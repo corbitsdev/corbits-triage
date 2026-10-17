@@ -7,15 +7,19 @@
 // queued when its first event is accepted, so a window lost to a restart is
 // recovered by the reconciler. Every accepted event opens or joins a window,
 // even on a head already queued: a queued row does not say whether its run
-// has read facts yet. The window map lives in process: the hub runs as one
-// replica.
-import type { ActionKind, CheckPack, PolicySource, PrTriageRow, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
+// has read facts yet. When the policy reads CI and CI on the head is still
+// running, the head waits instead, holding its events, and the window that
+// sees CI finish, or the reconciler, mails it. The window map lives in
+// process: the hub runs as one replica.
+import { dependsOnCi, type ActionKind, type CheckPack, type PolicySource, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
+import { checkPending, summarizeChecks, type CheckRun } from "@corbits/github-reads";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import type { PrMail } from "./normalize.js";
 import { triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader } from "./tenant-open-heads.js";
-import { failHead, queueHead, restoreHead, type QueuedHead, type Remembered } from "./triage-queue.js";
+import { inFlight, waitsForCi, type ReconcilePolicy } from "./reconcile-plan.js";
+import { failHead, queueHead, restoreHead, waitHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 
 export type CoalesceWindow = { quietMs: number; maxWaitMs: number; burstMs: number };
@@ -44,6 +48,7 @@ export type CoalescerDeps = {
   sendMail: (job: TriageJob) => Promise<unknown>;
   headChecks: HeadChecksReader;
   window: CoalesceWindow;
+  ciWait: Pick<ReconcilePolicy, "ciWaitMaxMs" | "ciStartGraceMs">;
   setTimer: SetTimer;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
@@ -124,15 +129,20 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     }, ms);
   }
 
-  async function checksPending(open: Open): Promise<boolean> {
+  /** Undefined when they could not be read, so the head is triaged rather than held. */
+  async function checksOf(open: Open): Promise<CheckRun[] | undefined> {
     const { tenantId, record } = open.latest;
     try {
-      const checks = await deps.headChecks(tenantId, record, open.head.headSha);
-      return checks.some((check) => check.status !== "completed");
+      return await deps.headChecks(tenantId, record, open.head.headSha);
     } catch (err) {
       deps.log({ level: "warn", msg: "coalesced_checks_unread", tenantId, repo: record.name, pr: open.head.number, headSha: open.head.headSha, error: String(err) });
-      return false;
+      return undefined;
     }
+  }
+
+  async function drop(open: Open, entry: Record<string, unknown>, reason: string): Promise<void> {
+    await restoreHead(deps.store, open.head, open.remembered);
+    deps.log({ level: "info", msg: "coalesced_dropped", ...entry, reason });
   }
 
   async function flush(key: string): Promise<void> {
@@ -141,12 +151,22 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     windows.delete(key);
     open.cancelQuiet();
     open.cancelDeadline();
-    const { latest, head, events } = open;
-    const entry = { tenantId: head.tenantId, repo: latest.record.name, pr: head.number, headSha: head.headSha, events };
-    // CI still running on the head is re-triaged once by its last completed check run.
-    if (events.every((event) => event === "checks") && await checksPending(open)) {
-      await restoreHead(deps.store, head, open.remembered);
-      deps.log({ level: "info", msg: "coalesced_dropped", ...entry, reason: "checks_pending" });
+    const { latest, head, remembered: { prior, rows } } = open;
+    const entry = { tenantId: head.tenantId, repo: latest.record.name, pr: head.number, headSha: head.headSha, events: open.events };
+    const checksOnly = open.events.every((event) => event === "checks");
+    const readsCi = dependsOnCi(latest.pack);
+    // A head the reconciler released from waiting after its CI finished already has its one run.
+    if (readsCi && checksOnly && prior !== undefined && inFlight(prior) && prior.events !== undefined) return drop(open, entry, "released");
+    const checks = checksOnly || readsCi ? await checksOf(open) : undefined;
+    const ci = checks && summarizeChecks(checks);
+    // CI still running on the head is re-triaged once by its last completed check run; a head waiting for CI is released by its first failed check.
+    const pending = prior?.status === "waiting" ? ci === "pending" : checks?.some(checkPending) === true;
+    if (checksOnly && pending) return drop(open, entry, "checks_pending");
+    const events = [...new Set([...(prior?.status === "waiting" ? prior.events ?? [] : []), ...open.events])];
+    const firstSeenAt = rows.find((row) => row.number === head.number && row.headSha === head.headSha)!.firstSeenAt;
+    if (readsCi && waitsForCi(ci, firstSeenAt, deps.now(), deps.ciWait)) {
+      await waitHead(deps.store, head, events, deps.now());
+      deps.log({ level: "info", msg: "triage_waiting_ci", ...entry, events, ci });
       return;
     }
     try {
@@ -157,7 +177,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());
       return;
     }
-    deps.log({ level: "info", msg: "forwarded", ...entry, workflow: latest.workflow });
+    deps.log({ level: "info", msg: "forwarded", ...entry, events, workflow: latest.workflow });
   }
 
   async function flushLogged(key: string): Promise<void> {

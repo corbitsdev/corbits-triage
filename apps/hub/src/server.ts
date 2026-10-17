@@ -416,7 +416,8 @@ function triageStack(triage: TriageWorkflow) {
     rotationKey: triage.rotationKey,
     tenants: reconcileTenants,
     liveDeployments,
-    ...(triage.pollsBuilds && { headChecks: tenantHeadChecks }),
+    headChecks: tenantHeadChecks,
+    verdicts: verdictRecordStore,
     latestDeployments: function latestTriageDeployments(tenantId, limit) {
       return latestDeployments(composition.db, tenantId, triage.id, limit);
     },
@@ -557,6 +558,7 @@ coalescer = createCoalescer({
   sendMail: sendTriageMail,
   headChecks: tenantHeadChecks,
   window: triageCoalesceWindow(env, reconcilePolicy),
+  ciWait: reconcilePolicy,
   setTimer,
   now,
   log: logJson,
@@ -690,6 +692,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     versions: tenantVersions,
     openPulls: openPullsCache,
     list: tenantOpenPrs,
+    triageState: triageStateStore,
     now,
   }),
   audit: createAuditLog({

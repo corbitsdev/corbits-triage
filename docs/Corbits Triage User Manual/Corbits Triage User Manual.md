@@ -109,7 +109,7 @@ A few things work differently from GitHub, because Bitbucket works differently:
 - **No labels.** Bitbucket Data Center has no labels, so the Labels card and **Add label…** steps have no effect there. Triage shows its verdict as a build status named **Corbits Triage** on the pull request's latest commit instead, while Comment is on for the repository.
 - **No assignments.** Bitbucket has no assignees, so **Assign to…** steps are not carried out.
 - **Bitbucket's own reviews.** Approve, Request changes, Close and Merge become Bitbucket's approve, needs work, decline and merge.
-- **CI is checked on a timer.** Bitbucket sends no event when a build finishes, so while the **CI must pass** rule is waiting on a build, or failing because of one, Triage looks at the build again after five minutes, then less often, and checks the pull request again once it has changed.
+- **CI is checked on a timer.** Bitbucket sends no event when a build finishes, so a pull request waiting for CI is checked within a few minutes of its builds ending. While the **CI must pass** rule is waiting on a build, or failing because of one, Triage looks at the build again after five minutes, then less often, and checks the pull request again once it has changed.
 - **No export.** The Policy card does not offer **Export to repository**, but a `.corbits-triage.yaml` you add yourself works the same way.
 
 ### Policy
@@ -202,7 +202,9 @@ Each step shows whether it **Waits for you** or runs on its own. If something is
 
 Triage only carries out an action on its own when the workspace allows that action in that repository under [Settings → Access](#access). Everything else waits in the Inbox for a person to click. Enabling a repository allows Comment and Labels on it; every other action waits until you allow it, so you can watch what Triage suggests before you let it act. Two actions are always held for a person: Close on Unsure, and Merge on anything but Pass.
 
-While a pull request's CI is still running, Triage holds every action, and its comment on the pull request lists them under **Waiting for checks to finish**. They go ahead once the checks are done.
+When the repository's rules or actions depend on CI (the **CI must pass** rule is on, a step has a CI condition, or a step approves or merges), Triage waits for a pull request's CI to finish before it checks it, so it gives one result instead of an early Unsure. Meanwhile the Inbox shows **Waiting for CI** and keeps the pull request out of Needs you. Triage goes ahead as soon as any check fails, after two minutes when the repository has no CI, and after an hour at most. **Triage again** does not wait.
+
+If Triage checks a pull request while its CI is still running anyway, it holds every action, and its comment on the pull request lists them under **Waiting for checks to finish**. They go ahead once the checks are done.
 
 ### Labels
 
@@ -256,7 +258,7 @@ The **All open** view groups pull requests by repository and adds two chips to e
 | PASS, FAIL or UNSURE | The verdict. Green means pass, red means fail, and gray means Triage could not tell. |
 | WAITS ON YOU, WAITS ON AUTHOR, WAITS ON NOBODY | Whose move it is. |
 
-A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened. A draft shows **Draft** and **Draft: Not evaluated** instead, since Triage waits until it is marked ready for review.
+A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. In **All open** it waits on CI. A draft shows **Draft** and **Draft: Not evaluated** instead, since Triage waits until it is marked ready for review.
 
 ### The reading pane
 

@@ -246,8 +246,14 @@ names CI green still requires CI); when it writes, it
 reads CI and reviews again and refuses while CI has not passed or anyone has
 requested changes; Triage's own standing request for changes is taken back
 first. The repository's branch protection stays the backstop.
-While CI is still running on the head, every action is held and the comment
-says "Waiting for checks to finish". When the policy's When includes checks,
+When the policy depends on CI (CI green is on, a step names a CI condition,
+or a step approves or merges), Triage waits for CI to finish on the head, or
+for its first check to fail, before it triages it, and the Inbox shows the
+pull request as **Waiting for CI**. A head with no checks after 2 minutes is
+taken as having no CI, and none waits longer than an hour. A run by hand does
+not wait.
+While CI is still running on a head triaged anyway, every action is held and
+the comment says "Waiting for checks to finish". When the policy's When includes checks,
 as it does by default, a completed check run has Triage triage the head again
 and resolve the held actions.
 Where Triage posts, a later head that may not be approved has the approve action's

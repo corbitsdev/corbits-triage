@@ -13,7 +13,7 @@ import { readyMaterializer, type LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
 import { createRunRecorder } from "./run-recorder.js";
 import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
-import type { ApprovedDo, RecordedVerdict } from "./verdict-record-store.js";
+import type { ApprovedDo, RecordedVerdict, VerdictRecord } from "./verdict-record-store.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
 import { markBaseMoved } from "./triage-queue.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
@@ -228,6 +228,10 @@ type HarnessOptions = {
   noPack?: boolean;
   /** Build statuses of every head, for a host whose builds the reconciler polls. */
   headChecks?: CheckRun[];
+  /** Stored triage state of the repository before the first pass. */
+  rows?: PrTriageRow[];
+  /** Verdicts recorded from runs no live log holds any more. */
+  recorded?: VerdictRecord[];
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
@@ -239,7 +243,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
   }
   const { reader, reads, latestOf } = fakeReader(logs);
   const delivered: Delivered = [];
-  const saved = new Map<string, PrTriageRow[]>();
+  const saved = new Map<string, PrTriageRow[]>(options.rows ? [[REPO, options.rows]] : []);
   let refusals = options.refuseSaves ?? 0;
   const logged: Array<Record<string, unknown>> = [];
   const now = options.now ?? (() => NOW);
@@ -312,7 +316,8 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       };
     },
     observeTenant: observer.observe,
-    ...(options.headChecks && { headChecks: async () => options.headChecks! }),
+    headChecks: async () => options.headChecks ?? [],
+    verdicts: { latest: async () => options.recorded ?? [] },
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
       if (options.noPack) return { status: "missing" };
@@ -383,6 +388,15 @@ describe("triage reconciler", () => {
     const green = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await green.reconcile();
     expect(mailedNumbers(green.delivered)).toEqual([1]);
+  });
+
+  test("a head whose verdict waits on CI is queued again once CI finished, though the deployment that gave the verdict was replaced", async () => {
+    const triaged: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: 1, runId: "run_gone", firstSeenAt: LONG_AGO, updatedAt: LONG_AGO };
+    const recorded: VerdictRecord = { tenantId: TENANT_ID, runId: "run_gone", repo: REPO, number: 1, headSha: "sha1", startedAt: new Date(LONG_AGO), verdictAt: new Date(LONG_AGO), settled: true, state: "awaiting-review", actor: "system", humanGated: false, degraded: null, checks: [{ check: "ci-green", result: "unconfirmed" }], dos: [], commented: false, detail: null, trigger: "pull_request:opened", runStatus: null };
+    const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    await run.reconcile();
+    expect(mailedNumbers(run.delivered)).toEqual([1]);
+    expect(run.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "build_status_changed" }));
   });
 
   test("a repository with every rule off, or no policy, starts no run and is logged once per head", async () => {

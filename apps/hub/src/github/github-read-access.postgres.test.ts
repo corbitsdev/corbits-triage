@@ -204,7 +204,7 @@ test("PostgreSQL: approving needs the approve Do grant on top of use, and pins t
 test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {
   const unused = {} as never;
   const app = guardedApp(handle.db, sessionOf, grants, {
-    triageVerdicts: createTriageVerdicts({ ...deps, list, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, now: unused }),
+    triageVerdicts: createTriageVerdicts({ ...deps, list, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, triageState: unused, now: unused }),
     triageTimeline: createTriageTimeline({ verdicts: unused }),
     triageStats: createTriageStats({ verdicts: unused, outcomes: unused, now: unused, log: unused }),
     audit: createAuditLog({ db: unused, artifacts: unused, readCheckPack: unused, runReader: unused, sameSource: unused, authorize: unused, workflows: ["pr-triage"] }),

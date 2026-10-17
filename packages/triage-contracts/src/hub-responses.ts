@@ -72,12 +72,15 @@ const Verdict = type({
 /**
  * The pull request's latest run, when it has not completed: still going, ended early, or running longer than any run can.
  * `unknown` until the hub read the workspace's live logs since it started, when a run may be going unseen.
+ * `waiting-ci`: no run yet, as the policy reads CI and it is still running on the head, seen `since`.
  */
 const Run = type({
   runId: "string",
   startedAt: "string",
   status: "'running' | 'failed' | 'cancelled' | 'stuck'",
-}).or({ status: "'unknown'" });
+})
+  .or({ status: "'unknown'" })
+  .or({ status: "'waiting-ci'", since: "string" });
 
 const Pull = type({
   repo: "string",

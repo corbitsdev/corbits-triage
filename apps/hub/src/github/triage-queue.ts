@@ -3,7 +3,7 @@
 // mail does not go out. Shared by the manual-run route and the webhook
 // coalescer.
 import { setTimeout as sleep } from "node:timers/promises";
-import type { PrTriageRow } from "@corbits/triage-contracts";
+import type { PrTriageRow, TriageEvent } from "@corbits/triage-contracts";
 import { BASE_MOVED, type ReconcilePolicy } from "./reconcile-plan.js";
 import { TriageStateConflictError, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
@@ -29,7 +29,7 @@ export function isRunningSince(row: PrTriageRow | undefined, now: Date, policy: 
 function queuedAgain(prior: PrTriageRow | undefined, number: number, headSha: string, at: string): PrTriageRow {
   if (prior === undefined) return { number, headSha, status: "queued", attempts: 0, firstSeenAt: at, queuedAt: at, updatedAt: at };
   // The last run and version stay named so the plan can tell this head from one it has never seen.
-  const { error: _error, ...rest } = prior;
+  const { error: _error, events: _events, ...rest } = prior;
   return { ...rest, status: "queued", queuedAt: at, updatedAt: at };
 }
 
@@ -70,20 +70,34 @@ export async function restoreHead(store: TriageStateStore, head: QueuedHead, rem
   await store.save(head.tenantId, head.repo, withRow(fresh.rows, head, remembered.prior), fresh.version);
 }
 
-/** Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; refused as stale, it is retried once on a fresh load. */
-export async function failHead(store: TriageStateStore, head: QueuedHead, error: string, now: Date): Promise<void> {
+/** Replaces a still queued head's row; refused as stale, it is retried once on a fresh load. */
+async function replaceQueued(store: TriageStateStore, head: QueuedHead, next: (row: PrTriageRow) => PrTriageRow): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const state = await store.load(head.tenantId, head.repo);
     const row = rowOf(state.rows, head);
     if (row?.status !== "queued") return;
     try {
-      await store.save(head.tenantId, head.repo, withRow(state.rows, head, { ...row, status: "failed", error, updatedAt: now.toISOString() }), state.version);
+      await store.save(head.tenantId, head.repo, withRow(state.rows, head, next(row)), state.version);
       return;
     } catch (err) {
       if (!(err instanceof TriageStateConflictError)) throw err;
     }
   }
   throw new TriageStateConflictError(head.repo);
+}
+
+/** Marks a still queued head failed after its mail did not go out, so the reconciler queues it again. */
+export function failHead(store: TriageStateStore, head: QueuedHead, error: string, now: Date): Promise<void> {
+  return replaceQueued(store, head, function failed(row) {
+    return { ...row, status: "failed", error, updatedAt: now.toISOString() };
+  });
+}
+
+/** Marks a still queued head waiting for its CI instead of mailing it, holding `events` for the run that starts once CI finishes. */
+export function waitHead(store: TriageStateStore, head: QueuedHead, events: TriageEvent[], now: Date): Promise<void> {
+  return replaceQueued(store, head, function waiting(row) {
+    return { ...row, status: "waiting", events, updatedAt: now.toISOString() };
+  });
 }
 
 /** Saves refused as stale before a base move gives up; each retry loads afresh after a growing pause. */

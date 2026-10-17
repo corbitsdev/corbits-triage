@@ -1,6 +1,7 @@
 // Decides, from what GitHub and the run logs say now, which open pull requests
 // to queue again. Pure, so every recovery path is decided in one place.
-import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
+import type { CiState } from "@corbits/github-reads";
 import { MODEL_NOT_ASKED } from "@corbits/triage-workflows/logic/settled";
 import type { Judged } from "@corbits/triage-workflows/logic/item";
 
@@ -43,6 +44,10 @@ export type ReconcilePolicy = {
   baseMoveWindowMs: number;
   /** Heads a tenant has queued or running at once; further due heads wait, never-triaged ones first, then oldest waiting first. */
   maxInFlight: number;
+  /** A head whose policy reads CI waits at most this long, from when it was first seen, for CI to finish. */
+  ciWaitMaxMs: number;
+  /** A head with no checks yet is taken as having no CI once it was first seen this long ago. */
+  ciStartGraceMs: number;
 };
 
 const MINUTE = 60_000;
@@ -60,9 +65,24 @@ export const DEFAULT_RECONCILE_POLICY: ReconcilePolicy = {
   unconfirmedRetryMs: 5 * MINUTE,
   baseMoveWindowMs: 15 * MINUTE,
   maxInFlight: 5,
+  ciWaitMaxMs: 60 * MINUTE,
+  ciStartGraceMs: 2 * MINUTE,
 };
 
-type RepoPlanInput = { name: string; prs: readonly OpenPr[]; rows: readonly PrTriageRow[] };
+/** A head waits while its CI is running, or has not started yet, within its bounds; a failed check ends the wait, and so does CI that could not be read. */
+export function waitsForCi(ci: CiState | undefined, firstSeenAt: string, now: Date, policy: Pick<ReconcilePolicy, "ciWaitMaxMs" | "ciStartGraceMs">): boolean {
+  const waited = now.getTime() - new Date(firstSeenAt).getTime();
+  if (ci === "pending") return waited < policy.ciWaitMaxMs;
+  return ci === "none" && waited < policy.ciStartGraceMs;
+}
+
+type RepoPlanInput = {
+  name: string;
+  prs: readonly OpenPr[];
+  rows: readonly PrTriageRow[];
+  /** CI of the repository's waiting heads and due new ones, by run key, when its policy reads CI; a head left out is not held. */
+  ci?: ReadonlyMap<string, CiState>;
+};
 
 export type TenantPlanInput = {
   repos: readonly RepoPlanInput[];
@@ -76,8 +96,8 @@ export type TenantPlanInput = {
   offeringId?: string;
 };
 
-/** A head to queue, why, the judge answers its earlier runs got, and the row to keep instead when its mail cannot be delivered. */
-export type QueuedPr = { number: number; reason: string; judged?: Judged; undelivered: PrTriageRow };
+/** A head to queue, why, the judge answers its earlier runs got, the events it waited on CI with, and the row to keep instead when its mail cannot be delivered. */
+export type QueuedPr = { number: number; reason: string; judged?: Judged; events?: TriageEvent[]; undelivered: PrTriageRow };
 
 /** Rows for exactly the open heads; queued heads are already marked queued. */
 export type RepoPlan = { rows: PrTriageRow[]; enqueue: QueuedPr[] };
@@ -104,10 +124,11 @@ type Observation = { status: PrTriageRow["status"]; run?: ObservedRun; runId?: s
 function withStatus(row: PrTriageRow, { status, run, runId = run?.runId, error }: Observation, now: string): PrTriageRow {
   const workflowVersion = run?.workflowVersion ?? row.workflowVersion;
   if (row.status === status && row.runId === runId && row.error === error && row.workflowVersion === workflowVersion) return row;
-  const { runId: _run, error: _error, workflowVersion: _version, ...rest } = row;
+  const { runId: _run, error: _error, workflowVersion: _version, events, ...rest } = row;
   return {
     ...rest,
     status,
+    ...(events !== undefined && inFlight({ status }) && { events }),
     ...(runId !== undefined && { runId }),
     ...(error !== undefined && { error }),
     ...(workflowVersion !== undefined && { workflowVersion }),
@@ -157,6 +178,8 @@ function sinceStale(row: PrTriageRow, runs: readonly ObservedRun[], policy: Reco
  * until it ends, and the head is stale then.
  */
 function observe(row: PrTriageRow, observed: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): PrTriageRow {
+  // A waiting head's earlier verdicts are older than the events it holds; only its CI releases it.
+  if (row.status === "waiting") return row;
   const at = now.toISOString();
   const waiting = row.status === "queued" || row.status === "running";
   const current = sinceStale(row, observed, policy);
@@ -195,7 +218,8 @@ function uncapped(row: PrTriageRow, now: Date, policy: ReconcilePolicy): PrTriag
   return { ...row, attempts: 0, cappedRetries: cycles + 1 };
 }
 
-function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): boolean {
+function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], ci: CiState | undefined, now: Date, policy: ReconcilePolicy): boolean {
+  if (row.status === "waiting") return !waitsForCi(ci, row.firstSeenAt, now, policy);
   if (row.status === "stale") return row.queuedAt === undefined || now.getTime() - ms(row.queuedAt) >= policy.baseMoveWindowMs;
   if (row.status === "new") return now.getTime() - ms(pr.updatedAt) >= policy.webhookGraceMs;
   if (row.status !== "failed" || row.attempts >= policy.maxAttempts) return false;
@@ -219,7 +243,7 @@ function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: stri
 }
 
 /** A queued head counts until the hub marks it failed for never starting, so a backed-up queue is not mailed again. */
-export function inFlight(row: PrTriageRow): boolean {
+export function inFlight(row: Pick<PrTriageRow, "status">): boolean {
   return row.status === "queued" || row.status === "running";
 }
 
@@ -274,7 +298,7 @@ export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: D
   const index = plan.rows.findIndex((candidate) => candidate.number === row.number && candidate.headSha === row.headSha);
   if (index === -1) return;
   const at = now.toISOString();
-  const { runId: _run, error: _error, ...rest } = row;
+  const { runId: _run, error: _error, events: _events, ...rest } = row;
   plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
   plan.enqueue.push({ number: row.number, reason, undelivered: row });
 }
@@ -285,7 +309,7 @@ export function planTenant({ repos, runs, now, policy, workflowVersion, offering
   const plans = new Map<string, RepoPlan>();
   const due: Due[] = [];
   const busy = runningHeads(runs, now, policy);
-  for (const { name, prs, rows } of repos) {
+  for (const { name, prs, rows, ci } of repos) {
     const byHead = new Map(rows.map((row) => [runKey(row.number, row.headSha), row]));
     const observed = runs.get(name);
     const next: PrTriageRow[] = [];
@@ -293,18 +317,23 @@ export function planTenant({ repos, runs, now, policy, workflowVersion, offering
       const key = runKey(pr.number, pr.headSha);
       const current = fresh(pr, byHead.get(key), workflowVersion, at);
       const runsOfHead = (observed?.get(key) ?? []).filter((run) => counts(run, current, workflowVersion));
-      const row = uncapped(observe(current, runsOfHead, now, policy), now, policy);
+      const seen = uncapped(observe(current, runsOfHead, now, policy), now, policy);
+      // A head no webhook queued waits for its running CI like one that did; one with no checks yet is taken as having none.
+      const held = seen.status === "new" && ci?.get(key) === "pending" && isDue(seen, pr, runsOfHead, undefined, now, policy) && waitsForCi("pending", seen.firstSeenAt, now, policy);
+      const row: PrTriageRow = held ? { ...seen, status: "waiting", updatedAt: at } : seen;
       if (inFlight(row)) busy.add(`${name} ${key}`);
-      if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row, judged: judgedOf(runsOfHead, workflowVersion, offeringId) });
+      if (isDue(row, pr, runsOfHead, ci?.get(key), now, policy)) due.push({ repo: name, index: next.length, row, judged: judgedOf(runsOfHead, workflowVersion, offeringId) });
       next.push(row);
     }
     plans.set(name, { rows: next, enqueue: [] });
   }
   for (const { repo, index, row, judged } of due.sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0))) {
     const plan = plans.get(repo)!;
-    const { runId: _run, error: _error, ...rest } = row;
-    plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
-    plan.enqueue.push({ number: row.number, reason: row.error ?? "never triaged", ...(Object.keys(judged).length > 0 && { judged }), undelivered: row });
+    const { runId: _run, error: _error, events, ...rest } = row;
+    // The events stay on the row while its run is in flight, so a check run finishing meanwhile is known to be covered by it.
+    plan.rows[index] = { ...rest, status: "queued", ...(events !== undefined && { events }), attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
+    const reason = row.status === "waiting" ? "waited for CI" : row.error ?? "never triaged";
+    plan.enqueue.push({ number: row.number, reason, ...(Object.keys(judged).length > 0 && { judged }), ...(events !== undefined && { events }), undelivered: row });
   }
   return plans;
 }

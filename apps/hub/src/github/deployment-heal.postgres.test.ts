@@ -149,6 +149,8 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     },
     openHeadsFor: async () => async () => [{ ...HEAD, updatedAt: ago(60 * MINUTE).toISOString(), draft: false }],
     observeTenant: observer.observe,
+    headChecks: async () => [],
+    verdicts: { latest: async () => [] },
     store: {
       async load(_tenantId, repo) {
         return { rows: rows.get(repo) ?? [], version: null };

@@ -152,13 +152,17 @@ onto the stock hook routes. Events:
   `pr:comment:added`, `pr:merged`, `pr:declined`, `pr:deleted`
 - Repository: `repo:refs_changed`
 
-Data Center sends no webhook when a build status finishes, so a verdict left
-waiting on `ci-green`, or failed by it, would never catch up on its own. The hub
+Data Center sends no webhook when a build status finishes. A head held while
+its policy waits for CI is released by the reconciler pass that finds its
+build statuses no longer in progress, so it is triaged up to one reconcile
+interval after its builds end. A verdict left waiting on `ci-green`, or failed
+by it, would likewise never catch up on its own. The hub
 re-reads the build statuses of such heads on the unconfirmed retry interval
 (5 minutes, doubling, up to the retry cap) and queues the head again once they
 changed: no longer pending, or no longer failing (`triage_requeued` with
-`reason: build_status_changed`). GitHub needs none of this: its `check_run`
-webhook triages the head again.
+`reason: build_status_changed`). On GitHub the `check_run` webhook triages the
+head again; the same poll covers a completed check run whose event was lost or
+whose mail failed.
 
 A webhook triage created is removed when the repository is disabled or the
 instance disconnected; one set up by hand is not, and stays until a repository

@@ -1295,6 +1295,8 @@ export type PrItem = {
   /** The verdict's reply is on GitHub: the run's mirror step wrote non-empty feedback, or this portal sent it (see `useQueueItems`). */
   posted: boolean;
   running: boolean;
+  /** Its policy reads CI, so triage holds this head until its CI finishes. */
+  waitingForCi: boolean;
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
   failure: RunFailure | null;
   actions: SuggestedAction[];
@@ -1393,7 +1395,7 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
 
 /** A stuck run is a failure, not running, so its Dos stay enabled: running them again is the way out. */
 function failureOf(run: PullRun | null): RunFailure | null {
-  return run === null || run.status === "running" || run.status === "unknown" ? null : run.status;
+  return run === null || run.status === "running" || run.status === "unknown" || run.status === "waiting-ci" ? null : run.status;
 }
 
 /** A run the hub has not read yet may be going, so it holds writes like one that is. */
@@ -1440,6 +1442,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     reviewAnswered: facts.reviewAnswered === true,
     posted: verdict.commented,
     running: isRunning(pull.run),
+    waitingForCi: pull.run?.status === "waiting-ci",
     failure: failureOf(pull.run),
     actions: suggestedActions(detail.actions ?? []),
     automatic: ACTION_KINDS.filter((kind) => detail.automatic?.includes(kind)),
@@ -1527,6 +1530,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         reviewAnswered: false,
         posted: false,
         running: isRunning(pull?.run ?? null),
+        waitingForCi: pull?.run?.status === "waiting-ci",
         failure: failureOf(pull?.run ?? null),
         actions: [],
         automatic: [],
