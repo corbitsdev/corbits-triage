@@ -193,7 +193,7 @@ A rule asks one question about a pull request and answers pass, fail or unconfir
   - **Check docs are updated when behavior changes.**
   - **Is it true that …**, a yes-or-no question of your own, such as "Is it true that the title says what changed?" The rule fails when the answer is no.
 
-Two rules always run: a draft pull request waits until it is ready for review, and a pull request with changes requested fails.
+Two rules always run: a draft pull request waits until it is ready for review, and a pull request with changes requested fails. Once the author pushes a new commit or replies, it still fails but waits on the reviewer, in **Needs you** as ready for re-review, until that reviewer approves or requests changes again.
 
 Size rules and facts the host already knows cost nothing and always give the same answer for the same pull request. Judgement rules cost one model request per pull request.
 
@@ -469,7 +469,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **Code review shows nothing for a pull request.** Check that code review is on in the repository's Code review section and that an Anthropic key is stored under Settings → Models. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one.
 
-**The author pushed a fix. Do I need to do anything?** No. Every new commit gets its own verdict, and Triage updates its comment. If you had requested changes through Triage and every failed rule is now fixed, Triage withdraws the request for you.
+**The author pushed a fix. Do I need to do anything?** No. Every new commit gets its own verdict, and Triage updates its comment. If you had requested changes through Triage and every failed rule is now fixed, Triage withdraws the request for you. If a reviewer requested changes, the pull request moves to **Needs you** for their re-review.
 
 **Can I try new rules without affecting anyone?** Rules change only in the repository's `.corbits-triage.yml`, so every change is reviewed in a pull request and applies once it reaches the default branch. Actions that Triage does not run on its own still wait for a person.
 

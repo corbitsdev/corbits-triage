@@ -137,8 +137,11 @@ describe("requested changes", () => {
     expect(waitsOn(reviewed, null)).toBe("author");
   });
 
-  test("an answered review is the maintainer's to re-review", () => {
-    const answered = { ...reviewed, reviewAnswered: true };
+  test.each([
+    ["waiting on the reviewer", "awaiting-review"],
+    ["stored before verdicts waited on the reviewer", "needs-author-update"],
+  ] as const)("an answered review %s is the maintainer's to re-review", (_, state) => {
+    const answered = { ...reviewed, state, reviewAnswered: true };
     expect(groupInbox([answered], READY).groups.map((group) => group.action)).toEqual(["review"]);
     expect(primaryAction(answered, inboxAction(answered))).toBe("approve");
     expect(inboxStatus(answered)).toBe("Waiting for review");

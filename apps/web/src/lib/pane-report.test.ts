@@ -106,8 +106,8 @@ describe("paneStatus", () => {
 
   test("agrees with the list and the primary: re-review, rechecking, and never asking for a reply when the button approves", () => {
     const requested = check({ check: "no-changes-requested", result: "fail", reason: "a reviewer requested changes" });
-    expect(statusOf({ state: "needs-author-update", checks: [requested], reviewAnswered: true })).toMatchObject({ text: "Ready for your re-review" });
-    expect(barOf(item({ state: "needs-author-update", checks: [requested], reviewAnswered: true })).primary?.kind).toBe("approve");
+    expect(statusOf({ state: "awaiting-review", checks: [requested], reviewAnswered: true })).toMatchObject({ text: "Ready for your re-review" });
+    expect(barOf(item({ state: "awaiting-review", checks: [requested], reviewAnswered: true })).primary?.kind).toBe("approve");
     expect(statusOf({ state: "stale" }).text).toBe("Rechecking");
     const draft = check({ check: "not-a-draft", result: "fail", reason: "pull request is a draft" });
     expect(barOf(item({ state: "awaiting-review", checks: [draft] })).primary?.kind).toBe("approve");
