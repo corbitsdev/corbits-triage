@@ -3,6 +3,7 @@ import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboun
 import { type } from "arktype";
 import { checkoutOf, READ_FILE_TOOL, type Checkout } from "./actions/checkout.js";
 import { quotedLine, type Finding, type Site } from "./findings.js";
+import { PACKAGE_NAME } from "./package-name.js";
 
 // Lines read on each side of a finding's range, to find the line its quoted code names.
 const READ_AROUND = 20;
@@ -198,7 +199,7 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
 }
 
 export const consolidate = defineDirector<ConsolidateDirectorConfig>({
-  id: "@corbits/pr-code-review-anthropic/consolidate",
+  id: `${PACKAGE_NAME}/consolidate`,
   configSchema: type({ name: "string", schema: "Record<string, unknown>" }),
   factory: function buildConsolidateDirector(config, _env, agent) {
     let inner: ReactorDirector | undefined;

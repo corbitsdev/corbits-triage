@@ -643,8 +643,8 @@ function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDir
 }
 
 /** Set by the workflow build to the published package name; source runs use the workspace package. */
-declare const TRIAGE_WORKFLOW_PACKAGE_NAME: string | undefined;
-const workflowPackageName = typeof TRIAGE_WORKFLOW_PACKAGE_NAME === "undefined" ? "@corbits/triage-workflows" : TRIAGE_WORKFLOW_PACKAGE_NAME;
+declare const WORKFLOW_PACKAGE_NAME: string | undefined;
+const workflowPackageName = typeof WORKFLOW_PACKAGE_NAME === "undefined" ? "@corbits/triage-workflows" : WORKFLOW_PACKAGE_NAME;
 
 export const triageDirector = defineDirector<TriageDirectorConfig>({
   id: `${workflowPackageName}/triage`,

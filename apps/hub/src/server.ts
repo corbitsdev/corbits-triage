@@ -47,10 +47,11 @@ import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
+import { codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
+import { createCodeReviewSwitch } from "./code-review.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
@@ -99,17 +100,22 @@ import { githubRead, githubWrite } from "@corbits/github-tool";
 import { bitbucketRead, bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
 
 // Per host: a workspace deploys a host's workflow and tools once that host's credential exists; pr-triage-historical
-// reads GitHub only. A workspace with both hosts runs both pr-triage workflows.
+// reads GitHub only. A workspace with both hosts runs both pr-triage workflows. A host's code review deploys while a
+// repository of it has code review on.
 const EXPECTED_DEPLOYMENT_SET = {
   github: {
     workflows: [
       { address: triageWorkflowFor("github").address, id: prTriageGithub.id },
       { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
+      { address: codeReviewWorkflowFor("github").id, id: codeReviewWorkflowFor("github").id },
     ],
     tools: [githubRead.id, githubWrite.id],
   },
   "bitbucket-datacenter": {
-    workflows: [{ address: triageWorkflowFor("bitbucket-datacenter").address, id: triageWorkflowFor("bitbucket-datacenter").id }],
+    workflows: [
+      { address: triageWorkflowFor("bitbucket-datacenter").address, id: triageWorkflowFor("bitbucket-datacenter").id },
+      { address: codeReviewWorkflowFor("bitbucket-datacenter").id, id: codeReviewWorkflowFor("bitbucket-datacenter").id },
+    ],
     tools: [bitbucketRead.id, bitbucketWrite.id],
   },
 };
@@ -499,6 +505,9 @@ const reconcileSourceDeployments = createSourceDeployments({
   connectedSources: function connectedSourcesOf(tenantId) {
     return connectedSources(composition.db, tenantId);
   },
+  codeReviewSources: function codeReviewSourcesOf(tenantId) {
+    return codeReviewSources(composition.db, tenantId);
+  },
   liveDeployments: function liveOf(tenantId, workflow) {
     return resolveLiveDeployments(composition.db, tenantId, workflow);
   },
@@ -706,6 +715,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   }),
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
+  codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged }),
   invitations: createInvitations({
     db: composition.db,
     cipher: composition.credentialCipher,

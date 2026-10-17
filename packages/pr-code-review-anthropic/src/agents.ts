@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { defineAgent } from "@intx/agent";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 import { githubRead } from "@corbits/github-tool";
@@ -6,11 +5,8 @@ import { repoRead } from "@corbits/repo-read-tool";
 import { CODE_REVIEW_MODELS, type RepoSource } from "@corbits/triage-contracts";
 import { reader } from "./reader-director.js";
 import { consolidate } from "./consolidate-director.js";
+import { SYSTEM_PROMPTS } from "./prompts.js";
 import { structured } from "./structured-director.js";
-
-function prompt(name: string): string {
-  return readFileSync(new URL(`../prompts/${name}.system.txt`, import.meta.url), "utf8");
-}
 
 function inferenceOn(model: string) {
   return { sources: [{ provider: "anthropic", model }] };
@@ -99,17 +95,17 @@ const WRITE_SCHEMA = {
   },
 };
 
-function structuredAgent(id: string, name: string, schema: Record<string, unknown>) {
-  return defineAgent({ id, systemPrompt: prompt(name), tools: [], capabilities: [], inference, director: structured.build({ name, schema }) });
+function structuredAgent(id: string, name: "plan" | "check" | "write", schema: Record<string, unknown>) {
+  return defineAgent({ id, systemPrompt: SYSTEM_PROMPTS[name], tools: [], capabilities: [], inference, director: structured.build({ name, schema }) });
 }
 
 /** The diff finder: one model turn over the pull request's diff, no tools. */
-export function finderAgent(systemPrompt = prompt("finder-diff")) {
+export function finderAgent(systemPrompt = SYSTEM_PROMPTS["finder-diff"]) {
   return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference: inferenceOn(CODE_REVIEW_MODELS.diffFinder) });
 }
 
 /** The repository finder: its director checks the head out with the host's read bundle, and the model reads it with the confined read tools. */
-export function repoFinderAgent(sources: Sources, systemPrompt = prompt("finder-repo")) {
+export function repoFinderAgent(sources: Sources, systemPrompt = SYSTEM_PROMPTS["finder-repo"]) {
   return defineAgent({
     id: "code-review-finder-repo",
     systemPrompt,
@@ -130,7 +126,7 @@ export const writeAgent = structuredAgent("code-review-write", "write", WRITE_SC
 export function consolidateAgent(sources: Sources) {
   return defineAgent({
     id: "code-review-consolidate",
-    systemPrompt: prompt("consolidate"),
+    systemPrompt: SYSTEM_PROMPTS.consolidate,
     tools: readsOf(sources),
     capabilities: [],
     inference,

@@ -1,6 +1,7 @@
 import { defineDirector } from "@intx/agent";
 import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent } from "@intx/types/runtime";
 import { type } from "arktype";
+import { PACKAGE_NAME } from "./package-name.js";
 
 export interface StructuredDirectorConfig {
   name: string;
@@ -32,7 +33,7 @@ function structuredDirector(caps: ReactorCapabilities, systemPrompt: string, { n
 }
 
 export const structured = defineDirector<StructuredDirectorConfig>({
-  id: "@corbits/pr-code-review-anthropic/structured",
+  id: `${PACKAGE_NAME}/structured`,
   configSchema: type({ name: "string", schema: "Record<string, unknown>" }),
   factory: function buildStructuredDirector(config, _env, agent) {
     return {

@@ -9,7 +9,7 @@ import { parsePin } from "@intx/tool-packaging";
 import type { WorkflowDeploymentResponse } from "@intx/types";
 import { WorkflowDefinitionInvalidError } from "@intx/workflow-deploy";
 import { failure } from "./github/portal-credential.js";
-import { connectedSources, HISTORICAL_ENTRY, triageWorkflowOf } from "./github/source-workflow.js";
+import { connectedSources, entrySource } from "./github/source-workflow.js";
 import type { Member } from "./integrations/app.js";
 
 export const WORKFLOW_DEPLOY_PATH = "/api/integrations/workflow-deploy";
@@ -58,7 +58,7 @@ export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
     if (!(await tenantAsset(tenantId, body.definitionAssetId, "workflow"))) return failure(404, "not_found", "Workflow asset not found");
     if (!(await tenantAsset(tenantId, body.registryAssetId, "package-registry"))) return failure(404, "not_found", "Package registry asset not found");
     // A host's package binds that host's credential, which an unresolved binding would fail: it deploys once the host is connected.
-    const needs = triageWorkflowOf(body.entry)?.source ?? (body.entry === HISTORICAL_ENTRY ? "github" : undefined);
+    const needs = entrySource(body.entry);
     if (needs !== undefined && !(await connectedSources(deps.db, tenantId)).includes(needs)) {
       return failure(409, "source_not_connected", `Connect ${needs} before deploying ${body.entry.slice(2, -4)}.`);
     }

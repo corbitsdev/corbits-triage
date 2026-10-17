@@ -1,13 +1,13 @@
 // The hub bridge finds deployments by workflow name, so each workflow is
 // redeployed only when its current deployment runs another version than this
-// build's, none exists, or the decision model changed (a deployment resolves
-// its offering when deployed).
+// build's, none exists, or its model's key changed (a deployment resolves
+// its offerings when deployed).
 import { ApiError, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { requestOrigin } from "./hub-origin.ts";
 import { currentDeployment, isLiveDeployment, listDeployedWorkflows, type DeployedWorkflow } from "./hub-api.ts";
 import { offeringsFor } from "./model-catalog.ts";
 import { tarballFilename, type RepoSource } from "@corbits/triage-contracts";
-import { WORKFLOW_PACKAGES, type PackageIndexEntry } from "./workflow-packages.ts";
+import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowKind, type WorkflowPackage } from "./workflow-packages.ts";
 
 const REGISTRY_NAME = "corbits";
 
@@ -142,12 +142,20 @@ function sourceNotConnected(cause: unknown): boolean {
   return cause instanceof ApiError && cause.status === 409 && cause.code === "source_not_connected";
 }
 
-/** `connected` are the hosts the workspace connected; each host's workflows deploy only while it is. */
+/** The hosts the workspace connected, and those whose code review is on. */
+export type DeployHosts = { connected: readonly RepoSource[]; codeReview: readonly RepoSource[] };
+
+function wanted(workflow: WorkflowPackage, hosts: DeployHosts): boolean {
+  if (!hosts.connected.includes(workflow.source)) return false;
+  return workflow.kind === "triage" || hosts.codeReview.includes(workflow.source);
+}
+
+/** Each host's triage deploys while the host is connected, its code review while that is on too; `redeploy` names the kinds deployed again even at the same version. */
 export async function ensureWorkflows(
   transport: Transport,
   tenantId: string,
-  connected: readonly RepoSource[],
-  redeploy: boolean,
+  hosts: DeployHosts,
+  redeploy: ReadonlySet<WorkflowKind>,
   fetchRaw: typeof fetch = fetch,
 ): Promise<string[]> {
   const deployments = await listDeployedWorkflows(transport, tenantId);
@@ -156,13 +164,13 @@ export async function ensureWorkflows(
   const index = await (await portalPackage(fetchRaw, "index.json")).json() as PackageIndexEntry[];
   await syncRegistry(transport, fetchRaw, tenantId, registry.id, index, deployments);
   const deployed: string[] = [];
-  for (const workflow of WORKFLOW_PACKAGES.filter((row) => connected.includes(row.source))) {
+  for (const workflow of WORKFLOW_PACKAGES.filter((row) => wanted(row, hosts))) {
     const pkg = index.find((entry) => entry.name === workflow.packageName);
     if (!pkg) throw new Error(`The portal build is missing the ${workflow.name} workflow.`);
     // The deploy route needs a workflow asset to name the definition; the code comes from the registry.
     const asset = await ensureAsset(transport, tenantId, "workflow", workflow.name);
     const current = currentDeployment(deployments, workflow.name)?.package;
-    const deploy = redeploy || current?.name !== pkg.name || current.version !== pkg.version;
+    const deploy = redeploy.has(workflow.kind) || current?.name !== pkg.name || current.version !== pkg.version;
     if (deploy) {
       const offerings = await offeringsFor(transport, tenantId, workflow.models);
       try {
@@ -183,4 +191,12 @@ export async function ensureWorkflows(
     if (cancelsSuperseded(workflow.name, deploy)) await cancelSuperseded(transport, tenantId, asset.id);
   }
   return deployed;
+}
+
+/** Releases the live deployments of one kind of workflow, such as code review once the Anthropic key it runs on is removed. */
+export async function releaseWorkflows(transport: Transport, tenantId: string, kind: WorkflowKind): Promise<void> {
+  const names = new Set<string>(WORKFLOW_PACKAGES.filter((workflow) => workflow.kind === kind).map((workflow) => workflow.name));
+  for (const deployment of await listDeployedWorkflows(transport, tenantId)) {
+    if (names.has(deployment.workflow) && !deployment.cancelling) await cancelDeployment(transport, tenantId, deployment.id);
+  }
 }

@@ -22,6 +22,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role; gives admins the same on older policies at start. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
+| `src/code-review.ts` | `POST /api/integrations/code-review/{tenantId}` turns code review on or off for one repository (`codeReview` on its record); on needs the host connected and the Anthropic key. |
 | `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`; pull request, review, comment and `check_run` events → coalescer; default-branch pushes touching `.corbits-triage.yaml` → policy-file sync. |
@@ -65,12 +66,17 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
 - `src/lib/workflow-deploy.ts`: `ensureWorkflows` publishes the tool and workflow tarballs to the tenant's
   `corbits` package registry and deploys each workflow pinned to its version
   through the hub's workflow-deploy route, redeploying a workflow only when
-  its deployment runs another version or the decision model was saved. Before
+  its deployment runs another version or its model's key was saved. A
+  host's code review (`pr-code-review-github`,
+  `pr-code-review-bitbucket-datacenter`) deploys only while one of its
+  connected repositories has code review on and the Anthropic key is
+  stored; removing the key releases it. Before
   publishing it removes every tarball neither this build nor a live
   deployment pins, since Interchange delivers the registry's whole tree under
   a 32 MiB cap; removed versions stay in the asset's git history.
-- `scripts/build-workflows.ts`: packs the GitHub tools and each workflow of
-  `packages/triage-workflows` as tarballs into `public/packages/`, listed in
+- `scripts/build-workflows.ts`: packs the host read tools and each workflow of
+  `packages/triage-workflows` and `packages/pr-code-review-anthropic` as
+  tarballs into `public/packages/`, listed in
   `index.json`. Each version is `<base>-sha-<8 hex>`, a SHA-256 over the
   package manifest and files (`tooling/pack-tarball.ts`), so any change to
   the tool or a workflow publishes a new version.
