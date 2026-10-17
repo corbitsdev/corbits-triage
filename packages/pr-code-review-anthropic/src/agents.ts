@@ -3,18 +3,20 @@ import { defineAgent } from "@intx/agent";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 import { githubRead } from "@corbits/github-tool";
 import { repoRead } from "@corbits/repo-read-tool";
-import type { RepoSource } from "@corbits/triage-contracts";
+import { CODE_REVIEW_MODELS, type RepoSource } from "@corbits/triage-contracts";
 import { reader } from "./reader-director.js";
 import { consolidate } from "./consolidate-director.js";
 import { structured } from "./structured-director.js";
-
-export const DEFAULT_MODEL = "claude-haiku-5-5";
 
 function prompt(name: string): string {
   return readFileSync(new URL(`../prompts/${name}.system.txt`, import.meta.url), "utf8");
 }
 
-const inference = { sources: [{ provider: "anthropic", model: DEFAULT_MODEL }] };
+function inferenceOn(model: string) {
+  return { sources: [{ provider: "anthropic", model }] };
+}
+
+const inference = inferenceOn(CODE_REVIEW_MODELS.other);
 
 export type Sources = readonly RepoSource[];
 
@@ -103,7 +105,7 @@ function structuredAgent(id: string, name: string, schema: Record<string, unknow
 
 /** The diff finder: one model turn over the pull request's diff, no tools. */
 export function finderAgent(systemPrompt = prompt("finder-diff")) {
-  return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference });
+  return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference: inferenceOn(CODE_REVIEW_MODELS.diffFinder) });
 }
 
 /** The repository finder: its director checks the head out with the host's read bundle, and the model reads it with the confined read tools. */

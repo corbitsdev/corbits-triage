@@ -8,7 +8,7 @@
 //   --budget <tokens> sets the repository finder's token budget (default the workflow's).
 //   bun run eval:review -- --rescore <results-dir>   re-scores saved results without model calls
 //   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--check] [--out <file.json>]
-//   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write;
+//   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write; each role defaults to its deployed model;
 //   runs the whole pr-code-review workflow on each case's head and scores the finders' union, the consolidated findings,
 //   the confirmed ones (all of them unless --check), the final review, and its comments found by both finders and by
 //   one, with each step's tokens, dollars and seconds.
@@ -20,13 +20,14 @@ import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { InferenceEvent } from "@intx/types/inference-events";
 import type { TokenUsage } from "@intx/types/runtime";
-import type { WorkflowAuthorizeFn } from "@intx/workflow";
+import type { AgentDefinition } from "@intx/agent";
+import type { StepInvokeRequest, WorkflowAuthorizeFn } from "@intx/workflow";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { runLocalWorkflow } from "../../triage-workflows/evals/run-local.js";
 import { githubRead } from "@corbits/github-tool";
 import * as actions from "../src/actions/index.js";
 import { BUDGET_EXHAUSTED } from "../src/actions/checkout.js";
-import { DEFAULT_MODEL, type Sources } from "../src/agents.js";
+import { finderAgent, repoFinderAgent, type Sources } from "../src/agents.js";
 import * as directors from "../src/directors.js";
 import { prCodeReview } from "../src/pr-code-review.js";
 import { finderInput } from "./finder-input.js";
@@ -184,6 +185,12 @@ async function runCase(testCase: Case, systemPrompt: string, effort: Effort, mod
   return { ...base, ...scoreCase(testCase, findings), findings, reanchored: moved, reply };
 }
 
+function deployedModel(agent: Pick<AgentDefinition, "inference">): string {
+  const [source] = agent.inference.sources;
+  if (!source) throw new Error("agent names no inference source");
+  return source.model;
+}
+
 function priceOf(model: string): ModelPrice {
   const price = PRICES[model];
   if (!price) throw new Error(`no price for ${model}; known: ${Object.keys(PRICES).join(", ")}`);
@@ -325,7 +332,8 @@ interface E2EResult {
 }
 
 interface E2EConfig {
-  models: Record<Role, string>;
+  /** The roles whose model a flag overrides; every other step runs on its deployed model. */
+  models: Partial<Record<Role, string>>;
   efforts: Record<Role, Effort>;
   budget?: number;
   check: boolean;
@@ -339,17 +347,17 @@ function effortFlag(value: unknown, fallback: Effort): Effort {
 }
 
 function e2eConfig(values: Record<string, unknown>): E2EConfig {
-  function model(role: Role): [Role, string] {
+  function model(role: Role): [Role, string][] {
     const value = values[`${ROLE_FLAGS[role]}-model`];
-    const chosen = typeof value === "string" ? value : DEFAULT_MODEL;
-    priceOf(chosen);
-    return [role, chosen];
+    if (typeof value !== "string") return [];
+    priceOf(value);
+    return [[role, value]];
   }
   function effort(role: Role): [Role, Effort] {
     return [role, effortFlag(values[`${ROLE_FLAGS[role]}-effort`], role === "write" ? "low" : "medium")];
   }
   return {
-    models: Object.fromEntries(ROLES.map(model)) as Record<Role, string>,
+    models: Object.fromEntries(ROLES.flatMap(model)),
     efforts: Object.fromEntries(ROLES.map(effort)) as Record<Role, Effort>,
     ...(typeof values.budget === "string" && { budget: Number(values.budget) }),
     check: values.check === true,
@@ -375,9 +383,16 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     step.usage.cacheWrite += usage.cacheWrite;
     step.usage.costUsd += costOf(usage, priceOf(event.data.source.model));
   }
-  function modelOf(agentId: string): string {
-    const role = ROLE_OF_AGENT[agentId];
-    return role ? config.models[role] : DEFAULT_MODEL;
+  function sourceFor(req: StepInvokeRequest) {
+    const role = ROLE_OF_AGENT[req.agent.id];
+    const model = (role && config.models[role]) ?? deployedModel(req.agent);
+    stepOf(req.agent.id, model);
+    return { id: req.agent.id, provider: "anthropic", baseURL: source.origin, credentialId: "inference", model };
+  }
+  function onStepDone(agentId: string, ms: number) {
+    const step = steps[agentId];
+    if (!step) throw new Error(`${agentId} finished without an inference source`);
+    step.ms += ms;
   }
   const head = headOf(testCase.id);
   const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, checkout: { source: "github", ...head }, efforts: config.efforts, check: config.check, ...(config.budget && { budgets: { repoFinder: config.budget } }) };
@@ -390,10 +405,10 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     authorize: allow,
     github,
     inference: { credentialId: "inference", origin: source.origin, apiKey: source.apiKey },
-    sourceFor: (req) => ({ id: req.agent.id, provider: "anthropic", baseURL: source.origin, credentialId: "inference", model: modelOf(req.agent.id) }),
+    sourceFor,
     triggerPayload: stockTriggerMail(request),
     onEvent,
-    onStepDone: (agentId, ms) => (stepOf(agentId, modelOf(agentId)).ms += ms),
+    onStepDone,
   });
   const wallMs = Math.round(performance.now() - started);
   const outputs = run.outputs as Record<string, any>;
@@ -488,7 +503,7 @@ async function main() {
     options: {
       prompt: { type: "string" },
       effort: { type: "string", default: "medium" },
-      model: { type: "string", default: DEFAULT_MODEL },
+      model: { type: "string" },
       cases: { type: "string" },
       "max-tokens": { type: "string", default: "1000000" },
       out: { type: "string" },
@@ -507,7 +522,7 @@ async function main() {
   if (!effort) throw new Error(`--effort must be one of ${EFFORTS.join(", ")}`);
   const maxTokens = Number(values["max-tokens"]);
   if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw new Error("--max-tokens must be a positive integer");
-  const model = values.model;
+  const model = values.model ?? deployedModel(values.repo ? repoFinderAgent(GITHUB) : finderAgent());
   priceOf(model);
   const systemPrompt = readFileSync(values.prompt, "utf8");
   const source = provider();
