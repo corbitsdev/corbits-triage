@@ -21,6 +21,8 @@ const ReviewRequest = type({
   "efforts?": { "plan?": Effort, "diffFinder?": Effort, "repoFinder?": Effort, "consolidate?": Effort, "check?": Effort, "write?": Effort },
   "check?": "boolean",
   "budgets?": { "repoFinder?": "number.integer > 0" },
+  /** Set when the diff was cut to its first `lines` of `of` lines to keep the review within its size limit. */
+  "cut?": { lines: "number.integer >= 0", of: "number.integer > 0" },
 });
 type ReviewRequest = typeof ReviewRequest.infer;
 
@@ -125,7 +127,8 @@ function aboutPullRequest(request: ReviewRequest): string {
 }
 
 function pullRequest(request: ReviewRequest): string {
-  return `${aboutPullRequest(request)}\n\n<diff>\n${request.diff}\n</diff>`;
+  const cut = request.cut ? `\n\nThe diff shows its first ${request.cut.lines} of ${request.cut.of} lines; the rest was left out for size.` : "";
+  return `${aboutPullRequest(request)}\n\n<diff>\n${request.diff}\n</diff>${cut}`;
 }
 
 /** The request from the trigger mail, the plan's user message and every role's per-call options. */
@@ -302,6 +305,7 @@ function agreementLine({ finders, reports }: Agreement): string {
  * agreement, and whether it stopped early. A finding the write step left without a comment gets one in its finder's words.
  */
 export async function review(steps: Steps) {
+  const { request } = stepOutput(steps, "reviewInput");
   const { findings, budgetExhausted } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
@@ -309,5 +313,5 @@ export async function review(steps: Steps) {
     const { title, body } = written.comments.find((c) => c.finding === index) ?? ownWords(finding);
     return { path, start, end, title, body: `${body}\n\n${agreementLine(agreement)}`, ...(priority !== undefined && { priority }), agreement };
   }
-  return { summary: written.summary, comments: findings.map(comment), budgetExhausted };
+  return { summary: written.summary, comments: findings.map(comment), budgetExhausted, ...(request.cut && { cut: request.cut }) };
 }

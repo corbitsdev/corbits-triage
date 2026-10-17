@@ -220,3 +220,11 @@ test("a job from another source for a running pull request waits for its worker,
   expect(fake.spawned.at(-1)).toMatchObject({ source: "reconcile", payload: { head: "reconcile" } });
   expect(fake.spawned).toHaveLength(2);
 });
+
+test("a pull request's code review is a job of its own beside its triage", async () => {
+  const { clock, fake, coordinator } = setup({ global: 2, perTenant: 2, spawnsPerSecond: Infinity });
+  coordinator.enqueue(job("t1", 1));
+  coordinator.enqueue({ ...job("t1", 1), workflow: "pr-code-review-github" });
+  await clock.advance(0);
+  expect(fake.spawned.map((j) => j.workflow)).toEqual(["pr-triage-github", "pr-code-review-github"]);
+});

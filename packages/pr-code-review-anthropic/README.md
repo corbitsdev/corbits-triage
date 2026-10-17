@@ -22,6 +22,8 @@ deployed packages, each binding only its host's read credential.
    each comment ends with how many finders reported it.
 
 The request is `{ kind: "code-review", title, description, diff, checkout }`
-with optional `efforts` per step, `budgets.repoFinder` and `check`.
+with optional `efforts` per step, `budgets.repoFinder`, `check`, and `cut`
+(`{ lines, of }`) when the sender cut the diff for size, which the review
+carries.
 `docs/ARCHITECTURE.md` has the detail; `evals/README.md` has the eval and its
 numbers.

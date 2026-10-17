@@ -51,6 +51,14 @@ function prFields(pr: PullRequest, association: Association) {
   };
 }
 
+/** The pull request's unified diff against its base. */
+export async function readPrDiff(bb: BitbucketFetch, repo: string, number: number): Promise<string> {
+  const path = `${repoPath(repo)}/pull-requests/${number}.diff`;
+  const res = await bb(path, { headers: { accept: "text/plain" } });
+  if (!res.ok) throw new Error(`bitbucket GET ${path} -> ${res.status}`);
+  return res.text();
+}
+
 /** A closed pull request has no merge to check, so its mergeability is null. */
 export async function getPr(bb: BitbucketFetch, repo: string, number: number) {
   const pr = PullRequest.assert(await json(bb, `${repoPath(repo)}/pull-requests/${number}`));
