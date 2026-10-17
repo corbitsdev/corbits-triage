@@ -12,6 +12,7 @@ import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { CODE_REVIEW_PATH, CodeReviewBody, CodeReviewQueued, CodeReviewRunBody, CodeReviewSet } from "../code-review.js";
+import { CodeReviewFound, CodeReviewQuery } from "../code-review-runs.js";
 import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody, validManifestMutationRequest } from "../github/manifest.js";
@@ -81,6 +82,7 @@ export type IntegrationHandlers = {
   workflowDeploy: BodyHandler<typeof DeployBody.infer>;
   codeReview: BodyHandler<typeof CodeReviewBody.infer>;
   codeReviewRun: BodyHandler<typeof CodeReviewRunBody.infer>;
+  codeReviewLatest: BodyHandler<typeof CodeReviewQuery.infer>;
   workflowVersions: (member: Member) => Promise<Response>;
   invitations: {
     create: (body: typeof InviteBody.infer, member: Member, req: Request) => Promise<Response>;
@@ -622,6 +624,22 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     body(CodeReviewBody),
     function setCodeReview(c) {
       return handlers.codeReview(c.req.valid("json"), memberOf(c));
+    },
+  );
+
+  app.get(
+    `${CODE_REVIEW_PATH}/:tenantId`,
+    describeRoute({
+      summary: "A pull request's latest code review",
+      description: "Needs `workflow-run:*` read. Read from the run logs of the host's code review deployments (`source` absent means GitHub), newest first among the workspace's recent reviews: `running`, `failed`, or `completed` with the summary, each finding's comment (path, lines, title, explanation, priority and the code it quotes) and `cut` when the diff was cut for size. `completed` is the newest finished review, the same as `review` unless a newer one is running or failed; both are null when the pull request has none. Nothing is posted to the host.",
+      tags: TAGS,
+      responses: { 200: json("The latest review, or null", CodeReviewFound), ...invalid, 401: failures[401], 403: failures[403] },
+    }),
+    member,
+    requireGrant("workflow-run:*", "read"),
+    validator("query", CodeReviewQuery, refuseInvalid),
+    function latestCodeReview(c) {
+      return handlers.codeReviewLatest(c.req.valid("query"), memberOf(c));
     },
   );
 

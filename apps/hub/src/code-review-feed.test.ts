@@ -38,7 +38,7 @@ test("each new non-draft head is sent to its host's code review once; Review aga
     number: 7,
     headSha: "sha1",
     source: "event",
-    payload: { kind: "code-review", title: "Fix", description: "Body", diff: PULL.diff, checkout: { source: "github", repo: "acme/widgets", sha: "sha1" } },
+    payload: { kind: "code-review", number: 7, title: "Fix", description: "Body", diff: PULL.diff, checkout: { source: "github", repo: "acme/widgets", sha: "sha1" } },
   }]);
   expect(await feed.again("t", RECORD, 7)).toBe("sent");
   expect(sent.map((job) => job.source)).toEqual(["event", "retry"]);

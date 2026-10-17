@@ -273,9 +273,12 @@ Clicking a pull request opens it on the right. The pane is built to be read top 
 1. **The header**: repository and number, the title, the author with their chip, when it was opened, and how many lines were added and removed. The **View on GitHub** or **View on Bitbucket** link in the corner opens the same pull request there. The pull request's own page has the same link.
 2. **The status line** in one sentence, such as **Ready to merge**, **Waiting for review**, or **Blocked · 2 things to fix, 1 to check**.
 3. **The problems**, if any. Each failed rule is listed under **To fix** with the evidence, such as the name of the failing check. A rule Triage could not evaluate is listed under **Couldn't check**. A pull request with no problems skips straight to the description.
-4. **The description** the author wrote.
-5. **Folded rows** you can expand: the linked issue, the changed files (with the diff), and the rules that passed. Evidence for a file cites its changed lines and links them at the exact commit Triage judged.
-6. **Commits and conversation** opens the full history and comments.
+4. **Code review**, when it is on for the repository: what the change does, then each bug it found as a comment from **Code review**, with the commit it reviewed, how severe it is (P0 is the most severe), the file and line, and the code it points at. **Review again** reviews the latest commit once more. Findings stay in Triage; nothing is posted to the pull request.
+5. **The description** the author wrote.
+6. **Folded rows** you can expand: the linked issue, the changed files (with the diff), and the rules that passed. Evidence for a file cites its changed lines and links them at the exact commit Triage judged.
+7. **Commits and conversation** opens the full history and comments.
+
+![The reading pane for acme/widgets #1 with its Code review: Adds total(), which skips the first element of its input, then a comment from Code review (Bot, reviewed 0f808f4) saying total() skips the first element, P1 at src/total.ts:3, with the quoted line, and Review again](images/28.png)
 
 ![The reading pane for a passing pull request: the status line Ready to merge, the description with its linked issue, folded rows, and a bottom bar whose first button is Merge into main](images/13.png)
 

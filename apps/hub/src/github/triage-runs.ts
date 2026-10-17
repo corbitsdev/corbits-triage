@@ -141,7 +141,7 @@ function lastCompleted(events: readonly WorkflowRunEvent[], steps: ReadonlySet<s
 }
 
 /** A step's inline output; an agent step wraps it in `{ reply }`. */
-function inlineOutput(event: WorkflowRunEvent | undefined): Record<string, unknown> | undefined {
+export function inlineOutput(event: WorkflowRunEvent | undefined): Record<string, unknown> | undefined {
   const ref = asRecord(event?.body["output"])?.["ref"];
   if (typeof ref !== "string" || !ref.startsWith(INLINE_PREFIX)) return undefined;
   const output = asRecord(parseJson(ref.slice(INLINE_PREFIX.length)));

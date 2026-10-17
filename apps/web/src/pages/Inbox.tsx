@@ -11,6 +11,7 @@ import { useHeldInbox } from "../lib/held-inbox.tsx";
 import type { PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
 import { VerdictChip } from "../components/VerdictChip.tsx";
+import { CodeReviewThreads } from "../components/CodeReviewThreads.tsx";
 import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
 import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, type PaneBar } from "../lib/pane-report.ts";
 import {
@@ -435,6 +436,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
           </header>
           <StatusLine status={status} />
           <Problems problems={paneProblems(item.checks)} pack={pack} item={item} />
+          {hasNumber(item) ? <CodeReviewThreads item={item} /> : null}
           <Description pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} />
           {editing && draft !== null ? (
             <FeedbackEditor item={item} draft={draft} replyRef={replyRef} onChange={setReply} onKeyDown={onReplyKey} onCancel={() => setEditing(false)} />
