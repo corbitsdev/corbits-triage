@@ -39,6 +39,8 @@ function item(overrides: Partial<PrItem>): PrItem {
     reviewAnswered: false,
     posted: false,
     running: false,
+    waitingForCi: false,
+    waitingHeadSha: null,
     failure: null,
     actions: [],
     href: "/prs/acme/widgets/1",
@@ -95,6 +97,8 @@ describe("paneStatus", () => {
     expect(statusOf({ state: "ready", checks: [check({})] })).toMatchObject({ tone: "ready", text: "Ready to merge" });
     expect(statusOf({ state: "ready" }, { approved: true })).toMatchObject({ tone: "ready", text: "Approved by Triage · ready for you to merge" });
     expect(statusOf({ running: true })).toMatchObject({ text: "Triage running…", live: true });
+    expect(statusOf({ waitingForCi: true, verdictSha: "head-1", waitingHeadSha: "head-1" }).text).toBe("Waiting for CI");
+    expect(statusOf({ waitingForCi: true, verdictSha: "head-1", waitingHeadSha: "head-2", headSha: "head-1" }).text).toBe("Waiting for CI · new commits since Triage checked");
     expect(statusOf({ state: "new", runId: null, failure: "stuck" }).text).toBe("Couldn't triage: the run stopped responding");
     expect(statusOf({ state: "new", runId: null }).text).toBe("Not triaged yet");
     expect(statusOf({ state: "new", runId: null, draft: true }).text).toBe("Draft");

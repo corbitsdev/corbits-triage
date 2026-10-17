@@ -11,7 +11,7 @@ import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
-import { approvedHead, checkedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { approvedHead, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
@@ -156,6 +156,7 @@ function About({ item }: { item: PrItem }) {
     <article className="pr-overview" aria-label="About">
       <header className="brief brief-lead">
         <h1>{title}</h1>
+        {hasUncheckedCommits(item) ? <p className="soft">New commits since Triage checked</p> : null}
         <p className="verdict-why">{item.evidence[0] ?? item.nextAction ?? "No evidence recorded."}</p>
         {item.comment ? <Markdown text={item.comment} /> : null}
       </header>

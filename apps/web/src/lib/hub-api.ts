@@ -1334,6 +1334,8 @@ export type PrItem = {
   running: boolean;
   /** Its policy reads CI, so triage holds this head until its CI finishes. */
   waitingForCi: boolean;
+  /** The head Triage is holding for CI, when it is. */
+  waitingHeadSha: string | null;
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
   failure: RunFailure | null;
   actions: SuggestedAction[];
@@ -1435,6 +1437,10 @@ function failureOf(run: PullRun | null): RunFailure | null {
   return run === null || run.status === "running" || run.status === "unknown" || run.status === "waiting-ci" ? null : run.status;
 }
 
+function waitingFields(run: PullRun | null | undefined): Pick<PrItem, "waitingForCi" | "waitingHeadSha"> {
+  return run?.status === "waiting-ci" ? { waitingForCi: true, waitingHeadSha: run.headSha } : { waitingForCi: false, waitingHeadSha: null };
+}
+
 /** A run the hub has not read yet may be going, so it holds writes like one that is. */
 function isRunning(run: PullRun | null): boolean {
   return run?.status === "running" || run?.status === "unknown";
@@ -1479,7 +1485,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     reviewAnswered: facts.reviewAnswered === true,
     posted: verdict.commented,
     running: isRunning(pull.run),
-    waitingForCi: pull.run?.status === "waiting-ci",
+    ...waitingFields(pull.run),
     failure: failureOf(pull.run),
     actions: suggestedActions(detail.actions ?? []),
     automatic: ACTION_KINDS.filter((kind) => detail.automatic?.includes(kind)),
@@ -1567,7 +1573,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         reviewAnswered: false,
         posted: false,
         running: isRunning(pull?.run ?? null),
-        waitingForCi: pull?.run?.status === "waiting-ci",
+        ...waitingFields(pull?.run),
         failure: failureOf(pull?.run ?? null),
         actions: [],
         automatic: [],

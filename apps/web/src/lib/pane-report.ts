@@ -92,7 +92,7 @@ export function paneStatus({ item, detail, handled, approved, primary }: StatusI
   const ended = endedText(item, detail, handled);
   if (ended !== null) return status("quiet", ended);
   if (item.running) return { ...status("quiet", "Triage running…"), live: true };
-  if (item.waitingForCi) return status("quiet", "Waiting for CI");
+  if (item.waitingForCi) return status("quiet", hasUncheckedCommits(item) ? "Waiting for CI · new commits since Triage checked" : "Waiting for CI");
   if (inboxAction(item) === "failed" && item.failure !== null) return status("quiet", `Couldn't triage: ${FAILURE_TEXT[item.failure]}`);
   if (item.state === "new" || item.state === "stale") return status("quiet", inboxStatus(item));
   if (hasUncheckedCommits(item)) return status("quiet", "New commits since Triage checked · rechecking");

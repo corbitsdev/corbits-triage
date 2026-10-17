@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { createInMemoryGrantStore, type GrantRule } from "@intx/authz";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { TriageVerdicts } from "@corbits/triage-contracts";
+import { TriageVerdicts, type PrTriageRow } from "@corbits/triage-contracts";
 import { guardedApp } from "../integrations/test-app.js";
 import { migrateTriageTables } from "../triage-db.js";
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/records.js";
@@ -43,7 +43,7 @@ function live(runId: string, status: ObservedRun["status"], startedAt: Date, tri
   return { runId, status, startedAt: startedAt.toISOString(), ...(trigger !== undefined && { trigger }) };
 }
 
-/** The live deployment's runs: #8's newest run failed after its verdict, #9 and #10 are still running and #6's run failed early. */
+/** The live deployment's runs: #8's newest run failed after its verdict, #9 and #10 are still running and #6's run failed early; #7 has no run, but waits for CI. */
 const OBSERVATION: TenantObservation = {
   deployments: [{ runId: "run_anchor", address: "pr-triage@verdicts.test", createdAt: minutes(-600), cancelling: false }],
   observed: [{
@@ -64,6 +64,8 @@ const OPEN: RepoPulls[] = [
   { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
   { repo: UNREAD, source: "github", prs: [], error: "rate limited" },
 ];
+
+const waitingRows: PrTriageRow[] = [{ number: 7, headSha: "sha_waiting", status: "waiting", attempts: 0, firstSeenAt: minutes(-3).toISOString(), updatedAt: minutes(-3).toISOString() }];
 
 type DB = ReturnType<typeof createDB>["db"];
 
@@ -132,7 +134,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       versions,
       openPulls,
       list: async () => { throw new Error("the workspace has no host credential"); },
-      triageState: { load: async () => ({ rows: [], version: null }) },
+      triageState: { load: async (_tenant, key) => ({ rows: key === REPO ? waitingRows : [], version: null }) },
       now: () => now,
     });
     const app = guardedApp(db, async () => session as never, createInMemoryGrantStore(grants), { triageVerdicts });
@@ -142,7 +144,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
 
     // Until the hub read the live logs since it started, any pull request may have a run going.
     const warming = TriageVerdicts.assert(await (await get()).json());
-    expect(new Set(warming.pulls.map((pull) => pull.run?.status))).toEqual(new Set(["unknown"]));
+    expect(new Set(warming.pulls.map((pull) => pull.run?.status))).toEqual(new Set(["unknown", "waiting-ci"]));
     ready = true;
     // The listing is past 30 seconds old; without the GitHub credential the route keeps using it.
     now = minutes(1);
@@ -166,6 +168,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       run: { runId: "run_3", startedAt: minutes(9).toISOString(), status: "failed" },
     });
     expect(byPull.get(`${REPO}#7`)?.verdict?.detail).toBeNull();
+    expect(byPull.get(`${REPO}#7`)?.run).toEqual({ status: "waiting-ci", since: minutes(-3).toISOString(), headSha: "sha_waiting" });
     expect(byPull.get(`${REPO}#9`)).toEqual({
       repo: REPO, number: 9, activityAt: minutes(-5).toISOString(), verdict: null, run: { runId: "run_9", startedAt: minutes(-5).toISOString(), status: "running" },
     });

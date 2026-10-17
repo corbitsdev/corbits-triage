@@ -246,13 +246,14 @@ first. The repository's branch protection stays the backstop.
 When the policy depends on CI (CI green is on, a step names a CI condition,
 or a step approves or merges), Triage waits for CI to finish on the head, or
 for its first check to fail, before it triages it, and the Inbox shows the
-pull request as **Waiting for CI**. A head with no checks after 2 minutes is
-taken as having no CI, and none waits longer than an hour. A run by hand does
-not wait. Meanwhile the pull request shows it is waiting where Triage writes
-its verdict: the `Triage: Waiting for CI` label on GitHub when the `pr-triage`
-role holds Labels, and the `Corbits Triage` build status as in progress,
-"Triage: Waiting for CI", on Bitbucket when it holds Comment. The verdict
-replaces it.
+pull request as **Waiting for CI**. A pull request with an earlier result notes
+new commits since Triage checked above it until the new result lands. A head
+with no checks after 2 minutes is taken as having no CI, and none waits longer
+than an hour. A run by hand does not wait. Meanwhile the pull request shows it
+is waiting where Triage writes its verdict: the `Triage: Waiting for CI` label
+on GitHub when the `pr-triage` role holds Labels, and the `Corbits Triage`
+build status as in progress, "Triage: Waiting for CI", on Bitbucket when it
+holds Comment. The verdict replaces it.
 While CI is still running on a head triaged anyway, every action is held and
 the comment says "Waiting for checks to finish". When the policy's When includes checks,
 as it does by default, a completed check run has Triage triage the head again
