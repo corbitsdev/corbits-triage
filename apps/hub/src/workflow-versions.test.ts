@@ -34,8 +34,13 @@ const ROWS = [
   { runId: "run_source", workflow: "pr-triage-historical", domain: "tenant.example", createdAt: CREATED_AT, cancellationRequestedAt: CREATED_AT },
 ];
 
+const WORKER_ROWS = [
+  { runId: "run_tarball_worker", workflow: "pr-triage", domain: "tenant.example", createdAt: CREATED_AT, cancellationRequestedAt: null },
+];
+
 function db() {
-  const chain = { from: () => chain, innerJoin: () => chain, leftJoin: () => chain, where: () => chain, orderBy: async () => ROWS };
+  const pages = [ROWS, WORKER_ROWS];
+  const chain = { from: () => chain, innerJoin: () => chain, leftJoin: () => chain, where: () => chain, orderBy: async () => pages.shift() };
   return {
     select: () => chain,
     query: {
@@ -46,17 +51,18 @@ function db() {
 }
 
 function handler() {
-  return createWorkflowVersions({ db: db(), launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId] ?? null) as never } });
+  return createWorkflowVersions({ db: db(), launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId.replace("_worker", "")] ?? null) as never } });
 }
 
 describe("createWorkflowVersions", () => {
-  test("reads each live deployment's workflow and tool versions from its frozen closure", async () => {
+  test("reads each live listener's and worker's workflow and tool versions from its frozen closure", async () => {
     const res = await handler()({ tenantId: TENANT_ID, principalId: "member-1" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       deployments: [
-        { id: "run_tarball", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, package: WORKFLOW, tools: [TOOL] },
-        { id: "run_source", workflow: "pr-triage-historical", createdAt: CREATED_AT.toISOString(), cancelling: true, package: null, tools: [] },
+        { id: "run_tarball", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, worker: false, package: WORKFLOW, tools: [TOOL] },
+        { id: "run_source", workflow: "pr-triage-historical", createdAt: CREATED_AT.toISOString(), cancelling: true, worker: false, package: null, tools: [] },
+        { id: "run_tarball_worker", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, worker: true, package: WORKFLOW, tools: [TOOL] },
       ],
     });
   });

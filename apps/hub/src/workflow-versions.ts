@@ -20,16 +20,19 @@ export function createWorkflowVersions(deps: WorkflowVersionsDeps) {
 
   return async function handle({ tenantId }: Member): Promise<Response> {
     const deployments: DeployedVersions["deployments"] = [];
-    for (const live of await resolveLiveDeployments(deps.db, tenantId)) {
-      const versions = await versionsOf(live.runId);
-      deployments.push({
-        id: live.runId,
-        workflow: live.workflow,
-        createdAt: live.createdAt.toISOString(),
-        cancelling: live.cancelling,
-        package: versions?.workflow ?? null,
-        tools: versions?.tools ?? [],
-      });
+    for (const kind of ["listener", "worker"] as const) {
+      for (const live of await resolveLiveDeployments(deps.db, tenantId, undefined, kind)) {
+        const versions = await versionsOf(live.runId);
+        deployments.push({
+          id: live.runId,
+          workflow: live.workflow,
+          createdAt: live.createdAt.toISOString(),
+          cancelling: live.cancelling,
+          worker: kind === "worker",
+          package: versions?.workflow ?? null,
+          tools: versions?.tools ?? [],
+        });
+      }
     }
     return Response.json({ deployments } satisfies DeployedVersions);
   };
