@@ -400,14 +400,17 @@ and reads nothing else.
 A code review reads a pull request for defects: correctness bugs in the
 changed lines and breakage the change causes elsewhere in the repository. Each
 defect it reports names the line, why it is wrong, what triggers it and a fix,
-and says how many of its two finders reported it. Every defect found is
-reported, the most severe and most agreed-on first. A pull request with no
-defects gets one sentence on what it changes.
+with the code it points at. Every defect found is reported, the most severe
+and most agreed-on first. A pull request with no defects gets one sentence on
+what it changes.
 It reviews GitHub and Bitbucket Data Center pull requests. Once code review
 is on for a repository, every new commit of a pull request that is not a
 draft is reviewed, and "Review again" reviews the current commit once more.
 A diff over 100,000 characters is cut to its first lines, and the review says
-how many it read.
+how many it read. A workspace turns it on by saving an Anthropic key in
+Settings and switching it on per repository; it costs about $0.14 a reviewed
+commit. Findings show only in the portal, in the pull request's reading pane,
+as the first comment of a thread of their own.
 
 ## Triage over time
 

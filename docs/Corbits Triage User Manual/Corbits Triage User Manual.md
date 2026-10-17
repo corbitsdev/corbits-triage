@@ -26,13 +26,22 @@ Think of it as a first reader. It does the routine checking (Did the tests pass?
 
 ### What it never does on its own
 
-Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center only records your repositories, with triage switched off. A repository is checked only after someone turns on **Triage pull requests in this repository**. Enabling a repository switches on Comment and Labels for it; every other action waits for a person to click until you decide which actions Triage may run by itself, and in which repositories.
+Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center only records your repositories, with triage switched off. A repository is checked only after someone turns on **Triage pull requests in this repository**. Enabling a repository switches on Comment and Labels for it; every other action waits for a person to click until you decide which actions Triage may run by itself, and in which repositories. Code review, too, runs only in repositories where someone switched it on, and it never writes to the pull request.
 
 ### The three parts
 
 1. **The portal** is the website you use. This manual is about the portal.
 2. **The hub** is the server that stores your settings, talks to GitHub or Bitbucket and runs the checks. You normally never see it.
 3. **The decision model** is an AI service that answers the judgment questions rules cannot answer from repository data alone, such as "Is this change focused on one thing?" You connect it once in Settings.
+
+### Code review
+
+Code review reads each new commit of a pull request for bugs: mistakes in the changed lines and breakage the change causes elsewhere in the repository. It is separate from the verdict and optional.
+
+- **Turning it on.** Save an Anthropic API key under Settings → Code review, then switch on **Review the code in every pull request for bugs** in each repository's [Code review card](#code-review-1). Switch it off there to stop.
+- **What it costs.** About $0.14 for each commit it reviews, on your Anthropic account. It reviews a pull request when it is opened and after every push while it is not a draft, and **Review again** is one more review, so a pull request reviewed five times costs about $0.70.
+- **Where you see it.** In the Inbox's reading pane, under **Code review**: each bug with how severe it is, its file and line, and the code it points at. **Review again** reviews the latest commit once more. A very large change is read up to a size limit, and the review says how much of it was read.
+- **What it does not do.** It only reads code; it never runs it. Nothing is posted to the pull request: findings stay in Triage.
 
 ## Getting started
 
@@ -116,7 +125,7 @@ A few things work differently from GitHub, because Bitbucket works differently:
 
 ![The Code review card for acme/widgets: Review the code in every pull request for bugs, about $0.14 a push, with its switch off, and an Anthropic key field with Save key below it](images/27.png)
 
-Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it; each reviewed push costs about $0.14 on your Anthropic account. It needs the workspace's Anthropic key: if none is saved, the card asks for it, and the key is kept in the same place as under Settings → Code review. Switch it off to stop.
+Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it; each commit it reviews costs about $0.14 on your Anthropic account. It needs the workspace's Anthropic key: if none is saved, the card asks for it, and the key is kept in the same place as under Settings → Code review. Switch it off to stop.
 
 ### Policy
 
@@ -357,7 +366,7 @@ This is where the AI decision model lives. The first line says which provider an
 
 ![The Code review section: Reads each pull request for bugs, with the stored Anthropic secret, a Replace secret button and a Remove link](images/26.png)
 
-Code review is Triage's bug finder, and it runs on Anthropic. Here you store the Anthropic API key it uses; then switch code review on for each repository in its [Code review card](#code-review). Paste the key and press **Save key**. Like every key, it is kept in the server's vault and then shows as **stored**, with **Replace secret** to change it and **Remove** to delete it.
+Code review is Triage's bug finder, and it runs on Anthropic. Here you store the Anthropic API key it uses; then switch code review on for each repository in its [Code review card](#code-review-1). Paste the key and press **Save key**. Like every key, it is kept in the server's vault and then shows as **stored**, with **Replace secret** to change it and **Remove** to delete it.
 
 ### Access
 
@@ -428,6 +437,8 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 | Role | A workspace role (Owner, Admin, Member) that controls what a person may do in Triage. |
 | CI | Continuous integration: the automated tests and checks a repository runs on every pull request. |
 | Draft | A pull request its author has marked as not ready. Triage waits until it is marked ready. |
+| Code review | Triage's optional bug finder, switched on per repository. It reads each new commit and lists the bugs it finds, in Triage only. |
+| Finding | One bug code review reports, with its severity (P0 is the most severe), file and line. |
 | First-timer | Someone opening their first pull request in a repository. |
 | Webhook | The channel GitHub or Bitbucket uses to tell Triage about new events. |
 | Audit log | The record of everything that happened in your workspace. |
@@ -441,6 +452,8 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 **Does Triage ever merge, close or approve on its own?** Only if you allow it. Each action has a list of repositories under **What Triage does on its own** in Settings → Access. Enabling a repository adds it to the Comment and Labels lists only; the others start empty. Close is never run automatically on an Unsure verdict, and Merge never on anything but Pass, even when they are allowed.
 
 **Why did Triage not call the decision model for a failing pull request?** When a rule fails, the answer is already Fail, so the model is not asked the verdict question. A repository with no Judgement rules never asks it at all. This saves money and keeps verdicts predictable.
+
+**Code review shows nothing for a pull request.** Check that code review is on in the repository's Code review card and that an Anthropic key is saved under Settings → Code review. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one.
 
 **The author pushed a fix. Do I need to do anything?** No. Every new commit gets its own verdict, and Triage updates its comment. If you had requested changes through Triage and every failed rule is now fixed, Triage withdraws the request for you.
 

@@ -66,6 +66,8 @@ The App's webhook URL is built from the hub origin that starts the manifest flow
 
 Restarting the emulator regenerates the App key; reconnect the App after each restart or pin `private_key` in the config.
 
+Code review against the emulator: the emulator ignores GitHub's diff media type and answers a pull request's JSON, which the hub refuses as no diff. Point `GITHUB_API_ORIGIN` at a small proxy in front of the emulator that answers `GET /repos/{owner}/{repo}/pulls/{number}` with 406 when it asks for a diff, as GitHub does for a very large pull request; the hub then builds the diff from the files' patches. Save an Anthropic key in Settings and switch code review on for `acme/widgets` in its repository panel. A review calls Anthropic for every step; to try the wiring without spending, point the `anthropic` catalog provider's `baseURL` at a stand-in that answers `/v1/messages`, and deploy before the portal next reconciles the catalog.
+
 ## Tests and typecheck
 
 ```sh
