@@ -14,6 +14,7 @@ import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE } from "../lib/github
 import { useGithubSync } from "../lib/github-sync.ts";
 import { awaitingText } from "../lib/inbox-view.ts";
 import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
+import { usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
 import { repoRows, type RepoRow } from "../lib/repo-rows.ts";
@@ -65,6 +66,8 @@ function selectedRepo(params: { owner?: string; repo?: string }): { name: string
   return { name: null, redirect: params.owner === undefined ? null : "/repositories" };
 }
 
+const UPGRADE_HEALTH = { upgrade: "Upgrade to a policy file", differs: "Policy file differs" } as const;
+
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
   const packStore = useHubRepoPackStore();
@@ -84,6 +87,7 @@ export default function Repositories() {
   const { data: openPulls, error: pullsError } = useOpenPulls();
   const packed = useMemo(() => repos.filter((repo) => repo.checkPack).map((repo) => repo.name), [repos]);
   const packs = useCheckPacks(packed);
+  const upgrades = usePolicyUpgrades();
   const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
   const active = useMemo(() => new Set(verdicts.data?.active), [verdicts.data]);
   const catchingUp = useMemo(() => catchingUpRepos(logs, runs.rows, triaged), [logs, runs.rows, triaged]);
@@ -135,6 +139,13 @@ export default function Repositories() {
     return loading ? null : value;
   }
 
+  /** A repository whose saved rules still need moving into its policy file says so in place of its usual health. */
+  function healthOf(row: RepoRow): ReactNode {
+    const upgrade = upgrades.find((found) => found.repo === row.name)?.upgrade;
+    if (upgrade && upgrade.state !== "ok") return <HealthMark health={{ tone: "warn", label: UPGRADE_HEALTH[upgrade.state] }} />;
+    return row.health.tone === "warn" ? <HealthMark health={row.health} /> : live(<HealthMark health={row.health} />);
+  }
+
   function renderRow(row: RepoRow) {
     function openRow(event: MouseEvent<HTMLTableRowElement>) {
       if (isPlainClick(event)) navigate(row.href);
@@ -153,7 +164,7 @@ export default function Repositories() {
         <td className="c-checks">{checksLabel(row, packs.get(row.name))}</td>
         <td className="c-own" title={pulls?.owners.join(", ")}>{pulls && live(ownersLabel(pulls.owners))}</td>
         <td className="c-act">{pulls && live(pulls.lastActivity ? relativeTime(pulls.lastActivity) : "None")}</td>
-        <td className="c-health">{row.health.tone === "warn" ? <HealthMark health={row.health} /> : live(<HealthMark health={row.health} />)}</td>
+        <td className="c-health">{healthOf(row)}</td>
       </tr>
     );
   }

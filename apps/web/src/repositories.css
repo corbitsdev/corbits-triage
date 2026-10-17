@@ -90,6 +90,10 @@
 .repos .step.invalid { box-shadow: inset 3px 0 0 var(--orange); padding-left: 10px; }
 
 .repos .rp .reason { margin: 4px 0 0; font-size: 13px; font-weight: 600; }
+.repos .rp .alert { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; margin: 0 0 24px; padding: 14px 16px; border-radius: var(--radius-sm); background: var(--sheet); font-size: 14px; }
+.repos .rp .alert p { margin: 2px 0 0; }
+.repos .rp .alert ul { margin: 6px 0 0; padding-left: 18px; list-style: disc; }
+.repos .rp .alert .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .repos .rp .note { font-size: 12px; margin: 12px 0 0; }
 .repos .rp .error { font-size: 13px; margin: 12px 0 0; }
 

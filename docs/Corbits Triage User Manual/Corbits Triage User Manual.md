@@ -119,7 +119,6 @@ A few things work differently from GitHub, because Bitbucket works differently:
 - **No assignments.** Bitbucket has no assignees, so **Assign to…** steps are not carried out.
 - **Bitbucket's own reviews.** Approve, Request changes, Close and Merge become Bitbucket's approve, needs work, decline and merge.
 - **CI is checked on a timer.** Bitbucket sends no event when a build finishes, so a pull request waiting for CI is checked within a few minutes of its builds ending. While the **CI must pass** rule is waiting on a build, or failing because of one, Triage looks at the build again after five minutes, then less often, and checks the pull request again once it has changed.
-- **No export.** The Policy card does not offer **Export to repository**, but a `.corbits-triage.yml` you add yourself works the same way.
 
 ### Code review
 
@@ -129,7 +128,16 @@ Code review reads each new commit of a pull request for bugs. It runs whether or
 
 ### Policy
 
-The **Policy** card says where the repository's rules and actions are kept. At first they are kept in Corbits Triage. Press **Export to repository** to open a pull request that adds them to the repository as a file called `.corbits-triage.yml`. Once that file is on the default branch, it is the policy: changes to it are reviewed like any other code, and the rules and actions on this page become read-only. A file named `.corbits-triage.yaml` works too.
+Rules can live in a file in the repository called `.corbits-triage.yml` (`.corbits-triage.yaml` works too). Once that file is on the default branch, it is the policy: changes to it are reviewed like any other code, and the **Policy** card links to it while the rules and actions on this page become read-only.
+
+Rules saved here before the file existed move into it once, through a pull request:
+
+- **Upgrade this repository to a policy file.** The repository has saved rules and no file. **Open pull request** opens one adding the file with your saved rules. They keep applying until it is merged. Anything a file can't hold, such as a score question, is listed in the note and in the pull request.
+- **Your policy file differs from your saved rules.** The repository has both, and they don't do the same thing; the note lists each difference. Your saved rules apply until they match. **Make the file match** opens a pull request changing the file to your saved rules. **Keep the file** keeps the file as it is and puts the saved rules away.
+
+![The acme/gadgets repository page with the note "Your policy file differs from your saved rules", its differences listed, and Make the file match and Keep the file below them](images/29.png)
+
+While its pull request is open, **Update pull request** brings it up to date with your saved rules; a second one is never opened. When the file already holds everything from your saved rules that a file can hold, only **Keep the file** is offered. The Repositories list shows these repositories as **Upgrade to a policy file** or **Policy file differs**, and the Inbox names them. Once the file and the saved rules match, the note goes away and the file alone is the policy.
 
 - **Edit on GitHub**, or **Edit on Bitbucket** for a Bitbucket repository, opens the file there.
 - When a change to the file reaches the default branch, the next triage uses it.

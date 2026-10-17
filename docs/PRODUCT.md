@@ -406,9 +406,12 @@ checks and every step, in order, do. Every pull request goes on the
 
 In the portal the repository's Policy card links the file; the rules, steps
 and labels are then read-only, with **Edit on GitHub**. A refused file is shown
-with each problem and its line on the Policy card, and named above the Inbox. A repository without the file
-can **Export to repository**: the hub opens a pull request adding the file
-from the current policy on the `corbits-triage/policy` branch. The same reads
+with each problem and its line on the Policy card, and named above the Inbox.
+A repository with saved rules to move shows a note at the top of its panel:
+**Upgrade this repository to a policy file** with **Open pull request**, or
+**Your policy file differs from your saved rules** with the differences,
+**Make the file match** and **Keep the file**. The Repositories list marks it
+in the Health column and the Inbox names it. The same reads
 and writes are hub routes: `GET …/github-triage/{tenantId}/policy/file`,
 `GET …/policy/upgrades` and `POST …/policy/export`; keeping the file archives
 the saved rules through the stock artifact route. `POST /api/integrations/policy/validate` takes a

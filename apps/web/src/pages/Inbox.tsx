@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { Badge, Button, EmptyState, type BadgeTone } from "@corbits/react-ui";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { AuthorKind } from "@corbits/triage-contracts";
@@ -79,6 +79,7 @@ import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
+import { usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
 import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
@@ -489,6 +490,13 @@ function RefusedPolicies({ repos }: { repos: string[] }) {
   ));
 }
 
+/** Saved rules that still need moving into a repository's policy file; the repository's panel says how. */
+function PolicyUpgradeNotice() {
+  const repos = usePolicyUpgrades().map((row) => row.repo);
+  if (repos.length === 0) return null;
+  return <p role="status" className="note">Upgrade to a policy file: {repos.map((repo, at) => <Fragment key={repo}>{at > 0 ? ", " : null}<Link to={`/repositories/${repo}`}>{repo}</Link></Fragment>)}.</p>;
+}
+
 function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
@@ -699,6 +707,7 @@ export default function Inbox({ view }: { view: ListView }) {
         </div>
         <div className="scroll" id="main">
           <RefusedPolicies repos={enabledNames} />
+          <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
           {flat.length === 0 ? (
             <EmptyList view={view} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />

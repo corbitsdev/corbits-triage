@@ -14,12 +14,14 @@ import { usePolicyView } from "../../lib/use-policy-view.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import { hasRuleOn } from "../../lib/pack-draft.ts";
 import { usePolicyFile } from "../../lib/policy-file.ts";
+import { usePolicyUpgrade } from "../../lib/policy-upgrades.ts";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import CodeReviewCard from "./CodeReviewCard.tsx";
 import LabelsCard from "./LabelsCard.tsx";
 import OutcomesCard from "./OutcomesCard.tsx";
 import OnItsOwn from "./OnItsOwn.tsx";
 import PolicyCard from "./PolicyCard.tsx";
+import PolicyUpgradeNote from "./PolicyUpgradeNote.tsx";
 import RemoveRepository from "./RemoveRepository.tsx";
 import RepoByline from "./RepoByline.tsx";
 import RulesSection from "./RulesSection.tsx";
@@ -40,8 +42,9 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const { draft, problem } = settings;
   const view = usePolicyView(draft, settings.edit);
   const policyFile = usePolicyFile(repo.name);
-  // The file is the policy: an edit here would be replaced by the next push. Until the file is known, it may exist.
-  const fromFile = policyFile.file.isPending || policyFile.file.isError || Boolean(policyFile.file.data);
+  const upgrade = usePolicyUpgrade(repo.name);
+  // With a file, rules change through the file, never here. Until the file is known, it may exist.
+  const fromFile = policyFile.isPending || policyFile.isError || Boolean(policyFile.data);
   const grants = useGrants();
   const roles = useRoles();
   const grantsKnown = ![grants, roles].some((section) => section.loading || section.unavailable || section.denied);
@@ -101,7 +104,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
         {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
         {grantsKnown && <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><OnItsOwn repo={repo.name} source={repo.source} roles={roles.rows} grants={grants.rows} disabled={disabled} /></div>}
         <CodeReviewCard repo={repo} disabled={readOnly || snapshot?.denied.repos === true} />
-        <PolicyCard repo={repo.name} source={repo.source} policyFile={policyFile} disabled={disabled} />
+        <PolicyCard source={repo.source} policyFile={policyFile} savedApply={upgrade?.upgrade?.state === "differs"} />
         <div className={gated ? "gated" : undefined} inert={gated}>
           <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={locked} edit={settings.edit} problem={problem} />
           <StepsSection view={view} automatic={grantsKnown ? runsAlone : undefined} disabled={locked} />
@@ -132,6 +135,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
           {settings.error ? <p role="alert" className="error">{settings.error} <button type="button" className="linkish" onClick={settings.flush}>Try again</button></p> : null}
           {settings.saved.pack.dropped?.length ? <p className="note">Left out because they no longer run: {settings.saved.pack.dropped.join("; ")}.</p> : null}
           {settings.corrupt ? <p className="note">The saved policy could not be read. The next change replaces it. {settings.corrupt}</p> : null}
+          {upgrade ? <PolicyUpgradeNote row={upgrade} disabled={readOnly || snapshot?.denied.repos === true} onSettled={settings.reload} /> : null}
           {renderBody()}
         </div>
       </div>
