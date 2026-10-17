@@ -51,9 +51,6 @@ const HubEnvSchema = type({
   "HUB_MAIL_ACK_MAX_RETRIES?": positiveInteger,
   "WORKFLOW_DEFAULT_MAX_LIFETIME?": positiveDuration,
   "WORKFLOW_DEFAULT_MAX_DISCONNECTED?": positiveDuration,
-  "WORKFLOW_DEFAULT_RETENTION_COMPLETED?": lifecycleDuration,
-  "WORKFLOW_DEFAULT_RETENTION_FAILED?": lifecycleDuration,
-  "WORKFLOW_DEFAULT_RETENTION_CANCELLED?": lifecycleDuration,
   "PATH?": "string",
   "HOME?": "string",
   "TMPDIR?": "string",
@@ -248,11 +245,8 @@ export function interchangeSettings(env: HubEnv): InterchangeSettings {
     defaultLifecyclePolicy: {
       maxLifetime: env.WORKFLOW_DEFAULT_MAX_LIFETIME ?? "7d",
       maxDisconnected: env.WORKFLOW_DEFAULT_MAX_DISCONNECTED ?? "15m",
-      capacityRetention: {
-        completed: env.WORKFLOW_DEFAULT_RETENTION_COMPLETED ?? "30m",
-        failed: env.WORKFLOW_DEFAULT_RETENTION_FAILED ?? "24h",
-        cancelled: env.WORKFLOW_DEFAULT_RETENTION_CANCELLED ?? "1h",
-      },
+      // Run history lives on the hub, so an ended run's sidecar has nothing left to keep.
+      capacityRetention: { completed: "0s", failed: "0s", cancelled: "0s" },
     },
   };
 }

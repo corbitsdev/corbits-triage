@@ -208,7 +208,7 @@ principal on REST routes.
   `credentialBindings`. The approval branch stays the
   first step.
 - Lifecycle policy: tenant `capacityRetention.cancelled: "0s"`,
-  `completed: "0s"`, `failed: "15m"`; worker `maxLifetime` is the listener's
+  `completed: "0s"`, `failed: "0s"`; worker `maxLifetime` is the listener's
   until step 5 sets the lifecycle at publish (`PATCH
   .../workflows/definitions/:definitionId/lifecycle`, lifecycle.md lines 60-74).
 - Same pull request again while its worker runs: the newer job waits in the
