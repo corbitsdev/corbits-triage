@@ -40,9 +40,13 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     mail, preview and portal read takes the policy from it (its `rules`
     mapped onto the stored policy's built-in rows and custom rules, or a file
     in the stored policy's shape as is), naming the file and its blob sha as
-    the source; the stored policy is read only when there is no file. A file
-    triage refuses is `invalid`: no mail is sent and nothing runs until it is
-    fixed, never a fall back to the stored policy. The hub keeps each
+    the source; the stored policy is read only when there is no file. While a
+    repository has both and they run differently (compared rule by rule and
+    step by step, never as text), or the file is refused, the stored policy
+    applies until the file matches it or the maintainer archives it; once both
+    run the same, the hub archives the stored policy and the file alone is
+    the policy. A file triage refuses with no stored policy is `invalid`: no
+    mail is sent and nothing runs until it is fixed. The hub keeps each
     repository's read in memory, nothing stored; a push to the default branch
     that touches the file (GitHub `push`, Bitbucket `repo:refs_changed`)
     reads it again, and a failed read is not kept, so the next trigger reads
@@ -51,8 +55,13 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     `GET …/policy/file` reads the file and why it is refused, if it is.
     `POST /api/integrations/policy/validate` (open, reads only its body)
     checks a file's text and answers each problem with its line.
-    `POST …/policy/export` opens a pull request adding the file from the
-    stored policy.
+    `GET …/policy/upgrades` answers, for each enabled repository, `upgrade`
+    (stored policy, no file), `differs` (with the differences in plain words)
+    or `ok`. `POST …/policy/export` writes the stored policy as a schema 3
+    file on `corbits-triage/policy`, at the existing file's path when there is
+    one, and opens a pull request through the GitHub App or the Bitbucket
+    Data Center token listing what the file cannot hold; asking again updates
+    the open pull request.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live pr-triage deployment for the repository's host
     (`pr-triage-github` or `pr-triage-bitbucket-datacenter`), as the tenant

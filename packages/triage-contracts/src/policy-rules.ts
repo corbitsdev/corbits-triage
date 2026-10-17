@@ -49,7 +49,8 @@ export function isPolicyRulesFile(file: Record<string, unknown>): boolean {
   return file.rules !== undefined;
 }
 
-function nameOf(id: string): string {
+/** The name a model or text rule shows under, from its id. */
+export function ruleNameOf(id: string): string {
   const words = id.replace(/-/g, " ");
   return `${words[0]!.toUpperCase()}${words.slice(1)}`;
 }
@@ -72,7 +73,7 @@ function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>): Record<str
 
 function customRow(rule: Extract<PolicyRule, { check: "model" | "text" }>): Record<string, unknown> {
   const { id } = rule;
-  const base = { id, name: nameOf(id), group: "pull-request", reason: rule.reason, evidence: rule.evidence, ...(rule.enabled === false && { enabled: false }) };
+  const base = { id, name: ruleNameOf(id), group: "pull-request", reason: rule.reason, evidence: rule.evidence, ...(rule.enabled === false && { enabled: false }) };
   if (rule.check === "model") return { ...base, kind: "model", shape: "is-true", claim: rule.text };
   return { ...base, text: rule.text, kind: "text", fields: rule.fields, failWhen: rule.failWhen, phrases: rule.phrases };
 }

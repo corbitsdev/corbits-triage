@@ -86,7 +86,7 @@ import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
 import { createGithubPolicyRead } from "./github/policy-read.js";
 import { createGithubBacklog } from "./github/backlog-triage.js";
-import { loadCheckPack, loadPolicy } from "./github/check-pack-store.js";
+import { loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
@@ -341,7 +341,7 @@ const codeReviewFeed = createCodeReviewFeed({
 });
 const policyFile = createPolicyFile({
   db: composition.db,
-  artifacts: composition.db,
+  settle: settleRepoPolicy,
   cipher: composition.credentialCipher,
   authorize: authorizePortal,
   tenantGithub,
@@ -352,8 +352,17 @@ const checkPackStore = { db: composition.db, artifacts: composition.db, automati
 function readStoredCheckPack(tenantId: string, repo: string) {
   return loadCheckPack(checkPackStore, tenantId, repo);
 }
-function readCheckPack(tenantId: string, repo: string) {
-  return loadPolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo);
+function settleRepoPolicy(tenantId: string, repo: string) {
+  return settlePolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo);
+}
+async function readCheckPack(tenantId: string, repo: string) {
+  return (await settleRepoPolicy(tenantId, repo)).read;
+}
+/** A push that lands a file matching the saved rules retires them now, so an edit after it is not taken for a difference. */
+async function refreshPolicyFile(tenantId: string, repo: string) {
+  const state = await policyFile.onPush(tenantId, repo);
+  if (state) await settleRepoPolicy(tenantId, repo);
+  return state;
 }
 // A tenant's system principal never changes once minted.
 const githubSenderPrincipals = new Map<string, string>();
@@ -622,7 +631,7 @@ const bridge = createBridgeHandler({
   readCheckPack,
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
-  refreshPolicyFile: policyFile.onPush,
+  refreshPolicyFile,
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
   db: hookDeps.db,
@@ -632,7 +641,7 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   codeReview: codeReviewFeed,
   readCheckPack,
   recheckOpenPulls,
-  refreshPolicyFile: policyFile.onPush,
+  refreshPolicyFile,
 }));
 
 function decodeSegments(rest: string): string[] | null {
@@ -677,6 +686,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   policyRead: createGithubPolicyRead({ readCheckPack }),
   policyFileRead: policyFile.fileRoute,
   policyFileExport: policyFile.exportRoute,
+  policyUpgrades: policyFile.upgradesRoute,
   backlog: createGithubBacklog({
     db: composition.db,
     cipher: composition.credentialCipher,

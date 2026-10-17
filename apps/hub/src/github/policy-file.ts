@@ -1,38 +1,44 @@
 // A repository's policy kept in `.corbits-triage.yml` (or `.yaml`) on its default branch. When the file is there, triage
-// reads it as the policy in place of the stored one, and a file it refuses stops triage until it is fixed rather than
-// falling back. Each read is kept in memory until a push to the default branch touches the file.
+// reads it as the policy unless the repository's saved rules run differently (see check-pack-store.ts), and a file it
+// refuses stops triage until it is fixed rather than falling back. Each read is kept in memory until a push to the
+// default branch touches the file. Saved rules are written to the file through a pull request (policy-pull.ts).
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { asRecord, errorText } from "@corbits/common";
+import { errorText } from "@corbits/common";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
-import { json, readRepoFile, type GithubFetch, type RepoFileRead } from "@corbits/github-reads";
-import { readRepo } from "../bitbucket-datacenter/client.js";
+import { readRepoFile, type GithubFetch, type RepoFileRead } from "@corbits/github-reads";
+import { defaultBranch, readRepo } from "../bitbucket-datacenter/client.js";
+import * as bitbucketPull from "../bitbucket-datacenter/policy-pull.js";
 import { splitName } from "../bitbucket-datacenter/records.js";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { checkPolicyFile, POLICY_FILE_PATH, POLICY_FILE_PATHS, policyFileReason, policyFileText, type PolicyFileStatus } from "@corbits/triage-contracts";
-import type { ArtifactDb } from "@corbits/artifacts";
-import { repoPolicyRow } from "./check-pack-store.js";
+import { checkPolicyFile, exportPolicyFile, POLICY_FILE_PATH, POLICY_FILE_PATHS, policyFileReason, type PolicyFileStatus, type PolicyUpgrades, type RepoSource } from "@corbits/triage-contracts";
+import type { PolicySettled } from "./check-pack-store.js";
 import { forInstallation } from "./open-pulls.js";
+import * as github from "./policy-pull.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
-import { githubFailed } from "./github-refusal.js";
+import { bitbucketFailed, githubFailed } from "./github-refusal.js";
 import type { Member } from "../integrations/app.js";
 
 export const PolicyFileBody = type({ repo: /^[\w.-]+\/[\w.-]+$/ });
 
-export const EXPORT_BRANCH = "corbits-triage/policy";
+const HOST_NAMES: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket" };
 
-const PR_TITLE = `chore: keep the Corbits Triage policy in ${POLICY_FILE_PATH}`;
+type PolicyUpgradeRow = PolicyUpgrades["repos"][number];
 
-const PR_BODY = [
-  `Adds \`${POLICY_FILE_PATH}\` with this repository's current Corbits Triage policy.`,
-  "",
-  "Once merged, triage reads the policy from this file on the default branch, and the portal shows it read-only with a link here. Edit the policy by changing this file.",
-].join("\n");
+/** What the pull request does, in the words a maintainer reviewing it reads. */
+function pullBody(state: "upgrade" | "differs", path: string, unexpressed: readonly string[]): string {
+  const lead = state === "upgrade"
+    ? [`Writes the rules saved in Corbits Triage to \`${path}\`.`, "", "The saved rules keep applying until this pull request is merged."]
+    : [`Makes \`${path}\` match the rules saved in Corbits Triage, which apply until the two agree.`];
+  const left = unexpressed.length ? ["", "A policy file can't hold everything the saved rules do:", ...unexpressed.map((line) => `- ${line}`)] : [];
+  return [...lead, "", "Once merged, triage reads its rules from this file, and you change them by editing it.", ...left].join("\n");
+}
 
 export type PolicyFileDeps = PortalCredentialDeps & {
-  artifacts: ArtifactDb;
+  /** The repository's policy and how its saved rules stand against its file. */
+  settle: (tenantId: string, repo: string) => Promise<PolicySettled>;
   /** GitHub as the tenant's App; undefined when the tenant has no active GitHub App credential. */
   tenantGithub: (tenantId: string) => Promise<GithubFetch | undefined>;
   tenantBitbucket: TenantBitbucket;
@@ -77,11 +83,15 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return forInstallation(gh, record.installationId);
   }
 
-  async function readAt(tenantId: string, record: RepoRecord, path: string): Promise<RepoFileRead | undefined> {
-    if (sourceOf(record) !== "bitbucket-datacenter") return readRepoFile(await repoGithub(tenantId, record), record.name, path);
+  async function repoBitbucket(tenantId: string): Promise<bitbucket.BitbucketFetch> {
     const bb = await deps.tenantBitbucket(tenantId);
     if (!bb) throw new Error("no active bitbucket-datacenter credential");
-    return bitbucket.readRepoFile(bb, record.name, path, record.defaultBranch);
+    return bb;
+  }
+
+  async function readAt(tenantId: string, record: RepoRecord, path: string): Promise<RepoFileRead | undefined> {
+    if (sourceOf(record) !== "bitbucket-datacenter") return readRepoFile(await repoGithub(tenantId, record), record.name, path);
+    return bitbucket.readRepoFile(await repoBitbucket(tenantId), record.name, path, record.defaultBranch);
   }
 
   /** The first of the policy file's names found on the record's default branch. */
@@ -153,62 +163,65 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return file instanceof Response ? file : Response.json({ file });
   }
 
-  async function createBranch(gh: GithubFetch, repo: string, sha: string): Promise<boolean> {
-    const res = await gh(`/repos/${repo}/git/refs`, { method: "POST", body: JSON.stringify({ ref: `refs/heads/${EXPORT_BRANCH}`, sha }) });
-    if (res.ok) return true;
-    if (res.status === 422 && (await res.text()).includes("Reference already exists")) return false;
-    throw new Error(`github POST /repos/${repo}/git/refs -> ${res.status}`);
+  async function bitbucketBase(bb: bitbucket.BitbucketFetch, record: RepoRecord): Promise<string> {
+    const base = record.defaultBranch ?? (await defaultBranch(bb, ...splitName(record.name)));
+    if (base === undefined) throw new Error(`${record.name} has no default branch`);
+    return base;
   }
 
-  /** Exporting opens a pull request through the GitHub App; another host's repository keeps its policy in the hub. */
+  async function openPull(tenantId: string, record: RepoRecord): Promise<github.PolicyPull | undefined> {
+    if (sourceOf(record) === "github") return github.openPolicyPull(await repoGithub(tenantId, record), record.name);
+    return bitbucketPull.openPolicyPull(await repoBitbucket(tenantId), record.name);
+  }
+
+  async function propose(tenantId: string, record: RepoRecord, change: github.PolicyChange): Promise<github.PolicyPull> {
+    if (sourceOf(record) === "github") return github.proposePolicy(await repoGithub(tenantId, record), record.name, change);
+    const bb = await repoBitbucket(tenantId);
+    return bitbucketPull.proposePolicy(bb, record.name, await bitbucketBase(bb, record), change);
+  }
+
+  /** Opens the pull request writing the saved rules to the policy file, or brings the open one up to date; refused when nothing differs. */
   async function exportRoute({ repo }: typeof PolicyFileBody.infer, member: Member): Promise<Response> {
     const record = await grantedRecord(member, repo, "use");
     if (record instanceof Response) return record;
-    if (sourceOf(record) !== "github") return failure(409, "export_unsupported", `${repo} is not on GitHub; add ${POLICY_FILE_PATH} to its default branch by hand.`);
-    const row = await repoPolicyRow(deps, member.tenantId, repo);
-    if (!row) return failure(409, "policy_missing", `${repo} has no policy to export.`);
-    let stored: Record<string, unknown> | undefined;
     try {
-      stored = asRecord(JSON.parse(row.content));
-    } catch {
-      stored = undefined;
-    }
-    if (!stored) return failure(409, "policy_corrupt", `${repo}'s policy is not readable; save it again first.`);
-    const text = policyFileText(stored);
-    let gh: GithubFetch | undefined;
-    let branched = false;
-    try {
-      gh = await repoGithub(member.tenantId, record);
-      if (await findFile(member.tenantId, record)) return failure(409, "policy_file_exists", `${repo} already has a policy file.`);
-      const { default_branch: base } = await json(gh, `/repos/${repo}`);
-      // Unverified against GitHub for a default branch whose name holds a slash.
-      const head = await json(gh, `/repos/${repo}/git/ref/heads/${encodeURIComponent(base)}`);
-      branched = await createBranch(gh, repo, head.object.sha);
-      if (!branched) return failure(409, "policy_branch_exists", `${repo} already has a ${EXPORT_BRANCH} branch; merge or delete it first.`);
-      await json(gh, `/repos/${repo}/contents/${POLICY_FILE_PATH}`, {
-        method: "PUT",
-        body: JSON.stringify({ message: `chore: add ${POLICY_FILE_PATH}`, content: Buffer.from(text, "utf8").toString("base64"), branch: EXPORT_BRANCH }),
-      });
-      const pull = await json(gh, `/repos/${repo}/pulls`, { method: "POST", body: JSON.stringify({ title: PR_TITLE, head: EXPORT_BRANCH, base, body: PR_BODY }) });
+      const { upgrade, saved } = await deps.settle(member.tenantId, repo);
+      if (upgrade.state === "ok" || !saved) return failure(409, "policy_settled", `${repo} has no saved rules apart from its policy file.`);
+      if (upgrade.state === "differs" && !upgrade.fixable) return failure(409, "policy_file_full", `${repo}'s policy file already holds all of its saved rules that a file can; keep the file to settle it.`);
+      const path = upgrade.state === "differs" ? upgrade.path : POLICY_FILE_PATH;
+      const { text, unexpressed } = exportPolicyFile(saved.pack, saved.source.shared !== undefined);
+      const pull = await propose(member.tenantId, record, { path, text, title: `chore: keep the Corbits Triage rules in ${path}`, body: pullBody(upgrade.state, path, unexpressed) });
       deps.log({ level: "info", msg: "policy_file_exported", tenantId: member.tenantId, repo, number: pull.number });
-      return Response.json({ status: "opened", url: pull.html_url, number: pull.number });
+      return Response.json({ status: "opened", ...pull });
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_file_export_failed", tenantId: member.tenantId, repo, error: errorText(err) });
-      if (gh && branched) await deleteBranch(gh, member.tenantId, repo);
-      return githubFailed(`open a pull request adding ${POLICY_FILE_PATH} to`, err);
+      const what = `open the pull request writing ${repo}'s saved rules to its policy file`;
+      return sourceOf(record) === "github" ? githubFailed(what, err) : bitbucketFailed(what, err);
     }
   }
 
-  /** A failed export takes back the branch it made, so trying again is not refused as already exported. */
-  async function deleteBranch(gh: GithubFetch, tenantId: string, repo: string): Promise<void> {
+  async function upgradeOf(member: Member, record: RepoRecord): Promise<PolicyUpgradeRow | undefined> {
+    if (await sourceCredentialGrant(deps, member.principalId, member.tenantId, record, "read")) return undefined;
     try {
-      await json(gh, `/repos/${repo}/git/refs/heads/${EXPORT_BRANCH}`, { method: "DELETE" });
+      const { upgrade } = await deps.settle(member.tenantId, record.name);
+      if (upgrade.state === "ok") return { repo: record.name, upgrade };
+      const pull = await openPull(member.tenantId, record);
+      return { repo: record.name, upgrade, ...(pull && { pull }) };
     } catch (err) {
-      deps.log({ level: "warn", msg: "policy_file_branch_left", tenantId, repo, branch: EXPORT_BRANCH, error: errorText(err) });
+      deps.log({ level: "warn", msg: "policy_upgrade_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
+      return { repo: record.name, error: `Could not read ${record.name}'s policy from ${HOST_NAMES[sourceOf(record)]}.` };
     }
   }
 
-  return { current, onPush, fileRoute, exportRoute };
+  /** How each enabled repository the member may read stands: see `settlePolicy`. */
+  async function upgradesRoute(member: Member): Promise<Response> {
+    const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, member.tenantId), columns: { config: true } });
+    const records = repoRecords(triageNs(tenant?.config)).filter((record) => record.connected && record.enabled);
+    const rows = await Promise.all(records.map((record) => upgradeOf(member, record)));
+    return Response.json({ repos: rows.filter((row) => row !== undefined) });
+  }
+
+  return { current, onPush, fileRoute, exportRoute, upgradesRoute };
 }
 
 export type PolicyFile = ReturnType<typeof createPolicyFile>;

@@ -7,7 +7,7 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import type { DB } from "@intx/db";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
@@ -70,6 +70,7 @@ export type IntegrationHandlers = {
   policyRead: BodyHandler<typeof PolicyQuery.infer>;
   policyFileRead: BodyHandler<typeof PolicyFileBody.infer>;
   policyFileExport: BodyHandler<typeof PolicyFileBody.infer>;
+  policyUpgrades: (member: Member) => Promise<Response>;
   backlog: BodyHandler<typeof BacklogBody.infer>;
   openPulls: (member: Member) => Promise<Response>;
   prDetails: MemberHandler;
@@ -377,13 +378,27 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     },
   );
 
+  app.get(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/upgrades`,
+    describeRoute({
+      summary: "How each enabled repository's saved rules stand against its policy file",
+      description: "Each enabled repository whose host credential the member may read. `upgrade`: saved rules and no policy file. `differs`: both, running differently, or a file triage refuses; the saved rules apply until the file matches them or the `saved` artifact is archived through the stock artifact route. `ok`: the file alone, the saved rules alone with nothing to write, or both running the same, after which the saved rules are archived. `pull` is the open pull request on `corbits-triage/policy`.",
+      tags: TAGS,
+      responses: { 200: json("Each enabled repository's standing", PolicyUpgrades), ...failures },
+    }),
+    member,
+    function policyUpgrades(c) {
+      return handlers.policyUpgrades(memberOf(c));
+    },
+  );
+
   app.post(
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/export`,
     describeRoute({
-      summary: "Open a pull request adding .corbits-triage.yml from the repository's policy",
-      description: "Needs `use` on the workspace's GitHub App credential, a connected repository and a stored policy. One commit on `corbits-triage/policy`; refused when the file or the branch already exists.",
+      summary: "Open a pull request writing the repository's saved rules to its policy file",
+      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository whose saved rules differ from its policy file or have no file. Writes the saved rules as a schema 3 file at the existing file's path, else `.corbits-triage.yml`, on `corbits-triage/policy`, and opens a pull request listing what the file cannot hold. Asking again updates the open pull request instead of opening another.",
       tags: TAGS,
-      responses: { 200: json("The pull request opened", PolicyExported), ...invalid, ...failures, ...githubFailed },
+      responses: { 200: json("The pull request opened or brought up to date", PolicyExported), ...invalid, ...failures, 502: json("The host refused", Failure) },
     }),
     member,
     body(PolicyFileBody),
