@@ -275,3 +275,21 @@ test("a policy that reads CI holds the head while CI runs, mails it once on its 
   await clock.advance(WINDOW.quietMs);
   expect(mails).toHaveLength(1);
 });
+
+test("a head held for CI where triage writes labels is mailed to be marked waiting once, then mailed for its verdict when CI finishes", async () => {
+  let checks: CheckRun[] = [{ name: "build", status: "in_progress", conclusion: null }];
+  const { clock, mails, coalescer } = harness([], { headChecks: async () => checks });
+  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+  const event = (name: TriageEvent) => ({ ...delivery(name, "sha1"), pack, automatic: ["labels" as const] });
+
+  await coalescer.accept(event("opened"));
+  await clock.advance(WINDOW.burstMs);
+  await coalescer.accept(event("commented"));
+  await clock.advance(WINDOW.quietMs);
+  expect(mails).toEqual([expect.objectContaining({ kind: "waiting", prNumber: 8, headSha: "sha1", automatic: ["labels"] })]);
+
+  checks = [{ name: "build", status: "completed", conclusion: "success" }];
+  await coalescer.accept(event("checks"));
+  await clock.advance(WINDOW.quietMs);
+  expect(mails.map((mail) => mail.kind)).toEqual(["waiting", "pr"]);
+});

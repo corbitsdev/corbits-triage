@@ -155,7 +155,10 @@ onto the stock hook routes. Events:
 Data Center sends no webhook when a build status finishes. A head held while
 its policy waits for CI is released by the reconciler pass that finds its
 build statuses no longer in progress, so it is triaged up to one reconcile
-interval after its builds end. A verdict left waiting on `ci-green`, or failed
+interval after its builds end. While it waits, the `Corbits Triage` build
+status on the head reads `INPROGRESS` "Triage: Waiting for CI", where Comment
+is on, until the verdict overwrites it; the hub's own CI read leaves that
+status out. A verdict left waiting on `ci-green`, or failed
 by it, would likewise never catch up on its own. The hub
 re-reads the build statuses of such heads on the unconfirmed retry interval
 (5 minutes, doubling, up to the retry cap) and queues the head again once they

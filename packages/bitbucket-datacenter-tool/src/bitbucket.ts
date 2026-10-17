@@ -11,6 +11,7 @@ export type BitbucketUser = () => Promise<TokenUser>;
 export class BitbucketRefusal extends Error {}
 
 export const NOT_OPEN = "the pull request is not open";
+const HEAD_MOVED = "the pull request has moved past the head";
 
 const TRIAGE_BUILD_NAME = "Corbits Triage";
 
@@ -207,6 +208,8 @@ export interface MirrorInput {
   comment?: string;
   header?: TriageHeader;
   build?: VerdictBuild;
+  /** Writes nothing once the pull request has moved past this head. */
+  onHead?: string;
   close: boolean;
 }
 
@@ -215,6 +218,7 @@ export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: Bitbucket
   const { repo, number } = i;
   const pr = await readPr(bb, repo, number);
   if (pr.state !== "OPEN") return { commentId: null, updated: false, closed: false, sha: pr.sha, skipped: NOT_OPEN };
+  if (i.onHead !== undefined && i.onHead !== pr.sha) return { commentId: null, updated: false, closed: false, sha: pr.sha, skipped: HEAD_MOVED };
   if (i.comment === "") await deleteTriageComments(bb, repo, number, await user());
   const posted = i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header }, await user()) : null;
   const build = i.build ? await setVerdictBuild(bb, pr.sha, i.build, pr.url) : undefined;

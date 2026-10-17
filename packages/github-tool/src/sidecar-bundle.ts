@@ -143,6 +143,7 @@ const MIRROR_INPUT = obj({
   },
   notReadyHead: str,
   fixedHead: str,
+  onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
 }, ["repo", "number", "labels"]);
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
@@ -273,6 +274,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, t
         owned: a.owned,
         comment: a.comment,
         header: a.header,
+        onHead: a.onHead,
         close: false,
       }, login);
       if ("skipped" in mirrored) return mirrored;
