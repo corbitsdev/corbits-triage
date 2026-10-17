@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { EnsureSidecarRequest } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
 import { createLocalProcessSidecarProvisioner } from "./local-provisioner.js";
@@ -21,8 +24,9 @@ const RECORD_WITHOUT_ADAPTERS: LocalSidecarManifest = {
 
 test("restore launches a record without adapterManifest with the hub's adapters", async () => {
   const spawned: EnsureSidecarRequest[] = [];
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "local-provisioner-"));
   const local = createLocalProcessSidecarProvisioner({
-    dataRoot: "/data",
+    dataRoot,
     adapterManifest: HUB_ADAPTERS,
     spawnSidecar: function spawnSidecar({ request }) {
       spawned.push(request);
@@ -37,7 +41,40 @@ test("restore launches a record without adapterManifest with the hub's adapters"
     log: () => {},
   });
 
-  await local.restore(async () => true);
+  try {
+    await local.restore(async () => true);
+  } finally {
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
 
   expect(spawned.map((request) => request.adapterManifest)).toEqual([HUB_ADAPTERS]);
+});
+
+test("restore removes a data dir no manifest names and keeps the ones that are named", async () => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "local-provisioner-"));
+  const named = path.join(dataRoot, "sal_1-Ab12Cd");
+  const orphan = path.join(dataRoot, "sal_2-Ef34Gh");
+  await fs.mkdir(named);
+  await fs.mkdir(orphan);
+  const local = createLocalProcessSidecarProvisioner({
+    dataRoot,
+    adapterManifest: HUB_ADAPTERS,
+    spawnSidecar: function spawnSidecar() {
+      throw new Error("restore has nothing to respawn");
+    },
+    manifests: {
+      readAll: async () => [],
+      write: async () => {},
+      readDataDir: async (allocationId) => (allocationId === "sal_1" ? named : null),
+      remove: async () => {},
+    },
+    log: () => {},
+  });
+
+  try {
+    await local.restore(async () => true);
+    expect((await fs.readdir(dataRoot)).sort()).toEqual(["sal_1-Ab12Cd"]);
+  } finally {
+    await fs.rm(dataRoot, { recursive: true, force: true });
+  }
 });
