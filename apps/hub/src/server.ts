@@ -36,6 +36,7 @@ import { runCronMigrations } from "@corbits/cron/migrations";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
+import { connectDockerSidecars, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
@@ -56,7 +57,7 @@ import { createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, dockerSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -171,6 +172,11 @@ const local = createLocalProcessSidecarProvisioner({
   adapterManifest: sidecarAdapterManifest,
   log: logJson,
 });
+const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+if (typeof docker === "string") logJson({ level: "info", msg: "docker_sidecars_off", reason: docker });
+// First match wins: workflows and probes that require isolation:workload land on Docker, the rest on the hub host.
+const workloadProvisioners = typeof docker === "string" ? [] : [docker.provisioner];
+const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
@@ -208,13 +214,15 @@ const composition = await createInterchangeHub({
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { sendResetPassword: smtp.passwordReset }) },
   credentialCipher,
   adapterManifest: sidecarAdapterManifest,
-  sidecarProvisioners: [local.provisioner],
-  probeSidecarProvisioners: [local.provisioner],
+  sidecarProvisioners,
+  probeSidecarProvisioners: sidecarProvisioners,
+  probeSidecarCapabilityRules: workloadProvisioners.length > 0 ? [{ capability: "isolation:workload", effect: "require" }] : [],
 });
 const stock = composition.server;
 composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
 
 await restoreLocalSidecars(composition.db, local);
+if (typeof docker !== "string") logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, docker) });
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },

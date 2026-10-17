@@ -126,8 +126,15 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     actions are synchronous: a maintainer's click must not wait on a
     workflow spin-up.
 - **Sidecars**: one per live deployment, started by the hub's
-  `SidecarProvisioner`. Today it runs local child processes and restores
-  them on boot; a remote provisioner replaces it without touching other code.
+  `SidecarProvisioner`. The local-process provisioner runs child processes
+  on the hub's machine and restores them on boot. The Docker provisioner
+  (`packages/provisioner-docker`), registered after it when a Docker daemon
+  with the sidecar image answers, runs each sidecar in a container of its own
+  and declares `isolation:workload`; workflows that require it land there, and
+  probes then require it too, so no probe runs on the hub's machine. Its
+  containers get 2 GiB each, which is also what each counts against the
+  daemon's memory ([measurements](provisioners/docker.md#memory)).
+  [provisioners/](provisioners/README.md) describes both.
   The local provisioner declines a new sidecar while free memory, less one
   footprint for each sidecar it started that has not connected yet, is below
   one more footprint. Free memory is the container's cgroup limit less its

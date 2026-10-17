@@ -61,6 +61,7 @@
         "@corbits/github-reads": "workspace:*",
         "@corbits/github-tool": "workspace:*",
         "@corbits/pr-code-review-anthropic": "workspace:*",
+        "@corbits/provisioner-docker": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-workflows": "workspace:*",
         "@corbits/webhooks": "0.3.1",
@@ -219,6 +220,18 @@
       "dependencies": {
         "@intx/hub-sessions": "0.5.0",
         "@intx/types": "workspace:*",
+      },
+    },
+    "packages/provisioner-docker": {
+      "name": "@corbits/provisioner-docker",
+      "version": "0.1.0",
+      "dependencies": {
+        "@intx/hub-sessions": "0.5.0",
+        "@intx/types": "workspace:*",
+        "arktype": "catalog:",
+      },
+      "devDependencies": {
+        "@corbits/provisioner-conformance": "workspace:*",
       },
     },
     "packages/provisioner-template": {
@@ -819,6 +832,8 @@
     "@corbits/pr-code-review-anthropic": ["@corbits/pr-code-review-anthropic@workspace:packages/pr-code-review-anthropic"],
 
     "@corbits/provisioner-conformance": ["@corbits/provisioner-conformance@workspace:packages/provisioner-conformance"],
+
+    "@corbits/provisioner-docker": ["@corbits/provisioner-docker@workspace:packages/provisioner-docker"],
 
     "@corbits/provisioner-template": ["@corbits/provisioner-template@workspace:packages/provisioner-template"],
 

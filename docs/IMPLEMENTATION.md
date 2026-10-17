@@ -126,7 +126,10 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
   the workspace policy it extends), repository settings, triage state,
   verdict labels, trigger mail and shared types.
 - `provisioner-template`: a minimal `SidecarProvisioner` to copy for a new
-  backend; see [PROVISIONERS.md](PROVISIONERS.md).
+  backend; see [provisioners/writing-your-own.md](provisioners/writing-your-own.md).
+- `provisioner-docker`: a `SidecarProvisioner` that runs each sidecar in its
+  own Docker container; the hub registers it in `src/sidecar/docker.ts`. See
+  [provisioners/docker.md](provisioners/docker.md).
 - `provisioner-conformance`: bun tests any `SidecarProvisioner` runs to prove
   the stock contract.
 - `openai-null-delta`: inference adapter fix for null stream deltas.
