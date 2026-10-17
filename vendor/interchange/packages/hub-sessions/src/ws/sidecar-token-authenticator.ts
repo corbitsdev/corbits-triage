@@ -1,6 +1,10 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { sha256 } from "@intx/crypto";
-import { workflowRunExecutability, type DB } from "@intx/db";
+import {
+  workflowRunExecutability,
+  workflowCapacityReleaseAt,
+  type DB,
+} from "@intx/db";
 import {
   sidecar,
   sidecarAllocation,
@@ -17,6 +21,7 @@ import type { SidecarAuthenticator } from "./sidecar-handler";
 
 export type CreateSidecarTokenAuthenticatorDeps = {
   db: DB["db"];
+  now?: () => Date;
 };
 
 /**
@@ -32,7 +37,13 @@ export type CreateSidecarTokenAuthenticatorDeps = {
  */
 export function createSidecarCredentialResolver({
   db,
+  now = () => new Date(),
 }: CreateSidecarTokenAuthenticatorDeps): SidecarCredentialResolver {
+  const cleanupStatus = inArray(sidecarAllocation.status, [
+    "releasing",
+    "replacing",
+    "destroy_failed",
+  ]);
   async function resolveBindings(
     sidecarId: string,
   ): Promise<SidecarCredentialIdentity[]> {
@@ -43,10 +54,14 @@ export function createSidecarCredentialResolver({
           tenantId: true,
           anchorRunId: true,
           generation: true,
+          status: true,
         },
         where: and(
           eq(sidecarAllocation.sidecarId, sidecarId),
-          inArray(sidecarAllocation.status, ["provisioning", "allocated"]),
+          or(
+            inArray(sidecarAllocation.status, ["provisioning", "allocated"]),
+            cleanupStatus,
+          ),
         ),
       }),
       db.query.workflowProbe.findMany({
@@ -77,7 +92,12 @@ export function createSidecarCredentialResolver({
           ? []
           : [
               {
-                kind: "allocated",
+                kind:
+                  allocation.status === "releasing" ||
+                  allocation.status === "replacing" ||
+                  allocation.status === "destroy_failed"
+                    ? "cleanup"
+                    : "allocated",
                 sidecarId,
                 allocationId: allocation.id,
                 tenantId: allocation.tenantId,
@@ -112,7 +132,17 @@ export function createSidecarCredentialResolver({
     identity: SidecarCredentialIdentity,
     use: SidecarIdentityUse,
   ): Promise<boolean> {
-    const copyCheck = use === "reclaim" || use === "retention";
+    const copyCheck =
+      use === "reclaim" ||
+      use === "retention" ||
+      use === "retention-transition";
+    if (
+      identity.kind === "cleanup" &&
+      use !== "registration" &&
+      use !== "cleanup"
+    )
+      return false;
+    if (use === "cleanup" && identity.kind !== "cleanup") return false;
     if (identity.kind === "probe") {
       if (copyCheck) return false;
       const statuses =
@@ -132,10 +162,15 @@ export function createSidecarCredentialResolver({
       return probe !== undefined;
     }
 
-    const statuses =
-      use === "registration"
-        ? (["provisioning", "allocated"] as const)
-        : (["allocated"] as const);
+    const statusCondition =
+      identity.kind === "cleanup"
+        ? cleanupStatus
+        : inArray(
+            sidecarAllocation.status,
+            use === "registration"
+              ? ["provisioning", "allocated"]
+              : ["allocated"],
+          );
     const allocation = await db.query.sidecarAllocation.findFirst({
       where: and(
         eq(sidecarAllocation.id, identity.allocationId),
@@ -143,12 +178,15 @@ export function createSidecarCredentialResolver({
         eq(sidecarAllocation.tenantId, identity.tenantId),
         eq(sidecarAllocation.anchorRunId, identity.anchorRunId),
         eq(sidecarAllocation.generation, identity.generation),
-        inArray(sidecarAllocation.status, statuses),
+        statusCondition,
       ),
     });
     if (allocation === undefined) return false;
     if (use === "registration") return true;
-    if (allocation.ensureAcceptedGeneration !== identity.generation) {
+    if (
+      identity.kind !== "cleanup" &&
+      allocation.ensureAcceptedGeneration !== identity.generation
+    ) {
       return false;
     }
     if (copyCheck && allocation.initializationLeaseId !== null) {
@@ -162,6 +200,9 @@ export function createSidecarCredentialResolver({
         expiresAt: true,
         cancellationRequestedAt: true,
         failureCode: true,
+        endedAt: true,
+        capacityReleaseAt: true,
+        lifecyclePolicy: true,
       },
       where: eq(workflowRun.id, identity.anchorRunId),
     });
@@ -171,15 +212,10 @@ export function createSidecarCredentialResolver({
     // The Hub may have ended the run without the worker recording it, so the
     // run row, not the copy that reconnects, decides whether it is over.
     const ended = workflowRunExecutability(anchor) === "terminal";
+    if (use === "retention-transition") return ended;
     if (use === "reclaim") return !ended && anchor.failureCode === null;
-    // Only a run that ended through its own history leaves its copy idle. A
-    // restart that lost the stopped mark of a copy whose run the Hub
-    // cancelled, expired or failed respawns it running that run.
-    return (
-      ended &&
-      anchor.cancellationRequestedAt === null &&
-      anchor.failureCode === null
-    );
+    const releaseAt = workflowCapacityReleaseAt(anchor);
+    return ended && (releaseAt === null || releaseAt > now());
   }
 
   return { resolve, resolveBindings, isCurrent };

@@ -7,6 +7,7 @@
 import { getLogger } from "@intx/log";
 import {
   WorkflowRunNotExecutableError,
+  type SidecarInventory,
   type WorkflowRunExecutionTarget,
 } from "@intx/db";
 import { chunkPack, createPackReceiver } from "@intx/pack-transport";
@@ -20,6 +21,7 @@ import type { GrantWalkSnapshot } from "@intx/types";
 import { deriveWorkflowRunRepoId } from "@intx/workflow-deploy";
 import { type } from "arktype";
 import {
+  DeploymentRejectedError,
   MAX_MAIL_OUTBOUND_BODY_BYTES,
   SidecarFrame,
   WORKFLOW_CONTROL_INITIALIZING_ERROR,
@@ -29,7 +31,9 @@ import {
   type AgentUndeployAckFrame,
   type AgentUndeployErrorFrame,
   type DeploymentStoppedFrame,
+  type DeploymentRetention,
   type HostedIncarnation,
+  type SidecarCapacity,
   type PackAckFrame,
   type HubFrame,
   type MailInboundFrame,
@@ -169,14 +173,15 @@ export class WorkflowControlRejectedError extends Error {
  * stop stays unconfirmed and unfenced, so that history can still land.
  */
 export class WorkflowControlHistoryPendingError extends Error {
-  constructor(message: string) {
-    super(`Workflow history has not reached the Hub: ${message}`);
+  constructor(message: string, options?: ErrorOptions) {
+    super(`Workflow history has not reached the Hub: ${message}`, options);
     this.name = "WorkflowControlHistoryPendingError";
   }
 }
 
 export type SidecarConnection = {
   sidecarId: string;
+  capacity: SidecarCapacity;
   /**
    * The probe and allocation generations this sidecar currently hosts, keyed
    * by allocation id. A provisioner may place several on one sidecar; each
@@ -488,14 +493,60 @@ export type AllocatedSidecarTarget = {
   readonly generation: number;
 };
 
+type WorkflowControlCommand = Omit<
+  WorkflowControlFrame,
+  "type" | "requestId" | "generation" | "action"
+> & { action: "cancel" | "stop" };
+
 export type SidecarAllocationRouter = {
+  /** Opaque identity of the currently attached cleanup connection. */
+  getCleanupConnection(target: AllocatedSidecarTarget): object | undefined;
+  /**
+   * Confirm cleanup of a releasing allocation. An expected connection token
+   * prevents sending on a different socket after asynchronous validation.
+   * Notify the owner when sent so its own timeout can distinguish preparation
+   * failures from attempted undeploys.
+   */
+  undeployAllocation(
+    target: AllocatedSidecarTarget,
+    timeoutMs: number,
+    signal: AbortSignal,
+    expectedConnection: object,
+    onSent: () => void,
+  ): Promise<void>;
   sendWorkflowControl(
     target: AllocatedSidecarTarget,
-    command: Omit<WorkflowControlFrame, "type" | "requestId" | "generation">,
+    command: WorkflowControlCommand,
     timeoutMs: number,
   ): Promise<void>;
-  /** Advance the in-memory trust boundary before provisioning a generation. */
-  fenceAllocation(allocationId: string, generation: number): void;
+  /** Concurrent callers share the existing request and its deadline. */
+  retainAllocation(
+    target: AllocatedSidecarTarget,
+    timeoutMs: number,
+  ): Promise<DeploymentRetention>;
+  getAllocationRetention(
+    target: AllocatedSidecarTarget,
+  ): DeploymentRetention | undefined;
+  /** Copies awaiting retention or history finality; the lifecycle checks run status. */
+  getRetentionCandidates(): readonly (AllocatedSidecarTarget & {
+    readonly sidecarId: string;
+  })[];
+  /** Undefined until the current connection's complete inventory is known. */
+  getSidecarInventory(sidecarId: string): SidecarInventory | undefined;
+  /** Wait outside placement transactions; the caller's signal bounds the wait. */
+  waitForSidecarInventory(
+    sidecarId: string,
+    signal: AbortSignal,
+  ): Promise<void>;
+  /**
+   * Advance the trust boundary after persisting a generation. `cleanup` keeps
+   * its control binding while the reconciler owns the acknowledged teardown.
+   */
+  fenceAllocation(
+    allocationId: string,
+    generation: number,
+    options?: { cleanup?: { sidecarId: string } },
+  ): void;
   /**
    * Remove an exact generation's fence after its durable owner becomes
    * terminal. Durable identity validation rejects later stale reconnects.
@@ -803,7 +854,8 @@ export function createSidecarRouter(
       () => {
         signal?.throwIfAborted();
         if (
-          allocationFences.get(binding.allocationId) !== binding.generation ||
+          allocationFences.get(binding.allocationId)?.generation !==
+            binding.generation ||
           allocatedConnections.get(binding.allocationId)?.ws !== ws ||
           !connections.has(ws)
         )
@@ -864,10 +916,21 @@ export function createSidecarRouter(
       identity: SidecarAuthIdentity;
     }
   >();
-  const allocationFences = new Map<string, number>();
+  const allocationFences = new Map<
+    string,
+    { generation: number; cleanup: { sidecarId: string } | undefined }
+  >();
   // allocationId -> generation whose worker acknowledged a workflow stop. Its
   // later workflow-run packs are refused, including after a reconnect.
   const stoppedAllocations = new Map<string, number>();
+  const connectionRetention = new WeakMap<
+    WsHandle,
+    Map<string, { generation: number; retention: DeploymentRetention }>
+  >();
+  const retainingAllocations = new Map<
+    string,
+    { ws: WsHandle; generation: number; result: Promise<DeploymentRetention> }
+  >();
   // allocationId -> the stop a sidecar reported for that generation's
   // deployment though the Hub did not stop it. It outlives the connection that
   // carried it, until the allocation's fence moves past that generation.
@@ -891,6 +954,7 @@ export function createSidecarRouter(
     onValidation?: (validation: Promise<boolean>) => void;
   };
   const allocationWaiters = new Map<string, Set<AllocationWaiter>>();
+  const inventoryWaiters = new Map<string, Set<() => void>>();
   // agentAddress → ws handle (routing table)
   const addressIndex = new Map<string, WsHandle>();
   // requestId → pending promise (resolved by session.ack, rejected by
@@ -905,7 +969,12 @@ export function createSidecarRouter(
   // generation. One deploy per address is in flight at a time; a reply that
   // names another request answers a deploy the Hub already gave up on.
   type PendingDeploy = { requestId: string; generation: number };
-  const pendingDeploys = new PendingTracker<string, string, PendingDeploy>();
+  const pendingDeploys = new PendingTracker<
+    string,
+    string,
+    PendingDeploy,
+    DeploymentRejectedError
+  >();
   // Run addresses whose ALLOCATED deploy is mid-flight -- key-record has been
   // started but not yet committed. pendingDeploys clears at the deploy ack, but an
   // allocated run's key is recorded LATER by session-service's anchor-key update,
@@ -1054,12 +1123,17 @@ export function createSidecarRouter(
 
   // agentAddress → the undeploy a caller awaits for it, answered by the
   // agent.undeploy.ack or agent.undeploy.error carrying its request id.
-  const pendingUndeploys = new PendingTracker<string, void, string>();
-  const pendingWorkflowControls = new PendingTracker<
+  const pendingUndeploys = new PendingTracker<
     string,
     void,
+    { requestId: string; generation: number; target?: AllocatedSidecarTarget }
+  >(scheduleTimeout);
+  const pendingWorkflowControls = new PendingTracker<
+    string,
+    DeploymentRetention | undefined,
     AllocatedSidecarTarget &
-      Pick<WorkflowControlFrame, "agentAddress" | "action"> & {
+      Pick<WorkflowControlFrame, "agentAddress" | "action" | "runId"> & {
+        terminal: boolean;
         fail(error: Error): void;
         received(): void;
       }
@@ -1697,6 +1771,7 @@ export function createSidecarRouter(
             sidecarId,
             incarnations,
             cachedSenderAddresses,
+            frame.capacity,
           ),
         ).catch((err: unknown) => {
           const message = err instanceof Error ? err.message : String(err);
@@ -1964,7 +2039,43 @@ export function createSidecarRouter(
   }
 
   function isFencedAsCurrent(binding: SidecarAuthIdentity): boolean {
-    return allocationFences.get(binding.allocationId) === binding.generation;
+    return (
+      allocationFences.get(binding.allocationId)?.generation ===
+      binding.generation
+    );
+  }
+
+  function getCleanupFence(
+    target: AllocatedSidecarTarget & { sidecarId: string },
+  ) {
+    const fence = allocationFences.get(target.allocationId);
+    if (
+      fence === undefined ||
+      fence.cleanup?.sidecarId !== target.sidecarId ||
+      fence.generation < target.generation
+    )
+      return undefined;
+    return fence;
+  }
+
+  // A committed cleanup binding can be observed before its releasing caller
+  // publishes the fence. Transfer the binding without issuing an untracked undeploy.
+  function fenceCleanupBindings(
+    bindings: readonly SidecarAuthIdentity[],
+  ): void {
+    for (const binding of bindings) {
+      if (binding.kind !== "cleanup") continue;
+      const fence = allocationFences.get(binding.allocationId);
+      if (
+        fence !== undefined &&
+        (fence.generation < binding.generation ||
+          (fence.generation === binding.generation &&
+            fence.cleanup?.sidecarId !== binding.sidecarId))
+      )
+        fenceAllocation(binding.allocationId, binding.generation, {
+          cleanup: { sidecarId: binding.sidecarId },
+        });
+    }
   }
 
   // Make `bindings` the connection's current set. A binding the in-memory
@@ -1983,20 +2094,35 @@ export function createSidecarRouter(
     ws: WsHandle,
     conn: SidecarConnection,
     bindings: readonly SidecarAuthIdentity[],
+    beforeRead?: ReadonlyMap<string, SidecarAuthIdentity>,
   ): { attached: SidecarAuthIdentity[]; added: SidecarAuthIdentity[] } {
-    const current = bindings.filter(isFencedAsCurrent);
-    for (const binding of bindings) {
+    const beforeTransfer = new Map(conn.bindings);
+    const unchangedDuringRead = (id: string) =>
+      beforeRead === undefined || beforeRead.get(id) === conn.bindings.get(id);
+    const observed = bindings.filter((binding) =>
+      unchangedDuringRead(binding.allocationId),
+    );
+    fenceCleanupBindings(observed);
+    const current = observed.filter(isFencedAsCurrent);
+    for (const binding of observed) {
       if (!current.includes(binding)) {
         logger.warn`Sidecar ${conn.sidecarId} skipped ${binding.kind} ${binding.allocationId} generation ${String(binding.generation)}: it is not fenced as current`;
       }
     }
     for (const [allocationId, held] of [...conn.bindings]) {
+      if (!unchangedDuringRead(allocationId)) continue;
+      const observed = bindings.find(
+        (binding) => binding.allocationId === allocationId,
+      );
+      if (observed !== undefined && observed.generation < held.generation)
+        continue;
       const next = current.find(
         (binding) => binding.allocationId === allocationId,
       );
       if (next === undefined || next.generation !== held.generation) {
         detachBinding(ws, allocationId, "Its binding is no longer current", {
           keepOpen: true,
+          undeploy: next?.kind !== "cleanup",
         });
       }
     }
@@ -2008,32 +2134,44 @@ export function createSidecarRouter(
           elsewhere.ws,
           binding.allocationId,
           `It moved to sidecar ${conn.sidecarId}`,
+          { undeploy: true },
         );
       }
       const held = conn.bindings.get(binding.allocationId);
       const unchanged =
         held?.generation === binding.generation && held.kind === binding.kind;
+      const previous = beforeTransfer.get(binding.allocationId);
+      if (
+        previous?.generation !== binding.generation ||
+        previous.kind !== binding.kind
+      )
+        added.push(binding);
       if (
         unchanged &&
         allocatedConnections.get(binding.allocationId)?.ws === ws
       )
         continue;
-      if (!unchanged) added.push(binding);
       conn.bindings.set(binding.allocationId, binding);
       allocatedConnections.set(binding.allocationId, { ws, identity: binding });
     }
-    return { attached: current, added };
+    return { attached: [...conn.bindings.values()], added };
   }
 
   // Remove one binding from its connection: drop its routes and in-flight
-  // work, tell the sidecar to undeploy the deployment it no longer hosts, and
-  // report the lost routes. The socket closes once it hosts nothing current,
-  // unless the caller is about to attach replacements.
+  // work and report the lost routes. Unless cleanup owns removal, also tell the
+  // sidecar to undeploy it. The socket closes once it hosts nothing current,
+  // unless the caller is preserving it to attach another binding.
   function detachBinding(
     ws: WsHandle,
     allocationId: string,
     reason: string,
-    { keepOpen = false }: { keepOpen?: boolean } = {},
+    {
+      keepOpen = false,
+      undeploy,
+    }: {
+      keepOpen?: boolean;
+      undeploy: boolean;
+    },
   ): void {
     const conn = connections.get(ws);
     const binding = conn?.bindings.get(allocationId);
@@ -2060,7 +2198,15 @@ export function createSidecarRouter(
       workflowRunPackReceiver.cancelByAgent(address);
     }
     const deploymentAddress =
-      binding.kind === "allocated" ? binding.workflowRunAddress : undefined;
+      binding.kind !== "probe" ? binding.workflowRunAddress : undefined;
+    // A transfer to a cleanup binding keeps the physical generation's proof
+    // until retirement; other detachments discard the obsolete entry.
+    if (undeploy && deploymentAddress !== undefined) {
+      const retained = connectionRetention.get(ws);
+      const proof = retained?.get(deploymentAddress);
+      if (proof !== undefined && proof.generation <= binding.generation)
+        retained?.delete(deploymentAddress);
+    }
     // An own-repository transfer needs no route, so the loop above can miss
     // it.
     if (deploymentAddress !== undefined)
@@ -2091,7 +2237,11 @@ export function createSidecarRouter(
     // pending entry, yet the sidecar may have installed it. The undeploy
     // names this generation, so it never removes a newer one, and a sidecar
     // that does not hold it acknowledges it anyway.
-    if (deploymentAddress !== undefined) {
+    if (
+      undeploy &&
+      deploymentAddress !== undefined &&
+      binding.kind === "allocated"
+    ) {
       sendUndeploy(
         conn,
         { address: deploymentAddress, generation: binding.generation },
@@ -2115,7 +2265,8 @@ export function createSidecarRouter(
   // answer, bounded by the request timeout. What the sidecar still sends for
   // the incarnation names its generation and is dropped, and an incarnation
   // still held after an undeploy lost with its connection is in the sidecar's
-  // next `hello`, which undeploys it again. An undeploy no deploy can wait on,
+  // next `hello`. Orphans are undeployed again; cleanup bindings leave removal
+  // to the reconciler's retry policy. An undeploy no deploy can wait on,
   // such as one of an address the sidecar reports but no binding of it
   // deploys, is not kept, so a sidecar cannot make the Hub keep any number of
   // them.
@@ -2235,7 +2386,7 @@ export function createSidecarRouter(
         attached.identity.generation !== binding.generation
       )
         continue;
-      if (binding.kind === "allocated") {
+      if (binding.kind !== "probe") {
         events.emit("sidecar.allocated.connected", {
           allocationId: binding.allocationId,
           generation: binding.generation,
@@ -2259,6 +2410,7 @@ export function createSidecarRouter(
     reclaimed: Map<string, Extract<SidecarAuthIdentity, { kind: "allocated" }>>;
     retained: Map<string, Extract<SidecarAuthIdentity, { kind: "allocated" }>>;
     unkept: HostedIncarnation[];
+    stopOnly: Set<string>;
     failed: {
       binding: Extract<SidecarAuthIdentity, { kind: "allocated" }>;
       error: string;
@@ -2273,6 +2425,7 @@ export function createSidecarRouter(
         ),
       );
       bindings = resolved.filter((_, index) => current[index]);
+      fenceCleanupBindings(bindings);
     } catch (err) {
       logger.error`Rejected registration from sidecar ${sidecarId}: cannot resolve what it hosts: ${err instanceof Error ? err.message : String(err)}`;
       handleClose(ws);
@@ -2307,12 +2460,13 @@ export function createSidecarRouter(
     // A reported incarnation takes its route back only when it is live, it is
     // the generation of a binding current for this sidecar, that deployment's
     // first deploy has completed, and its run has not ended. A stopped one of
-    // a current binding, and a live one whose run ended on its own, stay
+    // a current binding, and a live one whose run ended, stay
     // unrouted, their local state kept for inspection until the Hub releases
     // the deployment; one that stopped on its own is noted, and the reconciler
-    // fails its deployment. Every other one is undeployed: an earlier
-    // generation, a live one of a generation the sidecar already reported
-    // stopped, a live one of a run the Hub cancelled or failed, a deployment
+    // fails its deployment. A cleanup binding leaves removal to allocation
+    // reconciliation. Every other one is undeployed: an earlier
+    // generation, a live one of a still-live run whose sidecar already reported
+    // it stopped, a deployment
     // that left this sidecar while it was disconnected, one still deploying or
     // tearing down, or one whose deploy is still uncertain. The reconciler
     // fails a deployment whose current generation the sidecar no longer
@@ -2325,6 +2479,7 @@ export function createSidecarRouter(
       string,
       Extract<SidecarAuthIdentity, { kind: "allocated" }>
     >();
+    const stopOnly = new Set<string>();
     const unkept: HostedIncarnation[] = [];
     const failed: {
       binding: Extract<SidecarAuthIdentity, { kind: "allocated" }>;
@@ -2347,35 +2502,33 @@ export function createSidecarRouter(
       if (incarnation.state === "stopped") {
         return { incarnation, binding, kind: "stopped" } as const;
       }
-      // A live copy of a generation reported stopped is one a sidecar restart
-      // respawned after losing its stopped mark. It is undeployed, never
-      // routed.
-      if (
+      const reportedStopped =
         reportedStops.get(binding.allocationId)?.generation ===
-        binding.generation
-      ) {
-        return { incarnation, kind: "unkept" } as const;
-      }
+        binding.generation;
       const alreadyRouted =
         existing?.workflowAddresses.get(address) === binding.allocationId &&
         existing.bindings.get(binding.allocationId)?.generation ===
           binding.generation &&
         addressIndex.get(address) === ws;
-      let reclaimable: boolean;
-      let kept = false;
       try {
-        reclaimable =
-          alreadyRouted || (await validateSidecarIdentity(binding, "reclaim"));
-        if (!reclaimable)
-          kept = await validateSidecarIdentity(binding, "retention");
+        if (
+          !reportedStopped &&
+          (alreadyRouted || (await validateSidecarIdentity(binding, "reclaim")))
+        )
+          return { incarnation, binding, kind: "reclaimed" } as const;
+        if (await validateSidecarIdentity(binding, "retention-transition")) {
+          const retain = await validateSidecarIdentity(binding, "retention");
+          return {
+            incarnation,
+            binding,
+            kind: retain ? "retained" : "stop-only",
+          } as const;
+        }
+        return { incarnation, kind: "unkept" } as const;
       } catch (err) {
         logger.error`Rejected registration from sidecar ${sidecarId}: cannot validate reported ${address} generation ${String(incarnation.generation)}: ${err instanceof Error ? err.message : String(err)}`;
         throw err;
       }
-      if (reclaimable)
-        return { incarnation, binding, kind: "reclaimed" } as const;
-      if (kept) return { incarnation, binding, kind: "retained" } as const;
-      return { incarnation, kind: "unkept" } as const;
     }
     // Each validation reads the database. Bound the fan-out while avoiding a
     // serial round trip for every deployment before the welcome deadline.
@@ -2399,7 +2552,10 @@ export function createSidecarRouter(
               reclaimed.set(incarnation.address, result.binding);
               break;
             case "retained":
+            case "stop-only":
               retained.set(incarnation.address, result.binding);
+              if (result.kind === "stop-only")
+                stopOnly.add(incarnation.address);
               break;
             case "stopped":
               retained.set(incarnation.address, result.binding);
@@ -2420,7 +2576,7 @@ export function createSidecarRouter(
       ws.close();
       return null;
     }
-    return { bindings, reclaimed, retained, unkept, failed };
+    return { bindings, reclaimed, retained, unkept, failed, stopOnly };
   }
 
   async function handleRegistration(
@@ -2428,6 +2584,7 @@ export function createSidecarRouter(
     sidecarId: string,
     incarnations: readonly HostedIncarnation[],
     cachedSenderAddresses: string[],
+    capacity: SidecarCapacity,
   ): Promise<void> {
     const existing = connections.get(ws);
     if (existing !== undefined && existing.sidecarId !== sidecarId) {
@@ -2474,7 +2631,21 @@ export function createSidecarRouter(
       }
       return;
     }
-    const { bindings, reclaimed, retained, unkept, failed } = hosted;
+    const { reclaimed, retained, unkept, failed, stopOnly } = hosted;
+    // A release can commit while the hello reads other deployments. Carry its
+    // cleanup binding into welcome so later stop reports still have an owner.
+    const bindings = hosted.bindings.map((binding) => {
+      if (binding.kind === "probe") return binding;
+      const fence = getCleanupFence(binding);
+      if (fence !== undefined) {
+        return {
+          ...binding,
+          kind: "cleanup" as const,
+          generation: fence.generation,
+        };
+      }
+      return binding;
+    });
 
     // A sidecar reconnecting on a new socket takes its bindings along. Move
     // them off the previous socket first so its close reports only the
@@ -2491,6 +2662,7 @@ export function createSidecarRouter(
 
     const conn: SidecarConnection = existing ?? {
       sidecarId,
+      capacity,
       bindings: new Map(),
       workflowAddresses: new Map(),
       unansweredDeploys: new Map(),
@@ -2499,6 +2671,7 @@ export function createSidecarRouter(
         ws.send(JSON.stringify(frame));
       },
     };
+    conn.capacity = capacity;
     connections.set(ws, conn);
     sidecarSockets.set(sidecarId, ws);
 
@@ -2508,6 +2681,20 @@ export function createSidecarRouter(
       ),
     );
     for (const incarnation of unkept) {
+      // The reconciler owns the acknowledged teardown for this release fence.
+      if (
+        bindings.some(
+          (binding) =>
+            binding.kind !== "probe" &&
+            binding.workflowRunAddress === incarnation.address &&
+            getCleanupFence({
+              allocationId: binding.allocationId,
+              generation: incarnation.generation,
+              sidecarId,
+            }) !== undefined,
+        )
+      )
+        continue;
       logger.warn`Sidecar ${sidecarId} reported ${incarnation.address} generation ${String(incarnation.generation)} ${incarnation.state}, which the Hub does not keep there; asking it to undeploy`;
       sendUndeploy(
         conn,
@@ -2516,7 +2703,28 @@ export function createSidecarRouter(
         { waitable: deployable.has(incarnation.address) },
       );
     }
-    const { attached } = attachBindings(ws, conn, bindings);
+    const { attached, added } = attachBindings(ws, conn, bindings);
+    const retention = new Map<
+      string,
+      { generation: number; retention: DeploymentRetention }
+    >();
+    for (const incarnation of incarnations) {
+      if (incarnation.retention === undefined) continue;
+      const binding = attached.find(
+        (candidate) =>
+          candidate.kind !== "probe" &&
+          candidate.workflowRunAddress === incarnation.address &&
+          (candidate.kind === "cleanup"
+            ? candidate.generation >= incarnation.generation
+            : candidate.generation === incarnation.generation),
+      );
+      if (binding !== undefined)
+        retention.set(incarnation.address, {
+          generation: incarnation.generation,
+          retention: incarnation.retention,
+        });
+    }
+    connectionRetention.set(ws, retention);
     for (const { binding, error } of failed) {
       if (
         conn.bindings.get(binding.allocationId)?.generation ===
@@ -2527,6 +2735,7 @@ export function createSidecarRouter(
     if (!hostsWork(conn)) {
       logger.warn`Rejected sidecar ${sidecarId}: none of its bindings is fenced as current`;
       for (const [address, binding] of [...reclaimed, ...retained]) {
+        if (getCleanupFence(binding) !== undefined) continue;
         sendUndeploy(
           conn,
           { address, generation: binding.generation },
@@ -2542,6 +2751,7 @@ export function createSidecarRouter(
     const newlyRoutedAddresses = new Set<string>();
     const routed: { address: string; generation: number }[] = [];
     for (const [address, binding] of reclaimed) {
+      if (getCleanupFence(binding) !== undefined) continue;
       if (
         conn.bindings.get(binding.allocationId)?.generation !==
         binding.generation
@@ -2559,9 +2769,9 @@ export function createSidecarRouter(
       addressIndex.set(address, ws);
       routed.push({ address, generation: binding.generation });
     }
-    // A copy kept unrouted whose binding did not attach was released
-    // while this hello was read, and no later release reaches it.
+    // Remove stale retained copies unless the current cleanup fence owns them.
     for (const [address, binding] of retained) {
+      if (getCleanupFence(binding) !== undefined) continue;
       if (
         conn.bindings.get(binding.allocationId)?.generation !==
         binding.generation
@@ -2578,9 +2788,55 @@ export function createSidecarRouter(
     // delivered and re-drive what it owes each routed incarnation.
     conn.send({ type: "welcome", routed });
     welcomedSockets.add(ws);
+    notifySidecarInventory(sidecarId);
+    // Live retained copies were validated in readHostedWork's bounded batches.
+    // Stop them without repeating those queries or awaiting acknowledgements
+    // inside the hello handler that must finish before processing the replies.
+    for (const incarnation of incarnations) {
+      if (incarnation.state !== "live") continue;
+      const validated = retained.get(incarnation.address);
+      if (validated === undefined) continue;
+      const binding = conn.bindings.get(validated.allocationId);
+      if (
+        binding?.kind !== "allocated" ||
+        binding.generation !== validated.generation ||
+        !isFencedAsCurrent(binding) ||
+        connections.get(ws) !== conn
+      )
+        continue;
+      const target = {
+        allocationId: binding.allocationId,
+        generation: binding.generation,
+      };
+      const stopping = stopOnly.has(incarnation.address);
+      const request = stopping
+        ? sendWorkflowControlOnConnection(
+            { ws, conn, binding },
+            target,
+            {
+              runId: binding.anchorRunId,
+              agentAddress: binding.workflowRunAddress,
+              action: "stop",
+              reason: "The deployment's retention period ended",
+            },
+            requestTimeoutMs,
+            { terminal: true },
+          )
+        : retainOnConnection({ ws, conn, binding }, target, requestTimeoutMs);
+      void request.catch((cause: unknown) => {
+        logger.warn`${stopping ? "Stop" : "Retention"} remains unconfirmed after reconnect for ${binding.allocationId}: ${cause instanceof Error ? cause.message : String(cause)}`;
+      });
+    }
     logger.info`Provisioned sidecar ${sidecarId} registered for ${attached.map((binding) => `${binding.kind} ${binding.allocationId} generation ${String(binding.generation)}`).join(", ")}`;
     // Replay can wait on database admission without delaying connection readiness.
-    await announceAttached(ws, attached);
+    // Newly attached cleanup bindings can wake pending attempts. Repeated
+    // hellos on this socket must not bypass the normal retry backoff.
+    await announceAttached(
+      ws,
+      attached.filter(
+        (binding) => binding.kind !== "cleanup" || added.includes(binding),
+      ),
+    );
     if (connections.get(ws) !== conn) return;
     for (const address of newlyRoutedAddresses) {
       await redeliverPendingMail(address, conn);
@@ -2689,6 +2945,7 @@ export function createSidecarRouter(
       }
       const conn = connections.get(ws);
       if (conn === undefined) return;
+      const before = new Map(conn.bindings);
       const bindings = await resolveSidecarBindings(sidecarId);
       signal?.throwIfAborted();
       if (syncTarget(sidecarId) !== ws) {
@@ -2696,7 +2953,8 @@ export function createSidecarRouter(
         return;
       }
       if (connections.get(ws) !== conn) return;
-      const { added } = attachBindings(ws, conn, bindings);
+      // A snapshot must not undo a fence or retirement published during its read.
+      const { added } = attachBindings(ws, conn, bindings, before);
       if (!hostsWork(conn)) {
         logger.info`Sidecar ${sidecarId} hosts nothing current; closing its connection`;
         handleClose(ws);
@@ -3411,7 +3669,11 @@ export function createSidecarRouter(
   function handleClose(ws: WsHandle): void {
     closedSockets.add(ws);
     for (const [sidecarId, claimant] of sidecarClaims) {
-      if (claimant === ws) sidecarClaims.delete(sidecarId);
+      if (claimant === ws) {
+        sidecarClaims.delete(sidecarId);
+        // A failed takeover can leave the previous connection usable.
+        notifySidecarInventory(sidecarId);
+      }
     }
 
     // Cancel the liveness timer for this connection.
@@ -3618,9 +3880,27 @@ export function createSidecarRouter(
     frame: AgentUndeployAckFrame,
   ): void {
     const req = pendingUndeploys.get(frame.agentAddress);
-    if (req?.ws !== ws || req.meta !== frame.requestId) {
+    if (
+      req?.ws !== ws ||
+      req.meta.requestId !== frame.requestId ||
+      req.meta.generation !== frame.generation
+    ) {
       logger.debug`agent.undeploy.ack for ${frame.agentAddress} generation ${String(frame.generation)} answers an undeploy no request waits on`;
       return;
+    }
+    const target = req.meta.target;
+    if (target !== undefined) {
+      const current = allocatedConnections.get(target.allocationId);
+      if (
+        allocationFences.get(target.allocationId)?.generation !==
+          target.generation ||
+        current?.ws !== ws ||
+        current.identity.kind !== "cleanup" ||
+        current.identity.generation !== target.generation
+      ) {
+        pendingUndeploys.reject(frame.agentAddress, "Cleanup identity changed");
+        return;
+      }
     }
     pendingUndeploys.resolve(frame.agentAddress);
   }
@@ -3630,7 +3910,11 @@ export function createSidecarRouter(
     frame: AgentUndeployErrorFrame,
   ): void {
     const req = pendingUndeploys.get(frame.agentAddress);
-    if (req?.ws === ws && req.meta === frame.requestId) {
+    if (
+      req?.ws === ws &&
+      req.meta.requestId === frame.requestId &&
+      req.meta.generation === frame.generation
+    ) {
       pendingUndeploys.reject(frame.agentAddress, frame.error);
       return;
     }
@@ -3884,14 +4168,18 @@ export function createSidecarRouter(
    * drains use the deployment address), so the binding is transient: no
    * `hello` reports it and no reconnect restores it.
    */
-  function fenceAllocation(allocationId: string, generation: number): void {
+  function fenceAllocation(
+    allocationId: string,
+    generation: number,
+    { cleanup }: { cleanup?: { sidecarId: string } } = {},
+  ): void {
     const existing = allocationFences.get(allocationId);
-    if (existing !== undefined && generation < existing) {
+    if (existing !== undefined && generation < existing.generation) {
       throw new Error(
-        `Cannot move allocation ${allocationId} fence backward from ${String(existing)} to ${String(generation)}`,
+        `Cannot move allocation ${allocationId} fence backward from ${String(existing.generation)} to ${String(generation)}`,
       );
     }
-    allocationFences.set(allocationId, generation);
+    allocationFences.set(allocationId, { generation, cleanup });
     const stopped = stoppedAllocations.get(allocationId);
     if (stopped !== undefined && stopped < generation)
       stoppedAllocations.delete(allocationId);
@@ -3915,11 +4203,31 @@ export function createSidecarRouter(
 
     const current = allocatedConnections.get(allocationId);
     if (current !== undefined && current.identity.generation !== generation) {
+      const cleanupCurrent = cleanup?.sidecarId === current.identity.sidecarId;
+      const conn = connections.get(current.ws);
       detachBinding(
         current.ws,
         allocationId,
         `Generation ${String(generation)} superseded it`,
+        {
+          keepOpen: cleanupCurrent && current.identity.kind !== "probe",
+          undeploy: !cleanupCurrent,
+        },
       );
+      if (
+        cleanupCurrent &&
+        conn !== undefined &&
+        current.identity.kind !== "probe"
+      ) {
+        // Keep the control binding while the reconciler releases the provider
+        // hold. It carries no workflow routes, and cleanup still revalidates
+        // the durable generation before sending. Retirement can now close
+        // this connection even if provider failure prevents a later sync.
+        attachBindings(current.ws, conn, [
+          ...conn.bindings.values(),
+          { ...current.identity, kind: "cleanup", generation },
+        ]);
+      }
     }
 
     const waiters = allocationWaiters.get(allocationId);
@@ -3938,7 +4246,11 @@ export function createSidecarRouter(
   }
 
   function retireAllocation(target: AllocatedSidecarTarget): void {
-    if (allocationFences.get(target.allocationId) !== target.generation) return;
+    if (
+      allocationFences.get(target.allocationId)?.generation !==
+      target.generation
+    )
+      return;
 
     detachAllocation(target);
     allocationFences.delete(target.allocationId);
@@ -3973,13 +4285,21 @@ export function createSidecarRouter(
 
   async function getProvisionedConnection(
     target: AllocatedSidecarTarget,
-    use: "readiness" | "routing",
+    use:
+      | "readiness"
+      | "routing"
+      | "cleanup"
+      | "retention"
+      | "retention-transition",
   ): Promise<{
     ws: WsHandle;
     conn: SidecarConnection;
     binding: SidecarAuthIdentity;
   }> {
-    if (allocationFences.get(target.allocationId) !== target.generation) {
+    if (
+      allocationFences.get(target.allocationId)?.generation !==
+      target.generation
+    ) {
       throw new Error(
         `Allocation ${target.allocationId} generation ${String(target.generation)} is not current`,
       );
@@ -3993,6 +4313,14 @@ export function createSidecarRouter(
         `Allocated sidecar is not connected for allocation ${target.allocationId} generation ${String(target.generation)}`,
       );
     }
+    if (
+      (current.identity.kind === "cleanup" && use !== "cleanup") ||
+      (current.identity.kind !== "cleanup" && use === "cleanup")
+    ) {
+      throw new Error(
+        `Allocation ${target.allocationId} does not permit ${use}`,
+      );
+    }
     let identityCurrent: boolean;
     try {
       identityCurrent = await validateSidecarIdentity(current.identity, use);
@@ -4004,12 +4332,37 @@ export function createSidecarRouter(
       );
     }
     if (!identityCurrent) {
-      if (allocatedConnections.get(target.allocationId) === current) {
-        detachBinding(
-          current.ws,
-          target.allocationId,
-          "Its identity is no longer current",
-        );
+      if (
+        use !== "retention-transition" &&
+        use !== "retention" &&
+        allocatedConnections.get(target.allocationId) === current
+      ) {
+        // The database may have committed release before its caller published
+        // the fence. Do not let an old acknowledgement undeploy that copy.
+        let bindings: readonly SidecarAuthIdentity[];
+        try {
+          bindings = await resolveSidecarBindings(current.identity.sidecarId);
+        } catch (cause) {
+          throw new SidecarIdentityValidationError(
+            target.allocationId,
+            target.generation,
+            cause,
+          );
+        }
+        if (allocatedConnections.get(target.allocationId) === current) {
+          fenceCleanupBindings(
+            bindings.filter(
+              (binding) => binding.allocationId === target.allocationId,
+            ),
+          );
+          if (allocatedConnections.get(target.allocationId) === current)
+            detachBinding(
+              current.ws,
+              target.allocationId,
+              "Its identity is no longer current",
+              { undeploy: true },
+            );
+        }
       }
       throw new Error(
         `Allocated sidecar identity is no longer current for allocation ${target.allocationId}`,
@@ -4036,7 +4389,7 @@ export function createSidecarRouter(
 
   async function getAllocatedConnection(
     target: AllocatedSidecarTarget,
-    use: "readiness" | "routing",
+    use: "readiness" | "routing" | "retention" | "retention-transition",
   ): Promise<{
     ws: WsHandle;
     conn: SidecarConnection;
@@ -4069,6 +4422,123 @@ export function createSidecarRouter(
   function holdsAllocatedBinding(target: AllocatedSidecarTarget): boolean {
     const held = allocatedConnections.get(target.allocationId)?.identity;
     return held?.kind === "allocated" && held.generation === target.generation;
+  }
+
+  function getAllocationRetention(
+    target: AllocatedSidecarTarget,
+  ): DeploymentRetention | undefined {
+    const current = allocatedConnections.get(target.allocationId);
+    if (
+      current?.identity.kind !== "allocated" ||
+      current.identity.generation !== target.generation ||
+      !isFencedAsCurrent(current.identity) ||
+      connections.get(current.ws)?.bindings.get(target.allocationId) !==
+        current.identity
+    )
+      return undefined;
+    const retained = connectionRetention
+      .get(current.ws)
+      ?.get(current.identity.workflowRunAddress);
+    return retained?.generation === target.generation
+      ? retained.retention
+      : undefined;
+  }
+
+  function sidecarInventoryConnection(sidecarId: string) {
+    const ws = sidecarSockets.get(sidecarId);
+    const conn = ws === undefined ? undefined : connections.get(ws);
+    if (
+      ws === undefined ||
+      conn === undefined ||
+      closedSockets.has(ws) ||
+      !welcomedSockets.has(ws) ||
+      sidecarClaims.has(sidecarId)
+    )
+      return undefined;
+    return { ws, conn };
+  }
+
+  function notifySidecarInventory(sidecarId: string): void {
+    if (sidecarInventoryConnection(sidecarId) === undefined) return;
+    for (const ready of [...(inventoryWaiters.get(sidecarId) ?? [])]) ready();
+  }
+
+  async function waitForSidecarInventory(
+    sidecarId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    signal.throwIfAborted();
+    if (sidecarInventoryConnection(sidecarId) !== undefined) return;
+    await new Promise<void>((resolve, reject) => {
+      const waiters = inventoryWaiters.get(sidecarId) ?? new Set<() => void>();
+      const cleanUp = () => {
+        signal.removeEventListener("abort", abort);
+        waiters.delete(ready);
+        if (waiters.size === 0) inventoryWaiters.delete(sidecarId);
+      };
+      const ready = () => {
+        cleanUp();
+        resolve();
+      };
+      const abort = () => {
+        cleanUp();
+        reject(signal.reason);
+      };
+      waiters.add(ready);
+      inventoryWaiters.set(sidecarId, waiters);
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+
+  function getSidecarInventory(
+    sidecarId: string,
+  ): SidecarInventory | undefined {
+    const current = sidecarInventoryConnection(sidecarId);
+    if (current === undefined) return undefined;
+    const { ws, conn } = current;
+    const retained = connectionRetention.get(ws);
+    const retainedIncarnations = [...conn.bindings.values()].flatMap(
+      (binding) => {
+        if (
+          binding.kind === "probe" ||
+          !isFencedAsCurrent(binding) ||
+          allocatedConnections.get(binding.allocationId)?.ws !== ws
+        )
+          return [];
+        const copy = retained?.get(binding.workflowRunAddress);
+        if (
+          copy?.retention !== "kept" ||
+          (binding.kind === "cleanup"
+            ? copy.generation > binding.generation
+            : copy.generation !== binding.generation)
+        )
+          return [];
+        return [
+          { allocationId: binding.allocationId, generation: copy.generation },
+        ];
+      },
+    );
+    return { capacity: conn.capacity, retainedIncarnations };
+  }
+
+  function getRetentionCandidates() {
+    const candidates: (AllocatedSidecarTarget & { sidecarId: string })[] = [];
+    for (const [allocationId, current] of allocatedConnections) {
+      if (
+        current.identity.kind !== "allocated" ||
+        !isFencedAsCurrent(current.identity) ||
+        connections.get(current.ws)?.bindings.get(allocationId) !==
+          current.identity
+      )
+        continue;
+      const target = { allocationId, generation: current.identity.generation };
+      if (
+        getAllocationRetention(target) !== "kept" ||
+        stoppedAllocations.get(allocationId) !== target.generation
+      )
+        candidates.push({ ...target, sidecarId: current.identity.sidecarId });
+    }
+    return candidates;
   }
 
   async function isAllocatedWorkflowActive(
@@ -4132,7 +4602,10 @@ export function createSidecarRouter(
     }
     signal?.throwIfAborted();
     if (ready) return;
-    if (allocationFences.get(target.allocationId) !== target.generation) {
+    if (
+      allocationFences.get(target.allocationId)?.generation !==
+      target.generation
+    ) {
       throw new Error(
         `Allocation ${target.allocationId} generation ${String(target.generation)} is not current`,
       );
@@ -4605,7 +5078,9 @@ export function createSidecarRouter(
   function deployAnsweredBy(
     ws: WsHandle,
     frame: AgentDeployAckFrame | AgentDeployErrorFrame,
-  ): PendingEntry<string, string, PendingDeploy> | undefined {
+  ):
+    | PendingEntry<string, string, PendingDeploy, DeploymentRejectedError>
+    | undefined {
     const req = pendingDeploys.get(frame.agentAddress);
     return req?.ws === ws &&
       req.meta.requestId === frame.requestId &&
@@ -4672,10 +5147,15 @@ export function createSidecarRouter(
   ): void {
     connections.get(ws)?.unansweredDeploys.delete(frame.requestId);
     if (deployAnsweredBy(ws, frame) === undefined) {
-      logger.warn`Ignoring agent.deploy.error ${frame.requestId} for ${frame.agentAddress} generation ${String(frame.generation)}: it answers no deploy in flight on this connection: ${frame.error}`;
+      logger.warn`Ignoring agent.deploy.error ${frame.requestId} for ${frame.agentAddress} generation ${String(frame.generation)}: it answers no deploy in flight on this connection: ${frame.error.code}: ${frame.error.message}`;
       return;
     }
-    pendingDeploys.reject(frame.agentAddress, frame.error);
+    pendingDeploys.reject(
+      frame.agentAddress,
+      frame.error.code === "capacity_full"
+        ? new DeploymentRejectedError(frame.error.code, frame.error.message)
+        : frame.error.message,
+    );
   }
 
   function sendAgentDeployOnConnection(
@@ -4705,8 +5185,8 @@ export function createSidecarRouter(
 
     const requestId = nextRequestId();
     const response = Promise.withResolvers<{ publicKey: string }>();
-    // Timeout and frame-error rejections share this closure, so the routing
-    // rollback and the `frameSent: true` tag live in one place.
+    // Every failure removes the provisional route. Only an explicit rejection
+    // proves the sidecar did not start; other replies and timeouts stay uncertain.
     pendingDeploys.register(
       agentAddress,
       ws,
@@ -4716,14 +5196,16 @@ export function createSidecarRouter(
         resolve(publicKey) {
           response.resolve({ publicKey });
         },
-        reject(error: string) {
+        reject(error) {
           if (addressIndex.get(agentAddress) === ws) {
             conn.workflowAddresses.delete(agentAddress);
             addressIndex.delete(agentAddress);
           }
           // The deployment's owner settles any pre-ack sender mail parked on
           // this address once it knows the outcome.
-          response.reject(deployFrameFailure(error, true));
+          response.reject(
+            typeof error === "string" ? deployFrameFailure(error, true) : error,
+          );
         },
       },
       { requestId, generation: target.generation },
@@ -4873,8 +5355,8 @@ export function createSidecarRouter(
           resolve(_publicKey) {
             resolve();
           },
-          reject(error: string) {
-            reject(new Error(error));
+          reject(error) {
+            reject(typeof error === "string" ? new Error(error) : error);
           },
         },
         { requestId, generation },
@@ -4976,7 +5458,9 @@ export function createSidecarRouter(
     ) {
       return;
     }
-    detachBinding(current.ws, target.allocationId, "It was released");
+    detachBinding(current.ws, target.allocationId, "It was released", {
+      undeploy: true,
+    });
   }
 
   async function handleWorkflowControlAck(
@@ -4990,7 +5474,10 @@ export function createSidecarRouter(
       entry.meta.fail(error);
     };
     try {
-      const current = await getAllocatedConnection(entry.meta, "routing");
+      const current = await getAllocatedConnection(
+        entry.meta,
+        entry.meta.terminal ? "retention-transition" : "routing",
+      );
       if (current.ws !== ws) return;
     } catch (cause) {
       // A failed lookup leaves the stop unknown, not refused. The caller
@@ -5005,6 +5492,7 @@ export function createSidecarRouter(
       );
       return;
     }
+    if (pendingWorkflowControls.get(frame.requestId) !== entry) return;
     if (frame.error !== undefined)
       fail(
         frame.error === WORKFLOW_CONTROL_INITIALIZING_ERROR
@@ -5012,26 +5500,90 @@ export function createSidecarRouter(
           : new WorkflowControlRejectedError(frame.error),
       );
     else {
-      if (entry.meta.action === "stop") {
-        // Confirming the stop fences the worker's packs, so it must wait until
-        // the Hub holds the history the worker reported. A generation already
-        // confirmed is fenced, so the history it holds is final.
-        const unreceived =
-          stoppedAllocations.get(entry.meta.allocationId) ===
+      if (entry.meta.action === "retain") {
+        if (frame.retention === undefined) {
+          fail(new WorkflowControlRejectedError("Retention was not confirmed"));
+          return;
+        }
+        // A durable kept decision frees active capacity independently of the
+        // earlier history receives that may still be settling on the Hub.
+        const retained = connectionRetention.get(ws) ?? new Map();
+        retained.set(entry.meta.agentAddress, {
+          generation: entry.meta.generation,
+          retention: frame.retention,
+        });
+        connectionRetention.set(ws, retained);
+        removeRoute(ws, entry.meta.agentAddress);
+      }
+      if (entry.meta.action === "stop" || entry.meta.action === "retain") {
+        // A live stop waits for the worker's tips. Terminal controls follow the
+        // admission cutoff instead: later history cannot change an ended run.
+        // Both wait for earlier accepted writes before fencing further packs.
+        let unreceived: string | null = null;
+        let unreceivedCause: unknown;
+        if (
+          stoppedAllocations.get(entry.meta.allocationId) !==
           entry.meta.generation
-            ? null
-            : await findUnreceivedWorkflowHistory(
-                entry.meta.agentAddress,
-                frame.refTips,
-              );
+        ) {
+          if (entry.meta.terminal) {
+            unreceived = "the Hub has not finalized the terminal run's history";
+            if (lookups.isWorkflowRunHistoryFinal !== undefined) {
+              try {
+                if (
+                  await lookups.isWorkflowRunHistoryFinal({
+                    kind: "allocated",
+                    allocationId: entry.meta.allocationId,
+                    anchorRunId: entry.meta.runId,
+                    agentAddress: entry.meta.agentAddress,
+                    generation: entry.meta.generation,
+                  })
+                )
+                  unreceived = null;
+              } catch (cause) {
+                unreceived = `the Hub cannot confirm final history: ${cause instanceof Error ? cause.message : String(cause)}`;
+                unreceivedCause = cause;
+              }
+            }
+          } else {
+            unreceived = await findUnreceivedWorkflowHistory(
+              entry.meta.agentAddress,
+              frame.refTips,
+            );
+          }
+        }
+        // History lookup can outlive the request, connection, or release fence.
+        if (pendingWorkflowControls.get(frame.requestId) !== entry) return;
+        const current = allocatedConnections.get(entry.meta.allocationId);
+        if (
+          current?.ws !== ws ||
+          current.identity.generation !== entry.meta.generation ||
+          !isFencedAsCurrent(current.identity)
+        ) {
+          fail(
+            new WorkflowControlUnreachableError(
+              "Workflow control allocation changed",
+            ),
+          );
+          return;
+        }
         if (unreceived !== null) {
-          fail(new WorkflowControlHistoryPendingError(unreceived));
+          fail(
+            new WorkflowControlHistoryPendingError(
+              unreceived,
+              unreceivedCause === undefined
+                ? undefined
+                : { cause: unreceivedCause },
+            ),
+          );
           return;
         }
         stoppedAllocations.set(entry.meta.allocationId, entry.meta.generation);
         removeRoute(ws, entry.meta.agentAddress);
       }
-      pendingWorkflowControls.resolve(frame.requestId, undefined);
+      pendingWorkflowControls.resolve(
+        frame.requestId,
+        entry.meta.action === "retain" ? frame.retention : undefined,
+      );
     }
   }
 
@@ -5059,14 +5611,25 @@ export function createSidecarRouter(
   // A deployment stopped though the Hub did not stop it. A current
   // generation's stays unrouted, as a stopped one a hello reports does, and
   // the reconciler fails it once the Hub holds the history the stopped copy
-  // reported, or once it stops waiting for it. Any other stopped incarnation
-  // is not the Hub's to keep, so it is undeployed.
+  // reported, or once it stops waiting for it. Cleanup bindings leave removal
+  // to the reconciler; any other stopped incarnation is undeployed.
   function handleDeploymentStopped(
     ws: WsHandle,
     frame: DeploymentStoppedFrame,
   ): void {
     const conn = connections.get(ws);
     if (conn === undefined) return;
+    // Cleanup bindings retain access for the reconciler's acknowledged removal.
+    if (
+      [...conn.bindings.values()].some(
+        (binding) =>
+          binding.kind === "cleanup" &&
+          binding.workflowRunAddress === frame.agentAddress &&
+          binding.generation >= frame.generation &&
+          isFencedAsCurrent(binding),
+      )
+    )
+      return;
     const binding = deploymentBinding(conn, frame.agentAddress);
     if (
       binding?.generation !== frame.generation ||
@@ -5113,9 +5676,66 @@ export function createSidecarRouter(
 
   async function sendWorkflowControl(
     target: AllocatedSidecarTarget,
-    command: Omit<WorkflowControlFrame, "type" | "requestId" | "generation">,
+    command: WorkflowControlCommand,
     timeoutMs: number,
   ): Promise<void> {
+    await requestWorkflowControl(target, command, timeoutMs);
+  }
+
+  async function retainAllocation(
+    target: AllocatedSidecarTarget,
+    timeoutMs: number,
+  ): Promise<DeploymentRetention> {
+    const connection = await getAllocatedConnection(target, "retention");
+    return retainOnConnection(connection, target, timeoutMs);
+  }
+
+  async function retainOnConnection(
+    connection: Awaited<ReturnType<typeof getAllocatedConnection>>,
+    target: AllocatedSidecarTarget,
+    timeoutMs: number,
+  ): Promise<DeploymentRetention> {
+    const { ws, binding } = connection;
+    const confirmed = getAllocationRetention(target);
+    if (
+      confirmed !== undefined &&
+      stoppedAllocations.get(target.allocationId) === target.generation
+    )
+      return confirmed;
+    const held = retainingAllocations.get(target.allocationId);
+    if (held?.ws === ws && held.generation === target.generation)
+      return held.result;
+    const result = sendWorkflowControlOnConnection(
+      connection,
+      target,
+      {
+        runId: binding.anchorRunId,
+        agentAddress: binding.workflowRunAddress,
+        action: "retain",
+        reason: "The deployment ended; retain its stopped copy",
+      },
+      timeoutMs,
+      { terminal: true },
+    ).then((retention) => {
+      if (retention === undefined)
+        throw new WorkflowControlRejectedError("Retention was not confirmed");
+      return retention;
+    });
+    const request = { ws, generation: target.generation, result };
+    retainingAllocations.set(target.allocationId, request);
+    try {
+      return await result;
+    } finally {
+      if (retainingAllocations.get(target.allocationId) === request)
+        retainingAllocations.delete(target.allocationId);
+    }
+  }
+
+  async function requestWorkflowControl(
+    target: AllocatedSidecarTarget,
+    command: WorkflowControlCommand,
+    timeoutMs: number,
+  ): Promise<DeploymentRetention | undefined> {
     let connection: Awaited<ReturnType<typeof getAllocatedConnection>>;
     try {
       connection = await getAllocatedConnection(target, "routing");
@@ -5126,6 +5746,22 @@ export function createSidecarRouter(
         cause,
       );
     }
+    return sendWorkflowControlOnConnection(
+      connection,
+      target,
+      command,
+      timeoutMs,
+      { terminal: false },
+    );
+  }
+
+  function sendWorkflowControlOnConnection(
+    connection: Awaited<ReturnType<typeof getAllocatedConnection>>,
+    target: AllocatedSidecarTarget,
+    command: Omit<WorkflowControlFrame, "type" | "requestId" | "generation">,
+    timeoutMs: number,
+    { terminal }: { terminal: boolean },
+  ): Promise<DeploymentRetention | undefined> {
     const { ws, conn, binding } = connection;
     if (
       command.agentAddress !== binding.workflowRunAddress ||
@@ -5138,7 +5774,7 @@ export function createSidecarRouter(
     const requestId = nextRequestId();
     const timeoutMessage = `Workflow control ${requestId} timed out`;
     const unconfirmedMessage = `Workflow control ${requestId} was acknowledged but not processed in time`;
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<DeploymentRetention | undefined>((resolve, reject) => {
       let cancelProcessing: (() => void) | undefined;
       const settle = () => {
         cancelProcessing?.();
@@ -5149,9 +5785,9 @@ export function createSidecarRouter(
         {
           timeoutMs,
           timeoutMessage,
-          resolve: () => {
+          resolve: (retention) => {
             settle();
-            resolve();
+            resolve(retention);
           },
           // The tracker reports timeouts, disconnect sweeps, send failures,
           // and the processing limit as strings. Only a timeout shows the live
@@ -5174,7 +5810,9 @@ export function createSidecarRouter(
         {
           ...target,
           agentAddress: command.agentAddress,
+          runId: command.runId,
           action: command.action,
+          terminal,
           fail: (error) => {
             settle();
             reject(error);
@@ -5216,37 +5854,139 @@ export function createSidecarRouter(
       );
     }
     const { ws, conn, binding } = routed;
-    const requestId = nextRequestId();
+    return requestUndeploy({
+      ws,
+      conn,
+      agentAddress,
+      generation: binding.generation,
+      reason,
+      timeoutMs: requestTimeoutMs,
+    });
+  }
 
+  function getCleanupConnection(
+    target: AllocatedSidecarTarget,
+  ): object | undefined {
+    const current = allocatedConnections.get(target.allocationId);
+    return allocationFences.get(target.allocationId)?.generation ===
+      target.generation &&
+      current?.identity.kind === "cleanup" &&
+      current.identity.generation === target.generation
+      ? current.ws
+      : undefined;
+  }
+
+  async function undeployAllocation(
+    target: AllocatedSidecarTarget,
+    timeoutMs: number,
+    signal: AbortSignal,
+    expectedConnection: object,
+    onSent: () => void,
+  ): Promise<void> {
+    signal.throwIfAborted();
+    const { ws, conn, binding } = await getProvisionedConnection(
+      target,
+      "cleanup",
+    );
+    if (binding.kind !== "cleanup") {
+      throw new Error(
+        `Allocation ${target.allocationId} is not being cleaned up`,
+      );
+    }
+    if (ws !== expectedConnection) {
+      throw new Error("Cleanup connection changed before the request was sent");
+    }
+    await requestUndeploy({
+      ws,
+      conn,
+      agentAddress: binding.workflowRunAddress,
+      generation: binding.generation,
+      reason: "The allocation is being released",
+      timeoutMs,
+      target,
+      signal,
+      onSent,
+    });
+  }
+
+  function requestUndeploy(args: {
+    ws: WsHandle;
+    conn: SidecarConnection;
+    agentAddress: string;
+    generation: number;
+    reason: string;
+    timeoutMs: number;
+    signal?: AbortSignal;
+    target?: AllocatedSidecarTarget;
+    onSent?: () => void;
+  }): Promise<void> {
+    const {
+      ws,
+      conn,
+      agentAddress,
+      generation,
+      reason,
+      timeoutMs,
+      signal,
+      target,
+    } = args;
+    signal?.throwIfAborted();
+    if (pendingUndeploys.has(agentAddress)) {
+      return Promise.reject(
+        new Error(`Undeploy of ${agentAddress} is already pending`),
+      );
+    }
+    const requestId = nextRequestId();
     return new Promise<void>((resolve, reject) => {
-      // Timeout, ack, and error rejection share one closure so the routing
-      // teardown runs exactly once no matter how the round-trip settles.
+      const finish = () => {
+        signal?.removeEventListener("abort", onAbort);
+        if (target === undefined) removeRoute(ws, agentAddress);
+      };
+      const onAbort = () => {
+        if (pendingUndeploys.get(agentAddress)?.meta.requestId !== requestId)
+          return;
+        pendingUndeploys.delete(agentAddress);
+        finish();
+        reject(
+          signal?.reason instanceof Error
+            ? signal.reason
+            : new Error("Cleanup aborted"),
+        );
+      };
       pendingUndeploys.register(
         agentAddress,
         ws,
         {
-          timeoutMs: requestTimeoutMs,
-          timeoutMessage: `Undeploy of "${agentAddress}" timed out after ${requestTimeoutMs}ms`,
+          timeoutMs,
+          timeoutMessage: `Undeploy of "${agentAddress}" timed out after ${timeoutMs}ms`,
           resolve() {
-            removeRoute(ws, agentAddress);
+            finish();
             resolve();
           },
           reject(error: string) {
-            removeRoute(ws, agentAddress);
+            finish();
             reject(new Error(error));
           },
         },
-        requestId,
+        { requestId, generation, ...(target !== undefined ? { target } : {}) },
       );
-
-      conn.send({
-        type: "agent.undeploy",
-        requestId,
-        agentAddress,
-        generation: binding.generation,
-        reason,
-      });
-      noteUndeploying(conn, agentAddress, requestId);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        conn.send({
+          type: "agent.undeploy",
+          requestId,
+          agentAddress,
+          generation,
+          reason,
+        });
+        args.onSent?.();
+        noteUndeploying(conn, agentAddress, requestId);
+      } catch (error) {
+        pendingUndeploys.reject(
+          agentAddress,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     });
   }
 
@@ -5432,7 +6172,14 @@ export function createSidecarRouter(
     detachAllocation,
     syncSidecar,
     sendAgentUndeploy,
+    undeployAllocation,
+    getCleanupConnection,
     sendWorkflowControl,
+    retainAllocation,
+    getAllocationRetention,
+    getRetentionCandidates,
+    getSidecarInventory,
+    waitForSidecarInventory,
     sendSourcesUpdate,
     sendCredentialsUpdate,
     sendPackToAllocation,

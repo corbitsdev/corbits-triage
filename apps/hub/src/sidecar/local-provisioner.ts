@@ -17,6 +17,7 @@ import type { AdapterManifest } from "@intx/types";
 import type { LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
+const DATA_DIR_NAME = /^(.+)-[A-Za-z0-9]{6}$/;
 
 interface LocalSidecarProcess {
   readonly pid: number;
@@ -290,15 +291,17 @@ export function createLocalProcessSidecarProvisioner({
     }
   }
 
+  // Each allocation runs in its own process, and a newer generation or identity
+  // stopped and removed the older one first, so every destroy confirms cleanup.
   async function destroyAllocation(request: DestroySidecarRequest): Promise<DestroySidecarResult> {
     const existing = allocations.get(request.allocationId);
     if (existing !== undefined && existing.generation > request.generation) {
-      return { kind: "destroyed" as const };
+      return { kind: "destroyed", cleanup: "confirmed" };
     }
     // A delayed destroy for the superseded identity must not terminate the
     // replacement that already owns this generation.
     if (existing !== undefined && existing.sidecarId !== request.sidecarId) {
-      return { kind: "destroyed" as const };
+      return { kind: "destroyed", cleanup: "confirmed" };
     }
     if (existing?.kind === "live") {
       await stopAndRemove(request.allocationId, existing);
@@ -313,7 +316,7 @@ export function createLocalProcessSidecarProvisioner({
       generation: request.generation,
       sidecarId: request.sidecarId,
     });
-    return { kind: "destroyed" as const };
+    return { kind: "destroyed", cleanup: "confirmed" };
   }
 
   // Ensure or destroy may reach an allocation before restore does; their
@@ -341,15 +344,37 @@ export function createLocalProcessSidecarProvisioner({
     logAllocation("local_sidecar_respawned", manifest);
   }
 
+  async function removeOrphan(
+    { allocationId, dataDir }: { readonly allocationId: string; readonly dataDir: string },
+  ): Promise<void> {
+    const state = allocations.get(allocationId);
+    if (state?.kind === "live" && state.dataDir === dataDir) return;
+    if ((await manifests.readDataDir(allocationId)) === dataDir) return;
+    await fs.rm(dataDir, { recursive: true, force: true });
+    log({ level: "info", msg: "local_sidecar_orphan_removed", allocationId, dataDir });
+  }
+
+  // A hub that stopped between creating a data dir and writing its manifest
+  // leaves a dir no manifest names, which destroy would never remove.
+  async function removeOrphans(): Promise<void> {
+    await fs.mkdir(dataRoot, { recursive: true });
+    for (const entry of await fs.readdir(dataRoot, { withFileTypes: true })) {
+      const allocationId = entry.isDirectory() ? DATA_DIR_NAME.exec(entry.name)?.[1] : undefined;
+      if (allocationId === undefined) continue;
+      await serialize({ allocationId, dataDir: path.join(dataRoot, entry.name) }, removeOrphan);
+    }
+  }
+
   async function restore(isLive: IsLocalSidecarLive): Promise<void> {
     for (const manifest of await manifests.readAll()) {
       await serialize({ allocationId: manifest.allocationId, manifest, isLive }, restoreAllocation);
     }
+    await removeOrphans();
   }
 
   const provisioner: SidecarProvisioner = {
     id: "local-process",
-    apiVersion: 1,
+    apiVersion: 2,
     bindingFingerprint: "local-process:v1",
     capabilities: [],
     // Keep cleanup behind any late ensure for the same allocation, including

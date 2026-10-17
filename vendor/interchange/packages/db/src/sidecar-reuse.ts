@@ -1,6 +1,6 @@
-import { and, count, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, or } from "drizzle-orm";
 
-import { MAX_SIDECAR_INCARNATIONS } from "@intx/types/sidecar";
+import type { SidecarCapacity } from "@intx/types/sidecar";
 
 import type { DBExecutor } from "./client";
 import { sidecar, sidecarAllocation, workflowProbe } from "./schema";
@@ -16,10 +16,36 @@ export class SidecarReuseRejectedError extends Error {
   }
 }
 
+/** Placement must wait for a complete inventory from the current connection. */
+export class SidecarInventoryUnavailableError extends Error {
+  constructor(readonly sidecarId: string) {
+    super(`Sidecar ${sidecarId} has no current inventory for placement`);
+    this.name = "SidecarInventoryUnavailableError";
+  }
+}
+
 export type SidecarProvisionerBinding = {
   readonly provisionerId: string;
-  readonly provisionerApiVersion: 1;
+  readonly provisionerApiVersion: 2;
   readonly provisionerBindingFingerprint: string;
+};
+
+/** A sidecar's durable confirmation that this incarnation cannot resume. */
+export type RetainedSidecarIncarnation = {
+  readonly allocationId: string;
+  readonly generation: number;
+};
+
+export type SidecarInventory = {
+  readonly capacity: SidecarCapacity;
+  readonly retainedIncarnations: readonly RetainedSidecarIncarnation[];
+};
+
+export type SidecarAllocationStoreOptions = {
+  /** Missing or undefined inventory blocks placement. */
+  readonly getSidecarInventory?: (
+    sidecarId: string,
+  ) => SidecarInventory | undefined;
 };
 
 /** Lock sidecars in ID order before locking the probe or allocation that moves. */
@@ -40,8 +66,8 @@ export async function lockSidecars(
  * Asserts that a provisioner may place a probe or allocation on `sidecarId`.
  * The sidecar must still host other work of the same provisioner binding, so
  * a provisioner cannot claim another backend's sidecar. Work that is being
- * replaced or released counts: the provisioner keeps its hold on the sidecar
- * until `destroy` returns, so from its side the sidecar is still in use.
+ * replaced or released counts while its hosting binding remains. Releasing
+ * the provider's hold alone does not settle an unconfirmed deployment removal.
  * The sidecar must also have booted with the adapter manifest the placing
  * work's ensure carried, which the Hub knows only from a hosting row whose
  * digest equals `adapterManifestDigest`; a sidecar reads its manifest only at
@@ -118,46 +144,60 @@ export async function assertSidecarReusable(
 }
 
 /**
- * Asserts that `sidecarId` has room for one more deployment. A sidecar holds
- * at most `MAX_SIDECAR_INCARNATIONS`, the most its `hello` can report, and it
- * still holds the deployments of work being released. Locks the
- * sidecar row so concurrent placements on it serialize.
+ * Locks the sidecar so placements serialize, counting every reservation
+ * except cleanup confirmed removed or an incarnation durably retained.
+ * Unknown inventory blocks placement until the sidecar completes its hello.
  */
 export async function assertSidecarHasRoom(
   tx: DBExecutor,
   args: {
     readonly sidecarId: string;
     readonly placing: { readonly allocationId: string };
-  },
+  } & SidecarAllocationStoreOptions,
 ): Promise<void> {
   const [locked] = await lockSidecars(tx, [args.sidecarId]);
   if (locked === undefined) {
     throw new SidecarReuseRejectedError(args.sidecarId, "it does not exist");
   }
-  const [row] = await tx
-    .select({ hosted: count() })
+  const reservations = await tx
+    .select({
+      id: sidecarAllocation.id,
+      ensureAcceptedGeneration: sidecarAllocation.ensureAcceptedGeneration,
+    })
     .from(sidecarAllocation)
     .where(
       and(
         eq(sidecarAllocation.sidecarId, args.sidecarId),
         ne(sidecarAllocation.id, args.placing.allocationId),
-        inArray(sidecarAllocation.status, [
-          "provisioning",
-          "allocated",
-          "replacing",
-          "releasing",
-        ]),
+        or(
+          inArray(sidecarAllocation.status, ["provisioning", "allocated"]),
+          and(
+            inArray(sidecarAllocation.status, [
+              "replacing",
+              "releasing",
+              "destroy_failed",
+            ]),
+            eq(sidecarAllocation.deploymentCleanupConfirmed, false),
+          ),
+        ),
       ),
     );
-  if (row === undefined) {
-    throw new Error(
-      `counting the deployments on ${args.sidecarId} returned no row`,
-    );
-  }
-  if (row.hosted >= MAX_SIDECAR_INCARNATIONS) {
+  // Read after the database wait: the connection may have changed meanwhile.
+  const inventory = args.getSidecarInventory?.(args.sidecarId);
+  if (inventory === undefined)
+    throw new SidecarInventoryUnavailableError(args.sidecarId);
+  const active = reservations.filter(
+    (reservation) =>
+      !inventory.retainedIncarnations.some(
+        (incarnation) =>
+          incarnation.allocationId === reservation.id &&
+          incarnation.generation === reservation.ensureAcceptedGeneration,
+      ),
+  ).length;
+  if (active >= inventory.capacity.maxActiveDeployments) {
     throw new SidecarReuseRejectedError(
       args.sidecarId,
-      `it already hosts ${String(row.hosted)} deployments, as many as one sidecar can report`,
+      `it already hosts ${String(active)} deployments occupying all active slots`,
     );
   }
 }

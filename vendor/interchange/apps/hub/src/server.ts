@@ -459,7 +459,9 @@ export async function createHubServer({
       ? { operationTimeoutMs: sidecarOperationTimeoutMs }
       : {}),
   });
-  const sidecarAllocationStore = createSidecarAllocationStore(db);
+  const sidecarAllocationStore = createSidecarAllocationStore(db, {
+    getSidecarInventory: sidecarRouter.getSidecarInventory,
+  });
   const workflowRunReader = createWorkflowRunReader(agentRepoStore.repoStore);
   const launchSpecs = createWorkflowRunLaunchSpecStore(db);
   const classifyParkedRun = createParkedRunClassifier({
@@ -478,6 +480,7 @@ export async function createHubServer({
   });
   const workflowLifecycleService = createWorkflowLifecycleService({
     db,
+    retentionRouter: sidecarRouter,
     runReader: workflowRunReader,
     historyReceives: workflowHistoryReceives,
     sendControl: (target, command, timeoutMs) =>

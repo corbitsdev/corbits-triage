@@ -27,6 +27,8 @@ import {
   type ReconnectScheduler,
 } from "./hub-link";
 import {
+  DeploymentRejectedError,
+  DEFAULT_SIDECAR_CAPACITY,
   MAX_DEPLOYMENT_ERROR_LENGTH,
   SidecarFrame,
   type AgentDeployErrorFrame,
@@ -378,7 +380,7 @@ function startTestServer(): TestEnv {
 // every frame the sidecar sends. `send` delivers a frame to the sidecar that
 // connected last. `silence` stops answering that connection's pings, so the
 // sidecar drops it the way it drops a Hub it can no longer reach.
-function startWelcomingHub(): {
+function startWelcomingHub(onFrame?: (raw: string) => void): {
   server: ReturnType<typeof Bun.serve>;
   frames: string[];
   send(frame: object): void;
@@ -406,6 +408,7 @@ function startWelcomingHub(): {
         onMessage(evt, ws) {
           if (typeof evt.data !== "string") return;
           frames.push(evt.data);
+          onFrame?.(evt.data);
           const frame: { type: string } = JSON.parse(evt.data);
           if (frame.type === "hello") {
             ws.send(JSON.stringify({ type: "welcome", routed: [] }));
@@ -473,6 +476,145 @@ async function provisionDeploymentKey(
 }
 
 describe("sidecar↔hub integration", () => {
+  test("advertises configured capacity in hello", async () => {
+    const capacity = {
+      maxActiveDeployments: 512,
+      maxRetainedDeployments: 1024,
+    };
+    const hello =
+      Promise.withResolvers<Extract<SidecarFrame, { type: "hello" }>>();
+    const hub = startWelcomingHub((raw) => {
+      const frame = SidecarFrame.assert(JSON.parse(raw));
+      if (frame.type === "hello") hello.resolve(frame);
+    });
+    const client = createHubLink({
+      capacity,
+      hubURL: `ws://localhost:${hub.server.port}/ws`,
+      sidecarId: "capacity-advertisement",
+      token: "test-token",
+      transport: createInMemoryTransport(),
+      sessions: createMockSessionManager(),
+      ...withTestDeployBindings(),
+    });
+    try {
+      client.connect();
+      expect((await hello.promise).capacity).toEqual(capacity);
+    } finally {
+      client.close();
+      await hub.server.stop(true);
+    }
+  });
+
+  test.each([true, false])(
+    "preserves only a proven deployment rejection across the link: %s",
+    async (rejected) => {
+      const hello = Promise.withResolvers<undefined>();
+      const answered = Promise.withResolvers<SidecarFrame>();
+      const hub = startWelcomingHub((raw) => {
+        const frame = SidecarFrame.assert(JSON.parse(raw));
+        if (frame.type === "hello") hello.resolve(undefined);
+        if (frame.type === "agent.deploy.error") answered.resolve(frame);
+      });
+      const client = createHubLink({
+        capacity: DEFAULT_SIDECAR_CAPACITY,
+        hubURL: `ws://localhost:${hub.server.port}/ws`,
+        sidecarId: "deploy-rejection",
+        token: "test-token",
+        transport: createInMemoryTransport(),
+        sessions: createMockSessionManager(),
+        ...withTestDeployBindings(),
+        deployRouter: {
+          deploy: async () => {
+            if (rejected)
+              throw new DeploymentRejectedError(
+                "capacity_full",
+                "No active slot",
+              );
+            throw new Error("No active slot");
+          },
+        },
+      });
+      try {
+        client.connect();
+        await hello.promise;
+        hub.send({
+          type: "agent.deploy",
+          requestId: "deploy-capacity",
+          agentAddress: "run_capacity@example.test",
+          generation: 1,
+          agentId: "run_capacity",
+          config: TEST_CONFIG,
+          hubPublicKey: "a".repeat(64),
+        });
+        expect(await answered.promise).toEqual({
+          type: "agent.deploy.error",
+          requestId: "deploy-capacity",
+          agentAddress: "run_capacity@example.test",
+          generation: 1,
+          error: {
+            code: rejected ? "capacity_full" : "deployment_failed",
+            message: "No active slot",
+          },
+        });
+      } finally {
+        client.close();
+        await hub.server.stop(true);
+      }
+    },
+  );
+
+  test.each(["kept", "refused"] as const)(
+    "forwards a %s retention decision in its control acknowledgement",
+    async (retention) => {
+      const hello = Promise.withResolvers<undefined>();
+      const acknowledged = Promise.withResolvers<SidecarFrame>();
+      const hub = startWelcomingHub((raw) => {
+        const frame = SidecarFrame.assert(JSON.parse(raw));
+        if (frame.type === "hello") hello.resolve(undefined);
+        if (
+          frame.type === "workflow.control.ack" &&
+          frame.requestId === "retain-copy"
+        )
+          acknowledged.resolve(frame);
+      });
+      const bindings = withTestDeployBindings();
+      const client = createHubLink({
+        capacity: DEFAULT_SIDECAR_CAPACITY,
+        hubURL: `ws://localhost:${hub.server.port}/ws`,
+        sidecarId: "retention-ack",
+        token: "test-token",
+        transport: createInMemoryTransport(),
+        sessions: createMockSessionManager(),
+        ...bindings,
+        deployRouter: {
+          ...bindings.deployRouter,
+          control: async () => ({ retention }),
+        },
+      });
+      try {
+        client.connect();
+        await hello.promise;
+        hub.send({
+          type: "workflow.control",
+          requestId: "retain-copy",
+          action: "retain",
+          runId: "run_retained",
+          agentAddress: "run_retained@example.test",
+          generation: 1,
+          reason: "The workflow has ended",
+        });
+        expect(await acknowledged.promise).toEqual({
+          type: "workflow.control.ack",
+          requestId: "retain-copy",
+          retention,
+        });
+      } finally {
+        client.close();
+        await hub.server.stop(true);
+      }
+    },
+  );
+
   test("a cancellation finishing after reconnect does not reply on the new connection", async () => {
     const sockets: TestSocket[] = [];
     const stopped = Promise.withResolvers<undefined>();
@@ -517,6 +659,7 @@ describe("sidecar↔hub integration", () => {
     const reconnect = Promise.withResolvers<() => void>();
     const bindings = withTestDeployBindings();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: "ws://localhost/control-test",
       sidecarId: "control-reconnect",
       token: "test-token",
@@ -566,6 +709,7 @@ describe("sidecar↔hub integration", () => {
           type: "hello",
           sidecarId: "control-reconnect",
           token: "test-token",
+          capacity: DEFAULT_SIDECAR_CAPACITY,
           incarnations: [],
         },
         {
@@ -595,6 +739,7 @@ describe("sidecar↔hub integration", () => {
     const release = Promise.withResolvers<undefined>();
     const bindings = withTestDeployBindings();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId,
       token: "test-token",
@@ -669,6 +814,7 @@ describe("sidecar↔hub integration", () => {
     const transport = createInMemoryTransport();
     const sessions = createMockSessionManager();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "test-sidecar",
       token: "test-token",
@@ -696,6 +842,7 @@ describe("sidecar↔hub integration", () => {
     const transport = createInMemoryTransport();
     const sessions = createMockSessionManager();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-create",
       token: "test-token",
@@ -736,6 +883,7 @@ describe("sidecar↔hub integration", () => {
     // incarnation, which the welcome reports.
     const routed = Promise.withResolvers<string[]>();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-events",
       token: "test-token",
@@ -787,6 +935,7 @@ describe("sidecar↔hub integration", () => {
 
     const startLength = env.outboundMail.length;
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-mail-out",
       token: "test-token",
@@ -831,6 +980,7 @@ describe("sidecar↔hub integration", () => {
     const bindings = withTestDeployBindings();
     await provisionDeploymentKey(bindings.keyStore, deploymentAddress);
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-disconnect",
       token: "test-token",
@@ -859,6 +1009,7 @@ describe("sidecar↔hub integration", () => {
     const transport = createInMemoryTransport();
     const sessions = createMockSessionManager();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-pack-reject",
       token: "test-token",
@@ -904,6 +1055,7 @@ describe("sidecar↔hub integration", () => {
     const transport = createInMemoryTransport();
     const sessions = createMockSessionManager();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-pack-unsigned",
       token: "test-token",
@@ -995,6 +1147,7 @@ describe("sidecar↔hub integration", () => {
     });
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${badServer.port}/ws`,
       sidecarId: "sc-bad-hex",
       token: "test-token",
@@ -1079,6 +1232,7 @@ describe("sidecar↔hub integration", () => {
     const keyStore = createTestKeyStore();
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${deployServer.port}/ws`,
       sidecarId: "sc-deploy-key",
       token: "test-token",
@@ -1162,6 +1316,7 @@ describe("sidecar↔hub integration", () => {
     const sessions = createMockSessionManager();
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${pingEnv.server.port}/ws`,
       sidecarId: "sc-ping",
       token: "test-token",
@@ -1211,6 +1366,7 @@ describe("sidecar↔hub integration", () => {
     };
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-asset-route",
       token: "test-token",
@@ -1288,6 +1444,7 @@ describe("sidecar↔hub integration", () => {
     };
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-workflow-restore-route",
       token: "test-token",
@@ -1345,6 +1502,7 @@ describe("sidecar↔hub integration", () => {
     };
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-asset-fail",
       token: "test-token",
@@ -1403,6 +1561,7 @@ describe("sidecar↔hub integration", () => {
     const transport = createInMemoryTransport();
     const sessions = createMockSessionManager();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${reconnectEnv.server.port}/ws`,
       sidecarId: "sc-reconnect-race",
       token: "test-token",
@@ -1464,6 +1623,7 @@ describe("sidecar↔hub integration", () => {
     const transport = createInMemoryTransport();
     const sessions = createMockSessionManager();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${reconnectEnv.server.port}/ws`,
       sidecarId: "sc-reconnect-delay",
       token: "test-token",
@@ -1514,6 +1674,7 @@ describe("sidecar↔hub integration", () => {
     const bindings = withTestDeployBindings();
     await provisionDeploymentKey(bindings.keyStore, deploymentAddress);
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-multistep-mail",
       token: "test-token",
@@ -1573,6 +1734,7 @@ describe("sidecar↔hub integration", () => {
     const bindings = withTestDeployBindings();
     await provisionDeploymentKey(bindings.keyStore, deploymentAddress);
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-drain-router",
       token: "test-token",
@@ -1631,6 +1793,7 @@ describe("sidecar↔hub integration", () => {
     const bindings = withTestDeployBindings();
     await provisionDeploymentKey(bindings.keyStore, deploymentAddress);
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-sources-ack",
       token: "test-token",
@@ -1678,6 +1841,7 @@ describe("sidecar↔hub integration", () => {
     const bindings = withTestDeployBindings();
     await provisionDeploymentKey(bindings.keyStore, deploymentAddress);
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-sources-unrouted",
       token: "test-token",
@@ -1723,6 +1887,7 @@ describe("sidecar↔hub integration", () => {
     const bindings = withTestDeployBindings();
     await provisionDeploymentKey(bindings.keyStore, deploymentAddress);
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-sources-reject",
       token: "test-token",
@@ -1761,6 +1926,7 @@ describe("sidecar↔hub integration", () => {
     const bindings = withTestDeployBindings();
     await provisionDeploymentKey(bindings.keyStore, deploymentAddress);
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${env.server.port}/ws`,
       sidecarId: "sc-sources-norouter",
       token: "test-token",
@@ -1894,6 +2060,7 @@ describe("sidecar↔hub integration", () => {
 
     const welcomed = Promise.withResolvers<boolean>();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${wfrServer.port}/ws`,
       sidecarId: "sc-wfr-bootstrap-race",
       token: "test-token",
@@ -2026,6 +2193,7 @@ describe("sidecar↔hub integration", () => {
     });
     const welcomed = Promise.withResolvers<boolean>();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${rejectingServer.port}/ws`,
       sidecarId: "sc-wfr-no-retry",
       token: "test-token",
@@ -2088,6 +2256,10 @@ describe("initial handshake on connect", () => {
     );
     const server = Bun.serve({ fetch: app.fetch, websocket, port: 0 });
 
+    const fullError = "Its workflow child ended itself: ".padEnd(
+      MAX_DEPLOYMENT_ERROR_LENGTH,
+      "x",
+    );
     const incarnations = [
       {
         address: "live@integration.interchange",
@@ -2103,9 +2275,18 @@ describe("initial handshake on connect", () => {
         address: "leaving@integration.interchange",
         generation: 2,
         state: "tearing-down" as const,
+        error: fullError,
+      },
+      {
+        address: "kept@integration.interchange",
+        generation: 4,
+        state: "stopped" as const,
+        retention: "kept" as const,
+        error: fullError,
       },
     ];
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-hello",
       token: "test-token",
@@ -2133,7 +2314,7 @@ describe("initial handshake on connect", () => {
       const stopped = {
         agentAddress: "live@integration.interchange",
         generation: 3,
-        error: "Its workflow child ended itself",
+        error: fullError,
         refTips: { "refs/heads/main": "c".repeat(40) },
       };
       client.sendDeploymentStopped(stopped);
@@ -2202,6 +2383,7 @@ describe("initial handshake on connect", () => {
       }
     };
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-register-held",
       token: "test-token",
@@ -2290,6 +2472,7 @@ describe("initial handshake on connect", () => {
     const transport = createInMemoryTransport();
     transport.register(sender, createEd25519Crypto(await generateKeyPair()));
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-outage",
       token: "test-token",
@@ -2353,6 +2536,7 @@ describe("initial handshake on connect", () => {
     const transport = createInMemoryTransport();
     transport.register(sender, createEd25519Crypto(await generateKeyPair()));
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-outage-register",
       token: "test-token",
@@ -2428,6 +2612,7 @@ describe("initial handshake on connect", () => {
     const transport = createInMemoryTransport({ relayOnly: true });
     transport.register(sender, createEd25519Crypto(await generateKeyPair()));
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-multi",
       token: "test-token",
@@ -2478,6 +2663,7 @@ describe("initial handshake on connect", () => {
     const server = Bun.serve({ fetch: app.fetch, websocket, port: 0 });
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-hello-empty",
       token: "test-token",
@@ -2523,6 +2709,7 @@ describe("initial handshake on connect", () => {
     const events: string[] = [];
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-blocked-at-open",
       token: "test-token",
@@ -2584,6 +2771,7 @@ describe("initial handshake on connect", () => {
     const server = Bun.serve({ fetch: app.fetch, websocket, port: 0 });
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-unanswered",
       token: "test-token",
@@ -2631,6 +2819,7 @@ describe("initial handshake on connect", () => {
     const transport = createInMemoryTransport();
     const sessions = createMockSessionManager();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: "ws://localhost:1/ws",
       sidecarId: "sc-throw",
       token: "test-token",
@@ -2663,6 +2852,7 @@ describe("initial handshake on connect", () => {
     const sessions = createMockSessionManager();
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-register-snapshot",
       token: "test-token",
@@ -2751,6 +2941,7 @@ describe("initial handshake on connect", () => {
     const sessions = createMockSessionManager();
 
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-register-ack",
       token: "test-token",
@@ -2832,6 +3023,7 @@ describe("initial handshake on connect", () => {
     );
     const server = Bun.serve({ fetch: app.fetch, websocket, port: 0 });
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-push-unwelcomed",
       token: "test-token",
@@ -2875,6 +3067,7 @@ describe("initial handshake on connect", () => {
     const calls: string[] = [];
     const hub = startWelcomingHub();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${hub.server.port}/ws`,
       sidecarId: "sc-lifecycle",
       token: "test-token",
@@ -2965,14 +3158,19 @@ describe("initial handshake on connect", () => {
     const calls: string[] = [];
     const deploying = Promise.withResolvers<boolean>();
     const finishDeploy = Promise.withResolvers<boolean>();
+    const retryReceived = Promise.withResolvers<undefined>();
     const hub = startWelcomingHub();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${hub.server.port}/ws`,
       sidecarId: "sc-orphan",
       token: "test-token",
       transport: createInMemoryTransport(),
       sessions: createMockSessionManager(),
       ...withTestDeployBindings(),
+      cacheSenderKey: async () => {
+        retryReceived.resolve(undefined);
+      },
       pingIntervalMs: 20,
       reconnectDelayMs: 10,
       deployRouter: {
@@ -2982,8 +3180,8 @@ describe("initial handshake on connect", () => {
           await finishDeploy.promise;
           return { publicKey: "aa".repeat(32) };
         },
-        async undeploy() {
-          calls.push("undeploy");
+        async undeploy(frame) {
+          calls.push(`undeploy ${frame.requestId}`);
         },
       },
     });
@@ -3016,9 +3214,7 @@ describe("initial handshake on connect", () => {
       hub.silence();
       await waitUntil(() => hellos().length === 2);
 
-      finishDeploy.resolve(true);
-      // A later undeploy of the address runs behind the orphaned one on its
-      // lane, so its answer comes after any the orphaned one could send.
+      // Retry on the new socket while the original teardown is still queued.
       hub.send({
         type: "agent.undeploy",
         requestId: "undeploy-2",
@@ -3026,13 +3222,20 @@ describe("initial handshake on connect", () => {
         generation: 1,
         reason: "released",
       });
+      hub.send({
+        type: "sender.key.refresh",
+        address: "sentinel@tenant.example",
+        publicKey: "aa".repeat(32),
+      });
+      await retryReceived.promise;
+      finishDeploy.resolve(true);
       const answered = () =>
         hub.frames.flatMap((raw) => {
           const frame: { requestId?: string } = JSON.parse(raw);
           return frame.requestId === undefined ? [] : [frame.requestId];
         });
       await waitUntil(() => answered().includes("undeploy-2"));
-      expect(calls).toEqual(["deploy", "undeploy", "undeploy"]);
+      expect(calls).toEqual(["deploy", "undeploy undeploy-1"]);
       expect(answered()).toEqual(["undeploy-2"]);
     } finally {
       client.close();
@@ -3066,6 +3269,7 @@ describe("initial handshake on connect", () => {
     ]);
     const welcomed = Promise.withResolvers<undefined>();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-forget",
       token: "test-token",
@@ -3167,6 +3371,7 @@ describe("initial handshake on connect", () => {
     ]);
     const welcomed = Promise.withResolvers<undefined>();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-forget-retries",
       token: "test-token",
@@ -3252,6 +3457,7 @@ describe("initial handshake on connect", () => {
     const hub = startWelcomingHub();
     const drained: number[] = [];
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${hub.server.port}/ws`,
       sidecarId: "sc-refused",
       token: "test-token",
@@ -3323,6 +3529,7 @@ describe("initial handshake on connect", () => {
     const hub = startWelcomingHub();
     const drained: string[] = [];
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${hub.server.port}/ws`,
       sidecarId: "sc-refused-states",
       token: "test-token",
@@ -3406,6 +3613,7 @@ describe("initial handshake on connect", () => {
     const applied: string[] = [];
     const hub = startWelcomingHub();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${hub.server.port}/ws`,
       sidecarId: "sc-held-pack",
       token: "test-token",
@@ -3489,6 +3697,7 @@ describe("initial handshake on connect", () => {
 
     const welcomed = Promise.withResolvers<undefined>();
     const client = createHubLink({
+      capacity: DEFAULT_SIDECAR_CAPACITY,
       hubURL: `ws://localhost:${server.port}/ws`,
       sidecarId: "sc-register-retry",
       token: "test-token",
@@ -3615,7 +3824,10 @@ describe("answerMalformedRequestFrame", () => {
       requestId: "req-deploy",
       agentAddress: "run_deploy@example.com",
       generation: 3,
-      error: expect.stringMatching(/malformed agent.deploy frame/),
+      error: {
+        code: "deployment_failed",
+        message: expect.stringMatching(/malformed agent.deploy frame/),
+      },
     });
   });
 

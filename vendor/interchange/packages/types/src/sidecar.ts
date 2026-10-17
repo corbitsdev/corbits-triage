@@ -41,11 +41,28 @@ import { WorkflowDefinitionSource } from "./workflow-sources";
 // and routes through the existing invalid-frame drop+log path; no handler change
 // is needed.
 
-// The most deployment incarnations one sidecar holds, which bounds those a
-// `hello` reports and a `welcome` routes back. The Hub places no deployment on
-// a sidecar that already hosts this many, and a sidecar refuses a deploy past
-// it, so every hello it sends stays within the bound.
-export const MAX_SIDECAR_INCARNATIONS = 128;
+export const DEFAULT_SIDECAR_ACTIVE_DEPLOYMENTS = 128;
+export const DEFAULT_SIDECAR_RETAINED_DEPLOYMENTS = 256;
+// Bounds inventory processing independently of an operator's capacity settings.
+export const MAX_SIDECAR_INCARNATIONS = 2_048;
+
+export const SidecarCapacity = type({
+  maxActiveDeployments: "number.integer >= 1",
+  maxRetainedDeployments: "number.integer >= 0",
+}).narrow(
+  (capacity, ctx) =>
+    capacity.maxActiveDeployments + capacity.maxRetainedDeployments <=
+      MAX_SIDECAR_INCARNATIONS ||
+    ctx.mustBe(
+      `at most ${String(MAX_SIDECAR_INCARNATIONS)} deployments combined`,
+    ),
+);
+export type SidecarCapacity = typeof SidecarCapacity.infer;
+
+export const DEFAULT_SIDECAR_CAPACITY: SidecarCapacity = {
+  maxActiveDeployments: DEFAULT_SIDECAR_ACTIVE_DEPLOYMENTS,
+  maxRetainedDeployments: DEFAULT_SIDECAR_RETAINED_DEPLOYMENTS,
+};
 
 // Bounds on what a sidecar reports about a deployment it holds. The Hub keeps
 // a reported stop until it fails the deployment, and stores a deploy error on
@@ -58,10 +75,10 @@ export const MAX_REF_TIPS_FRAME = 16;
 export const MAX_REF_TIP_ENTRY_LENGTH = 255;
 
 /**
- * Cuts an error a sidecar reports to `MAX_DEPLOYMENT_ERROR_LENGTH`, so a long
- * error never makes the frame carrying it invalid.
+ * Fits an error to the non-empty, bounded string accepted in sidecar reports.
  */
 export function fitDeploymentError(error: string): string {
+  if (error.length === 0) return "Deployment failed without an error message";
   if (error.length <= MAX_DEPLOYMENT_ERROR_LENGTH) return error;
   // A cut between the two halves of a surrogate pair would leave a code
   // unit the Hub stores as a replacement character.
@@ -123,10 +140,10 @@ export const MAX_MAIL_OUTBOUND_BODY_BYTES = 44 * 1024 * 1024;
 const FRAME_OVERHEAD_BYTES = 20 * 1024 * 1024;
 
 // The ceiling wired as the hub sidecar websocket's `maxPayloadLength`. Bun
-// closes the connection on a RECEIVED message larger than this, so it must clear
-// the largest legit received frame -- the `mail.outbound` frame, whose
-// rawMessage is bounded by `MAX_MAIL_OUTBOUND_BODY_BYTES`, plus framing
-// overhead. maxPayloadLength gates incoming messages only; it does NOT limit
+// closes the connection on a RECEIVED message larger than this. It clears a
+// `mail.outbound` body at its byte limit plus framing overhead; all other
+// inbound frames, including complete deployment inventories, must also fit.
+// maxPayloadLength gates incoming messages only; it does NOT limit
 // what the hub sends, so the hub->sidecar inline-asset deploy does not factor
 // into this number.
 export const MAX_SIDECAR_FRAME_BYTES =
@@ -172,15 +189,25 @@ export const IncarnationState = type.enumerated(
 );
 export type IncarnationState = typeof IncarnationState.infer;
 
+export const DeploymentRetention = type.enumerated("kept", "refused");
+export type DeploymentRetention = typeof DeploymentRetention.infer;
+
 export const HostedIncarnation = type({
   address: type("string").atMostLength(MAX_DEPLOYMENT_ADDRESS_LENGTH),
   generation: Generation,
   state: IncarnationState,
+  "retention?": DeploymentRetention,
   // Why a stopped incarnation stopped when the Hub did not stop it: its
   // workflow child ended itself, or the sidecar could not restore it. The Hub
   // fails such a deployment.
   "error?": type("string > 0").atMostLength(MAX_DEPLOYMENT_ERROR_LENGTH),
-});
+}).narrow(
+  (incarnation, ctx) =>
+    incarnation.retention === undefined ||
+    incarnation.state === "stopped" ||
+    incarnation.state === "tearing-down" ||
+    ctx.mustBe("stopped before deciding retention"),
+);
 export type HostedIncarnation = typeof HostedIncarnation.infer;
 
 // ---------------------------------------------------------------------------
@@ -191,15 +218,18 @@ export type HostedIncarnation = typeof HostedIncarnation.infer;
  * The first frame on every connection. Authenticates the sidecar and reports
  * every incarnation it holds, whether still deploying, live, stopped, or
  * tearing down, so the Hub reconciles against what the sidecar actually runs:
- * it routes the live incarnations it still owns, keeps unrouted the stopped
- * ones it still owns and the live ones whose run ended on its own, and
- * undeploys the rest, then answers `welcome`. The sidecar sends nothing that
- * must be delivered until then.
+ * it routes current live work, keeps current stopped and retained copies
+ * unrouted, and stops terminal live copies after `welcome`, retaining them
+ * only while their policy allows it. Release cleanup bindings authenticate
+ * without routes and leave removal to allocation reconciliation. The Hub
+ * undeploys other unwanted copies. The sidecar sends nothing that must be
+ * delivered until `welcome`.
  */
 export const HelloFrame = type({
   type: "'hello'",
   sidecarId: "string",
   token: "string",
+  capacity: SidecarCapacity,
   // A sidecar holds one incarnation of an address, so a list that names one
   // twice does not say which of them it holds.
   incarnations: HostedIncarnation.array()
@@ -218,6 +248,15 @@ export const HelloFrame = type({
   "cachedSenderAddresses?": type("string")
     .array()
     .atMostLength(MAX_CACHED_SENDER_ADDRESSES_FRAME),
+}).narrow(({ incarnations, capacity }, ctx) => {
+  const retained = incarnations.filter(
+    (incarnation) => incarnation.retention === "kept",
+  ).length;
+  return (
+    (retained <= capacity.maxRetainedDeployments &&
+      incarnations.length - retained <= capacity.maxActiveDeployments) ||
+    ctx.mustBe("within the advertised active and retained deployment limits")
+  );
 });
 export type HelloFrame = typeof HelloFrame.infer;
 
@@ -235,13 +274,30 @@ export const AgentDeployAckFrame = type({
 });
 export type AgentDeployAckFrame = typeof AgentDeployAckFrame.infer;
 
+/** Capacity refusal starts nothing; a general failure may leave deployment state. */
+export const DeploymentError = type({
+  code: "'capacity_full' | 'deployment_failed'",
+  message: type("string").atMostLength(MAX_DEPLOYMENT_ERROR_LENGTH),
+});
+export type DeploymentError = typeof DeploymentError.infer;
+
+export class DeploymentRejectedError extends Error {
+  constructor(
+    readonly code: "capacity_full",
+    message: string,
+  ) {
+    super(message);
+    this.name = "DeploymentRejectedError";
+  }
+}
+
 /** Reports that the `agent.deploy` with this request id failed. */
 export const AgentDeployErrorFrame = type({
   type: "'agent.deploy.error'",
   requestId: "string",
   agentAddress: "string",
   generation: Generation,
-  error: type("string").atMostLength(MAX_DEPLOYMENT_ERROR_LENGTH),
+  error: DeploymentError,
 });
 export type AgentDeployErrorFrame = typeof AgentDeployErrorFrame.infer;
 
@@ -788,9 +844,9 @@ export const AgentUndeployFrame = type({
 export type AgentUndeployFrame = typeof AgentUndeployFrame.infer;
 
 /**
- * Cancel the workflow run of the incarnation this names, or stop its process
- * while keeping its local state for inspection. The sidecar refuses a command
- * for a generation other than the one it holds.
+ * Cancel a workflow, stop its process, or transfer a terminal copy into the
+ * retained pool. Retention reports kept/refused only after its decision is
+ * durable. The sidecar refuses a command for another generation.
  */
 export const WorkflowControlFrame = type({
   type: "'workflow.control'",
@@ -798,7 +854,7 @@ export const WorkflowControlFrame = type({
   agentAddress: "string",
   generation: Generation,
   runId: "string",
-  action: "'cancel' | 'stop'",
+  action: "'cancel' | 'stop' | 'retain'",
   reason: "string",
 });
 export type WorkflowControlFrame = typeof WorkflowControlFrame.infer;
@@ -824,9 +880,11 @@ export const WorkflowControlAckFrame = type({
   type: "'workflow.control.ack'",
   requestId: "string",
   "error?": "string",
+  "retention?": DeploymentRetention,
   /**
    * A stopped worker's ref tips, read after its child exited. The Hub
-   * confirms the stop only once it holds the same tips.
+   * confirms a live stop only once it holds the same tips. Retain follows
+   * the existing terminal-history cutoff instead of importing later commits.
    */
   "refTips?": WorkflowRunRefTips,
 });
@@ -853,9 +911,11 @@ export type DeploymentStoppedFrame = typeof DeploymentStoppedFrame.infer;
  * The Hub's answer to `hello`, sent once it has reconciled the reported
  * incarnations. `routed` lists the incarnations it routes on this connection;
  * it has already asked the sidecar to undeploy every other one reported, but
- * for the ones it keeps unrouted: stopped ones, and live ones whose run ended
- * on its own. From here on the sidecar may send what must be delivered, and
- * it re-drives what it owes the Hub for each routed incarnation.
+ * for the ones it keeps unrouted: stopped ones, live ones whose run ended
+ * (including Hub cancellations or failures), and copies under a cleanup
+ * binding whose removal belongs to the allocation reconciler. From here on
+ * the sidecar may send what must be delivered, and it re-drives what it owes
+ * the Hub for each routed incarnation.
  */
 export const WelcomeFrame = type({
   type: "'welcome'",

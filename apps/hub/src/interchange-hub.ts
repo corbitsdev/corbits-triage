@@ -303,7 +303,9 @@ export async function createInterchangeHub({
       ? { operationTimeoutMs: sidecarOperationTimeoutMs }
       : {}),
   });
-  const sidecarAllocationStore = createSidecarAllocationStore(db);
+  const sidecarAllocationStore = createSidecarAllocationStore(db, {
+    getSidecarInventory: sidecarRouter.getSidecarInventory,
+  });
   const runReader = createWorkflowRunReader(agentRepoStore.repoStore);
   const launchSpecs = createWorkflowRunLaunchSpecStore(db);
   async function addressForAnchor(anchorRunId: string): Promise<string | null> {
@@ -320,6 +322,7 @@ export async function createInterchangeHub({
   const classifyParkedRun = createParkedRunClassifier({ runReader, addressForAnchor, projectionForAnchor });
   const workflowLifecycleService = createWorkflowLifecycleService({
     db,
+    retentionRouter: sidecarRouter,
     runReader,
     historyReceives: workflowHistoryReceives,
     sendControl: (target, command, timeoutMs) =>

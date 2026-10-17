@@ -77,9 +77,13 @@ export type SidecarOperationFailure = typeof SidecarOperationFailure.infer;
  * used. The Hub accepts only a sidecar that still hosts another probe or
  * allocation of the same provisioner binding, including one whose release or
  * replacement has not yet destroyed it. A deployment also needs the sidecar to
- * host fewer than `MAX_SIDECAR_INCARNATIONS` deployments, which is checked
- * when an allocation is placed and when a deployment adopts its probe's
- * sidecar, not when the probe is placed.
+ * have fewer active reservations than the capacity it advertised in hello. Copies
+ * with confirmed removal or retained storage do not consume active capacity.
+ * This is checked when an allocation is placed and when a deployment adopts
+ * its probe's sidecar, not when the probe is placed.
+ * Unknown inventory delays placement until hello or the connection deadline.
+ * This is not a capacity rejection. The pending acceptance is in memory;
+ * after a Hub restart, cleanup precedes any new provisioning attempt.
  * Rejection means no infrastructure exists for this generation (ensure-only;
  * destroy rejections below carry no such guarantee); a provisioner must throw
  * when it cannot determine whether the request took effect.
@@ -92,21 +96,28 @@ export const EnsureSidecarResult = type({
 export type EnsureSidecarResult = typeof EnsureSidecarResult.infer;
 
 /**
- * Destruction confirms the allocation no longer holds its capacity and older
- * ensure calls are fenced. Whether a sidecar that hosts other work stays up is
- * the provisioner's decision; the Hub has already stopped routing the
- * allocation and undeploys it from a sidecar that is, or next becomes,
- * connected. A non-retryable rejection stops automatic cleanup; capacity may
- * still exist.
+ * Destruction fences older ensure calls and releases the provisioner's hold.
+ * `cleanup: confirmed` additionally proves that the deployment's worker and
+ * local state are gone and cannot return. A shared worker that remains needs
+ * `cleanup: required`; the Hub reserves its slot until the sidecar acknowledges
+ * removal. Retries must preserve this distinction, including after restarts.
+ * Stopping the last worker must also remove its restorable deployment state
+ * and confirm cleanup. A result requiring sidecar cleanup must leave that
+ * cleanup path available; absence from a provider's in-memory map is not proof.
+ * A non-retryable rejection of an outstanding hold release stops automatic cleanup
+ * and leaves the provider obligation and cleanup binding for operator recovery.
+ * A copy holds an active slot until removal or its transfer to retained storage
+ * is confirmed.
  */
 export const DestroySidecarResult = type({
   kind: "'destroyed'",
+  cleanup: "'confirmed' | 'required'",
 }).or(SidecarOperationFailure);
 export type DestroySidecarResult = typeof DestroySidecarResult.infer;
 
 export interface SidecarProvisioner {
   readonly id: string;
-  readonly apiVersion: 1;
+  readonly apiVersion: 2;
   /** Stable, non-secret identity for the backend configuration. */
   readonly bindingFingerprint: string;
   readonly capabilities: readonly SidecarCapabilityDeclaration[];
@@ -125,17 +136,19 @@ export interface SidecarProvisioner {
   destroy(request: DestroySidecarRequest): Promise<DestroySidecarResult>;
 }
 
-/** One probe or allocation generation that a sidecar currently hosts. */
+type AllocationCredentialIdentity = {
+  readonly sidecarId: string;
+  readonly allocationId: string;
+  readonly tenantId: string;
+  readonly anchorRunId: string;
+  readonly workflowRunAddress: string;
+  readonly generation: number;
+};
+
+/** One probe, deployment, or cleanup obligation authenticated on a sidecar. */
 export type SidecarCredentialIdentity =
-  | {
-      readonly kind: "allocated";
-      readonly sidecarId: string;
-      readonly allocationId: string;
-      readonly tenantId: string;
-      readonly anchorRunId: string;
-      readonly workflowRunAddress: string;
-      readonly generation: number;
-    }
+  | (AllocationCredentialIdentity & { readonly kind: "allocated" })
+  | (AllocationCredentialIdentity & { readonly kind: "cleanup" })
   | {
       readonly kind: "probe";
       readonly sidecarId: string;
@@ -157,20 +170,26 @@ export type SidecarCredentials = {
  * the anchor run not to be terminal: a copy of a run that has ended is not
  * routed, even when its own history never recorded the end.
  *
- * `retention` holds for such a copy instead when the run ended through its own
- * history: it requires what `reclaim` does, except that the anchor run has
- * ended without the Hub cancelling or failing it. The copy then stays
- * unrouted, its local state kept until the Hub releases the deployment, so a
- * reconnect does not cut short the retention the deployment's policy sets. A
- * copy of a run the Hub ended is undeployed, since a restart that lost its
- * stopped mark may be running that run again.
+ * `retention` permits retaining an initialized terminal copy while its capacity
+ * retention period remains open. `retention-transition` validates terminal
+ * copies independently of that deadline, including stop acknowledgements and
+ * acknowledgements for retains issued before expiry. Copies already due for
+ * release are stopped without consuming kept capacity. `cleanup` accepts
+ * releasing or replacing allocations and every failed cleanup, whatever
+ * stopped it. Their connection grants no workflow routes and preserves
+ * inventory. A reconnect can resume a disconnect timeout's cleanup, preserving
+ * its attempts and terminal workflow outcome. Other failed cleanups do not
+ * reopen. Replacing a parked deployment must confirm removal of its previous
+ * copy before binding replacement capacity.
  */
 export type SidecarIdentityUse =
   | "registration"
+  | "cleanup"
   | "readiness"
   | "routing"
   | "reclaim"
-  | "retention";
+  | "retention"
+  | "retention-transition";
 
 export interface SidecarCredentialResolver {
   /**
