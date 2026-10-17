@@ -109,6 +109,17 @@ function AuthorTag({ kind }: { kind: AuthorKind | null }) {
   return <span className={isLoudAuthorKind(kind) ? "tag" : "tag quiet"} title={`Author: ${label}`}><span className="sr-only">Author: </span>{label}</span>;
 }
 
+function RowAuthor({ author, kind }: { author: string | null; kind: AuthorKind | null }) {
+  const role = kind === null ? "" : ` (${AUTHOR_KIND_LABEL[kind]})`;
+  const login = kind === "bot" ? author?.replace(/\[bot\]$/, "") : author;
+  return (
+    <>
+      {login == null ? null : <span className="tag quiet login" title={`Author: ${author}${role}`}><span className="sr-only">Author: </span>{login}</span>}
+      {kind !== null && isLoudAuthorKind(kind) ? <AuthorTag kind={kind} /> : null}
+    </>
+  );
+}
+
 function listsOpen(view: ListView): boolean {
   return view !== "needs-you";
 }
@@ -133,7 +144,7 @@ function Row({ item, selected, search }: RowProps) {
   return (
     <Link className="row" role="option" aria-selected={selected} to={{ pathname: listHref("needs-you", item), search }} data-inbox-row={item.key}>
       <span className={dotClass(item, action)} />
-      <span className="tw"><AuthorTag kind={item.authorKind} /><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
+      <span className="tw"><RowAuthor author={item.author} kind={item.authorKind} /><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
       {primary === null ? null : <span className="act">{rowActionLabel(primary)}</span>}
       {isPostedToAuthor(item) ? <span className="act done">{POSTED}</span> : null}
@@ -148,7 +159,7 @@ function OpenRow({ view, entry, selected, search }: Omit<RowProps, "item"> & { v
   return (
     <Link className="row open-row" role="option" aria-selected={selected} to={{ pathname: listHref(view, item), search }} data-inbox-row={item.key}>
       <span className={dotClass(item, inboxAction(item))} />
-      <span className="tw"><AuthorTag kind={item.authorKind} /><b>{titleText(item.title)}</b><span className="why">{rowWhy(item) ?? inboxStatus(item)}</span></span>
+      <span className="tw"><RowAuthor author={item.author} kind={item.authorKind} /><b>{titleText(item.title)}</b><span className="why">{rowWhy(item) ?? inboxStatus(item)}</span></span>
       <span className="age">{ageText(item.waitingSince)}</span>
       <VerdictChip item={item} className="merge-chip" />
       <Badge tone={WAITS_ON_TONE[waits]}>{WAITS_ON_LABEL[waits]}</Badge>

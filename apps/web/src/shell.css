@@ -188,6 +188,7 @@
 .inbox .tag { display: inline-flex; align-items: center; gap: 3px; font: 600 11px var(--font); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
 .inbox .tag.quiet { font-weight: 500; border-color: var(--rule); color: var(--ink-mute); }
 .inbox .row .tw .tag { margin: 0 6px 0 0; }
+.inbox .row .tw .tag.login { display: inline-block; vertical-align: top; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
 .inbox .zero { margin: auto; text-align: center; display: grid; gap: 10px; justify-items: center; padding: 40px; max-width: 420px; }
 .inbox .zero h2 { margin: 0; font-size: 26px; letter-spacing: -0.015em; }
 .inbox .zero p { margin: 0; font-size: 15px; }
