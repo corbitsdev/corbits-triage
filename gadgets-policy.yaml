@@ -1,0 +1,60 @@
+# Corbits Triage policy.
+rules:
+  - check: max-files-changed
+    text: Flag pull requests over 25 files changed.
+    max: 25
+    reason: Set in the portal before the policy file.
+    evidence:
+      - maintainer-stated
+  - check: max-lines-changed
+    text: Flag pull requests over 2,500 lines changed.
+    max: 2500
+    reason: Set in the portal before the policy file.
+    evidence:
+      - maintainer-stated
+  - check: focused
+    text: Check the change is focused on one thing.
+    reason: Set in the portal before the policy file.
+    evidence:
+      - maintainer-stated
+  - check: docs
+    text: Check docs are updated when behavior changes.
+    reason: Set in the portal before the policy file.
+    evidence:
+      - maintainer-stated
+    enabled: false
+  - check: linked-issue
+    text: Require a linked issue from GitHub or Linear.
+    tracker: either
+    reason: Set in the portal before the policy file.
+    evidence:
+      - maintainer-stated
+  - check: no-merge-conflicts
+    text: Flag merge conflicts with the base branch.
+    reason: Set in the portal before the policy file.
+    evidence:
+      - maintainer-stated
+  - check: ci-green
+    text: CI must pass before merge.
+    reason: Set in the portal before the policy file.
+    evidence:
+      - maintainer-stated
+  - check: no-forbidden-paths
+    text: Never accept changes to vendor/**, node_modules/**.
+    paths:
+      - vendor/**
+      - node_modules/**
+    reason: Set in the portal before the policy file.
+    evidence:
+      - maintainer-stated
+actions:
+  pass:
+    - do: approve
+      when:
+        author:
+          - maintainers
+  unsure:
+    - do: request-review
+      target:
+        to: codeowners
+

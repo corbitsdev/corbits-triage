@@ -1,0 +1,49 @@
+{
+ "repos": [
+  {
+   "repo": "acme/widgets",
+   "upgrade": {
+    "state": "upgrade",
+    "saved": {
+     "id": "d793c4ca-2837-4937-a70b-ba86cc9bb8e5",
+     "version": 1
+    },
+    "unexpressed": [
+     "Rule \"Risk\" (Score how risky the change is as high, medium, low, fail below medium.) cannot be written in a policy file, so the file leaves it out."
+    ]
+   }
+  },
+  {
+   "repo": "acme/gadgets",
+   "upgrade": {
+    "state": "differs",
+    "path": ".corbits-triage.yaml",
+    "saved": {
+     "id": "086892d5-5a27-40d9-b99e-259e4ba101a6",
+     "version": 1
+    },
+    "differences": [
+     "Your saved rules say \"Never accept changes to vendor/**, node_modules/**\"; the file says \"Never accept changes to node_modules/**\".",
+     "On Pass, your saved rules approve; the file says nothing.",
+     "On Unsure, your saved rules request review; the file says nothing."
+    ],
+    "unexpressed": []
+   }
+  },
+  {
+   "repo": "corbitsdev/corbits-code",
+   "upgrade": {
+    "state": "differs",
+    "path": ".corbits-triage.yaml",
+    "saved": {
+     "id": "1c93bc64-1731-47c6-a686-20b047b7cc3c",
+     "version": 1
+    },
+    "differences": [
+     "Your saved rules say \"Never accept changes to vendor/**, node_modules/**\"; the file says \"Never accept changes to node_modules/**\"."
+    ],
+    "unexpressed": []
+   }
+  }
+ ]
+}

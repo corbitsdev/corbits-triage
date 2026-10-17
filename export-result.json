@@ -1,0 +1,30 @@
+{
+ "acme/widgets": [
+  [
+   200,
+   {
+    "status": "opened",
+    "url": "http://localhost:4000/acme/widgets/pull/1",
+    "number": 1
+   }
+  ],
+  [
+   200,
+   {
+    "status": "opened",
+    "url": "http://localhost:4000/acme/widgets/pull/1",
+    "number": 1
+   }
+  ]
+ ],
+ "acme/gadgets": [
+  [
+   200,
+   {
+    "status": "opened",
+    "url": "http://localhost:4000/acme/gadgets/pull/1",
+    "number": 1
+   }
+  ]
+ ]
+}

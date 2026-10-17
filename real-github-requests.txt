@@ -1,0 +1,7 @@
+# Every request the read-only proxy sent to real GitHub (corbitsdev/corbits-code), with counts. The one refused PUT is the proxy's own self-test before the hub started; the hub sent no write.
+  16 {"real":"GET","path":"/repos/corbitsdev/corbits-code","status":200}
+   4 {"real":"GET","path":"/repos/corbitsdev/corbits-code/contents/.corbits-triage.yaml","status":200}
+   3 {"real":"GET","path":"/repos/corbitsdev/corbits-code/contents/.corbits-triage.yml","status":404}
+   2 {"real":"GET","path":"/repos/corbitsdev/corbits-code/pulls?state=open&head=corbitsdev%3Acorbits-triage%2Fpolicy&base=main","status":200}
+   8 {"real":"GET","path":"/repos/corbitsdev/corbits-code/pulls?state=open&per_page=100","status":200}
+   1 {"refused":"PUT","path":"/repos/corbitsdev/corbits-code/contents/x"}
