@@ -3,11 +3,14 @@ import { createSourceDeployments, triageWorkflowOf } from "./source-workflow.js"
 
 type Live = Record<string, Array<{ runId: string; cancelling: boolean }>>;
 
-function harness(connected: Array<"github" | "bitbucket-datacenter">, live: Live) {
+type Host = "github" | "bitbucket-datacenter";
+
+function harness(connected: Host[], live: Live, reviewed: Host[] = []) {
   const released: string[] = [];
   const logged: Array<Record<string, unknown>> = [];
   const reconcile = createSourceDeployments({
     connectedSources: async () => connected,
+    codeReviewSources: async () => reviewed,
     liveDeployments: async (_tenantId, workflow) => live[workflow] ?? [],
     async release(_tenantId, runId) {
       released.push(runId);
@@ -24,6 +27,18 @@ test("disconnecting a host releases its deployment; the pre-host pr-triage deplo
   await h.reconcile("tnt");
   expect(h.released).toEqual(["run_bb", "run_legacy"]);
   expect(h.logged.map((entry) => [entry.msg, entry.reason])).toEqual([["triage_deployment_released", "source_disconnected"], ["triage_deployment_released", "superseded_by_pr_triage_github"]]);
+});
+
+test("a host's code review stays deployed only while one of its repositories has it on", async () => {
+  const live = { "pr-triage-github": [{ runId: "run_gh", cancelling: false }], "pr-code-review-github": [{ runId: "run_review", cancelling: false }] };
+  const on = harness(["github"], live, ["github"]);
+  await on.reconcile("tnt");
+  expect(on.released).toEqual([]);
+
+  const off = harness(["github"], live);
+  await off.reconcile("tnt");
+  expect(off.released).toEqual(["run_review"]);
+  expect(off.logged.map((entry) => entry.reason)).toEqual(["code_review_off"]);
 });
 
 test("the pre-host workflow name and each package entry name a host's workflow", () => {

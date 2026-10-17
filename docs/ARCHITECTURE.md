@@ -89,7 +89,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     GitHub App setup and installation sync, open pull requests, details,
     actions, held actions, previews (API only; the portal no longer calls it) and single
     pull request triage, latest verdicts, triage stats and timeline, the
-    policy schemas, invitations, and workflow deploy and versions.
+    policy schemas, invitations, workflow deploy and versions, and the
+    per-repository code review switch.
     `GET /api/integrations/github-triage/{tenantId}/policy?repo=` answers a
     repository's policy as triage reads it, and
     `POST /api/integrations/github-triage/{tenantId}/backlog` starts backlog
@@ -211,6 +212,16 @@ credential. Downstream work on a pull request is its own workflow, never a
 step here.
 
 ## Code review pipeline
+
+Code review is switched on per repository through
+`POST /api/integrations/code-review/{tenantId}`, which needs the host
+connected and the workspace's Anthropic key. The portal then deploys that
+host's `pr-code-review-<host>` with an offering for each model it names
+(Opus 5.5 for the diff finder, Haiku 5.5 elsewhere). The hub releases a
+host's code review once none of its repositories has it on, the host is
+disconnected or the key is gone. Code review only reads: its tools are the
+host read bundle and the confined repository reads, so it stays on the
+local-process sidecar.
 
 The pipeline looks for defects with two finders, groups what they report by
 defect and reports every group, ordered so the most severe and most agreed-on

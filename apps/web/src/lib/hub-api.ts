@@ -66,6 +66,7 @@ export type RepoRecord = {
   installationUrl?: string;
   selection?: "all" | "selected";
   enabled?: boolean;
+  codeReview?: boolean;
   checks?: RepoCheckFlags;
   checkPack?: { name: string; id?: string };
 };
@@ -298,6 +299,7 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
     const account = (row as { account?: unknown }).account;
     const installationUrl = (row as { installationUrl?: unknown }).installationUrl;
     const selection = (row as { selection?: unknown }).selection;
+    const codeReview = (row as { codeReview?: unknown }).codeReview;
     const source = repoSourceOf((row as { source?: unknown }).source);
     parsed.push({
       name,
@@ -308,6 +310,7 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
       ...(typeof account === "string" ? { account } : {}),
       ...(typeof installationUrl === "string" ? { installationUrl } : {}),
       ...(selection === "all" || selection === "selected" ? { selection } : {}),
+      ...(codeReview === true && { codeReview }),
     });
   }
   return parsed;
@@ -869,6 +872,12 @@ export async function triagePullRequest(transport: Transport, tenantId: string, 
   const clean = validateRepo(repo);
   if (!Number.isInteger(number) || number < 1) throw new Error("Pull request number must be a positive integer.");
   await transport.fetch("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}`, { repo: clean, number });
+}
+
+/** The hosts with a connected repository that has code review on, while the Anthropic key is stored: the hosts whose code review deploys. */
+export function codeReviewSources(snapshot: Pick<PortalSnapshot, "repos" | "credentials">): RepoSource[] {
+  if (!snapshot.credentials.some((credential) => credential.name === ANTHROPIC_CREDENTIAL_NAME && credential.status.toLowerCase() === "active")) return [];
+  return [...new Set(snapshot.repos.filter((repo) => repo.connected && repo.codeReview).map((repo) => repo.source))];
 }
 
 export type OpenPulls = {

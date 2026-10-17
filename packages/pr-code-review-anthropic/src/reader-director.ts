@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
 import { defineDirector } from "@intx/agent";
 import { getLogger } from "@intx/log";
 import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent, TokenUsage, ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
 import { refused, REPO_READ_DEFINITIONS } from "@corbits/repo-read-tool";
 import { BUDGET_EXHAUSTED, budgetOf, CHECKOUT_TOOL, checkoutOf } from "./actions/checkout.js";
+import { TOOL_PROMPTS } from "./prompts.js";
+import { PACKAGE_NAME } from "./package-name.js";
 
 const log = getLogger(["corbits", "pr-code-review", "reader"]);
 
@@ -33,8 +34,8 @@ function billableTokens(usage: TokenUsage): number {
 }
 
 export interface ReaderDirectorConfig {
-  /** The prompts/<tools>.tools.txt section appended to the system prompt while the model reads. */
-  tools: string;
+  /** The tools section appended to the system prompt while the model reads. */
+  tools: keyof typeof TOOL_PROMPTS;
 }
 
 /**
@@ -46,8 +47,7 @@ export interface ReaderDirectorConfig {
  * BUDGET_EXHAUSTED.
  */
 function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }: ReaderDirectorConfig): ReactorDirector {
-  const toolsSection = readFileSync(new URL(`../prompts/${tools}.tools.txt`, import.meta.url), "utf8");
-  const systemPrompt = `${basePrompt.trimEnd()}\n\n${toolsSection}`;
+  const systemPrompt = `${basePrompt.trimEnd()}\n\n${TOOL_PROMPTS[tools]}`;
   let budget = 0;
   let spent = 0;
   let checkedOut = false;
@@ -130,8 +130,8 @@ function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDir
 }
 
 export const reader = defineDirector<ReaderDirectorConfig>({
-  id: "@corbits/pr-code-review-anthropic/reader",
-  configSchema: type({ tools: "string" }),
+  id: `${PACKAGE_NAME}/reader`,
+  configSchema: type({ tools: type.enumerated(...Object.keys(TOOL_PROMPTS)) }),
   factory: function buildReaderDirector(config, _env, agent) {
     return lazy(function buildDirector(caps) {
       return readerDirector(caps, agent.systemPrompt, config);

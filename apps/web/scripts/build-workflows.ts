@@ -1,6 +1,7 @@
 // Packs each workflow as a tarball into public/packages/ beside the host tools it depends on,
 // so the portal can publish them to the hub.
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import * as bitbucketTool from "../../../packages/bitbucket-datacenter-tool/build.ts";
@@ -10,7 +11,7 @@ import githubPkg from "../../../packages/github-tool/package.json";
 import { contentVersion, packPackage, type PackedTarball } from "../../../tooling/pack-tarball.ts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowPackage } from "../src/lib/workflow-packages.ts";
 
-const WORKFLOW_SRC = resolve(import.meta.dir, "../../../packages/triage-workflows");
+const PACKAGES = resolve(import.meta.dir, "../../../packages");
 const PUBLIC = resolve(import.meta.dir, "../public");
 const DIRECTORS = "directors.mjs";
 const ACTIONS = "actions.mjs";
@@ -30,13 +31,13 @@ async function bundle(workflow: WorkflowPackage, outdir: string): Promise<void> 
   const entries = [[workflow.src, workflow.entry.slice(2)], ["src/directors.ts", DIRECTORS], ["src/actions/index.ts", ACTIONS]];
   for (const [src, naming] of entries) {
     await Bun.build({
-      entrypoints: [join(WORKFLOW_SRC, src)],
+      entrypoints: [join(PACKAGES, workflow.workspace, src)],
       outdir,
       naming,
       target: "node",
       format: "esm",
       conditions: ["intx-src"],
-      define: { "TRIAGE_WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
+      define: { "WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
       // The packed tools export only their roots, so a subpath import would not resolve at run time.
       external: TOOL_NAMES,
       // Strips the per-module path comments: the version hash must not depend on the lockfile layout.
@@ -54,7 +55,8 @@ function assertOnlyToolImports(workflow: WorkflowPackage, code: string): void {
     throw new Error(`${workflow.packageName} bundles a CommonJS require; only ESM imports of ${TOOL_NAMES.join(", ")} are allowed.`);
   }
   for (const { path } of new Bun.Transpiler({ loader: "js" }).scanImports(code)) {
-    if (path.startsWith("node:") || TOOL_NAMES.includes(path)) continue;
+    // Bundled dependencies import Node builtins without the node: prefix.
+    if (isBuiltin(path.startsWith("node:") ? path : `node:${path}`) || TOOL_NAMES.includes(path)) continue;
     throw new Error(`${workflow.packageName} imports ${path} at run time; only ${TOOL_NAMES.join(", ")} are published beside it.`);
   }
 }

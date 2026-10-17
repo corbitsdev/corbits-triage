@@ -10,6 +10,7 @@ import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, PolicyExported
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
+import { CODE_REVIEW_PATH, CodeReviewBody, CodeReviewSet } from "../code-review.js";
 import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody, validManifestMutationRequest } from "../github/manifest.js";
@@ -76,6 +77,7 @@ export type IntegrationHandlers = {
   triageVerdicts: MemberHandler;
   audit: MemberHandler;
   workflowDeploy: BodyHandler<typeof DeployBody.infer>;
+  codeReview: BodyHandler<typeof CodeReviewBody.infer>;
   workflowVersions: (member: Member) => Promise<Response>;
   invitations: {
     create: (body: typeof InviteBody.infer, member: Member, req: Request) => Promise<Response>;
@@ -601,6 +603,28 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     requireGrant("workflow:*", "read"),
     function workflowVersions(c) {
       return handlers.workflowVersions(memberOf(c));
+    },
+  );
+
+  app.post(
+    `${CODE_REVIEW_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Turn code review on or off for a repository",
+      description: "Needs `manage` on the workspace. Sets `codeReview` on the repository's record (`source` absent means GitHub). Turning it on needs the repository's host connected and the workspace's Anthropic key; the portal then deploys that host's code review. Turning off the last repository of a host releases its code review deployment.",
+      tags: TAGS,
+      responses: {
+        200: json("The repository's code review setting", CodeReviewSet),
+        ...invalid,
+        401: failures[401],
+        403: failures[403],
+        404: json("No such repository", Failure),
+        409: json("`source_not_connected` or `anthropic_key_missing`", Failure),
+      },
+    }),
+    member,
+    body(CodeReviewBody),
+    function setCodeReview(c) {
+      return handlers.codeReview(c.req.valid("json"), memberOf(c));
     },
   );
 

@@ -21,6 +21,8 @@ export type RepoRecord = {
   installationUrl?: string;
   selection?: "all" | "selected";
   enabled?: boolean;
+  /** Code review runs on each pull request; set only through the code review route, which needs the Anthropic key. */
+  codeReview?: boolean;
   checks?: RepoPolicy["checks"];
   checkPack?: RepoPolicy["checkPack"];
 };
