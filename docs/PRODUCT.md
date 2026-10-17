@@ -23,8 +23,8 @@ wakes the policy as if it were opened.
 
 ## What you see
 
-- **Inbox**: open pull requests across repositories with triage on, in three views:
-  Needs you, All open and First-timers. Each opens a reading pane: one status
+- **Inbox**: open pull requests across repositories with triage on, in two views:
+  Needs you and All open. Each opens a reading pane: one status
   line, the problems (failed rules, unsure answers, rules that could not
   run), the description, and folded rows for the linked issue, the changed
   files and the rules that passed. A bar at the bottom offers the next step

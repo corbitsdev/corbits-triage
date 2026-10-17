@@ -44,7 +44,6 @@ import {
   ageText,
   allOpen,
   awaitingText,
-  firstTimers,
   groupInbox,
   groupOpen,
   inboxAction,
@@ -90,7 +89,7 @@ const POSTED = "Posted";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
 
-const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", "all-open": "All open", "first-timers": "First-timers" };
+const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", "all-open": "All open" };
 
 const WAITS_ON_TONE: Record<WaitsOn, BadgeTone> = { maintainer: "accent", author: "info", ci: "neutral", nobody: "neutral" };
 
@@ -131,8 +130,6 @@ function viewEntries(view: ListView, open: OpenItem[], enabled: ReadonlySet<stri
       return needsYou(open, enabled);
     case "all-open":
       return allOpen(open, enabled);
-    case "first-timers":
-      return firstTimers(open, enabled);
   }
 }
 
@@ -502,7 +499,6 @@ function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyL
     return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><Button type="button" variant="outline" size="sm" onClick={onClear}>Clear filters</Button></div>;
   }
   if (view === "all-open") return <NoneOpen title="No open pull requests" />;
-  if (view === "first-timers") return <NoneOpen title="No first-timers" />;
   return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
 }
 

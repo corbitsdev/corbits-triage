@@ -251,7 +251,6 @@ The dark strip on the left is the same on every page:
 - **Workspace name** at the top. If you belong to more than one workspace, click it to switch.
 - **Pulse**: a summary of what changed since your last visit.
 - **Inbox**, with two views. **Needs you** shows only pull requests waiting on a person, in repositories with triage on. A pull request with an approval waiting stays there even after triage is turned off. **All open** shows every open pull request in every repository with triage on.
-- **Saved views**: ready-made filters. **First-timers** shows pull requests from people who have never contributed to the repository before.
 - **Your name** at the bottom. Click it for Repositories, Settings and Sign out.
 
 Each view has a search box, a **Filter** button and quick filters such as Action, Repo and Owner; **All open** adds Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.

@@ -205,9 +205,9 @@ export function matchesQuery(item: PrItem, query: string): boolean {
   return `${item.title ?? ""} #${item.number ?? ""} ${item.repo} ${item.author ?? ""} ${item.owner ?? ""}`.toLowerCase().includes(normalized);
 }
 
-export type ListView = "needs-you" | "all-open" | "first-timers";
+export type ListView = "needs-you" | "all-open";
 
-const LIST_ROOT: Record<ListView, string> = { "needs-you": "/inbox", "all-open": "/open", "first-timers": "/first-timers" };
+const LIST_ROOT: Record<ListView, string> = { "needs-you": "/inbox", "all-open": "/open" };
 
 export function listRoot(view: ListView): string {
   return LIST_ROOT[view];
@@ -232,15 +232,10 @@ export function needsYou(open: OpenItem[], enabled: ReadonlySet<string>): OpenIt
   return open.filter((entry) => entry.handled === null && (enabled.has(entry.item.repo) || entry.item.pendingApprovalId !== null));
 }
 
-export function firstTimers(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
-  return allOpen(open, enabled).filter((entry) => entry.item.authorKind !== null && isFirstTimer(entry.item.authorKind));
-}
-
 export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Record<ListView, number> {
   return {
     "needs-you": needsYou(open, enabled).filter((entry) => inNeedsYou(entry.item)).length,
     "all-open": allOpen(open, enabled).length,
-    "first-timers": firstTimers(open, enabled).length,
   };
 }
 
