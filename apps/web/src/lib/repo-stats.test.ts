@@ -2,19 +2,14 @@ import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { dehydrate, hydrate, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { emptyPack, repoPolicy, type RepoSource, type TriageStats } from "@corbits/triage-contracts";
+import type { RepoSource, TriageStats } from "@corbits/triage-contracts";
 import OutcomesCard from "../components/repo-panel/OutcomesCard.tsx";
-import RulesSection from "../components/repo-panel/RulesSection.tsx";
 import { fakeHub } from "./fake-hub.ts";
-import { fromPack } from "./pack-draft.ts";
 import { isPersistedQuery } from "./persisted-queries.ts";
-import { draftPolicy, transportRepoPackStore, type RepoPackStore } from "./repo-pack-store.ts";
+import { transportRepoPackStore, type RepoPackStore } from "./repo-pack-store.ts";
 import { repoStatsQuery, useRepoStats } from "./repo-stats.ts";
-import { usePolicyView } from "./use-policy-view.ts";
 
 const REPO = "o/r";
-const PACK = emptyPack(REPO);
-const DRAFT = fromPack({ ...PACK, checks: { "max-files-changed": { enabled: true, maxFiles: 30 } } }, draftPolicy(repoPolicy(undefined)));
 const STATS: TriageStats = {
   repo: REPO,
   days: 7,
@@ -36,12 +31,9 @@ const STATS: TriageStats = {
   daily: [0, 1, 0, 2, 0, 0, 2].map((triaged, i) => ({ date: `2026-10-0${i + 1}`, triaged })),
 };
 
-function noop() {}
-
 function Panel({ store }: { store: RepoPackStore }) {
   const stats = useRepoStats(store, REPO);
-  const view = usePolicyView(DRAFT, noop);
-  return createElement(RulesSection, { draft: DRAFT, saved: PACK, view, stats, disabled: false, edit: noop, problem: null });
+  return stats ? createElement(OutcomesCard, { outcomes: stats.outcomes, source: "github" }) : null;
 }
 
 function render(client: QueryClient, store: RepoPackStore): string {
@@ -52,7 +44,7 @@ function statsRequests(requests: string[]): string[] {
   return requests.filter((request) => request.includes("/triage-stats/"));
 }
 
-test("the rules read their weekly pass counts from one request", async () => {
+test("the outcomes read the weekly stats from one request", async () => {
   const hub = fakeHub();
   hub.stats = STATS;
   const store = transportRepoPackStore(hub.transport, "t");
@@ -62,7 +54,7 @@ test("the rules read their weekly pass counts from one request", async () => {
   const html = render(client, store);
 
   expect(statsRequests(hub.requests)).toEqual([`GET /api/integrations/triage-stats/t?repo=o%2Fr&days=7`]);
-  expect(html).toContain("3 of 4 passed");
+  expect(html).toContain("3 PRs, 2 closed");
 });
 
 test("persisted stats render from the cache after a reload", () => {
@@ -75,7 +67,7 @@ test("persisted stats render from the cache after a reload", () => {
   const after = new QueryClient();
   hydrate(after, persisted);
 
-  expect(render(after, store)).toContain("3 of 4 passed");
+  expect(render(after, store)).toContain("3 PRs, 2 closed");
 });
 
 test("the outcomes show the triaged medians with their counts, and each missing state as one sentence", () => {

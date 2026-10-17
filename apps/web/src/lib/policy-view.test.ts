@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { AUTHOR_GROUPS, emptyPack, readCheckPack, type AuthorGroup } from "@corbits/triage-contracts";
-import { forChoice, withFor } from "./policy-view.ts";
+import { forChoice } from "./policy-view.ts";
 
 describe("for", () => {
-  test.each(Object.keys(AUTHOR_GROUPS) as AuthorGroup[])("a stored step for %s shows as it, and choosing it again keeps the same authors", (group) => {
+  test.each(Object.keys(AUTHOR_GROUPS) as AuthorGroup[])("a stored step for %s shows as it", (group) => {
     const pack = readCheckPack({ ...emptyPack("acme/widgets"), actions: { when: ["opened"], pass: [{ do: "approve", for: group }], fail: [], unsure: [] } });
-    const step = pack.actions.pass[0]!;
-    expect(forChoice(step)).toBe(group);
-    expect(withFor(step, group)).toEqual(step);
+    expect(forChoice(pack.actions.pass[0]!)).toBe(group);
   });
 
   test("a stored step for several groups shows its first group, as before", () => {
@@ -21,6 +19,5 @@ describe("for", () => {
 
   test("a step for one kind shows as that kind", () => {
     expect(forChoice({ do: "approve", when: { author: ["OWNER"] } })).toBe("OWNER");
-    expect(withFor({ do: "approve" }, "FIRST_TIMER")).toEqual({ do: "approve", when: { author: ["FIRST_TIMER"] } });
   });
 });

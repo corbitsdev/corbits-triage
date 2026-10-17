@@ -137,8 +137,9 @@ export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: (ten
   if (file.status === "absent") return { read: stored, upgrade: saved ? { state: "upgrade", saved: saved.source.repo, unexpressed: exported(saved).unexpressed } : { state: "ok" }, ...(saved && { saved }) };
   const read = await fileRead(deps, tenantId, repo, file);
   if (!saved) return { read, upgrade: { state: "ok" } };
-  const differences = read.status === "ok" ? policyDifferences(saved.pack, read.pack) : read.reason.split("\n").map((line) => `Triage can't read ${read.path}: ${line}`);
-  if (differences.length > 0) return { read: saved, upgrade: { state: "differs", path: file.status === "ok" ? file.file.path : file.path, saved: saved.source.repo, differences, fixable: fileCanChange(saved, read, repo), unexpressed: exported(saved).unexpressed }, saved };
+  const differences = read.status === "ok" ? policyDifferences(saved.pack, read.pack) : [];
+  const problem = read.status === "ok" ? undefined : read.reason;
+  if (differences.length > 0 || problem) return { read: saved, upgrade: { state: "differs", path: file.status === "ok" ? file.file.path : file.path, saved: saved.source.repo, differences, ...(problem && { problem }), fixable: fileCanChange(saved, read, repo), unexpressed: exported(saved).unexpressed }, saved };
   await retireSaved(deps, tenantId, repo);
   return { read, upgrade: { state: "ok" } };
 }

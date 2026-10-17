@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, StatusDot } from "@corbits/react-ui";
-import { VERDICTS, type ActionKind } from "@corbits/triage-contracts";
-import { triageRunsAlone } from "../../lib/automation-grid.ts";
 import { bitbucketDatacenterRepoUrl, useBitbucketDatacenterConnection, useBitbucketDatacenterManualWebhook } from "../../lib/bitbucket-datacenter.ts";
 import type { RepoRecord } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
@@ -10,22 +8,15 @@ import type { RepoPackStore } from "../../lib/repo-pack-store.ts";
 import { useRepoStats } from "../../lib/repo-stats.ts";
 import type { RepoRow } from "../../lib/repo-rows.ts";
 import { useGrants, useRoles } from "../../lib/tenant-entities.ts";
-import { usePolicyView } from "../../lib/use-policy-view.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import { hasRuleOn } from "../../lib/pack-draft.ts";
-import { usePolicyFile } from "../../lib/policy-file.ts";
-import { usePolicyUpgrade } from "../../lib/policy-upgrades.ts";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import CodeReviewCard from "./CodeReviewCard.tsx";
-import LabelsCard from "./LabelsCard.tsx";
 import OutcomesCard from "./OutcomesCard.tsx";
 import OnItsOwn from "./OnItsOwn.tsx";
-import PolicyCard from "./PolicyCard.tsx";
-import PolicyUpgradeNote from "./PolicyUpgradeNote.tsx";
+import PolicySection from "./PolicySection.tsx";
 import RemoveRepository from "./RemoveRepository.tsx";
 import RepoByline from "./RepoByline.tsx";
-import RulesSection from "./RulesSection.tsx";
-import StepsSection from "./StepsSection.tsx";
 import TriageSwitch from "./TriageSwitch.tsx";
 
 type RepoPanelProps = { repo: RepoRecord; row: RepoRow; live: boolean; store: RepoPackStore | null; onClose: () => void };
@@ -39,37 +30,19 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const { readOnly, snapshot } = usePortal();
   const settings = useRepoPack(store, repo.name, repo.source);
   const stats = useRepoStats(store, repo.name);
-  const { draft, problem } = settings;
-  const view = usePolicyView(draft, settings.edit);
-  const policyFile = usePolicyFile(repo.name);
-  const upgrade = usePolicyUpgrade(repo.name);
-  // With a file, rules change through the file, never here. Until the file is known, it may exist.
-  const fromFile = policyFile.isPending || policyFile.isError || Boolean(policyFile.data);
+  const { draft } = settings;
   const grants = useGrants();
   const roles = useRoles();
   const grantsKnown = ![grants, roles].some((section) => section.loading || section.unavailable || section.denied);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [closing, setClosing] = useState(false);
   const instance = useBitbucketDatacenterConnection().data;
   const fromBitbucket = repo.source === "bitbucket-datacenter";
   const manualWebhook = useBitbucketDatacenterManualWebhook(repo.name, fromBitbucket && settings.saved.policy.enabled);
   const [sawTriageOff, setSawTriageOff] = useState(false);
   if (settings.status === "ready" && !settings.saved.policy.enabled && !sawTriageOff) setSawTriageOff(true);
   const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready";
-  const gated = !draft.policy.enabled;
-  const locked = disabled || gated || fromFile;
-  const unfinished = VERDICTS.some((verdict) => view.steps[verdict].some((step) => step.problem) || view.labels[verdict].problem) || view.rules.some((rule) => rule.problem);
-
-  /** Unfinished steps and rules are never saved, so the first close says so and the second discards them. */
-  function close() {
-    if (unfinished && !closing) {
-      setClosing(true);
-      return;
-    }
-    onClose();
-  }
-  const closeRef = useRef(close);
-  closeRef.current = close;
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(function focusHeading() {
     headingRef.current?.focus();
@@ -91,10 +64,6 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     return <Button asChild variant="ghost" size="sm" className="gh-link"><a href={bitbucketDatacenterRepoUrl(instance.baseUrl, repo.name)} target="_blank" rel="noreferrer">Bitbucket <ExternalIcon /></a></Button>;
   }
 
-  function runsAlone(kind: ActionKind): boolean {
-    return triageRunsAlone(roles.rows, grants.rows, kind, repo.name);
-  }
-
   function renderBody() {
     if (settings.status === "loading") return <div className="loading-indicator"><StatusDot label="Loading" live tone="emphasis" /></div>;
     if (settings.status === "failed") return <div className="rs"><Button type="button" variant="outline" size="sm" onClick={settings.reload}>Retry</Button></div>;
@@ -102,14 +71,9 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
       <>
         <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} rerunnable={repo.source === "github"} />
         {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
-        {grantsKnown && <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><OnItsOwn repo={repo.name} source={repo.source} roles={roles.rows} grants={grants.rows} disabled={disabled} /></div>}
+        <PolicySection repo={repo.name} source={repo.source} pack={settings.saved.pack} disabled={readOnly || snapshot?.denied.repos === true} onSettled={settings.reload} />
         <CodeReviewCard repo={repo} disabled={readOnly || snapshot?.denied.repos === true} />
-        <PolicyCard source={repo.source} policyFile={policyFile} savedApply={upgrade?.upgrade?.state === "differs"} />
-        <div className={gated ? "gated" : undefined} inert={gated}>
-          <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={locked} edit={settings.edit} problem={problem} />
-          <StepsSection view={view} automatic={grantsKnown ? runsAlone : undefined} disabled={locked} />
-          <LabelsCard view={view} automatic={grantsKnown ? runsAlone("labels") : undefined} disabled={locked} />
-        </div>
+        {grantsKnown && <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><OnItsOwn repo={repo.name} source={repo.source} roles={roles.rows} grants={grants.rows} disabled={disabled} /></div>}
         {stats ? <OutcomesCard outcomes={stats.outcomes} source={repo.source} /> : null}
         <RemoveRepository repo={repo.name} source={repo.source} disabled={readOnly || snapshot?.denied.repos === true} onRemoved={onClose} />
       </>
@@ -126,16 +90,14 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
               {settings.status === "ready" ? <span className={`saved ${settings.save}`} role="status" aria-live="polite">{SAVE_WORDS[settings.save]}</span> : null}
               <span className="sp" />
               {sourceLink()}
-              <Button type="button" variant="ghost" size="icon" aria-label="Close repository settings" onClick={close}><CloseIcon /></Button>
+              <Button type="button" variant="ghost" size="icon" aria-label="Close repository settings" onClick={onClose}><CloseIcon /></Button>
             </div>
             {live ? <RepoByline row={row} /> : null}
           </header>
-          {closing && unfinished ? <p role="alert" className="error">Unfinished steps and rules are not saved; one that was saved before keeps its saved version. Close again to leave them, or remove them with ×.</p> : null}
           {settings.conflicts.length ? <p className="note">Another writer also changed {settings.conflicts.join(", ")}; yours was kept.</p> : null}
           {settings.error ? <p role="alert" className="error">{settings.error} <button type="button" className="linkish" onClick={settings.flush}>Try again</button></p> : null}
           {settings.saved.pack.dropped?.length ? <p className="note">Left out because they no longer run: {settings.saved.pack.dropped.join("; ")}.</p> : null}
           {settings.corrupt ? <p className="note">The saved policy could not be read. The next change replaces it. {settings.corrupt}</p> : null}
-          {upgrade ? <PolicyUpgradeNote row={upgrade} disabled={readOnly || snapshot?.denied.repos === true} onSettled={settings.reload} /> : null}
           {renderBody()}
         </div>
       </div>

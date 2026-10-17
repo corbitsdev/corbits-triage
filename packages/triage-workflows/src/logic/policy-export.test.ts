@@ -105,7 +105,7 @@ describe("a saved policy exported as a policy file", () => {
     expect(file.labels).toEqual(saved.labels);
     expect(runs(file)).toEqual(runs(saved));
     expect(runs(saved).flat().some((action) => "effectId" in action)).toBe(saved.actions.pass.length + saved.actions.fail.length + saved.actions.unsure.length > 0);
-    expect(unexpressed).toEqual(saved === extended ? [expect.stringContaining("shared rules are copied")] : []);
+    expect(unexpressed).toEqual(saved === extended ? ["Later changes to the workspace's shared rules stop reaching this repository."] : []);
   });
 
   test("what a file cannot hold is listed and left out, never run in its place", () => {
@@ -120,10 +120,10 @@ describe("a saved policy exported as a policy file", () => {
     };
     const { text, unexpressed } = exportPolicyFile(saved, false);
     expect(unexpressed).toEqual([
-      expect.stringContaining("Flag pull requests over any number of lines changed"),
-      'Rule "Risk level" is named "Risk" in the file.',
-      expect.stringContaining('Rule "Risk level" (Score the risk'),
-      expect.stringContaining('Rule "Per file" (Is it true that Each file has a header.?)'),
+      "Flag pull requests over any number of lines changed stops after the merge; a policy file can't hold it without a value.",
+      "Risk level is called Risk in the file.",
+      "Risk level stops after the merge; a policy file can't hold it.",
+      "Per file stops after the merge; a policy file can't hold it.",
     ]);
     const file = readPolicyFile(text, REPO) as CheckPack;
     expect(policyDifferences(saved, file)).toHaveLength(3);
@@ -146,13 +146,16 @@ checks:
 custom: []
 actions: { when: [opened, updated, checks, ready], pass: [], fail: [], unsure: [] }
 `, corbitsCode.repo) as CheckPack;
-    expect(policyDifferences(corbitsCode, file)).toEqual(['Your saved rules say "Never accept changes to vendor/**, node_modules/**"; the file says "Never accept changes to node_modules/**".']);
+    expect(policyDifferences(corbitsCode, file)).toEqual([
+      { rule: "Never accept changes to", saved: ["vendor/**", "node_modules/**"], file: ["node_modules/**"], instead: "Pull requests that change vendor/** will no longer fail." },
+    ]);
   });
 
   test("CI green written down and off lets merges skip CI, so it differs from no CI green row", () => {
     const merging: CheckPack = { ...emptyPack(REPO), actions: { ...emptyPack(REPO).actions, pass: [{ do: "merge" }] } };
     const skipping = { ...merging, checks: { "ci-green": { enabled: false } } };
-    expect(policyDifferences(merging, skipping)).toEqual(['The file has "Merges need not wait for CI"; your saved rules do not.']);
+    expect(policyDifferences(merging, skipping)).toEqual([{ rule: "CI must pass before merge", saved: ["merges wait for CI"], file: ["merges skip CI"], instead: "Merges will no longer wait for CI." }]);
+    expect(policyDifferences(skipping, merging)).toEqual([{ rule: "CI must pass before merge", saved: ["merges skip CI"], file: ["merges wait for CI"], instead: "Failing CI will no longer fail pull requests; merges still wait for it." }]);
     expect(policyDifferences(skipping, readPolicyFile(exportPolicyFile(skipping, false).text, REPO) as CheckPack)).toEqual([]);
   });
 
@@ -165,6 +168,6 @@ actions: { when: [opened, updated, checks, ready], pass: [], fail: [], unsure: [
     };
     expect(policyDifferences(everyStep, reworded)).toEqual([]);
     const moved = { ...everyStep, actions: { ...everyStep.actions, unsure: [...everyStep.actions.unsure].reverse() } };
-    expect(policyDifferences(everyStep, moved)).toEqual(["On Unsure, your saved rules request review, then assign, then request review, then do nothing; the file does nothing, then requests review, then assigns, then requests review."]);
+    expect(policyDifferences(everyStep, moved).map((difference) => difference.rule)).toEqual(["When Triage is unsure"]);
   });
 });

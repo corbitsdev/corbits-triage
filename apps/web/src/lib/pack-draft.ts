@@ -1,12 +1,10 @@
 import {
-  BUILT_IN_CHECK_NAMES,
   CATALOG_IDS,
   catalogCheckEnabled,
   customCheckEnabled,
   customRuleId,
   defaultActions,
   emptyPack,
-  isCatalogId,
   LABEL_MAX,
   readCheckPack,
   RECOMMENDED_ISSUE,
@@ -17,7 +15,6 @@ import {
   type CatalogCheck,
   type CatalogId,
   type CheckPack,
-  type CheckRef,
   type CustomCheck,
   type Step,
   type PolicyActions,
@@ -48,7 +45,7 @@ export function freshStepId(): string {
   return `step-${lastStepId}`;
 }
 
-export function freshStepIds(pack: CheckPack): Record<VerdictWord, string[]> {
+function freshStepIds(pack: CheckPack): Record<VerdictWord, string[]> {
   return { pass: pack.actions.pass.map(freshStepId), fail: pack.actions.fail.map(freshStepId), unsure: pack.actions.unsure.map(freshStepId) };
 }
 
@@ -91,10 +88,6 @@ const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>> = {
   "no-forbidden-paths": { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
 };
 
-export function catalogValue<K extends keyof CatalogCheck>(pack: CheckPack, id: CatalogId, key: K): CatalogCheck[K] {
-  return pack.checks[id]?.[key] ?? CATALOG_DEFAULTS[id]?.[key] as CatalogCheck[K];
-}
-
 /**
  * Writes only the keys that differ, so a stored row never gains values the user did not set.
  * A check the saved pack lacks goes back to absent once it reads as absent again.
@@ -110,27 +103,6 @@ export function setCatalogCheck(draft: RepoDraft, saved: CheckPack, id: CatalogI
   }
   if (current && changed.length === 0) return draft;
   return withPack(draft, { checks: { ...draft.pack.checks, [id]: next } });
-}
-
-/** Whether a check is in the verdict; a saved tracker of "off" leaves the issue check doing nothing, so it reads as off. */
-export function checkOn(pack: CheckPack, id: CheckRef): boolean {
-  if (BUILT_IN_CHECK_NAMES.has(id)) return true;
-  if (!isCatalogId(id)) return pack.custom.some((row) => row.id === id && customCheckEnabled(row));
-  return catalogCheckEnabled(pack, id) && !(id === "linked-issue" && pack.checks["linked-issue"]?.tracker === "off");
-}
-
-/** Off is stored as `enabled: false`; back on drops the flag, which the contract reads as on. */
-export function setCustomEnabled(draft: RepoDraft, id: string, enabled: boolean): RepoDraft {
-  function toggled(row: CustomCheck): CustomCheck {
-    if (row.id !== id) return row;
-    const { enabled: _was, ...rest } = row;
-    return (enabled ? rest : { ...rest, enabled: false }) as CustomCheck;
-  }
-  return withPack(draft, { custom: draft.pack.custom.map(toggled) });
-}
-
-export function removeCustom(draft: RepoDraft, id: string): RepoDraft {
-  return withPack(draft, { custom: draft.pack.custom.filter((row) => row.id !== id) });
 }
 
 /** So two rows never share a key. */
@@ -200,9 +172,9 @@ function contractProblem(raw: unknown): string | null {
 }
 
 /** The most steps a verdict holds, as the contract enforces. */
-export const STEPS_MAX = 20;
+const STEPS_MAX = 20;
 
-export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step, position: number): string | null {
+function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step, position: number): string | null {
   if (position >= STEPS_MAX) return `A verdict holds at most ${STEPS_MAX} steps.`;
   const found = contractProblem({ ...emptyPack(draft.pack.repo), actions: { ...defaultActions(), [list]: [step] } });
   if (found) return found;
@@ -218,13 +190,13 @@ export function storedLabel(name: string): string {
   return name.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
 }
 
-export function labelProblem(name: string): string | null {
+function labelProblem(name: string): string | null {
   const stored = storedLabel(name);
   if (!stored) return "name the label.";
   return stored.length > LABEL_MAX ? `a label is at most ${LABEL_MAX} characters.` : null;
 }
 
-export function customProblem(draft: RepoDraft, row: CustomCheck): string | null {
+function customProblem(draft: RepoDraft, row: CustomCheck): string | null {
   return contractProblem({ ...emptyPack(draft.pack.repo), custom: [row] });
 }
 
