@@ -9,7 +9,9 @@ is a wrapper over them.
 
 - The instance URL is `bitbucketDatacenter.baseUrl` in the workspace's `corbitsTriage`
   config, with `bitbucketDatacenter.user`, the slug the token acts as, whose
-  own webhook events never wake triage. One connection per workspace.
+  own webhook events never wake triage. One connection per workspace. Only the
+  connect route writes it, and each read checks the URL again as connect does;
+  one that fails reads as not connected, and disconnect still removes it.
 - The token is the stock credential `bitbucket-datacenter` (type `api_key`) on the stock
   provider `bitbucket-datacenter` (plugin `http`, `apiBaseUrl` = the instance URL).
 - The webhook secret is the stock credential `bitbucket-datacenter-hook`, with
