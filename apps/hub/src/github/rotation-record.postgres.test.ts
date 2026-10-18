@@ -10,6 +10,10 @@ const T = "tnt_rot";
 
 async function noGrant(): Promise<void> {}
 
+async function allowAll(): Promise<boolean> {
+  return true;
+}
+
 function patchReq(ns: Record<string, unknown>) {
   return new Request("https://hub/api/tenants/x", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: { corbitsTriage: ns } }) });
 }
@@ -28,21 +32,20 @@ test("PostgreSQL: a rotation is claimed once, a portal save read before it is re
     const record = { from: "run_a", to: "run_c", at: "2026-10-08T00:00:00.000Z" };
     expect(await claimRotation(a.db, T, record)).toBe(true);
     expect(await claimRotation(a.db, T, { ...record, to: "run_d" })).toBe(false);
-    const refused = await prepareCorbitsTriagePatch(a.db, T, patchReq(stale), noGrant);
+    const refused = await prepareCorbitsTriagePatch({ db: a.db, authorize: allowAll, grantEnabled: noGrant }, T, "prn_admin", patchReq(stale));
     expect(refused instanceof Response && refused.status).toBe(409);
     const [row] = await a.db.select().from(schema.tenant).where(eq(schema.tenant.id, T));
     const fresh = triageNs(row!.config);
-    const passed = await prepareCorbitsTriagePatch(a.db, T, patchReq({ ...fresh, confidenceFloor: 0.5 }), noGrant);
+    const passed = await prepareCorbitsTriagePatch({ db: a.db, authorize: allowAll, grantEnabled: noGrant }, T, "prn_admin", patchReq(fresh));
     expect(passed instanceof Response).toBe(false);
-    expect(rotationRecord(JSON.parse(await (passed as Request).text()).config.corbitsTriage)).toEqual(record);
     await clearRotation(a.db, T, { ...record, to: "other" });
     const [kept] = await a.db.select().from(schema.tenant).where(eq(schema.tenant.id, T));
     expect(rotationRecord(triageNs(kept!.config))).toEqual(record);
     await clearRotation(a.db, T, record);
     const [cleared] = await a.db.select().from(schema.tenant).where(eq(schema.tenant.id, T));
     expect(rotationRecord(triageNs(cleared!.config))).toBeUndefined();
-    // Only the claim and the matching clear wrote; the refused claim and the other clear were no-ops.
-    expect(triageNs(cleared!.config).rev).toBe(5);
+    // Only the claim, the portal save and the matching clear wrote; the refused claim and the other clear were no-ops.
+    expect(triageNs(cleared!.config).rev).toBe(6);
   } finally {
     await a?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

@@ -377,6 +377,20 @@ dismissed on a head is not made again on it. Where it does not mirror, its
 approvals are not dismissed.
 Hub routes that reach GitHub for the portal use the same adapter.
 
+The portal saves repository settings through the stock tenant update (`PATCH
+/api/tenants/:id`), which the hub checks first. Besides tenant `manage`, it
+takes only what the portal changes in `corbitsTriage`: a repository's
+`enabled` and `checkPack`, and dropping a repository. Switching a GitHub
+repository on needs `use` on the App credential; switching a Bitbucket one,
+or dropping it while on, is refused (409 `use_bitbucket_route`), since its
+own route also adds or removes the webhook; changing the pinned policy needs
+`write` on the policy pinned before and after. A repository the workspace
+does not have is refused 400. Every other key (the Bitbucket connection,
+code review, connected state, installation and webhook ids) keeps its stored
+value whatever the request says. The hub writes `corbitsTriage` itself under
+the tenant row's lock, refusing 409 if it changed since the hub read it, and
+passes the rest of the request on to stock without it.
+
 ## Data
 
 - Interchange's own tables, artifacts and run logs hold tenants, credentials,

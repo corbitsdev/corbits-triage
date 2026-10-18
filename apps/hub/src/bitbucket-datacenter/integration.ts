@@ -245,7 +245,8 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     const refused = await manageRefusal(member);
     if (refused) return refused;
     const ns = await tenantNs(member.tenantId);
-    if (!bitbucketConnection(ns)) return failure(404, "bitbucket_datacenter_not_connected", "Bitbucket is not connected.");
+    // A stored connection whose URL no longer passes the check can still be removed.
+    if (ns.bitbucketDatacenter === undefined) return failure(404, "bitbucket_datacenter_not_connected", "Bitbucket is not connected.");
     const webhooksLeft = await removeWebhooks(member, repoRecords(ns).filter(isBitbucketRecord));
     for (const name of [TOKEN_CREDENTIAL, HOOK_CREDENTIAL]) {
       const removeFailed = await removeCredential(req, member.tenantId, name);

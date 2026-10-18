@@ -16,6 +16,7 @@ import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage-github";
 import { verdictRecord } from "./github/verdict-record-store.js";
 import { ensureTriageRole } from "./github/automation.js";
+import { patchCorbitsTriage, upsertConnectedRepos } from "./github/tenant-config.js";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -339,7 +340,7 @@ function fakeGithub() {
   return { origin: `http://127.0.0.1:${server.port}`, comments, writes, repoRequests, stop: () => server.stop(true) };
 }
 
-async function connectGithub(origin: string, headers: Record<string, string>, tenantId: string, githubOrigin: string): Promise<string> {
+async function connectGithub(db: Db, origin: string, headers: Record<string, string>, tenantId: string, githubOrigin: string): Promise<string> {
   const provider = await fetch(`${origin}/api/tenants/${tenantId}/providers`, {
     method: "POST", headers, body: JSON.stringify({ name: "github", plugin: "http", apiBaseUrl: githubOrigin }),
   });
@@ -352,8 +353,11 @@ async function connectGithub(origin: string, headers: Record<string, string>, te
     body: JSON.stringify({ providerId, name: "github", type: "api_key", secret: JSON.stringify({ appId: "1", privateKey }), metadata: { appSlug: "corbits" } }),
   });
   expect(credential.status).toBe(201);
+  const installed = await patchCorbitsTriage(db, tenantId, function install(ns) {
+    return upsertConnectedRepos(ns, [REPO], { installationId: 1 });
+  });
   const enable = await fetch(`${origin}/api/tenants/${tenantId}`, {
-    method: "PATCH", headers, body: JSON.stringify({ config: { corbitsTriage: { rev: 0, repos: [{ name: REPO, connected: true, enabled: true }] } } }),
+    method: "PATCH", headers, body: JSON.stringify({ config: { corbitsTriage: { rev: installed?.rev, repos: [{ name: REPO, enabled: true }] } } }),
   });
   expect(enable.status).toBe(200);
   return providerId;
@@ -424,7 +428,7 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
     const tenantId = await createTenant(origin, headers);
     const otherTenantId = await createTenant(origin, headers);
 
-    await connectGithub(origin, headers, tenantId, github.origin);
+    await connectGithub(db, origin, headers, tenantId, github.origin);
 
     const label: SeededDo = { list: "pass", kind: "labels", target: { labels: ["api"] }, index: 0, held: true };
     const forged: SeededDo = { list: "fail", kind: "labels", target: { labels: ["api"] }, index: 0, effectId: "0".repeat(64), held: true };
@@ -473,7 +477,7 @@ test("a pack preview evaluates an open pull request without writing anything", a
     const origin = await startHub({ GITHUB_API_ORIGIN: github.origin });
     const headers = await signedIn(origin);
     const tenantId = await createTenant(origin, headers);
-    await connectGithub(origin, headers, tenantId, github.origin);
+    await connectGithub(db, origin, headers, tenantId, github.origin);
     const title = checkPackName(REPO);
     const saved = await fetch(`${origin}/api/tenants/${tenantId}/artifacts`, {
       method: "POST", headers, body: JSON.stringify({ mode: "text", title, content: JSON.stringify(SAVED_PACK), metadata: { checkPack: title } }),
@@ -560,7 +564,7 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
     const headers = await signedIn(origin);
     const tenantId = await createTenant(origin, headers);
     const otherTenantId = await createTenant(origin, headers);
-    await connectGithub(origin, headers, tenantId, github.origin);
+    await connectGithub(db, origin, headers, tenantId, github.origin);
 
     const label: SeededDo = { list: "pass", kind: "labels", target: { labels: ["api"] }, index: 0 };
     const note: SeededDo = { list: "fail", kind: "comment", target: { body: "Thanks" }, index: 0 };
@@ -622,7 +626,7 @@ test("a burst of webhook deliveries for one pull request queues its head once an
     const origin = await startHub({ GITHUB_API_ORIGIN: github.origin, TRIAGE_COALESCE_QUIET_MS: "1000" }, temporaryDirectory(), output);
     const headers = await signedIn(origin);
     const tenantId = await createTenant(origin, headers);
-    const providerId = await connectGithub(origin, headers, tenantId, github.origin);
+    const providerId = await connectGithub(db, origin, headers, tenantId, github.origin);
     const title = checkPackName(REPO);
     const saved = await fetch(`${origin}/api/tenants/${tenantId}/artifacts`, {
       method: "POST", headers, body: JSON.stringify({ mode: "text", title, content: JSON.stringify(SAVED_PACK), metadata: { checkPack: title } }),
