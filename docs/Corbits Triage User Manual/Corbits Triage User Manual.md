@@ -177,6 +177,29 @@ A file exported before rules carried reasons keeps working as it is.
 
 A file can also start from a workspace-wide policy with `extends`, and then set only what differs for this repository. This is useful when many repositories should follow the same rules.
 
+#### Checking the file in pull requests
+
+On GitHub, a mistake in the file can be caught before it reaches the default branch. Add this workflow to the repository as `.github/workflows/corbits-triage-policy.yml`:
+
+```yaml
+name: Corbits Triage policy
+on:
+  pull_request:
+    paths: [".corbits-triage.yml", ".corbits-triage.yaml"]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: corbitsdev/corbits-triage/packages/policy-check-action@main
+```
+
+Each pull request that changes the file then gets a **Corbits Triage policy / check** check. It reads the file exactly as Triage does and fails if Triage could not read it. Each problem is marked on its line in the pull request's **Files changed**, or on the file as a whole when it has no line. It needs no Triage account and no secrets, and sets up its own Bun for the job. `@main` will be replaced by a release tag with the first pre-release.
+
 ### Rules
 
 A rule asks one question about a pull request and answers pass, fail or unconfirmed. The Policy section shows each rule that is on as one sentence. A file can turn on:

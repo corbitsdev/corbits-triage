@@ -199,6 +199,13 @@
         "@intx/types": "workspace:*",
       },
     },
+    "packages/policy-check-action": {
+      "name": "@corbits/policy-check-action",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/triage-contracts": "workspace:*",
+      },
+    },
     "packages/pr-code-review-anthropic": {
       "name": "@corbits/pr-code-review-anthropic",
       "version": "0.1.0",
@@ -828,6 +835,8 @@
     "@corbits/hub": ["@corbits/hub@workspace:apps/hub"],
 
     "@corbits/openai-null-delta": ["@corbits/openai-null-delta@workspace:packages/openai-null-delta"],
+
+    "@corbits/policy-check-action": ["@corbits/policy-check-action@workspace:packages/policy-check-action"],
 
     "@corbits/pr-code-review-anthropic": ["@corbits/pr-code-review-anthropic@workspace:packages/pr-code-review-anthropic"],
 

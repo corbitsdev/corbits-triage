@@ -1,6 +1,6 @@
 import { errorText } from "@corbits/common";
 import { readRepoFileResponse, type RepoFileRead } from "@corbits/github-reads";
-import { POLICY_FILE_PATHS, readCheckPack, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
+import { notAFileReason, POLICY_FILE_PATHS, readCheckPack, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
 import type { GithubApi } from "./github-api.ts";
 import { savedPackFor } from "./pack-store.ts";
 import { keepPolicyFile, localPacks, policyFiles } from "./storage.ts";
@@ -18,7 +18,7 @@ export type PolicyOrigin = { from: "file"; url: string } | { from: "saved" } | {
 export type PolicyRead = { pack: CheckPack; origin: PolicyOrigin };
 
 function outcomeOf(read: RepoFileRead, repo: string, path: string): FileOutcome {
-  if (read.kind === "not-a-file") return { kind: "refused", reason: `${path} is not a file.` };
+  if (read.kind === "not-a-file") return { kind: "refused", reason: notAFileReason(path) };
   if (read.text === null) return { kind: "refused", reason: `${path} is too large.` };
   try {
     return { kind: "policy", url: read.url, policy: readPolicyFile(read.text, repo) };

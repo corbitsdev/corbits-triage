@@ -345,7 +345,9 @@ A built-in rule takes its setting as `max` (size limits), `tracker` (linked
 issue) or `paths` (forbidden paths); `enabled: false` keeps a rule written
 down but off. Its JSON Schema is `policyFile` at the hub's
 `/api/integrations/pack-schema`. Only YAML is read today, up to 64 KB and
-without anchors or aliases.
+without anchors or aliases. The GitHub Action in
+[packages/policy-check-action](../packages/policy-check-action/action.yml)
+checks the file the same way on pull requests that change it.
 
 ```yaml
 rules:
