@@ -38,7 +38,7 @@ Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center on
 
 Code review reads each new commit of a pull request for bugs: mistakes in the changed lines and breakage the change causes elsewhere in the repository. It is separate from the verdict and optional.
 
-- **Turning it on.** Save an Anthropic API key under [Settings → Models](#models), then switch on **Review the code in every pull request for bugs** in each repository's [Code review section](#code-review-1). Switch it off there to stop.
+- **Turning it on.** Save an Anthropic API key under [Settings → Code review](#code-review-2), then switch on **Review the code in every pull request for bugs** in each repository's [Code review section](#code-review-1). Switch it off there to stop.
 - **What it costs.** Each commit it reviews is billed to your Anthropic account. It reviews a pull request when it is opened and after every push while it is not a draft, and **Review again** is one more review.
 - **Where you see it.** In the Inbox's reading pane, under **Code review**: each bug with how severe it is, its file and line, and the code it points at. **Review again** reviews the latest commit once more. A very large change is read up to a size limit, and the review says how much of it was read.
 - **Sending it to GitHub.** On a GitHub pull request, **Send to GitHub** posts the review as one review from the Triage App: each finding on a changed line is a comment on that line, and the rest are listed in the review. A finding whose lines run past the changed ones sits on its first changed lines and names the others. A review too long for GitHub lists what fits and says how many more are in the portal. It is sent once per commit; the section then says **Sent to GitHub**, and sending it again only tells you it is already there. A review of a newer commit is sent as a new review, and the earlier one stays.
@@ -74,7 +74,7 @@ The first time you sign in to a new workspace, the portal walks you through thre
 
    ![The form for connecting an existing GitHub App, with fields for App ID, App slug, Private key, Webhook secret and the Webhook URL to copy](images/04.png)
 
-   If your team uses Bitbucket Data Center rather than GitHub, expand **Use Bitbucket Data Center instead** and connect your instance as described under [Sources](#sources).
+   If your team uses Bitbucket Data Center rather than GitHub, expand **Use Bitbucket Data Center instead** and connect your instance as described under [GitHub and Bitbucket Data Center](#github-and-bitbucket-data-center).
 
    ![Use Bitbucket Data Center instead, expanded: the Instance URL and HTTP access token fields, the note on the Corbits Triage user and its permissions, the Download the Corbits Triage avatar link and the Connect button](images/24.png)
 2. **Repositories.** On GitHub, press **Choose repositories on GitHub** and pick which repositories the App may see. GitHub tells Triage which ones you chose. With Bitbucket Data Center there is nothing to pick: Triage lists every repository the token can see, and you turn triage on for each one under Repositories. Either way they arrive with triage switched off, so nothing runs yet.
@@ -253,7 +253,7 @@ A step can be limited to some authors, shown after it, such as "Approve, for mai
 
 A step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for.
 
-Under Code review, **Actions Triage takes on its own** lists each action with its own switch. On, Triage does that action in this repository without asking; off, it waits for you in the Inbox, in this repository only. An action allowed in every repository under [Settings → Access](#access) shows on and changes only there. Bitbucket Data Center repositories list **Comment and build status** instead of Comment, and do not list Add labels or Assign; Settings → Access does not offer them for those actions.
+Under Code review, **Actions Triage takes on its own** lists each action with its own switch. On, Triage does that action in this repository without asking; off, it waits for you in the Inbox, in this repository only. An action switched on for every repository under [Settings → Triage](#actions-that-run-on-their-own) shows on and changes only there. Bitbucket Data Center repositories list **Comment and build status** instead of Comment, and do not list Add labels or Assign.
 
 Enabling a repository switches on Comment and Add labels (Comment only on Bitbucket, which has no labels); every other action waits for a person to click until you switch it on, so you can watch what Triage suggests before you let it act. Turning triage off and on again switches them back on. Two actions are always held for a person: Close on Unsure, and Merge on anything but Pass.
 
@@ -269,13 +269,13 @@ On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repos
 
 ### Code review
 
-![The Code review section of a repository page: Review the code in every pull request for bugs, with its switch off, and Needs an Anthropic key in Settings → Models below it](images/27.png)
+![The Code review section of a repository page: Review the code in every pull request for bugs, with its switch off, and Needs an Anthropic key in Settings → Code review below it](images/27.png)
 
-Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. It needs the workspace's Anthropic key: until one is saved, the section says **Needs an Anthropic key in Settings → Models**, with a link to [Models](#models).
+Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. It needs the workspace's Anthropic key: until one is saved, the section says **Needs an Anthropic key in Settings → Code review**, with a link to [Code review](#code-review-2).
 
 ### Where code review runs
 
-Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up). [Models](#models) says where it runs.
+Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up). [Settings → Code review](#code-review-2) says where it runs.
 
 A server without Docker set up for Triage has nowhere to run it. The switch is then replaced by **Code review needs an isolated place to run**, with **Set up Docker** and **All options**, which open the setup guides, and **Review again** is hidden in the Inbox. A repository that had code review on says **It is switched on here but not running**, with **Turn off**; nothing is reviewed until Docker is set up, and then it carries on without being switched on again.
 
@@ -375,31 +375,29 @@ Authors do not use the portal. Depending on the repository's actions, they see a
 
 ![The Pulse page: four counters for new, resolved, now waiting on you and acted on by you since the last visit, a Stuck section, and a table per repository with triaged, needed you, acted on, and median time to merge or close and to first response beside the before-Triage median](images/16.png)
 
-## Settings: people, access and workspace configuration
+## Settings: Triage, code review and people
 
-**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with five sections: Triage, Sources, Models, Access and Your account. The links at the top jump to each section. Most teams visit it once during setup and then only to invite people or change what Triage may do on its own.
+**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with four sections: Triage, Code review, People and Your account. The links at the top jump to each section. At the very bottom, **Versions for support** opens the version of each Triage component running for your workspace, with a **Copy** button; support will ask for it when you report a problem. Most teams visit it once during setup and then only to invite people or change what Triage does on its own.
 
 ### Triage
 
-![The Triage section of Settings: Triage is running on 1 of 1 repository, the versions it runs and a Copy button](images/22.png)
+Everything triage needs, top to bottom: its status, where pull requests come from, each repository's policy file, the decision model, and the actions Triage takes without asking.
 
-Says how many repositories Triage is running on, with a **Choose repositories** link, and shows the version of each Triage component currently running for your workspace. You do not need to change anything here. Press **Copy** when you report a problem, because support will ask which versions you are on.
+![The top of the Triage section of Settings: Triage is running on 0 of 2 repositories, with Choose repositories](images/22.png)
 
-### Sources
+The first line says how many repositories Triage is running on, with a **Choose repositories** link.
 
-Sources are where Triage reads pull requests from and acts on them. GitHub and Bitbucket Data Center sit side by side, and a workspace can use either or both.
+#### GitHub and Bitbucket Data Center
 
-![The Sources section: GitHub, with The GitHub App is not connected, a Connect it link and its Webhook URL, beside Bitbucket Data Center, Connected to http://localhost:7990 with a Disconnect button and its Webhook URL](images/17.png)
+Triage reads pull requests from GitHub, Bitbucket Data Center, or both. Each has a card of its own.
 
-#### GitHub
+![The GitHub card, with the GitHub App connected and installed on 2 repositories, its secrets and its Webhook URL, then Bitbucket Data Center is not connected, with a Connect button](images/17.png)
 
-This section shows whether the GitHub App is connected and which repositories it is installed on. Press **Choose repositories on GitHub** to add or remove repositories. GitHub's own installer opens, and when you come back, any new repository appears under Repositories with triage switched off. **Open Repositories** goes straight to that page.
+A host that is not connected takes one line with a **Connect** button. The **GitHub** card shows whether the GitHub App is connected and how many repositories it is installed on. Press **Choose repositories on GitHub** to add or remove repositories. GitHub's own installer opens, and when you come back, any new repository appears under Repositories with triage switched off.
 
 Below that are the secrets the App needs: the webhook secret and the App's private key. Each has a **Replace secret** button for rotating it and a **Remove** link. Removing the GitHub App secret disconnects Triage from GitHub, so do that only when you mean to. The **Webhook URL** is what GitHub uses to tell Triage about pull request events. You only need it if you set up the App by hand.
 
-#### Bitbucket Data Center
-
-Triage reaches a Bitbucket Data Center instance with an HTTP access token. To connect one, enter the **Instance URL**, such as `https://bitbucket.example.com`, paste the **HTTP access token** and press **Connect**. Triage tries the token once and stores it in the server's vault only if the instance accepts it.
+The **Bitbucket Data Center** card reaches an instance with an HTTP access token. To connect one, press **Connect**, enter the **Instance URL**, such as `https://bitbucket.example.com`, paste the **HTTP access token** and press **Connect**. Triage tries the token once and stores it in the server's vault only if the instance accepts it.
 
 Create the token for a dedicated Bitbucket user named **Corbits Triage**, not for a person, so that Triage's comments and reviews show under that name. **Download the Corbits Triage avatar** gives you a picture for that user. The token needs:
 
@@ -411,26 +409,33 @@ Create the token for a dedicated Bitbucket user named **Corbits Triage**, not fo
 
 Once connected, the card says **Connected to** the instance and shows the **Webhook URL**, where Bitbucket sends pull request events. Triage creates each repository's webhook when you turn triage on, if the token allows it. **Disconnect** stops triage on every Bitbucket Data Center repository and removes the webhooks Triage created; their rules are kept. If a webhook cannot be removed, the card names the repositories where an admin must delete it by hand.
 
-### Models
+#### Repositories
 
-![The Models section with both keys stored: Judge pull requests with TypeSafe (Jev) and Review code with Anthropic, each marked Key stored with Change and Remove](images/18.png)
+![The Repositories card: acme/widgets with No .corbits-triage.yml and a Start a policy file link, then acme/gadgets with Has .corbits-triage.yml, and Open Repositories](images/40.png)
 
-The keys Triage uses to judge and review pull requests, one row each:
+Lists each connected repository and whether its default branch has a `.corbits-triage.yml` policy file. A repository with triage on and no file has a **Start a policy file** link to its repository page, where the steps are (see [Policy](#policy)). **Open Repositories** is where triage is turned on or off per repository.
 
-- **Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider.
-- **Review code with Anthropic** is the key [code review](#code-review) runs on.
+#### Decision model
 
-Below them, a line says where code review runs, such as **Code review runs in a Docker container on your Triage server**, or **Code review can't run yet: this server has no isolated place for it**, with **Set up Docker**.
+![The Decision model card: Answers your policies' Judgement rules and chooses the verdict, and Judge pull requests with TypeSafe (Jev), Key stored, with Change and Remove](images/41.png)
 
-Each row says **Key stored** or **No key**. With no key, its form is open below it: for the decision model, pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service; for code review, paste the Anthropic key and press **Save key**. **Change** opens the form again to replace a stored key, and **Remove** deletes it after you confirm; whatever uses it stops working. Keys are kept in the server's vault and never shown again. Every save of the decision model redeploys Triage's workers, so give it a minute before expecting new verdicts.
+**Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider. It answers your policies' Judgement rules and chooses the verdict.
 
-![The Models section with no Anthropic key: Judge pull requests with your own provider, Key stored, with Change and Remove, then Review code with Anthropic, No key, with the Anthropic key field and Save key open below it, and Code review runs in a Docker container on your Triage server.](images/26.png)
+The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Change** opens the form again to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again. Every save of the decision model redeploys Triage's workers, so give it a minute before expecting new verdicts.
 
-### Access
+#### Actions that run on their own
 
-The Access section has three parts: People, who may approve a held action, and what Triage does on its own.
+![Actions that run on their own: a switch per action, all off, with Add labels and Comment on in acme/widgets](images/42.png)
 
-![The People list with the owner and an Email field and Role dropdown for inviting someone, then the grid Who may approve a held action with a row per action and a switch per role](images/19.png)
+One switch per action. On, Triage carries that action out in every repository by itself during triage, without waiting for anyone; off, it waits for you in the Inbox, except in repositories where it is switched on from the repository page, which the action lists under its name. In a new workspace every switch is off. Turn actions on one at a time as you gain confidence, starting with low-risk ones such as adding labels.
+
+### Code review
+
+![The Code review section: Review code with Anthropic, No key, with the Anthropic key field and Save key, then Code review can't run yet: this server has no isolated place for it, with Set up Docker](images/43.png)
+
+[Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**; with no key, paste it and press **Save key**. **Change** and **Remove** work as for the decision model. Below it, a line says where code review runs, such as **Code review runs in a Docker container on your Triage server**, or **Code review can't run yet: this server has no isolated place for it**, with **Set up Docker**.
+
+### People
 
 **People** lists everyone in the workspace with their role. To add a teammate, type their email, choose a role and press **Invite**. They receive a sign-in link that works once and expires after 15 minutes. If your server is not set up to send email, the portal shows you the link to copy and send yourself.
 
@@ -440,13 +445,7 @@ There are three roles:
 | --- | --- |
 | Owner | Everything, including workspace settings and inviting people. The person who created the workspace is its owner. |
 | Admin | Manage repositories, rules and people. |
-| Member | Use the Inbox and carry out the actions their role is allowed below. |
-
-**Who may approve a held action** is a grid with one row per action and one column per role. An owner may always approve. A switch that is on means that role may approve that action when it is waiting in the Inbox.
-
-![What Triage does on its own: a row per action, with Add labels allowed on its own in acme/widgets and every other action waiting for approval](images/23.png)
-
-**What Triage does on its own** is the important one. Each action has a list of repositories where Triage carries it out on the pull request by itself during triage, without waiting for anyone. Pick a repository from **Add repository…**, or **All repositories**, to allow it; press × to take it away. An action with no repositories listed waits for approval everywhere. In a new workspace every list is empty. Allow actions one at a time as you gain confidence, starting with low-risk ones such as adding labels. The repository page's **Actions Triage takes on its own** then shows them on.
+| Member | Use the Inbox and approve the held actions their role allows. |
 
 ### Your account
 
@@ -478,7 +477,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 | --- | --- |
 | Pull request | A proposed change to a repository on GitHub or Bitbucket Data Center, waiting to be reviewed and merged. |
 | Repository | One project's code, such as acme/widgets on GitHub or TRI/widgets on Bitbucket Data Center. |
-| Source | Where pull requests live: GitHub or Bitbucket Data Center. Connected under Settings → Sources. |
+| Source | Where pull requests live: GitHub or Bitbucket Data Center. Connected under Settings → Triage. |
 | Workspace | Your team's shared space in Triage. One workspace can watch many repositories. |
 | Portal | The Triage website. |
 | Hub | The Triage server behind the portal. You never use it directly. |
@@ -486,7 +485,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 | HTTP access token | The connection between Triage and Bitbucket Data Center, created for a Bitbucket user named Corbits Triage. |
 | Build status | The pass or fail mark Bitbucket shows beside a commit. Triage writes its verdict there as **Corbits Triage**, since Bitbucket has no labels. |
 | Rule | One question Triage asks about a pull request, answered pass, fail or unconfirmed. |
-| Decision model | The AI service that answers questions needing judgment, and that gives the final verdict when the policy has Judgement rules. Set under Settings → Models. |
+| Decision model | The AI service that answers questions needing judgment, and that gives the final verdict when the policy has Judgement rules. Set under Settings → Triage. |
 | Verdict | Triage's overall answer for one commit of a pull request: Pass, Fail or Unsure. |
 | Score | How sure the decision model is that the pull request passes, from 0 to 1. A score of 0.9 means 90 percent sure. |
 | Action | One step in a repository's policy, such as adding a label or requesting a review. |
@@ -505,13 +504,13 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **Triage says Unsure. What should I do?** Read the pull request yourself. Unsure means the rules did not catch a problem but the decision model was not confident either way. Approve, request changes or comment as you would normally. If a rule could not run because the host had not finished computing something, such as CI, Triage will check again on its own.
 
-**A pull request shows "Not triaged yet" for a long time.** Check that triage is on for its repository, that its source is still connected under Settings → Sources, and that a decision model key is stored under Settings → Models. If all three look right, open the repository and press **Triage open pull requests again**. On Bitbucket, also check the repository has its **Corbits Triage** webhook.
+**A pull request shows "Not triaged yet" for a long time.** Check that triage is on for its repository, that its source is still connected under Settings → Triage, and that a decision model key is stored there. If all three look right, open the repository and press **Triage open pull requests again**. On Bitbucket, also check the repository has its **Corbits Triage** webhook.
 
-**Does Triage ever merge, close or approve on its own?** Only if you allow it. Each action has a list of repositories under **What Triage does on its own** in Settings → Access. Enabling a repository adds it to the Comment and Labels lists only; the others start empty. Close is never run automatically on an Unsure verdict, and Merge never on anything but Pass, even when they are allowed.
+**Does Triage ever merge, close or approve on its own?** Only if you allow it. Each action has a switch under **Actions that run on their own** in Settings → Triage, and one per repository on its page. Enabling a repository switches on Comment and Add labels for it only; the others start off. Close is never run automatically on an Unsure verdict, and Merge never on anything but Pass, even when they are allowed.
 
 **Why did Triage not call the decision model for a failing pull request?** When a rule fails, the answer is already Fail, so the model is not asked the verdict question. A repository with no Judgement rules never asks it at all. This saves money and keeps verdicts predictable.
 
-**Code review shows nothing for a pull request.** Check that code review is on in the repository's Code review section and that an Anthropic key is stored under Settings → Models. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one. If the Code review section says **Code review needs an isolated place to run**, whoever runs your Triage server sets one up first.
+**Code review shows nothing for a pull request.** Check that code review is on in the repository's Code review section and that an Anthropic key is stored under Settings → Code review. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one. If the Code review section says **Code review needs an isolated place to run**, whoever runs your Triage server sets one up first.
 
 **The author pushed a fix. Do I need to do anything?** No. Every new commit gets its own verdict, and Triage updates its comment. If you had requested changes through Triage and every failed rule is now fixed, Triage withdraws the request for you. If a reviewer requested changes, the pull request moves to **Needs you** for their re-review.
 
@@ -519,6 +518,6 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **Where do I change my password?** Sign out. If the sign-in screen shows **Forgot password?**, use it, and a reset link is sent to your email.
 
-**How do I remove someone from the workspace?** An Owner or Admin can change or remove a person's role under Settings → Access.
+**How do I remove someone from the workspace?** The portal does not change roles; an Owner or Admin changes or removes a person's role through the Triage server's API.
 
-**Something looks wrong. What should I tell support?** The repository name and pull request number, what you expected, what you saw, and the versions listed under Settings → Triage (use its **Copy** button). The audit log's **Export** button gives support a record of what happened.
+**Something looks wrong. What should I tell support?** The repository name and pull request number, what you expected, what you saw, and the versions under **Versions for support** at the bottom of Settings (use its **Copy** button). The audit log's **Export** button gives support a record of what happened.
