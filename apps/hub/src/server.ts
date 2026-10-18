@@ -97,7 +97,7 @@ import { createSettledStatusReader, createTriageRuns } from "./github/triage-run
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { failHead, markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManagerRefusal } from "./github/tenant-config.js";
+import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead, githubWrite } from "@corbits/github-tool";
@@ -838,11 +838,15 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       } catch {
         return Response.json({ error: "not_found" }, { status: 404 });
       }
-      const refused = await tenantManagerRefusal({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
-      if (refused) return refused;
-      const prepared = await prepareCorbitsTriagePatch(composition.db, tenantId, req, function grantEnabled(tx, repo) {
-        return grantEnabledKinds(tx, tenantId, repo, "github", now());
-      });
+      const principalId = await tenantManager({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
+      if (principalId instanceof Response) return principalId;
+      const prepared = await prepareCorbitsTriagePatch({
+        db: composition.db,
+        authorize: authorizePortal,
+        grantEnabled(tx, repo) {
+          return grantEnabledKinds(tx, tenantId, repo, "github", now());
+        },
+      }, tenantId, principalId, req);
       if (prepared instanceof Response) return prepared;
       return stock.fetch(prepared, server);
     }

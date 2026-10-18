@@ -1,10 +1,12 @@
+import { type } from "arktype";
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { repoPolicy, repoSourceOf, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
-import { asRecord } from "@corbits/common";
+import { UpdateTenant } from "@intx/types";
+import { REPO_SOURCES, repoPolicy, repoSourceOf, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { asRecord, isRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
 import type { Tx } from "./admin-github-grant.js";
-import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure, memberPrincipal, sourceCredentialGrant, type GrantDeps } from "./portal-credential.js";
 
 const CONFIG_KEY = "corbitsTriage";
 
@@ -159,36 +161,92 @@ function cloneWithBody(req: Request, body: string): Request {
   return new Request(req.url, { method: req.method, headers, body });
 }
 
-/** Checked as stock does, before the body or tenant is read. */
-export async function tenantManagerRefusal(
-  d: Pick<PortalCredentialDeps, "db" | "authorize"> & { getSession: (headers: Headers) => Promise<{ user: { id: string } } | null> },
+/** Checked as stock does, before the body or tenant is read; the manager's principal id, or the refusal. */
+export async function tenantManager(
+  d: GrantDeps & { getSession: (headers: Headers) => Promise<{ user: { id: string } } | null> },
   tenantId: string,
   headers: Headers,
-): Promise<Response | undefined> {
+): Promise<string | Response> {
   const session = await d.getSession(headers);
   if (!session) return failure(401, "unauthorized", "Authentication required");
   const principalId = await memberPrincipal(d.db, tenantId, session.user.id);
   if (principalId === undefined) return failure(403, "forbidden", "Not a member of this tenant");
-  if (await d.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage")) return undefined;
+  if (await d.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage")) return principalId;
   return failure(403, "forbidden", "You do not have permission to manage this tenant");
 }
 
-function enabledGithubNames(ns: CorbitsTriageNs): Set<string> {
-  return new Set(repoRecords(ns).filter((record) => record.enabled === true && sourceOf(record) === "github").map((record) => record.name));
+/** What a member may change in the namespace through the tenant route; everything else keeps its stored value. */
+const TriagePatch = type({
+  "+": "delete",
+  "rev?": "number",
+  "repos?": type({
+    "+": "delete",
+    name: "string > 0",
+    "source?": type.enumerated(...REPO_SOURCES),
+    "enabled?": "boolean",
+    "checkPack?": { "+": "delete", name: "string", "id?": "string" },
+  }).array(),
+});
+
+type TriagePatch = typeof TriagePatch.infer;
+
+/** `after` is undefined for a record the patch removes. */
+type RepoChange = { before: RepoRecord; after: RepoRecord | undefined };
+
+/** Records the patch leaves out are removed; a record it names that is not stored is refused. */
+function patchedRepos(stored: RepoRecord[], patch: NonNullable<TriagePatch["repos"]>): RepoChange[] | Response {
+  const byKey = new Map(patch.map((row) => [triageStateKey(row), row]));
+  const storedKeys = new Set(stored.map(triageStateKey));
+  const unknown = patch.find((row) => !storedKeys.has(triageStateKey(row)));
+  if (unknown) return failure(400, "repo_not_found", `The workspace has no repository ${unknown.name}.`);
+  return stored.map(function patched(before) {
+    const row = byKey.get(triageStateKey(before));
+    if (!row) return { before, after: undefined };
+    const { name: _name, source: _source, ...fields } = row;
+    return { before, after: { ...before, ...fields } };
+  });
+}
+
+type PatchDeps = GrantDeps & { grantEnabled: (tx: Tx, repo: string) => Promise<void> };
+
+/** Each change needs the grant its own route needs: switching off or removing an enabled Bitbucket repository also removes the webhook, so it is refused here, as is switching one on. */
+async function changeRefusal(d: PatchDeps, tenantId: string, principalId: string, { before, after }: RepoChange): Promise<Response | undefined> {
+  const wasOn = before.enabled === true;
+  const isOn = after?.enabled === true;
+  if (wasOn !== isOn && sourceOf(before) !== "github") {
+    return failure(409, "use_bitbucket_route", "Turn Bitbucket Data Center repositories on or off with their own switch.");
+  }
+  if (isOn && !wasOn) {
+    const refused = await sourceCredentialGrant(d, principalId, tenantId, before, "use");
+    if (refused) return refused;
+  }
+  const pinned = before.checkPack?.id;
+  const pin = after?.checkPack?.id;
+  if (after === undefined || pin === pinned) return undefined;
+  for (const id of [pinned, pin]) {
+    if (id !== undefined && !(await d.authorize(principalId, tenantId, `artifact:${id}`, "write"))) {
+      return failure(403, "forbidden", "You do not have permission to write that policy.");
+    }
+  }
+  return undefined;
+}
+
+function conflict(): Response {
+  return Response.json({ error: "config_conflict" }, { status: 409 });
 }
 
 /**
  * CAS for portal PATCH /api/tenants/:id that carries `config.corbitsTriage`.
- * Matching rev ⇒ grant each GitHub repository the write switches on, rewrite body to current+1 and let stock.fetch
- * do the write. Granting first leaves nothing to retry if the write fails: grants are idempotent and inert while a
- * repository is off.
+ * Matching rev ⇒ the hub writes the stored namespace with the changes `TriagePatch` allows and the caller holds the
+ * grants for, rev current+1, under the row lock, granting each GitHub repository switched on in the same transaction;
+ * the request goes on to stock without `corbitsTriage`, so stock's own write cannot overwrite a namespace written since.
  * Stale rev ⇒ 409 `{ error: "config_conflict" }`. Over 1 MB ⇒ 413.
  */
 export async function prepareCorbitsTriagePatch(
-  db: DB["db"],
+  d: PatchDeps,
   tenantId: string,
+  principalId: string,
   req: Request,
-  grantEnabled: (tx: Tx, repo: string) => Promise<void>,
 ): Promise<Request | Response> {
   const raw = await readCappedBody(req);
   if (raw === null) return failure(413, "payload_too_large", "Request body too large");
@@ -200,28 +258,41 @@ export async function prepareCorbitsTriagePatch(
   }
   const body = asRecord(parsed);
   const config = asRecord(body?.["config"]);
-  const incomingNs = asRecord(config?.[CONFIG_KEY]);
-  if (!body || !config || !incomingNs) return cloneWithBody(req, raw);
+  if (!body || !config || !(CONFIG_KEY in config)) return cloneWithBody(req, raw);
+  const { [CONFIG_KEY]: incoming, ...otherConfig } = config;
+  if (!isRecord(incoming)) return failure(400, "invalid_request", `${CONFIG_KEY} must be an object`);
+  const patch = TriagePatch(incoming);
+  if (patch instanceof type.errors) return failure(400, "invalid_request", `${CONFIG_KEY}: ${patch.summary}`);
+  // Checked before the namespace is written, so a body stock would refuse saves nothing.
+  const forwarded = { ...body, config: otherConfig };
+  const rest = UpdateTenant(forwarded);
+  if (rest instanceof type.errors) return failure(400, "invalid_request", rest.summary);
 
-  const incomingRev = incomingNs["rev"] ?? 0;
-  const outcome = await db.transaction(async function compareRev(tx) {
-    const [row] = await tx.select().from(schema.tenant).where(eq(schema.tenant.id, tenantId)).for("update");
-    const current = triageNs(row?.config);
-    const currentRev = nsRev(current);
-    if (incomingRev !== currentRev) return { conflict: true as const };
-    const wasEnabled = enabledGithubNames(current);
-    for (const name of enabledGithubNames(incomingNs)) {
-      if (!wasEnabled.has(name)) await grantEnabled(tx, name);
-    }
-    return { conflict: false as const, nextRev: currentRev + 1 };
-  });
-  if (outcome.conflict) {
-    return Response.json({ error: "config_conflict" }, { status: 409 });
+  const [unlocked] = await d.db.select({ config: schema.tenant.config }).from(schema.tenant).where(eq(schema.tenant.id, tenantId));
+  const stored = triageNs(unlocked?.config);
+  const storedRev = nsRev(stored);
+  if ((patch.rev ?? 0) !== storedRev) return conflict();
+  const changes = patch.repos === undefined ? [] : patchedRepos(repoRecords(stored), patch.repos);
+  if (changes instanceof Response) return changes;
+  // Checked before the row lock, so the lock is held briefly and no pooled connection is held while these take another.
+  for (const change of changes) {
+    const refused = await changeRefusal(d, tenantId, principalId, change);
+    if (refused) return refused;
   }
-  return cloneWithBody(req, JSON.stringify({
-    ...body,
-    config: { ...config, [CONFIG_KEY]: { ...incomingNs, rev: outcome.nextRev } },
-  }));
+  let conflicted = false;
+  await patchCorbitsTriage(d.db, tenantId, async function applyPatch(current, tx) {
+    // Every write of the namespace bumps rev, so an unchanged rev means the namespace authorized above is the one stored.
+    if (nsRev(current) !== storedRev) {
+      conflicted = true;
+      return undefined;
+    }
+    for (const { before, after } of changes) {
+      if (after?.enabled === true && before.enabled !== true) await d.grantEnabled(tx, after.name);
+    }
+    return patch.repos === undefined ? current : { ...current, repos: changes.flatMap((change) => change.after ?? []) };
+  });
+  if (conflicted) return conflict();
+  return cloneWithBody(req, JSON.stringify(forwarded));
 }
 
 /** Repositories new to the config are recorded disabled: nothing runs until a user enables one. Another host's record of the same name is left alone. */

@@ -29,7 +29,9 @@ export async function memberPrincipal(db: DB["db"], tenantId: string, userId: st
   return member?.id;
 }
 
-export async function holds(d: PortalCredentialDeps, principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
+export type GrantDeps = Pick<PortalCredentialDeps, "db" | "authorize">;
+
+export async function holds(d: Pick<PortalCredentialDeps, "authorize">, principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
   if (await d.authorize(principalId, tenantId, resource, action)) return true;
   return action === "read" && d.authorize(principalId, tenantId, resource, "use");
 }
@@ -50,7 +52,7 @@ const HOST_CREDENTIAL = {
   "bitbucket-datacenter": { name: TOKEN_CREDENTIAL, label: "Bitbucket Data Center", connect: "Connect Bitbucket Data Center first." },
 } as const;
 
-async function hostCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, source: RepoSource, action: CredentialAction) {
+async function hostCredential(d: GrantDeps, principalId: string, tenantId: string, source: RepoSource, action: CredentialAction) {
   const host = HOST_CREDENTIAL[source];
   const credential = await activeCredential(d.db, tenantId, host.name);
   if (!credential) return { status: 409, code: `${source.replace("-", "_")}_not_connected`, message: host.connect } satisfies CredentialRefusal;
@@ -71,13 +73,13 @@ export async function githubAppGrant(d: PortalCredentialDeps, principalId: strin
 }
 
 /** Why the member may not hold `action` on the credential of the record's host, if they may not. */
-export async function sourceCredentialRefusal(d: PortalCredentialDeps, principalId: string, tenantId: string, record: Pick<RepoRecord, "source">, action: CredentialAction): Promise<CredentialRefusal | undefined> {
+export async function sourceCredentialRefusal(d: GrantDeps, principalId: string, tenantId: string, record: Pick<RepoRecord, "source">, action: CredentialAction): Promise<CredentialRefusal | undefined> {
   const credential = await hostCredential(d, principalId, tenantId, sourceOf(record), action);
   return "code" in credential ? credential : undefined;
 }
 
 /** Whether the member holds `action` on the credential of the record's host; a missing credential is a 409 naming the host. */
-export async function sourceCredentialGrant(d: PortalCredentialDeps, principalId: string, tenantId: string, record: Pick<RepoRecord, "source">, action: CredentialAction): Promise<Response | undefined> {
+export async function sourceCredentialGrant(d: GrantDeps, principalId: string, tenantId: string, record: Pick<RepoRecord, "source">, action: CredentialAction): Promise<Response | undefined> {
   const refusal = await sourceCredentialRefusal(d, principalId, tenantId, record, action);
   return refusal && refusalResponse(refusal);
 }
