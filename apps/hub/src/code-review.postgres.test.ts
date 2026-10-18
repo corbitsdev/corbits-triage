@@ -3,7 +3,9 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
+import { createSidecarPluginRegistry, type SidecarProvisioner } from "@intx/hub-sessions";
+import type { SidecarCapabilityDeclaration } from "@intx/types";
+import { createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
 import type { Offered } from "./code-review-feed.js";
 import { codeReviewSources } from "./github/source-workflow.js";
 import { repoRecords, triageNs } from "./github/tenant-config.js";
@@ -12,7 +14,16 @@ const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "po
 const TENANT = "tnt_review";
 const MEMBER = { tenantId: TENANT, principalId: "prn_owner" };
 
-test("PostgreSQL: code review turns on only with the host connected and the Anthropic key stored, and the hosts it reviews follow it", async () => {
+function provisioner(id: string, capabilities: SidecarCapabilityDeclaration[]): SidecarProvisioner {
+  async function unused(): Promise<never> {
+    throw new Error("not started in this test");
+  }
+  return { id, apiVersion: 2, bindingFingerprint: `${id}:test`, capabilities, ensure: unused, destroy: unused };
+}
+const LOCAL = provisioner("local-process", []);
+const DOCKER = provisioner("docker", [{ capability: "isolation:workload", state: "available" }]);
+
+test("PostgreSQL: code review turns on only with an isolated place to run, the host connected and the Anthropic key stored, and the hosts it reviews follow it", async () => {
   const database = `corbits_review_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
   await admin.db.execute(sql.raw(`create database ${database}`));
@@ -29,6 +40,12 @@ test("PostgreSQL: code review turns on only with the host connected and the Anth
       { id: "prv_anthropic", tenantId: TENANT, name: "anthropic", plugin: "anthropic", apiBaseUrl: "https://api.anthropic.com" },
     ]);
     await db.insert(schema.credential).values({ id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key", secret: "unused", status: "active" });
+    const place = createCodeReviewPlacement(db, createSidecarPluginRegistry({ provisioners: [LOCAL, DOCKER] }));
+    const nowhere = createCodeReviewPlacement(db, createSidecarPluginRegistry({ provisioners: [LOCAL] }));
+    expect(await place(TENANT)).toBe("docker");
+    expect(await nowhere(TENANT)).toBeNull();
+    await db.insert(schema.tenant).values({ id: "tnt_blocked", name: "Blocked", slug: "blocked", domain: "blocked.test", config: { sidecarPlacement: { capabilities: [{ capability: "isolation:workload", effect: "block" }] } } });
+    expect(await place("tnt_blocked")).toBeNull();
     const changed: string[] = [];
     const setCodeReview = createCodeReviewSwitch({
       db,
@@ -36,6 +53,7 @@ test("PostgreSQL: code review turns on only with the host connected and the Anth
       async onChanged(tenantId) {
         changed.push(tenantId);
       },
+      place,
     });
     async function answer(body: Parameters<typeof setCodeReview>[0]) {
       const response = await setCodeReview(body, MEMBER);
@@ -47,6 +65,8 @@ test("PostgreSQL: code review turns on only with the host connected and the Anth
       body: { error: { code: "anthropic_key_missing", message: "Save an Anthropic key in Settings before turning on code review." } },
     });
     await db.insert(schema.credential).values({ id: "crd_anthropic", tenantId: TENANT, principalId: null, providerId: "prv_anthropic", oauthClientId: null, name: "anthropic", type: "api_key", secret: "unused", status: "active" });
+    const switchNowhere = createCodeReviewSwitch({ db, authorize: async () => true, onChanged: async () => {}, place: nowhere });
+    expect((await (await switchNowhere({ repo: "acme/widgets", enabled: true }, MEMBER)).json() as { error: { code: string } }).error.code).toBe("no_isolated_place");
     expect((await answer({ repo: "TRI/widgets", source: "bitbucket-datacenter", enabled: true })).body.error?.code).toBe("source_not_connected");
     expect((await answer({ repo: "acme/missing", enabled: true })).status).toBe(404);
     expect((await answer({ repo: "acme/gone", enabled: true })).body.error?.code).toBe("repo_not_connected");
@@ -70,7 +90,10 @@ test("PostgreSQL: code review turns on only with the host connected and the Anth
           return next;
         },
       },
+      place,
     });
+    const runNowhere = createCodeReviewRun({ db, authorize: async () => true, feed: { again: async () => "sent" }, place: nowhere });
+    expect((await runNowhere({ repo: "acme/widgets", number: 7 }, MEMBER)).status).toBe(409);
     async function run(repo: string) {
       const response = await runCodeReview({ repo, number: 7 }, MEMBER);
       return [response.status, ((await response.json()) as { status?: string; error?: { code: string } }).error?.code ?? "queued"];

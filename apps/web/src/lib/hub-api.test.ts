@@ -71,6 +71,7 @@ const snapshot = (): PortalSnapshot => ({
   invitations: [],
   repos: [],
   credentials: [],
+  codeReviewPlace: null,
   denied: { repos: false, credentials: false },
 });
 

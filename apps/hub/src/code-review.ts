@@ -1,5 +1,7 @@
 import { type } from "arktype";
-import type { DB } from "@intx/db";
+import { resolveTenantSidecarCapabilityPolicies, type DB } from "@intx/db";
+import type { SidecarPluginRegistry } from "@intx/hub-sessions";
+import { CODE_REVIEW_PLACEMENT } from "@corbits/pr-code-review-anthropic/pr-code-review";
 import { REPO_SOURCES } from "@corbits/triage-contracts";
 import { activeCredential, failure } from "./github/portal-credential.js";
 import { ANTHROPIC_CREDENTIAL, connectedSources } from "./github/source-workflow.js";
@@ -17,6 +19,26 @@ export const CodeReviewSet = type({ repo: "string", source: Source, codeReview: 
 export const CodeReviewRunBody = type({ repo: "string > 0", "source?": Source, number: "number.integer > 0" });
 export const CodeReviewQueued = type({ status: "'queued'" });
 
+/** The id of the provisioner a workspace's code review deploys to; null when Interchange would refuse it with `provisioner_no_match`. */
+export type PlaceCodeReview = (tenantId: string) => Promise<string | null>;
+
+/** Stock's own selection, with the workspace's sidecar placement policies and code review's requirement. */
+export function createCodeReviewPlacement(db: DB["db"], plugins: Pick<SidecarPluginRegistry, "selectProvisioner">): PlaceCodeReview {
+  return async function placeCodeReview(tenantId: string): Promise<string | null> {
+    const selection = await plugins.selectProvisioner({
+      tenantPolicies: await resolveTenantSidecarCapabilityPolicies(db, tenantId),
+      workflowRules: CODE_REVIEW_PLACEMENT.capabilities,
+    });
+    return selection.ok ? selection.provisioner.id : null;
+  };
+}
+
+export function createCodeReviewPlace(place: PlaceCodeReview) {
+  return async function codeReviewPlace({ tenantId }: Member): Promise<Response> {
+    return Response.json({ provisioner: await place(tenantId) });
+  };
+}
+
 const REFUSED: Record<Exclude<Offered, "sent">, { code: string; message: string }> = {
   not_reviewed: { code: "code_review_off", message: "Code review is off for this repository, or the Anthropic key is missing." },
   draft: { code: "draft", message: "The pull request is a draft; code review starts once it is ready." },
@@ -28,9 +50,14 @@ type CodeReviewDeps = {
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
   /** After a change: a host's code review deployment is released once none of its repositories has it on. */
   onChanged: (tenantId: string) => Promise<void>;
+  place: PlaceCodeReview;
 };
 
 const HOST_NAMES = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" } as const;
+
+function noPlace(): Response {
+  return failure(409, "no_isolated_place", "Code review needs an isolated place to run, and this server has none set up yet.");
+}
 
 /** Turns code review on or off for one repository; on needs its host connected and the workspace's Anthropic key. */
 export function createCodeReviewSwitch(deps: CodeReviewDeps) {
@@ -39,6 +66,7 @@ export function createCodeReviewSwitch(deps: CodeReviewDeps) {
       return failure(403, "forbidden", "You do not have permission to manage this workspace.");
     }
     const source = body.source ?? "github";
+    if (body.enabled && (await deps.place(tenantId)) === null) return noPlace();
     if (body.enabled && !(await connectedSources(deps.db, tenantId)).includes(source)) {
       return failure(409, "source_not_connected", `Connect ${HOST_NAMES[source]} before turning on code review.`);
     }
@@ -64,7 +92,7 @@ export function createCodeReviewSwitch(deps: CodeReviewDeps) {
   };
 }
 
-type CodeReviewRunDeps = Pick<CodeReviewDeps, "db" | "authorize"> & { feed: Pick<CodeReviewFeed, "again"> };
+type CodeReviewRunDeps = Pick<CodeReviewDeps, "db" | "authorize" | "place"> & { feed: Pick<CodeReviewFeed, "again"> };
 
 /** "Review again": reviews the pull request's current head once more. */
 export function createCodeReviewRun(deps: CodeReviewRunDeps) {
@@ -72,6 +100,7 @@ export function createCodeReviewRun(deps: CodeReviewRunDeps) {
     if (!(await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage"))) {
       return failure(403, "forbidden", "You do not have permission to manage this workspace.");
     }
+    if ((await deps.place(tenantId)) === null) return noPlace();
     const source = body.source ?? "github";
     const record = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).find((row) => row.name === body.repo && sourceOf(row) === source && row.connected);
     if (!record) return failure(404, "repo_not_found", "The workspace has no such connected repository.");

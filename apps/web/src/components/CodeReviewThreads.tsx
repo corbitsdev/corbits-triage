@@ -73,7 +73,7 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       <h3 className="lbl-h">
         Code review<span className="hint">{hint(reviews)}</span>
         <span className="sp" />
-        {on ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}
+        {on && snapshot?.codeReviewPlace ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}
       </h3>
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}

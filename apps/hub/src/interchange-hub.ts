@@ -6,7 +6,8 @@
 // key store, `getSession`, hoisted out of `createApp` for reuse, and the
 // better-auth instance invites send magic links through) and the
 // workflow allocation and lifecycle services the pr-triage deployment
-// rotation calls; and the injected database config, auth config, credential
+// rotation calls, and the deployment plugin registry code review's
+// placement asks; and the injected database config, auth config, credential
 // cipher and Interchange settings, whose defaults env.ts `interchangeSettings`
 // mirrors from upstream. The caller builds the cipher so sidecar provisioners
 // created before the hub share it.
@@ -540,5 +541,6 @@ export async function createInterchangeHub({
     runReader,
     workflowAllocationService,
     workflowLifecycleService,
+    sidecarPlugins,
   };
 }

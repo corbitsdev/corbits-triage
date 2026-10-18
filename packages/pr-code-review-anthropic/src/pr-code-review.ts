@@ -5,6 +5,9 @@ export const PR_CODE_REVIEW_ADDRESS = "pr-code-review";
 
 const TIMEOUT = 10 * 60_000;
 
+/** Its own sidecar, never one shared with other work: the review checks out the pull request's code. */
+export const CODE_REVIEW_PLACEMENT = { capabilities: [{ capability: "isolation:workload", effect: "require" as const }] };
+
 function stepsOf(...ids: string[]) {
   return { project: { from: "steps" }, fields: ids } as const;
 }
@@ -47,6 +50,7 @@ export function prCodeReview({ id = PR_CODE_REVIEW_ADDRESS, sources }: { id?: st
   return defineWorkflow({
     id,
     credentialBindings: credentialBindingsFor(sources),
+    sidecarPlacement: CODE_REVIEW_PLACEMENT,
     steps: { events: onTrigger({ on: { type: "mail", to: id }, body, onBodyFailure: "tolerate" }) },
   });
 }

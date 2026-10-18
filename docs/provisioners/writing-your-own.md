@@ -35,4 +35,4 @@ describeProvisionerConformance("my-backend", async () => ({
 
 ## Register it
 
-The hub registers provisioners in `apps/hub/src/server.ts`, in `sidecarProvisioners` for deployments and `probeSidecarProvisioners` for probes; in each list the first match wins. Pass the same instance to both, so a deployment can adopt its probe's sidecar. Configuration comes from `apps/hub/src/env.ts` only.
+The hub registers provisioners in `apps/hub/src/server.ts`, in `sidecarProvisioners` for deployments and `probeSidecarProvisioners` for probes; in each list the first match wins. Pass the same instance to both, so a deployment can adopt its probe's sidecar. Configuration comes from `apps/hub/src/env.ts` only. A provisioner in `sidecarProvisioners` that declares `isolation:workload` available is one code review can run on: `GET /api/integrations/code-review/{tenantId}/place` names it when it is the one selected, and the portal lets code review be switched on. Add a setup guide for it beside the others in [this folder](README.md).

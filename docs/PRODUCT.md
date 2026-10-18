@@ -444,9 +444,13 @@ draft is reviewed, and "Review again" reviews the current commit once more.
 A diff over 100,000 characters is cut to its first lines, and the review says
 how many it read. A workspace turns it on by saving an Anthropic key under
 Settings → Models and switching it on per repository; each reviewed commit is
-billed to the workspace's Anthropic account. Findings show only in the portal,
-in the pull request's reading pane, as the first comment of a thread of their
-own.
+billed to the workspace's Anthropic account. Each review runs in an isolated
+place of its own, apart from other work, because it checks out the pull
+request's code. Until the server has one, the repository page shows a card
+linking the setup guides in place of the switch, a repository left switched
+on is not reviewed, and Settings → Models says code review can't run yet.
+Findings show only in the portal, in the pull request's reading pane, as the
+first comment of a thread of their own.
 
 ## Triage over time
 
@@ -462,5 +466,6 @@ model's earlier answers for anything unchanged. See
 
 - The repository scan measures a repository's closed pull requests but does
   not propose a policy yet, and the hub does not run it.
-- Sidecars run on the hub's own machine; there is no remote provisioner yet.
+- Code review runs only where the hub has Docker; there is no cloud
+  provisioner yet.
 - Code review's findings are not posted to the pull request.

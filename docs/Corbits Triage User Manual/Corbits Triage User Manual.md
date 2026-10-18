@@ -269,7 +269,11 @@ Code review reads each new commit of a pull request for bugs. It runs whether or
 
 ### Where code review runs
 
-Code review runs on the server that runs Triage, beside Triage itself.
+Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage. [Models](#models) says where it runs.
+
+A server without Docker set up for Triage has nowhere to run it. The switch is then replaced by **Code review needs an isolated place to run**, with **Set up Docker** and **All options**, which open the setup guides, and **Review again** is hidden in the Inbox. A repository that had code review on says **It is switched on here but not running**, with **Turn off**; nothing is reviewed until Docker is set up, and then it carries on without being switched on again.
+
+![The Code review section on a server without Docker: Code review needs an isolated place to run, It is switched on here but not running, with Set up Docker, All options and Turn off](images/38.png)
 
 ### Removing a repository
 
@@ -410,9 +414,11 @@ The keys Triage uses to judge and review pull requests, one row each:
 - **Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider.
 - **Review code with Anthropic** is the key [code review](#code-review) runs on.
 
+Below them, a line says where code review runs, such as **Code review runs in a Docker container on your Triage server**, or **Code review can't run yet: this server has no isolated place for it**, with **Set up Docker**.
+
 Each row says **Key stored** or **No key**. With no key, its form is open below it: for the decision model, pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service; for code review, paste the Anthropic key and press **Save key**. **Change** opens the form again to replace a stored key, and **Remove** deletes it after you confirm; whatever uses it stops working. Keys are kept in the server's vault and never shown again. Every save of the decision model redeploys Triage's workers, so give it a minute before expecting new verdicts.
 
-![The Models section with no Anthropic key: Judge pull requests with TypeSafe (Jev), Key stored, with Change and Remove, then Review code with Anthropic, No key, with the Anthropic key field and Save key open below it](images/26.png)
+![The Models section with no Anthropic key: Judge pull requests with your own provider, Key stored, with Change and Remove, then Review code with Anthropic, No key, with the Anthropic key field and Save key open below it, and Code review runs in a Docker container on your Triage server.](images/26.png)
 
 ### Access
 
@@ -499,7 +505,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **Why did Triage not call the decision model for a failing pull request?** When a rule fails, the answer is already Fail, so the model is not asked the verdict question. A repository with no Judgement rules never asks it at all. This saves money and keeps verdicts predictable.
 
-**Code review shows nothing for a pull request.** Check that code review is on in the repository's Code review section and that an Anthropic key is stored under Settings → Models. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one.
+**Code review shows nothing for a pull request.** Check that code review is on in the repository's Code review section and that an Anthropic key is stored under Settings → Models. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one. If the Code review section says **Code review needs an isolated place to run**, whoever runs your Triage server sets one up first.
 
 **The author pushed a fix. Do I need to do anything?** No. Every new commit gets its own verdict, and Triage updates its comment. If you had requested changes through Triage and every failed rule is now fixed, Triage withdraws the request for you. If a reviewer requested changes, the pull request moves to **Needs you** for their re-review.
 

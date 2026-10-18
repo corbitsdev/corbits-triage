@@ -6,7 +6,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -129,6 +129,8 @@ export type PortalSnapshot = {
   config?: AppConfig;
   configVersion?: string;
   credentials: HubCredential[];
+  /** Absent when the hub refused to say where code review runs. */
+  codeReviewPlace?: CodeReviewPlace["provisioner"];
   denied: SectionDenied;
 };
 
@@ -917,9 +919,9 @@ export function hasAnthropicKey(credentials: readonly HubCredential[]): boolean 
   return credentials.some((credential) => credential.name === ANTHROPIC_CREDENTIAL_NAME && credential.status.toLowerCase() === "active");
 }
 
-/** The hosts with a connected repository that has code review on, while the Anthropic key is stored: the hosts whose code review deploys. */
-export function codeReviewSources(snapshot: Pick<PortalSnapshot, "repos" | "credentials">): RepoSource[] {
-  if (!hasAnthropicKey(snapshot.credentials)) return [];
+/** The hosts with a connected repository that has code review on, while the Anthropic key is stored and the hub can run it: the hosts whose code review deploys. */
+export function codeReviewSources(snapshot: Pick<PortalSnapshot, "repos" | "credentials" | "codeReviewPlace">): RepoSource[] {
+  if (!hasAnthropicKey(snapshot.credentials) || typeof snapshot.codeReviewPlace !== "string") return [];
   return [...new Set(snapshot.repos.filter((repo) => repo.connected && repo.codeReview).map((repo) => repo.source))];
 }
 
@@ -1218,15 +1220,25 @@ export async function listRuns(transport: Transport, tenantId: string): Promise<
   return listAll<HubRun>(transport, `/api/tenants/${tid}/workflows/runs`);
 }
 
+async function readCodeReviewPlace(transport: Transport, tid: string): Promise<CodeReviewPlace | undefined> {
+  try {
+    return CodeReviewPlace.assert(await transport.fetch<unknown>("GET", `/api/integrations/code-review/${tid}/place`));
+  } catch (cause) {
+    if (isAuthDenied(cause)) return undefined;
+    throw cause;
+  }
+}
+
 /** Only what the gate needs; approvals, runs and access rules are read by the pages that show them. */
 export async function loadPortal(transport: Transport, access: MemberAccess, hasPack: CheckPackLookup): Promise<PortalSnapshot> {
   const { workspace, workspaces, invitations } = access;
   const tenantId = requireTenantId(workspace.tenantId);
   const tid = enc(tenantId);
   const tenantFallback: TenantBody = { id: tenantId, name: "", slug: WORKSPACE_SLUG };
-  const [tenant, credentials] = await Promise.all([
+  const [tenant, credentials, places] = await Promise.all([
     tolerateSection(transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`), tenantFallback),
     tolerateSection(listAll<HubCredential>(transport, `/api/tenants/${tid}/credentials`), []),
+    readCodeReviewPlace(transport, tid),
   ]);
   return {
     workspace,
@@ -1237,6 +1249,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     config: appConfig(tenant.value.config),
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
+    ...(places && { codeReviewPlace: places.provisioner }),
     denied: {
       repos: tenant.denied,
       credentials: credentials.denied,
