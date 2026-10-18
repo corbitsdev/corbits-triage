@@ -13,7 +13,6 @@ import {
   projectQueue,
   reposFromConfig,
   removeRepository,
-  saveInference,
   saveRepoSettings,
   triagePullRequest,
   untilDeploymentReady,
@@ -72,7 +71,7 @@ const snapshot = (): PortalSnapshot => ({
   repos: [],
   credentials: [],
   codeReviewPlace: null,
-  denied: { repos: false, credentials: false },
+  denied: { repos: false, credentials: false, models: false },
 });
 
 const queue = (approvals: HubApproval[], pulls: PullTriage[] = [decided], openPulls?: Parameters<typeof projectQueue>[2]) =>
@@ -324,52 +323,6 @@ describe("workspace GitHub App and repository lifecycle", () => {
         body: { config: { corbitsTriage: { rev: 0, repos: [{ name: "acme/two", connected: true }] } } },
       },
     ]);
-  });
-
-  test("saves inference through stock provider and credential routes", async () => {
-    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
-    const transport: Transport = {
-      fetch: async (method, path, body) => {
-        calls.push({ method, path, body });
-        if (method === "GET" && path.includes("/providers")) return { data: [], nextCursor: null } as never;
-        if (method === "POST" && path.endsWith("/providers")) {
-          return { id: "provider-inference", name: "corbits-system-one", plugin: "corbits-system-one" } as never;
-        }
-        if (method === "POST" && path.endsWith("/credentials")) return { id: "crd-inference" } as never;
-        if (method === "GET" && path === "/api/tenants/tenant") {
-          return { id: "tenant", name: "Acme", slug: "acme", config: {} } as never;
-        }
-        if (method === "PATCH" && path === "/api/tenants/tenant") return undefined as never;
-        throw new Error(`unexpected ${method} ${path}`);
-      },
-      subscribe: () => () => {},
-    };
-
-    await saveInference(transport, "tenant", {
-      endpoint: "https://inference.example/v1",
-      model: "triage-large",
-      secret: "sk-test",
-    });
-
-    expect(calls).toContainEqual({
-      method: "POST",
-      path: "/api/tenants/tenant/providers",
-      body: { name: "corbits-system-one", plugin: "corbits-system-one", apiBaseUrl: "https://inference.example/v1" },
-    });
-    expect(calls).toContainEqual({
-      method: "POST",
-      path: "/api/tenants/tenant/credentials",
-      body: expect.objectContaining({
-        providerId: "provider-inference",
-        name: "corbits-system-one",
-        type: "api_key",
-        secret: "sk-test",
-      }),
-    });
-    const configPatch = calls.find((call) => call.method === "PATCH" && call.path === "/api/tenants/tenant");
-    expect(configPatch?.body).toMatchObject({
-      config: { corbitsTriage: { inference: { endpoint: "https://inference.example/v1", model: "triage-large" } } },
-    });
   });
 });
 

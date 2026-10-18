@@ -3,7 +3,7 @@ import { Button, Input } from "@corbits/react-ui";
 import { useMutation } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { runCredentialAction } from "../../lib/credential-actions.ts";
-import type { HubCredential } from "../../lib/hub-api.ts";
+import { isActiveCredential, type HubCredential } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 
 type CredentialRowProps = {
@@ -36,7 +36,7 @@ export function CredentialRow({ credential, name, replaceable, remove }: Credent
     },
   });
   const disabled = readOnly || change.isPending;
-  const active = credential.status.toLowerCase() === "active";
+  const active = isActiveCredential(credential);
 
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

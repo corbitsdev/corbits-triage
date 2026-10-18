@@ -13,7 +13,6 @@ import Layout from "./components/Layout.tsx";
 import LoadingIndicator from "./components/LoadingIndicator.tsx";
 import Connect from "./pages/Connect.tsx";
 import { OtherWorkspaces } from "./components/OtherWorkspaces.tsx";
-import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
 import { AcceptInvite } from "./pages/AcceptInvite.tsx";
 import { Device, DEVICE_PATH } from "./pages/Device.tsx";
@@ -94,6 +93,7 @@ function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
   const sections: string[] = [];
   if (snapshot.denied.repos) sections.push("repositories");
   if (snapshot.denied.credentials) sections.push("credentials");
+  if (snapshot.denied.models) sections.push("models");
   return (
     <div className="gate">
       <section className="onboarding centered-setup" aria-label="Access denied">
@@ -144,10 +144,10 @@ function Gate() {
     if (loading || !loadError) return <LoadingGate />;
     return <HubOutage message={loadError || "Could not reach the service."} />;
   }
-  if (snapshot.denied.repos || snapshot.denied.credentials) {
+  if (snapshot.denied.repos || snapshot.denied.credentials || snapshot.denied.models) {
     return <DeniedGate snapshot={snapshot} />;
   }
-  if (!connected || !hasDecisionModelCredential(snapshot.credentials) || path === "/connect") return <Connect />;
+  if (!connected || !snapshot.decisionModel || path === "/connect") return <Connect />;
 
   if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;
   if (path === "/login" || path === "/") {

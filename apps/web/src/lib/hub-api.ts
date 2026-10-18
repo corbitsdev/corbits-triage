@@ -77,12 +77,12 @@ export function githubAppInstallUrl(slug: string): string {
   return `https://github.com/apps/${encodeURIComponent(clean)}/installations/new`;
 }
 
+export function isActiveCredential(credential: HubCredential): boolean {
+  return typeof credential.status === "string" && credential.status.toLowerCase() === "active";
+}
+
 export function activeGithubCredential(credentials: HubCredential[]): HubCredential | undefined {
-  return credentials.find((item) =>
-    item.name === GITHUB_CREDENTIAL_NAME
-    && typeof item.status === "string"
-    && item.status.toLowerCase() === "active",
-  );
+  return credentials.find((item) => item.name === GITHUB_CREDENTIAL_NAME && isActiveCredential(item));
 }
 
 export function hasActiveGithubCredential(credentials: HubCredential[]): boolean {
@@ -118,6 +118,7 @@ export type RunLog = {
 type SectionDenied = {
   repos: boolean;
   credentials: boolean;
+  models: boolean;
 };
 
 export type PortalSnapshot = {
@@ -129,6 +130,7 @@ export type PortalSnapshot = {
   config?: AppConfig;
   configVersion?: string;
   credentials: HubCredential[];
+  decisionModel?: Inference;
   /** Absent when the hub refused to say where code review runs. */
   codeReviewPlace?: CodeReviewPlace["provisioner"];
   denied: SectionDenied;
@@ -223,6 +225,35 @@ export async function listAll<T>(transport: Transport, path: string): Promise<T[
   });
 }
 
+export type CatalogRow = { id: string; name?: string; canonicalName?: string; baseURL?: string; credentialId?: string | null; modelId?: string; providerId?: string; quirks?: Record<string, unknown> | null };
+
+type CatalogRows = "providers" | "models" | "offerings";
+
+export type Catalog = Record<CatalogRows, CatalogRow[]>;
+
+export function catalogPath(tenantId: string, rows: CatalogRows): string {
+  return `/api/tenants/${enc(tenantId)}/catalog/${rows}`;
+}
+
+export async function listCatalog(transport: Transport, tenantId: string): Promise<Catalog> {
+  const [providers, models, offerings] = await Promise.all([
+    listAll<CatalogRow>(transport, catalogPath(tenantId, "providers")),
+    listAll<CatalogRow>(transport, catalogPath(tenantId, "models")),
+    listAll<CatalogRow>(transport, catalogPath(tenantId, "offerings")),
+  ]);
+  return { providers, models, offerings };
+}
+
+/** The saved decision model: its catalog provider's endpoint and the model its decision offering names, while the provider's key is active. */
+export function decisionModelOf({ providers, models, offerings }: Catalog, credentials: readonly HubCredential[]): Inference | undefined {
+  const provider = providers.find((row) => row.name === INFERENCE_PROVIDER);
+  const decision = models.find((row) => row.canonicalName === DECISION_MODEL_ALIAS);
+  if (!provider?.baseURL || !decision) return undefined;
+  if (!credentials.some((credential) => credential.id === provider.credentialId && isActiveCredential(credential))) return undefined;
+  const model = offerings.find((row) => row.providerId === provider.id && row.modelId === decision.id)?.quirks?.["model"];
+  return typeof model === "string" ? { endpoint: provider.baseURL, model } : undefined;
+}
+
 const CONFIG_KEY = "corbitsTriage";
 
 export type Inference = { endpoint: string; model: string };
@@ -231,7 +262,6 @@ export type AppConfig = {
   repos?: unknown[];
   allowlist?: Record<string, string[]>;
   labelMap?: Record<string, string>;
-  inference?: Inference;
   allowlistImport?: {
     at: string;
     organizationRuns: Array<{ repo: string; organization: string; count: number; runId: string }>;
@@ -734,23 +764,23 @@ async function ensureCredentialProvider(transport: Transport, tenantId: string, 
   }
 }
 
-/** Stores an API key in the vault under its provider, replacing the secret of the one already stored. */
+/** Stores an API key in the vault under its provider, replacing the secret of the one already stored; returns its id. */
 async function writeApiKey(
   transport: Transport,
   tenantId: string,
-  input: { providerId: string; name: string; secret: string; metadata?: Record<string, unknown>; what: string },
-): Promise<void> {
+  input: { providerId: string; name: string; secret: string; what: string },
+): Promise<string> {
   const tid = enc(requireTenantId(tenantId));
-  const { providerId, name, secret, metadata } = input;
+  const { providerId, name, secret } = input;
   try {
-    await transport.fetch("POST", `/api/tenants/${tid}/credentials`, {
+    const created = await transport.fetch<HubCredential>("POST", `/api/tenants/${tid}/credentials`, {
       providerId,
       name,
       type: "api_key",
       secret,
-      ...(metadata && { metadata }),
       idempotencyKey: credentialIdempotencyKey(providerId, name),
     });
+    return created.id;
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
     const existing = await transport.fetch<HubCredential>(
@@ -766,33 +796,31 @@ async function writeApiKey(
       const label = typeof current.status === "string" && current.status.length > 0 ? current.status : "unknown";
       throw new Error(`The ${input.what} is ${label} — save a new secret.`);
     }
-    const patch: Record<string, unknown> = { secret, ...(metadata && { metadata }) };
+    const patch: Record<string, unknown> = { secret };
     if (REACTIVATABLE_CREDENTIAL_STATUSES.has(status)) patch.status = "active";
     await transport.fetch("PATCH", `/api/tenants/${tid}/credentials/${enc(existing.id)}`, patch);
+    return existing.id;
   }
 }
 
-export async function saveInference(
+/** Stores the decision model's key in the vault; returns the checked endpoint and model with the key's id. */
+export async function saveInferenceKey(
   transport: Transport,
   tenantId: string,
   input: { endpoint: string; model: string; secret: string },
-): Promise<Inference> {
+): Promise<Inference & { credentialId: string }> {
   const endpoint = requireHttpsUrl(input.endpoint, "Endpoint");
   const model = requireContent(input.model, "Model");
   if (!input.secret.trim()) throw new Error("Secret is required.");
   const secret = requireSecret(input.secret);
   const providerId = await ensureCredentialProvider(transport, tenantId, { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER_PLUGIN, apiBaseUrl: endpoint });
-  await writeApiKey(transport, tenantId, {
+  const credentialId = await writeApiKey(transport, tenantId, {
     providerId,
     name: INFERENCE_CREDENTIAL_NAME,
     secret,
-    metadata: { model, endpoint },
     what: "inference secret",
   });
-  await patchAppConfig(transport, tenantId, function setInference(current) {
-    return { ...current, inference: { endpoint, model } };
-  });
-  return { endpoint, model };
+  return { endpoint, model, credentialId };
 }
 
 export async function saveAnthropicKey(transport: Transport, tenantId: string, input: string): Promise<void> {
@@ -917,7 +945,7 @@ export async function setCodeReview(transport: Transport, tenantId: string, repo
 
 /** The provider the workspace runs code review on: the one whose key it stores in Settings → Models. */
 export function codeReviewProvider(credentials: readonly HubCredential[]): CodeReviewProvider | undefined {
-  return codeReviewProviderOf(credentials.filter((credential) => credential.status.toLowerCase() === "active").map((credential) => credential.name));
+  return codeReviewProviderOf(credentials.filter(isActiveCredential).map((credential) => credential.name));
 }
 
 /** The hosts with a connected repository that has code review on, while a code review provider's key is stored and the hub can run it: the hosts whose code review deploys. */
@@ -1232,17 +1260,21 @@ async function readCodeReviewPlace(transport: Transport, tid: string): Promise<C
   }
 }
 
+const EMPTY_CATALOG: Catalog = { providers: [], models: [], offerings: [] };
+
 /** Only what the gate needs; approvals, runs and access rules are read by the pages that show them. */
 export async function loadPortal(transport: Transport, access: MemberAccess, hasPack: CheckPackLookup): Promise<PortalSnapshot> {
   const { workspace, workspaces, invitations } = access;
   const tenantId = requireTenantId(workspace.tenantId);
   const tid = enc(tenantId);
   const tenantFallback: TenantBody = { id: tenantId, name: "", slug: WORKSPACE_SLUG };
-  const [tenant, credentials, places] = await Promise.all([
+  const [tenant, credentials, catalog, places] = await Promise.all([
     tolerateSection(transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`), tenantFallback),
     tolerateSection(listAll<HubCredential>(transport, `/api/tenants/${tid}/credentials`), []),
+    tolerateSection(listCatalog(transport, tenantId), EMPTY_CATALOG),
     readCodeReviewPlace(transport, tid),
   ]);
+  const decisionModel = decisionModelOf(catalog.value, credentials.value);
   return {
     workspace,
     tenantName: tenant.value.name,
@@ -1252,10 +1284,12 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     config: appConfig(tenant.value.config),
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
+    ...(decisionModel && { decisionModel }),
     ...(places && { codeReviewPlace: places.provisioner }),
     denied: {
       repos: tenant.denied,
       credentials: credentials.denied,
+      models: catalog.denied,
     },
   };
 }
@@ -1263,7 +1297,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
 export const BITBUCKET_DATACENTER_CREDENTIAL_NAME = "bitbucket-datacenter";
 
 function hasBitbucketDatacenterCredential(credentials: HubCredential[]): boolean {
-  return credentials.some((item) => item.name === BITBUCKET_DATACENTER_CREDENTIAL_NAME && item.status.toLowerCase() === "active");
+  return credentials.some((item) => item.name === BITBUCKET_DATACENTER_CREDENTIAL_NAME && isActiveCredential(item));
 }
 
 /** The pull request hosts the workspace connected: the GitHub App, a Bitbucket Data Center token. */

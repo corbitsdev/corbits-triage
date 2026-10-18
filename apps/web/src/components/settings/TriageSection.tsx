@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
 import type { RepoSource } from "@corbits/triage-contracts";
 import { DeniedNotice } from "../../lib/denied.tsx";
-import { hasDecisionModelCredential } from "../../lib/decision-models.ts";
 import { connectedSources, currentDeployment, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
 import { triageReadyRepos } from "../../lib/repo-rows.ts";
@@ -49,7 +48,7 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
   const status = {
     sources,
     undeployed: undeployedSources(deployed.rows, sources),
-    model: hasDecisionModelCredential(snapshot.credentials),
+    model: snapshot.decisionModel !== undefined,
     triaging: triageReadyRepos(snapshot.repos).size,
     total: snapshot.repos.length,
   };

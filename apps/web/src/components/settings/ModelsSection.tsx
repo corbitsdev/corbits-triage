@@ -6,7 +6,7 @@ import { presetFor } from "@corbits/triage-contracts";
 import { DOCKER_GUIDE } from "../../lib/code-review-place.ts";
 import { anthropicSecrets, modelSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
-import type { HubCredential, PortalSnapshot } from "../../lib/hub-api.ts";
+import { isActiveCredential, type HubCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { DecisionModelForm } from "../DecisionModelForm.tsx";
 import { ExternalIcon } from "../inbox-icons.tsx";
@@ -102,13 +102,9 @@ function ReviewPlace({ provisioner }: { provisioner: string | null | undefined }
   return <div className="sentence"><span className="txt">Code review runs in {where}.</span></div>;
 }
 
-function active(credential: HubCredential): boolean {
-  return credential.status.toLowerCase() === "active";
-}
-
 export function ModelsSection({ snapshot }: { snapshot: PortalSnapshot }) {
-  const { revoke, removeAnthropic } = usePortal();
-  const saved = snapshot.config?.inference;
+  const { removeDecisionModel, removeAnthropic } = usePortal();
+  const saved = snapshot.decisionModel;
 
   return (
     <section className="sec" id="models" aria-labelledby="sec-models">
@@ -122,15 +118,15 @@ export function ModelsSection({ snapshot }: { snapshot: PortalSnapshot }) {
           <KeyRow
             words={saved ? <>Judge pull requests with {judgeModel(saved)}</> : "Judge pull requests with a decision model"}
             name="decision model"
-            keys={modelSecrets(snapshot.credentials).filter(active)}
+            keys={modelSecrets(snapshot.credentials).filter(isActiveCredential)}
             denied={snapshot.denied.credentials}
-            remove={revoke}
+            remove={removeDecisionModel}
             editor={(onSaved) => <DecisionModelForm onSaved={onSaved} />}
           />
           <KeyRow
             words={<>Review code with <b>Anthropic</b></>}
             name="Anthropic"
-            keys={anthropicSecrets(snapshot.credentials).filter(active)}
+            keys={anthropicSecrets(snapshot.credentials).filter(isActiveCredential)}
             denied={snapshot.denied.credentials}
             remove={removeAnthropic}
             editor={(onSaved) => <AnthropicKeyForm onSaved={onSaved} />}
