@@ -499,11 +499,20 @@ function RefusedPolicies({ repos }: { repos: string[] }) {
   ));
 }
 
-/** Each repository whose saved rules still need moving into its policy file; its panel walks through it. */
+/**
+ * Each repository whose saved rules still need moving into its policy file, its panel walking through it; those with
+ * no policy file yet are counted, however many there are.
+ */
 function PolicyUpgradeNotice() {
   const rows = usePolicyUpgrades();
-  if (rows.length === 0) return null;
-  return <p role="status" className="note">{rows.map((row, at) => <Fragment key={row.repo}>{at > 0 ? " · " : null}<Link to={`/repositories/${row.repo}`}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p>;
+  const moving = rows.filter((row) => row.upgrade?.state !== "start");
+  const starting = rows.length - moving.length;
+  return (
+    <>
+      {moving.length ? <p role="status" className="note">{moving.map((row, at) => <Fragment key={row.repo}>{at > 0 ? " · " : null}<Link to={`/repositories/${row.repo}`}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
+      {starting ? <p role="status" className="note"><Link to="/repositories">{repositoriesText(starting)}</Link> {starting === 1 ? "has" : "have"} no policy file yet, so Triage runs nothing there.</p> : null}
+    </>
+  );
 }
 
 function EmptyList({ view, waiting, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {

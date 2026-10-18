@@ -116,11 +116,14 @@ export function createOpenPullsCache(now: () => Date): OpenPullsCache {
   };
 }
 
-/** A listing this young is answered again rather than asking GitHub, so the portal and the verdict route share one read. */
+/** A listing this young is answered again rather than asking GitHub, so the portal, the verdict route and the policy standings share one read. */
 const RELIST_MS = 10_000;
 
-export function createGithubOpenPulls(deps: PortalCredentialDeps & { list: OpenPrsLister; cache: OpenPullsCache }) {
-  return async function openPulls(member: Member): Promise<Response> {
+export type MemberOpenPulls = (member: Member, fresh: boolean) => Promise<OpenPullsRead | Response>;
+
+/** The workspace's open pull requests from the shared listing, listed again once it is `RELIST_MS` old or when `fresh`; the refusal when the member may not see it. */
+export function createMemberOpenPulls(deps: PortalCredentialDeps & { list: OpenPrsLister; cache: OpenPullsCache }): MemberOpenPulls {
+  return async function memberOpenPulls(member, fresh) {
     const { tenantId } = member;
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
@@ -128,7 +131,15 @@ export function createGithubOpenPulls(deps: PortalCredentialDeps & { list: OpenP
     const refused = await refusedSources(deps, member, connected);
     const refusal = listingRefusal(connected, refused);
     if (refusal) return refusal;
-    const listed = deps.cache.kept(tenantId, RELIST_MS) ?? await deps.cache.read(tenantId, () => listConnectedPulls(deps.list, tenantId, connected, refused));
-    return Response.json({ repos: listed.repos });
+    const kept = fresh ? undefined : deps.cache.kept(tenantId, RELIST_MS);
+    return kept ?? deps.cache.read(tenantId, () => listConnectedPulls(deps.list, tenantId, connected, refused));
+  };
+}
+
+export function createGithubOpenPulls(deps: PortalCredentialDeps & { list: OpenPrsLister; cache: OpenPullsCache }) {
+  const memberOpenPulls = createMemberOpenPulls(deps);
+  return async function openPulls(member: Member): Promise<Response> {
+    const listed = await memberOpenPulls(member, false);
+    return listed instanceof Response ? listed : Response.json({ repos: listed.repos });
   };
 }

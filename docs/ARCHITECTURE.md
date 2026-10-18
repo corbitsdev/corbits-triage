@@ -55,13 +55,17 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     `GET …/policy/file` reads the file and why it is refused, if it is.
     `POST /api/integrations/policy/validate` (open, reads only its body)
     checks a file's text and answers each problem with its line.
-    `GET …/policy/upgrades` answers, for each enabled repository, `upgrade`
-    (stored policy, no file), `differs` (with the differences in plain words)
-    or `ok`. `POST …/policy/export` writes the stored policy as a schema 3
-    file on `corbits-triage/policy`, at the existing file's path when there is
-    one, and opens a pull request through the GitHub App or the Bitbucket
-    Data Center token listing what the file cannot hold; asking again updates
-    the open pull request.
+    `GET …/policy/upgrades` answers, for each enabled repository, `start`
+    (neither), `upgrade` (stored policy, no file), `differs` (with the
+    differences in plain words) or `ok`. `POST …/policy/export` writes the
+    stored policy as a schema 3 file on `corbits-triage/policy`, at the
+    existing file's path when there is one, and opens a pull request through
+    the GitHub App or the Bitbucket Data Center token listing what the file
+    cannot hold; asking again updates the open pull request. With `start`, for an
+    enabled repository, it writes the starter policy (`starterPack`) to
+    `.corbits-triage.yml` the same way, or answers its open pull request
+    untouched; a `start` row finds that pull request in the shared open
+    pull request listing, by its branch.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live pr-triage deployment for the repository's host
     (`pr-triage-github` or `pr-triage-bitbucket-datacenter`), as the tenant

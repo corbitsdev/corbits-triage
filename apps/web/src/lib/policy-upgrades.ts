@@ -6,14 +6,14 @@ import { usePortal } from "./portal.tsx";
 
 export type PolicyUpgradeRow = PolicyUpgrades["repos"][number];
 
-/** `settled`: each repository whose saved rules were moved into its file while the portal was open. */
+/** `settled`: each repository that came to run on its file, started or moved from saved rules, while the portal was open. */
 type Upgrades = { rows: PolicyUpgradeRow[]; settled: string[] };
 
 function unsettled(row: PolicyUpgradeRow): boolean {
   return row.upgrade !== undefined && row.upgrade.state !== "ok";
 }
 
-/** The repositories that had saved rules to move before and now stand settled on their file. */
+/** The repositories that had a file to start or saved rules to move before and now stand settled on their file. */
 function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): string[] {
   return before.filter((row) => unsettled(row) && now.some((next) => next.repo === row.repo && next.upgrade?.state === "ok")).map((row) => row.repo);
 }
@@ -50,12 +50,12 @@ function useUpgradeRows(): PolicyUpgradeRow[] {
   return useUpgrades()?.rows ?? [];
 }
 
-/** Whether the repository's saved rules were moved into its file while the portal was open. */
+/** Whether the repository came to run on its file while the portal was open. */
 export function useSettled(repo: string): boolean {
   return useUpgrades()?.settled.includes(repo) ?? false;
 }
 
-const UPGRADE_LABELS = { upgrade: "Move rules to a file", differs: "Rules differ from file" } as const;
+const UPGRADE_LABELS = { start: "Add a policy file", upgrade: "Move rules to a file", differs: "Rules differ from file" } as const;
 
 /** The repository's standing in a few words, wherever it is listed; undefined once its rules come from its file. */
 export function upgradeLabel(row: PolicyUpgradeRow): string | undefined {
@@ -64,12 +64,12 @@ export function upgradeLabel(row: PolicyUpgradeRow): string | undefined {
   return row.upgrade && row.upgrade.state !== "ok" ? UPGRADE_LABELS[row.upgrade.state] : undefined;
 }
 
-/** Each enabled repository whose saved rules still need moving into its policy file. */
+/** Each enabled repository that still needs a policy file, or whose saved rules still need moving into it. */
 export function usePolicyUpgrades(): PolicyUpgradeRow[] {
   return useUpgradeRows().filter(unsettled);
 }
 
-/** The repository's standing when there is something to say: saved rules to move, or why it could not be read. */
+/** The repository's standing when there is something to say: a file to start, saved rules to move, or why it could not be read. */
 export function usePolicyUpgrade(repo: string): PolicyUpgradeRow | undefined {
   return useUpgradeRows().find((row) => row.repo === repo && (row.error !== undefined || row.upgrade?.state !== "ok"));
 }

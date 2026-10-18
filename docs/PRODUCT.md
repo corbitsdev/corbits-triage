@@ -411,17 +411,21 @@ checks and every step, in order, do. Every pull request goes on the
 
 In the portal the repository's Policy section reads the file back, with
 **Change on GitHub** (or Bitbucket). A refused file is shown with each problem
-in the Policy section, and named above the Inbox. A repository with saved
-rules to move shows one card in the Policy section, stepping through Review,
+in the Policy section, and named above the Inbox. A repository with neither a
+file nor saved rules shows **Start a policy file**: the starter rules (at most
+30 files and 3,000 lines changed, no merge conflicts, CI green; no actions)
+and **Open the pull request**, which adds them as `.corbits-triage.yml` (or
+answers the one already open, leaving its edits). A
+repository with saved rules to move shows one card in the Policy section, stepping through Review,
 Open pull request, Merge on the host and Done: **Move this repository's rules
 into a policy file** with **Open the pull request**; **Your policy file
 differs from your saved rules** with each difference's saved and file values,
 **Update the file to match** and **Use the file instead** (after confirming
 what changes); the open pull request, re-read every 30 seconds until it
 merges; or **Finish moving to the policy file** with **Use the file**. The
-Repositories list marks it **Move rules to a file**, **Rules differ from
+Repositories list marks it **Add a policy file**, **Move rules to a file**, **Rules differ from
 file**, **Waiting for merge** or **Switch to the file**, and the Inbox shows
-the same words in one line. The same reads
+the same words in one line, counting repositories with no file. The same reads
 and writes are hub routes: `GET …/github-triage/{tenantId}/policy/file`,
 `GET …/policy/upgrades` and `POST …/policy/export`; using the file archives
 the saved rules through the stock artifact route. `POST /api/integrations/policy/validate` takes a

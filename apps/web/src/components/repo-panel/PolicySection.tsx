@@ -9,7 +9,7 @@ import PolicyRules from "./PolicyRules.tsx";
 
 type PolicySectionProps = { repo: string; source: RepoSource; pack: CheckPack; disabled: boolean; onSettled: () => void };
 
-/** The repository's policy file read back as sentences, or the steps that move its saved rules into one. */
+/** The repository's policy file read back as sentences, or the steps that start one or move its saved rules into one. */
 export default function PolicySection({ repo, source, pack, disabled, onSettled }: PolicySectionProps) {
   const policyFile = usePolicyFile(repo);
   const row = usePolicyUpgrade(repo);

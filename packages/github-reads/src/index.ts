@@ -109,6 +109,8 @@ export async function listOpenPrs(gh: GithubFetch, repo: string) {
     authorBot: p.user?.type === "Bot",
     draft: p.draft,
     sha: p.head?.sha,
+    // A fork's branch is not one of this repository's.
+    branch: p.head?.repo?.id !== undefined && p.head.repo.id === p.base?.repo?.id ? (p.head.ref as string) : null,
     updatedAt: p.updated_at,
     labels: p.labels?.map((l: any) => l.name) ?? [],
     url: typeof p.html_url === "string" ? p.html_url : null,

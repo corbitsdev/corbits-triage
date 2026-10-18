@@ -69,7 +69,7 @@ import { createTriageQueueView } from "./github/triage-queue-view.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
-import { createGithubOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
+import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
@@ -352,6 +352,10 @@ const codeReviewFeed = createCodeReviewFeed({
   send: sendToWorker,
   log: logJson,
 });
+const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
+const tenantOpenPrs = createTenantOpenPrs(tenantSources);
+const openPullsCache = createOpenPullsCache(now);
+const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, db: composition.db, cipher: composition.credentialCipher, list: tenantOpenPrs, authorize: authorizePortal });
 const policyFile = createPolicyFile({
   db: composition.db,
   settle: settleRepoPolicy,
@@ -359,6 +363,7 @@ const policyFile = createPolicyFile({
   authorize: authorizePortal,
   tenantGithub,
   tenantBitbucket,
+  openPulls: memberOpenPulls,
   log: logJson,
 });
 const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
@@ -400,12 +405,9 @@ const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
 async function liveTriageDeployments(tenantId: string, workflow: string) {
   return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, workflow));
 }
-const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
 const tenantOpenHeads = createTenantOpenHeads(tenantSources);
 const tenantOpenHead = createTenantOpenHead(tenantSources);
-const tenantOpenPrs = createTenantOpenPrs(tenantSources);
 const tenantHeadChecks = createTenantHeadChecks(tenantSources);
-const openPullsCache = createOpenPullsCache(now);
 const githubOpenPulls = createGithubOpenPulls({
   cache: openPullsCache,
   db: composition.db,
