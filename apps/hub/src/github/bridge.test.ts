@@ -370,23 +370,25 @@ describe("bridge handler", () => {
     const sent: Sent[] = [];
     const handle = bridge({ sent });
     const pr = JSON.parse(prPayload);
-    function checkRun(action: string) {
+    function checks(kind: "check_run" | "check_suite", action: string) {
       return JSON.stringify({
         action,
         repository: { full_name: "octocat/hello" },
-        check_run: { head_sha: "sha7", pull_requests: [{ number: 7, head: { sha: "sha7" } }] },
+        [kind]: { head_sha: "sha7", pull_requests: [{ number: 7, head: { sha: "sha7" } }] },
       });
     }
     const deliveries: Array<[string, string, string]> = [
       ["pull_request", JSON.stringify({ ...pr, action: "labeled" }), "ignored"],
-      ["check_run", checkRun("created"), "ignored"],
-      ["check_run", checkRun("completed"), "queued"],
+      ["check_run", checks("check_run", "created"), "ignored"],
+      ["check_run", checks("check_run", "completed"), "queued"],
+      ["check_suite", checks("check_suite", "requested"), "ignored"],
+      ["check_suite", checks("check_suite", "completed"), "queued"],
       ["pull_request", JSON.stringify({ ...pr, action: "synchronize" }), "queued"],
     ];
     for (const [index, [event, body, status]] of deliveries.entries()) {
       expect(await (await handle(githubRequest(body, { delivery: `e${index}`, event }), TARGET)).json()).toEqual({ status });
     }
-    expect(sent.map((item) => item.mail.action)).toEqual(["completed", "synchronize"]);
+    expect(sent.map((item) => item.mail.event)).toEqual(["check_run", "check_suite", "pull_request"]);
   });
 
   test("events sent by the workspace's own app bot are ignored", async () => {

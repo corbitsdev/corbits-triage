@@ -37,6 +37,7 @@ const GITHUB_APP_EVENTS = [
   "pull_request_review",
   "issue_comment",
   "check_run",
+  "check_suite",
   "push",
   "installation",
   "installation_repositories",

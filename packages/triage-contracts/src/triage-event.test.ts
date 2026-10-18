@@ -10,6 +10,8 @@ describe("triageEventOf", () => {
     [{ event: "check_run", action: "created" }, null],
     [{ event: "check_run", action: "in_progress" }, null],
     [{ event: "check_run", action: "completed" }, "checks"],
+    [{ event: "check_suite", action: "requested" }, null],
+    [{ event: "check_suite", action: "completed" }, "checks"],
     [{ event: "pull_request_review", action: "submitted", review: { state: "approved" } }, "approved"],
     [{ event: "pull_request_review", action: "submitted", review: { state: "CHANGES_REQUESTED" } }, "changes-requested"],
     [{ event: "pull_request_review", action: "submitted", review: { state: "commented" } }, "reviewed"],

@@ -26,7 +26,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/code-review-feed.ts` | Sends each new non-draft head of a pull request with code review on to its host's `pr-code-review` once, with the host's diff cut past `DIFF_LIMIT`. |
 | `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore, and `host-capacity.ts`, which reads the box's free memory (cgroup, else `MemAvailable`); the provisioner declines a placement when it is below one sidecar's footprint for it and each sidecar still starting. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
-| `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`; pull request, review, comment and `check_run` events → coalescer; default-branch pushes touching the policy file → policy-file read again. |
+| `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`; pull request, review, comment, `check_run` and `check_suite` events → coalescer; default-branch pushes touching the policy file → policy-file read again. |
 | `src/github/policy-file.ts` | Reads `.corbits-triage.yml` (or `.yaml`) on the default branch, kept in memory until a push touches it; reports each enabled repository's upgrade state and writes the stored policy to the file as a pull request. |
 | `src/github/policy-pull.ts`, `src/bitbucket-datacenter/policy-pull.ts` | The one pull request on `corbits-triage/policy` per repository: opened once, updated when asked again. |
 | `src/github/automation.ts` | Which action kinds triage writes unattended on a repository, from the grants of the tenant's `pr-triage` system role. |

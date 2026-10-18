@@ -1,7 +1,7 @@
 import type { RepoPolicy } from "@corbits/triage-contracts";
 import { isTriageComment } from "@corbits/github-reads";
 
-const EVENTS = ["pull_request", "pull_request_review", "issue_comment", "check_run"] as const;
+const EVENTS = ["pull_request", "pull_request_review", "issue_comment", "check_run", "check_suite"] as const;
 
 export interface PrMail {
   kind: "pr";
@@ -14,7 +14,7 @@ export interface PrMail {
   author: string | null;
   title: string | null;
   body: string | null;
-  /** Null when the payload does not say, as on check_run. */
+  /** Null when the payload does not say, as on check_run and check_suite. */
   draft: boolean | null;
   review: { state: string } | null;
   /** Who caused the event, on hosts whose own user's events must not wake triage; GitHub's App events are told apart by sender. */
@@ -62,6 +62,8 @@ export function normalize(event: string, deliveryId: string, p: Json): PrMail | 
     pr = p.issue;
   } else if (event === "check_run") {
     pr = p.check_run?.pull_requests?.[0];
+  } else if (event === "check_suite") {
+    pr = p.check_suite?.pull_requests?.[0];
   }
   if (pr?.state === "closed") return null;
   return {
@@ -71,7 +73,7 @@ export function normalize(event: string, deliveryId: string, p: Json): PrMail | 
     deliveryId,
     event,
     action: p.action ?? null,
-    headSha: pr?.head?.sha ?? p.check_run?.head_sha ?? p.after ?? null,
+    headSha: pr?.head?.sha ?? p.check_run?.head_sha ?? p.check_suite?.head_sha ?? p.after ?? null,
     author: pr?.user?.login ?? null,
     title: pr?.title ?? null,
     body: pr?.body ?? null,

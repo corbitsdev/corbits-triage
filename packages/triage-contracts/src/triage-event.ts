@@ -41,6 +41,7 @@ export function triageEventOf({ event, action, review, merged }: MailEvent): Tri
       if (action !== "submitted") return null;
       return REVIEW[reviewState(review)] ?? "reviewed";
     case "check_run":
+    case "check_suite":
       return action === "completed" ? "checks" : null;
     default:
       return null;
