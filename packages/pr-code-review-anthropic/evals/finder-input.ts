@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { type } from "arktype";
 import { triggerRequestOf } from "@corbits/triage-contracts";
-import { budgetTag, Checkout, DEFAULT_BUDGET, repositoryTag } from "../src/actions/checkout.js";
+import { budgetTag, Checkout, DEFAULT_BUDGET, repositoryTag } from "@corbits/pr-code-review/actions/checkout";
 
 const USER_TEMPLATE = readFileSync(new URL("../prompts/finder-diff.user.txt", import.meta.url), "utf8");
 

@@ -5,7 +5,8 @@ import { type } from "arktype";
 import { refused, REPO_READ_DEFINITIONS } from "@corbits/repo-read-tool";
 import { BUDGET_EXHAUSTED, budgetOf, CHECKOUT_TOOL, checkoutOf } from "./actions/checkout.js";
 import { TOOL_PROMPTS } from "./prompts.js";
-import { PACKAGE_NAME } from "./package-name.js";
+import { packageName } from "./package-name.js";
+import type { CodeReviewProfile } from "./profile.js";
 
 const log = getLogger(["corbits", "pr-code-review", "reader"]);
 
@@ -28,11 +29,6 @@ function resultText(result: ToolResult): string {
   return typeof result.content === "string" ? result.content : JSON.stringify(result.content);
 }
 
-// Cache reads re-count the whole prompt on every turn, so only new tokens are billed against the budget.
-function billableTokens(usage: TokenUsage): number {
-  return usage.input + usage.output + usage.cacheWrite;
-}
-
 export interface ReaderDirectorConfig {
   /** The tools section appended to the system prompt while the model reads. */
   tools: keyof typeof TOOL_PROMPTS;
@@ -46,7 +42,7 @@ export interface ReaderDirectorConfig {
  * REFUSED_ROUNDS such rounds the model's latest text is the reply. A reply whose calls were refused starts with
  * BUDGET_EXHAUSTED.
  */
-function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }: ReaderDirectorConfig): ReactorDirector {
+function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }: ReaderDirectorConfig, billableTokens: (usage: TokenUsage) => number): ReactorDirector {
   const systemPrompt = `${basePrompt.trimEnd()}\n\n${TOOL_PROMPTS[tools]}`;
   let budget = 0;
   let spent = 0;
@@ -129,12 +125,14 @@ function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDir
   };
 }
 
-export const reader = defineDirector<ReaderDirectorConfig>({
-  id: `${PACKAGE_NAME}/reader`,
-  configSchema: type({ tools: type.enumerated(...Object.keys(TOOL_PROMPTS)) }),
-  factory: function buildReaderDirector(config, _env, agent) {
-    return lazy(function buildDirector(caps) {
-      return readerDirector(caps, agent.systemPrompt, config);
-    });
-  },
-});
+export function readerDirectorOf(profile: CodeReviewProfile) {
+  return defineDirector<ReaderDirectorConfig>({
+    id: `${packageName(profile.packageName)}/reader`,
+    configSchema: type({ tools: type.enumerated(...Object.keys(TOOL_PROMPTS)) }),
+    factory: function buildReaderDirector(config, _env, agent) {
+      return lazy(function buildDirector(caps) {
+        return readerDirector(caps, agent.systemPrompt, config, profile.billableTokens);
+      });
+    },
+  });
+}

@@ -4,8 +4,8 @@ import { cancelsSuperseded, ensureWorkflows } from "./workflow-deploy.ts";
 import type { PackageIndexEntry } from "./workflow-packages.ts";
 
 const DECISION = [{ canonicalName: "decision", offerings: [{ offeringId: "mof_1", providerName: "corbits-system-one" }] }];
-const BOTH = { connected: ["github", "bitbucket-datacenter"], codeReview: [] } as const;
-const GITHUB = { connected: ["github"], codeReview: [] } as const;
+const BOTH = { connected: ["github", "bitbucket-datacenter"], codeReview: [], codeReviewProvider: "anthropic" } as const;
+const GITHUB = { connected: ["github"], codeReview: [], codeReviewProvider: "anthropic" } as const;
 const MISSING = new Set<never>();
 const INDEX: PackageIndexEntry[] = [
   { name: "@corbits/github-tool", version: "0.2.0", filename: "@corbits-github-tool-0.2.0.tgz", integrity: "sha512-tool" },
@@ -224,10 +224,10 @@ describe("ensureWorkflows", () => {
       { canonicalName: "claude-haiku-5-5", offerings: [{ offeringId: "mof_haiku", providerName: "anthropic" }] },
     ];
     const hub = fakeHub({}, [], models);
-    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"] }, MISSING, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical", "pr-code-review-github"]);
+    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic" }, MISSING, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical", "pr-code-review-github"]);
     expect(hub.deployed.at(-1)).toMatchObject({ entry: "./pr-code-review-github.mjs", sourceOfferingIds: ["mof_opus", "mof_haiku"], defaultSourceOfferingId: "mof_opus" });
 
-    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"] }, new Set(["code-review"]), hub.fetchRaw)).toEqual(["pr-code-review-github"]);
+    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic" }, new Set(["code-review"]), hub.fetchRaw)).toEqual(["pr-code-review-github"]);
   });
 
   test("refuses to deploy a workflow whose model the workspace does not offer", async () => {

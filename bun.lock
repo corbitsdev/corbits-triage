@@ -60,7 +60,7 @@
         "@corbits/cron": "0.2.1",
         "@corbits/github-reads": "workspace:*",
         "@corbits/github-tool": "workspace:*",
-        "@corbits/pr-code-review-anthropic": "workspace:*",
+        "@corbits/pr-code-review": "workspace:*",
         "@corbits/provisioner-docker": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-workflows": "workspace:*",
@@ -207,8 +207,8 @@
         "@corbits/triage-contracts": "workspace:*",
       },
     },
-    "packages/pr-code-review-anthropic": {
-      "name": "@corbits/pr-code-review-anthropic",
+    "packages/pr-code-review": {
+      "name": "@corbits/pr-code-review",
       "version": "0.1.0",
       "dependencies": {
         "@corbits/bitbucket-datacenter-tool": "workspace:*",
@@ -217,6 +217,19 @@
         "@corbits/triage-contracts": "workspace:*",
         "@intx/agent": "workspace:*",
         "@intx/log": "workspace:*",
+        "@intx/types": "workspace:*",
+        "@intx/workflow": "workspace:*",
+        "arktype": "catalog:",
+      },
+    },
+    "packages/pr-code-review-anthropic": {
+      "name": "@corbits/pr-code-review-anthropic",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/github-tool": "workspace:*",
+        "@corbits/pr-code-review": "workspace:*",
+        "@corbits/triage-contracts": "workspace:*",
+        "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
         "@intx/workflow": "workspace:*",
         "arktype": "catalog:",
@@ -838,6 +851,8 @@
     "@corbits/openai-null-delta": ["@corbits/openai-null-delta@workspace:packages/openai-null-delta"],
 
     "@corbits/policy-check-action": ["@corbits/policy-check-action@workspace:packages/policy-check-action"],
+
+    "@corbits/pr-code-review": ["@corbits/pr-code-review@workspace:packages/pr-code-review"],
 
     "@corbits/pr-code-review-anthropic": ["@corbits/pr-code-review-anthropic@workspace:packages/pr-code-review-anthropic"],
 

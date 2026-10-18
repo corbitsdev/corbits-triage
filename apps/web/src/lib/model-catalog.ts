@@ -1,5 +1,5 @@
 import { ApiError, type Transport } from "@intx/hub-client";
-import { CODE_REVIEW_MODELS } from "@corbits/triage-contracts";
+import { CODE_REVIEW_PROVIDERS } from "@corbits/triage-contracts";
 import {
   ANTHROPIC_API,
   ANTHROPIC_CREDENTIAL_NAME,
@@ -16,8 +16,8 @@ import {
 /** The models Triage's workflows name, each with the catalog provider that serves it. */
 export const DECLARED_MODELS = [
   { model: DECISION_MODEL_ALIAS, provider: INFERENCE_PROVIDER },
-  { model: CODE_REVIEW_MODELS.diffFinder, provider: ANTHROPIC_PROVIDER },
-  { model: CODE_REVIEW_MODELS.other, provider: ANTHROPIC_PROVIDER },
+  { model: CODE_REVIEW_PROVIDERS.anthropic.models.diffFinder, provider: ANTHROPIC_PROVIDER },
+  { model: CODE_REVIEW_PROVIDERS.anthropic.models.other, provider: ANTHROPIC_PROVIDER },
 ] as const;
 
 export type DeclaredModel = (typeof DECLARED_MODELS)[number]["model"];

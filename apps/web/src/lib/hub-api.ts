@@ -6,7 +6,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -23,7 +23,7 @@ export const INFERENCE_CREDENTIAL_NAME = "corbits-system-one";
 export const DECISION_MODEL_ALIAS = "decision";
 export const ANTHROPIC_PROVIDER = "anthropic";
 export const ANTHROPIC_API = "https://api.anthropic.com";
-export const ANTHROPIC_CREDENTIAL_NAME = "anthropic";
+export const ANTHROPIC_CREDENTIAL_NAME = CODE_REVIEW_PROVIDERS.anthropic.credential;
 
 function githubProviderApiBaseUrl(
   env: Record<string, string | undefined> = (import.meta as { env?: Record<string, string | undefined> }).env ?? {},
@@ -915,13 +915,14 @@ export async function setCodeReview(transport: Transport, tenantId: string, repo
   await transport.fetch("POST", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}`, { repo: validateRepo(repo.name), source: repo.source, enabled });
 }
 
-export function hasAnthropicKey(credentials: readonly HubCredential[]): boolean {
-  return credentials.some((credential) => credential.name === ANTHROPIC_CREDENTIAL_NAME && credential.status.toLowerCase() === "active");
+/** The provider the workspace runs code review on: the one whose key it stores in Settings → Models. */
+export function codeReviewProvider(credentials: readonly HubCredential[]): CodeReviewProvider | undefined {
+  return codeReviewProviderOf(credentials.filter((credential) => credential.status.toLowerCase() === "active").map((credential) => credential.name));
 }
 
-/** The hosts with a connected repository that has code review on, while the Anthropic key is stored and the hub can run it: the hosts whose code review deploys. */
+/** The hosts with a connected repository that has code review on, while a code review provider's key is stored and the hub can run it: the hosts whose code review deploys. */
 export function codeReviewSources(snapshot: Pick<PortalSnapshot, "repos" | "credentials" | "codeReviewPlace">): RepoSource[] {
-  if (!hasAnthropicKey(snapshot.credentials) || typeof snapshot.codeReviewPlace !== "string") return [];
+  if (!codeReviewProvider(snapshot.credentials) || typeof snapshot.codeReviewPlace !== "string") return [];
   return [...new Set(snapshot.repos.filter((repo) => repo.connected && repo.codeReview).map((repo) => repo.source))];
 }
 

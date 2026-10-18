@@ -17,12 +17,10 @@
     }
   },
   "dependencies": {
-    "@corbits/bitbucket-datacenter-tool": "workspace:*",
     "@corbits/github-tool": "workspace:*",
-    "@corbits/repo-read-tool": "workspace:*",
+    "@corbits/pr-code-review": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@intx/agent": "workspace:*",
-    "@intx/log": "workspace:*",
     "@intx/types": "workspace:*",
     "@intx/workflow": "workspace:*",
     "arktype": "catalog:"

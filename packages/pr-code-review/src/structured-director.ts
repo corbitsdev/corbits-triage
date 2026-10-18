@@ -1,7 +1,8 @@
 import { defineDirector } from "@intx/agent";
 import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent } from "@intx/types/runtime";
 import { type } from "arktype";
-import { PACKAGE_NAME } from "./package-name.js";
+import { packageName } from "./package-name.js";
+import type { CodeReviewProfile } from "./profile.js";
 
 export interface StructuredDirectorConfig {
   name: string;
@@ -32,14 +33,16 @@ function structuredDirector(caps: ReactorCapabilities, systemPrompt: string, { n
   };
 }
 
-export const structured = defineDirector<StructuredDirectorConfig>({
-  id: `${PACKAGE_NAME}/structured`,
-  configSchema: type({ name: "string", schema: "Record<string, unknown>" }),
-  factory: function buildStructuredDirector(config, _env, agent) {
-    return {
-      async decide(event, state, caps) {
-        return structuredDirector(caps, agent.systemPrompt, config).decide(event, state, caps);
-      },
-    };
-  },
-});
+export function structuredDirectorOf(profile: CodeReviewProfile) {
+  return defineDirector<StructuredDirectorConfig>({
+    id: `${packageName(profile.packageName)}/structured`,
+    configSchema: type({ name: "string", schema: "Record<string, unknown>" }),
+    factory: function buildStructuredDirector(config, _env, agent) {
+      return {
+        async decide(event, state, caps) {
+          return structuredDirector(caps, agent.systemPrompt, config).decide(event, state, caps);
+        },
+      };
+    },
+  });
+}

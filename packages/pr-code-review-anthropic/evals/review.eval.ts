@@ -26,7 +26,7 @@ import { stockTriggerMail } from "@corbits/triage-contracts";
 import { runLocalWorkflow } from "../../triage-workflows/evals/run-local.js";
 import { githubRead } from "@corbits/github-tool";
 import * as actions from "../src/actions/index.js";
-import { BUDGET_EXHAUSTED } from "../src/actions/checkout.js";
+import { BUDGET_EXHAUSTED } from "@corbits/pr-code-review/actions/checkout";
 import { finderAgent, repoFinderAgent, type Sources } from "../src/agents.js";
 import * as directors from "../src/directors.js";
 import { prCodeReview } from "../src/pr-code-review.js";

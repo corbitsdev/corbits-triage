@@ -1,16 +1,10 @@
 import { type } from "arktype";
 import { triggerRequestOf } from "@corbits/triage-contracts";
 import { changedFiles, parseFindings, quotedLine, samePath, type Finding, type Site } from "../findings.js";
+import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, repositoryTag } from "./checkout.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
-
-const Effort = type("'low' | 'medium' | 'high'");
-
-const ROLES = ["plan", "diffFinder", "repoFinder", "consolidate", "check", "write"] as const;
-type Role = (typeof ROLES)[number];
-
-const DEFAULT_EFFORTS: Record<Role, typeof Effort.infer> = { plan: "medium", diffFinder: "medium", repoFinder: "medium", consolidate: "medium", check: "medium", write: "low" };
 
 const ReviewRequest = type({
   kind: "'code-review'",
@@ -61,7 +55,7 @@ interface Steps {
 }
 
 interface StepInference {
-  effort: typeof Effort.infer;
+  effort: Effort;
   maxTokens: number;
 }
 
@@ -133,16 +127,14 @@ function pullRequest(request: ReviewRequest): string {
   return `${aboutPullRequest(request)}\n\n<diff>\n${request.diff}\n</diff>${cut}`;
 }
 
-/** The request from the trigger mail, the plan's user message and every role's per-call options. */
-export async function reviewInput(input: unknown): Promise<ReviewInput> {
-  const parsed = ReviewRequest(triggerRequestOf(input));
-  if (parsed instanceof type.errors) throw new Error(`reviewInput: invalid request: ${parsed.summary}`);
-  const request = parsed;
-  function inference(role: Role): [Role, StepInference] {
-    return [role, { effort: request.efforts?.[role] ?? DEFAULT_EFFORTS[role], maxTokens: MAX_OUTPUT_TOKENS }];
-  }
-  const inferences = Object.fromEntries(ROLES.map(inference)) as Record<Role, StepInference>;
-  return { request, plan: `${pullRequest(request)}\n\nPlan the review of this pull request.`, inference: inferences };
+/** The reviewInput action: the request from the trigger mail, the plan's user message and every role's per-call options; a role's effort is the request's, else the profile's. */
+export function reviewInputFor({ efforts }: Pick<CodeReviewProfile, "efforts">) {
+  return async function reviewInput(input: unknown): Promise<ReviewInput> {
+    const request = ReviewRequest(triggerRequestOf(input));
+    if (request instanceof type.errors) throw new Error(`reviewInput: invalid request: ${request.summary}`);
+    const inference = Object.fromEntries(ROLES.map((role) => [role, { effort: request.efforts?.[role] ?? efforts[role], maxTokens: MAX_OUTPUT_TOKENS }])) as Record<Role, StepInference>;
+    return { request, plan: `${pullRequest(request)}\n\nPlan the review of this pull request.`, inference };
+  };
 }
 
 /** Both finders' user messages with the plan appended; the repository finder's names its checkout and token budget. */
