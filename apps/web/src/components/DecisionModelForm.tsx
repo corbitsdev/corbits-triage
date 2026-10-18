@@ -2,7 +2,6 @@ import { useId, useState, type FormEvent } from "react";
 import { Button, Input } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "@corbits/triage-contracts";
-import { modelSecrets } from "../lib/credential-actions.ts";
 import { usePortal } from "../lib/portal.tsx";
 
 type Draft = { custom: boolean; endpoint: string; model: string; apiKey: string };
@@ -30,8 +29,7 @@ export function DecisionModelForm({ onSaved }: { onSaved?: () => void }) {
   const [error, setError] = useState("");
   const custom = preset.id === "custom";
   const disabled = readOnly || saving;
-  // The Models row shows the key as stored only while it is active, so the help text follows the same key.
-  const stored = saved !== undefined && modelSecrets(snapshot?.credentials ?? []).some((key) => key.status.toLowerCase() === "active");
+  const stored = saved !== undefined;
   const blocker = saveBlocker({ custom, endpoint, model, apiKey });
   const blockerId = useId();
 

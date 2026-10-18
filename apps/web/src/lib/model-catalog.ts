@@ -5,13 +5,16 @@ import {
   ANTHROPIC_CREDENTIAL_NAME,
   ANTHROPIC_PROVIDER,
   DECISION_MODEL_ALIAS,
-  INFERENCE_CREDENTIAL_NAME,
   INFERENCE_PROVIDER,
+  catalogPath,
+  isActiveCredential,
   listAll,
+  listCatalog,
   revokeCredential,
   saveInferenceKey,
+  type Catalog,
+  type CatalogRow,
   type HubCredential,
-  type Inference,
 } from "./hub-api.ts";
 
 /** The models Triage's workflows name, each with the catalog provider that serves it. */
@@ -23,22 +26,14 @@ export const DECLARED_MODELS = [
 
 export type DeclaredModel = (typeof DECLARED_MODELS)[number]["model"];
 
-/** A catalog provider's row, keyed to the vault credential it uses; `quirks` maps a catalog model onto the provider's own model name. */
-type ProviderSpec = { name: string; plugin: string; baseURL: string; credential: string; quirks?: Record<string, unknown> };
+/** A catalog provider's row; `quirks` maps a catalog model onto the provider's own model name. */
+type ProviderSpec = { name: string; plugin: string; baseURL: string; quirks?: Record<string, unknown> };
 
-/** The decision model's provider and offering are written when it is saved (`saveInference`), so a reconcile declares only fixed providers. */
-const PROVIDER_SPECS: ProviderSpec[] = [{ name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, baseURL: ANTHROPIC_API, credential: ANTHROPIC_CREDENTIAL_NAME }];
-
-type CatalogRow = { id: string; name?: string; canonicalName?: string; baseURL?: string; modelId?: string; providerId?: string; quirks?: Record<string, unknown> | null };
-
-type CatalogRows = "providers" | "models" | "offerings";
-
-function catalogPath(tenantId: string, rows: CatalogRows): string {
-  return `/api/tenants/${encodeURIComponent(tenantId)}/catalog/${rows}`;
-}
+/** The decision model's provider and offering are written when it is saved, so a reconcile declares only fixed providers, each with the vault credential it uses. */
+const PROVIDER_SPECS: Array<ProviderSpec & { credential: string }> = [{ name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, baseURL: ANTHROPIC_API, credential: ANTHROPIC_CREDENTIAL_NAME }];
 
 /** Creates a catalog row, or takes the one a concurrent reconcile created first. */
-async function createRow(transport: Transport, tenantId: string, rows: CatalogRows, body: Record<string, unknown>, matches: (row: CatalogRow) => boolean): Promise<CatalogRow> {
+async function createRow(transport: Transport, tenantId: string, rows: keyof Catalog, body: Record<string, unknown>, matches: (row: CatalogRow) => boolean): Promise<CatalogRow> {
   try {
     return await transport.fetch<CatalogRow>("POST", catalogPath(tenantId, rows), body);
   } catch (cause) {
@@ -87,15 +82,6 @@ async function ensureOffering(transport: Transport, tenantId: string, modelId: s
   }
 }
 
-async function listCatalog(transport: Transport, tenantId: string) {
-  const [providers, models, offerings] = await Promise.all([
-    listAll<CatalogRow>(transport, catalogPath(tenantId, "providers")),
-    listAll<CatalogRow>(transport, catalogPath(tenantId, "models")),
-    listAll<CatalogRow>(transport, catalogPath(tenantId, "offerings")),
-  ]);
-  return { providers, models, offerings };
-}
-
 /**
  * Adds to the workspace catalog whatever the declared models lack: each model,
  * and its offering through each provider whose key is stored. A catalog
@@ -109,7 +95,7 @@ export async function reconcileModelCatalog(transport: Transport, tenantId: stri
   ]);
   const providerIds = new Map<string, { id: string; spec: ProviderSpec }>();
   for (const spec of PROVIDER_SPECS) {
-    const credential = credentials.find((row) => row.name === spec.credential && row.status.toLowerCase() === "active");
+    const credential = credentials.find((row) => row.name === spec.credential && isActiveCredential(row));
     if (credential) providerIds.set(spec.name, { id: await ensureProvider(transport, tenantId, spec, credential.id, providers), spec });
   }
   for (const declared of DECLARED_MODELS) {
@@ -123,20 +109,10 @@ export async function reconcileModelCatalog(transport: Transport, tenantId: stri
 export async function saveInference(transport: Transport, tenantId: string, input: { endpoint: string; model: string; secret: string }): Promise<void> {
   const { endpoint, model, credentialId } = await saveInferenceKey(transport, tenantId, input);
   const { providers, models, offerings } = await listCatalog(transport, tenantId);
-  const spec = { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER, baseURL: endpoint, credential: INFERENCE_CREDENTIAL_NAME, quirks: { model } };
+  const spec = { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER, baseURL: endpoint, quirks: { model } };
   const providerId = await ensureProvider(transport, tenantId, spec, credentialId, providers);
   const modelId = await ensureModel(transport, tenantId, DECISION_MODEL_ALIAS, models);
   await ensureOffering(transport, tenantId, modelId, providerId, spec, offerings);
-}
-
-/** The saved decision model: its catalog provider's endpoint and the model its decision offering names. */
-export async function readDecisionModel(transport: Transport, tenantId: string): Promise<Inference | undefined> {
-  const { providers, models, offerings } = await listCatalog(transport, tenantId);
-  const provider = providers.find((row) => row.name === INFERENCE_PROVIDER);
-  const decision = models.find((row) => row.canonicalName === DECISION_MODEL_ALIAS);
-  if (!provider?.baseURL || !decision) return undefined;
-  const model = offerings.find((row) => row.providerId === provider.id && row.modelId === decision.id)?.quirks?.["model"];
-  return typeof model === "string" ? { endpoint: provider.baseURL, model } : undefined;
 }
 
 /** The vault refuses to delete a key a catalog provider still uses, so the provider and its offerings go first. */

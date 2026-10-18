@@ -63,7 +63,9 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   `claude-haiku-5-5` on `anthropic`). `reconcileModelCatalog` adds whatever
   the tenant catalog lacks through the stock catalog routes, on each
   converge and after a key is saved; a provider's offerings appear once its
-  key is in the vault. `offeringsFor` picks each deploy's offerings from the
+  key is in the vault. The `decision` offering is written by
+  `saveInference` instead, from the endpoint and model being saved.
+  `offeringsFor` picks each deploy's offerings from the
   same list and refuses a model the tenant does not offer.
 - `src/lib/workflow-deploy.ts`: `ensureWorkflows` publishes the tool and workflow tarballs to the tenant's
   `corbits` package registry and deploys each workflow pinned to its version
@@ -91,9 +93,10 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   `decision` offering names the provider's own model (`quirks.model`). The
   portal reads the saved model back from those rows.
 - The Anthropic key (Settings, Models) is a vault credential named
-  `anthropic`. Removing it, or the decision model key, deletes its catalog
-  provider and offerings first, because the vault keeps a key a catalog
-  provider uses.
+  `anthropic`. Removing it, or the decision model key, first releases the
+  workflows that use it (code review or triage), then deletes its catalog
+  provider and offerings before the key, because the vault keeps a key a
+  catalog provider uses.
 
 ### Decision model
 

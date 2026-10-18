@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { Transport } from "@intx/hub-client";
-import { readDecisionModel, reconcileModelCatalog, saveInference } from "./model-catalog.ts";
+import { ApiError, type Transport } from "@intx/hub-client";
+import { loadPortal, type MemberAccess } from "./hub-api.ts";
+import { reconcileModelCatalog, saveInference } from "./model-catalog.ts";
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -8,13 +9,17 @@ function fakeHub(credentials: string[]) {
   const rows: Record<string, Row[]> = { providers: [], models: [], offerings: [] };
   const writes: string[] = [];
   const credentialBodies: unknown[] = [];
+  const keys = credentials.map((name) => ({ id: `crd_${name}`, name, status: "active" }));
   async function fetch<T>(method: string, url: string, body?: unknown): Promise<T> {
     const path = new URL(url, "http://hub").pathname;
     if (path === "/api/tenants/t/credentials" && method === "POST") {
       credentialBodies.push(body);
+      if (!keys.some((key) => key.id === "crd_saved")) keys.push({ id: "crd_saved", name: (body as { name: string }).name, status: "active" });
       return { id: "crd_saved" } as T;
     }
-    if (path === "/api/tenants/t/credentials") return { data: credentials.map((name) => ({ id: `crd_${name}`, name, status: "active" })), nextCursor: null } as T;
+    if (path === "/api/tenants/t/credentials") return { data: keys, nextCursor: null } as T;
+    if (path === "/api/tenants/t") return { id: "t", name: "Acme", slug: "acme", config: {} } as T;
+    if (path === "/api/integrations/code-review/t/place") throw new ApiError(403, "forbidden", "forbidden");
     if (path === "/api/tenants/t/providers") return (method === "GET" ? { data: [], nextCursor: null } : { id: "vault_provider" }) as T;
     if (!path.includes("/catalog/")) throw new Error(`unexpected ${method} ${path}`);
     const kind = path.split("/catalog/")[1]!.split("/")[0]!;
@@ -30,7 +35,7 @@ function fakeHub(credentials: string[]) {
     return row as T;
   }
   const transport: Transport = { fetch, subscribe: () => () => {} } as Transport;
-  return { transport, rows, writes, credentialBodies };
+  return { transport, rows, writes, credentialBodies, keys };
 }
 
 describe("reconcileModelCatalog", () => {
@@ -60,6 +65,12 @@ describe("reconcileModelCatalog", () => {
   });
 });
 
+const ACCESS: MemberAccess = { kind: "member", workspace: { tenantId: "t", principalId: "p", userId: "u" }, workspaces: [], invitations: [] };
+
+async function savedModel(transport: Transport) {
+  return (await loadPortal(transport, ACCESS, async () => false)).decisionModel;
+}
+
 describe("saveInference", () => {
   test("stores the endpoint and model in the catalog, where the portal reads them back", async () => {
     const hub = fakeHub([]);
@@ -70,9 +81,16 @@ describe("saveInference", () => {
       ["corbits-system-one", "https://inference.example/v1", "crd_saved"],
     ]);
     expect(hub.rows.offerings!.map(({ quirks }) => quirks)).toEqual([{ model: "triage-large" }]);
-    expect(await readDecisionModel(hub.transport, "t")).toEqual({ endpoint: "https://inference.example/v1", model: "triage-large" });
+    expect(await savedModel(hub.transport)).toEqual({ endpoint: "https://inference.example/v1", model: "triage-large" });
 
     await saveInference(hub.transport, "t", { endpoint: "https://other.example/v1", model: "triage-small", secret: "sk-test" });
-    expect(await readDecisionModel(hub.transport, "t")).toEqual({ endpoint: "https://other.example/v1", model: "triage-small" });
+    expect(await savedModel(hub.transport)).toEqual({ endpoint: "https://other.example/v1", model: "triage-small" });
+  });
+
+  test("a saved model whose key is no longer active counts as no decision model", async () => {
+    const hub = fakeHub([]);
+    await saveInference(hub.transport, "t", { endpoint: "https://inference.example/v1", model: "triage-large", secret: "sk-test" });
+    hub.keys[0]!.status = "expired";
+    expect(await savedModel(hub.transport)).toBeUndefined();
   });
 });

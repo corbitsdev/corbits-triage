@@ -47,7 +47,7 @@ import { readChosenWorkspace, writeChosenWorkspace } from "./chosen-workspace.ts
 import type { CreateGrantInput } from "./grant-actions.ts";
 import { ensureWorkflows, releaseWorkflows, type DeployHosts } from "./workflow-deploy.ts";
 import type { WorkflowKind } from "./workflow-packages.ts";
-import { readDecisionModel, reconcileModelCatalog, removeModelKey, saveInference } from "./model-catalog.ts";
+import { reconcileModelCatalog, removeModelKey, saveInference } from "./model-catalog.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
 import { checkPackName, type RepoSource } from "@corbits/triage-contracts";
@@ -219,7 +219,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       async function hasPack(repo: string) {
         return (await queryClient.fetchQuery(checkPackIndexQuery(tenantId))).has(checkPackName(repo));
       }
-      return await loadPortal(transport, access, hasPack, readDecisionModel);
+      return await loadPortal(transport, access, hasPack);
     } catch (cause: unknown) {
       signOutWhenRejected(cause);
       throw cause;
@@ -487,8 +487,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     async function removeAnthropic(credentialId: string) {
       const current = requireSnapshot();
       const transport = createHubTransport();
-      await removeModelKey(transport, current.workspace.tenantId, ANTHROPIC_PROVIDER, credentialId);
       await releaseWorkflows(transport, current.workspace.tenantId, "code-review");
+      await removeModelKey(transport, current.workspace.tenantId, ANTHROPIC_PROVIDER, credentialId);
       notify("Anthropic key removed.");
       refresh();
     },
@@ -498,7 +498,9 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const removeDecisionModel = useCallback(
     async function removeDecisionModel(credentialId: string) {
       const current = requireSnapshot();
-      await removeModelKey(createHubTransport(), current.workspace.tenantId, INFERENCE_PROVIDER, credentialId);
+      const transport = createHubTransport();
+      await releaseWorkflows(transport, current.workspace.tenantId, "triage");
+      await removeModelKey(transport, current.workspace.tenantId, INFERENCE_PROVIDER, credentialId);
       notify("Secret removed.");
       refresh();
     },
