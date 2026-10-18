@@ -2,6 +2,7 @@ import { createPrivateKey, X509Certificate } from "node:crypto";
 import { homedir } from "node:os";
 import { type, type ArkError } from "arktype";
 import type { DockerTls, FindDockerHostOpts } from "@corbits/provisioner-docker";
+import type { QemuHost } from "@corbits/provisioner-qemu";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 import type { CoalesceWindow } from "./github/coalescer.js";
@@ -69,6 +70,8 @@ const HubEnvSchema = type({
   "RAILWAY_GIT_REPO_OWNER?": "string",
   "RAILWAY_GIT_REPO_NAME?": "string",
   "RAILWAY_ENVIRONMENT_ID?": "string",
+  "QEMU_PROVISIONER_URL?": "string.url",
+  "QEMU_PROVISIONER_TOKEN?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
@@ -214,6 +217,19 @@ export function railwaySandboxSettings(env: HubEnv): RailwaySandboxSettings | un
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("RAILWAY_GIT_COMMIT_SHA must be a full commit hash");
   if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(name)) throw new Error("RAILWAY_GIT_REPO_OWNER and RAILWAY_GIT_REPO_NAME must be a GitHub owner and repository name");
   return { token, environmentId, repository: `https://github.com/${owner}/${name}`, commit, publicHubWebSocketUrl: publicHubWebSocketUrl(env) };
+}
+
+export type QemuSettings = QemuHost & {
+  /** Where VMs reach the hub. */
+  readonly publicHubWebSocketUrl: string;
+};
+
+/** Unset URL and token mean no QEMU provisioner. */
+export function qemuSettings(env: HubEnv): QemuSettings | undefined {
+  const { QEMU_PROVISIONER_URL: url, QEMU_PROVISIONER_TOKEN: token } = env;
+  if (url === undefined && token === undefined) return undefined;
+  if (url === undefined || token === undefined) throw new Error("QEMU_PROVISIONER_URL and QEMU_PROVISIONER_TOKEN must be set together");
+  return { url, token, publicHubWebSocketUrl: publicHubWebSocketUrl(env) };
 }
 
 export type ChildProcessEnv = { PATH?: string; HOME?: string; TMPDIR?: string };

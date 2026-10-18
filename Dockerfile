@@ -36,6 +36,13 @@ USER bun
 WORKDIR /app/vendor/interchange
 CMD ["bun", "--conditions=intx-src", "apps/sidecar/src/index.ts"]
 
+# The sidecar as a QEMU microVM's root disk; packages/provisioner-qemu/host/install.sh turns it into ext4. Its init
+# mounts, configures the network and starts the sidecar as root.
+FROM sidecar AS sidecar-vm
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY packages/provisioner-qemu/host/init /sbin/corbits-init
+
 # The hub runs local sidecars in this container, so it needs the code review's linter too.
 FROM app
 COPY --from=portal /app/apps/web/dist apps/web/dist

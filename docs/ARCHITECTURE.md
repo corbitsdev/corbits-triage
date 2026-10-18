@@ -173,13 +173,17 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   The Railway Sandboxes provisioner (`packages/provisioner-railway`),
   registered after E2B when its token and environment are set, does the same
   with one Railway sandbox per sidecar.
+  The QEMU provisioner (`packages/provisioner-qemu`), registered after Railway
+  when `QEMU_PROVISIONER_URL` and `QEMU_PROVISIONER_TOKEN` are set and its
+  agent answers, asks a small agent on a Linux KVM host to run each sidecar in
+  a microVM.
   [provisioners/](provisioners/README.md) describes each.
-  Code review requires `isolation:workload`; without Docker, E2B or Railway Sandboxes, stock
+  Code review requires `isolation:workload`; without Docker, E2B, Railway Sandboxes or QEMU, stock
   Interchange refuses it with `provisioner_no_match`.
   `GET /api/integrations/code-review/{tenantId}/place` names the provisioner
   stock's plugin registry selects for it under the workspace's placement
   policies, or null, and lists every place the hub's provisioner packages
-  describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`, `RAILWAY_PLACE`) with the state the hub
+  describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`, `RAILWAY_PLACE`, `QEMU_PLACE`) with the state the hub
   found at boot, for Settings → Code review. The hub's own machine is never
   one. While it is null the switch and **Review again** refuse
   (`no_isolated_place`), nothing is mailed, the host's code review
