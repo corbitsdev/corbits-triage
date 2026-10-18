@@ -5,7 +5,7 @@ Every triage run, code review and workflow probe runs in a sidecar: a process th
 | Provisioner | Runs sidecars | Isolation | Registered |
 | --- | --- | --- | --- |
 | [Local process](local.md) | as child processes of the hub | none: they share the hub's machine, user and files | always |
-| [Docker](docker.md) | each in a container of its own | `isolation:workload` | when a Docker daemon with the sidecar image answers |
+| [Docker](docker.md) | each in a container of its own, on the hub's machine or [another one over TLS](docker-remote.md) | `isolation:workload` | when a Docker daemon with the sidecar image answers |
 
 ## How the hub picks one
 
@@ -19,5 +19,6 @@ With Docker registered, workflow probes (the hub's check of a workflow's source 
 
 - **Local process** is the default and needs no setup. It suits a single box running only Corbits Triage's own workflows.
 - **Docker** suits a box with Docker on it, when workflows that require a sidecar of their own must run, or when probes should not run on the hub's machine.
+- **Docker on another machine** suits a hub on a platform without Docker, such as Railway: code review runs on a VPS you set up with [Docker on another machine](docker-remote.md).
 
 To add a backend, see [Writing your own](writing-your-own.md).

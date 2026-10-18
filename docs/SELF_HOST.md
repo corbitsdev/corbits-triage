@@ -88,9 +88,11 @@ where sidecars run, their capacity and setting up Docker.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. The platform's drain time must exceed it. |
-| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Docker containers dial it with a loopback host replaced by `host.docker.internal`. |
+| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Docker containers on the hub's machine dial it with a loopback host replaced by `host.docker.internal`; on [another machine](provisioners/docker-remote.md) they dial it as set, else `BETTER_AUTH_BASE_URL` with `wss://` and this path, and must get `wss://`. Leave it unset for a remote daemon, so local sidecars keep dialling loopback. |
 | `DOCKER_HOST` | the docker CLI's context, else its default sockets | The Docker daemon for the [Docker provisioner](provisioners/docker.md). |
 | `DOCKER_CONTEXT` | the docker CLI's current context | The docker CLI context whose daemon the Docker provisioner uses, when `DOCKER_HOST` is unset. |
+| `DOCKER_TLS_VERIFY` | unset | Any non-empty value, even `0`, as with the docker CLI: reach the daemon over TLS, verifying it and presenting the client certificate. Required for a daemon on [another machine](provisioners/docker-remote.md). |
+| `DOCKER_CERT_PATH` | `$HOME/.docker` | The absolute path of the directory with `ca.pem`, `cert.pem` and `key.pem` for `DOCKER_TLS_VERIFY`. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `PG_SCHEMA` | default `search_path` | Postgres schema. |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |

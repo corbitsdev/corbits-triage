@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import path from "node:path";
 import { type, type ArkError } from "arktype";
 import type { FindDockerHostOpts } from "@corbits/provisioner-docker";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
@@ -41,6 +42,8 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
   "DOCKER_HOST?": "string",
   "DOCKER_CONTEXT?": "string",
+  "DOCKER_TLS_VERIFY?": "string",
+  "DOCKER_CERT_PATH?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
@@ -93,14 +96,32 @@ export function githubApiOrigin(env: HubEnv): string {
   return env.GITHUB_API_ORIGIN === undefined ? DEFAULT_GITHUB_API_ORIGIN : env.GITHUB_API_ORIGIN.trim().replace(/\/+$/, "");
 }
 
-export type DockerSettings = FindDockerHostOpts;
+/** The sidecar websocket at a hub base URL: `wss://` for `https://`, else `ws://`. */
+function websocketUrlOf(baseUrl: string): string {
+  const url = new URL("/api/sidecars/ws", baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.href;
+}
 
-/** Where to look for the Docker daemon, as the docker CLI does: `DOCKER_HOST`, `DOCKER_CONTEXT`, then its config and sockets under `home`. */
+export type DockerSettings = FindDockerHostOpts & {
+  /** The directory of `ca.pem`, `cert.pem` and `key.pem` when `DOCKER_TLS_VERIFY` is set. */
+  readonly certPath?: string;
+  /** Where sidecars on another machine reach the hub. */
+  readonly publicHubWebSocketUrl: string;
+};
+
+/**
+ * Where to look for the Docker daemon and how to reach it, as the docker CLI does: `DOCKER_HOST`, `DOCKER_CONTEXT`, then
+ * its config and sockets under `home`; TLS with `DOCKER_TLS_VERIFY`, from `DOCKER_CERT_PATH` or `~/.docker`.
+ */
 export function dockerSettings(env: HubEnv): DockerSettings {
+  const home = env.HOME ?? homedir();
   return {
     ...(env.DOCKER_HOST !== undefined && { dockerHost: env.DOCKER_HOST }),
     ...(env.DOCKER_CONTEXT !== undefined && { dockerContext: env.DOCKER_CONTEXT }),
-    home: env.HOME ?? homedir(),
+    ...(env.DOCKER_TLS_VERIFY !== undefined && { certPath: env.DOCKER_CERT_PATH ?? path.join(home, ".docker") }),
+    home,
+    publicHubWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL),
   };
 }
 

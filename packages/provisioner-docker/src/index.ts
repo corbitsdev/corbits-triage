@@ -8,9 +8,18 @@ import type {
   SidecarProvisioner,
 } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
-import { DockerEngineError, type DockerEngine } from "./engine.js";
+import { DockerEngineError, isThisMachine, type DockerEngine } from "./engine.js";
 
-export { connectDocker, findDockerHost, type DockerEngine, type FindDockerHostOpts } from "./engine.js";
+export {
+  connectDocker,
+  findDockerHost,
+  isLocalDockerHost,
+  isThisMachine,
+  readDockerTls,
+  type DockerEngine,
+  type DockerTls,
+  type FindDockerHostOpts,
+} from "./engine.js";
 
 const LABEL = {
   hub: "corbits.hub",
@@ -23,7 +32,6 @@ const MiB = 1024 ** 2;
 /** One sidecar's memory limit and footprint; docs/provisioners/docker.md has the measurements. */
 const SIDECAR_BYTES = 2048 * MiB;
 const SIDECAR_PIDS = 1024;
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 const Container = type({
   Id: "string",
@@ -52,6 +60,8 @@ export type CreateDockerSidecarProvisionerOpts = DockerSidecars & {
   readonly image: string;
   /** The hub's adapter manifest at the paths the image holds its modules. */
   readonly adapterManifest: AdapterManifest;
+  /** Where containers reach the hub, for a daemon on another machine; unset, the hub's own address with loopback mapped to the Docker host. */
+  readonly hubWebSocketUrl?: string;
 };
 
 type Fence = {
@@ -75,7 +85,7 @@ function isDestroyedBy(container: Container, request: DestroySidecarRequest): bo
 // A container cannot reach the hub's loopback; Docker maps host.docker.internal to the host.
 function hubUrlFromContainer(url: string): string {
   const parsed = new URL(url);
-  if (LOOPBACK.has(parsed.hostname)) parsed.hostname = "host.docker.internal";
+  if (isThisMachine(parsed.hostname)) parsed.hostname = "host.docker.internal";
   return parsed.href;
 }
 
@@ -104,6 +114,7 @@ export function createDockerSidecarProvisioner({
   daemonId,
   image,
   adapterManifest,
+  hubWebSocketUrl,
 }: CreateDockerSidecarProvisionerOpts): SidecarProvisioner {
   const fences = new Map<string, Fence>();
   const queues = new Map<string, Promise<unknown>>();
@@ -123,7 +134,7 @@ export function createDockerSidecarProvisioner({
 
   async function create(request: EnsureSidecarRequest): Promise<string> {
     const env = {
-      HUB_WS_URL: hubUrlFromContainer(request.hubWebSocketUrl),
+      HUB_WS_URL: hubWebSocketUrl ?? hubUrlFromContainer(request.hubWebSocketUrl),
       SIDECAR_ID: request.sidecarId,
       SIDECAR_TOKEN: request.token,
       SIDECAR_DATA_DIR: DATA_DIR,
@@ -152,7 +163,7 @@ export function createDockerSidecarProvisioner({
         SecurityOpt: ["no-new-privileges"],
         Tmpfs: { "/tmp": "" },
         Mounts: [{ Type: "volume", Target: DATA_DIR }],
-        ExtraHosts: ["host.docker.internal:host-gateway"],
+        ...(hubWebSocketUrl === undefined && { ExtraHosts: ["host.docker.internal:host-gateway"] }),
       },
     };
     const { signal } = request;
