@@ -29,7 +29,14 @@ account, the GitHub App and the decision model, then turn on triage for a
 repository. Its open pull requests appear in the Inbox with a verdict, a
 score and the reasons for it. A repository can keep its policy in
 `.corbits-triage.yml` on its default branch; the hub reads it directly (see
-[Policy file](docs/PRODUCT.md#policy-file)). To check that file on every
+[Policy file](docs/PRODUCT.md#policy-file)). The agent skill in
+[skills/corbits-triage-setup](skills/corbits-triage-setup/SKILL.md) writes a
+first one from a look at the repository and checks it. To use it, copy that
+folder into your coding agent's skills folder, such as `.claude/skills/` for
+Claude Code or `.agents/skills/` for agents that read that path, then ask the
+agent to set up Corbits Triage.
+
+To check that file on every
 pull request that changes it, add the GitHub Action in
 [packages/policy-check-action](packages/policy-check-action/action.yml); it
 needs no hub or secrets and sets up its own Bun for the job. It marks each
