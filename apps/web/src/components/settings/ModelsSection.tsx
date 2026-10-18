@@ -107,7 +107,7 @@ function active(credential: HubCredential): boolean {
 }
 
 export function ModelsSection({ snapshot }: { snapshot: PortalSnapshot }) {
-  const { revoke, removeAnthropic } = usePortal();
+  const { removeDecisionModel, removeAnthropic } = usePortal();
   const saved = snapshot.decisionModel;
 
   return (
@@ -124,7 +124,7 @@ export function ModelsSection({ snapshot }: { snapshot: PortalSnapshot }) {
             name="decision model"
             keys={modelSecrets(snapshot.credentials).filter(active)}
             denied={snapshot.denied.credentials}
-            remove={revoke}
+            remove={removeDecisionModel}
             editor={(onSaved) => <DecisionModelForm onSaved={onSaved} />}
           />
           <KeyRow

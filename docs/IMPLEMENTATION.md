@@ -91,8 +91,9 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   `decision` offering names the provider's own model (`quirks.model`). The
   portal reads the saved model back from those rows.
 - The Anthropic key (Settings, Models) is a vault credential named
-  `anthropic`. Removing it deletes the `anthropic` catalog provider and its
-  offerings first, because the vault keeps a key a catalog provider uses.
+  `anthropic`. Removing it, or the decision model key, deletes its catalog
+  provider and offerings first, because the vault keeps a key a catalog
+  provider uses.
 
 ### Decision model
 

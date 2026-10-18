@@ -140,8 +140,8 @@ export async function readDecisionModel(transport: Transport, tenantId: string):
 }
 
 /** The vault refuses to delete a key a catalog provider still uses, so the provider and its offerings go first. */
-export async function removeAnthropicKey(transport: Transport, tenantId: string, credentialId: string): Promise<void> {
-  const provider = (await listAll<CatalogRow>(transport, catalogPath(tenantId, "providers"))).find((row) => row.name === ANTHROPIC_PROVIDER);
+export async function removeModelKey(transport: Transport, tenantId: string, providerName: string, credentialId: string): Promise<void> {
+  const provider = (await listAll<CatalogRow>(transport, catalogPath(tenantId, "providers"))).find((row) => row.name === providerName);
   if (provider) await transport.fetch("DELETE", `${catalogPath(tenantId, "providers")}/${encodeURIComponent(provider.id)}`);
   await revokeCredential(transport, tenantId, credentialId);
 }
