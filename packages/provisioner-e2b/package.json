@@ -1,0 +1,22 @@
+{
+  "name": "@corbits/provisioner-e2b",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "module": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@corbits/triage-contracts": "workspace:*",
+    "@intx/hub-sessions": "0.5.0",
+    "@intx/types": "workspace:*",
+    "e2b": "2.52.1"
+  },
+  "devDependencies": {
+    "@corbits/provisioner-conformance": "workspace:*"
+  },
+  "main": "./src/index.ts",
+  "description": "An Interchange sidecar provisioner that runs each sidecar in its own E2B sandbox"
+}

@@ -44,6 +44,7 @@ const HubEnvSchema = type({
   "DOCKER_CONTEXT?": "string",
   "DOCKER_TLS_VERIFY?": "string",
   "DOCKER_CERT_PATH?": "string",
+  "E2B_API_KEY?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
@@ -123,6 +124,18 @@ export function dockerSettings(env: HubEnv): DockerSettings {
     home,
     publicHubWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL),
   };
+}
+
+export type E2bSettings = {
+  readonly apiKey: string;
+  /** Where sandboxes reach the hub. */
+  readonly publicHubWebSocketUrl: string;
+};
+
+/** Unset `E2B_API_KEY` means no E2B provisioner. */
+export function e2bSettings(env: HubEnv): E2bSettings | undefined {
+  if (env.E2B_API_KEY === undefined) return undefined;
+  return { apiKey: env.E2B_API_KEY, publicHubWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL) };
 }
 
 export type ChildProcessEnv = { PATH?: string; HOME?: string; TMPDIR?: string };
