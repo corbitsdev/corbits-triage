@@ -1,5 +1,6 @@
 // Interchange's workflow runtime cannot load in a browser yet, so the extension calls pr-triage's step handlers itself.
-import { getChecks, getReviews, listIssueComments, listPrCommits, readPr, readRepoDocsPage, repoDocs, type GithubFetch, type RepoDocsPage } from "@corbits/github-reads";
+import { errorText } from "@corbits/common";
+import { getChecks, getPostedCodeReview, getReviews, listIssueComments, listPrCommits, readPr, readRepoDocsPage, repoDocs, type GithubFetch, type RepoDocsPage } from "@corbits/github-reads";
 import { checkName, classificationSources, doSentence, repoPolicy, type CheckPack } from "@corbits/triage-contracts";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { parts } from "@corbits/triage-workflows/actions/parts";
@@ -48,6 +49,20 @@ async function readItem(gh: GithubFetch, { repo, number }: PrRef, pack: CheckPac
   return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: null }, { repo, policy: repoPolicy({}), pack, events: ["catch-up"], docs });
 }
 
+/** The repository's docs are read only when the decision model will be asked. */
+async function readWithDocs(gh: GithubFetch, pr: PrRef, pack: CheckPack, asking: boolean): Promise<RulesItem> {
+  return readItem(gh, pr, pack, asking ? await readDocs(gh, pr.repo) : NO_DOCS);
+}
+
+/** A code review that cannot be read is said so beside the rules rather than failing their check. */
+async function readCodeReview(gh: GithubFetch, { repo, number }: PrRef): Promise<NonNullable<TriageView["codeReview"]>> {
+  try {
+    return { review: await getPostedCodeReview(gh, repo, number) };
+  } catch (cause) {
+    return { error: errorText(cause) };
+  }
+}
+
 function stateOf(check: CheckResult): RuleState {
   if (check.kind === "model" && check.reason === NEEDS_JUDGE_REASON) return "not-evaluated";
   if (check.result === "unconfirmed") return "waiting";
@@ -87,7 +102,7 @@ async function modelChecks(item: RulesItem, systemOne: SystemOneSettings, signal
  */
 export async function runStepsInBrowser(pr: PrRef, gh: GithubFetch, { pack, origin }: PolicyRead, systemOne: SystemOneSettings | null): Promise<TriageView> {
   const asking = systemOne !== null && hasModelChecks(classificationSources(pack));
-  const item = await readItem(gh, pr, pack, asking ? await readDocs(gh, pr.repo) : NO_DOCS);
+  const [item, codeReview] = await Promise.all([readWithDocs(gh, pr, pack, asking), readCodeReview(gh, pr)]);
   const signal = new AbortController().signal;
   const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, signal);
   const ruledItem = ruled.items[0]!;
@@ -106,5 +121,6 @@ export async function runStepsInBrowser(pr: PrRef, gh: GithubFetch, { pack, orig
     rules: rows,
     decided: verdict.reason === NEEDS_JUDGE_REASON ? null : { verdict: verdict.verdict, ...posted(verdict, pr.repo) },
     notes: fileNotes(named),
+    codeReview,
   };
 }

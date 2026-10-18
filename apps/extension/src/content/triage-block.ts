@@ -1,5 +1,6 @@
+import type { PostedCodeReview } from "@corbits/github-reads";
 import { CORBITS_MARK_PATH } from "@corbits/react-ui";
-import { POLICY_FILE_PATH } from "@corbits/triage-contracts";
+import { findingTitle, POLICY_FILE_PATH } from "@corbits/triage-contracts";
 import { clock } from "../clock.ts";
 import type { PolicyOrigin } from "../policy-source.ts";
 import type { RunState } from "../storage.ts";
@@ -23,12 +24,16 @@ function button(text: string, onClick: () => void): HTMLButtonElement {
   return made;
 }
 
+function link(text: string, href: string): HTMLAnchorElement {
+  const made = node("a", "", text);
+  made.href = href;
+  return made;
+}
+
 function policyLine(origin: PolicyOrigin): HTMLElement {
   const line = node("p", "tb-meta", "Policy: ");
   if (origin.from === "file") {
-    const link = node("a", "", POLICY_FILE_PATH);
-    link.href = origin.url;
-    line.append(link, " on the default branch");
+    line.append(link(POLICY_FILE_PATH, origin.url), " on the default branch");
   } else {
     line.append(origin.from === "saved" ? "rules saved in this browser" : `recommended rules (no ${POLICY_FILE_PATH})`);
   }
@@ -67,6 +72,29 @@ function postedPart(posted: Posted, origin: PolicyOrigin): HTMLElement[] {
   const comment = node("details", "tb-comment");
   comment.append(node("summary", "", "Comment"), node("pre", "", posted.comment));
   parts.push(comment);
+  return parts;
+}
+
+function findingLink(comment: PostedCodeReview["comments"][number]): HTMLElement {
+  const item = node("li", "tb-finding");
+  item.append(link(findingTitle(comment), comment.url), node("span", "tb-meta", comment.line === null ? `${comment.path} · outdated` : `${comment.path}:${comment.line}`));
+  return item;
+}
+
+function codeReviewPart(read: NonNullable<TriageView["codeReview"]>): HTMLElement[] {
+  if ("error" in read) return [node("h3", "tb-subhead", "Code review"), node("p", "tb-warn", `Couldn't read the code review: ${read.error}`)];
+  const { review } = read;
+  if (!review) return [];
+  const head = node("h3", "tb-subhead");
+  head.append(link("Code review", review.url), ` by ${review.author}`);
+  const parts: HTMLElement[] = [head];
+  if (review.earlier) parts.push(node("p", "tb-meta", "For an earlier commit."));
+  if (review.comments.length) {
+    const list = node("ul", "tb-findings");
+    list.setAttribute("aria-label", "Code review comments");
+    list.append(...review.comments.map(findingLink));
+    parts.push(list);
+  }
   return parts;
 }
 
@@ -109,6 +137,7 @@ export function triageBlock(handlers: { rerun(): void; openPanel(): void }): Tri
       parts.push(policyLine(view.policy), rulesList(view));
       if (view.decided) parts.push(...postedPart(view.decided, view.policy));
       else parts.push(node("p", "tb-meta", "The verdict needs the decision model, so it is not named here."));
+      if (view.codeReview) parts.push(...codeReviewPart(view.codeReview));
     }
     parts.push(foot(view, run));
     element.replaceChildren(...parts);

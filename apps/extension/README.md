@@ -25,6 +25,14 @@ verdict is named only when the rules decide it without the decision model; then 
 comment and other steps the policy would post (the hub's, when the policy is the file). A chip beside the title repeats the verdict, and the Files tab marks the
 files and lines a failing rule cites.
 
+When the Corbits Triage App has sent a code review to the pull request, the block links to the newest one, names the
+account that wrote it, and lists each of its inline comments by title, file and line, linked to the comment; a
+comment whose line has since changed is marked outdated, and a review of an earlier commit says so. It is read from
+GitHub, never run here. A review counts only when it carries code review's marker and was written by a GitHub App's
+bot account; the App's own login is not readable with your token, so another App installed on the repository could
+write one, which the account name shows. A pull request with no review shows nothing, and a review that cannot be read
+is said so without failing the rules. A review sent after the last check shows on the next one.
+
 ## Limits
 
 - Every read needs a GitHub token. A fine-grained token with read-only access to public repositories is enough;

@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { minimatch } from "minimatch";
 import { compare } from "@corbits/common";
+import { parseFindingHeadline } from "@corbits/triage-contracts/code-review";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
 
@@ -748,6 +749,39 @@ export const REQUEST_CHANGES_DO_MARKER = "<!-- corbits-request-changes -->";
 
 /** Marks a code review sent to a pull request, so sending the same head again finds it. */
 export const CODE_REVIEW_MARKER = "<!-- corbits-code-review -->";
+
+/**
+ * A code review sent to the pull request: the review's page, the account that wrote it, whether it read an earlier
+ * commit than the head, and each inline comment; `line` is null once the comment is outdated.
+ */
+export type PostedCodeReview = {
+  url: string;
+  author: string;
+  earlier: boolean;
+  comments: ({ path: string; line: number | null; url: string } & ReturnType<typeof parseFindingHeadline>)[];
+};
+
+/**
+ * GitHub gives the Bot type only to App accounts, so a person who copies the marker into their own review is not read.
+ * Without the App's credential its login is unknown, so another App on the repository could still write the marker.
+ */
+function isAppReview(review: any): boolean {
+  return review.user?.type === "Bot" && typeof review.user.login === "string" && review.user.login.endsWith("[bot]") && carries(review, CODE_REVIEW_MARKER);
+}
+
+/** The newest code review sent to the pull request, read without the App's credential; null when none was sent. */
+export async function getPostedCodeReview(gh: GithubFetch, repo: string, number: number): Promise<PostedCodeReview | null> {
+  const [reviews, pr] = await Promise.all([jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`), readPr(gh, repo, number)]);
+  const review = reviews.findLast(isAppReview);
+  if (!review) return null;
+  const comments = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}/comments?per_page=100`);
+  return {
+    url: review.html_url,
+    author: review.user.login,
+    earlier: review.commit_id !== pr.sha,
+    comments: comments.map((c) => ({ ...parseFindingHeadline(c.body), path: c.path, line: c.line ?? null, url: c.html_url })),
+  };
+}
 
 const RepoFile = type({ type: "string", sha: "string", "content?": "string", "encoding?": "string", html_url: "string" });
 

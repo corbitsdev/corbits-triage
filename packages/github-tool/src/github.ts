@@ -1,6 +1,6 @@
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type AppLogin, type GithubFetch } from "@corbits/github-reads";
-import { HTML_MARKERS, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingHeadline, HTML_MARKERS, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -236,10 +236,6 @@ function lineRange({ start, end }: Lines): string {
   return end > start ? `${start}–${end}` : `${start}`;
 }
 
-function headline(finding: CodeReviewComment): string {
-  return finding.priority === undefined ? `**${finding.title}**` : `**P${finding.priority} · ${finding.title}**`;
-}
-
 /** The finding's lines outside the comment's, named so none are lost when its range runs past the hunk. */
 function alsoCovers(finding: CodeReviewComment, at: Lines): string[] {
   const before = at.start > finding.start ? [lineRange({ start: finding.start, end: at.start - 1 })] : [];
@@ -249,13 +245,13 @@ function alsoCovers(finding: CodeReviewComment, at: Lines): string[] {
 }
 
 function inlineComment(finding: CodeReviewComment, at: Lines): ReviewComment {
-  const body = [headline(finding), finding.body, ...alsoCovers(finding, at)].join("\n\n");
+  const body = [findingHeadline(finding), finding.body, ...alsoCovers(finding, at)].join("\n\n");
   if (at.start === at.end) return { path: finding.path, line: at.end, side: "RIGHT", body };
   return { path: finding.path, start_line: at.start, start_side: "RIGHT", line: at.end, side: "RIGHT", body };
 }
 
 function bodySection(finding: CodeReviewComment): string {
-  return `${headline(finding)} · \`${finding.path}:${lineRange(finding)}\`\n\n${finding.body}`;
+  return `${findingHeadline(finding)} · \`${finding.path}:${lineRange(finding)}\`\n\n${finding.body}`;
 }
 
 /** The summary and as many sections as fit under GitHub's limit, then how many more the portal holds. */

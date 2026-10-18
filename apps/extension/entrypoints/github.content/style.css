@@ -187,6 +187,18 @@ button:disabled {
   color: var(--fgColor-attention, #9a6700);
 }
 
+.tb-findings {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.tb-finding {
+  display: grid;
+  overflow-wrap: anywhere;
+}
+
 .tb-subhead {
   color: var(--fgColor-muted, #59636e);
   font-size: 12px;
