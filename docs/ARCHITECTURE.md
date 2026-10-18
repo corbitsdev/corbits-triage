@@ -20,11 +20,11 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   origin carries the portal, the API and GitHub webhooks. Triage adds:
   - **GitHub bridge**: verifies GitHub's HMAC on `/api/hooks/*`, updates the
     tenant's repository list from installation events, and hands pull
-    request, review, comment and `check_run` events to the coalescer. A pull
-    request merged into the default branch marks the repository's other
-    triaged heads `stale`. A push to the default branch that touches
-    `.corbits-triage.yml` or `.corbits-triage.yaml` reads the policy file
-    again. Signatures are checked by
+    request, review, comment, `check_run` and `check_suite` events to the
+    coalescer. A pull request merged into the default branch marks the
+    repository's other triaged heads `stale`. A push to the default branch
+    that touches `.corbits-triage.yml` or `.corbits-triage.yaml` reads the
+    policy file again. Signatures are checked by
     the X-Hub-Signature verifier in `@corbits/common/x-hub-signature`, the
     same scheme `@corbits/webhooks` 0.4 adds as `verify: "x-hub-signature"`
     (`sha256=` and the hex HMAC of the raw body, the header names taken from
@@ -77,7 +77,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     merges), a head whose CI is still running is not mailed: its row in the
     triage state turns `waiting` and keeps the window's events
     (`triage_waiting_ci`). The window that sees CI finish, or its first check
-    fail, mails the head once with those events. A head with no checks yet
+    fail, mails the head once with those events. A completed `check_suite`
+    on a waiting head closes its window after a few seconds, so the head is
+    triaged soon after its CI finishes; check events that find CI still
+    running write nothing to the triage state. A head with no checks yet
     waits up to 2 minutes for CI to start, and no head waits more than 60
     minutes from when it was first seen. Manual runs, the backlog
     run and retries after the base branch moves are not held. When a head

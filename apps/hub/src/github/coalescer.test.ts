@@ -50,7 +50,7 @@ function memoryStore(rows: PrTriageRow[] = []) {
       return { artifactId: "art_state", version };
     },
   };
-  return { store, rows: () => current };
+  return { store, rows: () => current, saves: () => version };
 }
 
 const PULL_REQUEST: Record<string, [string, string]> = {
@@ -341,4 +341,53 @@ test("a head held for CI where triage writes labels is mailed to be marked waiti
   await coalescer.accept(event("checks"));
   await clock.advance(WINDOW.quietMs);
   expect(mails.map((mail) => mail.kind)).toEqual(["waiting", "pr"]);
+});
+
+function suiteCompleted(headSha: string): CoalescedEvent {
+  const input = delivery("checks", headSha);
+  return { ...input, mail: { ...input.mail, event: "check_suite" } };
+}
+
+function heldForCi() {
+  const running = Array.from({ length: 60 }, (_, index): CheckRun => ({ name: `job ${index}`, status: "in_progress", conclusion: null }));
+  const ci = { checks: running, reads: 0 };
+  const held = harness([], {
+    async headChecks() {
+      ci.reads += 1;
+      return ci.checks;
+    },
+  });
+  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+  return { ...held, ci, pack };
+}
+
+test("a completed check suite on a head held for CI mails it after the burst once CI finished", async () => {
+  const { clock, state, mails, coalescer, ci, pack } = heldForCi();
+  await coalescer.accept({ ...delivery("opened", "sha1"), pack });
+  await clock.advance(WINDOW.burstMs);
+  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting" })]);
+
+  ci.checks = ci.checks.map((check) => ({ ...check, status: "completed", conclusion: "success" }));
+  await coalescer.accept({ ...suiteCompleted("sha1"), pack });
+  await clock.advance(WINDOW.burstMs - 1);
+  expect(mails).toHaveLength(0);
+  await clock.advance(1);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", event: "check_suite", events: ["opened", "checks"] })]);
+});
+
+test("check runs finishing on a head held for CI fold on the quiet period and write nothing while CI still runs", async () => {
+  const { clock, state, mails, coalescer, ci, pack } = heldForCi();
+  await coalescer.accept({ ...delivery("opened", "sha1"), pack });
+  await clock.advance(WINDOW.burstMs);
+  const before = { reads: ci.reads, saves: state.saves() };
+
+  for (let index = 0; index < 59; index++) {
+    ci.checks[index] = { ...ci.checks[index]!, status: "completed", conclusion: "success" };
+    await coalescer.accept({ ...delivery("checks", "sha1"), pack });
+    await clock.advance(5_000);
+  }
+  await clock.advance(WINDOW.quietMs);
+  expect(mails).toHaveLength(0);
+  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting", events: ["opened"] })]);
+  expect({ reads: ci.reads - before.reads, saves: state.saves() - before.saves }).toEqual({ reads: 3, saves: 0 });
 });

@@ -250,7 +250,8 @@ requested changes; Triage's own standing request for changes is taken back
 first. The repository's branch protection stays the backstop.
 When the policy depends on CI (CI green is on, a step names a CI condition,
 or a step approves or merges), Triage waits for CI to finish on the head, or
-for its first check to fail, before it triages it, and the Inbox shows the
+for its first check to fail, before it triages it, running a few seconds after
+CI finishes on GitHub, and the Inbox shows the
 pull request as **Waiting for CI**. A pull request with an earlier result notes
 new commits since Triage checked above it until the new result lands. A head
 with no checks after 2 minutes is taken as having no CI, and none waits longer

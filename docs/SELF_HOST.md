@@ -77,7 +77,7 @@ All optional; the defaults suit most installs.
 | `TRIAGE_MAX_IN_FLIGHT` | 5 | Heads the reconciler lets a tenant have queued or running at once; each runs in a sidecar of its own. |
 | `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
 | `TRIAGE_ROTATE_AFTER_RUNS` | 15 | Runs a pr-triage deployment's log may hold before the hub deploys a fresh copy. |
-| `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run; at most four times this after the first. A new commit, an opened, reopened or ready pull request, an approval or a change request waits only 3 seconds (or this, if shorter); comments, other chatter and check events wait this long. Must stay below 150000. |
+| `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run; at most four times this after the first. A new commit, an opened, reopened or ready pull request, an approval or a change request waits only 3 seconds, or the quiet time if shorter, as does a completed check suite on a head waiting for CI; comments, other chatter and other check events wait the quiet time. Must stay below 150000. |
 
 ### Hub and sidecars
 
@@ -140,14 +140,17 @@ still set its own `capacityRetention`.
    - Permissions: Pull requests, Issues and Contents: write; Checks, Members
      and Metadata: read.
    - Events: Pull request, Pull request review, Issue comment, Check run,
-     Push, Installation, Installation repositories.
+     Check suite, Push, Installation, Installation repositories.
 
    An App created before the Push event was added keeps working, but a change
    to its repositories' `.corbits-triage.yml` is read only after the hub
    restarts until Push is ticked under the App's settings → Permissions &
    events. Contents
    access already covers it, so installations are not asked to approve
-   anything new.
+   anything new. An App created before the Check suite event was added
+   triages a head waiting for CI after the quiet time rather than 3 seconds
+   once CI finishes, until Check suite is ticked there too; Checks access
+   already covers it.
 3. **Choose repositories on GitHub**. The hub records them from GitHub's
    installation events, with triage off; nothing runs yet.
 4. **Add the decision model** (during onboarding, or the **Models** section of Settings). Pick
