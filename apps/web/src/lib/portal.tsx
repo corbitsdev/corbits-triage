@@ -24,7 +24,6 @@ import {
   resolveApproval,
   revokeCredential,
   saveAnthropicKey,
-  saveInference,
   setCodeReview,
   codeReviewProvider,
   codeReviewSources,
@@ -34,7 +33,6 @@ import {
   untilDeploymentReady,
   WAITING_FOR_WORKFLOW,
   type HubGrant,
-  type Inference,
   type InvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
@@ -47,9 +45,8 @@ import { readChosenWorkspace, writeChosenWorkspace } from "./chosen-workspace.ts
 import type { CreateGrantInput } from "./grant-actions.ts";
 import { ensureWorkflows, releaseWorkflows, type DeployHosts } from "./workflow-deploy.ts";
 import type { WorkflowKind } from "./workflow-packages.ts";
-import { reconcileModelCatalog, removeAnthropicKey } from "./model-catalog.ts";
+import { readDecisionModel, reconcileModelCatalog, removeAnthropicKey, saveInference } from "./model-catalog.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
-import { hasDecisionModelCredential } from "./decision-models.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
 import { checkPackName, type RepoSource } from "@corbits/triage-contracts";
 
@@ -219,7 +216,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       async function hasPack(repo: string) {
         return (await queryClient.fetchQuery(checkPackIndexQuery(tenantId))).has(checkPackName(repo));
       }
-      return await loadPortal(transport, access, hasPack);
+      return await loadPortal(transport, access, hasPack, readDecisionModel);
     } catch (cause: unknown) {
       signOutWhenRejected(cause);
       throw cause;
@@ -274,16 +271,15 @@ export function PortalProvider({ children }: { children: ReactNode }) {
 
   const tenantId = snapshot?.workspace.tenantId;
   const hosts = useMemo<DeployHosts>(() => (snapshot ? hostsOf(snapshot) : NO_HOSTS), [snapshot]);
-  const decisionModelConnected = snapshot ? hasDecisionModelCredential(snapshot.credentials) : false;
-  const inference = snapshot?.config?.inference;
-  const convergeWorkflows = useCallback(function convergeWorkflows(id: string, deployHosts: DeployHosts, saved: Inference | undefined, redeploy: ReadonlySet<WorkflowKind>) {
+  const decisionModelConnected = snapshot?.decisionModel !== undefined;
+  const convergeWorkflows = useCallback(function convergeWorkflows(id: string, deployHosts: DeployHosts, redeploy: ReadonlySet<WorkflowKind>) {
     const key = `${id}:${JSON.stringify(deployHosts)}`;
     if (redeploy.size === 0 && convergedTenants.has(key)) return;
     convergedTenants.add(key);
     async function deploy() {
       try {
         const transport = createHubTransport();
-        await reconcileModelCatalog(transport, id, saved);
+        await reconcileModelCatalog(transport, id);
         const deployed = await ensureWorkflows(transport, id, deployHosts, redeploy);
         if (deployed.length) refresh();
       } catch (cause: unknown) {
@@ -295,8 +291,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [refresh, warn]);
 
   useEffect(function convergeOnConnect() {
-    if (tenantId && hosts.connected.length > 0 && decisionModelConnected) convergeWorkflows(tenantId, hosts, inference, DEPLOY_MISSING);
-  }, [convergeWorkflows, decisionModelConnected, hosts, inference, tenantId]);
+    if (tenantId && hosts.connected.length > 0 && decisionModelConnected) convergeWorkflows(tenantId, hosts, DEPLOY_MISSING);
+  }, [convergeWorkflows, decisionModelConnected, hosts, tenantId]);
 
   const requireSnapshot = useCallback(function requireSnapshot() {
     if (readOnly || !snapshot) {
@@ -459,11 +455,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const saveInferenceSecret = useCallback(
     async function saveInferenceSecret(input: { endpoint: string; model: string; secret: string }) {
       const current = requireSnapshot();
-      const saved = await saveInference(createHubTransport(), current.workspace.tenantId, input);
+      await saveInference(createHubTransport(), current.workspace.tenantId, input);
       notify("Decision model saved.");
       refresh();
       const deployHosts = hostsOf(current);
-      if (deployHosts.connected.length > 0) convergeWorkflows(current.workspace.tenantId, deployHosts, saved, REDEPLOY_TRIAGE);
+      if (deployHosts.connected.length > 0) convergeWorkflows(current.workspace.tenantId, deployHosts, REDEPLOY_TRIAGE);
     },
     [convergeWorkflows, notify, refresh, requireSnapshot],
   );
@@ -473,13 +469,13 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const current = requireSnapshot();
       const transport = createHubTransport();
       await saveAnthropicKey(transport, current.workspace.tenantId, secret);
-      await reconcileModelCatalog(transport, current.workspace.tenantId, current.config?.inference);
+      await reconcileModelCatalog(transport, current.workspace.tenantId);
       notify("Anthropic key saved.");
       // A new key can mean new offerings, which a deployment resolves only when deployed.
       const fresh = await refreshNow();
       if (!fresh) return;
       const freshHosts = hostsOf(fresh);
-      if (freshHosts.codeReview.length > 0) convergeWorkflows(fresh.workspace.tenantId, freshHosts, fresh.config?.inference, REDEPLOY_CODE_REVIEW);
+      if (freshHosts.codeReview.length > 0) convergeWorkflows(fresh.workspace.tenantId, freshHosts, REDEPLOY_CODE_REVIEW);
     },
     [convergeWorkflows, notify, refreshNow, requireSnapshot],
   );

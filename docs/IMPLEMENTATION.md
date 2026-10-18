@@ -86,10 +86,10 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
 - `src/lib/hub-api.ts`: typed calls over the hub routes.
 - Decision model presets (`@corbits/triage-contracts`): TypeSafe, Vercel AI
   Gateway, OpenCode Zen, all serving Jev, plus a custom provider. Saving
-  stores the key as a vault credential and the choice in tenant config; the
-  catalog reconcile sets the `corbits-system-one` provider `baseURL` and
-  points the `decision` offering at the provider's own model name
-  (`quirks.model`).
+  stores the key as a vault credential and the choice in the model catalog:
+  the `corbits-system-one` provider's `baseURL` is the endpoint, and the
+  `decision` offering names the provider's own model (`quirks.model`). The
+  portal reads the saved model back from those rows.
 - The Anthropic key (Settings, Models) is a vault credential named
   `anthropic`. Removing it deletes the `anthropic` catalog provider and its
   offerings first, because the vault keeps a key a catalog provider uses.

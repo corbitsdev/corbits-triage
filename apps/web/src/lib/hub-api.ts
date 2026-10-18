@@ -118,6 +118,7 @@ export type RunLog = {
 type SectionDenied = {
   repos: boolean;
   credentials: boolean;
+  models: boolean;
 };
 
 export type PortalSnapshot = {
@@ -129,6 +130,8 @@ export type PortalSnapshot = {
   config?: AppConfig;
   configVersion?: string;
   credentials: HubCredential[];
+  /** Absent until a decision model is saved. */
+  decisionModel?: Inference;
   /** Absent when the hub refused to say where code review runs. */
   codeReviewPlace?: CodeReviewPlace["provisioner"];
   denied: SectionDenied;
@@ -231,7 +234,6 @@ export type AppConfig = {
   repos?: unknown[];
   allowlist?: Record<string, string[]>;
   labelMap?: Record<string, string>;
-  inference?: Inference;
   allowlistImport?: {
     at: string;
     organizationRuns: Array<{ repo: string; organization: string; count: number; runId: string }>;
@@ -734,23 +736,23 @@ async function ensureCredentialProvider(transport: Transport, tenantId: string, 
   }
 }
 
-/** Stores an API key in the vault under its provider, replacing the secret of the one already stored. */
+/** Stores an API key in the vault under its provider, replacing the secret of the one already stored; returns its id. */
 async function writeApiKey(
   transport: Transport,
   tenantId: string,
-  input: { providerId: string; name: string; secret: string; metadata?: Record<string, unknown>; what: string },
-): Promise<void> {
+  input: { providerId: string; name: string; secret: string; what: string },
+): Promise<string> {
   const tid = enc(requireTenantId(tenantId));
-  const { providerId, name, secret, metadata } = input;
+  const { providerId, name, secret } = input;
   try {
-    await transport.fetch("POST", `/api/tenants/${tid}/credentials`, {
+    const created = await transport.fetch<HubCredential>("POST", `/api/tenants/${tid}/credentials`, {
       providerId,
       name,
       type: "api_key",
       secret,
-      ...(metadata && { metadata }),
       idempotencyKey: credentialIdempotencyKey(providerId, name),
     });
+    return created.id;
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
     const existing = await transport.fetch<HubCredential>(
@@ -766,33 +768,31 @@ async function writeApiKey(
       const label = typeof current.status === "string" && current.status.length > 0 ? current.status : "unknown";
       throw new Error(`The ${input.what} is ${label} — save a new secret.`);
     }
-    const patch: Record<string, unknown> = { secret, ...(metadata && { metadata }) };
+    const patch: Record<string, unknown> = { secret };
     if (REACTIVATABLE_CREDENTIAL_STATUSES.has(status)) patch.status = "active";
     await transport.fetch("PATCH", `/api/tenants/${tid}/credentials/${enc(existing.id)}`, patch);
+    return existing.id;
   }
 }
 
-export async function saveInference(
+/** Stores the decision model's key in the vault; the catalog holds its endpoint and model (`saveInference`, model-catalog.ts). */
+export async function saveInferenceKey(
   transport: Transport,
   tenantId: string,
   input: { endpoint: string; model: string; secret: string },
-): Promise<Inference> {
+): Promise<Inference & { credentialId: string }> {
   const endpoint = requireHttpsUrl(input.endpoint, "Endpoint");
   const model = requireContent(input.model, "Model");
   if (!input.secret.trim()) throw new Error("Secret is required.");
   const secret = requireSecret(input.secret);
   const providerId = await ensureCredentialProvider(transport, tenantId, { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER_PLUGIN, apiBaseUrl: endpoint });
-  await writeApiKey(transport, tenantId, {
+  const credentialId = await writeApiKey(transport, tenantId, {
     providerId,
     name: INFERENCE_CREDENTIAL_NAME,
     secret,
-    metadata: { model, endpoint },
     what: "inference secret",
   });
-  await patchAppConfig(transport, tenantId, function setInference(current) {
-    return { ...current, inference: { endpoint, model } };
-  });
-  return { endpoint, model };
+  return { endpoint, model, credentialId };
 }
 
 export async function saveAnthropicKey(transport: Transport, tenantId: string, input: string): Promise<void> {
@@ -1233,14 +1233,20 @@ async function readCodeReviewPlace(transport: Transport, tid: string): Promise<C
 }
 
 /** Only what the gate needs; approvals, runs and access rules are read by the pages that show them. */
-export async function loadPortal(transport: Transport, access: MemberAccess, hasPack: CheckPackLookup): Promise<PortalSnapshot> {
+export async function loadPortal(
+  transport: Transport,
+  access: MemberAccess,
+  hasPack: CheckPackLookup,
+  readDecisionModel: (transport: Transport, tenantId: string) => Promise<Inference | undefined>,
+): Promise<PortalSnapshot> {
   const { workspace, workspaces, invitations } = access;
   const tenantId = requireTenantId(workspace.tenantId);
   const tid = enc(tenantId);
   const tenantFallback: TenantBody = { id: tenantId, name: "", slug: WORKSPACE_SLUG };
-  const [tenant, credentials, places] = await Promise.all([
+  const [tenant, credentials, decisionModel, places] = await Promise.all([
     tolerateSection(transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`), tenantFallback),
     tolerateSection(listAll<HubCredential>(transport, `/api/tenants/${tid}/credentials`), []),
+    tolerateSection(readDecisionModel(transport, tenantId), undefined),
     readCodeReviewPlace(transport, tid),
   ]);
   return {
@@ -1252,10 +1258,12 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     config: appConfig(tenant.value.config),
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
+    ...(decisionModel.value && { decisionModel: decisionModel.value }),
     ...(places && { codeReviewPlace: places.provisioner }),
     denied: {
       repos: tenant.denied,
       credentials: credentials.denied,
+      models: decisionModel.denied,
     },
   };
 }

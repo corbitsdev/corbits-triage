@@ -108,7 +108,7 @@ function active(credential: HubCredential): boolean {
 
 export function ModelsSection({ snapshot }: { snapshot: PortalSnapshot }) {
   const { revoke, removeAnthropic } = usePortal();
-  const saved = snapshot.config?.inference;
+  const saved = snapshot.decisionModel;
 
   return (
     <section className="sec" id="models" aria-labelledby="sec-models">

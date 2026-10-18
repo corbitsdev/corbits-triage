@@ -28,7 +28,6 @@ import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { OtherWorkspaces } from "../components/OtherWorkspaces.tsx";
 import { DECISION_MODEL_INTRO } from "@corbits/triage-contracts";
-import { hasDecisionModelCredential } from "../lib/decision-models.ts";
 
 type GuidedStep = "create" | "install" | "select" | "model";
 
@@ -81,7 +80,7 @@ export default function Connect() {
   const runs = useRuns();
   const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
   const githubReady = repos.some((repo) => triaged.has(repo.name));
-  const modelStored = hasDecisionModelCredential(snapshot?.credentials ?? []);
+  const modelStored = snapshot?.decisionModel !== undefined;
   // A verdict the decision model scored proves inference contributed; credentials alone do not.
   const inferenceReady = verdicts.data?.scored === true;
   const liveReady = githubReady && inferenceReady;

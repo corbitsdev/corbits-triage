@@ -2,7 +2,7 @@ import { useId, useState, type FormEvent } from "react";
 import { Button, Input } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "@corbits/triage-contracts";
-import { hasDecisionModelCredential } from "../lib/decision-models.ts";
+import { modelSecrets } from "../lib/credential-actions.ts";
 import { usePortal } from "../lib/portal.tsx";
 
 type Draft = { custom: boolean; endpoint: string; model: string; apiKey: string };
@@ -21,7 +21,7 @@ function keyHelp(stored: boolean): string {
 
 export function DecisionModelForm({ onSaved }: { onSaved?: () => void }) {
   const { snapshot, saveInferenceSecret, readOnly } = usePortal();
-  const saved = snapshot?.config?.inference;
+  const saved = snapshot?.decisionModel;
   const [preset, setPreset] = useState<DecisionModelPreset>(presetFor(saved));
   const [endpoint, setEndpoint] = useState(saved?.endpoint ?? "");
   const [model, setModel] = useState(saved?.model ?? "");
@@ -30,7 +30,8 @@ export function DecisionModelForm({ onSaved }: { onSaved?: () => void }) {
   const [error, setError] = useState("");
   const custom = preset.id === "custom";
   const disabled = readOnly || saving;
-  const stored = snapshot !== null && hasDecisionModelCredential(snapshot.credentials);
+  // The Models row shows the key as stored only while it is active, so the help text follows the same key.
+  const stored = saved !== undefined && modelSecrets(snapshot?.credentials ?? []).some((key) => key.status.toLowerCase() === "active");
   const blocker = saveBlocker({ custom, endpoint, model, apiKey });
   const blockerId = useId();
 

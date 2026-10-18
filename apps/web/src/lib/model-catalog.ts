@@ -9,6 +9,7 @@ import {
   INFERENCE_PROVIDER,
   listAll,
   revokeCredential,
+  saveInferenceKey,
   type HubCredential,
   type Inference,
 } from "./hub-api.ts";
@@ -25,12 +26,8 @@ export type DeclaredModel = (typeof DECLARED_MODELS)[number]["model"];
 /** A catalog provider's row, keyed to the vault credential it uses; `quirks` maps a catalog model onto the provider's own model name. */
 type ProviderSpec = { name: string; plugin: string; baseURL: string; credential: string; quirks?: Record<string, unknown> };
 
-/** The decision model's provider is the one the workspace chose, so it is declared only once one is saved. */
-function providerSpecs(inference: Inference | undefined): ProviderSpec[] {
-  const anthropic = { name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, baseURL: ANTHROPIC_API, credential: ANTHROPIC_CREDENTIAL_NAME };
-  if (!inference) return [anthropic];
-  return [{ name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER, baseURL: inference.endpoint, credential: INFERENCE_CREDENTIAL_NAME, quirks: { model: inference.model } }, anthropic];
-}
+/** The decision model's provider and offering are written when it is saved (`saveInference`), so a reconcile declares only fixed providers. */
+const PROVIDER_SPECS: ProviderSpec[] = [{ name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, baseURL: ANTHROPIC_API, credential: ANTHROPIC_CREDENTIAL_NAME }];
 
 type CatalogRow = { id: string; name?: string; canonicalName?: string; baseURL?: string; modelId?: string; providerId?: string; quirks?: Record<string, unknown> | null };
 
@@ -90,22 +87,28 @@ async function ensureOffering(transport: Transport, tenantId: string, modelId: s
   }
 }
 
+async function listCatalog(transport: Transport, tenantId: string) {
+  const [providers, models, offerings] = await Promise.all([
+    listAll<CatalogRow>(transport, catalogPath(tenantId, "providers")),
+    listAll<CatalogRow>(transport, catalogPath(tenantId, "models")),
+    listAll<CatalogRow>(transport, catalogPath(tenantId, "offerings")),
+  ]);
+  return { providers, models, offerings };
+}
+
 /**
  * Adds to the workspace catalog whatever the declared models lack: each model,
  * and its offering through each provider whose key is stored. A catalog
  * provider needs its key, so a model whose key is missing gets its offering
  * on the reconcile after the key is saved.
  */
-export async function reconcileModelCatalog(transport: Transport, tenantId: string, inference: Inference | undefined): Promise<void> {
-  const tid = encodeURIComponent(tenantId);
-  const [credentials, providers, models, offerings] = await Promise.all([
-    listAll<HubCredential>(transport, `/api/tenants/${tid}/credentials`),
-    listAll<CatalogRow>(transport, catalogPath(tenantId, "providers")),
-    listAll<CatalogRow>(transport, catalogPath(tenantId, "models")),
-    listAll<CatalogRow>(transport, catalogPath(tenantId, "offerings")),
+export async function reconcileModelCatalog(transport: Transport, tenantId: string): Promise<void> {
+  const [credentials, { providers, models, offerings }] = await Promise.all([
+    listAll<HubCredential>(transport, `/api/tenants/${encodeURIComponent(tenantId)}/credentials`),
+    listCatalog(transport, tenantId),
   ]);
   const providerIds = new Map<string, { id: string; spec: ProviderSpec }>();
-  for (const spec of providerSpecs(inference)) {
+  for (const spec of PROVIDER_SPECS) {
     const credential = credentials.find((row) => row.name === spec.credential && row.status.toLowerCase() === "active");
     if (credential) providerIds.set(spec.name, { id: await ensureProvider(transport, tenantId, spec, credential.id, providers), spec });
   }
@@ -114,6 +117,26 @@ export async function reconcileModelCatalog(transport: Transport, tenantId: stri
     const provider = providerIds.get(declared.provider);
     if (provider) await ensureOffering(transport, tenantId, modelId, provider.id, provider.spec, offerings);
   }
+}
+
+/** Stores the decision model's key in the vault, then points the catalog's decision offering at its endpoint and model. */
+export async function saveInference(transport: Transport, tenantId: string, input: { endpoint: string; model: string; secret: string }): Promise<void> {
+  const { endpoint, model, credentialId } = await saveInferenceKey(transport, tenantId, input);
+  const { providers, models, offerings } = await listCatalog(transport, tenantId);
+  const spec = { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER, baseURL: endpoint, credential: INFERENCE_CREDENTIAL_NAME, quirks: { model } };
+  const providerId = await ensureProvider(transport, tenantId, spec, credentialId, providers);
+  const modelId = await ensureModel(transport, tenantId, DECISION_MODEL_ALIAS, models);
+  await ensureOffering(transport, tenantId, modelId, providerId, spec, offerings);
+}
+
+/** The saved decision model: its catalog provider's endpoint and the model its decision offering names. */
+export async function readDecisionModel(transport: Transport, tenantId: string): Promise<Inference | undefined> {
+  const { providers, models, offerings } = await listCatalog(transport, tenantId);
+  const provider = providers.find((row) => row.name === INFERENCE_PROVIDER);
+  const decision = models.find((row) => row.canonicalName === DECISION_MODEL_ALIAS);
+  if (!provider?.baseURL || !decision) return undefined;
+  const model = offerings.find((row) => row.providerId === provider.id && row.modelId === decision.id)?.quirks?.["model"];
+  return typeof model === "string" ? { endpoint: provider.baseURL, model } : undefined;
 }
 
 /** The vault refuses to delete a key a catalog provider still uses, so the provider and its offerings go first. */
