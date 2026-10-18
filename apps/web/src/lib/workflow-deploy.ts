@@ -6,7 +6,7 @@ import { ApiError, listWorkflowDeployments, type Transport, type WorkflowDeploym
 import { requestOrigin } from "./hub-origin.ts";
 import { currentDeployment, isLiveDeployment, listDeployedWorkflows, type DeployedWorkflow } from "./hub-api.ts";
 import { offeringsFor } from "./model-catalog.ts";
-import { tarballFilename, type RepoSource } from "@corbits/triage-contracts";
+import { tarballFilename, type CodeReviewProvider, type RepoSource } from "@corbits/triage-contracts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowKind, type WorkflowPackage } from "./workflow-packages.ts";
 
 const REGISTRY_NAME = "corbits";
@@ -142,12 +142,12 @@ function sourceNotConnected(cause: unknown): boolean {
   return cause instanceof ApiError && cause.status === 409 && cause.code === "source_not_connected";
 }
 
-/** The hosts the workspace connected, and those whose code review is on. */
-export type DeployHosts = { connected: readonly RepoSource[]; codeReview: readonly RepoSource[] };
+/** The hosts the workspace connected, those whose code review is on, and the provider it runs code review on. */
+export type DeployHosts = { connected: readonly RepoSource[]; codeReview: readonly RepoSource[]; codeReviewProvider: CodeReviewProvider | undefined };
 
 function wanted(workflow: WorkflowPackage, hosts: DeployHosts): boolean {
   if (!hosts.connected.includes(workflow.source)) return false;
-  return workflow.kind === "triage" || hosts.codeReview.includes(workflow.source);
+  return workflow.kind === "triage" || (workflow.provider === hosts.codeReviewProvider && hosts.codeReview.includes(workflow.source));
 }
 
 /** Each host's triage deploys while the host is connected, its code review while that is on too; `redeploy` names the kinds deployed again even at the same version. */

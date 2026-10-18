@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { errorText } from "@corbits/common";
 import { DOCKER_GUIDE, PLACES_GUIDE } from "../../lib/code-review-place.ts";
-import { hasAnthropicKey, type RepoRecord } from "../../lib/hub-api.ts";
+import { codeReviewProvider, type RepoRecord } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { ExternalIcon } from "../inbox-icons.tsx";
 
@@ -29,7 +29,7 @@ function NeedsPlace({ switchedOn, busy, turnOff }: NeedsPlaceProps) {
 
 export default function CodeReviewCard({ repo, disabled }: { repo: RepoRecord; disabled: boolean }) {
   const { snapshot, switchCodeReview } = usePortal();
-  const keyStored = snapshot !== null && hasAnthropicKey(snapshot.credentials);
+  const keyStored = snapshot !== null && codeReviewProvider(snapshot.credentials) !== undefined;
   const change = useMutation({
     mutationFn: function applySwitch(next: boolean) {
       return switchCodeReview(repo, next);

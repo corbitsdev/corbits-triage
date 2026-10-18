@@ -71,13 +71,14 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   its deployment runs another version or its model's key was saved. A
   host's code review (`pr-code-review-github`,
   `pr-code-review-bitbucket-datacenter`) deploys only while one of its
-  connected repositories has code review on and the Anthropic key is
-  stored; removing the key releases it. Before
+  connected repositories has code review on and a code review provider's key
+  is stored, from that provider's package (`codeReviewProvider` in
+  `src/lib/hub-api.ts`); removing the key releases it. Before
   publishing it removes every tarball neither this build nor a live
   deployment pins, since Interchange delivers the registry's whole tree under
   a 32 MiB cap; removed versions stay in the asset's git history.
 - `scripts/build-workflows.ts`: packs the host read tools and each workflow of
-  `packages/triage-workflows` and `packages/pr-code-review-anthropic` as
+  `packages/triage-workflows` and each `packages/pr-code-review-<provider>` as
   tarballs into `public/packages/`, listed in
   `index.json`. Each version is `<base>-sha-<8 hex>`, a SHA-256 over the
   package manifest and files (`tooling/pack-tarball.ts`), so any change to
@@ -119,8 +120,12 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
   and Bitbucket Data Center read bundles add `*_checkout`, which unpacks a
   repository at a commit into that tree, and `*_read_file`, which reads lines
   of one file at a commit through the host API.
-- `pr-code-review-anthropic`: the `pr-code-review` workflow, its directors,
-  deterministic steps (`src/actions/`) and prompts (`prompts/*.txt`).
+- `pr-code-review`: the provider-neutral `pr-code-review` workflow, its
+  agents, directors, deterministic steps (`src/actions/`) and prompts
+  (`prompts/*.txt`), each built from a provider profile (`src/profile.ts`).
+- `pr-code-review-anthropic`: the Anthropic profile and the deployed entry
+  points (`pr-code-review-github`, `pr-code-review-bitbucket-datacenter`),
+  plus the code review eval.
 - `triage-contracts`: policy schema (`schemaVersion` 2) with the workspace
   policy and override schemas, `resolve-policy.ts` (a repository policy over
   the workspace policy it extends), repository settings, triage state,

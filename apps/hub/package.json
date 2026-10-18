@@ -16,7 +16,7 @@
     "@corbits/github-reads": "workspace:*",
     "@corbits/bitbucket-datacenter-tool": "workspace:*",
     "@corbits/github-tool": "workspace:*",
-    "@corbits/pr-code-review-anthropic": "workspace:*",
+    "@corbits/pr-code-review": "workspace:*",
     "@corbits/provisioner-docker": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@corbits/triage-workflows": "workspace:*",

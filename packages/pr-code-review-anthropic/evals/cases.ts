@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Site } from "../src/findings.js";
+import type { Site } from "@corbits/pr-code-review/findings";
 
 const LABELS = new URL("./labels/", import.meta.url).pathname;
 const CASES = new URL("./cases.json", import.meta.url).pathname;
 const CACHE = new URL("./.cache/", import.meta.url).pathname;
 
-export type { Site } from "../src/findings.js";
+export type { Site } from "@corbits/pr-code-review/findings";
 
 export type Reach = "diff" | "repo" | "intent";
 

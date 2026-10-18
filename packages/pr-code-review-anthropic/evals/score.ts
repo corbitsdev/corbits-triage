@@ -1,7 +1,7 @@
-import { samePath, type Finding } from "../src/findings.js";
+import { samePath, type Finding } from "@corbits/pr-code-review/findings";
 import type { Bug, CaseKey, Reach, Site } from "./cases.js";
 
-export { parseFindings, type Finding } from "../src/findings.js";
+export { parseFindings, type Finding } from "@corbits/pr-code-review/findings";
 
 /** Lines a finding may sit from a site and still hit it. */
 const SLACK = 3;

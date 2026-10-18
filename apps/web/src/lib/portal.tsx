@@ -26,6 +26,7 @@ import {
   saveAnthropicKey,
   saveInference,
   setCodeReview,
+  codeReviewProvider,
   codeReviewSources,
   startBacklogTriage,
   githubPrAction,
@@ -170,7 +171,7 @@ export function useSignOutWhenRejected(): (cause: unknown) => void {
 /** Each tenant's converge, keyed by the hosts it was connected to, so connecting or disconnecting one converges again. */
 const convergedTenants = new Set<string>();
 
-const NO_HOSTS: DeployHosts = { connected: [], codeReview: [] };
+const NO_HOSTS: DeployHosts = { connected: [], codeReview: [], codeReviewProvider: undefined };
 const DEPLOY_MISSING: ReadonlySet<WorkflowKind> = new Set();
 const REDEPLOY_TRIAGE: ReadonlySet<WorkflowKind> = new Set(["triage"]);
 const REDEPLOY_CODE_REVIEW: ReadonlySet<WorkflowKind> = new Set(["code-review"]);
@@ -181,7 +182,7 @@ function forgetConverged(tenantId: string): void {
 }
 
 function hostsOf(snapshot: PortalSnapshot): DeployHosts {
-  return { connected: connectedSources(snapshot.credentials), codeReview: codeReviewSources(snapshot) };
+  return { connected: connectedSources(snapshot.credentials), codeReview: codeReviewSources(snapshot), codeReviewProvider: codeReviewProvider(snapshot.credentials) };
 }
 
 type PortalLoad = PortalSnapshot | InvitedAccess;

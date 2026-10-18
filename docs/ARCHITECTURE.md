@@ -195,11 +195,13 @@ executes and ends.
   not deployed by the hub yet; proposing rules, replaying them and opening the
   policy pull request come next.
 
-- `pr-code-review-github` and `pr-code-review-bitbucket-datacenter`
-  (`@corbits/pr-code-review-anthropic`): one mail names one pull request
-  (title, description, diff, and the host, repository and head sha to read)
-  and the run returns a review: a summary and comments anchored to lines.
-  Both are built by `prCodeReview({ sources })` and bind only their host's
+- `pr-code-review-github` and `pr-code-review-bitbucket-datacenter`: one
+  mail names one pull request (title, description, diff, and the host,
+  repository and head sha to read) and the run returns a review: a summary
+  and comments anchored to lines. `@corbits/pr-code-review` holds the
+  workflow and builds it from a provider profile; each provider's package
+  (today only `@corbits/pr-code-review-anthropic`) publishes both under these
+  names, built by its `prCodeReview({ sources })`, binding only their host's
   read credential. Nothing mails them or posts their review yet.
 
 The bridge and the reconciler find the target by workflow name per tenant; no
@@ -277,11 +279,14 @@ step here.
 
 Code review is switched on per repository through
 `POST /api/integrations/code-review/{tenantId}`, which needs the host
-connected and the workspace's Anthropic key. The portal then deploys that
-host's `pr-code-review-<host>` with an offering for each model it names
-(Opus 5.5 for the diff finder, Haiku 5.5 elsewhere). The hub releases a
-host's code review once none of its repositories has it on, the host is
-disconnected or the key is gone. Each new non-draft head of a pull request
+connected and a code review provider's key. A workspace runs one code review
+provider, the one whose key it stores in Settings → Models
+(`CODE_REVIEW_PROVIDERS` in `triage-contracts`; only Anthropic today). The
+portal then deploys that host's `pr-code-review-<host>` from the provider's
+package with an offering for each model it names (on Anthropic, Opus 5.5 for
+the diff finder and Haiku 5.5 elsewhere). The hub releases a host's code
+review once none of its repositories has it on, the host is disconnected or
+the key is gone. Each new non-draft head of a pull request
 in such a repository (opened, reopened, a push, marked ready) is mailed to it
 once, whether or not triage is on; it runs in a worker of its own, keyed
 apart from the pull request's triage.
@@ -335,6 +340,15 @@ The structured steps (plan, consolidate, check, write) answer against a JSON
 schema. Checkout and file reads reach the host through its bound credential,
 so, as with triage's facts step, they run in directors. The eval and its
 numbers are in `packages/pr-code-review-anthropic/evals/README.md`.
+
+Stock Interchange locks each step's provider and model into the package that
+declares them; a deploy only picks which catalog offering serves each
+declared pair. So each provider has its own package: `@corbits/pr-code-review`
+builds the workflow, agents, directors and actions from a provider profile
+(provider, model and default effort per step, and how a reader turn's tokens
+count against the repository finder's budget), and the provider's package
+supplies the profile and the deployed entry points.
+`packages/pr-code-review/README.md` says how to add one.
 
 ## Tenancy and authority
 

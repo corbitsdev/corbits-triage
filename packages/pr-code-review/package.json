@@ -1,0 +1,20 @@
+{
+  "name": "@corbits/pr-code-review",
+  "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@corbits/bitbucket-datacenter-tool": "workspace:*",
+    "@corbits/github-tool": "workspace:*",
+    "@corbits/repo-read-tool": "workspace:*",
+    "@corbits/triage-contracts": "workspace:*",
+    "@intx/agent": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/types": "workspace:*",
+    "@intx/workflow": "workspace:*",
+    "arktype": "catalog:"
+  }
+}

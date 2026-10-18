@@ -24,7 +24,7 @@ const REMEMBERED_HEADS = 10_000;
 export type PullRequestToReview = { title: string; description: string; headSha: string; draft: boolean; open: boolean; diff: string };
 
 export type CodeReviewFeedDeps = {
-  /** The hosts whose code review runs: a repository of the host has it on and the Anthropic key is stored. */
+  /** The hosts whose code review runs: a repository of the host has it on and a code review provider's key is stored. */
   reviewed: (tenantId: string) => Promise<RepoSource[]>;
   read: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
   send: (job: TriageJob) => Promise<void>;

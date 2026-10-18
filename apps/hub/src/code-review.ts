@@ -1,10 +1,10 @@
 import { type } from "arktype";
 import { resolveTenantSidecarCapabilityPolicies, type DB } from "@intx/db";
 import type { SidecarPluginRegistry } from "@intx/hub-sessions";
-import { CODE_REVIEW_PLACEMENT } from "@corbits/pr-code-review-anthropic/pr-code-review";
+import { CODE_REVIEW_PLACEMENT } from "@corbits/pr-code-review/pr-code-review";
 import { REPO_SOURCES } from "@corbits/triage-contracts";
-import { activeCredential, failure } from "./github/portal-credential.js";
-import { ANTHROPIC_CREDENTIAL, connectedSources } from "./github/source-workflow.js";
+import { failure } from "./github/portal-credential.js";
+import { connectedSources, hasCodeReviewKey } from "./github/source-workflow.js";
 import { tenantConfigOf } from "./github/bridge.js";
 import { patchCorbitsTriage, repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import type { CodeReviewFeed, Offered } from "./code-review-feed.js";
@@ -59,7 +59,7 @@ function noPlace(): Response {
   return failure(409, "no_isolated_place", "Code review needs an isolated place to run, and this server has none set up yet.");
 }
 
-/** Turns code review on or off for one repository; on needs its host connected and the workspace's Anthropic key. */
+/** Turns code review on or off for one repository; on needs its host connected and a code review provider's key. */
 export function createCodeReviewSwitch(deps: CodeReviewDeps) {
   return async function setCodeReview(body: typeof CodeReviewBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     if (!(await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage"))) {
@@ -70,7 +70,7 @@ export function createCodeReviewSwitch(deps: CodeReviewDeps) {
     if (body.enabled && !(await connectedSources(deps.db, tenantId)).includes(source)) {
       return failure(409, "source_not_connected", `Connect ${HOST_NAMES[source]} before turning on code review.`);
     }
-    if (body.enabled && !(await activeCredential(deps.db, tenantId, ANTHROPIC_CREDENTIAL))) {
+    if (body.enabled && !(await hasCodeReviewKey(deps.db, tenantId))) {
       return failure(409, "anthropic_key_missing", "Save an Anthropic key in Settings before turning on code review.");
     }
     function isRepo(record: RepoRecord): boolean {

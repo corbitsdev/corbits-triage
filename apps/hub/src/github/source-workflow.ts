@@ -3,13 +3,11 @@
 // its host's workflow.
 import { and, eq, inArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import type { RepoSource } from "@corbits/triage-contracts";
+import { CODE_REVIEW_PROVIDERS, codeReviewProviderOf, type RepoSource } from "@corbits/triage-contracts";
 import { PR_TRIAGE_ADDRESS } from "@corbits/triage-workflows/pr-triage";
 import { PR_TRIAGE_BITBUCKET_DATACENTER_ADDRESS, workflow as prTriageBitbucket } from "@corbits/triage-workflows/pr-triage-bitbucket-datacenter";
 import { PR_TRIAGE_GITHUB_ADDRESS, workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
-import { PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS } from "@corbits/pr-code-review-anthropic/pr-code-review-bitbucket-datacenter";
-import { PR_CODE_REVIEW_GITHUB_ADDRESS } from "@corbits/pr-code-review-anthropic/pr-code-review-github";
-import { activeCredential } from "./portal-credential.js";
+import { PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS, PR_CODE_REVIEW_GITHUB_ADDRESS } from "@corbits/pr-code-review/pr-code-review";
 import { repoRecords, ROTATION_KEY, sourceOf, triageNs } from "./tenant-config.js";
 
 export type TriageWorkflow = {
@@ -28,15 +26,13 @@ export const TRIAGE_WORKFLOWS: readonly TriageWorkflow[] = [
   { source: "bitbucket-datacenter", id: prTriageBitbucket.id, address: PR_TRIAGE_BITBUCKET_DATACENTER_ADDRESS, entry: "./pr-triage-bitbucket-datacenter.mjs", credential: "bitbucket-datacenter", rotationKey: "rotationBitbucketDatacenter" },
 ];
 
-/** Code review per host, binding that host's read credential; it is deployed while a repository of the host has it on. */
+/** Code review per host, binding that host's read credential; it is deployed while a repository of the host has it on, from the package of the workspace's code review provider. */
 export type CodeReviewWorkflow = { source: RepoSource; id: string; entry: string };
 
 export const CODE_REVIEW_WORKFLOWS: readonly CodeReviewWorkflow[] = [
   { source: "github", id: PR_CODE_REVIEW_GITHUB_ADDRESS, entry: "./pr-code-review-github.mjs" },
   { source: "bitbucket-datacenter", id: PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS, entry: "./pr-code-review-bitbucket-datacenter.mjs" },
 ];
-
-export const ANTHROPIC_CREDENTIAL = "anthropic";
 
 /** The workflow id deployed before hosts, which GitHub hook credentials still name; its mail now goes to the GitHub workflow. */
 const LEGACY_TRIAGE_WORKFLOW = PR_TRIAGE_ADDRESS;
@@ -64,9 +60,19 @@ export function entrySource(entry: string): RepoSource | undefined {
   return (triageWorkflowOf(entry) ?? CODE_REVIEW_WORKFLOWS.find((workflow) => workflow.entry === entry))?.source;
 }
 
-/** The hosts with a connected repository that has code review on, while the Anthropic key is stored. */
+/** Whether the workspace stores a code review provider's key. */
+export async function hasCodeReviewKey(db: DB["db"], tenantId: string): Promise<boolean> {
+  const credentials = Object.values(CODE_REVIEW_PROVIDERS).map((provider) => provider.credential);
+  const rows = await db.query.credential.findMany({
+    where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.status, "active"), inArray(schema.credential.name, credentials)),
+    columns: { name: true },
+  });
+  return codeReviewProviderOf(rows.map((row) => row.name)) !== undefined;
+}
+
+/** The hosts with a connected repository that has code review on, while a code review provider's key is stored. */
 export async function codeReviewSources(db: DB["db"], tenantId: string): Promise<RepoSource[]> {
-  if (!(await activeCredential(db, tenantId, ANTHROPIC_CREDENTIAL))) return [];
+  if (!(await hasCodeReviewKey(db, tenantId))) return [];
   const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
   const reviewed = repoRecords(triageNs(tenant?.config)).filter((record) => record.connected && record.codeReview === true);
   return [...new Set(reviewed.map(sourceOf))];

@@ -19,7 +19,7 @@ const TEXT_FIELDS = ["code", "title", "why", "trigger"] as const;
 
 type Parsed = { findings: Finding[] } | { unparsable: string };
 
-// Haiku sometimes ends a finding with a stray key and no value: `"trigger": "...", "}"}]}`.
+// A model sometimes ends a finding with a stray key and no value: `"trigger": "...", "}"}]}`.
 function withoutStrayKeys(json: string): string {
   return json.replace(/,\s*"\}"\s*\}/g, "}");
 }
