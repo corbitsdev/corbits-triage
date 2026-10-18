@@ -224,12 +224,14 @@ export const PolicyDifference = type({ rule: "string", saved: "string[]", file: 
 export type PolicyDifference = typeof PolicyDifference.infer;
 
 /**
- * How a repository's saved rules stand against its policy file. `upgrade`: saved rules and no file. `differs`: both, and
- * they run differently, or triage refuses the file at `path` for `problem`; the saved rules apply until the file matches
- * them or the saved artifact is archived; `fixable` is false when writing the saved rules to the file would change nothing it does,
- * because the rest is what a file cannot hold. `unexpressed` lists what the saved rules hold that a policy file cannot.
+ * How a repository's saved rules stand against its policy file. `start`: neither. `upgrade`: saved rules and no file.
+ * `differs`: both, and they run differently, or triage refuses the file at `path` for `problem`; the saved rules apply
+ * until the file matches them or the saved artifact is archived; `fixable` is false when writing the saved rules to the
+ * file would change nothing it does, because the rest is what a file cannot hold. `unexpressed` lists what the saved
+ * rules hold that a policy file cannot.
  */
 export const PolicyUpgrade = type({ state: "'ok'" })
+  .or({ state: "'start'" })
   .or({ state: "'upgrade'", saved: ArtifactRefShape, unexpressed: "string[]" })
   .or({ state: "'differs'", path: "string", saved: ArtifactRefShape, differences: PolicyDifference.array(), "problem?": "string", fixable: "boolean", unexpressed: "string[]" });
 export type PolicyUpgrade = typeof PolicyUpgrade.infer;

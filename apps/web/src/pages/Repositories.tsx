@@ -137,7 +137,7 @@ export default function Repositories() {
     return loading ? null : value;
   }
 
-  /** A repository whose saved rules still need moving into its policy file says so in place of its usual health. */
+  /** A repository that still needs a policy file, or whose saved rules still need moving into it, says so in place of its usual health. */
   function healthOf(row: RepoRow): ReactNode {
     const found = upgrades.find((upgrade) => upgrade.repo === row.name);
     const label = found && upgradeLabel(found);

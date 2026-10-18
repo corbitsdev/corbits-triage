@@ -77,6 +77,8 @@ function openPr(row: unknown) {
     authorBot: isBot(pr.author.user),
     draft: pr.draft === true,
     sha: pr.fromRef.latestCommit,
+    // A fork's branch is not one of this repository's.
+    branch: pr.fromRef.repository.id === pr.toRef.repository.id ? pr.fromRef.displayId : null,
     updatedAt: isoTime(pr.updatedDate),
     labels: [],
     url: pr.links?.self[0]?.href ?? null,

@@ -126,15 +126,16 @@ function fileCanChange(saved: SavedPack, read: FileRead, repo: string): boolean 
 export type PolicySettled = { read: CheckPackRead; upgrade: PolicyUpgrade; saved?: SavedPack };
 
 /**
- * The policy triage runs on and how the repository's saved rules stand against its policy file: saved rules and no file
- * is `upgrade`; both, running differently or with a file triage refuses, is `differs`, and the saved rules apply; else
- * the file or the saved rules alone apply and it is `ok`.
+ * The policy triage runs on and how the repository's saved rules stand against its policy file: neither is `start`;
+ * saved rules and no file is `upgrade`; both, running differently or with a file triage refuses, is `differs`, and the
+ * saved rules apply; else the file or the saved rules alone apply and it is `ok`.
  */
 export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: (tenantId: string, repo: string) => Promise<PolicyFileState> }, tenantId: string, repo: string): Promise<PolicySettled> {
   const file = await deps.policyFile(tenantId, repo);
   const stored = await loadCheckPack(deps, tenantId, repo);
   const saved = stored.status === "ok" ? stored : undefined;
-  if (file.status === "absent") return { read: stored, upgrade: saved ? { state: "upgrade", saved: saved.source.repo, unexpressed: exported(saved).unexpressed } : { state: "ok" }, ...(saved && { saved }) };
+  if (file.status === "absent" && saved) return { read: stored, upgrade: { state: "upgrade", saved: saved.source.repo, unexpressed: exported(saved).unexpressed }, saved };
+  if (file.status === "absent") return { read: stored, upgrade: { state: stored.status === "missing" ? "start" : "ok" } };
   const read = await fileRead(deps, tenantId, repo, file);
   if (!saved) return { read, upgrade: { state: "ok" } };
   const differences = read.status === "ok" ? policyDifferences(saved.pack, read.pack) : [];

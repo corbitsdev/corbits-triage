@@ -61,7 +61,7 @@ const OBSERVATION: TenantObservation = {
 };
 
 const OPEN: RepoPulls[] = [
-  { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
+  { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
   { repo: UNREAD, source: "github", prs: [], error: "rate limited" },
 ];
 
@@ -214,7 +214,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
     const verdicts = createVerdictRecordStore(db);
     await verdicts.record(TENANT, [verdict("run_on", 1, 0), verdict("run_off", 1, 0, { repo: off }), verdict("run_held", 2, 0, { repo: off })]);
     const openPulls = createOpenPullsCache(() => minutes(0));
-    const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, updatedAt: minutes(0).toISOString(), labels: [], url: null });
+    const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null });
     await openPulls.read(TENANT, async () => [{ repo: REPO, source: "github" as const, prs: [pr(1)] }, { repo: off, source: "github" as const, prs: [pr(1), pr(2)] }]);
     const triageVerdicts = createTriageVerdicts({
       db,
@@ -267,7 +267,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
       openPulls,
       async list(_tenantId: string, record: RepoRecord) {
         listed.push(record.name);
-        return [{ number: 1, title: "PR 1", author: "ada", draft: false, sha: "sha1", updatedAt: minutes(0).toISOString(), labels: [], url: null, authorAssociation: "MEMBER", authorBot: false }];
+        return [{ number: 1, title: "PR 1", author: "ada", draft: false, sha: "sha1", branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null, authorAssociation: "MEMBER", authorBot: false }];
       },
     };
     const triageVerdicts = createTriageVerdicts({

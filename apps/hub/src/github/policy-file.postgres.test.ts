@@ -6,17 +6,20 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { createArtifact, findArtifactByTitle, runArtifactMigrations } from "@corbits/artifacts";
-import { checkPackName, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
+import { checkPackName, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, starterPack, type CheckPack } from "@corbits/triage-contracts";
 import { settlePolicy } from "./check-pack-store.js";
 import { createPolicyFile } from "./policy-file.js";
 import { POLICY_BRANCH } from "./policy-pull.js";
-import { createTenantGithub } from "./tenant-open-heads.js";
+import { createMemberOpenPulls, createOpenPullsCache } from "./open-pulls.js";
+import { createTenantGithub, createTenantOpenPrs } from "./tenant-open-heads.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_policy_file";
 const FROM_FILE = "acme/from-file";
 const SAVED = "acme/saved";
 const EXPORTED = "acme/exported";
+const STARTER = "acme/starter";
+const OFF = "acme/off";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 const FILE = `rules:
   - check: ci-green
@@ -35,6 +38,8 @@ let readFails = false;
 const refs = new Map<string, string>();
 const pulls: Array<{ repo: string; number: number; head: string; base: string; title: string; body: string; open: boolean }> = [];
 let commits = 0;
+/** Each request GitHub got, as `METHOD path`. */
+const requests: string[] = [];
 
 function onMain(repo: string, path: string, text: string | null, sha = `blob${++commits}`): void {
   files.set(`${repo}@main/${path}`, { sha, text });
@@ -44,6 +49,7 @@ async function github(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const { pathname } = url;
   if (pathname === "/app/installations/1/access_tokens") return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
+  requests.push(`${req.method} ${pathname}`);
   const [, , owner, name, ...rest] = pathname.split("/");
   const repo = `${owner}/${name}`;
   const path = decodeURIComponent(rest.join("/"));
@@ -80,6 +86,10 @@ async function github(req: Request): Promise<Response> {
     for (const [key, file] of files) if (key.startsWith(`${repo}@main/`)) files.set(key.replace("@main/", `@${branch}/`), file);
     return Response.json({ ref: `refs/heads/${branch}` });
   }
+  if (req.method === "GET" && path === "pulls" && !url.searchParams.has("head")) {
+    const open = pulls.filter((pull) => pull.repo === repo && pull.open);
+    return Response.json(open.map((pull) => ({ number: pull.number, title: pull.title, user: { login: "triage", type: "Bot" }, draft: false, head: { ref: pull.head, sha: "head-sha", repo: { id: 1 } }, base: { repo: { id: 1 } }, updated_at: "2026-10-17T00:00:00Z", labels: [], html_url: `https://github.com/${repo}/pull/${pull.number}` })));
+  }
   if (req.method === "GET" && path === "pulls") {
     const head = url.searchParams.get("head");
     return Response.json(pulls.filter((pull) => pull.repo === repo && pull.open && `${owner}:${pull.head}` === head).map((pull) => ({ number: pull.number, html_url: `https://github.com/${repo}/pull/${pull.number}` })));
@@ -112,7 +122,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [FROM_FILE, SAVED, EXPORTED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 }));
+  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -124,14 +134,17 @@ beforeAll(async () => {
     id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
     secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_github", "secret")), status: "active",
   });
+  async function authorize(principalId: string, _tenantId: string, resource: string, action: string) {
+    return resource === "credential:crd_github" && action === "use" && principalId === "prn_user";
+  }
+  const list = createTenantOpenPrs({ db, cipher, githubApiOrigin, tenantBitbucket: async () => undefined });
   policyFile = createPolicyFile({
     db,
+    openPulls: createMemberOpenPulls({ db, cipher, authorize, list, cache: createOpenPullsCache(() => new Date()) }),
     settle: settled,
     cipher,
     tenantBitbucket: async () => undefined,
-    async authorize(principalId, _tenantId, resource, action) {
-      return resource === "credential:crd_github" && action === "use" && principalId === "prn_user";
-    },
+    authorize,
     tenantGithub: createTenantGithub({ db, cipher, githubApiOrigin }),
     log() {},
   });
@@ -258,7 +271,6 @@ test("PostgreSQL: saved rules apply while the file runs differently or is refuse
 }, 60_000);
 
 test("PostgreSQL: writing the saved rules to the file opens one pull request, updates it when asked again, and the merged file takes over", async () => {
-  expect(await exportOf(EXPORTED)).toMatchObject({ http: 409, error: { code: "policy_settled" } });
   const saved: CheckPack = { ...emptyPack(EXPORTED), checks: { "ci-green": { enabled: true } }, actions: { ...emptyPack(EXPORTED).actions, pass: [{ do: "approve", when: { author: ["OWNER", "MEMBER", "COLLABORATOR"] } }] } };
   await writePolicy(EXPORTED, JSON.stringify(saved));
 
@@ -299,6 +311,36 @@ test("PostgreSQL: a file already holding all a file can of the saved rules is no
   expect(await readPack(FROM_FILE)).toMatchObject({ status: "ok", source: { repo: { version: 1 } } });
   expect(await upgradeOf(FROM_FILE)).toMatchObject({ upgrade: { state: "differs", differences: [{ rule: "Risk", file: [] }], fixable: false } });
   expect(await exportOf(FROM_FILE)).toMatchObject({ http: 409, error: { code: "policy_file_full" } });
+}, 60_000);
+
+test("PostgreSQL: an enabled repository with no rules and no file is offered a starter file through the same pull request, left as edited and run once merged", async () => {
+  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "start" } });
+  expect(await exportOf(OFF)).toMatchObject({ http: 409, error: { code: "policy_settled" } });
+
+  const number = pulls.length + 1;
+  expect(await exportOf(STARTER)).toEqual({ http: 200, status: "opened", url: `https://github.com/${STARTER}/pull/${number}`, number });
+  expect(pulls.filter((row) => row.repo === STARTER)).toMatchObject([{ head: POLICY_BRANCH, base: "main", title: `chore: add a Corbits Triage policy in ${YML}` }]);
+  // Opening it lists the workspace's pull requests again; a reload then finds it in that listing without asking GitHub.
+  requests.length = 0;
+  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "start" }, pull: { url: `https://github.com/${STARTER}/pull/${number}`, number } });
+  expect(requests.filter((request) => request.includes(STARTER))).toEqual([]);
+
+  // Asking again answers the open pull request and keeps the maintainer's edit on its branch.
+  const branchFile = `${STARTER}@${POLICY_BRANCH}/${YML}`;
+  const edited = files.get(branchFile)!.text!.replace("max: 30", "max: 40");
+  files.set(branchFile, { sha: "edited", text: edited });
+  expect(await exportOf(STARTER)).toEqual({ http: 200, status: "opened", url: `https://github.com/${STARTER}/pull/${number}`, number });
+  expect(files.get(branchFile)).toEqual({ sha: "edited", text: edited });
+  expect(pulls.filter((row) => row.repo === STARTER)).toHaveLength(1);
+
+  onMain(STARTER, YML, files.get(`${STARTER}@${POLICY_BRANCH}/${YML}`)!.text);
+  pulls.find((row) => row.repo === STARTER)!.open = false;
+  await policyFile.onPush(TENANT, STARTER);
+  const read = await readPack(STARTER);
+  expect(read).toMatchObject({ status: "ok", source: { file: { path: YML } } });
+  expect(read.status === "ok" && policyDifferences(starterPack(STARTER), read.pack)).toMatchObject([{ rule: "Most files changed", saved: ["30"], file: ["40"] }]);
+  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "ok" } });
+  expect(await exportOf(STARTER)).toMatchObject({ http: 409, error: { code: "policy_settled" } });
 }, 60_000);
 
 async function writePolicy(repo: string, content: string): Promise<void> {

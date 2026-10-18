@@ -124,7 +124,10 @@ A few things work differently from GitHub, because Bitbucket works differently:
 
 A repository's policy is the file `.corbits-triage.yml` (`.corbits-triage.yaml` works too) on its default branch, so changes to it are reviewed like any other code. The **Policy** section reads it back in plain sentences: each rule that is on, then what Triage does on **Pass**, **Fail** and **Unsure**. Rules and actions change only in the file. **Change on GitHub**, or **Change on Bitbucket** for a Bitbucket repository, opens it there.
 
-- With no file, the section says to add `.corbits-triage.yml` to the default branch.
+- With no file and no rules saved in Triage, the section shows a **Start a policy file** card with the steps **Review**, **Open pull request**, **Merge on GitHub** (or Bitbucket) and **Done**. It lists the rules the file starts with: at most 30 files and 3,000 lines changed, no merge conflicts and passing CI, with no actions. **Open the pull request** opens one adding `.corbits-triage.yml`, or shows the one already open; change the rules there before you merge. Triage runs nothing on the repository until it is merged.
+
+  ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge on GitHub and Done, the four starter rules with Nothing on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
+
 - When a change to the file reaches the default branch, the next triage uses it.
 - If the file has a mistake, Triage runs nothing on the repository until it is fixed. The section says so and lists each problem, and the Inbox names the repository. A repository that still has rules saved in Triage keeps running on them instead, and its card below says **Triage can't read** the file and why.
 
@@ -154,7 +157,7 @@ Once the move is done, the file alone is the policy. If the page is open when th
 
 ![The Policy section for acme/widgets after the move: Done. Your rules now come from .corbits-triage.yml, above its rules and its Pass, Fail and Unsure steps](images/34.png)
 
-The Repositories list marks each repository that still has a step to take: **Move rules to a file**, **Rules differ from file**, **Waiting for merge** or **Switch to the file**. The Inbox shows the same words in one line, each repository linking to its page.
+The Repositories list marks each repository that still has a step to take: **Add a policy file**, **Move rules to a file**, **Rules differ from file**, **Waiting for merge** or **Switch to the file**. The Inbox shows the same words in one line, each repository linking to its page; repositories with no policy file yet are counted in a line of their own that links to Repositories.
 
 ![The Repositories list: acme/widgets and corbitsdev/corbits-code marked Waiting for merge, acme/gadgets Needs setup](images/35.png)
 

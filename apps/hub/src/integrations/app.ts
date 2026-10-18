@@ -115,6 +115,7 @@ const OpenPull = type({
   "authorKind?": type.enumerated(...AUTHOR_KINDS),
   draft: "boolean",
   "sha?": "string",
+  branch: "string | null",
   updatedAt: "string",
   labels: "string[]",
 });
@@ -382,7 +383,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/upgrades`,
     describeRoute({
       summary: "How each enabled repository's saved rules stand against its policy file",
-      description: "Each enabled repository whose host credential the member may read. `upgrade`: saved rules and no policy file. `differs`: both, running differently, or a file triage refuses; the saved rules apply until the file matches them or the `saved` artifact is archived through the stock artifact route. `ok`: the file alone, the saved rules alone with nothing to write, or both running the same, after which the saved rules are archived. `pull` is the open pull request on `corbits-triage/policy`.",
+      description: "Each enabled repository whose host credential the member may read. `start`: no saved rules and no policy file; its `pull` is found in the workspace's shared open pull request listing. `upgrade`: saved rules and no policy file. `differs`: both, running differently, or a file triage refuses; the saved rules apply until the file matches them or the `saved` artifact is archived through the stock artifact route. `ok`: the file alone, the saved rules alone with nothing to write, or both running the same, after which the saved rules are archived. `pull` is the open pull request on `corbits-triage/policy`.",
       tags: TAGS,
       responses: { 200: json("Each enabled repository's standing", PolicyUpgrades), ...failures },
     }),
@@ -395,8 +396,8 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.post(
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/export`,
     describeRoute({
-      summary: "Open a pull request writing the repository's saved rules to its policy file",
-      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository whose saved rules differ from its policy file or have no file. Writes the saved rules as a schema 3 file at the existing file's path, else `.corbits-triage.yml`, on `corbits-triage/policy`, and opens a pull request listing what the file cannot hold. Asking again updates the open pull request instead of opening another.",
+      summary: "Open a pull request writing the repository's saved rules, or a starter policy, to its policy file",
+      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository whose saved rules differ from its policy file or have no file, or an enabled one with neither. Writes the saved rules as a schema 3 file at the existing file's path, else `.corbits-triage.yml`, on `corbits-triage/policy`, and opens a pull request listing what the file cannot hold; an enabled repository with neither gets a starter `.corbits-triage.yml` instead, and asking again while its pull request is open answers that pull request unchanged. Otherwise asking again updates the open pull request instead of opening another.",
       tags: TAGS,
       responses: { 200: json("The pull request opened or brought up to date", PolicyExported), ...invalid, ...failures, 502: json("The host refused", Failure) },
     }),

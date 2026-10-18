@@ -479,6 +479,27 @@ export function recommendedPack(repo: string): CheckPack {
   };
 }
 
+const STARTER_REASONS = {
+  "max-files-changed": "Large pull requests are hard to review.",
+  "max-lines-changed": "Large pull requests are hard to review.",
+  "no-merge-conflicts": "A pull request with conflicts can't be merged as it is.",
+  "ci-green": "A change is not ready until CI passes.",
+} as const satisfies Partial<Record<CatalogId, string>>;
+
+/**
+ * The first policy file for a repository with none: a chosen subset of the recommended rules, with no steps. It keeps
+ * the rules that need no model and hold for any repository; a linked issue and forbidden paths are left out, since a
+ * repository without an issue tracker, or one that edits `.github/**`, would fail every pull request.
+ */
+export function starterPack(repo: string): CheckPack {
+  const recommended = recommendedPack(repo).checks;
+  const checks: CheckPack["checks"] = {};
+  for (const [id, reason] of Object.entries(STARTER_REASONS) as Array<[keyof typeof STARTER_REASONS, string]>) {
+    checks[id] = { ...recommended[id]!, reason, evidence: [MAINTAINER_STATED] };
+  }
+  return { ...emptyPack(repo), checks, actions: { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] } };
+}
+
 export function applyRecommended(pack: CheckPack): CheckPack {
   return { ...pack, checks: recommendedPack(pack.repo).checks };
 }

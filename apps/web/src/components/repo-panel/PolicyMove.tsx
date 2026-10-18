@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { POLICY_FILE_PATH, type PolicyDifference, type PolicyUpgrade, type RepoSource } from "@corbits/triage-contracts";
+import { POLICY_FILE_PATH, starterPack, type PolicyDifference, type PolicyUpgrade, type RepoSource } from "@corbits/triage-contracts";
 import { usePolicyUpgradeActions, type PolicyUpgradeRow } from "../../lib/policy-upgrades.ts";
 import { CheckIcon, ExternalIcon } from "../inbox-icons.tsx";
+import PolicyRules from "./PolicyRules.tsx";
 
 export const HOST_NAME: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket" };
 
@@ -60,7 +61,7 @@ function stageOf(upgrade: Exclude<PolicyUpgrade, { state: "ok" }>, pulled: boole
 
 type PolicyMoveProps = { row: PolicyUpgradeRow; upgrade: Exclude<PolicyUpgrade, { state: "ok" }>; source: RepoSource; disabled: boolean; onSettled: () => void };
 
-/** Moving a repository's saved rules into its policy file, one step at a time, until the pull request is merged. */
+/** Moving a repository's saved rules into its policy file, or starting one when it has none, one step at a time, until the pull request is merged. */
 export default function PolicyMove({ row, upgrade, source, disabled, onSettled }: PolicyMoveProps) {
   const { propose, keepFile } = usePolicyUpgradeActions(row.repo, onSettled);
   const [confirming, setConfirming] = useState(false);
@@ -69,10 +70,20 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
   const error = propose.error ?? keepFile.error;
   const host = HOST_NAME[source];
   const differs = upgrade.state === "differs";
+  const start = upgrade.state === "start";
+  const unexpressed = start ? [] : upgrade.unexpressed;
   const stage = stageOf(upgrade, pull !== undefined);
 
   function review() {
-    if (!differs) return <p className="lead">{upgrade.unexpressed.length ? "Your rules and actions move as they are, except:" : "Your rules and actions move as they are."}</p>;
+    if (start) {
+      return (
+        <>
+          <p className="lead">The pull request adds these rules. You can change them there before you merge.</p>
+          <PolicyRules pack={starterPack(row.repo)} />
+        </>
+      );
+    }
+    if (!differs) return <p className="lead">{unexpressed.length ? "Your rules and actions move as they are, except:" : "Your rules and actions move as they are."}</p>;
     return (
       <div className="sentences">
         {upgrade.problem ? <div className="sentence"><span className="txt">Triage can't read <code>{upgrade.path}</code>: {upgrade.problem}</span></div> : null}
@@ -87,11 +98,13 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
   }
 
   function title(): string {
+    if (start) return "Start a policy file";
     if (stage === "finish") return "Finish moving to the policy file";
     return differs ? "Your policy file differs from your saved rules" : "Move this repository's rules into a policy file";
   }
 
   function subtitle() {
+    if (start) return <>Triage runs nothing until <code>{POLICY_FILE_PATH}</code> is merged.</>;
     if (stage === "finish") return "The file holds everything it can. Your saved rules apply until you switch.";
     return differs ? "Your saved rules apply until they match." : <>They keep working here until <code>{POLICY_FILE_PATH}</code> is merged.</>;
   }
@@ -119,7 +132,7 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
             </div>
           </div>
           <div className="acts">
-            <button type="button" className="linkish quiet" disabled={busy} onClick={() => propose.mutate()}>Update the pull request with your saved rules</button>
+            {start ? null : <button type="button" className="linkish quiet" disabled={busy} onClick={() => propose.mutate()}>Update the pull request with your saved rules</button>}
             {differs ? <button type="button" className="linkish quiet" disabled={busy} onClick={() => setConfirming(true)}>Use the file instead</button> : null}
           </div>
         </>
@@ -142,7 +155,7 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
       </header>
       <Track at={STAGE_STEP[stage]} host={host} />
       {pull ? null : review()}
-      {stage === "review" && upgrade.unexpressed.length ? <div className="sentences">{upgrade.unexpressed.map((line) => <div key={line} className="sentence out"><span className="txt">{line}</span></div>)}</div> : null}
+      {stage === "review" && unexpressed.length ? <div className="sentences">{unexpressed.map((line) => <div key={line} className="sentence out"><span className="txt">{line}</span></div>)}</div> : null}
       {actions()}
       {error ? <p role="alert" className="error">{errorText(error)}</p> : null}
     </section>

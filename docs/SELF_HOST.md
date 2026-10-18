@@ -162,8 +162,9 @@ still set its own `capacityRetention`.
    from the repository's `.corbits-triage.yml`, which the hub reads again on
    every push to the default branch that changes it (see
    [Policy file](PRODUCT.md#policy-file)). A repository with rules saved in
-   the portal shows **Move this repository's rules into a policy file**; use
-   **Open the pull request** and merge it.
+   the portal shows **Move this repository's rules into a policy file**, and
+   one with neither shows **Start a policy file**; use **Open the pull
+   request** and merge it.
 6. **Verify.** Open a test pull request; it appears in the Inbox once its
    triage run completes.
 
