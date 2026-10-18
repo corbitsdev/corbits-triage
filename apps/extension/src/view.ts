@@ -1,3 +1,4 @@
+import type { PostedCodeReview } from "@corbits/github-reads";
 import type { VerdictWord } from "@corbits/triage-contracts";
 import type { FileNote } from "./notes.ts";
 import type { PolicyOrigin } from "./policy-source.ts";
@@ -22,6 +23,8 @@ export type TriageView = {
   /** Named only when the rules decide it without the decision model. */
   decided: ({ verdict: VerdictWord } & Posted) | null;
   notes: FileNote[];
+  /** The newest code review the App sent to the pull request, read from GitHub, or why it could not be read; absent from checks saved before it was read. */
+  codeReview?: { review: PostedCodeReview | null } | { error: string };
 };
 
 /** A pull request opened again within this long reuses its last run. */

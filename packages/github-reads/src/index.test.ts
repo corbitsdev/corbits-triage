@@ -3,6 +3,8 @@ import {
   authorTeams,
   codeownersFor,
   codeownersForPr,
+  CODE_REVIEW_MARKER,
+  getPostedCodeReview,
   listInstallations,
   listOpenPrs,
   listPrFiles,
@@ -110,6 +112,40 @@ docs/*       @linus
     });
     expect(await codeownersForPr(gh, "acme/widgets", 8)).toEqual({ users: ["grace"], teams: ["core"] });
     expect(requests[1]?.path).toBe("/repos/acme/widgets/contents/.github/CODEOWNERS?ref=main");
+  });
+});
+
+describe("getPostedCodeReview", () => {
+  const APP = { login: "corbits-triage[bot]", type: "Bot" };
+  const review = (id: number, user: object, body: string, commit = "head") => ({ id, user, body, commit_id: commit, html_url: `https://github.com/acme/widgets/pull/8#pullrequestreview-${id}` });
+  const comment = (body: string, line: number | null, id: number) => ({ body, path: "src/a.ts", line, original_line: 12, html_url: `https://github.com/acme/widgets/pull/8#discussion_r${id}` });
+
+  test("reads the App's newest marked review; a person's or a non-App account's copied marker is not one", async () => {
+    const { gh } = recorder((path) => {
+      if (path === "/repos/acme/widgets/pulls/8") return { head: { sha: "head" } };
+      if (path.includes("/reviews/2/comments")) return [comment("\n\n**P1 · Null deref**\n\nWhy.", 12, 1), comment("**Stale cache**\n\nWhy.", null, 2)];
+      return [
+        review(1, APP, `Old\n\n${CODE_REVIEW_MARKER}`),
+        review(2, APP, `New\n\n${CODE_REVIEW_MARKER}`, "earlier"),
+        review(3, { login: "maya", type: "User" }, CODE_REVIEW_MARKER),
+        review(4, { login: "mallory[bot]", type: "User" }, CODE_REVIEW_MARKER),
+        review(5, APP, "Approved"),
+      ];
+    });
+    expect(await getPostedCodeReview(gh, "acme/widgets", 8)).toEqual({
+      url: "https://github.com/acme/widgets/pull/8#pullrequestreview-2",
+      author: "corbits-triage[bot]",
+      earlier: true,
+      comments: [
+        { title: "Null deref", priority: 1, path: "src/a.ts", line: 12, url: "https://github.com/acme/widgets/pull/8#discussion_r1" },
+        { title: "Stale cache", path: "src/a.ts", line: null, url: "https://github.com/acme/widgets/pull/8#discussion_r2" },
+      ],
+    });
+  });
+
+  test("no code review sent is null", async () => {
+    const { gh } = recorder((path) => (path === "/repos/acme/widgets/pulls/8" ? { head: { sha: "head" } } : [review(3, { login: "maya", type: "User" }, CODE_REVIEW_MARKER)]));
+    expect(await getPostedCodeReview(gh, "acme/widgets", 8)).toBeNull();
   });
 });
 

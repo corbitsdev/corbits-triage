@@ -5,6 +5,7 @@
   "module": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./code-review": "./src/code-review.ts",
     "./paths": "./src/paths.ts",
     "./team": "./src/team.ts"
   },
