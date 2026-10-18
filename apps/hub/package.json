@@ -19,6 +19,7 @@
     "@corbits/pr-code-review": "workspace:*",
     "@corbits/provisioner-docker": "workspace:*",
     "@corbits/provisioner-e2b": "workspace:*",
+    "@corbits/provisioner-railway": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@corbits/triage-workflows": "workspace:*",
     "@corbits/webhooks": "0.3.1",

@@ -323,4 +323,6 @@ answers for anything unchanged.
 
 - The repository scan measures a repository's closed pull requests but does
   not propose a policy yet, and the hub does not run it.
+- The Railway Sandboxes provisioner uses the operator's Railway token only;
+  a workspace cannot bring its own.
 - Code review findings are not sent to Bitbucket Data Center pull requests.

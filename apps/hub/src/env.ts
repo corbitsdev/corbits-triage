@@ -45,6 +45,11 @@ const HubEnvSchema = type({
   "DOCKER_TLS_VERIFY?": "string",
   "DOCKER_CERT_PATH?": "string",
   "E2B_API_KEY?": "string",
+  "RAILWAY_SANDBOX_TOKEN?": "string",
+  "RAILWAY_SANDBOX_ENVIRONMENT_ID?": "string",
+  "RAILWAY_GIT_COMMIT_SHA?": "string",
+  "RAILWAY_GIT_REPO_OWNER?": "string",
+  "RAILWAY_GIT_REPO_NAME?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
@@ -104,6 +109,11 @@ function websocketUrlOf(baseUrl: string): string {
   return url.href;
 }
 
+/** Where sidecars on another machine reach the hub. */
+function publicHubWebSocketUrl(env: HubEnv): string {
+  return env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL);
+}
+
 export type DockerSettings = FindDockerHostOpts & {
   /** The directory of `ca.pem`, `cert.pem` and `key.pem` when `DOCKER_TLS_VERIFY` is set. */
   readonly certPath?: string;
@@ -136,6 +146,35 @@ export type E2bSettings = {
 export function e2bSettings(env: HubEnv): E2bSettings | undefined {
   if (env.E2B_API_KEY === undefined) return undefined;
   return { apiKey: env.E2B_API_KEY, publicHubWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL) };
+}
+
+export type RailwaySandboxSettings = {
+  readonly token: string;
+  readonly environmentId: string;
+  /** The public GitHub repository and commit the hub was deployed from, which the sidecar template checks out. */
+  readonly repository: string;
+  readonly commit: string;
+  readonly publicHubWebSocketUrl: string;
+};
+
+/**
+ * Unset token and environment mean no Railway sandboxes. Railway sets the `RAILWAY_GIT_*` variables on a service it
+ * deploys from GitHub; a hub deployed any other way sets them itself.
+ */
+export function railwaySandboxSettings(env: HubEnv): RailwaySandboxSettings | undefined {
+  const { RAILWAY_SANDBOX_TOKEN: token, RAILWAY_SANDBOX_ENVIRONMENT_ID: environmentId } = env;
+  if (token === undefined && environmentId === undefined) return undefined;
+  if (token === undefined || environmentId === undefined) {
+    throw new Error("RAILWAY_SANDBOX_TOKEN and RAILWAY_SANDBOX_ENVIRONMENT_ID must be set together");
+  }
+  const { RAILWAY_GIT_COMMIT_SHA: commit, RAILWAY_GIT_REPO_OWNER: owner, RAILWAY_GIT_REPO_NAME: name } = env;
+  if (commit === undefined || owner === undefined || name === undefined) {
+    throw new Error("RAILWAY_SANDBOX_TOKEN requires RAILWAY_GIT_COMMIT_SHA, RAILWAY_GIT_REPO_OWNER and RAILWAY_GIT_REPO_NAME");
+  }
+  // They go into the template's shell commands.
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("RAILWAY_GIT_COMMIT_SHA must be a full commit hash");
+  if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(name)) throw new Error("RAILWAY_GIT_REPO_OWNER and RAILWAY_GIT_REPO_NAME must be a GitHub owner and repository name");
+  return { token, environmentId, repository: `https://github.com/${owner}/${name}`, commit, publicHubWebSocketUrl: publicHubWebSocketUrl(env) };
 }
 
 export type ChildProcessEnv = { PATH?: string; HOME?: string; TMPDIR?: string };

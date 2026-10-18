@@ -8,6 +8,7 @@ import type {
 import type { Backend, SidecarResource } from "./backend.js";
 
 export { createMemoryBackend, type Backend } from "./backend.js";
+export { sidecarEnv, type SidecarEnvOpts } from "./sidecar-env.js";
 
 export type CreateTemplateSidecarProvisionerOpts = {
   readonly backend: Backend;
