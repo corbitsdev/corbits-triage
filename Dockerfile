@@ -15,6 +15,11 @@ COPY --from=base /app/apps/hub apps/hub
 WORKDIR /app/vendor/interchange
 CMD ["bun", "--conditions=intx-src", "apps/sidecar/src/index.ts"]
 
+# The sidecar as a QEMU microVM's root disk; packages/provisioner-qemu/host/install.sh turns it into ext4.
+FROM sidecar AS sidecar-vm
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 ca-certificates && rm -rf /var/lib/apt/lists/* && mkdir /data
+COPY packages/provisioner-qemu/host/init /sbin/corbits-init
+
 FROM base
 RUN bun run --cwd apps/web build
 ENV PORTAL_DIR=/app/apps/web/dist

@@ -35,6 +35,7 @@ import {
 import { runCronMigrations } from "@corbits/cron/migrations";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
+import { QEMU_PLACE } from "@corbits/provisioner-qemu";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
@@ -42,6 +43,7 @@ import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./si
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
 import { connectRailwaySidecars, sweepRailwaySidecarsOf, type RailwaySidecarProvisioner } from "./sidecar/railway.js";
+import { connectQemuSidecars, sweepQemuSidecarsOf } from "./sidecar/qemu.js";
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
@@ -61,7 +63,7 @@ import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, 
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, qemuSettings, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -187,8 +189,11 @@ if (typeof e2b === "string") logJson({ level: "info", msg: "e2b_sidecars_off", r
 const railwaySettings = railwaySandboxSettings(env);
 const railway = railwaySettings === undefined ? undefined : await connectRailwaySidecars({ railway: railwaySettings, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
 if (typeof railway === "string") logJson({ level: "info", msg: "railway_sidecars_off", reason: railway });
-// First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, then Railway, the rest on the hub host.
-const workloadProvisioners = [dockerUp, e2b, railway].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
+const qemuConfig = qemuSettings(env);
+const qemu = qemuConfig === undefined ? undefined : await connectQemuSidecars({ qemu: qemuConfig, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+if (typeof qemu === "string") logJson({ level: "info", msg: "qemu_sidecars_off", reason: qemu });
+// First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, then Railway, then QEMU, the rest on the hub host.
+const workloadProvisioners = [dockerUp, e2b, railway, qemu].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
 const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
 
 let shuttingDown = false;
@@ -238,6 +243,7 @@ composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connect
 
 await restoreLocalSidecars(composition.db, local);
 if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
+if (qemu !== undefined && typeof qemu !== "string") logJson({ level: "info", msg: "qemu_sidecars_swept", removed: await sweepQemuSidecarsOf(composition.db, qemu) });
 async function tendE2b(sidecars: E2bSidecarProvisioner): Promise<void> {
   try {
     logJson({ level: "info", msg: "e2b_sidecars_tended", removed: await tendE2bSidecarsOf(composition.db, sidecars) });
@@ -811,7 +817,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview }),
-  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
+  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }, { guide: QEMU_PLACE, found: qemu }] }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({
