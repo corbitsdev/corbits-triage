@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, listCounts, needsYou, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, postedLabel, primaryAction, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -118,10 +118,10 @@ describe("waitsOn", () => {
     for (const kind of ["changes", "reply", "comment"] as const) expect(waitsOn(item({ ci: "pending" }), { kind })).toBe("author");
   });
 
-  test("CI while it is pending, else nobody", () => {
+  test("CI while it is pending, Triage before its first result, else nobody", () => {
     expect(waitsOn(item({ ci: "pending" }), { kind: "approve" })).toBe("ci");
     expect(waitsOn(item({ ci: "success" }), { kind: "approve" })).toBe("nobody");
-    expect(waitsOn(item({ state: "new", runId: null }), null)).toBe("nobody");
+    expect(waitsOn(item({ state: "new", runId: null }), null)).toBe("triage");
   });
 });
 
@@ -172,7 +172,7 @@ describe("groupOpen", () => {
   ];
 
   function keys(grouping: Parameters<typeof groupOpen>[1]) {
-    return groupOpen(open, grouping).map((pile) => [pile.label, pile.items.map((entry) => entry.item.key)]);
+    return groupOpen(open, grouping, new Set()).map((pile) => [pile.label, pile.items.map((entry) => entry.item.key)]);
   }
 
   test("groups every open pull request by repository or owner, in inbox order inside each group", () => {
@@ -207,6 +207,30 @@ describe("All open", () => {
     expect(listCounts(open, READY)).toEqual({ "needs-you": 1, "all-open": 3 });
     expect(listCounts(open, new Set())).toEqual({ "needs-you": 0, "all-open": 0 });
     expect(listCounts([], READY)).toEqual({ "needs-you": 0, "all-open": 0 });
+  });
+
+  test("Waiting lists every open pull request outside Needs you, each with what it waits on", () => {
+    const waiting: OpenItem[] = [
+      ...open,
+      { item: item({ key: "acme/widgets#5", state: "needs-author-update", comment: "Please rebase", posted: true }), handled: null },
+      { item: item({ key: "acme/widgets#6", state: "new", runId: null, waitingForCi: true }), handled: null },
+      { item: item({ key: "acme/widgets#7", running: true }), handled: null },
+      { item: item({ key: "acme/widgets#8", waitingForCi: true }), handled: null },
+      { item: item({ key: "acme/widgets#9", pendingApprovalId: "a1" }), handled: { kind: "approve" } },
+      { item: item({ key: "acme/off#10", repo: "acme/off", pendingApprovalId: "a2" }), handled: null },
+    ];
+    expect(waitingOnOthers(waiting, READY).map((entry) => [entry.item.key, waitsOnIn(entry, new Set())])).toEqual([
+      ["acme/widgets#2", "triage"],
+      ["acme/widgets#3", "nobody"],
+      ["acme/widgets#5", "author"],
+      ["acme/widgets#6", "ci"],
+    ]);
+    expect(needsYou(waiting, READY).filter((entry) => inNeedsYou(entry.item)).map((entry) => entry.item.key)).toEqual(["acme/widgets#1", "acme/widgets#7", "acme/widgets#8", "acme/widgets#9", "acme/off#10"]);
+    expect(listCounts(waiting, READY)["needs-you"] + waitingOnOthers(waiting, READY).length).toBe(allOpen(waiting, READY).length);
+  });
+
+  test("an untriaged pull request in a repository that is not set up waits on its setup", () => {
+    expect(waitsOnIn({ item: item({ state: "new", runId: null }), handled: null }, READY)).toBe("setup");
   });
 
   test("Needs you keeps a pending approval of a repository with triage off", () => {
