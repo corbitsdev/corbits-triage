@@ -273,7 +273,7 @@ Code review reads each new commit of a pull request for bugs. It runs whether or
 
 ### Where code review runs
 
-Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage. [Models](#models) says where it runs.
+Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up). [Models](#models) says where it runs.
 
 A server without Docker set up for Triage has nowhere to run it. The switch is then replaced by **Code review needs an isolated place to run**, with **Set up Docker** and **All options**, which open the setup guides, and **Review again** is hidden in the Inbox. A repository that had code review on says **It is switched on here but not running**, with **Turn off**; nothing is reviewed until Docker is set up, and then it carries on without being switched on again.
 

@@ -26,14 +26,63 @@ export type DockerEngine = {
   request(method: string, path: string, opts?: DockerRequestOpts): Promise<unknown>;
 };
 
-/** A client for the Docker Engine API at `unix:///path` or `tcp://host:port`; throws for any other address. */
-export function connectDocker(host: string): DockerEngine {
+/** Docker's client TLS files, as `DOCKER_CERT_PATH` holds them. */
+export type DockerTls = {
+  readonly ca: string;
+  readonly cert: string;
+  readonly key: string;
+};
+
+/** Reads `ca.pem`, `cert.pem` and `key.pem` from `certPath`, as the docker CLI does with `DOCKER_TLS_VERIFY` set. */
+export async function readDockerTls(certPath: string): Promise<DockerTls> {
+  async function read(file: string): Promise<string> {
+    const text = await fs.readFile(path.join(certPath, file), "utf8");
+    if (text.trim() === "") throw new Error(`${path.join(certPath, file)} is empty`);
+    return text;
+  }
+  const [ca, cert, key] = await Promise.all([read("ca.pem"), read("cert.pem"), read("key.pem")]);
+  return { ca, cert, key };
+}
+
+/**
+ * Whether a hostname names this machine: `localhost`, 127.0.0.0/8 in any IPv4 spelling, `0.0.0.0`, `::`, `::1` and
+ * IPv4-mapped loopback. Any other name, even one that resolves to this machine, counts as another machine.
+ */
+export function isThisMachine(hostname: string): boolean {
+  const name = hostname.toLowerCase().replace(/\.$/, "");
+  if (name === "localhost") return true;
+  let normalized: string;
+  try {
+    // http parses IPv4 short and hex forms, which other schemes leave as text.
+    normalized = new URL(`http://${name}`).hostname;
+  } catch {
+    return false;
+  }
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(normalized)) return normalized.startsWith("127.") || normalized === "0.0.0.0";
+  return normalized === "[::1]" || normalized === "[::]" || /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/.test(normalized);
+}
+
+/** Whether the daemon runs on this machine: a unix socket, or a `tcp://` address `isThisMachine` accepts. */
+export function isLocalDockerHost(host: string): boolean {
+  const address = new URL(host);
+  return address.protocol === "unix:" || isThisMachine(address.hostname);
+}
+
+/**
+ * A client for the Docker Engine API at `unix:///path` or `tcp://host:port`, over TLS when `tls` is given. Throws for
+ * any other address, and for `tcp://` to another machine without TLS.
+ */
+export function connectDocker(host: string, tls?: DockerTls): DockerEngine {
   const address = new URL(host);
   if (address.protocol !== "unix:" && address.protocol !== "tcp:") {
     throw new Error(`Docker host ${host} must be unix:// or tcp://`);
   }
-  const base = address.protocol === "unix:" ? "http://docker" : `http://${address.host}`;
-  const transport = address.protocol === "unix:" ? { unix: address.pathname } : {};
+  if (tls === undefined && !isLocalDockerHost(host)) {
+    throw new Error(`Docker host ${host} is another machine; reach it over TLS with DOCKER_TLS_VERIFY and DOCKER_CERT_PATH`);
+  }
+  const scheme = tls === undefined ? "http" : "https";
+  const base = address.protocol === "unix:" ? "http://docker" : `${scheme}://${address.host}`;
+  const transport = address.protocol === "unix:" ? { unix: address.pathname } : { ...(tls !== undefined && { tls }) };
 
   return {
     host,

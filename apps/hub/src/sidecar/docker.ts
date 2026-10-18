@@ -1,7 +1,18 @@
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { type } from "arktype";
-import { connectDocker, createDockerSidecarProvisioner, findDockerHost, sweepDockerSidecars, type DockerEngine, type DockerSidecars } from "@corbits/provisioner-docker";
+import {
+  connectDocker,
+  createDockerSidecarProvisioner,
+  findDockerHost,
+  isLocalDockerHost,
+  isThisMachine,
+  readDockerTls,
+  sweepDockerSidecars,
+  type DockerEngine,
+  type DockerSidecars,
+  type DockerTls,
+} from "@corbits/provisioner-docker";
 import { createDB, createSidecarAllocationStore, createWorkflowProbeStore, type DB } from "@intx/db";
 import type { SidecarProvisioner } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
@@ -60,6 +71,18 @@ async function daemonId(engine: DockerEngine): Promise<string> {
   return DaemonInfo.assert(await engine.request("GET", "/info")).ID;
 }
 
+/** Why sidecars on another machine cannot dial the hub at `hubUrl`: its token and credentials cross that socket. */
+function remoteHubProblem(host: string, hubUrl: string): string | undefined {
+  const url = new URL(hubUrl);
+  if (url.protocol !== "wss:") {
+    return `Docker at ${host} is another machine, and its sidecars would dial the hub at ${hubUrl} without TLS; set BETTER_AUTH_BASE_URL to the hub's https:// address`;
+  }
+  if (isThisMachine(url.hostname)) {
+    return `Docker at ${host} is another machine, and its sidecars would dial the hub at its own address ${hubUrl}; set BETTER_AUTH_BASE_URL to the hub's public address`;
+  }
+  return undefined;
+}
+
 /** The Docker provisioner, or why it is not registered. */
 export async function connectDockerSidecars({ docker, database, root, adapterManifest }: ConnectOpts): Promise<DockerSidecarProvisioner | string> {
   const manifest = inImage(adapterManifest, root);
@@ -71,10 +94,28 @@ export async function connectDockerSidecars({ docker, database, root, adapterMan
     return `the docker CLI's context cannot be read (${String(error)})`;
   }
   if (host === undefined) return "no Docker daemon found";
+  let remote: boolean;
+  try {
+    remote = !isLocalDockerHost(host);
+  } catch {
+    return `Docker host ${host} is not a URL`;
+  }
+  const hubProblem = remote ? remoteHubProblem(host, docker.publicHubWebSocketUrl) : undefined;
+  if (hubProblem !== undefined) return hubProblem;
+  let tls: DockerTls | undefined;
+  try {
+    tls = docker.certPath === undefined ? undefined : await readDockerTls(docker.certPath);
+  } catch (error) {
+    return `DOCKER_TLS_VERIFY is set but the TLS files cannot be read (${String(error)})`;
+  }
   let engine: DockerEngine;
+  try {
+    engine = connectDocker(host, tls);
+  } catch (error) {
+    return `Docker at ${host} is refused (${String(error)})`;
+  }
   let id: string;
   try {
-    engine = connectDocker(host);
     id = await daemonId(engine);
   } catch (error) {
     return `Docker at ${host} has no ${SIDECAR_IMAGE} image or does not answer (${String(error)}); build it with docker build --target sidecar -t ${SIDECAR_IMAGE} .`;
@@ -88,7 +129,14 @@ export async function connectDockerSidecars({ docker, database, root, adapterMan
   return {
     engine,
     hubId,
-    provisioner: createDockerSidecarProvisioner({ engine, hubId, daemonId: id, image: SIDECAR_IMAGE, adapterManifest: manifest }),
+    provisioner: createDockerSidecarProvisioner({
+      engine,
+      hubId,
+      daemonId: id,
+      image: SIDECAR_IMAGE,
+      adapterManifest: manifest,
+      ...(remote && { hubWebSocketUrl: docker.publicHubWebSocketUrl }),
+    }),
   };
 }
 
