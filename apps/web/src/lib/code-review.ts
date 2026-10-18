@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RepoSource } from "@corbits/triage-contracts";
 import { latestCodeReview, reviewAgain } from "./hub-api.ts";
+import { GITHUB_PULL_QUERY_KEY } from "./github-pull.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { usePortal } from "./portal.tsx";
 
@@ -23,6 +24,21 @@ export function useCodeReview({ repo, source, number }: Pull) {
     queryFn: fetchReview,
     enabled: tenantId !== undefined,
     refetchInterval: (query) => (query.state.data?.review?.status === "running" ? RUNNING_REFRESH_MS : REFRESH_MS),
+  });
+}
+
+/** Sends the review of `headSha` to the pull request on GitHub, then reads the pull request again so the sent review shows. */
+export function useSendCodeReview({ repo, number }: Pull) {
+  const { snapshot, writeGithub } = usePortal();
+  const queryClient = useQueryClient();
+  const tenantId = snapshot?.workspace.tenantId;
+  return useMutation({
+    mutationFn: function sendToGithub(headSha: string) {
+      return writeGithub({ action: "code-review", repo, number, headSha }, "now");
+    },
+    onSuccess: function readPullAgain() {
+      return queryClient.invalidateQueries({ queryKey: [GITHUB_PULL_QUERY_KEY, tenantId, repo, number] });
+    },
   });
 }
 

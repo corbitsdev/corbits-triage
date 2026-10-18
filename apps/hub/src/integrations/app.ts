@@ -144,6 +144,13 @@ const failures = {
   409: json("GitHub, the workspace or the repository is not ready", Failure),
 };
 const invalid = { 400: json("Invalid request", Failure) };
+const CODE_REVIEW_SEND_REFUSALS = [
+  "GitHub, the workspace or the repository is not ready. For code-review:",
+  "`no_code_review`: no finished review;",
+  "`code_review_outdated`: a newer review finished than `headSha`'s;",
+  "`code_review_empty`: no summary and no findings;",
+  "`head_moved`: the pull request has moved past `headSha`.",
+].join(" ");
 const githubFailed = { 502: json("GitHub failed", Failure) };
 
 const manifestFailures = {
@@ -292,9 +299,15 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_ACTIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Act on a pull request",
-      description: "Needs `use` on the GitHub App credential and `invoke` on `triage-do:<kind>:<owner/name>` for the Do kind the action is: comment (comment and reply), labels, assign, request-review, approve or request-changes (review), close or merge.",
+      description: "Needs `use` on the GitHub App credential and `invoke` on `triage-do:<kind>:<owner/name>` for the Do kind the action is: comment (comment, reply and code-review), labels, assign, request-review, approve or request-changes (review), close or merge. `code-review` sends the pull request's newest finished code review, which must be of `headSha`, as one COMMENT review on that head: findings the diff shows are inline comments (one whose lines run past its hunk names the rest), the others are in the review's body, as many as fit GitHub's limit and then how many more the portal holds. It is sent once per head; sending it again answers `sent: false` with the review already there.",
       tags: TAGS,
-      responses: { 200: json("GitHub's answer", type("unknown")), ...invalid, ...failures, ...githubFailed },
+      responses: {
+        200: json("GitHub's answer", type("unknown")),
+        ...invalid,
+        ...failures,
+        409: json(CODE_REVIEW_SEND_REFUSALS, Failure),
+        ...githubFailed,
+      },
     }),
     member,
     body(ActionBody),

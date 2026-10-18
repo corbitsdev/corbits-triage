@@ -284,7 +284,13 @@ files' patches when the pull request is too large for GitHub's diff), cut at
 a line boundary past 100,000 characters, with `cut: { lines, of }`, which the review carries.
 Code review only reads: its tools are the
 host read bundle and the confined repository reads, so it stays on the
-local-process sidecar.
+local-process sidecar. Sending a review to GitHub is a person's write through
+`POST /api/integrations/github-actions/{tenantId}` (`action: "code-review"`,
+the comment Do grant): the hub reads the newest finished review from the run
+logs and posts it as one `COMMENT` review pinned to its head, inline where the
+head's diff shows the lines and in the review body elsewhere. The review's
+marker and `commit_id` are its effect id: the App's marked review of that head
+is found before anything is written.
 
 The pipeline looks for defects with two finders, groups what they report by
 defect and reports every group, ordered so the most severe and most agreed-on

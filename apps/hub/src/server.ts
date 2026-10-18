@@ -286,12 +286,14 @@ const githubManifest = createGithubManifestIntegration({
   authorizeCredential: authorizePortal,
   stateSecret: env.BETTER_AUTH_SECRET,
 });
+const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader });
 const githubPrActions = createGithubPrActions({
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   readCheckPack,
+  codeReviews: codeReviewRuns,
   log: logJson,
 });
 const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch });
@@ -760,7 +762,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview }),
   codeReviewPlace: createCodeReviewPlace(placeCodeReview),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview }),
-  codeReviewLatest: createCodeReviewRuns({ db: composition.db, runReader: composition.runReader }),
+  codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({
     db: composition.db,
     cipher: composition.credentialCipher,

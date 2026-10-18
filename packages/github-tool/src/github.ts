@@ -1,5 +1,6 @@
-import { getPr, isTriageComment, json, jsonAll, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type AppLogin, type GithubFetch } from "@corbits/github-reads";
-import { HTML_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { parsePatch, type DiffHunk } from "@corbits/common/patch";
+import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type AppLogin, type GithubFetch } from "@corbits/github-reads";
+import { HTML_MARKERS, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -208,6 +209,91 @@ export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: st
     await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}/dismissals`, send("PUT", { message: "Nothing triage asked to change still fails, so this request no longer stands.", event: "DISMISS" }));
   }
   return standing.map((review) => review.id);
+}
+
+/** `sha` is the head the review read; it is sent once, and not at all once the pull request has moved past it. */
+export type SendCodeReviewInput = { repo: string; number: number; sha: string; summary: string; comments: CodeReviewComment[] };
+
+type Lines = { start: number; end: number };
+type ReviewComment = { path: string; line: number; side: "RIGHT"; start_line?: number; start_side?: "RIGHT"; body: string };
+
+/** GitHub refuses a review body longer than this. */
+const REVIEW_BODY_LIMIT = 65_536;
+
+/** The finding's lines that the first hunk of its file to show any of them shows on the new side, which a hunk numbers without gaps. */
+function anchor(finding: Lines, hunks: readonly DiffHunk[]): Lines | undefined {
+  for (const hunk of hunks) {
+    const shown = hunk.lines.flatMap((line) => (line.newNo === null ? [] : [line.newNo]));
+    const first = shown[0];
+    const last = shown.at(-1);
+    if (first === undefined || last === undefined || finding.end < first || finding.start > last) continue;
+    return { start: Math.max(finding.start, first), end: Math.min(finding.end, last) };
+  }
+  return undefined;
+}
+
+function lineRange({ start, end }: Lines): string {
+  return end > start ? `${start}–${end}` : `${start}`;
+}
+
+function headline(finding: CodeReviewComment): string {
+  return finding.priority === undefined ? `**${finding.title}**` : `**P${finding.priority} · ${finding.title}**`;
+}
+
+/** The finding's lines outside the comment's, named so none are lost when its range runs past the hunk. */
+function alsoCovers(finding: CodeReviewComment, at: Lines): string[] {
+  const before = at.start > finding.start ? [lineRange({ start: finding.start, end: at.start - 1 })] : [];
+  const after = finding.end > at.end ? [lineRange({ start: at.end + 1, end: finding.end })] : [];
+  const ranges = [...before, ...after];
+  return ranges.length ? [`Also lines ${ranges.join(" and ")}.`] : [];
+}
+
+function inlineComment(finding: CodeReviewComment, at: Lines): ReviewComment {
+  const body = [headline(finding), finding.body, ...alsoCovers(finding, at)].join("\n\n");
+  if (at.start === at.end) return { path: finding.path, line: at.end, side: "RIGHT", body };
+  return { path: finding.path, start_line: at.start, start_side: "RIGHT", line: at.end, side: "RIGHT", body };
+}
+
+function bodySection(finding: CodeReviewComment): string {
+  return `${headline(finding)} · \`${finding.path}:${lineRange(finding)}\`\n\n${finding.body}`;
+}
+
+/** The summary and as many sections as fit under GitHub's limit, then how many more the portal holds. */
+function reviewBody(summary: string, sections: readonly string[]): string {
+  const room = REVIEW_BODY_LIMIT - [summary, `${sections.length} more in the portal.`, CODE_REVIEW_MARKER].join("\n\n").length;
+  const kept: string[] = [];
+  let used = 0;
+  for (const section of sections) {
+    used += section.length + 2;
+    if (used > room) break;
+    kept.push(section);
+  }
+  const rest = sections.length - kept.length;
+  const more = rest > 0 ? [`${rest} more in the portal.`] : [];
+  return [summary, ...kept, ...more, CODE_REVIEW_MARKER].filter((part) => part !== "").join("\n\n");
+}
+
+/**
+ * Sends a code review as one COMMENT review on `sha`: each finding the diff shows is an inline comment, the rest are in
+ * the review's body. The App's review of `sha` carries a marker, so sending it again writes nothing.
+ */
+export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput, login: AppLogin) {
+  const { repo, number, sha } = input;
+  const sent = (await reviewsBy(gh, repo, number, await login())).find((review) => review.commit_id === sha && review.body?.includes(CODE_REVIEW_MARKER));
+  if (sent) return { reviewId: sent.id, sent: false };
+  const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
+  if (pr.head.sha !== sha) return { reviewId: null, sent: false, skipped: HEAD_MOVED };
+  const patches = new Map((await listPrFiles(gh, repo, number)).flatMap((file) => (file.patch === undefined ? [] : [[file.path, parsePatch(file.patch)] as const])));
+  const comments: ReviewComment[] = [];
+  const outside: string[] = [];
+  for (const finding of input.comments) {
+    const at = anchor(finding, patches.get(finding.path) ?? []);
+    if (at) comments.push(inlineComment(finding, at));
+    else outside.push(bodySection(finding));
+  }
+  const body = reviewBody(input.summary, outside);
+  const posted = await json(gh, `/repos/${repo}/pulls/${number}/reviews`, send("POST", { commit_id: sha, event: "COMMENT", body, comments }));
+  return { reviewId: posted.id as number, sent: true };
 }
 
 export type CreateIssueCommentInput = {

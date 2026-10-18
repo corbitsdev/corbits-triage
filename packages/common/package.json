@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./hook-metadata": "./src/hook-metadata.ts",
+    "./patch": "./src/patch.ts",
     "./x-hub-signature": "./src/x-hub-signature.ts"
   },
   "main": "./src/index.ts",

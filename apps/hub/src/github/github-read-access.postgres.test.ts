@@ -19,6 +19,7 @@ import { createTriageStats } from "./triage-stats.js";
 import { createTriageTimeline } from "./triage-timeline.js";
 import { createTriageVerdicts } from "./triage-verdicts.js";
 import type { VerdictRecord } from "./verdict-record-store.js";
+import type { CompletedReview } from "../code-review-runs.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_read_access";
@@ -27,11 +28,23 @@ const HEAD = "abc123";
 const testSchema = `corbits_read_access_${randomBytes(6).toString("hex")}`;
 const requested: string[] = [];
 const reviewed: unknown[] = [];
+type SentReview = { event: string; commit_id: string; body: string; comments: unknown[] };
+const sentReviews: SentReview[] = [];
+const FINISHED = {
+  status: "completed" as const,
+  headSha: HEAD,
+  startedAt: "2026-10-17T00:00:00.000Z",
+  summary: "Fixes the widget.",
+  comments: [
+    { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1 },
+    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it." },
+  ],
+};
+let completed: CompletedReview | null = FINISHED;
 
 const READS: Record<string, unknown> = {
   [`/repos/${REPO}/pulls`]: [{ number: 8, title: "Fix the widget", draft: false, user: { login: "octocat" }, head: { sha: HEAD } }],
   [`/repos/${REPO}/pulls/8`]: { number: 8, title: "Fix the widget", state: "open", user: { login: "octocat" }, head: { sha: HEAD, ref: "fix" }, mergeable: true, labels: [], assignees: [] },
-  [`/repos/${REPO}/pulls/8/reviews`]: [],
   [`/repos/${REPO}/pulls/8/commits`]: [{ sha: HEAD, commit: { message: "fix: the widget" } }],
   [`/repos/${REPO}/pulls/8/files`]: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+fixed" }],
   [`/repos/${REPO}/issues/8/comments`]: [],
@@ -46,8 +59,14 @@ async function github(req: Request): Promise<Response> {
   if (pathname === "/app/installations/1/access_tokens") return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
   if (req.method === "GET" && pathname in READS) return Response.json(READS[pathname]);
   if (pathname === `/repos/${REPO}/installation`) return Response.json({ id: 1 });
+  if (pathname === "/app") return Response.json({ slug: "triage" });
+  if (req.method === "GET" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
+    return Response.json(sentReviews.map((review, index) => ({ id: 100 + index, user: { login: "triage[bot]" }, state: "COMMENTED", commit_id: review.commit_id, body: review.body })));
+  }
   if (req.method === "POST" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
-    reviewed.push(await req.json());
+    const posted = await req.json() as SentReview;
+    if (posted.event === "COMMENT") sentReviews.push(posted);
+    else reviewed.push(posted);
     return Response.json({ id: 1, state: "APPROVED" });
   }
   return new Response(null, { status: 404 });
@@ -71,7 +90,12 @@ const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigi
 const list = createTenantOpenPrs({ ...deps, tenantBitbucket: async () => undefined });
 const openPulls = createGithubOpenPulls({ ...deps, list, cache: createOpenPullsCache(() => new Date()) });
 const prDetails = createGithubPrDetails({ ...deps, tenantBitbucket: async () => undefined, log() {} });
-const prActions = createGithubPrActions({ ...deps, log() {}, async readCheckPack() { return { status: "missing" } as const; } });
+const prActions = createGithubPrActions({
+  ...deps,
+  log() {},
+  async readCheckPack() { return { status: "missing" } as const; },
+  codeReviews: { async latest() { return { review: completed, completed }; } },
+});
 const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO), automatic: [], source: { repo: { id: "art_pack", version: 1 } } } as const; } });
 
 function member(user: string) {
@@ -122,6 +146,7 @@ beforeAll(async () => {
     { id: "grt_approver_use", tenantId: TENANT, principalId: "prn_approver", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
     { id: "grt_approver_approve", tenantId: TENANT, principalId: "prn_approver", resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "system" },
     { id: "grt_approver_labels", tenantId: TENANT, principalId: "prn_approver", resource: `triage-do:labels:${REPO}`, action: "invoke", effect: "allow", origin: "system" },
+    { id: "grt_approver_comment", tenantId: TENANT, principalId: "prn_approver", resource: `triage-do:comment:${REPO}`, action: "invoke", effect: "allow", origin: "system" },
     { id: "grt_lent_use", tenantId: TENANT, principalId: "prn_lent", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
     { id: "grt_triage_approve", tenantId: TENANT, roleId: "rol_triage", resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "role" },
   ]);
@@ -199,6 +224,40 @@ test("PostgreSQL: approving needs the approve Do grant on top of use, and pins t
   expect(lent.status).toBe(403);
   expect(await lent.json()).toEqual({ error: { code: "forbidden", message: "Triage's own role cannot act for a person. Remove it from this member first." } });
   expect(reviewed).toHaveLength(1);
+});
+
+test("PostgreSQL: a code review is sent once per head as one COMMENT review, inline where the diff shows the lines and in the body elsewhere", async () => {
+  const send = { action: "code-review", repo: REPO, number: 8, headSha: HEAD } as const;
+  expect((await prActions(send, member("usr_user"))).status).toBe(403);
+  expect(sentReviews).toEqual([]);
+
+  const first = await prActions(send, member("usr_approver"));
+  expect(first.status).toBe(200);
+  expect(await first.json()).toEqual({ reviewId: 1, sent: true });
+  expect(sentReviews).toEqual([{
+    commit_id: HEAD,
+    event: "COMMENT",
+    body: "Fixes the widget.\n\n**Stale import** · `src/other.ts:5`\n\nRemove it.\n\n<!-- corbits-code-review -->",
+    comments: [{ path: "src/widget.ts", line: 1, side: "RIGHT", body: "**P1 · Unchecked input**\n\nValidate it first.\n\nAlso lines 2–3." }],
+  }]);
+
+  const again = await prActions(send, member("usr_approver"));
+  expect(await again.json()).toEqual({ reviewId: 100, sent: false });
+  expect(sentReviews).toHaveLength(1);
+
+  const details = await (await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=8`), member("usr_approver"))).json() as { reviews: unknown[] };
+  expect(details.reviews).toEqual([expect.objectContaining({ commitId: HEAD, codeReview: true })]);
+
+  const outdated = await prActions({ ...send, headSha: "older" }, member("usr_approver"));
+  expect(outdated.status).toBe(409);
+  expect(await outdated.json()).toMatchObject({ error: { code: "code_review_outdated" } });
+
+  completed = { ...FINISHED, headSha: "newer", summary: "", comments: [] };
+  expect(await (await prActions({ ...send, headSha: "newer" }, member("usr_approver"))).json()).toMatchObject({ error: { code: "code_review_empty" } });
+  completed = null;
+  expect(await (await prActions(send, member("usr_approver"))).json()).toMatchObject({ error: { code: "no_code_review" } });
+  expect(sentReviews).toHaveLength(1);
+  expect(sentReviews).toHaveLength(1);
 });
 
 test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {
