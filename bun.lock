@@ -168,6 +168,7 @@
       "name": "@corbits/github-tool",
       "version": "0.7.2",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/repo-read-tool": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",

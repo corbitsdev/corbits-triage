@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
-import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, type GithubFetch } from "@corbits/github-reads";
+import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, type GithubFetch } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
@@ -28,7 +28,9 @@ async function githubDetails(gh: GithubFetch, repo: string, number: number) {
   const [issues, checks, reviews] = await Promise.all([
     listReferencedIssues(gh, repo, number, text),
     getChecks(gh, repo, pr.sha),
-    getReviews(gh, repo, number),
+    getReviews(gh, repo, number, function login() {
+      return appLogin(gh);
+    }),
   ]);
   return { pr, files, commits, comments, issues, checks, reviews };
 }

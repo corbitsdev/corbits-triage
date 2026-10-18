@@ -453,8 +453,16 @@ place of its own, apart from other work, because it checks out the pull
 request's code. Until the server has one, the repository page shows a card
 linking the setup guides in place of the switch, a repository left switched
 on is not reviewed, and Settings → Models says code review can't run yet.
-Findings show only in the portal, in the pull request's reading pane, as the
-first comment of a thread of their own.
+Findings show in the portal, in the pull request's reading pane, as the
+first comment of a thread of their own. On a GitHub pull request, "Send to
+GitHub" posts the newest finished review as one comment review by the Triage
+App: findings on lines the diff shows are inline comments (one running past
+its hunk names its other lines), the rest are in the review's text, as many
+as fit GitHub's limit and then how many more the portal holds. It is posted
+once per commit, never on its own, and not once the pull request has newer
+commits; a newer commit's review is a review of its own beside the earlier
+one. Sending needs only a finished review, so it works without an isolated
+place.
 
 ## Triage over time
 
@@ -472,4 +480,4 @@ model's earlier answers for anything unchanged. See
   not propose a policy yet, and the hub does not run it.
 - Code review runs only where the hub has Docker; there is no cloud
   provisioner yet.
-- Code review's findings are not posted to the pull request.
+- Code review's findings are not sent to Bitbucket Data Center pull requests.

@@ -99,6 +99,7 @@ const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
   assign: "Assigned",
   "request-review": "Requested review on",
   review: "Reviewed",
+  "code-review": "Sent the code review to",
   merge: "Merged",
   close: "Closed",
 };
@@ -381,7 +382,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const current = requireSnapshot();
       const transport = delivery === "leaving" ? createLeavingHubTransport() : createHubTransport();
       const result = await githubPrAction(transport, current.workspace.tenantId, input);
-      if (delivery === "now") notify(`${GITHUB_ACTION_DONE[input.action]} ${input.repo}#${input.number}.`);
+      if (delivery === "now" && result.alreadySent) notify(`The code review was already on ${input.repo}#${input.number}.`);
+      else if (delivery === "now") notify(`${GITHUB_ACTION_DONE[input.action]} ${input.repo}#${input.number}.`);
       refresh();
       return result;
     },

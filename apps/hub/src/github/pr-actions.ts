@@ -12,10 +12,12 @@ import {
   mergePr,
   mirror,
   requestReviewers,
+  sendCodeReview,
   upsertTriageComment,
 } from "@corbits/github-tool/github";
 import { appLogin, codeownersForPr, type GithubFetch } from "@corbits/github-reads";
 import { ownedLabels, TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
+import type { CodeReviewRuns, CompletedReview } from "../code-review-runs.js";
 import type { CheckPackRead } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
@@ -43,12 +45,28 @@ export const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.int
     }).narrow(namesReviewers))
     .or({ action: "'review'", event: "'REQUEST_CHANGES'", body: "string" })
     .or({ action: "'review'", event: "'APPROVE'", body: "string", headSha: "string > 0" })
+    .or({ action: "'code-review'", headSha: "string > 0" })
     .or({ action: "'merge'", "headSha?": "string > 0" })
     .or({ action: "'close'", labels: "string[]", comment: "string" }),
 );
 
+type SendBody = Extract<typeof ActionBody.infer, { action: "code-review" }>;
+
+/** Sends the pull request's newest finished code review, only when it is the one the person saw and has something to post. */
+async function sendReview(gh: GithubFetch, body: SendBody, completed: CompletedReview | null) {
+  const { repo, number, headSha } = body;
+  if (!completed) return failure(409, "no_code_review", "This pull request has no finished code review to send.");
+  if (completed.headSha !== headSha) return failure(409, "code_review_outdated", "A newer code review replaced this one. Reload, then send it.");
+  if (!completed.summary && completed.comments.length === 0) return failure(409, "code_review_empty", "This code review has nothing to post.");
+  const sent = await sendCodeReview(gh, { repo, number, sha: headSha, summary: completed.summary, comments: completed.comments }, function login() {
+    return appLogin(gh);
+  });
+  if ("skipped" in sent) return failure(409, "head_moved", "The pull request has new commits since this review. Review again, then send it.");
+  return sent;
+}
+
 /** `owned` is the labels a close takes back: triage's own and the policy's verdict labels. */
-async function runAction(gh: GithubFetch, body: typeof ActionBody.infer, owned: readonly string[]) {
+async function runAction(gh: GithubFetch, body: Exclude<typeof ActionBody.infer, SendBody>, owned: readonly string[]) {
   const { repo, number } = body;
   switch (body.action) {
     case "comment":
@@ -76,11 +94,12 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer, owned: 
   }
 }
 
-/** The Do kind whose grant a direct action needs; triage's reply is a comment. */
+/** The Do kind whose grant a direct action needs; triage's reply and a code review are comments. */
 function doKind(body: typeof ActionBody.infer): ActionKind {
   switch (body.action) {
     case "comment":
     case "reply":
+    case "code-review":
       return "comment";
     case "labels":
     case "assign":
@@ -96,9 +115,24 @@ function doKind(body: typeof ActionBody.infer): ActionKind {
 export function createGithubPrActions(deps: PortalCredentialDeps & {
   githubApiOrigin: string;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  codeReviews: Pick<CodeReviewRuns, "latest">;
   log: (entry: Record<string, unknown>) => void;
 }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
+
+  async function ownedBy(tenantId: string, body: { action: string; repo: string }): Promise<readonly string[]> {
+    if (body.action !== "close") return TRIAGE_LABELS;
+    const read = await deps.readCheckPack(tenantId, body.repo);
+    return read.status === "ok" ? ownedLabels(read.pack.labels) : TRIAGE_LABELS;
+  }
+
+  async function act(gh: GithubFetch, tenantId: string, body: typeof ActionBody.infer) {
+    if (body.action === "code-review") {
+      const { completed } = await deps.codeReviews.latest(tenantId, { repo: body.repo, number: body.number });
+      return sendReview(gh, body, completed);
+    }
+    return runAction(gh, body, await ownedBy(tenantId, body));
+  }
 
   return async function handle(body: typeof ActionBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
@@ -109,8 +143,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
 
     try {
       const { repo, number } = body;
-      const read = body.action === "close" ? await deps.readCheckPack(tenantId, repo) : undefined;
-      const result = await runAction(gh, body, read?.status === "ok" ? ownedLabels(read.pack.labels) : TRIAGE_LABELS);
+      const result = await act(gh, tenantId, body);
       if (result instanceof Response) return result;
       deps.log({ level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number });
       return Response.json(result);

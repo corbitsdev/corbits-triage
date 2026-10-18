@@ -296,22 +296,34 @@ export function latestDecisive(reviews: Review[]): Map<string, string> {
   return latest;
 }
 
-/** `login` names the App, asked only when a review carries the request-changes marker, as only the App's marked requests are triage's own. */
-export async function getReviews(gh: GithubFetch, repo: string, number: number, appLogin?: AppLogin): Promise<Review[]> {
-  const reviews = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
-  const marked = reviews.some((v: any) => typeof v.body === "string" && v.body.includes(REQUEST_CHANGES_DO_MARKER));
-  const login = marked && appLogin ? await appLogin() : undefined;
-  return reviews.map((v: any) => ({
-    reviewer: v.user?.login,
-    state: v.state,
-    submittedAt: v.submitted_at,
-    commitId: v.commit_id,
-    ...(login !== undefined && v.user?.login === login && typeof v.body === "string" && v.body.includes(REQUEST_CHANGES_DO_MARKER) ? { triageRequest: true as const } : {}),
-  }));
+function carries(review: any, marker: string): boolean {
+  return typeof review.body === "string" && review.body.includes(marker);
 }
 
-/** `triageRequest` marks the request-changes Do's own review, which is triage's verdict rather than a reviewer's. */
-export type Review = { reviewer?: string; state?: string; submittedAt?: string; commitId?: string; triageRequest?: true };
+/** `login` names the App, asked only when a review carries one of triage's markers, as only the App's marked reviews are triage's own. */
+export async function getReviews(gh: GithubFetch, repo: string, number: number, appLogin?: AppLogin): Promise<Review[]> {
+  const reviews = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+  const marked = reviews.some((v: any) => carries(v, REQUEST_CHANGES_DO_MARKER) || carries(v, CODE_REVIEW_MARKER));
+  const login = marked && appLogin ? await appLogin() : undefined;
+  function reviewOf(v: any): Review {
+    const own = login !== undefined && v.user?.login === login;
+    return {
+      reviewer: v.user?.login,
+      state: v.state,
+      submittedAt: v.submitted_at,
+      commitId: v.commit_id,
+      ...(own && carries(v, REQUEST_CHANGES_DO_MARKER) ? { triageRequest: true as const } : {}),
+      ...(own && carries(v, CODE_REVIEW_MARKER) ? { codeReview: true as const } : {}),
+    };
+  }
+  return reviews.map(reviewOf);
+}
+
+/**
+ * `triageRequest` marks the request-changes Do's own review, which is triage's verdict rather than a reviewer's;
+ * `codeReview` marks a code review sent to the pull request.
+ */
+export type Review = { reviewer?: string; state?: string; submittedAt?: string; commitId?: string; triageRequest?: true; codeReview?: true };
 
 /** Reviewers whose latest review still stands on the current head, when the review names its commit. */
 export function reviewedOnHead(reviews: Review[], headSha: string): string[] {
@@ -733,6 +745,9 @@ export type AppLogin = () => Promise<string>;
 
 /** Marks the changes the request-changes Do requested, so a repeat on the same head finds them. */
 export const REQUEST_CHANGES_DO_MARKER = "<!-- corbits-request-changes -->";
+
+/** Marks a code review sent to a pull request, so sending the same head again finds it. */
+export const CODE_REVIEW_MARKER = "<!-- corbits-code-review -->";
 
 const RepoFile = type({ type: "string", sha: "string", "content?": "string", "encoding?": "string", html_url: "string" });
 

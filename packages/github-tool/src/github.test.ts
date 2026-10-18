@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { githubWrite } from "./sidecar-bundle.js";
 import { type GithubFetch } from "@corbits/github-reads";
-import { mergePr, mirror, upsertTriageComment } from "./github.js";
+import { mergePr, mirror, sendCodeReview, upsertTriageComment } from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
 
@@ -274,5 +274,59 @@ describe("mergePr", () => {
     });
     await expect(mergePr(gh, { repo: "acme/widgets", number: 8 })).rejects.toThrow("pull request is not mergeable");
     expect(requests).toEqual([{ path: "/repos/acme/widgets/pulls/8", method: "GET", body: null }]);
+  });
+});
+
+describe("sendCodeReview", () => {
+  const PATCH = "@@ -10,3 +10,4 @@\n ten\n-old\n+new\n+added\n twelve\n@@ -40 +41 @@\n-x\n+y";
+  const review = {
+    repo: "acme/widgets",
+    number: 8,
+    sha: "abc123",
+    summary: "",
+    comments: [
+      { path: "src/a.ts", start: 8, end: 12, title: "Spans the hunk's start", body: "B." },
+      { path: "src/a.ts", start: 20, end: 30, title: "Between hunks", body: "C." },
+      { path: "src/a.ts", start: 12, end: 41, title: "Spans both hunks", body: "D." },
+    ],
+  };
+
+  function pull(head: string) {
+    return recorder(function respond(path, init) {
+      if (path.includes("/reviews?per_page")) return [];
+      if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: PATCH }];
+      if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: head } };
+      return { id: 9 };
+    });
+  }
+
+  test("anchors a range to the first hunk that shows it, names the lines past it, and keeps lines between hunks in the body", async () => {
+    const { gh, requests } = pull("abc123");
+    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true });
+    expect(requests.at(-1)?.body).toEqual({
+      commit_id: "abc123",
+      event: "COMMENT",
+      body: "**Between hunks** · `src/a.ts:20–30`\n\nC.\n\n<!-- corbits-code-review -->",
+      comments: [
+        { path: "src/a.ts", start_line: 10, start_side: "RIGHT", line: 12, side: "RIGHT", body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9." },
+        { path: "src/a.ts", start_line: 12, start_side: "RIGHT", line: 13, side: "RIGHT", body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41." },
+      ],
+    });
+  });
+
+  test("lists as many findings outside the diff as fit GitHub's body limit, then how many more the portal holds", async () => {
+    const { gh, requests } = pull("abc123");
+    const long = Array.from({ length: 5 }, (_, index) => ({ path: "src/b.ts", start: index + 1, end: index + 1, title: `T${index}`, body: "x".repeat(20_000) }));
+    await sendCodeReview(gh, { ...review, comments: long }, login);
+    const body = (requests.at(-1)?.body as { body: string }).body;
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body.match(/\*\*T\d\*\*/g)).toEqual(["**T0**", "**T1**", "**T2**"]);
+    expect(body.endsWith("2 more in the portal.\n\n<!-- corbits-code-review -->")).toBe(true);
+  });
+
+  test("writes nothing once the pull request has moved past the reviewed head", async () => {
+    const { gh, requests } = pull("def456");
+    expect(await sendCodeReview(gh, review, login)).toMatchObject({ reviewId: null, sent: false });
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 });

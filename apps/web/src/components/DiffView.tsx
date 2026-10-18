@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "@corbits/react-ui";
-import { missingPatchReason, parsePatch, splitRows, type DiffHunk, type DiffLine, type PatchedFile } from "../lib/diff.ts";
+import { parsePatch, type DiffHunk, type DiffLine } from "@corbits/common/patch";
+import { missingPatchReason, splitRows, type PatchedFile } from "../lib/diff.ts";
 import type { DiffLayout } from "../lib/diff-layout.ts";
 
 export type DiffFile = PatchedFile & { path: string; previousPath?: string };

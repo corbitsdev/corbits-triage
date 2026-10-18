@@ -8,7 +8,6 @@ import { createCodeReviewRuns } from "./code-review-runs.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_reviews";
-const MEMBER = { tenantId: TENANT, principalId: "prn_owner" };
 
 function request(number: number, sha: string) {
   return { kind: "code-review", number, title: "Fix", description: "", diff: "diff --git a/x b/x\n", checkout: { source: "github", repo: "acme/widgets", sha } };
@@ -55,7 +54,7 @@ test("PostgreSQL: a pull request's latest code review comes from the newest run 
       { id: "run_other", definitionId: "wfd_review", anchorRunId: "wfr_anchor", tenantId: TENANT, status: "running", createdAt: at(2) },
     ]);
     const reads: string[] = [];
-    const latest = createCodeReviewRuns({
+    const runs = createCodeReviewRuns({
       db,
       runReader: {
         async readRunEvents(_repoId, _ref, runId) {
@@ -65,9 +64,9 @@ test("PostgreSQL: a pull request's latest code review comes from the newest run 
       },
     });
     async function reviewsOf(number: number) {
-      return (await (await latest({ repo: "acme/widgets", number }, MEMBER)).json()) as { review: unknown; completed: unknown };
+      return runs.latest(TENANT, { repo: "acme/widgets", number });
     }
-    const finished = { status: "completed", headSha: "sha1", startedAt: at(1).toISOString(), summary: REVIEW.summary, comments: REVIEW.comments };
+    const finished = { status: "completed" as const, headSha: "sha1", startedAt: at(1).toISOString(), summary: REVIEW.summary, comments: REVIEW.comments };
 
     expect(await reviewsOf(7)).toEqual({ review: finished, completed: finished });
     expect(await reviewsOf(8)).toEqual({ review: { status: "running", headSha: "sha9", startedAt: at(2).toISOString() }, completed: null });

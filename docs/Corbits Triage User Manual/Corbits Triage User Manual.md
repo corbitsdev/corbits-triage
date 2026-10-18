@@ -26,7 +26,7 @@ Think of it as a first reader. It does the routine checking (Did the tests pass?
 
 ### What it never does on its own
 
-Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center only records your repositories, with triage switched off. A repository is checked only after someone turns on **Triage pull requests in this repository**. Enabling a repository switches on Comment and Labels for it; every other action waits for a person to click until you decide which actions Triage may run by itself, and in which repositories. Code review, too, runs only in repositories where someone switched it on, and it never writes to the pull request.
+Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center only records your repositories, with triage switched off. A repository is checked only after someone turns on **Triage pull requests in this repository**. Enabling a repository switches on Comment and Labels for it; every other action waits for a person to click until you decide which actions Triage may run by itself, and in which repositories. Code review, too, runs only in repositories where someone switched it on, and it writes to the pull request only when someone sends it.
 
 ### The three parts
 
@@ -41,7 +41,8 @@ Code review reads each new commit of a pull request for bugs: mistakes in the ch
 - **Turning it on.** Save an Anthropic API key under [Settings → Models](#models), then switch on **Review the code in every pull request for bugs** in each repository's [Code review section](#code-review-1). Switch it off there to stop.
 - **What it costs.** Each commit it reviews is billed to your Anthropic account. It reviews a pull request when it is opened and after every push while it is not a draft, and **Review again** is one more review.
 - **Where you see it.** In the Inbox's reading pane, under **Code review**: each bug with how severe it is, its file and line, and the code it points at. **Review again** reviews the latest commit once more. A very large change is read up to a size limit, and the review says how much of it was read.
-- **What it does not do.** It only reads code; it never runs it. Nothing is posted to the pull request: findings stay in Triage.
+- **Sending it to GitHub.** On a GitHub pull request, **Send to GitHub** posts the review as one review from the Triage App: each finding on a changed line is a comment on that line, and the rest are listed in the review. A finding whose lines run past the changed ones sits on its first changed lines and names the others. A review too long for GitHub lists what fits and says how many more are in the portal. It is sent once per commit; the section then says **Sent to GitHub**, and sending it again only tells you it is already there. A review of a newer commit is sent as a new review, and the earlier one stays.
+- **What it does not do.** It only reads code; it never runs it. Nothing is posted to the pull request until someone sends it.
 
 ## Getting started
 
@@ -334,12 +335,12 @@ Clicking a pull request opens it on the right. The pane is built to be read top 
 1. **The header**: repository and number, the title, the author with their chip, when it was opened, and how many lines were added and removed. The **View on GitHub** or **View on Bitbucket** link in the corner opens the same pull request there. The pull request's own page has the same link.
 2. **The status line** in one sentence, such as **Ready to merge**, **Waiting for review**, or **Blocked · 2 things to fix, 1 to check**.
 3. **The problems**, if any. Each failed rule is listed under **To fix** with the evidence, such as the name of the failing check. A rule Triage could not evaluate is listed under **Couldn't check**. A pull request with no problems skips straight to the description.
-4. **Code review**, when it is on for the repository: what the change does, then each bug it found as a comment from **Code review**, with the commit it reviewed, how severe it is (P0 is the most severe), the file and line, and the code it points at. **Review again** reviews the latest commit once more. Findings stay in Triage; nothing is posted to the pull request.
+4. **Code review**, when it is on for the repository: what the change does, then each bug it found as a comment from **Code review**, with the commit it reviewed, how severe it is (P0 is the most severe), the file and line, and the code it points at. **Review again** reviews the latest commit once more. On a GitHub pull request, **Send to GitHub** posts the review to the pull request, inline where the lines are part of the change; it then says **Sent to GitHub**. It needs the Comment permission for the repository, and is refused once the pull request has newer commits: review again, then send.
 5. **The description** the author wrote.
 6. **Folded rows** you can expand: the linked issue, the changed files (with the diff), and the rules that passed. Evidence for a file cites its changed lines and links them at the exact commit Triage judged.
 7. **Commits and conversation** opens the full history and comments.
 
-![The reading pane for acme/widgets #1 with its Code review: Adds total(), which skips the first element of its input, then a comment from Code review (Bot, reviewed 0f808f4) saying total() skips the first element, P1 at src/total.ts:3, with the quoted line, and Review again](images/28.png)
+![The reading pane for acme/widgets #2 with its Code review: 3 findings, Sent to GitHub and Review again, the summary, then comments from Code review (Bot, reviewed 60f1fc6): total() skips the first element, P1 at src/total.ts:3, and average() divides by zero for an empty array, P2 at src/total.ts:26–32, each with its quoted line](images/28.png)
 
 ![The reading pane for a passing pull request: the status line Ready to merge, the description with its linked issue, folded rows, and a bottom bar whose first button is Merge into main](images/13.png)
 
@@ -492,7 +493,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 | Role | A workspace role (Owner, Admin, Member) that controls what a person may do in Triage. |
 | CI | Continuous integration: the automated tests and checks a repository runs on every pull request. |
 | Draft | A pull request its author has marked as not ready. Triage waits until it is marked ready. |
-| Code review | Triage's optional bug finder, switched on per repository. It reads each new commit and lists the bugs it finds, in Triage only. |
+| Code review | Triage's optional bug finder, switched on per repository. It reads each new commit and lists the bugs it finds in Triage, and on GitHub sends them to the pull request when you ask. |
 | Finding | One bug code review reports, with its severity (P0 is the most severe), file and line. |
 | First-timer | Someone opening their first pull request in a repository. |
 | Webhook | The channel GitHub or Bitbucket uses to tell Triage about new events. |

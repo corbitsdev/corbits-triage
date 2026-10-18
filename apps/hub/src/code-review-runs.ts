@@ -5,7 +5,7 @@ import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
-import { REPO_SOURCES, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
+import { CodeReviewComment, REPO_SOURCES, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
 import { CODE_REVIEW_WORKFLOWS } from "./github/source-workflow.js";
 import { inlineOutput } from "./github/triage-runs.js";
 import type { Member } from "./integrations/app.js";
@@ -20,18 +20,19 @@ const Source = type.enumerated(...REPO_SOURCES);
 export const CodeReviewQuery = type({ repo: "string > 0", "source?": Source, number: "string.integer.parse" });
 
 const Cut = type({ lines: "number", of: "number" });
-const Comment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", "priority?": "number", "quoted?": "string" });
-const Review = type({ summary: "string", comments: Comment.array(), budgetExhausted: "boolean", "cut?": Cut });
-const ReviewRun = type({
-  status: "'running' | 'completed' | 'failed'",
+const Review = type({ summary: "string", comments: CodeReviewComment.array(), budgetExhausted: "boolean", "cut?": Cut });
+const CompletedRun = type({
+  status: "'completed'",
   headSha: "string",
   startedAt: "string",
-  "summary?": "string",
-  "comments?": Comment.array(),
+  summary: "string",
+  comments: CodeReviewComment.array(),
   "cut?": Cut,
 });
+const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string" });
+export type CompletedReview = typeof CompletedRun.infer;
 /** The pull request's newest review, and its newest finished one, which is the same unless a newer one is running or failed. */
-export const CodeReviewFound = type({ review: ReviewRun.or("null"), completed: ReviewRun.or("null") });
+export const CodeReviewFound = type({ review: ReviewRun.or("null"), completed: CompletedRun.or("null") });
 
 type Run = { source: RepoSource; repo: string; number: number; review: typeof ReviewRun.infer };
 
@@ -91,7 +92,7 @@ export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
     return run;
   }
 
-  return async function latestCodeReview(query: typeof CodeReviewQuery.infer, { tenantId }: Member): Promise<Response> {
+  async function latest(tenantId: string, query: typeof CodeReviewQuery.infer): Promise<typeof CodeReviewFound.infer> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true } });
     if (!tenant) throw new Error(`Tenant ${tenantId} not found`);
     const source = repoSourceOf(query.source);
@@ -101,8 +102,16 @@ export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
       const run = await readRun({ ...row, anchorRunId: row.anchorRunId }, tenant.domain);
       if (!run || run.source !== source || run.repo !== query.repo || run.number !== query.number) continue;
       review ??= run.review;
-      if (run.review.status === "completed") return Response.json({ review, completed: run.review });
+      if (run.review.status === "completed") return { review, completed: run.review };
     }
-    return Response.json({ review, completed: null });
-  };
+    return { review, completed: null };
+  }
+
+  async function latestCodeReview(query: typeof CodeReviewQuery.infer, { tenantId }: Member): Promise<Response> {
+    return Response.json(await latest(tenantId, query));
+  }
+
+  return { latest, latestCodeReview };
 }
+
+export type CodeReviewRuns = ReturnType<typeof createCodeReviewRuns>;

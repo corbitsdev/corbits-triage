@@ -943,11 +943,12 @@ export type PrGithubWriteInput =
   | { action: "request-review"; repo: string; number: number; reviewers?: string[]; teamReviewers?: string[] }
   | { action: "review"; repo: string; number: number; event: "REQUEST_CHANGES"; body: string }
   | { action: "review"; repo: string; number: number; event: "APPROVE"; body: string; headSha: string }
+  | { action: "code-review"; repo: string; number: number; headSha: string }
   | { action: "merge"; repo: string; number: number; headSha: string }
   | { action: "close"; repo: string; number: number; labels: string[]; comment: string };
 
-/** The hub answers a reply with the GitHub comment it wrote; other writes carry none. */
-export type PrGithubWriteResult = { commentId: number | null };
+/** The hub answers a reply with the GitHub comment it wrote, and a code review send with whether it was already there. */
+export type PrGithubWriteResult = { commentId: number | null; alreadySent?: true };
 
 export async function githubPrAction(transport: Transport, tenantId: string, input: PrGithubWriteInput): Promise<PrGithubWriteResult> {
   const repo = validateRepo(input.repo);
@@ -957,7 +958,7 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
     throw new Error("Review body must not be empty.");
   }
   const result = asRecord(await transport.fetch<unknown>("POST", `/api/integrations/github-actions/${enc(requireTenantId(tenantId))}`, { ...input, repo })) ?? {};
-  return { commentId: typeof result.commentId === "number" ? result.commentId : null };
+  return { commentId: typeof result.commentId === "number" ? result.commentId : null, ...(result.sent === false ? { alreadySent: true as const } : {}) };
 }
 
 /** Names one held Do by the run whose verdict holds it; the hub looks the Do up and mails the deployment to run it. */
@@ -1046,7 +1047,8 @@ export type GithubPullDetail = {
   comments: Array<{ id: number | string; author: string; body: string; createdAt: string }>;
   issues: Array<{ number: number; title: string; state: string; body: string | null; url: string }>;
   checks: Array<{ name: string; status: string; conclusion: string | null }>;
-  reviews: Array<{ reviewer: string; state: string; submittedAt: string; commitId: string }>;
+  /** `codeReview` marks a code review sent from the portal. */
+  reviews: Array<{ reviewer: string; state: string; submittedAt: string; commitId: string; codeReview?: true }>;
 };
 
 export async function loadGithubPull(

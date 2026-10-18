@@ -9,6 +9,7 @@ export const GITHUB_VERB = {
   assign: "assign",
   "request-review": "request reviewers on",
   review: "review",
+  "code-review": "send the code review to",
   approve: "approve",
   "request-changes": "request changes on",
   merge: "merge",
