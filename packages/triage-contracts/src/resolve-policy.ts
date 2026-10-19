@@ -5,6 +5,7 @@ import {
   readCheckPack,
   readPolicyOverride,
   readSharedPolicy,
+  refuseTriageLabels,
   WORKSPACE_POLICY_TITLE_PREFIX,
   type CatalogCheck,
   type CatalogId,
@@ -42,7 +43,7 @@ export function resolvePolicy(shared: SharedPolicy, repo: PolicyOverride): Check
   const custom = [...shared.custom.map((row) => own.get(row.id) ?? row), ...repo.custom.filter((row) => !sharedIds.has(row.id))];
   if (custom.length > CUSTOM_CHECK_CAP) throw new Error(`Policy and the shared policy it extends must have at most ${CUSTOM_CHECK_CAP} custom rules together.`);
   const { dropped } = shared;
-  return {
+  return refuseTriageLabels({
     ...(dropped && { dropped }),
     kind: CHECK_PACK_KIND,
     schemaVersion: CHECK_PACK_SCHEMA_VERSION,
@@ -60,7 +61,7 @@ export function resolvePolicy(shared: SharedPolicy, repo: PolicyOverride): Check
       fail: repo.labels.fail ?? shared.labels.fail,
       unsure: repo.labels.unsure ?? shared.labels.unsure,
     },
-  };
+  });
 }
 
 /**

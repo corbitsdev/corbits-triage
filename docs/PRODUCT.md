@@ -126,6 +126,9 @@ Each pull request head gets one verdict: **Pass**, **Fail** or **Unsure**.
    is the probability of pass. An Unsure comment names each rule Triage could
    not confirm.
 
+Advisory rules are left out of all three: they never decide Fail or Unsure,
+and the verdict question neither asks about nor sees them.
+
 Draft pull requests are not decided. A closed or merged one gets no verdict,
 and Triage never writes to it. A model that does not answer leaves the verdict Unsure
 and Triage checks it again.
@@ -249,6 +252,12 @@ are required. A model or text rule names its own `id`. A built-in rule takes
 its setting as `max` (size limits), `tracker` (linked issue), `paths`
 (forbidden paths) or `types` and `fields` (conventional commits);
 `enabled: false` keeps it written down but off.
+`advisory: true` makes any rule label the pull request instead of deciding
+its verdict: when it fails or stays unsure, the verdict is unchanged, the
+comment notes it, and an Add labels action adds its label (`size: large`,
+`docs: check`, `<id>: check`, or the rule's own `label`), which stays until a
+person removes it. A label starting `Triage:` or `rule: `, or a verdict label,
+is refused. On Bitbucket Data Center it is only noted.
 
 ```yaml
 rules:

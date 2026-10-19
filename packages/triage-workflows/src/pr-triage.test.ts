@@ -256,6 +256,25 @@ describe("pr-triage body", () => {
     expect((verdict as Verdict).request.comment).toStartWith(`**Triage: Fail**\n\n@octocat, please address the following:\n- ${reason}`);
   });
 
+  test("a failing advisory rule labels and notes the pull request without changing its verdict, and the label waits without its grant", async () => {
+    const issue = { enabled: true, tracker: "linear" as const };
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, "linked-issue": { ...issue, advisory: true, label: "issue: missing" } } };
+    const { verdict, dos, requests } = await triage(pack);
+    expect(verdict).toMatchObject({ verdict: "pass", reason: RULES_PASS_REASON, reasons: [], advisory: [{ check: "linked-issue", result: "fail" }], actions: [{ list: "pass", index: 0, kind: "labels", target: { labels: ["issue: missing"] } }] });
+    expect((verdict as Verdict).request.comment).toBe("**Triage: Pass**\n\nNo changes needed from you. A maintainer will review this pull request.\n\nNotes:\n- pull request does not reference an issue\n\nTriage will label.");
+    expect(dos).toEqual([expect.objectContaining({ status: "done" })]);
+    expect(requests).toContainEqual({ method: "POST", path: `/repos/${REPO}/issues/8/labels` });
+    expect((await triage(pack, { automatic: [] })).verdict).toMatchObject({ actions: [{ kind: "labels", held: true }] });
+    expect((await triage({ ...pack, checks: { ...pack.checks, "linked-issue": issue } })).verdict).toMatchObject({ verdict: "fail", actions: [] });
+  });
+
+  test("an advisory judged rule is asked but never asks the verdict question or decides the verdict", async () => {
+    const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, docs: { enabled: true, advisory: true } } });
+    expect(path).toEqual(VERDICT_PATH);
+    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).not.toContain("verdict");
+    expect(verdict).toMatchObject({ verdict: "pass", reason: RULES_PASS_REASON, advisory: [{ check: "docs", result: "fail" }], actions: [{ kind: "labels", target: { labels: ["docs: check"] } }] });
+  });
+
   test("requested changes wait on the author, then on the reviewer once the author pushes, until the reviewer reviews again", async () => {
     const github = fakeGithub();
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO };

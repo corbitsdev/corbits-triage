@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { POLICY_EVENTS } from "./check-pack.ts";
+import { advisoryLabels, POLICY_EVENTS, type CheckPack } from "./check-pack.ts";
+import { exportPolicyFile } from "./policy-export.ts";
 import { checkPolicyFile, readPolicyFile } from "./policy-file.ts";
 
 const REPO = "acme/widgets";
@@ -103,5 +104,14 @@ actions:
     const missingReason = "rules:\n  - check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [maintainer-stated]\n  - check: focused\n    text: One change.\n    evidence: [maintainer-stated]\n";
     expect(checkPolicyFile(missingReason, REPO)).toEqual({ ok: false, problems: [{ message: expect.stringContaining("reason must be"), line: 6 }] });
     expect(checkPolicyFile("# policy\nrules: [\n", REPO)).toEqual({ ok: false, problems: [{ message: expect.stringContaining("is not YAML"), line: 3, column: 1 }] });
+  });
+
+  test("an advisory rule labels by its check unless it names a label, survives export, and a label needs advisory", () => {
+    const rule = "  - check: docs\n    text: Docs follow the change.\n    reason: Docs ship with code.\n    evidence: [maintainer-stated]\n";
+    const advisory = readPolicyFile(`rules:\n${rule}    advisory: true\n  - check: max-files-changed\n    text: At most 30 files.\n    max: 30\n    advisory: true\n    label: big\n    reason: Size is hygiene.\n    evidence: [maintainer-stated]\n`, REPO) as CheckPack;
+    expect([...advisoryLabels(advisory)]).toEqual([["max-files-changed", "big"], ["docs", "docs: check"]]);
+    expect(readPolicyFile(exportPolicyFile(advisory, false).text, REPO)).toEqual(advisory);
+    expect(checkPolicyFile(`rules:\n${rule}    label: docs\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label needs advisory: true.", line: 2 }] });
+    expect(checkPolicyFile(`rules:\n${rule}    advisory: true\n    label: "rule: docs"\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label rule: docs is one Triage takes back; name another." }] });
   });
 });

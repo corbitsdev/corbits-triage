@@ -176,6 +176,8 @@ export interface RenderOutput extends Rendered {
   feedback: string;
   /** Only the host's own checks were left to confirm, CI still running or mergeability not computed yet: nothing is decided or posted, and the head shows the waiting marker. */
   waiting?: true;
+  /** Each advisory rule's result, set when the policy has any; none of them decides the verdict. */
+  advisory?: CheckResult[];
 }
 
 type Sources = DeterministicResult["sources"];
@@ -273,6 +275,11 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
   const checks: CheckResult[] = [];
   let anyUnanswered = false;
 
+  /** An advisory rule left unanswered never holds the verdict back. */
+  function unansweredBy(check: string) {
+    anyUnanswered ||= !det.advisory?.ids.includes(check);
+  }
+
   function unavailableReason(): string {
     if (!det.needsJudgment) return NOT_ASKED_REASON;
     if (judgeSkipped) return NEEDS_JUDGE_REASON;
@@ -325,7 +332,7 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
       if (noul !== undefined) answered.push([item, yesPasses ? 1 - noul : noul]);
     }
     const unanswered = answered.length < Object.keys(filePlan.asked).length;
-    anyUnanswered ||= unanswered;
+    if (unanswered) unansweredBy(check);
     const needing = answered.filter(([, short]) => short >= YES).sort((a, b) => b[1] - a[1]);
     if (needing.length > 0) {
       // Docs asks once per part of a file split across requests, so a file can need docs more than once.
@@ -372,7 +379,7 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
     const asked = Object.keys(plan.slices).length;
     // An outage leaves a slice unanswered, and a pull request over the budget is asked nothing.
     if (answered.length < asked || asked + plan.unread.length === 0) {
-      anyUnanswered = true;
+      unansweredBy("focused");
       return unchecked("focused", unavailable);
     }
     // A file the judge could not get whole may be the separate change, so only a fully read pull request passes.
@@ -398,7 +405,7 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
     else if (row.shape === "score" && byLevel) scoreCheck(row, byLevel);
     else if (row.shape === "choose" && byOption) chooseCheck(row, byOption);
     else {
-      anyUnanswered = true;
+      unansweredBy(id);
       unchecked(id, unavailable);
     }
   }
@@ -514,6 +521,23 @@ function hostPending(c: CheckResult): boolean {
   return c.kind === "machine" && c.result === "unconfirmed";
 }
 
+/** An advisory rule's result that labels and notes the pull request. */
+export function isAdvisoryFinding(c: CheckResult): boolean {
+  return c.result === "fail" || unsure(c);
+}
+
+/** Judged rules that decide the verdict, and every advisory rule's result. */
+export function splitAdvisory(det: DeterministicResult, model: CheckResult[]): { deciding: CheckResult[]; advisory: CheckResult[] } {
+  const ids = det.advisory?.ids ?? [];
+  return { deciding: model.filter((c) => !ids.includes(c.check)), advisory: [...(det.advisory?.checks ?? []), ...model.filter((c) => ids.includes(c.check))] };
+}
+
+/** Whether a rule that is not advisory needs the decision model. */
+export function decidesByModel(det: DeterministicResult): boolean {
+  const ids = det.advisory?.ids ?? [];
+  return hasModelChecks(det.sources) && [...det.sources!.quality, ...det.sources!.custom].some((source) => !ids.includes(source.id));
+}
+
 function outageCount(checks: CheckResult[]): number {
   return checks.filter((c) => c.kind === "model" && c.result === "unconfirmed" && c.reason === UNAVAILABLE_REASON).length;
 }
@@ -572,7 +596,12 @@ export const NOTHING_TO_CHANGE = "No changes needed from you. ";
  * maintainer's requested changes are already in front of the author, so they are left out, and a comment holding
  * nothing else is not posted.
  */
-function authorComment({ author, repo, headSha, sources, purpose }: RenderContext, checks: CheckResult[], verdict: VerdictWord): string {
+function noteOf(c: CheckResult, { repo, headSha, sources }: RenderContext): string {
+  return c.result === "fail" ? `- ${c.reason}${failureEvidence(c, repo, headSha)}` : `- Not confirmed: ${passText(c.check, sources!)}`;
+}
+
+function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: VerdictWord): string {
+  const { author, repo, headSha, sources, purpose } = ctx;
   const failing = checks.filter((c) => c.result === "fail");
   const mine = authorFailures(checks, sources);
   const unconfirmed = sources ? checks.filter(unsure) : [];
@@ -601,6 +630,8 @@ function authorComment({ author, repo, headSha, sources, purpose }: RenderContex
   }
   const skipped = sources ? checks.flatMap((c) => skippedLine(c, sources)) : [];
   if (skipped.length) lines.push("", "Skipped:", ...skipped);
+  const notes = ctx.advisory.filter(isAdvisoryFinding);
+  if (notes.length) lines.push("", "Notes:", ...notes.map((c) => noteOf(c, ctx)));
   return bounded([commentTitle(verdict), "", ...lines]);
 }
 
@@ -625,6 +656,7 @@ interface RenderContext {
   reviewers: string[];
   /** Set whenever focused was asked. */
   purpose?: string;
+  advisory: CheckResult[];
 }
 
 function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, reasons: string[], ctx: RenderContext): RenderOutput {
@@ -637,6 +669,7 @@ function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number 
     reasons,
     feedback: authorComment(ctx, checks, rendered.verdict),
     checks,
+    ...(ctx.advisory.length > 0 && { advisory: ctx.advisory }),
   };
 }
 
@@ -667,17 +700,18 @@ const UNCONFIRMED_REASON = "the decision model passed it, but a rule could not b
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
   const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait } = input;
-  const ctx = { author, repo, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose };
   const evaluated = evaluateModel(input);
-  const checks = [...det.checks, ...evaluated.checks];
-  const reasons = reasonsOf(det, evaluated.checks);
+  const { deciding, advisory } = splitAdvisory(det, evaluated.checks);
+  const ctx = { author, repo, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, advisory };
+  const checks = [...det.checks, ...deciding];
+  const reasons = reasonsOf(det, deciding);
   const hard = hardFailures(det.checks);
   if (hard.length > 0) return withChecks({ ...render(det.state), verdict: "fail", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
   if (!det.needsJudgment) {
     const verdict = withChecks({ ...render(det.state), verdict: "unsure", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
     return { ...verdict, feedback: "" };
   }
-  if (!hasModelChecks(det.sources)) {
+  if (!decidesByModel(det)) {
     if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
     return noWait ? unsureOf(RULES_UNSURE_REASON) : waitingOf(null);
   }
@@ -694,7 +728,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const outage = `${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`;
   if (judgeError !== undefined || evaluated.unanswered) return unsureOf(outage, "inference-outage");
   // A judged rule's own answer decides it, so nothing the pull request says to the verdict question can pass it.
-  const failing = evaluated.checks.filter((check) => check.result === "fail").map((check) => reasonOf(check, det.sources));
+  const failing = deciding.filter((check) => check.result === "fail").map((check) => reasonOf(check, det.sources));
   if (failing.length) return withChecks({ ...render(VERDICT_STATES.fail), verdict: "fail", degraded: null, reason: failing.join("; ") }, checks, null, reasons, ctx);
   if (choice === undefined) return unsureOf(outage, "inference-outage");
   const decided = decide(choice);
