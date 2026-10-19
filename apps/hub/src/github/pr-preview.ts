@@ -192,7 +192,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
       result: c.kind === "model" && c.reason === NEEDS_JUDGE_REASON ? "needs-judge" as const : c.result,
     }));
     const waits = reason === NEEDS_JUDGE_REASON ? "waits-on-judge" as const : verdict.actions;
-    const actions = previewActions({ facts: judged.facts, checks: verdict.checks, verdict: word, reason, pack, advisory: verdict.advisory }, waits);
+    const actions = previewActions({ facts: judged.facts, checks: verdict.checks, verdict: word, reason, pack, labelled: verdict.labelled }, waits);
     return Response.json({
       repo,
       number,

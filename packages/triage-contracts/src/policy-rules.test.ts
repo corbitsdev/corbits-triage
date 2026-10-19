@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { advisoryLabels, POLICY_EVENTS, type CheckPack } from "./check-pack.ts";
+import { labelRules, POLICY_EVENTS, readCheckPack, reviewRules, type CheckPack } from "./check-pack.ts";
 import { exportPolicyFile } from "./policy-export.ts";
 import { checkPolicyFile, readPolicyFile } from "./policy-file.ts";
+import { extendedFilePack } from "./resolve-policy.ts";
 
 const REPO = "acme/widgets";
 
@@ -106,12 +107,22 @@ actions:
     expect(checkPolicyFile("# policy\nrules: [\n", REPO)).toEqual({ ok: false, problems: [{ message: expect.stringContaining("is not YAML"), line: 3, column: 1 }] });
   });
 
-  test("an advisory rule labels by its check unless it names a label, survives export, and a label needs advisory", () => {
+  test("onFail labels by its check unless a label is named, takes the file's default, survives export, is the extending file's for a rule it lists, a label needs onFail: label, and advisory is refused", () => {
     const rule = "  - check: docs\n    text: Docs follow the change.\n    reason: Docs ship with code.\n    evidence: [maintainer-stated]\n";
-    const advisory = readPolicyFile(`rules:\n${rule}    advisory: true\n  - check: max-files-changed\n    text: At most 30 files.\n    max: 30\n    advisory: true\n    label: big\n    reason: Size is hygiene.\n    evidence: [maintainer-stated]\n`, REPO) as CheckPack;
-    expect([...advisoryLabels(advisory)]).toEqual([["max-files-changed", "big"], ["docs", "docs: check"]]);
-    expect(readPolicyFile(exportPolicyFile(advisory, false).text, REPO)).toEqual(advisory);
-    expect(checkPolicyFile(`rules:\n${rule}    label: docs\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label needs advisory: true.", line: 2 }] });
-    expect(checkPolicyFile(`rules:\n${rule}    advisory: true\n    label: "rule: docs"\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label rule: docs is one Triage takes back; name another." }] });
+    const files = "  - check: max-files-changed\n    text: At most 30 files.\n    max: 30\n    reason: Size is hygiene.\n    evidence: [maintainer-stated]\n";
+    const labelled = readPolicyFile(`rules:\n${rule}    onFail: label\n${files}    onFail: label\n    label: big\n`, REPO) as CheckPack;
+    expect([...labelRules(labelled)]).toEqual([["max-files-changed", "big"], ["docs", "docs: check"]]);
+    expect(readPolicyFile(exportPolicyFile(labelled, false).text, REPO)).toEqual(labelled);
+    const review = readPolicyFile(`onFail: review\nrules:\n${rule}${files}    onFail: fail\n`, REPO) as CheckPack;
+    expect(reviewRules(review)).toEqual(["docs"]);
+    expect(readPolicyFile(exportPolicyFile(review, false).text, REPO)).toEqual(review);
+    const shared = { repo: "acme/shared", policy: readPolicyFile(`rules:\n${rule}    onFail: review\n${files}    onFail: label\n`, "acme/shared") };
+    const extending = extendedFilePack(REPO, readPolicyFile(`extends: acme/shared\nrules:\n${rule}    onFail: fail\n${files}`, REPO), shared);
+    expect([reviewRules(extending), [...labelRules(extending)]]).toEqual([[], []]);
+    expect(reviewRules(extendedFilePack(REPO, readPolicyFile(`extends: acme/shared\nonFail: review\nrules:\n${files}`, REPO), shared))).toEqual(["max-files-changed", "docs"]);
+    expect(() => readCheckPack({ ...review, checks: { docs: { enabled: true, advisory: true } } }, REPO)).toThrow("write onFail: label instead");
+    expect(checkPolicyFile(`rules:\n${rule}    advisory: true\n`, REPO)).toMatchObject({ ok: false });
+    expect(checkPolicyFile(`rules:\n${rule}    label: docs\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label needs onFail: label.", line: 2 }] });
+    expect(checkPolicyFile(`rules:\n${rule}    onFail: label\n    label: "rule: docs"\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label rule: docs is one Triage takes back; name another." }] });
   });
 });

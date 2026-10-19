@@ -256,23 +256,30 @@ describe("pr-triage body", () => {
     expect((verdict as Verdict).request.comment).toStartWith(`**Triage: Fail**\n\n@octocat, please address the following:\n- ${reason}`);
   });
 
-  test("a failing advisory rule labels and notes the pull request without changing its verdict, and the label waits without its grant", async () => {
+  test("a failing labelling rule labels and notes the pull request without changing its verdict, the label waits without its grant, and a review rule leaves it Unsure for a maintainer once CI is done", async () => {
     const issue = { enabled: true, tracker: "linear" as const };
-    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, "linked-issue": { ...issue, advisory: true, label: "issue: missing" } } };
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, "linked-issue": { ...issue, onFail: "label", label: "issue: missing" } } };
     const { verdict, dos, requests } = await triage(pack);
-    expect(verdict).toMatchObject({ verdict: "pass", reason: RULES_PASS_REASON, reasons: [], advisory: [{ check: "linked-issue", result: "fail" }], actions: [{ list: "pass", index: 0, kind: "labels", target: { labels: ["issue: missing"] } }] });
+    expect(verdict).toMatchObject({ verdict: "pass", reason: RULES_PASS_REASON, reasons: [], labelled: [{ check: "linked-issue", result: "fail" }], actions: [{ list: "pass", index: 0, kind: "labels", target: { labels: ["issue: missing"] } }] });
     expect((verdict as Verdict).request.comment).toBe("**Triage: Pass**\n\nNo changes needed from you. A maintainer will review this pull request.\n\nNotes:\n- pull request does not reference an issue\n\nTriage will label.");
     expect(dos).toEqual([expect.objectContaining({ status: "done" })]);
     expect(requests).toContainEqual({ method: "POST", path: `/repos/${REPO}/issues/8/labels` });
     expect((await triage(pack, { automatic: [] })).verdict).toMatchObject({ actions: [{ kind: "labels", held: true }] });
     expect((await triage({ ...pack, checks: { ...pack.checks, "linked-issue": issue } })).verdict).toMatchObject({ verdict: "fail", actions: [] });
+    const reviewPack: CheckPack = { ...pack, checks: { ...pack.checks, "linked-issue": { ...issue, onFail: "review" } } };
+    const review = (await triage(reviewPack)).verdict as Verdict;
+    expect(review).toMatchObject({ verdict: "unsure", state: "awaiting-review", actor: "maintainer", nextAction: "Review: pull request does not reference an issue", actions: [{ list: "unsure", kind: "request-review" }] });
+    expect(review.request.comment).toBe("**Triage: Unsure**\n\nA maintainer will review:\n- pull request does not reference an issue\n\nTriage will request review.");
+    const pending = fakeGithub();
+    pending.pr.ci = "pending";
+    expect((await triage(reviewPack, { github: pending })).verdict).toMatchObject({ waiting: true, actions: [] });
   });
 
-  test("an advisory judged rule is asked but never asks the verdict question or decides the verdict", async () => {
-    const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, docs: { enabled: true, advisory: true } } });
+  test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {
+    const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, docs: { enabled: true, onFail: "label" } } });
     expect(path).toEqual(VERDICT_PATH);
     expect(judged.flatMap((call) => call.questions.map((question) => question.id))).not.toContain("verdict");
-    expect(verdict).toMatchObject({ verdict: "pass", reason: RULES_PASS_REASON, advisory: [{ check: "docs", result: "fail" }], actions: [{ kind: "labels", target: { labels: ["docs: check"] } }] });
+    expect(verdict).toMatchObject({ verdict: "pass", reason: RULES_PASS_REASON, labelled: [{ check: "docs", result: "fail" }], actions: [{ kind: "labels", target: { labels: ["docs: check"] } }] });
   });
 
   test("requested changes wait on the author, then on the reviewer once the author pushes, until the reviewer reviews again", async () => {

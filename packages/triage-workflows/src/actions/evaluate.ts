@@ -8,7 +8,7 @@ import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
-import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitAdvisory, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
+import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
 
@@ -104,9 +104,9 @@ export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[
   const { facts, det } = it;
   const { plan, focused, requests } = evaluation;
   const model = evaluateModel({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, answers: answersOf(requests, first), plan, focused, stack: facts.stack });
-  const { deciding } = splitAdvisory(det, model.checks);
-  // A judged rule that failed decides Fail on its own, so the verdict question is not asked.
-  if (model.unanswered || deciding.some((check) => check.result === "fail")) return undefined;
+  const { deciding } = splitLabelled(det, model.checks);
+  // A failed rule decides the verdict on its own, Fail or Unsure for a maintainer, so the verdict question is not asked.
+  if (model.unanswered || [...det.checks, ...deciding].some((check) => check.result === "fail")) return undefined;
   return verdictRequest(facts, [...det.checks, ...deciding].map((c) => policyRule(it.pack!, c)));
 }
 
@@ -178,9 +178,9 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(it.noWait && { noWait: it.noWait }),
     });
-    // Bitbucket Data Center has no labels, so there an advisory rule is only noted.
-    const advisory = hostKinds(it.repoSource ?? "github").includes("labels") ? rendered.advisory : undefined;
-    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, advisory } : undefined;
+    // Bitbucket Data Center has no labels, so there a labelling rule is only noted.
+    const labelled = hostKinds(it.repoSource ?? "github").includes("labels") ? rendered.labelled : undefined;
+    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, labelled } : undefined;
     // A degraded verdict is incomplete, a waiting one is not made yet, and a draft or closed pull request is not decided, so nothing is suggested from any.
     const decided = rendered.degraded === null && rendered.waiting === undefined && (it.det.needsJudgment || rendered.verdict === "fail");
     const suggested = actionInput && decided ? evaluateActions(actionInput) : [];

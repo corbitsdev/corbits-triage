@@ -120,7 +120,7 @@ The secret is shown only this once. Turning triage off removes a webhook Triage 
 
 A few things work differently from GitHub, because Bitbucket works differently:
 
-- **No labels.** Bitbucket Data Center has no labels, so verdict labels and **Add labels** steps have no effect there, and an advisory rule only adds its note to the comment. Triage shows its verdict as a build status named **Corbits Triage** on the pull request's latest commit instead, while Comment is on for the repository.
+- **No labels.** Bitbucket Data Center has no labels, so verdict labels and **Add labels** steps have no effect there, and a rule set to `onFail: label` only adds its note to the comment. Triage shows its verdict as a build status named **Corbits Triage** on the pull request's latest commit instead, while Comment is on for the repository.
 - **No assignments.** Bitbucket has no assignees, so **Assign to** steps are not carried out.
 - **Bitbucket's own reviews.** Approve, Request changes, Close and Merge become Bitbucket's approve, needs work, decline and merge.
 - **CI is checked on a timer.** Bitbucket sends no event when a build finishes, so a pull request waiting for CI is checked within a few minutes of its builds ending. While the **CI must pass** rule is waiting on a build, or failing because of one, Triage looks at the build again after five minutes, then less often, and checks the pull request again once it has changed.
@@ -229,13 +229,17 @@ A rule asks one question about a pull request and answers pass, fail or unconfir
 
 Two rules always run: a draft pull request waits until it is ready for review, and a pull request with changes requested fails. Once the author pushes a new commit or replies, it still fails but waits on the reviewer, in **Needs you** as ready for re-review, until that reviewer approves or requests changes again.
 
-Any rule can be made advisory with `advisory: true` in the file. An advisory rule never changes the verdict: when it fails, or the decision model can't tell, Triage adds its label to the pull request and a line under **Notes:** in its comment. Triage never takes the label off, since a person may have added it; remove it once it no longer applies. The label is `size: large` for the size rules, `docs: check` for the docs rule and the rule's id followed by `: check` for any other; `label:` names a different one, but not one starting `Triage:` or `rule: ` or a verdict label, which Triage takes back itself. This suits rules that are hygiene rather than a gate, such as size limits an atomic change has to cross:
+Each rule's `onFail` says what happens when it fails:
+
+- `fail`, the default: the verdict is **Fail** and the comment asks the author to fix it.
+- `review`: the verdict is **Unsure** and the comment lists the rule under **A maintainer will review:**, so the pull request waits for you in **Needs you** instead of on its author.
+- `label`: the verdict does not change. When the rule fails, or the decision model can't tell, Triage adds its label to the pull request and a line under **Notes:** in its comment. Triage never takes the label off, since a person may have added it; remove it once it no longer applies. The label is `size: large` for the size rules, `docs: check` for the docs rule and the rule's id followed by `: check` for any other; `label:` names a different one, but not one starting `Triage:` or `rule: ` or a verdict label, which Triage takes back itself. `onFail: label` suits rules that are hygiene rather than a gate, such as size limits an atomic change has to cross. A top-level `onFail` sets it for every rule in the file that does not set its own. The Policy section shows a rule that does not fail the pull request with what it does instead, such as "(on fail, labels size: large)".
 
 ```yaml
   - check: max-files-changed
     text: Flag pull requests over 30 files changed.
     max: 30
-    advisory: true
+    onFail: label
     reason: Atomic changes stay one pull request, so size is a label, not a failure.
     evidence: ["#306"]
 ```
@@ -244,11 +248,11 @@ Size rules and facts the host already knows cost nothing and always give the sam
 
 ### How the verdict is decided
 
-1. If any rule fails, the verdict is **Fail** right away. That includes a Judgement rule the decision model answered no to.
+1. If any rule fails, the verdict is **Fail** right away. That includes a Judgement rule the decision model answered no to. A failed rule set to `onFail: review` makes it **Unsure** instead, unless another rule fails it.
 2. If the policy has no Judgement rules, there is nothing left to judge: the verdict is **Pass** when every rule passes. A rule still waiting on the host, such as CI that is still running, makes Triage wait (see Waiting for CI).
 3. Otherwise the decision model reads the whole pull request together with every rule's result and answers one question: does this pull request pass this repository's policy? If it is at least 70% sure the answer is yes, the verdict is **Pass**. If it is at least 70% sure the answer is no, the verdict is **Fail**. Anything in between is **Unsure**, which means a person should look. A pull request with a Judgement rule the model could not confirm is never more than Unsure.
 
-Advisory rules take no part in any of these steps: they only label and note the pull request. A policy whose only Judgement rules are advisory is decided as one with none.
+Rules set to `onFail: label` take no part in any of these steps: they only label and note the pull request. A policy whose only Judgement rules only label is decided as one with none.
 
 Draft pull requests are not decided at all, and a closed pull request gets no verdict.
 
@@ -283,7 +287,7 @@ An **Unsure** comment lists each rule Triage could not confirm, with checks stil
 
 ### Labels
 
-Triage keeps a verdict label on every pull request so that other tools, such as a coding agent, can react to it. It puts the verdict's label on the pull request and takes the other two off. The defaults are **Triage: Ready** for Pass, **Triage: Not Ready** for Fail and **Triage: Needs Human Review** for Unsure; the file can rename them. A step that labels each failed rule, shown as **Label each failed rule**, adds a label such as `rule: linked-issue` for every rule that failed. An advisory rule's label is added whatever the verdict, after the verdict's own steps, as an **Add labels** action: on its own where Add labels is switched on, otherwise waiting for you in the Inbox.
+Triage keeps a verdict label on every pull request so that other tools, such as a coding agent, can react to it. It puts the verdict's label on the pull request and takes the other two off. The defaults are **Triage: Ready** for Pass, **Triage: Not Ready** for Fail and **Triage: Needs Human Review** for Unsure; the file can rename them. A step that labels each failed rule, shown as **Label each failed rule**, adds a label such as `rule: linked-issue` for every rule that failed. The label of a rule set to `onFail: label` is added whatever the verdict, after the verdict's own steps, as an **Add labels** action: on its own where Add labels is switched on, otherwise waiting for you in the Inbox.
 
 On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repositories](#bitbucket-data-center-repositories).
 

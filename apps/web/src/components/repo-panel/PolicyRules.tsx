@@ -1,4 +1,4 @@
-import { advisoryLabels, CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, people, VERDICT_NAMES, VERDICTS, type CatalogId, type CheckPack, type CustomCheck, type Step } from "@corbits/triage-contracts";
+import { CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, onFailText, people, VERDICT_NAMES, VERDICTS, type CatalogId, type CheckPack, type CustomCheck, type Step } from "@corbits/triage-contracts";
 import { FOR_NAMES, forChoice, stepFor } from "../../lib/policy-view.ts";
 
 function doText(step: Step): string {
@@ -43,14 +43,16 @@ function customText(row: CustomCheck): string {
 
 /** The policy triage runs on, read only: each rule that is on, then what happens on each verdict. */
 export default function PolicyRules({ pack }: { pack: CheckPack }) {
-  const advisory = advisoryLabels(pack);
   const rules = [
     ...CATALOG_IDS.flatMap(function shown(id) {
       const text = catalogText(pack, id);
       return text ? [{ key: id, text }] : [];
     }),
     ...pack.custom.filter(customCheckEnabled).map((row) => ({ key: row.id, text: customText(row) })),
-  ].map((rule) => (advisory.has(rule.key) ? { ...rule, text: `${rule.text} (advisory, labels ${advisory.get(rule.key)})` } : rule));
+  ].map(function withOnFail(rule) {
+    const onFail = onFailText(pack, rule.key);
+    return onFail === undefined ? rule : { ...rule, text: `${rule.text} (${onFail})` };
+  });
 
   return (
     <div className="gcard">

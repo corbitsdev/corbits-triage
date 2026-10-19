@@ -1,5 +1,4 @@
 import {
-  advisoryLabels,
   catalogCheckEnabled,
   CLOSED_FINDING,
   classificationSources,
@@ -7,10 +6,12 @@ import {
   CONVENTIONAL_TYPES,
   customCheckEnabled,
   isTextCheck,
+  labelRules,
   parseCheckPack,
   NO_CHANGES_REQUESTED,
   NOT_A_DRAFT,
   repoPolicy,
+  reviewRules,
   type AuthorKind,
   type CatalogId,
   type CheckOutput,
@@ -96,6 +97,8 @@ export interface CheckResult {
   reason: string;
   evidence: string[];
   output: CheckOutput;
+  /** Set on a rule whose failure goes to a maintainer, leaving the verdict Unsure instead of Fail. */
+  onFail?: "review";
 }
 
 export interface DeterministicResult {
@@ -105,8 +108,10 @@ export interface DeterministicResult {
   checks: CheckResult[];
   needsJudgment: boolean;
   sources?: ReturnType<typeof classificationSources>;
-  /** The policy's advisory rules, which never decide the verdict, and the results of those read without the model; `checks` holds neither. */
-  advisory?: { ids: string[]; checks: CheckResult[] };
+  /** The policy's labelling rules, which never decide the verdict, and the results of those read without the model; `checks` holds neither. */
+  labelled?: { ids: string[]; checks: CheckResult[] };
+  /** The policy's rules whose failure goes to a maintainer. */
+  review?: string[];
 }
 
 export const NEEDS_SETUP_REASON = "This repository still needs a policy.";
@@ -139,9 +144,10 @@ function rankTop(findings: Finding[]): Finding | null {
 }
 
 function finish(all: Finding[], results: CheckResult[], facts: PrFacts, pack?: CheckPack): DeterministicResult {
-  const ids = pack ? [...advisoryLabels(pack).keys()] : [];
-  const findings = all.filter((f) => !ids.includes(f.check));
-  const checks = results.filter((c) => !ids.includes(c.check));
+  const ids = pack ? [...labelRules(pack).keys()] : [];
+  const review = pack ? reviewRules(pack) : [];
+  const findings = all.filter((f) => !ids.includes(f.check) && !review.includes(f.check));
+  const checks = results.filter((c) => !ids.includes(c.check)).map((c) => forReview(c, review));
   const top = rankTop(findings);
   const sources = pack ? classificationSources(pack) : undefined;
   // A draft cannot be merged, so it is never ready.
@@ -154,15 +160,20 @@ function finish(all: Finding[], results: CheckResult[], facts: PrFacts, pack?: C
     checks,
     needsJudgment: sources !== undefined && facts.state === "open" && !facts.draft && hardFailures(checks).length === 0,
     ...(sources ? { sources } : {}),
-    ...(ids.length > 0 && { advisory: { ids, checks: results.filter((c) => ids.includes(c.check)) } }),
+    ...(ids.length > 0 && { labelled: { ids, checks: results.filter((c) => ids.includes(c.check)) } }),
+    ...(review.length > 0 && { review }),
   };
 }
 
-type RuleOutcome = Pick<CheckResult, "check" | "kind" | "result">;
+export function forReview(c: CheckResult, review: readonly string[] | undefined): CheckResult {
+  return review?.includes(c.check) ? { ...c, onFail: "review" } : c;
+}
 
-/** None on a draft, which is not decided at all. */
+type RuleOutcome = Pick<CheckResult, "check" | "kind" | "result" | "onFail">;
+
+/** None on a draft, which is not decided at all; a rule whose failure goes to a maintainer is not one. */
 export function hardFailures<T extends RuleOutcome>(checks: readonly T[]): T[] {
-  const failed = checks.filter((c) => c.kind === "machine" && c.result === "fail");
+  const failed = checks.filter((c) => c.kind === "machine" && c.result === "fail" && c.onFail === undefined);
   return failed.some((c) => c.check === NOT_A_DRAFT) ? [] : failed;
 }
 
