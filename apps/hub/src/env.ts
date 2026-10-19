@@ -37,6 +37,7 @@ const HubEnvSchema = type({
     /^smtps?:\/\/[^\s]+$/.test(value) || ctx.mustBe("an smtp:// or smtps:// URL")),
   "EMAIL_FROM?": "string",
   "GITHUB_API_ORIGIN?": "string.url",
+  "BITBUCKET_EGRESS_ALLOWLIST?": "string",
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
@@ -95,6 +96,13 @@ export function loadHubEnv(raw: Record<string, string | undefined>): HubEnv {
   const env = HubEnvSchema(present);
   if (env instanceof type.errors) throw new Error(env.map(describeEnvError).join("\n"));
   return env;
+}
+
+/** Hostnames or literal IPs that may be private or loopback. Empty or unset means no exceptions. */
+export function bitbucketEgressAllowlist(env: HubEnv): readonly string[] {
+  const raw = env.BITBUCKET_EGRESS_ALLOWLIST;
+  if (raw === undefined) return [];
+  return raw.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
 }
 
 /** Unset means production GitHub; a set origin (e.g. a local emulator) loses any trailing slash. */

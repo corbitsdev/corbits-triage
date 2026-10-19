@@ -1657,6 +1657,7 @@ const BITBUCKET_DATACENTER_REFUSALS: Record<string, string> = {
   bitbucket_datacenter_connected_elsewhere: "This workspace is connected to another Bitbucket Data Center instance with repositories recorded. Disconnect it first.",
   bitbucket_datacenter_unreachable: "The hub could not reach this Bitbucket Data Center instance. Check the URL and that the hub can reach it.",
   bitbucket_datacenter_not_connected: "Connect Bitbucket Data Center in Settings first.",
+  bitbucket_datacenter_host_refused: "The Triage server refuses this Bitbucket Data Center address. A private-network instance must be allowed by whoever runs the server.",
   bitbucket_datacenter_failed: "Bitbucket Data Center answered with an error. Try again in a moment.",
   repo_not_found: "Bitbucket Data Center does not show this repository to the token. Check the token can read its project.",
   repo_empty: "This repository has no default branch yet. Push a first commit, then turn on triage.",

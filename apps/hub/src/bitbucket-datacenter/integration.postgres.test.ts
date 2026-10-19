@@ -17,6 +17,11 @@ const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 const BASE_URL = "https://bitbucket.test";
 const HOOK_ID = `crd_${HOOK_CREDENTIAL.replaceAll("-", "_")}`;
 
+async function lookupBitbucket(hostname: string): Promise<readonly { address: string; family: number }[]> {
+  if (hostname !== "bitbucket.test") throw new Error(`unexpected host ${hostname}`);
+  return [{ address: "8.8.8.8", family: 4 }];
+}
+
 function instanceFetch(webhookStatus: number) {
   return async function stubInstance(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const path = new URL(String(input)).pathname;
@@ -67,7 +72,7 @@ test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enable
     const integration = createBitbucketIntegration({
       db, cipher, async authorize() { return true; },
       async stockFetch() { return new Response(null, { status: 500 }); },
-      publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201),
+      publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201), lookup: lookupBitbucket,
       onEnabled() {}, async onConnectionChanged() {}, now: () => new Date(), log() {},
     });
     const automation = createAutomation({ db, now: () => new Date() });
@@ -88,7 +93,7 @@ test("PostgreSQL: a hand-made webhook needs use on the hook credential, its setu
       db, cipher,
       async authorize(_principal, _tenant, resource) { return resource !== `credential:${HOOK_ID}` || hookUse; },
       async stockFetch() { return new Response(null, { status: 500 }); },
-      publicOrigin: "https://hub.test", fetchImpl: instanceFetch(403),
+      publicOrigin: "https://hub.test", fetchImpl: instanceFetch(403), lookup: lookupBitbucket,
       onEnabled() { enabledCalls += 1; }, async onConnectionChanged() {}, now: () => new Date(), log() {},
     });
     async function stored() {

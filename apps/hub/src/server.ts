@@ -52,7 +52,7 @@ import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
-import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
+import { checkedBitbucketSpawner, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
@@ -61,7 +61,7 @@ import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, 
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -347,7 +347,7 @@ const githubPrActions = createGithubPrActions({
   codeReviews: codeReviewRuns,
   log: logJson,
 });
-const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch });
+const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -654,7 +654,7 @@ async function failCoordinatedJob(job: TriageJob, error: string): Promise<void> 
 }
 await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleService, logJson);
 coordinator = createCoordinator({
-  spawner: createWorkerSpawner({
+  spawner: checkedBitbucketSpawner(createWorkerSpawner({
     db: composition.db,
     redeploy: github.rotation.redeploy,
     deliver: deliverToDeployment,
@@ -662,7 +662,7 @@ coordinator = createCoordinator({
     sleep: Bun.sleep,
     fireTimeoutMs: WORKER_FIRE_TIMEOUT_MS,
     pollMs: WORKER_POLL_MS,
-  }),
+  }), tenantBitbucket),
   retry: { minMs: TRIAGE_RETRY_MS, maxMs: TRIAGE_RETRY_MAX_MS },
   failed: failCoordinatedJob,
   setTimer,
@@ -841,6 +841,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     },
     publicOrigin: new URL(env.BETTER_AUTH_BASE_URL).origin,
     fetchImpl: fetch,
+    egressAllowlist: bitbucketEgressAllowlist(env),
     onEnabled: triageLoop.kick,
     onConnectionChanged: onSourcesChanged,
     now,

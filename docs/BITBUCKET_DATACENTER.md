@@ -56,11 +56,23 @@ grants for the writes.
 
 Body: `{ "baseUrl": "https://bitbucket.example.com", "token": "..." }`.
 
-`baseUrl` may name a private-network or localhost host, since Data Center
-commonly lives on a private network. Link-local hosts (`169.254.0.0/16`),
-`fd00::/8` addresses and `metadata.google.internal` are refused: a cloud
-runtime answers its own metadata there, and the hub's token check would reach
-it.
+The hub resolves `baseUrl` once each time it is about to send the token (at
+connect, for each portal request, for each hub-side read, and before it
+spawns a Bitbucket workflow run) and connects to the address it checked,
+with the hostname as `Host` and TLS server name, so a second DNS answer
+cannot redirect the request. Every address must be public unicast: anything
+else (loopback, private, link-local, carrier-grade NAT, reserved,
+multicast, NAT64, 6to4, IPv4-compatible or site-local IPv6) is refused, as
+are a failed or empty lookup and the hostnames `metadata` and
+`metadata.google.internal`. A host listed in `BITBUCKET_EGRESS_ALLOWLIST`
+(a hub environment variable, not a tenant setting) may also resolve to
+private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7` other
+than `fd00:ec2::254`) or loopback addresses; nothing else can be listed.
+`GET /connection` reads the stored URL without resolving it; a stored host
+that is refused answers `bitbucket_datacenter_host_refused` where the token
+would be sent. A workflow run's sidecar resolves the host again itself, so
+deny sidecar egress to metadata addresses at the network layer
+([SELF_HOST.md](SELF_HOST.md)).
 
 The token is tried once against `GET /rest/api/1.0/application-properties`
 and stored only if the instance signs it in. A webhook secret is generated
@@ -97,7 +109,7 @@ Needs `use` on the `bitbucket-datacenter` credential. Every repository the token
 ```
 
 A recorded repository the token no longer sees is listed with
-`connected: false`. 409 `bitbucket_datacenter_not_connected`, 502 on instance failure.
+`connected: false`. 409 `bitbucket_datacenter_not_connected` or `bitbucket_datacenter_host_refused`, 502 on instance failure.
 
 ### `POST /repositories/{project}/{slug}/enable`
 
@@ -114,7 +126,7 @@ removes Labels and Assign grants left on Bitbucket repositories.
 | 200 | `{ "repository", "webhook": "created", "hookUrl" }` |
 | 200 | `{ "repository", "webhook": "manual", "hookUrl", "hookSecret", "events" }` when the token may not manage webhooks |
 | 404 | `repo_not_found` |
-| 409 | `bitbucket_datacenter_not_connected`, `repo_empty` (no default branch), `repo_name_taken` (a GitHub repository has the same name) |
+| 409 | `bitbucket_datacenter_not_connected`, `bitbucket_datacenter_host_refused`, `repo_empty` (no default branch), `repo_name_taken` (a GitHub repository has the same name) |
 | 502 | `bitbucket_datacenter_failed`, `bitbucket_datacenter_unreachable` |
 
 ### `GET /repositories/{project}/{slug}/webhook`

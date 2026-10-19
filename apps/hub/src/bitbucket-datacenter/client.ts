@@ -1,4 +1,6 @@
+import { lookup as dnsLookup } from "node:dns/promises";
 import { type } from "arktype";
+import ipaddr from "ipaddr.js";
 import { repoPath as repoPathOf, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 
 export class BitbucketFailed extends Error {
@@ -26,44 +28,72 @@ export const InstanceRepo = type({ slug: "string", project: { key: "string" } })
 const DefaultBranch = type({ displayId: "string" });
 const Webhook = type({ id: "number" });
 
-export function bitbucketFetch(fetchImpl: typeof fetch, baseUrl: string, token: string): BitbucketFetch {
+/** Every request connects to the checked address, so the host is not resolved again between the check and the request. */
+export function bitbucketFetch(fetchImpl: typeof fetch, instance: Instance, token: string): BitbucketFetch {
+  const named = new URL(instance.baseUrl);
+  const pinned = new URL(instance.baseUrl);
+  pinned.hostname = instance.address.includes(":") ? `[${instance.address}]` : instance.address;
+  const pinnedBase = `${pinned.origin}${pinned.pathname.replace(/\/+$/, "")}`;
+  // Certificates are checked against the name, not the address.
+  const tls = named.protocol === "https:" && addressOf(named.hostname) === undefined ? { tls: { serverName: named.hostname } } : {};
   return function withToken(path, init) {
     const headers = new Headers(init?.headers);
+    headers.set("host", named.host);
     headers.set("authorization", `Bearer ${token}`);
     headers.set("accept", "application/json");
     // A form sets its own content type, with the boundary its parts are split on.
     if (init?.body !== undefined && !(init.body instanceof FormData)) headers.set("content-type", "application/json");
-    return fetchImpl(`${baseUrl}${path}`, { ...init, headers, redirect: "manual" });
+    return fetchImpl(`${pinnedBase}${path}`, { ...init, headers, redirect: "manual", ...tls });
   };
 }
 
-// Private-network and localhost hosts are allowed, since Data Center commonly lives on a private network; the hosts a
-// cloud runtime answers its own metadata on are not, because the hub's token-check request would reach them.
-const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata", "169.254.169.254"]);
+// The token reaches public unicast addresses only. An operator allowlist may name a host whose addresses are private or
+// loopback; it cannot unlock the rest.
+const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata"]);
+// EC2 IPv6 instance metadata sits inside the otherwise allowlistable fc00::/7.
+const EC2_METADATA = ipaddr.parse("fd00:ec2::254").toString();
+// ipaddr.js names site-local fec0::/10 and IPv4-compatible ::a.b.c.d "unicast"; public IPv6 is global unicast only.
+const GLOBAL_UNICAST = ipaddr.parseCIDR("2000::/3");
+const ALLOWLISTABLE = new Set(["private", "uniqueLocal", "loopback"]);
 
-/** An IPv6-mapped IPv4 address (`::ffff:169.254.169.254` or `::ffff:a9fe:a9fe`) in dotted form; anything else as given. */
-function unmapped(host: string): string {
-  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
-  if (dotted) return dotted[1]!;
-  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  if (!hex) return host;
-  const [high, low] = [parseInt(hex[1]!, 16), parseInt(hex[2]!, 16)];
-  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+type AddressKind = "public" | "allowlistable" | "refused";
+
+/** The literal address a host names, with IPv4-mapped IPv6 unwrapped; undefined for a name. */
+function addressOf(host: string): ipaddr.IPv4 | ipaddr.IPv6 | undefined {
+  const bare = host.replace(/^\[|\]$/g, "");
+  return ipaddr.isValid(bare) ? ipaddr.process(bare) : undefined;
 }
 
-function isMetadataHost(hostname: string): boolean {
-  const host = unmapped(hostname.replace(/^\[|\]$/g, "").toLowerCase());
-  if (METADATA_HOSTS.has(host)) return true;
-  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-  // fd00::/8 holds the metadata addresses cloud runtimes publish over IPv6, such as fd00:ec2::254.
-  return /^fd[0-9a-f]{2}:/i.test(host);
+function kindOf(address: ipaddr.IPv4 | ipaddr.IPv6): AddressKind {
+  const range = address.range();
+  if (range === "unicast") {
+    if (address instanceof ipaddr.IPv6 && !address.match(GLOBAL_UNICAST)) return "refused";
+    return "public";
+  }
+  if (address.toString() === EC2_METADATA) return "refused";
+  return ALLOWLISTABLE.has(range) ? "allowlistable" : "refused";
+}
+
+function hostKey(host: string): string {
+  const address = addressOf(host);
+  return address === undefined ? host.toLowerCase().replace(/\.+$/, "") : address.toString();
+}
+
+function allowlisted(host: string, allowlist: readonly string[]): boolean {
+  const key = hostKey(host);
+  return allowlist.some((entry) => hostKey(entry) === key);
+}
+
+function permitted(address: ipaddr.IPv4 | ipaddr.IPv6, listed: boolean): boolean {
+  const kind = kindOf(address);
+  return kind === "public" || (listed && kind === "allowlistable");
 }
 
 /**
  * An http(s) URL without credentials, query or fragment, kept with its context path
- * (an instance can live under one) and without a trailing slash.
+ * (an instance can live under one) and without a trailing slash. The host is not checked.
  */
-export function instanceBaseUrl(value: string): string | undefined {
+export function instanceUrl(value: string): string | undefined {
   let url: URL;
   try {
     url = new URL(value.trim());
@@ -71,8 +101,49 @@ export function instanceBaseUrl(value: string): string | undefined {
     return undefined;
   }
   if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password || url.search || url.hash) return undefined;
-  if (isMetadataHost(url.hostname)) return undefined;
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+/** An instance URL whose host is not a metadata name and, when a literal address, one the token may reach. */
+function instanceBaseUrl(value: string, allowlist: readonly string[] = []): string | undefined {
+  const baseUrl = instanceUrl(value);
+  if (baseUrl === undefined) return undefined;
+  const { hostname } = new URL(baseUrl);
+  if (METADATA_HOSTS.has(hostKey(hostname))) return undefined;
+  const address = addressOf(hostname);
+  if (address !== undefined && !permitted(address, allowlisted(hostname, allowlist))) return undefined;
+  return baseUrl;
+}
+
+export type AddressLookup = (hostname: string) => Promise<readonly { address: string; family: number }[]>;
+
+export function lookupAddresses(hostname: string): Promise<readonly { address: string; family: number }[]> {
+  return dnsLookup(hostname, { all: true, verbatim: true });
+}
+
+/** A checked instance: `address` is what its host resolved to, and every request goes there. */
+export type Instance = { baseUrl: string; address: string };
+
+/** Resolved once; undefined when the URL is refused, the lookup fails, or any address is one the token may not reach. */
+export async function resolveInstance(value: string, lookup: AddressLookup, allowlist: readonly string[] = []): Promise<Instance | undefined> {
+  const baseUrl = instanceBaseUrl(value, allowlist);
+  if (baseUrl === undefined) return undefined;
+  const { hostname } = new URL(baseUrl);
+  const literal = addressOf(hostname);
+  if (literal !== undefined) return { baseUrl, address: literal.toString() };
+  let answers: readonly { address: string }[];
+  try {
+    answers = await lookup(hostname);
+  } catch {
+    return undefined;
+  }
+  const listed = allowlisted(hostname, allowlist);
+  const addresses = answers.map((answer) => addressOf(answer.address));
+  if (addresses.length === 0 || !addresses.every((address) => address !== undefined && permitted(address, listed))) return undefined;
+  // Only the pinned address is tried, with no fallback to another answer, so IPv4 goes first: a host without IPv6
+  // egress cannot connect to an IPv6 answer.
+  const pinned = addresses.find((address) => address?.kind() === "ipv4") ?? addresses[0]!;
+  return { baseUrl, address: pinned.toString() };
 }
 
 export async function pagedValues(bb: BitbucketFetch, path: string): Promise<unknown[]> {

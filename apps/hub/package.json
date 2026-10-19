@@ -39,6 +39,7 @@
     "drizzle-orm": "catalog:",
     "hono": "catalog:",
     "hono-openapi": "^1.2.0",
+    "ipaddr.js": "2.2.0",
     "nodemailer": "^10.1.0"
   },
   "devDependencies": {

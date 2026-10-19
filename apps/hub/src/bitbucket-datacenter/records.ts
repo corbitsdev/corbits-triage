@@ -1,19 +1,19 @@
 import { asRecord } from "@corbits/common";
 import { repoPolicy } from "@corbits/triage-contracts";
 import { repoRecords, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
-import { instanceBaseUrl } from "./client.js";
+import { instanceUrl } from "./client.js";
 import { PROVIDER, TOKEN_CREDENTIAL, HOOK_CREDENTIAL } from "./names.js";
 export { PROVIDER, TOKEN_CREDENTIAL, HOOK_CREDENTIAL };
 
 /** `user` is the slug the token acts as, recorded at connect; a connection recorded before it has none. */
 type BitbucketConnection = { baseUrl: string; user?: string };
 
-/** The stored base URL passes the same check as at connect, so a host it would refuse is never sent the token. */
+/** The stored connection; its host is checked where the token is sent (`resolveInstance`). */
 export function bitbucketConnection(ns: CorbitsTriageNs): BitbucketConnection | undefined {
   const connection = asRecord(ns.bitbucketDatacenter);
   const stored = connection?.["baseUrl"];
   const user = connection?.["user"];
-  const baseUrl = typeof stored === "string" ? instanceBaseUrl(stored) : undefined;
+  const baseUrl = typeof stored === "string" ? instanceUrl(stored) : undefined;
   return baseUrl === undefined ? undefined : { baseUrl, ...(typeof user === "string" && { user }) };
 }
 
