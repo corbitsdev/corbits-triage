@@ -1,0 +1,20 @@
+# HTTPS for DOMAIN in .env: docker compose -f compose.yml -f compose.tls.yml up --build -d
+# Caddy gets a Let's Encrypt certificate on ports 80 and 443; the hub is reachable only through it.
+services:
+  hub:
+    environment:
+      BETTER_AUTH_BASE_URL: https://${DOMAIN:?set DOMAIN in .env}
+      # Port 3000 is closed, so sidecars, Docker containers included, dial the hub through Caddy.
+      HUB_SIDECAR_WEBSOCKET_URL: wss://${DOMAIN}/api/sidecars/ws
+    ports: !reset []
+  caddy:
+    image: caddy:2.10
+    command: caddy reverse-proxy --from ${DOMAIN} --to hub:3000
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes: [caddy-data:/data]
+    # The hub's own sidecars reach Caddy inside Compose instead of through the public address.
+    networks: { default: { aliases: ["${DOMAIN}"] } }
+    depends_on: [hub]
+    restart: unless-stopped
+volumes:
+  caddy-data:
