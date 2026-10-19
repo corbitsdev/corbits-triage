@@ -29,10 +29,6 @@ const BUNDLE = {
 };
 const JOB: TriageJob = { tenantId: TENANT, workflow: WORKFLOW, repo: "acme/widgets", number: 8, headSha: "abc123", source: "event", payload: { prNumber: 8 } };
 
-async function until(done: () => boolean): Promise<void> {
-  while (!done()) await Bun.sleep(5);
-}
-
 async function withDatabase(body: (db: DB["db"]) => Promise<void>): Promise<void> {
   const database = `corbits_spawn_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
@@ -74,10 +70,12 @@ function notReached(): never {
 
 test("PostgreSQL: a job with no listener to copy, then refused for capacity, is deferred both times and its worker is fired once it starts", async () => {
   await withDatabase(async function deferThenFire(db) {
-    const timers: Array<() => Promise<void>> = [];
+    // The clock moves only when a timer fires, so a deferred job always waits for its timer.
+    let clock = 0;
+    let timer = Promise.withResolvers<() => Promise<void>>();
+    const released = Promise.withResolvers<string>();
     const delivered: string[] = [];
     const failed: string[] = [];
-    const released: string[] = [];
     let refusals = 1;
     let notReady = 1;
     const coordinator = createCoordinator({
@@ -94,7 +92,7 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
         },
         lifecycle: {
           async requestCancellation(_tenantId, runId) {
-            released.push(runId);
+            released.resolve(runId);
             return "pending";
           },
           getStatus: async () => null,
@@ -107,27 +105,30 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
       async failed(job, error) {
         failed.push(`${job.number}: ${error}`);
       },
-      setTimer(fire) {
-        timers.push(fire);
+      setTimer(fire, ms) {
+        timer.resolve(async function elapse() {
+          clock += ms;
+          await fire();
+        });
         return () => {};
       },
-      now: () => new Date(),
+      now: () => new Date(clock),
       log: () => {},
     });
 
     coordinator.enqueue(JOB);
-    await until(() => timers.length === 1);
+    const noListener = await timer.promise;
     expect(coordinator.snapshot(TENANT).queued).toHaveLength(1);
 
+    timer = Promise.withResolvers();
     await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed" });
-    await timers.shift()!();
-    await until(() => timers.length === 1);
+    await noListener();
+    const noCapacity = await timer.promise;
     expect(refusals).toBe(0);
 
-    await timers.shift()!();
-    await until(() => released.length === 1);
+    await noCapacity();
+    expect(await released.promise).toBe("run_worker");
     expect(delivered).toEqual([`run_worker@${DOMAIN}`]);
-    expect(released).toEqual(["run_worker"]);
     expect(failed).toEqual([]);
     coordinator.stop();
   });
