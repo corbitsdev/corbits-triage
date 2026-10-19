@@ -202,9 +202,9 @@ export function matchesQuery(item: PrItem, query: string): boolean {
   return `${item.title ?? ""} #${item.number ?? ""} ${item.repo} ${item.author ?? ""} ${item.owner ?? ""}`.toLowerCase().includes(normalized);
 }
 
-export type ListView = "needs-you" | "all-open";
+export type ListView = "needs-you" | "ready" | "all-open";
 
-const LIST_ROOT: Record<ListView, string> = { "needs-you": "/inbox", "all-open": "/open" };
+const LIST_ROOT: Record<ListView, string> = { "needs-you": "/inbox", ready: "/ready", "all-open": "/open" };
 
 export function listRoot(view: ListView): string {
   return LIST_ROOT[view];
@@ -239,9 +239,20 @@ export function waitingOnOthers(open: OpenItem[], enabled: ReadonlySet<string>):
   return allOpen(open, enabled).filter((entry) => !needsYouEntry(entry) || !inNeedsYou(entry.item));
 }
 
+/** A pass on the head GitHub has now, with CI green and no conflicts. */
+function isReadyToMerge(item: PrItem): boolean {
+  return item.verdict === "pass" && item.verdictSha !== null && item.verdictSha === item.headSha && item.draft === false && item.ci === "success" && item.mergeable === true;
+}
+
+/** Oldest pass first. */
+export function readyToMerge(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
+  return allOpen(open, enabled).filter((entry) => isReadyToMerge(entry.item)).sort((a, b) => waitingSince(a.item) - waitingSince(b.item));
+}
+
 export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Record<ListView, number> {
   return {
     "needs-you": needsYou(open, enabled).filter((entry) => inNeedsYou(entry.item)).length,
+    ready: readyToMerge(open, enabled).length,
     "all-open": allOpen(open, enabled).length,
   };
 }

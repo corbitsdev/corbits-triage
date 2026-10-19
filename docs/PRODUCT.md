@@ -27,8 +27,9 @@ How to use the portal, screen by screen, is in the
 
 ## What you see
 
-- **Inbox**: open pull requests across repositories with triage on, in two
-  views, **Needs you** and **All open**. A row is a state mark, the number
+- **Inbox**: open pull requests across repositories with triage on, in three
+  views, **Needs you**, **Ready** (passed on the latest commit, CI passed, no
+  conflicts, oldest first) and **All open**. A row is a state mark, the number
   (with the repository's name, or the author when grouped by repository), the
   title, its age and a short status. Each opens a reading pane: the status
   line, the problems (failed rules, unsure answers, rules that could not run),

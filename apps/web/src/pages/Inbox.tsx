@@ -52,6 +52,7 @@ import {
   listRoot,
   matchesQuery,
   needsYou,
+  readyToMerge,
   regroupInbox,
   waitingOnOthers,
   type InboxAction,
@@ -79,7 +80,7 @@ import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
 
-const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", "all-open": "All open" };
+const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", ready: "Ready", "all-open": "All open" };
 
 const WAITING = "Waiting";
 
@@ -109,9 +110,16 @@ function viewEntries(view: ListView, open: OpenItem[], enabled: ReadonlySet<stri
   switch (view) {
     case "needs-you":
       return needsYou(open, enabled);
+    case "ready":
+      return readyToMerge(open, enabled);
     case "all-open":
       return allOpen(open, enabled);
   }
+}
+
+function groupingsOf(view: ListView, listsRest: boolean): Array<InboxGrouping | OpenGrouping> {
+  if (view === "ready") return [];
+  return listsRest ? OPEN_GROUPINGS : INBOX_GROUPINGS;
 }
 
 function repoName(repo: string): string {
@@ -481,6 +489,7 @@ function EmptyList({ view, waiting, loading, denied, noRepos, filtered, onClear 
     return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><Button type="button" variant="outline" size="sm" onClick={onClear}>Clear filters</Button></div>;
   }
   if (view === "all-open") return <NoneOpen title="No open pull requests" />;
+  if (view === "ready") return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing ready</h2><p>No pull requests can be merged now.</p></div>;
   if (waiting) return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing waiting</h2><p>No pull requests are waiting on others.</p></div>;
   return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
 }
@@ -572,6 +581,7 @@ export default function Inbox({ view }: { view: ListView }) {
   const shown = useMemo(() => searched.filter((entry) => matchesFilters(entry.item, filters, now)), [searched, filters, now]);
   const needsYou = useMemo(() => groupInbox(shown.map((entry) => entry.item), ready), [shown, ready]);
   const piles = useMemo(function pilesOfView() {
+    if (view === "ready") return [{ key: "ready", label: "Oldest first", items: shown }];
     if (listsOpen(view)) return groupOpen(shown, openGrouping, needsSetup);
     if (waiting) return groupOpen(shown, waitingGrouping, needsSetup);
     return needsYouPiles(regroupInbox(needsYou, needsYouGrouping));
@@ -582,9 +592,9 @@ export default function Inbox({ view }: { view: ListView }) {
   // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
   const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
   const paneMark = listsRest ? selectedMark : null;
-  const groupings: Array<InboxGrouping | OpenGrouping> = listsRest ? OPEN_GROUPINGS : INBOX_GROUPINGS;
+  const groupings = groupingsOf(view, listsRest);
   const grouping = currentGrouping();
-  const byRepo = grouping === "repo";
+  const byRepo = view !== "ready" && grouping === "repo";
   const listTitle = waiting ? WAITING : LIST_TITLE[view];
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
 
@@ -610,6 +620,7 @@ export default function Inbox({ view }: { view: ListView }) {
   }
 
   function groupBy(index: number) {
+    if (groupings.length === 0) return;
     if (listsRest) {
       const mode = OPEN_GROUPINGS[index];
       if (mode === undefined) return;
@@ -706,11 +717,13 @@ export default function Inbox({ view }: { view: ListView }) {
             </label>
             <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
             {view === "needs-you" ? <WaitingToggle on={waiting} count={waitingEntries.length} onToggle={toggleWaiting} /> : null}
-            <div className="seg" role="group" aria-label="Group by">
-              {groupings.map((mode, index) => (
-                <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
-              ))}
-            </div>
+            {groupings.length === 0 ? null : (
+              <div className="seg" role="group" aria-label="Group by">
+                {groupings.map((mode, index) => (
+                  <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
+                ))}
+              </div>
+            )}
           </div>
           <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} />
         </div>

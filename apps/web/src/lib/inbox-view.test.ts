@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, postedLabel, primaryAction, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, postedLabel, primaryAction, readyToMerge, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -211,9 +211,9 @@ describe("All open", () => {
   });
 
   test("Needs you and All open count only repositories with triage enabled", () => {
-    expect(listCounts(open, READY)).toEqual({ "needs-you": 1, "all-open": 3 });
-    expect(listCounts(open, new Set())).toEqual({ "needs-you": 0, "all-open": 0 });
-    expect(listCounts([], READY)).toEqual({ "needs-you": 0, "all-open": 0 });
+    expect(listCounts(open, READY)).toEqual({ "needs-you": 1, ready: 0, "all-open": 3 });
+    expect(listCounts(open, new Set())).toEqual({ "needs-you": 0, ready: 0, "all-open": 0 });
+    expect(listCounts([], READY)).toEqual({ "needs-you": 0, ready: 0, "all-open": 0 });
   });
 
   test("Waiting lists every open pull request outside Needs you, each with what it waits on", () => {
@@ -243,5 +243,27 @@ describe("All open", () => {
   test("Needs you keeps a pending approval of a repository with triage off", () => {
     const held = { item: item({ key: "acme/off#5", repo: "acme/off", pendingApprovalId: "a1" }), handled: null };
     expect(needsYou([...open, held], READY).map((entry) => entry.item.key)).toEqual(["acme/widgets#1", "acme/widgets#2", "acme/off#5"]);
+  });
+});
+
+describe("Ready", () => {
+  function passed(number: number, overrides: Partial<PrItem>): OpenItem {
+    const base = { key: `acme/widgets#${number}`, number, state: "ready" as const, verdict: "pass" as const, verdictSha: "head", headSha: "head", ci: "success" as const, mergeable: true };
+    return { item: item({ ...base, ...overrides }), handled: null };
+  }
+
+  test("lists passes on the current head with CI green and no conflicts, oldest first", () => {
+    const open = [
+      passed(1, { waitingSince: "2026-10-03T00:00:00.000Z" }),
+      passed(2, { waitingSince: "2026-10-02T00:00:00.000Z" }),
+      passed(3, { headSha: "newer" }),
+      passed(4, { draft: true }),
+      passed(5, { ci: "pending" }),
+      passed(6, { mergeable: false }),
+      passed(7, { verdict: "unsure", state: "awaiting-review" }),
+      passed(8, { key: "acme/off#8", repo: "acme/off" }),
+    ];
+    expect(readyToMerge(open, READY).map((entry) => entry.item.number)).toEqual([2, 1]);
+    expect(listCounts(open, READY).ready).toBe(2);
   });
 });

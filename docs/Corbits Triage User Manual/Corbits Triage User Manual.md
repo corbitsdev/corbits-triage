@@ -321,10 +321,10 @@ The dark strip on the left is the same on every page:
 
 - **Workspace name** at the top. If you belong to more than one workspace, click it to switch.
 - **Pulse**: a summary of what changed since your last visit.
-- **Inbox**, with two views. **Needs you** shows only pull requests waiting on a person, in repositories with triage on. A pull request with an approval waiting stays there even after triage is turned off. **All open** shows every open pull request in every repository with triage on, and any with an approval waiting.
+- **Inbox**, with three views. **Needs you** shows only pull requests waiting on a person, in repositories with triage on. A pull request with an approval waiting stays there even after triage is turned off. **Ready** shows the pull requests you can merge now. **All open** shows every open pull request in every repository with triage on, and any with an approval waiting.
 - **Your name** at the bottom. Click it for Repositories, Settings and Sign out.
 
-Each view has a search box, a **Filter** button and quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
+Each view has a search box and a **Filter** button. **Needs you** and **All open** add quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
 
 ### Needs you
 
@@ -335,6 +335,12 @@ Pull requests are grouped by what you need to do: **Unblock** for ones that are 
 Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval waiting always stays. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back.
 
 ![The Waiting view grouped by Waits on: two drafts under Waits on author, one of them checked by Triage before it became a draft, and a pull request under Waits on CI. The pane shows the draft, Draft · waiting on @ivan-p](images/37.png)
+
+### Ready
+
+The **Ready** view lists open pull requests you can merge now, oldest first, with the same rows and pane: Triage passed the latest commit, CI passed and there are no conflicts. Drafts stay out. **Merge** is the pane's next step. A new commit takes a pull request out until Triage passes it again.
+
+![The Ready view: pull requests that passed on their latest commit, oldest first, with Merge in the pane's bottom bar](images/45.png)
 
 ### All open
 

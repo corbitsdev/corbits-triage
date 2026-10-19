@@ -162,6 +162,8 @@ function Gate() {
         <Route path="/pulse" element={<Pulse />} />
         <Route path="/inbox" element={<Inbox view="needs-you" />} />
         <Route path="/inbox/:owner/:repo/:number" element={<Inbox view="needs-you" />} />
+        <Route path="/ready" element={<Inbox view="ready" />} />
+        <Route path="/ready/:owner/:repo/:number" element={<Inbox view="ready" />} />
         <Route path="/open" element={<Inbox view="all-open" />} />
         <Route path="/open/:owner/:repo/:number" element={<Inbox view="all-open" />} />
         <Route path="/triage/pr/:owner/:repo/:number" element={<PRDetail />} />
