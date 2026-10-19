@@ -14,6 +14,10 @@ afterAll(async function cleanup() {
   await rm(scratch, { recursive: true, force: true });
 });
 
+async function importsOf(file: string): Promise<string[]> {
+  return new Bun.Transpiler({ loader: "js" }).scanImports(await readFile(file, "utf8")).map((entry) => entry.path);
+}
+
 test("packs each workflow deterministically, importing the host tools instead of inlining them", async () => {
   const first = await packWorkflows(path.join(scratch, "a"));
   const second = await packWorkflows(path.join(scratch, "b"));
@@ -34,8 +38,12 @@ test("packs each workflow deterministically, importing the host tools instead of
     expect(manifest.dependencies).toEqual(Object.fromEntries(tools.map((tool) => [tool.name, tool.version])));
     // The sidecar deploys only a package's own workflow entry.
     expect(manifest.interchange.workflow).toBe(workflow.entry);
-    const bundle = await readFile(path.join(extracted, "package", workflow.entry), "utf8");
-    const imports = new Bun.Transpiler({ loader: "js" }).scanImports(bundle).map((entry) => entry.path);
+    const imports = await importsOf(path.join(extracted, "package", workflow.entry));
     for (const tool of tools) expect(imports).toContain(tool.name);
+    // Directors and actions import the workflow's chunks instead of carrying their own copy of its dependencies.
+    for (const entry of [manifest.interchange.directors, manifest.interchange.actions]) {
+      const chunks = (await importsOf(path.join(extracted, "package", entry))).map((specifier) => path.posix.join(path.posix.dirname(entry), specifier));
+      expect(imports.some((specifier) => specifier.startsWith("./chunk-") && chunks.includes(path.posix.normalize(specifier)))).toBe(true);
+    }
   }
 });
