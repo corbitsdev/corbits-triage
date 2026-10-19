@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CheckResult, GithubPullDetail, PrItem, SuggestedAction } from "./hub-api.ts";
 import { paneFacts } from "./inbox-pane.ts";
-import { approvedByTriage, paneBar, paneProblems, paneStatus, passedChecks, type StatusInput } from "./pane-report.ts";
+import { approvedByTriage, paneBar, paneProblems, paneStatus, passedChecks, rowStatus, type StatusInput } from "./pane-report.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
@@ -139,6 +139,22 @@ describe("paneStatus", () => {
     expect(statusOf({ state: "needs-author-update", posted: true, checks: [FAIL, check({ check: "ci-green", result: "fail" })] })).toEqual({ tone: "author", text: "Waiting on @ada to fix 2 things", live: false });
     expect(statusOf({ checks: [FAIL] }, { handled: { kind: "changes" } })).toMatchObject({ tone: "author", text: "Waiting on @ada to fix 1 thing" });
     expect(statusOf({ checks: [FAIL] }, { handled: { kind: "approve" } })).toMatchObject({ tone: "you", text: "You approved · 1 rule failing" });
+  });
+});
+
+test("a pull request turned into a draft after its verdict waits on its author, with no review offered first", () => {
+  const drafted = item({ state: "awaiting-review", draft: true });
+  expect(statusOf({ state: "awaiting-review", draft: true })).toMatchObject({ tone: "author", text: "Draft · waiting on @ada" });
+  expect(barOf(drafted).primary).toBeNull();
+});
+
+describe("rowStatus", () => {
+  test("CI and drafts first, then what you did, then failures to fix, else the verdict", () => {
+    expect(rowStatus(item({ waitingForCi: true, draft: true }), null)).toBe("Waiting for CI");
+    expect(rowStatus(item({ draft: true, checks: [FAIL] }), null)).toBe("Draft");
+    expect(rowStatus(item({ checks: [FAIL] }), { kind: "approve" })).toBe("Approved");
+    expect(rowStatus(item({ state: "blocked", checks: [FAIL, UNSURE] }), null)).toBe("1 to fix");
+    expect(rowStatus(item({ state: "ready" }), null)).toBe("Ready");
   });
 });
 

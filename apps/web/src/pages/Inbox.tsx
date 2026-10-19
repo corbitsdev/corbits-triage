@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { Badge, Button, EmptyState, type BadgeTone } from "@corbits/react-ui";
+import { Button, EmptyState } from "@corbits/react-ui";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { AuthorKind } from "@corbits/triage-contracts";
 import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
@@ -10,10 +10,9 @@ import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
 import type { PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
-import { VerdictChip } from "../components/VerdictChip.tsx";
 import { CodeReviewThreads } from "../components/CodeReviewThreads.tsx";
 import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
-import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, type PaneBar } from "../lib/pane-report.ts";
+import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, rowStatus, type PaneBar } from "../lib/pane-report.ts";
 import {
   COMPOSER_COPY,
   canRun,
@@ -40,29 +39,21 @@ import {
   AUTHOR_KIND_LABEL,
   INBOX_GROUPINGS,
   OPEN_GROUPINGS,
-  WAITS_ON_LABEL,
   ageText,
   allOpen,
   awaitingText,
   groupInbox,
   groupOpen,
   inboxAction,
-  inboxStatus,
   inNeedsYou,
   initialsOf,
   isLoudAuthorKind,
-  isPostedToAuthor,
   listHref,
   listRoot,
   matchesQuery,
   needsYou,
-  postedLabel,
-  primaryAction,
   regroupInbox,
-  rowActionLabel,
-  rowWhy,
   waitingOnOthers,
-  waitsOnIn,
   type InboxAction,
   type InboxGrouping,
   type HandledMark,
@@ -71,7 +62,6 @@ import {
   type OpenGrouping,
   type OpenItem,
   type OpenPile,
-  type WaitsOn,
 } from "../lib/inbox-view.ts";
 import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesFilters, type InboxFilters } from "../lib/inbox-filter.ts";
 import { leavesOpen, useOpenItems, useOpenPulls, useOpenPullsUnanswered, useQueueLoading } from "../lib/open-pulls.ts";
@@ -87,13 +77,9 @@ import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { CheckIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
-const POSTED = "Posted";
-
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
 
 const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", "all-open": "All open" };
-
-const WAITS_ON_TONE: Record<WaitsOn, BadgeTone> = { maintainer: "accent", author: "info", ci: "neutral", triage: "neutral", setup: "warning", nobody: "neutral" };
 
 const WAITING = "Waiting";
 
@@ -115,17 +101,6 @@ function AuthorTag({ kind }: { kind: AuthorKind | null }) {
   return <span className={isLoudAuthorKind(kind) ? "tag" : "tag quiet"} title={`Author: ${label}`}><span className="sr-only">Author: </span>{label}</span>;
 }
 
-function RowAuthor({ author, kind }: { author: string | null; kind: AuthorKind | null }) {
-  const role = kind === null ? "" : ` (${AUTHOR_KIND_LABEL[kind]})`;
-  const login = kind === "BOT" ? author?.replace(/\[bot\]$/, "") : author;
-  return (
-    <>
-      {login == null ? null : <span className="tag quiet login" title={`Author: ${author}${role}`}><span className="sr-only">Author: </span>{login}</span>}
-      {kind !== null && isLoudAuthorKind(kind) ? <AuthorTag kind={kind} /> : null}
-    </>
-  );
-}
-
 function listsOpen(view: ListView): boolean {
   return view !== "needs-you";
 }
@@ -139,53 +114,34 @@ function viewEntries(view: ListView, open: OpenItem[], enabled: ReadonlySet<stri
   }
 }
 
-type RowProps = { item: PrItem; selected: boolean; search: string };
-
-function Row({ item, selected, search }: RowProps) {
-  const action = inboxAction(item);
-  const primary = primaryAction(item, action);
-  const why = rowWhy(item);
-  return (
-    <Link className="row" role="option" aria-selected={selected} to={{ pathname: listHref("needs-you", item), search }} data-inbox-row={item.key}>
-      <span className={dotClass(item, action)} />
-      <span className="tw"><RowAuthor author={item.author} kind={item.authorKind} /><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
-      <span className="age">{ageText(item.waitingSince)}</span>
-      {primary === null ? null : <span className="act">{rowActionLabel(primary)}</span>}
-      {isPostedToAuthor(item) ? <span className="act done">{POSTED}</span> : null}
-    </Link>
-  );
+function repoName(repo: string): string {
+  return repo.slice(repo.lastIndexOf("/") + 1);
 }
 
-type OpenRowProps = Omit<RowProps, "item"> & { view: ListView; entry: OpenItem; needsSetup: ReadonlySet<string> };
+type RowProps = { view: ListView; entry: OpenItem; byRepo: boolean; selected: boolean; search: string };
 
-function OpenRow({ view, entry, needsSetup, selected, search }: OpenRowProps) {
+/** Grouped by repository the pile names it, so the row names the author instead. */
+function Row({ view, entry, byRepo, selected, search }: RowProps) {
   const { item, handled } = entry;
-  const waits = waitsOnIn(entry, needsSetup);
-  const posted = postedLabel(item, handled);
   return (
-    <Link className="row open-row" role="option" aria-selected={selected} to={{ pathname: listHref(view, item), search }} data-inbox-row={item.key}>
+    <Link className="row" aria-current={selected} to={{ pathname: listHref(view, item), search }} data-inbox-row={item.key}>
       <span className={dotClass(item, inboxAction(item))} />
-      <span className="tw"><RowAuthor author={item.author} kind={item.authorKind} /><b>{titleText(item.title)}</b><span className="why">{rowWhy(item) ?? inboxStatus(item)}</span></span>
+      <span className="num">{byRepo ? null : repoName(item.repo)}{item.number === null ? null : `#${item.number}`}</span>
+      <b className="tw">{titleText(item.title)}</b>
+      {byRepo ? <span className="who" title={item.author ?? undefined}>{item.author}</span> : null}
       <span className="age">{ageText(item.waitingSince)}</span>
-      <VerdictChip item={item} className="merge-chip" />
-      <Badge tone={WAITS_ON_TONE[waits]}>{WAITS_ON_LABEL[waits]}</Badge>
-      {posted === null ? null : <span className="act done">{posted}</span>}
+      <span className="st">{rowStatus(item, handled)}</span>
     </Link>
   );
 }
 
-function PileRow({ view, rest, entry, needsSetup, selected, search }: OpenRowProps & { rest: boolean }) {
-  if (rest) return <OpenRow view={view} entry={entry} needsSetup={needsSetup} selected={selected} search={search} />;
-  return <Row item={entry.item} selected={selected} search={search} />;
-}
+type PileProps = { view: ListView; byRepo: boolean; pile: OpenPile; selectedKey: string | undefined; search: string };
 
-type PileProps = { view: ListView; rest: boolean; needsSetup: ReadonlySet<string>; pile: OpenPile; selectedKey: string | undefined; search: string };
-
-function Pile({ view, rest, needsSetup, pile, selectedKey, search }: PileProps) {
+function Pile({ view, byRepo, pile, selectedKey, search }: PileProps) {
   return (
     <>
       <div className="gh">{pile.label}<span className="n">{pile.items.length}</span></div>
-      {pile.items.map((entry) => <PileRow key={entry.item.key} view={view} rest={rest} needsSetup={needsSetup} entry={entry} selected={entry.item.key === selectedKey} search={search} />)}
+      {pile.items.map((entry) => <Row key={entry.item.key} view={view} byRepo={byRepo} entry={entry} selected={entry.item.key === selectedKey} search={search} />)}
     </>
   );
 }
@@ -628,6 +584,7 @@ export default function Inbox({ view }: { view: ListView }) {
   const paneMark = listsRest ? selectedMark : null;
   const groupings: Array<InboxGrouping | OpenGrouping> = listsRest ? OPEN_GROUPINGS : INBOX_GROUPINGS;
   const grouping = currentGrouping();
+  const byRepo = grouping === "repo";
   const listTitle = waiting ? WAITING : LIST_TITLE[view];
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
 
@@ -764,8 +721,8 @@ export default function Inbox({ view }: { view: ListView }) {
           {flat.length === 0 ? (
             <EmptyList view={view} waiting={waiting} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
           ) : (
-            <div className="groups">
-              {piles.map((pile) => <Pile key={pile.key} view={view} rest={listsRest} needsSetup={needsSetup} pile={pile} selectedKey={selected?.key} search={search} />)}
+            <div className={byRepo ? "groups by-repo" : "groups"}>
+              {piles.map((pile) => <Pile key={pile.key} view={view} byRepo={byRepo} pile={pile} selectedKey={selected?.key} search={search} />)}
             </div>
           )}
         </div>

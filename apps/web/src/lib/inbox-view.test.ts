@@ -60,7 +60,7 @@ describe("groupInbox", () => {
     ], READY);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([
       ["decide", ["f", "g"]],
-      ["unblock", ["c", "b"]],
+      ["unblock", ["c"]],
       ["merge", ["a"]],
       ["failed", ["h"]],
     ]);
@@ -82,6 +82,13 @@ describe("groupInbox", () => {
     const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true })], READY);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => [row.key, inboxStatus(row)])])).toEqual([["decide", [["rerun", "Running"]]]]);
     expect(view.awaiting).toBe(1);
+  });
+
+  test("a pull request turned into a draft after its verdict leaves Needs you and waits on its author", () => {
+    const drafted = item({ state: "awaiting-review", draft: true });
+    expect(groupInbox([drafted], READY).groups).toEqual([]);
+    expect(waitingOnOthers([{ item: drafted, handled: null }], READY).map((entry) => entry.item.key)).toEqual([drafted.key]);
+    expect(waitsOn(drafted, null)).toBe("author");
   });
 
   test("a repository that cannot be triaged keeps its verdicts as rows but counts nothing as awaiting", () => {

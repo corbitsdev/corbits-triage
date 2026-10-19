@@ -1588,8 +1588,8 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
       const key = `${repo}#${pr.number}`;
       const known = items.get(key);
       if (known) {
-        // A verdict recorded before the hub kept its facts takes the pull request's from GitHub.
-        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: known.draft ?? pr.draft, authorKind: pr.authorKind ?? null, updatedAt: pr.updatedAt, headSha: pr.sha, source: repoSourceOf(source), url: pr.url ?? null });
+        // A verdict recorded before the hub kept its facts takes the pull request's from GitHub; a draft is GitHub's now, not the verdict's.
+        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: pr.draft, authorKind: pr.authorKind ?? null, updatedAt: pr.updatedAt, headSha: pr.sha, source: repoSourceOf(source), url: pr.url ?? null });
         continue;
       }
       const pull = triage.get(key);
