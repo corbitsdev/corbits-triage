@@ -355,7 +355,10 @@ export async function tenantConfigOf(d: Pick<BridgeDeps, "db">, tenantId: string
   return (await d.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } }))?.config;
 }
 
-/** A moved default branch can change every other open pull request's conflicts, so they are triaged again; the merged one is not. */
+/**
+ * A moved default branch can change every other open pull request's conflicts, so they are triaged again; the merged one is
+ * not. The merge may also have changed the policy file, and an App registered before it subscribed to `push` hears only this.
+ */
 async function handleBaseMove(
   d: BridgeDeps,
   log: (entry: Record<string, unknown>) => void,
@@ -364,6 +367,13 @@ async function handleBaseMove(
   event: string,
   { repo, merged }: BaseMove,
 ): Promise<Response> {
+  try {
+    await d.refreshPolicyFile(loaded.tenantId, repo);
+  } catch (err) {
+    d.cache.forget(`${loaded.credentialId}:${delivery}`);
+    log({ level: "error", msg: "policy_file_read_failed", delivery, event, repo, error: errorText(err) });
+    return json(500, { error: "policy_file_read_failed" });
+  }
   let tenantConfig: unknown;
   try {
     tenantConfig = await tenantConfigOf(d, loaded.tenantId);
