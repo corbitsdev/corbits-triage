@@ -3,5 +3,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src", "proof", "template.ts"]
+  "include": ["src", "template.ts"]
 }

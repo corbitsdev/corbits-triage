@@ -21,7 +21,7 @@ bun packages/provisioner-e2b/template.ts
 bun --conditions=intx-src test packages/provisioner-e2b
 ```
 
-Live check: see `e2e/README.md`.
+Live check: see [e2e/README.md](../../e2e/README.md).
 
 ## Docs
 

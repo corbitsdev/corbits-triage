@@ -92,7 +92,7 @@ Without the variables the place says **Not set up**. The hub does not start when
 The [conformance suite](writing-your-own.md) runs against real sandboxes by hand only, since it creates and destroys about ten of them. With a workspace token saved in a file readable only by you, a sandbox environment, and a commit of this repository pushed to GitHub:
 
 ```sh
-bun packages/provisioner-railway/proof/live.ts --token-file ~/railway-token --environment <environment id> --commit <commit>
+bun e2e/provisioners/railway.ts --token-file ~/railway-token --environment <environment id> --commit <commit>
 ```
 
 The token goes to the suite on standard input, never in a command's arguments or environment. The suite destroys every sandbox it created, and only those.

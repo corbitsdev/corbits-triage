@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { describeProvisionerConformance } from "@corbits/provisioner-conformance";
+import { describeProvisionerConformance } from "@corbits/provisioner-test";
 import { createRailwaySidecarProvisioner, RailwayCreateRefused, sweepRailwaySidecars, type RailwaySandboxes, type SandboxSummary } from "./index.js";
 
 type FakeSandbox = {

@@ -43,7 +43,7 @@
     "nodemailer": "^10.1.0"
   },
   "devDependencies": {
-    "@corbits/provisioner-conformance": "workspace:*",
+    "@corbits/provisioner-test": "workspace:*",
     "@intx/harness": "workspace:*",
     "@intx/mime": "workspace:*",
     "@types/nodemailer": "^8.0.2"

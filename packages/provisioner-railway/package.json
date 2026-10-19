@@ -16,8 +16,7 @@
     "railway": "3.16.0"
   },
   "devDependencies": {
-    "@corbits/provisioner-conformance": "workspace:*",
-    "arktype": "catalog:"
+    "@corbits/provisioner-test": "workspace:*"
   },
   "main": "./src/index.ts",
   "description": "An Interchange sidecar provisioner that runs each sidecar in a Railway sandbox of its own"

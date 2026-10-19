@@ -1,4 +1,4 @@
-import { describeProvisionerConformance } from "@corbits/provisioner-conformance";
+import { describeProvisionerConformance } from "@corbits/provisioner-test";
 import { createMemoryBackend, createTemplateSidecarProvisioner } from "./index.js";
 
 describeProvisionerConformance("template", async () => {

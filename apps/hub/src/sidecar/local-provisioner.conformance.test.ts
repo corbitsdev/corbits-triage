@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describeProvisionerConformance } from "@corbits/provisioner-conformance";
+import { describeProvisionerConformance } from "@corbits/provisioner-test";
 import { createLocalProcessSidecarProvisioner } from "./local-provisioner.js";
 import type { LocalSidecarManifest } from "./manifest-store.js";
 

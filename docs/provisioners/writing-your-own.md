@@ -14,10 +14,10 @@ Copy `packages/provisioner-template`. `src/index.ts` is a complete provisioner; 
 
 ## Prove it with the conformance suite
 
-`@corbits/provisioner-conformance` checks the contract above against a real backend. Call it from a test file with a fresh provisioner per test and a way to read what the backend holds:
+`@corbits/provisioner-test` checks the contract above against a real backend. Call it from a test file with a fresh provisioner per test and a way to read what the backend holds:
 
 ```ts
-import { describeProvisionerConformance } from "@corbits/provisioner-conformance";
+import { describeProvisionerConformance } from "@corbits/provisioner-test";
 
 describeProvisionerConformance("my-backend", async () => ({
   provisioner: createMyProvisioner(config),

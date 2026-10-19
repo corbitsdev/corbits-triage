@@ -9,6 +9,7 @@ Repository-wide rules. `apps/*` and some `packages/*` have their own AGENTS.md w
 - `bun run check`: typecheck everything and bundle the hub
 - `bun run test`: all tests (hub tests need Postgres)
 - `bun run lint`: oxlint
+- `e2e/`: live checks against real services, run by hand, never in CI (e2e/README.md)
 - `sh tooling/vendor-diff-check.sh`: vendor drift gate
 
 ## Boundaries
@@ -53,6 +54,7 @@ Check these for a stock route or primitive before touching the hub, sidecars or 
 ## Tests
 
 - Only load-bearing tests, end to end where possible.
+- Tests beside the code are fast and offline; anything that runs real services lives in `e2e/`.
 - Never read `process.env` in tests.
 - A change to how a workflow judges or reviews states its package's eval result before and after.
 
