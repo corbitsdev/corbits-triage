@@ -3,7 +3,7 @@
 // the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CustomId, Evidence, ISSUE_TRACKERS, Label, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, withAuthorKinds, type CatalogId } from "./check-pack.js";
+import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, Evidence, ISSUE_TRACKERS, Label, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, withAuthorKinds, type CatalogId } from "./check-pack.js";
 
 const Lines = Text.array().atLeastLength(1).atMostLength(50);
 const Limit = type("number.integer").atLeast(1);
@@ -17,6 +17,7 @@ const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green"] as c
 const RuleSchema = type({ ...RULE_BASE, check: "'max-files-changed' | 'max-lines-changed'", max: Limit })
   .or({ ...RULE_BASE, check: "'linked-issue'", "tracker?": type.enumerated(...ISSUE_TRACKERS.filter((tracker) => tracker !== "off")) })
   .or({ ...RULE_BASE, check: "'no-forbidden-paths'", paths: Lines })
+  .or({ ...RULE_BASE, check: "'conventional-commits'", "types?": type(CONVENTIONAL_TYPE).describe("a single word").array().atLeastLength(1).atMostLength(50), "fields?": type.enumerated(...CONVENTIONAL_FIELDS).array().atLeastLength(1) })
   .or({ ...RULE_BASE, check: type.enumerated(...SIMPLE_CHECKS) })
   .or({ ...OWN_RULE, check: "'model'" })
   .or({ ...OWN_RULE, check: "'text'", fields: type.enumerated(...TEXT_FIELDS).array().atLeastLength(1), failWhen: type.enumerated(...TEXT_MATCHES), phrases: Lines });
@@ -66,6 +67,8 @@ function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>): Record<str
       return rule.tracker === undefined ? row : { ...row, tracker: rule.tracker };
     case "no-forbidden-paths":
       return { ...row, forbiddenGlobs: rule.paths };
+    case "conventional-commits":
+      return { ...row, ...(rule.types && { types: rule.types }), ...(rule.fields && { fields: rule.fields }) };
     default:
       return row;
   }

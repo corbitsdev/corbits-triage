@@ -31,6 +31,7 @@ const FACTS: Record<string, (value: number | boolean | string) => string> = {
   hasConflicts: (value) => (value ? "has conflicts" : "no conflicts"),
   touchesForbiddenPaths: (value) => (value ? "touches forbidden paths" : "no forbidden paths"),
   linkedIssue: (value) => (value ? "issue linked" : "no issue linked"),
+  conventional: (value) => (value ? "conventional commits" : "not conventional commits"),
   files: (value) => counted(value, "file"),
   lines: (value) => counted(value, "line"),
   approvals: (value) => counted(value, "approval"),

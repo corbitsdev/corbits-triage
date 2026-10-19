@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, readPolicyFile, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
 import { deriveState, REVIEW_ANSWERED_REASON, type PrFacts } from "./checks.ts";
 import { NO_FACTS } from "./item.ts";
 
@@ -207,5 +207,31 @@ describe("text rules", () => {
     const result = deriveState(open, undefined, recommendedPack("acme/widgets"));
     expect(result.checks.find((check) => check.check === "no-attribution-trailers")?.result).toBe("fail");
     expect(result.needsJudgment).toBe(false);
+  });
+});
+
+describe("conventional commits", () => {
+  const open: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success" };
+  const RULE = "rules:\n  - check: conventional-commits\n    text: Conventional.\n    reason: History.\n    evidence: [maintainer-stated]\n";
+
+  function conventional(title: string, commitMessages: string[], settings = "") {
+    const pack = readCheckPack(readPolicyFile(`${RULE}${settings}`, "acme/widgets"));
+    return deriveState({ ...open, title, commitMessages }, undefined, pack).checks.find((check) => check.check === "conventional-commits");
+  }
+
+  test("a type in any case, a scope and a breaking mark pass, and merges and reverts are skipped", () => {
+    expect(conventional("feat(api)!: drop v1", ["Fix: login\n\nBody", "Merge pull request #4 from acme/fix", "Merge pull request #12 in PROJ/widgets from fix to main", "Merge branch 'main' into fix", 'Revert "feat: login"', "chore(deps): bump"])).toMatchObject({ result: "pass", reason: "follows conventional commits" });
+  });
+
+  test("an unknown type, a missing colon or space, and a type the policy leaves out each fail, named", () => {
+    expect(conventional("feature: login", ["fix login", "fix:login", "fix(): login"])).toMatchObject({
+      result: "fail",
+      reason: "`feature: login` isn't a conventional commit; `fix login` isn't a conventional commit; `fix:login` isn't a conventional commit; and 1 more",
+    });
+    expect(conventional("feat: login", [], "    types: [fix]\n")).toMatchObject({ result: "fail", reason: "`feat: login` isn't a conventional commit" });
+  });
+
+  test("title-only reads no commits", () => {
+    expect(conventional("fix: login", ["Add tests"], "    fields: [title]\n")).toMatchObject({ result: "pass" });
   });
 });

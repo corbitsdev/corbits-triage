@@ -63,7 +63,9 @@ The same pull request and policy give the same result. A rule is unconfirmed
 only while the host has not computed what it needs, such as mergeability or CI.
 
 Built in: Max files changed, Max lines changed, Linked issue (GitHub, Linear or
-either), No merge conflicts, CI green, No forbidden paths. Two always run:
+either), No merge conflicts, CI green, No forbidden paths, Conventional commits
+(the title and each of the first 100 commits' first line start
+`type(scope)!: `, in any case; merges and reverts skipped). Two always run:
 Not a draft, and No changes requested (a requested change fails and waits on
 the author, then on the reviewer once the author pushes or replies). The
 recommended forbidden paths are `vendor/**`, `node_modules/**` and
@@ -242,8 +244,9 @@ rule's id, `model` for a yes/no question about the whole pull request, or
 `text` for a phrase match) and why it exists: a one-line `reason` and its
 `evidence` (`#44`, `owner/name#44`, links or `maintainer-stated`). All four
 are required. A model or text rule names its own `id`. A built-in rule takes
-its setting as `max` (size limits), `tracker` (linked issue) or `paths`
-(forbidden paths); `enabled: false` keeps it written down but off.
+its setting as `max` (size limits), `tracker` (linked issue), `paths`
+(forbidden paths) or `types` and `fields` (conventional commits);
+`enabled: false` keeps it written down but off.
 
 ```yaml
 rules:

@@ -1,11 +1,19 @@
 // Plain-text words for a policy's rules and Dos; only the browser extension uses them today.
-import { RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type ModelShape, type TextCheck, type TextField, type TextMatch } from "./check-pack.js";
+import { CONVENTIONAL_FIELDS, RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type ModelShape, type TextCheck, type TextField, type TextMatch } from "./check-pack.js";
 import type { ResolvedTarget } from "./do.js";
 
 export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
 
 function count(value: number | undefined): string {
   return value?.toLocaleString() ?? "any number of";
+}
+
+const CONVENTIONAL_SUBJECTS = { title: "a conventional commit title", commits: "conventional commit messages", both: "a conventional commit title and messages" } as const;
+
+function conventionalSentence(row: CatalogCheck | undefined): string {
+  const fields = row?.fields ?? CONVENTIONAL_FIELDS;
+  const subject = CONVENTIONAL_SUBJECTS[fields.length === 1 ? fields[0]! : "both"];
+  return `Require ${subject}${row?.types ? ` of type ${row.types.join(", ")}` : ""}`;
 }
 
 const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => string> = {
@@ -15,6 +23,7 @@ const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => st
   "no-merge-conflicts": () => "Flag merge conflicts with the base branch",
   "ci-green": () => "CI must pass before merge",
   "no-forbidden-paths": (row) => `Never accept changes to ${(row?.forbiddenGlobs ?? []).join(", ") || "forbidden paths"}`,
+  "conventional-commits": conventionalSentence,
   focused: () => "Check the change is focused on one thing",
   docs: () => "Check docs are updated when behavior changes",
 };

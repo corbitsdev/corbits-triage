@@ -20,6 +20,7 @@ export const CATALOG_IDS = [
   "no-merge-conflicts",
   "ci-green",
   "no-forbidden-paths",
+  "conventional-commits",
 ] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
@@ -38,6 +39,7 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   "no-merge-conflicts": { name: "No merge conflicts", group: "around", kind: "machine" },
   "ci-green": { name: "CI green", group: "code-vs-ci", kind: "machine" },
   "no-forbidden-paths": { name: "No forbidden paths", group: "code-vs-ci", kind: "machine" },
+  "conventional-commits": { name: "Conventional commits", group: "pull-request", kind: "machine" },
 };
 
 export const NOT_A_DRAFT = "not-a-draft";
@@ -96,6 +98,11 @@ export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
 // An author who edits `.github/**` can change which checks run and turn CI green.
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**", ".github/**"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
+export const CONVENTIONAL_TYPES = ["feat", "fix", "refactor", "perf", "docs", "test", "chore", "ci", "build", "style", "revert"] as const;
+export const CONVENTIONAL_FIELDS = ["title", "commits"] as const;
+export type ConventionalField = (typeof CONVENTIONAL_FIELDS)[number];
+export const CONVENTIONAL_TYPE = /^[\w-]+$/;
+
 export const RECOMMENDED_TEXT: Readonly<TextCustomCheck> = {
   id: "no-attribution-trailers",
   name: "No attribution trailers",
@@ -121,6 +128,9 @@ export type CatalogCheck = RuleNote & {
   maxLines?: number;
   tracker?: IssueTracker;
   forbiddenGlobs?: string[];
+  /** Conventional commits: the types allowed, and whether the title, the commits or both are read; absent is every default type, and both. */
+  types?: string[];
+  fields?: ConventionalField[];
 };
 
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
@@ -366,6 +376,8 @@ const CatalogCheckSchema = type({
   "maxLines?": "number",
   "tracker?": type.enumerated(...ISSUE_TRACKERS),
   "forbiddenGlobs?": "string[]",
+  "types?": "string[]",
+  "fields?": type.enumerated(...CONVENTIONAL_FIELDS).array(),
 });
 
 export const CustomId = type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX);
@@ -547,7 +559,23 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
     const globs = parseGlobs(row.forbiddenGlobs, "No forbidden paths globs");
     if (globs) check.forbiddenGlobs = globs;
   }
+  if (id === "conventional-commits") {
+    if (row.types !== undefined) check.types = commitTypes(row.types);
+    if (row.fields !== undefined) check.fields = conventionalFields(row.fields);
+  }
   return check;
+}
+
+function commitTypes(value: unknown): string[] {
+  const types = texts(value, "Conventional commits types");
+  const bad = types.find((name) => !CONVENTIONAL_TYPE.test(name));
+  if (bad !== undefined) throw new Error(`Conventional commits types must be single words, not ${bad}.`);
+  return types;
+}
+
+function conventionalFields(value: unknown): ConventionalField[] {
+  const fields = new Set(list(value, "Conventional commits fields").map((field) => oneOf(field, CONVENTIONAL_FIELDS, "Conventional commits fields")));
+  return CONVENTIONAL_FIELDS.filter((field) => fields.has(field));
 }
 
 /** An old size row that set only one limit never measured the other, so that half loads switched off. */
