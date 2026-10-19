@@ -31,6 +31,8 @@ export async function migrateTriageTables(db: DB["db"], schema: string): Promise
   }
   await db.transaction(async function migrate(tx) {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${LOCK_KEY})`);
+    // Every boot re-runs the idempotent DDL; its "already exists, skipping" notices are noise.
+    await tx.execute(sql`SET LOCAL client_min_messages = warning`);
     for (const statement of statements) await tx.execute(sql.raw(statement));
   });
 }

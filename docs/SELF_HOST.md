@@ -5,16 +5,29 @@ portal setup, and every setting. Local development is in [DEV.md](DEV.md).
 
 ## What you need
 
-- Postgres 15+.
-- One machine or container for the hub, built from the root `Dockerfile`, with
-  a persistent volume for `HUB_DATA_DIR` and a public HTTPS domain. GitHub must
-  reach it to deliver webhooks. The hub serves the portal, the API and the
-  webhooks (`/api/hooks/...`) on that one domain.
+To try it on your machine with [Docker Compose](#docker-compose):
+
+- Docker.
 - A GitHub account or organization that can create a GitHub App.
 - An API key for a System One model (Jev), from TypeSafe, Vercel AI Gateway,
   OpenCode Zen, or any System One–compatible provider.
-- Optional: a Google OAuth client for sign-in, an SMTP account for invite
-  emails, an Anthropic key and Docker for [code review](PRODUCT.md#code-review).
+
+GitHub cannot deliver webhooks to localhost, so a local hub picks up pull
+requests every five minutes and reads a policy file change after a restart.
+For live events, forward webhooks with a tunnel
+([Webhooks on localhost](DEV.md#webhooks-on-localhost-unverified)).
+
+A real deployment also needs:
+
+- Postgres 15+.
+- One machine or container for the hub, built from the root `Dockerfile`, with
+  a persistent volume for `HUB_DATA_DIR` and a public HTTPS domain GitHub can
+  reach. The hub serves the portal, the API and the webhooks (`/api/hooks/...`)
+  on that one domain.
+
+Optional, locally or deployed: a Google OAuth client for sign-in, an SMTP
+account for invite emails, and for [code review](PRODUCT.md#code-review) an
+Anthropic key and an [isolated place to run it](#where-sidecars-run).
 
 Size the hub for its sidecars: each triage and code review runs in a Bun
 process of its own (about 1 GiB at peak).
@@ -23,12 +36,18 @@ process of its own (about 1 GiB at peak).
 
 ### Docker Compose
 
-`compose.yml` runs Postgres and the hub at `http://localhost:3000`:
+`compose.yml` runs Postgres and the hub at `http://localhost:3000`. In `.env`
+set only the four secrets; compose sets `DATABASE_URL`, `HUB_DATA_DIR`, `PORT`
+and `BETTER_AUTH_BASE_URL`, and applies the [database role](#database-role)
+setting.
 
 ```sh
-cp .env.example .env   # fill the four secrets: openssl rand -hex 32 each
-docker compose up --build
+cp .env.example .env   # set the four secrets: openssl rand -hex 32 each
+docker compose up --build -d
+docker compose logs -f hub
 ```
+
+The hub is ready when it logs `Started server: http://localhost:3000`.
 
 ### Railway or Render
 
@@ -54,8 +73,9 @@ at `HUB_DATA_DIR`.
 
 ### Database role
 
-On the hub's database role, end wedged transactions after ten minutes, so a
-stuck run-log receive releases its lock and the sidecar pushes again:
+On every Postgres but Compose's, set this on the hub's database role: it ends
+wedged transactions after ten minutes, so a stuck run-log receive releases its
+lock and the sidecar pushes again:
 
 ```sql
 alter role <hub role> set idle_in_transaction_session_timeout = '10min';
@@ -232,12 +252,21 @@ across sites.
 
 ## Where sidecars run
 
-Sidecars run as child processes on the hub's machine by default. Code review
-needs a sidecar of its own, so it runs only once an isolated place is set up.
+Sidecars run as child processes on the hub's machine by default; triage needs
+nothing more. Code review needs a sidecar of its own, so it runs only once an
+isolated place is set up.
 Settings → Code review → **Where it runs** lists every place this server
 offers, with the `.env` lines and guide for each; code review uses the first
 ready one in the order shown and waits there when it is full.
 [provisioners/README.md](provisioners/README.md) covers each option.
+
+For Docker, build the sidecar image before starting the hub: the hub looks for
+it only at start ([Docker](provisioners/docker.md#set-up)). The stock
+`compose.yml` mounts no Docker socket. For code review on Docker under Compose,
+either mount the socket and publish the hub's port
+([Docker](provisioners/docker.md#set-up)), which gives the hub control of that
+Docker, or set `DOCKER_HOST` in `.env` to
+[another machine](provisioners/docker-remote.md).
 
 ## Backups
 

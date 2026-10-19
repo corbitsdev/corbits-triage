@@ -923,5 +923,6 @@ logJson({
 
 export default {
   ...stock,
+  development: false,
   fetch: env.PORTAL_ORIGIN === undefined ? routeRequest : withPortalCors(new URL(env.PORTAL_ORIGIN).origin, routeRequest),
 };
