@@ -3,7 +3,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import * as bitbucketTool from "../../../packages/bitbucket-datacenter-tool/build.ts";
 import bitbucketPkg from "../../../packages/bitbucket-datacenter-tool/package.json";
 import * as githubTool from "../../../packages/github-tool/build.ts";
@@ -14,7 +14,7 @@ import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowPackage } from 
 const PACKAGES = resolve(import.meta.dir, "../../../packages");
 const PUBLIC = resolve(import.meta.dir, "../public");
 const DIRECTORS = "directors.mjs";
-const ACTIONS = "actions.mjs";
+const ACTIONS = "actions/index.mjs";
 
 /** The tool packages published beside each workflow; the workflow imports only these at run time. */
 const TOOLS = [
@@ -27,29 +27,32 @@ function interchangeEntries(workflow: WorkflowPackage) {
   return { workflow: workflow.entry, directors: `./${DIRECTORS}`, actions: `./${ACTIONS}` };
 }
 
-async function bundle(workflow: WorkflowPackage, outdir: string): Promise<void> {
-  const entries = [[workflow.src, workflow.entry.slice(2)], ["src/directors.ts", DIRECTORS], ["src/actions/index.ts", ACTIONS]];
-  for (const [src, naming] of entries) {
-    await Bun.build({
-      entrypoints: [join(PACKAGES, workflow.workspace, src)],
-      outdir,
-      naming,
-      target: "node",
-      format: "esm",
-      conditions: ["intx-src"],
-      define: { "WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
-      // The packed tools export only their roots, so a subpath import would not resolve at run time.
-      external: TOOL_NAMES,
-      // Strips the per-module path comments: the version hash must not depend on the lockfile layout.
-      minify: { whitespace: true },
-      sourcemap: "none",
-      throw: true,
-    });
-  }
+// One build with code splitting, so the workflow, directors and actions share their dependencies in chunks
+// and a process that imports all three evaluates the schemas they share once.
+async function bundle(workflow: WorkflowPackage, outdir: string): Promise<string[]> {
+  const src = join(PACKAGES, workflow.workspace, "src");
+  const result = await Bun.build({
+    entrypoints: [join(PACKAGES, workflow.workspace, workflow.src), join(src, "directors.ts"), join(src, "actions/index.ts")],
+    root: src,
+    outdir,
+    naming: { entry: "[dir]/[name].mjs", chunk: "chunk-[hash].mjs" },
+    splitting: true,
+    target: "node",
+    format: "esm",
+    conditions: ["intx-src"],
+    define: { "WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
+    // The packed tools export only their roots, so a subpath import would not resolve at run time.
+    external: TOOL_NAMES,
+    // Strips the per-module path comments: the version hash must not depend on the lockfile layout.
+    minify: { whitespace: true },
+    sourcemap: "none",
+    throw: true,
+  });
+  return result.outputs.map((output) => relative(outdir, output.path)).sort();
 }
 
-// The tarball resolves only from the registry asset it is published to, which holds nothing but the tools.
-function assertOnlyToolImports(workflow: WorkflowPackage, code: string): void {
+// The tarball resolves only its own chunks and the registry asset it is published to, which holds nothing but the tools.
+function assertOnlyToolImports(workflow: WorkflowPackage, file: string, code: string, outputs: string[]): void {
   // A CommonJS require would load a module the import scan cannot see.
   if (/\bcreateRequire\b|\b__require\b/.test(code)) {
     throw new Error(`${workflow.packageName} bundles a CommonJS require; only ESM imports of ${TOOL_NAMES.join(", ")} are allowed.`);
@@ -57,6 +60,7 @@ function assertOnlyToolImports(workflow: WorkflowPackage, code: string): void {
   for (const { path } of new Bun.Transpiler({ loader: "js" }).scanImports(code)) {
     // Bundled dependencies import Node builtins without the node: prefix.
     if (isBuiltin(path.startsWith("node:") ? path : `node:${path}`) || TOOL_NAMES.includes(path)) continue;
+    if (path.startsWith(".") && outputs.includes(join(dirname(file), path))) continue;
     throw new Error(`${workflow.packageName} imports ${path} at run time; only ${TOOL_NAMES.join(", ")} are published beside it.`);
   }
 }
@@ -64,22 +68,19 @@ function assertOnlyToolImports(workflow: WorkflowPackage, code: string): void {
 async function packWorkflow(workflow: WorkflowPackage, tools: PackedTarball[], outDir: string): Promise<PackedTarball> {
   const stage = await mkdtemp(join(tmpdir(), `${workflow.name}-`));
   try {
-    await bundle(workflow, stage);
-    const files = {
-      [workflow.entry]: join(stage, workflow.entry),
-      [`./${DIRECTORS}`]: join(stage, DIRECTORS),
-      [`./${ACTIONS}`]: join(stage, ACTIONS),
-    };
+    const outputs = await bundle(workflow, stage);
+    const files = Object.fromEntries(outputs.map((output) => [`./${output}`, join(stage, output)]));
     const manifest = {
       type: "module",
       dependencies: Object.fromEntries(tools.map((tool) => [tool.name, tool.version])),
       interchange: interchangeEntries(workflow),
-      files: [workflow.entry.slice(2), DIRECTORS, ACTIONS, "package.json"],
+      files: [...outputs, "package.json"],
     };
-    if (!(await readFile(files[`./${DIRECTORS}`], "utf8")).includes(workflow.packageName)) {
-      throw new Error(`${workflow.packageName} directors bundle lacks its package name; the build define was dropped.`);
+    const code = await Promise.all(outputs.map((output) => readFile(join(stage, output), "utf8")));
+    if (!code.some((source) => source.includes(workflow.packageName))) {
+      throw new Error(`${workflow.packageName} bundle lacks its package name; the build define was dropped.`);
     }
-    for (const file of Object.values(files)) assertOnlyToolImports(workflow, await readFile(file, "utf8"));
+    for (const [i, output] of outputs.entries()) assertOnlyToolImports(workflow, output, code[i]!, outputs);
     const version = await contentVersion("0.1.0", { name: workflow.packageName, ...manifest }, files);
     return await packPackage({ name: workflow.packageName, version, ...manifest }, files, outDir);
   } finally {
