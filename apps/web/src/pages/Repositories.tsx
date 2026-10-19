@@ -17,7 +17,7 @@ import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
-import { repoRows, type RepoRow } from "../lib/repo-rows.ts";
+import { repoRows, reposNeedingSetup, type RepoRow } from "../lib/repo-rows.ts";
 import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
@@ -39,8 +39,7 @@ function sourcesNote(accounts: string[], fromBitbucket: boolean): string {
   return `Triage sees ${seen.join(", and ")}.`;
 }
 
-function checksLabel(row: RepoRow, state: PackState | undefined): string {
-  if (row.needsSetup) return "Not set up";
+function checksLabel(state: PackState | undefined): string {
   if (!state || state.pending) return "";
   if (state.error) return "Could not read";
   if (state.found?.kind === "corrupt") return "Unreadable";
@@ -83,15 +82,16 @@ export default function Repositories() {
   const items = useQueueItems();
   const loading = useQueueLoading();
   const { data: openPulls, error: pullsError } = useOpenPulls();
-  const packed = useMemo(() => repos.filter((repo) => repo.checkPack).map((repo) => repo.name), [repos]);
-  const packs = useCheckPacks(packed);
+  const names = useMemo(() => repos.map((repo) => repo.name), [repos]);
+  const packs = useCheckPacks(names);
+  const needsSetup = useMemo(() => reposNeedingSetup(packs), [packs]);
   const upgrades = usePolicyUpgrades();
   const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
   const active = useMemo(() => new Set(verdicts.data?.active), [verdicts.data]);
   const catchingUp = useMemo(() => catchingUpRepos(logs, runs.rows, triaged), [logs, runs.rows, triaged]);
   const rows = useMemo(
-    () => repoRows(repos, items, active, catchingUp, openPulls, pullsError),
-    [repos, items, active, catchingUp, openPulls, pullsError],
+    () => repoRows(repos, needsSetup, items, active, catchingUp, openPulls, pullsError),
+    [repos, needsSetup, items, active, catchingUp, openPulls, pullsError],
   );
   const accounts = [...new Set(repos.filter((repo) => repo.source === "github").map((repo) => repo.name.split("/")[0]!))];
   const fromBitbucket = repos.some((repo) => repo.source === "bitbucket-datacenter");
@@ -137,12 +137,13 @@ export default function Repositories() {
     return loading ? null : value;
   }
 
-  /** A repository that still needs a policy file, or whose saved rules still need moving into it, says so in place of its usual health. */
+  /** A repository that still needs a policy file, or whose saved rules still need moving into it, says so in place of its usual health, which stays blank until its policy is read. */
   function healthOf(row: RepoRow): ReactNode {
     const found = upgrades.find((upgrade) => upgrade.repo === row.name);
     const label = found && upgradeLabel(found);
     if (found?.pull) return <span className="hl wait"><span className="dot" />{label}</span>;
     if (label) return <HealthMark health={{ tone: "warn", label }} />;
+    if (packs.get(row.name)?.pending) return null;
     return row.health.tone === "warn" ? <HealthMark health={row.health} /> : live(<HealthMark health={row.health} />);
   }
 
@@ -161,7 +162,7 @@ export default function Repositories() {
         </td>
         <td className="c-n mono">{pulls && live(pulls.open)}</td>
         <td className="c-n mono">{"error" in row.pulls ? <span title={row.pulls.error}>GitHub error</span> : live(row.pulls.needsYou)}</td>
-        <td className="c-checks">{checksLabel(row, packs.get(row.name))}</td>
+        <td className="c-checks">{checksLabel(packs.get(row.name))}</td>
         <td className="c-own" title={pulls?.owners.join(", ")}>{pulls && live(ownersLabel(pulls.owners))}</td>
         <td className="c-act">{pulls && live(pulls.lastActivity ? relativeTime(pulls.lastActivity) : "None")}</td>
         <td className="c-health">{healthOf(row)}</td>
@@ -217,7 +218,7 @@ export default function Repositories() {
           )}
         </main>
       </section>
-      {selectedConfig && selectedRow ? <RepoPanel key={selectedConfig.name} repo={selectedConfig} row={selectedRow} live={!loading} store={packStore} onClose={closePanel} /> : null}
+      {selectedConfig && selectedRow ? <RepoPanel key={selectedConfig.name} repo={selectedConfig} row={selectedRow} live={!loading && !packs.get(selectedRow.name)?.pending} store={packStore} onClose={closePanel} /> : null}
     </div>
   );
 }

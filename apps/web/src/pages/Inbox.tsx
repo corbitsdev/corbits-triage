@@ -78,11 +78,11 @@ import { leavesOpen, useOpenItems, useOpenPulls, useOpenPullsUnanswered, useQueu
 import { usePortal } from "../lib/portal.tsx";
 import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
-import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
+import { reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
-import { reposNeedingSetup, useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
+import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { CheckIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";

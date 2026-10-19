@@ -1,7 +1,9 @@
 import { repoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { repoNeedsCheckSetup } from "./check-pack.ts";
+import type { PackState } from "./check-packs.ts";
 import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
+import { hasRuleOn } from "./pack-draft.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
 
@@ -15,6 +17,15 @@ export function repoHealth(state: { needsSetup: boolean; enabled: boolean; catch
 
 function triageReady(repo: RepoRecord): boolean {
   return !repoNeedsCheckSetup(repo) && repoPolicy(repo).enabled;
+}
+
+/** Repositories whose policy cannot run: refused, missing, unreadable or with no rule on. One still loading or failing to load is not named. */
+export function reposNeedingSetup(packs: Map<string, PackState>): Set<string> {
+  const needing = [...packs].filter(function cannotRun([, state]) {
+    if (state.pending || state.error !== null) return false;
+    return state.found === null || !("pack" in state.found) || !hasRuleOn(state.found.pack);
+  });
+  return new Set(needing.map(([repo]) => repo));
 }
 
 /** The stored repositories, then the Bitbucket Data Center repositories not recorded yet. */
@@ -39,7 +50,6 @@ export type RepoRow = {
   name: string;
   source: RepoSource;
   href: string;
-  needsSetup: boolean;
   pulls: RepoPulls;
   health: RepoHealth;
 };
@@ -60,9 +70,10 @@ function pullsOf(open: PrItem[], ready: boolean): RepoPulls {
   };
 }
 
-/** `items` are the open pull requests; `active` the repositories with a verdict in the last 14 days or a run in flight; `pullsError` is the open pull request listing's own failure. */
+/** `needsSetup` are the repositories whose policy cannot run; `items` the open pull requests; `active` the repositories with a verdict in the last 14 days or a run in flight; `pullsError` is the open pull request listing's own failure. */
 export function repoRows(
   repos: RepoRecord[],
+  needsSetup: ReadonlySet<string>,
   items: PrItem[],
   active: ReadonlySet<string>,
   catchingUp: Set<string>,
@@ -71,16 +82,14 @@ export function repoRows(
 ): RepoRow[] {
   const errors = new Map(openPulls?.repos.flatMap((row) => (row.error ? [[row.repo, row.error] as const] : [])));
   return repos.map(function repoRow(repo) {
-    const needsSetup = repoNeedsCheckSetup(repo);
-    const policy = repoPolicy(repo);
+    const { enabled } = repoPolicy(repo);
     const error = pullsError?.message ?? errors.get(repo.name);
     return {
       name: repo.name,
       source: repo.source,
       href: `/repositories/${repo.name}`,
-      needsSetup,
       pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), triageReady(repo)) : { error },
-      health: repoHealth({ needsSetup, enabled: policy.enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: active.has(repo.name) }),
+      health: repoHealth({ needsSetup: needsSetup.has(repo.name), enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: active.has(repo.name) }),
     };
   });
 }
