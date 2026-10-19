@@ -12,6 +12,7 @@ import {
   createDefaultDirectorRegistry,
   type DirectorRegistry,
 } from "@intx/agent";
+import type { HostCredentialCapability } from "@intx/types";
 
 import type {
   AuthorizeContext,
@@ -24,10 +25,12 @@ import {
 } from "../ontrigger-bodies";
 import { runtimeRun, type RuntimeRunOptions } from "../runtime/run";
 import { createNoopDrainController } from "../runtime/drain";
+import { guardCredentialCapability } from "../runtime/credential-guard";
 import { createEffectContext } from "../runtime/effect-context";
 import { createLoopIterationHandle } from "../runtime/loop-iteration-handle";
 import { createSuspendableChildHandle } from "../runtime/suspendable-child-handle";
 import type {
+  ActionCredentialsFactory,
   ActionInvoker,
   EffectLedger,
   LoopFnRegistry,
@@ -60,6 +63,17 @@ export interface RunLocalOptions extends RuntimeRunOptions {
    * ledger across a re-run construct the env directly instead.
    */
   invokeAction?: ActionInvoker;
+  /**
+   * Build each action invocation's credentials capability. The default is
+   * `unavailableActionCredentials`: an action that declares credentials fails
+   * before its handler runs, and any other action's `resolve` fails closed.
+   * `createActionCredentialsFactory` from `@intx/harness` builds one over a
+   * material cell, a grants resolver and a provider registry, the same builder
+   * the deployed host uses. A `childWorkflow` child inherits it. It applies
+   * only to the default action-runner, so passing it with `invokeAction` is
+   * refused.
+   */
+  actionCredentials?: ActionCredentialsFactory;
   /** Resolve an action `handler` ref to a handler function. */
   actionResolver?: (ref: string) => ActionHandler;
   /** Resolve a loop's `while`/`carry` refs to pure functions. */
@@ -126,10 +140,23 @@ function assembleRunLocalEnv(
   const authorize = options.authorize;
   const invokeStep: StepInvoker =
     options.invokeStep ?? createDefaultStepInvoker(authorize);
+  if (
+    options.invokeAction !== undefined &&
+    options.actionCredentials !== undefined
+  ) {
+    throw new Error(
+      "runLocal: actionCredentials applies only to the default action-runner; a custom invokeAction must build its own credentials",
+    );
+  }
   const effects = createInMemoryEffectLedger();
   const invokeAction: ActionInvoker =
     options.invokeAction ??
-    createDefaultActionInvoker(authorize, effects, options.actionResolver);
+    createDefaultActionInvoker(
+      authorize,
+      effects,
+      options.actionResolver,
+      options.actionCredentials ?? unavailableActionCredentials,
+    );
   const clock = options.clock ?? defaultClock;
   const newId = options.newId ?? defaultNewId;
 
@@ -232,6 +259,7 @@ type InheritedChildOptions = Pick<
   | "authorize"
   | "invokeStep"
   | "invokeAction"
+  | "actionCredentials"
   | "actionResolver"
   | "loopFns"
   | "directors"
@@ -247,6 +275,9 @@ function inheritChildOptions(options: RunLocalOptions): InheritedChildOptions {
       : {}),
     ...(options.invokeAction !== undefined
       ? { invokeAction: options.invokeAction }
+      : {}),
+    ...(options.actionCredentials !== undefined
+      ? { actionCredentials: options.actionCredentials }
       : {}),
     ...(options.actionResolver !== undefined
       ? { actionResolver: options.actionResolver }
@@ -293,18 +324,31 @@ function createDefaultStepInvoker(authorize: WorkflowAuthorizeFn): StepInvoker {
 }
 
 /**
- * Default action invoker. Resolves the handler ref, builds an
- * EffectContext against the supplied ledger and authorize, and runs the
- * handler. Failing loudly when no resolver is wired mirrors
- * `createNoopSpawnChild`: a silent stub would let action workflows pass
- * tests against effects that never ran.
+ * Default action invoker. Resolves the handler ref, builds the action's
+ * credentials capability and an EffectContext against the supplied ledger and
+ * authorize, and runs the handler. Failing loudly when no resolver is wired
+ * mirrors `createNoopSpawnChild`: a silent stub would let action workflows
+ * pass tests against effects that never ran.
+ *
+ * The capability is built before the handler runs, so a factory that throws
+ * fails the action before any effect. It is disposed when the handler settles.
+ * A dispose failure fails the invocation, so a handle that does not release
+ * its resources surfaces; when the handler also threw, both errors surface.
  */
 export function createDefaultActionInvoker(
   authorize: WorkflowAuthorizeFn,
   effects: EffectLedger,
   resolver: ((ref: string) => ActionHandler) | undefined,
+  credentialsFactory: ActionCredentialsFactory,
 ): ActionInvoker {
-  return async ({ handler, input, requires, authzContext, signal }) => {
+  return async ({
+    handler,
+    input,
+    requires,
+    credentials,
+    authzContext,
+    signal,
+  }) => {
     // Refuse before anything is constructed, so a cancelled run resolves no
     // handler and touches no ledger. An action is single-attempt with
     // observable side effects and there is no retry to reconsider the
@@ -319,17 +363,91 @@ export function createDefaultActionInvoker(
       );
     }
     const fn = resolver(handler);
-    const ctx = createEffectContext({
-      authorize,
-      effects,
-      requires,
+    const capability = credentialsFactory({
+      handler,
+      credentials,
       authzContext,
-      input,
     });
-    const output = await fn(input, ctx, signal);
+    // The handler's `perform` scopes see only `resolve`; `dispose` stays with
+    // the invoker. The view, and every handle it returns, refuses once
+    // disposal starts, so a `perform` the handler left pending cannot shape a
+    // handle that nothing would dispose, or use one it already holds.
+    let disposed = false;
+    const dispose = (): Promise<void> => {
+      disposed = true;
+      return capability.dispose();
+    };
+    let output: unknown;
+    try {
+      const ctx = createEffectContext({
+        handler,
+        authorize,
+        effects,
+        requires,
+        authzContext,
+        input,
+        credentials: guardCredentialCapability(
+          capability,
+          () => !disposed,
+          (h, verb) =>
+            `action ${handler} cannot ${verb} credential handle "${h}": its credentials capability is disposed`,
+        ),
+      });
+      output = await fn(input, ctx, signal);
+    } catch (handlerError) {
+      try {
+        await dispose();
+      } catch (disposeError) {
+        throw new AggregateError(
+          [handlerError, disposeError],
+          `action ${handler} failed and its credentials capability failed to dispose`,
+        );
+      }
+      throw handlerError;
+    }
+    await dispose();
     return { output };
   };
 }
+
+/**
+ * A credentials capability for a host that delivers no credential to the
+ * named handler: `resolve` fails closed for every handle and `dispose` releases
+ * nothing.
+ */
+export function unavailableCredentialCapability(
+  handler: string,
+): HostCredentialCapability {
+  return {
+    resolve(handle) {
+      return Promise.reject(
+        new Error(
+          `action ${handler} cannot resolve credential handle "${handle}": no credential source is configured for action handlers`,
+        ),
+      );
+    },
+    dispose() {
+      return Promise.resolve();
+    },
+  };
+}
+
+/**
+ * The credentials factory for a host with no credential source. An action
+ * that declares credentials fails before its handler runs; any other action
+ * gets a capability whose `resolve` fails closed.
+ */
+export const unavailableActionCredentials: ActionCredentialsFactory = ({
+  handler,
+  credentials,
+}) => {
+  if (credentials.length > 0) {
+    throw new Error(
+      `action ${handler} declares credential handle(s) ${credentials.join(", ")}, but no credential source is configured for action handlers`,
+    );
+  }
+  return unavailableCredentialCapability(handler);
+};
 
 export function createInMemoryEffectLedger(): EffectLedger {
   const store = new Map<string, { output: unknown }>();

@@ -82,6 +82,30 @@ Plus the relevant options and callback types (`StepEnvBase`,
 `WorkflowSupervisorBindings`, `SubprocessSpawner`,
 `MailBusBindings`, `PrincipalSigner`, `SignedPayload`, etc.).
 
+### Local entry
+
+`@intx/workflow-host/local` exports what a caller needs to run a definition
+with `runLocal` and the real step invoker, with no hub and no sidecar:
+
+- `createWorkflowStepInvoker`, `createToolBearingAgentFactory`,
+  `attachStepTools`, `attachStepCredentialWiring` and
+  `deriveToolMarkFloorGrants` — the step invoker and the step tool builders
+  the deployed host uses.
+- `createCredentialsBackedAuthorize` and `createGrantEvaluator` — the
+  authorize closure and grant evaluator a run child authorizes with.
+- `createLocalCredentialsSnapshot` and `snapshotStepGrants` — the grants a
+  deployed source-ref run holds, derived from the definition, and their
+  per-step reader for Gate 2.
+
+Nothing this entry imports is a Node or Bun module, so it bundles for a
+browser; `tests/workflow/local-runtime-browser-bundle.test.ts` checks that.
+Some code it reaches uses the `Buffer` global at run time (MIME header
+encoding in `@intx/mime`), so a browser caller installs one, as
+`@intx/storage-isogit/browser` does. The
+package root and the other subpaths are Node-only by design: the
+supervisor spawns processes, and the run child, the substrate adapters and
+the deploy program read and write the filesystem.
+
 ## Supervisor
 
 `createWorkflowSupervisor(bindings)` returns a per-deployment
@@ -321,9 +345,12 @@ The contract is intentionally narrow:
    only the keys the host listed in
    `RunWorkflowChildFromProcessEnvOpts.substrateConfigKeys`. The
    factory returns `RunWorkflowChildBindings`: substrate `RepoStore`,
-   principal, per-deployment repo ids, scheduler, step invoker, child
-   spawner, grant evaluator. The factory consumes the typed struct,
-   never `NodeJS.ProcessEnv` directly. Each spawner declares
+   principal, per-deployment repo ids, scheduler, step invoker, action
+   credentials factory, child spawner, grant evaluator. The action
+   credentials binding turns the run's credential wiring into the
+   factory that builds the credentials each action handler's `perform`
+   scopes resolve through. The factory consumes the typed struct, never
+   `NodeJS.ProcessEnv` directly. Each spawner declares
    `hasUpstreamSignalResolver` on the runtime env it builds: `true`
    for a run an answer can reach -- the deployment's own addressable
    run, a suspendable body whose container relays a decision back

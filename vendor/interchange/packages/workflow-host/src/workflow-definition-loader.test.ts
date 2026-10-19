@@ -420,7 +420,9 @@ describe("loadWorkflowLoopFnsFromClosure", () => {
 });
 
 describe("loadWorkflowActionHandlersFromClosure", () => {
-  const dummyCtx = { perform: async () => undefined };
+  const dummyCtx = {
+    perform: async () => undefined,
+  };
 
   test("resolves an action handler by export name", async () => {
     const packageDir = await createClosureFixture({

@@ -3,8 +3,8 @@
 ## Baseline
 
 - Upstream: <https://github.com/faremeter/interchange>
-- Stock ref: `aa7b78ee4bacb08737c4bd33adf53266f4ca924f`
-- Composite pin: stock `aa7b78ee` (release `v0.5.0`) plus the
+- Stock ref: `c19d327b4cb3a5abbbafdab0a2e4b4bd75351420`
+- Composite pin: stock `c19d327b` (`v0.5.0-22`) plus the
   step-env director threading from PR #193, the local CL-10210 carry and the
   INTR-666 adaptive-thinking model ids and Anthropic structured outputs. Do
   not treat any delta as a new stock pin.
@@ -35,7 +35,9 @@ own `interchange.directors`. Stock loads that registry into the
 run-child's runtime env, but `createSidecarStepBuildEnv` still hardcodes
 `createDefaultDirectorRegistry()`, so every step naming
 `@corbits/triage-workflows/triage` fails at build with
-`UnknownDirectorIdError`. The carry resolves the step env's registry from
+`UnknownDirectorIdError`. Stock `c19d327b` moved the file's credential
+wiring into `credentials-backed-authorize.ts` and `action-credentials.ts`;
+the carry was re-applied by hand and is unchanged in substance. The carry resolves the step env's registry from
 `closurePackageDir` (memoised, built-ins when absent) and passes the same
 closure registry to spawned-child deps, whose grant cap otherwise drops the
 `director:` grant of every onTrigger body step (kept for consistency with the
@@ -67,7 +69,7 @@ input channel. `hasRecordedSignal` reads the run's event log for that check.
 Stock `cb0bdfb4` stops the child appending a duplicate `SignalReceived`, but
 `dispatchOne` still redelivers the mail and waits for the run to park, which
 a dropped duplicate does not do, so the carry stays. The three files are
-unchanged upstream between `cd02c313` and `aa7b78ee`, so the carry applies
+unchanged upstream between `cd02c313` and `c19d327b`, so the carry applies
 as-is.
 
 Allowed files:

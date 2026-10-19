@@ -779,7 +779,7 @@ export const APPROVAL_SNAPSHOT_MAX_BYTES = 131072;
  */
 export const BoundedApprovalSnapshot = ApprovalSnapshot.narrow(
   (snapshot, ctx) => {
-    const bytes = Buffer.byteLength(JSON.stringify(snapshot), "utf8");
+    const bytes = new TextEncoder().encode(JSON.stringify(snapshot)).length;
     return (
       bytes <= APPROVAL_SNAPSHOT_MAX_BYTES ||
       ctx.mustBe(`at most ${APPROVAL_SNAPSHOT_MAX_BYTES} bytes when serialized`)
@@ -1886,7 +1886,7 @@ export const InferenceSource = type({
   // Reference into the run's credential-material cell. The provider's secret
   // (formerly an inline `apiKey`) is resolved from that cell by `credentialId`
   // at call time, so the source config carries no secret and the child never
-  // holds the key inline. The same cell backs tool credentials.
+  // holds the key inline. The same cell backs binding credentials.
   credentialId: "string",
   model: "string",
   "defaults?": InferenceSourceDefaults,

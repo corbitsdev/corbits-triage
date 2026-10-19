@@ -22,6 +22,7 @@
 // carries its own.
 
 import type { AgentDefinition, BaseEnv } from "@intx/agent";
+import { ToolCredentialHandle } from "@intx/types/package-json";
 import type { Type } from "arktype";
 
 // Type-only import: an action handler's `ctx` parameter is the runtime's
@@ -276,6 +277,18 @@ export interface ActionPrimitive extends PrimitiveBase {
   drainBehavior?: DrainBehavior;
   /** See {@link StepPrimitive.onFailure}. */
   onFailure?: string;
+  /**
+   * The credential handles this action declares for its handler. The scope
+   * is per handler: inside `perform`'s `run`, the handler may resolve any
+   * handle a step running that handler declares and a root binding names for
+   * it. Deploy refuses a declared handle with no binding, and a binding for a
+   * handle no such step declares. `action()` validates each handle's
+   * format and rejects a duplicate, rejects a non-empty list without an
+   * `effect.requires` capability, and omits the field when the list is
+   * empty. The handles are part of the approved projection and the
+   * definition hash, in the order the author wrote them.
+   */
+  credentials?: readonly string[];
 }
 
 /**
@@ -287,12 +300,15 @@ export interface ActionPrimitive extends PrimitiveBase {
  *
  * A deployed handler is a BARE MODULE EXPORT of the module named by the
  * package's `interchange.actions` field, resolved by export name. It
- * receives exactly these three parameters and nothing else: no injected
- * services, and no opportunity to close over host configuration, because
- * nothing in the deployment constructs it. `ctx` carries one method,
- * `perform`. Per-deployment configuration must therefore arrive through
- * `input`, which in practice means the author selects it out of the
- * trigger payload via the action's {@link ActionPrimitive.input} selector.
+ * receives exactly these three parameters and nothing else, and has no
+ * opportunity to close over host configuration, because nothing in the
+ * deployment constructs it. `ctx` carries `perform`, and `perform` gives each
+ * `run` the one host service: the consumer-scoped `credentials` capability,
+ * which resolves the handles the action declares and works only until that
+ * `run` settles.
+ * Per-deployment configuration must therefore arrive through `input`, which
+ * in practice means the author selects it out of the trigger payload via the
+ * action's {@link ActionPrimitive.input} selector.
  */
 export type ActionHandler = (
   input: unknown,
@@ -691,10 +707,35 @@ export interface ActionOpts {
   after?: readonly string[];
   /** See {@link StepPrimitive.onFailure}. */
   onFailure?: string;
+  /** See {@link ActionPrimitive.credentials}. */
+  credentials?: readonly string[];
 }
 
 export function action(opts: ActionOpts): ActionPrimitive {
   const drainBehavior: DrainBehavior = opts.drainBehavior ?? "cancel";
+  const credentials = opts.credentials ?? [];
+  const seen = new Set<string>();
+  for (const handle of credentials) {
+    if (!ToolCredentialHandle.allows(handle)) {
+      throw new Error(
+        `action ${JSON.stringify(opts.handler)} declares credential handle ${JSON.stringify(handle)}, which does not match ${ToolCredentialHandle.expression}`,
+      );
+    }
+    if (seen.has(handle)) {
+      throw new Error(
+        `action ${JSON.stringify(opts.handler)} declares credential handle ${JSON.stringify(handle)} more than once`,
+      );
+    }
+    seen.add(handle);
+  }
+  // Credentials resolve only inside `perform`'s `run`, and `perform` accepts
+  // only a capability the action requires. Without one, the declared handles
+  // could never be used.
+  if (credentials.length > 0 && (opts.effect?.requires.length ?? 0) === 0) {
+    throw new Error(
+      `action ${JSON.stringify(opts.handler)} declares credential handles but no effect.requires; its credentials resolve only inside perform, which needs a declared capability`,
+    );
+  }
   return {
     kind: "action",
     id: "",
@@ -705,6 +746,7 @@ export function action(opts: ActionOpts): ActionPrimitive {
     ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
     ...(opts.after !== undefined ? { after: opts.after } : {}),
     ...(opts.onFailure !== undefined ? { onFailure: opts.onFailure } : {}),
+    ...(credentials.length > 0 ? { credentials } : {}),
   };
 }
 

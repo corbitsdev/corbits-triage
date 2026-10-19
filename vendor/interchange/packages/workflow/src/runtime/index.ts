@@ -1,4 +1,5 @@
 export type {
+  ActionCredentialsFactory,
   ActionInvokeRequest,
   ActionInvokeResult,
   ActionInvoker,
@@ -8,6 +9,7 @@ export type {
   LoopFn,
   LoopFnRegistry,
   ParkedApprovalOp,
+  PerformScope,
   PrimitiveKind,
   ReadParkedApprovalOps,
   RepoStore,

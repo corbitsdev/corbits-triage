@@ -61,8 +61,8 @@ import {
   toolApprovalEffect,
   UnknownDirectorIdError,
 } from "@intx/agent/authoring";
-import { toolConsumer } from "@intx/authz";
-import type { GrantEffect } from "@intx/types";
+import { actionConsumer, toolConsumer } from "@intx/authz";
+import type { GrantEffect, GrantOrigin, GrantWalkSnapshot } from "@intx/types";
 import {
   EXECUTABLE_STEP_DESCENT,
   walkNestedWorkflowSteps,
@@ -172,10 +172,118 @@ export function walkCapabilities(
 }
 
 /**
- * Consumer identities (`toolConsumer(factory.id)`) for every tool factory
- * the definition instantiates, including factories that appear only inside
- * an inline nested body. This is the credential-cap input. It is not part
- * of `CapabilityWalkResult`: those strings are not operator-facing grants.
+ * The fields of a grant rule a run's runtime authority needs, without the
+ * storage identity (id, tenant, principal, timestamps) a host adds.
+ */
+export type RuntimeGrantRule = {
+  readonly resource: string;
+  readonly action: string;
+  readonly effect: GrantEffect;
+  readonly origin: GrantOrigin;
+  readonly conditions: Record<string, unknown> | null;
+  readonly expiresAt: null;
+};
+
+const TOOL_GRANT_PREFIX = "tool:";
+const EFFECT_GRANT_PREFIX = "effect:";
+
+/**
+ * Project a grant-walk snapshot into a run's runtime grant rules -- the
+ * `tool:<name>` and `effect:<cap>` grants the runtime enforces fail-closed.
+ * Every distinct grant string across all steps becomes one creator-origin
+ * rule with `action: invoke`. Other walk grants (`capability:`, `director:`,
+ * `inference.source:`, `mail.*`) are not runtime grants and are dropped.
+ *
+ * Tool grants carry the effect the tool's static declaration requested (`ask`
+ * for approval-gated tools, `allow` otherwise) via each step's `grantEffects`
+ * record. A tool in more than one step is emitted once; when two steps disagree
+ * on its effect, `ask` wins over `allow` so an approval-gated declaration is
+ * never silently downgraded. A tool grant with no `grantEffects` entry throws:
+ * a defaulted `allow` would silently downgrade an `ask` tool.
+ *
+ * Effect grants are always `allow` -- the `effect.requires` set names the
+ * capability floor an action needs, with no per-effect ask/allow distinction,
+ * so they are NOT routed through the `grantEffects` record (which covers tool
+ * grants only). An `effect:<cap>` in more than one step is emitted once.
+ *
+ * The `tool:` rules carry the bare tool names the walk reads from inline
+ * `agent.toolFactories`. They authorize a source-ref tool, which runs under
+ * that name; a pinned tool runs as `<bundleId>:<name>` and takes its
+ * authority from the sidecar tool-mark floor instead.
+ */
+export function runtimeGrantRules(
+  snapshot: Pick<GrantWalkSnapshot, "perStep">,
+): RuntimeGrantRule[] {
+  const effectByResource = new Map<string, GrantEffect>();
+  for (const step of snapshot.perStep) {
+    const grantEffects = new Map<string, GrantEffect>(
+      Object.entries(step.grantEffects),
+    );
+    for (const grant of step.grants) {
+      if (grant.startsWith(TOOL_GRANT_PREFIX)) {
+        const effect = grantEffects.get(grant);
+        if (effect === undefined) {
+          throw new Error(
+            `runtimeGrantRules: tool grant ${JSON.stringify(grant)} has no grantEffects entry; the grant-walk snapshot must carry an effect for every tool grant`,
+          );
+        }
+        const existing = effectByResource.get(grant);
+        if (existing === "ask" || effect === "ask") {
+          effectByResource.set(grant, "ask");
+        } else if (existing === undefined) {
+          effectByResource.set(grant, effect);
+        }
+      } else if (grant.startsWith(EFFECT_GRANT_PREFIX)) {
+        if (!effectByResource.has(grant)) {
+          effectByResource.set(grant, "allow");
+        }
+      }
+    }
+  }
+  return [...effectByResource].map(([resource, effect]) => ({
+    resource,
+    action: "invoke",
+    effect,
+    origin: "creator",
+    conditions: null,
+    expiresAt: null,
+  }));
+}
+
+/**
+ * One system-origin `credential:{id}` / `use` rule per distinct
+ * `(credentialId, consumer)` on a run's resolved credential bindings. The
+ * consumer string is copied onto `{ tool }`, the condition Gate 2 checks.
+ * Inference credentials are not in this list: they have no binding and no
+ * consumer.
+ */
+export function credentialUseGrantRules(
+  bindings: readonly { credentialId: string; consumer: string }[],
+): RuntimeGrantRule[] {
+  const seen = new Set<string>();
+  const rules: RuntimeGrantRule[] = [];
+  for (const binding of bindings) {
+    const key = `${binding.credentialId}\0${binding.consumer}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rules.push({
+      resource: `credential:${binding.credentialId}`,
+      action: "use",
+      effect: "allow",
+      origin: "system",
+      conditions: { tool: binding.consumer },
+      expiresAt: null,
+    });
+  }
+  return rules;
+}
+
+/**
+ * Consumer identities the definition runs, including those that appear only
+ * inside an inline nested body: `toolConsumer(factory.id)` for every tool
+ * factory, and `actionConsumer(handler)` for every action that declares
+ * credentials. This is the credential-cap input. It is not part of
+ * `CapabilityWalkResult`: those strings are not operator-facing grants.
  * Plugin names are absent. A factory with an empty `definitions` array is
  * still present, because the source arm keys Gate 2 on the factory id.
  */
@@ -212,7 +320,7 @@ function walkDefinition(
     // routes the step and any nested bodies it carries through one dispatch,
     // so an approval covers every agent, action, and effect the step can run.
     // The consumer set is the same object the nested visit writes into, then
-    // unioned here, so a factory that exists only on an inline body survives.
+    // unioned here, so a consumer that exists only on an inline body survives.
     const collected = emptyGrantSet();
     collectPrimitiveGrants(
       primitive,
@@ -310,8 +418,8 @@ function collectPrimitiveGrants(
 
 /**
  * Union the grants a single primitive declares in its own right -- its agent's
- * grants and its action's `effect:<cap>` grants -- into `collected`, without
- * descending into anything it nests.
+ * grants and its action's `effect:<cap>` grants -- and the credential consumers
+ * it runs into `collected`, without descending into anything it nests.
  */
 function collectOwnGrants(
   primitive: WorkflowDefinition["steps"][string],
@@ -326,6 +434,13 @@ function collectOwnGrants(
   }
   for (const grant of collectActionGrants(primitive)) {
     collected.grants.add(grant);
+  }
+  // Unlike a tool factory, which counts even with empty `definitions`
+  // because the source arm keys Gate 2 on its id, an action counts only when
+  // it carries a `credentials` field: that list is its declared credential
+  // surface, so an action without the field consumes nothing.
+  if (primitive.kind === "action" && primitive.credentials !== undefined) {
+    collected.credentialConsumers.add(actionConsumer(primitive.handler));
   }
 }
 

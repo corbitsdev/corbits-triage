@@ -374,6 +374,34 @@ describe("wire validator preserves credentialBindings", () => {
     }
     expect(validated.credentialBindings).toEqual([binding]);
   });
+
+  test("a projected action binding survives WorkflowProjectionDefinition validation", () => {
+    const binding = {
+      action: "pushRelease",
+      handle: "api_key",
+      provider: "openai",
+      locator: "tenant",
+    } as const;
+    const projection = projectLiveToInert(
+      defineWorkflow({
+        id: "wf_main",
+        trigger: { type: "mail", to: "wf@acme.test" },
+        steps: {
+          main: step({
+            agent: mkAgent([alphaTool], baseCapabilities, [OPENAI]),
+          }),
+        },
+        credentialBindings: [binding],
+      }),
+    );
+    const validated = WorkflowProjectionDefinition(projection);
+    if (validated instanceof type.errors) {
+      throw new Error(
+        `projection failed the wire schema: ${validated.summary}`,
+      );
+    }
+    expect(validated.credentialBindings).toEqual([binding]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1293,5 +1321,81 @@ describe("wire validator preserves inboundMailPolicy", () => {
     expect(
       await computeLiveDefinitionHash(policyWorkflow({ invalid: "reject" })),
     ).not.toBe(await computeLiveDefinitionHash(baseWorkflow()));
+  });
+});
+
+describe("action credentials projection and hash", () => {
+  function actionWorkflow(credentials?: readonly string[]): WorkflowDefinition {
+    return defineWorkflow({
+      id: "action-credential-hash",
+      trigger: { type: "manual" },
+      steps: {
+        push: action({
+          handler: "push",
+          effect: { requires: ["call"] },
+          ...(credentials !== undefined ? { credentials } : {}),
+        }),
+      },
+    });
+  }
+
+  test("an action without credentials keeps both hashes and the projection", async () => {
+    const plain = actionWorkflow();
+    expect(canonicalJsonStringify(projectLiveToInert(plain))).not.toContain(
+      "credentials",
+    );
+    expect(hashDefinition(actionWorkflow([]))).toEqual(hashDefinition(plain));
+    expect(await computeLiveDefinitionHash(actionWorkflow([]))).toBe(
+      await computeLiveDefinitionHash(plain),
+    );
+  });
+
+  test("declared credentials reach the projection and move both hashes", async () => {
+    const plain = actionWorkflow();
+    const declared = actionWorkflow(["github"]);
+    expect(projectLiveToInert(declared).steps["push"]).toMatchObject({
+      kind: "action",
+      credentials: ["github"],
+    });
+    expect(hashDefinition(declared)).not.toEqual(hashDefinition(plain));
+    expect(await computeLiveDefinitionHash(declared)).not.toBe(
+      await computeLiveDefinitionHash(plain),
+    );
+  });
+
+  test("declared credentials reach a loop body and a childWorkflow body", () => {
+    const body = (id: string) =>
+      defineWorkflow({
+        id,
+        trigger: { type: "manual" },
+        steps: {
+          push: action({
+            handler: "push",
+            credentials: ["github"],
+            effect: { requires: ["call"] },
+          }),
+        },
+      });
+    const projection = projectLiveToInert(
+      defineWorkflow({
+        id: "nested-action-credentials",
+        trigger: { type: "manual" },
+        steps: {
+          rework: loop({
+            body: body("loop-body"),
+            while: "cont",
+            carry: "next",
+            maxIterations: 2,
+            onExhausted: "done",
+          }),
+          spawn: childWorkflow({ definition: body("child-body") }),
+          done: action({ handler: "done", after: ["rework"] }),
+        },
+      }),
+    );
+    const serialized = canonicalJsonStringify(projection);
+    expect(serialized).toContain('"loop-body"');
+    expect(serialized).toContain('"child-body"');
+    expect(serialized.split('"credentials":["github"]')).toHaveLength(3);
   });
 });
