@@ -216,6 +216,15 @@ describe("triage comment on a rerun", () => {
     ]);
   });
 
+  test("a changed policy file of the repository the policy extends supersedes the comment", async () => {
+    const github = timedGithub();
+    const file = { path: ".corbits-triage.yml", sha: "1111111aaa" };
+    const before = { ...PASSED, header: { head: "abc", policy: { file, sharedFile: { repo: "acme/shared", ...file } }, verdict: "pass" } };
+    await mirror(github.gh, before, login);
+    await mirror(github.gh, { ...before, comment: "Fails: CI.", header: { head: "abc", policy: { file, sharedFile: { repo: "acme/shared", path: file.path, sha: "2222222bbb" } }, verdict: "fail" } }, login);
+    expect(github.comments.at(-1)!.body).toContain("This supersedes the comment above because the rules changed: acme/shared policy file 1111111 → 2222222.");
+  });
+
   test("another bot's byte-copied marker and header is ignored, and Triage posts its own", async () => {
     const forged = { id: 7, user: { login: "github-actions[bot]", type: "Bot" }, body: PASSED_BODY, updated_at: "2026-10-12T00:00:00.000Z" };
     const github = timedGithub("open", [forged]);

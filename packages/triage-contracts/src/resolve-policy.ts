@@ -18,8 +18,14 @@ export type ArtifactRef = { id: string; version: number };
 /** `sha` is the file's blob on the default branch. */
 export type PolicyFileRef = { path: string; sha: string };
 
-/** What a policy was read from: the repository's policy file, or else its stored policy; either may extend a workspace policy. */
-export type PolicySource = { repo?: ArtifactRef; shared?: ArtifactRef; file?: PolicyFileRef };
+/** The policy file of the repository a policy file extends. */
+export type SharedFileRef = PolicyFileRef & { repo: string };
+
+/**
+ * What a policy was read from: the repository's policy file, or else its stored policy; either may extend a workspace
+ * policy, and the file may instead extend another repository's file.
+ */
+export type PolicySource = { repo?: ArtifactRef; shared?: ArtifactRef; file?: PolicyFileRef; sharedFile?: SharedFileRef };
 
 /**
  * A repository's policy over the shared policy it extends. The shared policy holds wherever the repository is silent:
@@ -72,4 +78,10 @@ export function storedPolicyPack(repo: string, content: unknown, shared?: { titl
   if (shared === null) throw new Error("The workspace policy it extends no longer exists.");
   if (!shared.title.startsWith(WORKSPACE_POLICY_TITLE_PREFIX)) throw new Error("It extends an artifact that is not a workspace policy.");
   return resolvePolicy(readSharedPolicy(shared.content), readPolicyOverride(content, repo));
+}
+
+/** A policy file's pack over the policy file of the repository its `extends` names, which must extend nothing itself. */
+export function extendedFilePack(repo: string, content: unknown, shared: { repo: string; policy: Record<string, unknown> }): CheckPack {
+  if (shared.policy.extends !== undefined) throw new Error(`${shared.repo}'s policy extends another, so no policy can extend it.`);
+  return resolvePolicy(readSharedPolicy(shared.policy), readPolicyOverride(content, repo));
 }

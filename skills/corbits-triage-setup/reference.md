@@ -101,7 +101,7 @@ labels:
 
 ## extends
 
-`extends: <id>` starts from a workspace policy and sets only what differs. Use it only when the user gives the workspace policy's id. The local check can't see the workspace, so "valid" does not prove the id exists; tell the user to confirm it.
+`extends: owner/name` starts from that repository's `.corbits-triage.yml` and sets only what differs; `extends: <id>` does the same from a workspace policy. Use it only when the user names the repository or gives the id. The repository must be connected to the same workspace and its own file must not use `extends`. The local check can't see either, so "valid" does not prove it can be read; tell the user to confirm it.
 
 ## Starter file
 

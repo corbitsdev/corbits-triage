@@ -20,6 +20,8 @@ const SAVED = "acme/saved";
 const EXPORTED = "acme/exported";
 const STARTER = "acme/starter";
 const OFF = "acme/off";
+const SHARED = "acme/shared";
+const EXTENDS = "acme/extends";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 const FILE = `rules:
   - check: ci-green
@@ -122,7 +124,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }];
+  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -348,3 +350,24 @@ async function writePolicy(repo: string, content: string): Promise<void> {
     return createArtifact(tx, { scope: { tenantId: TENANT, principalId: "prn_user" }, ownerPrincipalId: null, kind: "document", title: checkPackName(repo), content, source: { origin: "manual" } });
   });
 }
+
+test("PostgreSQL: a policy file extending another repository runs over that repository's file as last pushed, and is refused while that file cannot be read or extends again", async () => {
+  onMain(EXTENDS, YML, `extends: ${SHARED}\nrules:\n  - check: max-files-changed\n    max: 50\n    text: At most 50 files.\n    reason: Reviewable.\n    evidence: [maintainer-stated]\n`, "own1");
+  await policyFile.onPush(TENANT, EXTENDS);
+  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: `${SHARED} is not connected to this workspace or has no policy file.` });
+
+  onMain(SHARED, YML, FILE, "shared1");
+  await policyFile.onPush(TENANT, SHARED);
+  const read = await readPack(EXTENDS);
+  expect(read).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "own1" }, sharedFile: { repo: SHARED, path: YML, sha: "shared1" } } });
+  expect(read.status === "ok" && Object.keys(read.pack.checks)).toEqual(["ci-green", "max-files-changed"]);
+
+  // A push to the shared repository reaches every repository extending it.
+  onMain(SHARED, YML, `extends: ${EXTENDS}\n${FILE}`, "shared2");
+  await policyFile.onPush(TENANT, SHARED);
+  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: `${SHARED}'s policy extends another, so no policy can extend it.` });
+
+  onMain(SHARED, YML, "rules: [", "shared3");
+  await policyFile.onPush(TENANT, SHARED);
+  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 2: The policy file is not YAML`) });
+});

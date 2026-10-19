@@ -1001,7 +1001,7 @@ export type PolicyOverride = Pick<CheckPack, "repo" | "custom"> & {
 export function extendsOf(raw: unknown): string | undefined {
   const value = asRecord(parseJson(raw))?.extends;
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.trim().length === 0) throw new Error("extends must be a shared policy's id.");
+  if (typeof value !== "string" || value.trim().length === 0) throw new Error("extends must be a repository (owner/name) or a shared policy's id.");
   return value.trim();
 }
 
