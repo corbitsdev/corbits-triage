@@ -151,7 +151,9 @@ name per tenant; no deployment ids are configured anywhere.
 ## Triage pipeline
 
 Every run is the same steps; the repository's policy decides what each one
-does.
+does. Before facts, a pull request mail from the hub naming a GitHub head
+mirrors `unready:<owner>--<name>:<number>:<head sha>`, which takes the pass
+label off that head, so it never stands on a head not yet triaged.
 
 1. **facts**: reads the pull request, its files, reviews, CI, commits (the
    first 100 messages in full), the repository's docs and its contribution
@@ -188,7 +190,13 @@ does.
    waiting mail skips every other step: `markWaiting` writes only the waiting
    label or `INPROGRESS` build status under the effect id
    `waiting:<owner>--<name>:<number>:<head sha>`, and nothing once the pull
-   request moved past that head.
+   request moved past that head. On GitHub the marker passes the fail and
+   unsure verdict labels as `keep`, so a pull request carrying one keeps its
+   labels until the verdict, which swaps them only when it differs. A head
+   with no checks (the coalescer's `noCi` on the waiting mail, or facts'
+   `checks: "none"` in a run) gets no waiting label: the marker only takes the
+   pass label off. The portal reads the wait from the head's triage-state
+   row, not the label.
 8. **execute**: runs the actions whose kind the `pr-triage` role holds on the
    repository. Every other action is held in the verdict (`held: true`).
 

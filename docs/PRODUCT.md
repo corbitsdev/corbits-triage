@@ -194,9 +194,12 @@ When the policy depends on CI (CI green is on, a step has a `ci` condition, or
 a step approves or merges), Triage waits for CI to finish on the head, or for
 its first check to fail, before it triages it. A head with no checks after 2
 minutes is taken as having no CI, and none waits longer than an hour; a run by
-hand does not wait. Meanwhile the Inbox shows **Waiting for CI**, and the pull
-request shows the `Triage: Waiting for CI` label on GitHub (or the `Corbits
-Triage` build status in progress on Bitbucket) until the verdict replaces it.
+hand does not wait. Meanwhile the Inbox shows **Waiting for CI**. On GitHub a
+pull request labelled `Triage: Not Ready` or `Triage: Needs Human Review`
+keeps it, so a push that leaves the verdict as it was changes no label; any
+other shows `Triage: Waiting for CI` until the verdict replaces it, or no
+Triage label while the head has no checks. On Bitbucket the head's `Corbits
+Triage` build status is in progress until its verdict.
 A head triaged anyway while the only rules left to confirm are the host's own
 (CI still running, mergeability not computed yet) gets no verdict yet: it
 shows the same marker, nothing is posted or run, and it is triaged again once
@@ -211,10 +214,10 @@ Their names are stable:
 
 | Label | When |
 | --- | --- |
-| `Triage: Ready` | The head passes. |
+| `Triage: Ready` | The head passes. Taken off as soon as Triage sees a new head, until that head passes. |
 | `Triage: Not Ready` | The head fails. |
 | `Triage: Needs Human Review` | The head is unsure. |
-| `Triage: Waiting for CI` | Triage is waiting for the head's CI before it decides. |
+| `Triage: Waiting for CI` | Triage is waiting for the head's CI before it decides, unless the pull request is Not Ready or Needs Human Review or the head has no checks. |
 | `rule: <rule id>` | A rule that failed on the head, such as `rule: docs`, from a `{ do: labels, target: { from: rules } }` step. |
 
 A head carries one verdict label at a time, and Triage takes back the ones

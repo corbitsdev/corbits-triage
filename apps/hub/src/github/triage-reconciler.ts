@@ -226,7 +226,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     if (!marksWaiting(sourceOf(repo.record), repo.automatic)) return;
     const waited = new Set(repo.stored.rows.filter((row) => row.status === "waiting").map(headKey));
     for (const row of rows.filter((candidate) => candidate.status === "waiting" && !waited.has(headKey(candidate)))) {
-      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, source: "reconcile", payload: waitingPayload(repo.record, repo.policy, repo, row) });
+      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, source: "reconcile", payload: waitingPayload(repo.record, repo.policy, repo, row, false) });
     }
   }
 

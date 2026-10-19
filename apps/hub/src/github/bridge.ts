@@ -184,9 +184,9 @@ export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy:
   };
 }
 
-/** The mail for a head held for its CI: triage marks it waiting where it writes the verdict, and triages nothing. */
-export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, pack: StoredPack, head: { number: number; headSha: string }) {
-  return { ...mailPayload(record, policy, pack, { prNumber: head.number, headSha: head.headSha }), kind: WAITING_KIND };
+/** The mail for a head held for its CI: triage marks it waiting where it writes the verdict, and triages nothing. `noCi` names a head with no checks yet. */
+export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, pack: StoredPack, head: { number: number; headSha: string }, noCi: boolean) {
+  return { ...mailPayload(record, policy, pack, { prNumber: head.number, headSha: head.headSha, ...(noCi && { noCi }) }), kind: WAITING_KIND };
 }
 
 export async function resolvedPack(

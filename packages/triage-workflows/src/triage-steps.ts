@@ -24,7 +24,7 @@ const RULED = { project: outputOf("rules"), fields: ["items", "batch"] } as cons
 // as directors, reaching GitHub through the tool's credential, until upstream exposes credentials to actions. The judge maps over the
 // rules output's chunks, one System One call each; a second map asks focused's file questions only for the items it failed,
 // and makes no call otherwise. An approval mail skips triage and executes the one held action it names; a waiting mail
-// skips triage and mirrors only the waiting marker. The mirror writes the verdict's comment and label (or build status) before execute,
+// skips triage and mirrors only the waiting marker; any other takes Ready off its head before triaging it. The mirror writes the verdict's comment and label (or build status) before execute,
 // so a merge or close finds them on the head it closes; a mirror on a closed pull request would write nothing. Each gate
 // branch evaluates, mirrors and executes on its own: a live run never hands a skipped step's output to a selector, so a join
 // after the gate could not read the judge when it was skipped.
@@ -34,9 +34,10 @@ export function triageSteps({ facts: factsAgent, judge: judgeAgent, execute: exe
     approved: gate({ when: { from: "steps.approval.output.approved" }, then: "executeApproved", else: "waiting", after: ["approval"] }),
     executeApproved: step({ agent: executeAgent, input: outputOf("approval"), after: ["approved"], ...STEP }),
     waiting: action({ handler: "waiting", input: { from: "trigger.payload" }, after: ["approved"] }),
-    held: gate({ when: { from: "steps.waiting.output.waiting" }, then: "markWaiting", else: "facts", after: ["waiting"] }),
+    held: gate({ when: { from: "steps.waiting.output.waiting" }, then: "markWaiting", else: "unready", after: ["waiting"] }),
     markWaiting: step({ agent: mirrorAgent, input: outputOf("waiting"), after: ["held"], ...STEP }),
-    facts: step({ agent: factsAgent, input: { from: "trigger.payload" }, after: ["held"], ...STEP }),
+    unready: step({ agent: mirrorAgent, input: outputOf("waiting"), after: ["held"], ...STEP }),
+    facts: step({ agent: factsAgent, input: { from: "trigger.payload" }, after: ["unready"], ...STEP }),
     rules: action({ handler: "rules", input: replyOf("facts"), after: ["facts"] }),
     route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "judge", else: "evaluateRules", after: ["rules"] }),
     judge: map({ over: { from: "steps.rules.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["route"] }),

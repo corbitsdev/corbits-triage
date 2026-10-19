@@ -507,7 +507,7 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
     return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...build, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
-  function markWaiting({ mark }: WaitingOutput & { waiting: true }) {
+  function markWaiting({ mark }: WaitingOutput) {
     if (!mark) return caps.reply(JSON.stringify({ skipped: true }));
     return b.run([markCall(mark)], finish);
   }
@@ -518,7 +518,7 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
         case "message.received": {
           const input = parseInput(event.message.content);
           if (!input) return caps.reply(JSON.stringify({ skipped: true, reason: "mirror: input is not JSON" }));
-          if (input.waiting === true) return markWaiting(input as WaitingOutput & { waiting: true });
+          if (typeof input.waiting === "boolean") return markWaiting(input as WaitingOutput);
           const parsed = verdictsOf(input);
           batch = parsed.batch;
           const mirrored = parsed.verdicts.filter(mirrors);

@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, ownedLabels, repoSourceOf, TRIAGE_LABELS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { ciRefusal } from "@corbits/github-reads";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
@@ -191,7 +191,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
     const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
     const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
-    const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, owned ?? TRIAGE_LABELS);
+    const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none");
     const verdict = {
       ...stamp(it.facts, it), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }),
       ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),

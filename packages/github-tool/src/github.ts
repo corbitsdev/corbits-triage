@@ -16,6 +16,8 @@ export interface MirrorInput {
   labels: string[];
   /** Labels the caller owns; the mirror removes only these. Optional so requests built before it existed remove nothing. */
   owned?: readonly string[];
+  /** While the pull request carries any of these, its labels are left as they are. */
+  keep?: readonly string[];
   comment?: string;
   /** What the comment is written for; without it the comment is written whatever it said before. */
   header?: TriageHeader;
@@ -54,7 +56,8 @@ export async function mirror(gh: GithubFetch, i: MirrorInput, login: AppLogin) {
   if (i.comment === "") await deleteTriageComments(gh, repo, number);
   const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined }, login) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
-  await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
+  const kept = new Set((i.keep ?? []).map(lowercase));
+  if (!current.some((name) => kept.has(lowercase(name)))) await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
   return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }) };
 }

@@ -173,10 +173,10 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
   }
 
   /** The waiting marker is only shown, so a mail that did not go out is logged and the head still waits. */
-  async function markWaiting({ latest, head }: Open): Promise<void> {
+  async function markWaiting({ latest, head }: Open, noCi: boolean): Promise<void> {
     if (!marksWaiting(sourceOf(latest.record), latest.automatic)) return;
     try {
-      await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", payload: waitingPayload(latest.record, latest.policy, latest, head) });
+      await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", payload: waitingPayload(latest.record, latest.policy, latest, head, noCi) });
     } catch (err) {
       deps.log({ level: "warn", msg: "waiting_mail_failed", tenantId: head.tenantId, repo: latest.record.name, pr: head.number, headSha: head.headSha, error: String(err) });
     }
@@ -207,7 +207,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     if (readsCi && waitsForCi(ci, firstSeenAt, deps.now(), deps.ciWait)) {
       await waitHead(deps.store, head, events, deps.now());
       deps.log({ level: "info", msg: "triage_waiting_ci", ...entry, events, ci });
-      if (prior?.status !== "waiting") await markWaiting(open);
+      if (prior?.status !== "waiting") await markWaiting(open, ci === "none");
       return;
     }
     try {

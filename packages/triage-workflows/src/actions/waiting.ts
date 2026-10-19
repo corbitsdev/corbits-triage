@@ -1,35 +1,53 @@
 import type { EffectContext } from "@intx/workflow";
-import { ACTION_KINDS, isFromTriageSender, marksWaiting, ownedLabels, repoSourceOf, triggerRequestOf, WAITING_KIND, WAITING_LABEL, type RepoSource } from "@corbits/triage-contracts";
+import { ACTION_KINDS, isFromTriageSender, marksWaiting, ownedLabels, repoSourceOf, triggerRequestOf, WAITING_KIND, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import { packFromInput } from "../logic/checks.js";
 
 /** The mirror tool's arguments for the waiting marker: the label on GitHub, the build status on Bitbucket Data Center. */
-type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; build?: { state: "INPROGRESS"; description: string } };
+type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS"; description: string } };
 
 /** `effectId` names the marker on its head; the write itself is a no-op where the head already shows it, and skipped once the head moved. */
 export type WaitingMark = { effectId: string; repoSource: RepoSource; args: MarkArgs };
 
 /** `mark` is absent when triage does not write the verdict on this host, so nothing is written either. */
-export type WaitingOutput = { waiting: false } | { waiting: true; mark?: WaitingMark };
+export type WaitingOutput = { waiting: boolean; mark?: WaitingMark };
 
-function markArgs(source: RepoSource, pull: { repo: string; number: number; onHead: string }, owned: readonly string[]): MarkArgs {
+type Pull = { repo: string; number: number; onHead: string };
+
+/** Ready never stands on a head triage has not checked; Not Ready and Needs Human Review stay until its verdict, so a push changes no label. */
+function markArgs(source: RepoSource, pull: Pull, labels: Record<VerdictWord, string>, ci: boolean): MarkArgs {
   if (source === "bitbucket-datacenter") return { ...pull, labels: [], owned: [], build: { state: "INPROGRESS", description: WAITING_LABEL } };
-  return { ...pull, labels: [WAITING_LABEL], owned };
+  if (!ci) return { ...pull, labels: [], owned: [labels.pass] };
+  return { ...pull, labels: [WAITING_LABEL], owned: ownedLabels(labels), keep: [labels.fail, labels.unsure] };
 }
 
-/** The waiting marker on `headSha`; none where triage does not write the verdict on this host. */
-export function waitingMark(source: RepoSource, { repo, number, headSha }: { repo: string; number: number; headSha: string }, automatic: readonly unknown[], owned: readonly string[]): WaitingMark | undefined {
-  if (!marksWaiting(source, ACTION_KINDS.filter((kind) => automatic.includes(kind)))) return undefined;
-  const effectId = `waiting:${repo.replace("/", "--")}:${number}:${headSha}`;
-  return { effectId, repoSource: source, args: markArgs(source, { repo, number, onHead: headSha }, owned) };
+function mark(kind: "waiting" | "unready", source: RepoSource, pull: Pull, labels: Record<VerdictWord, string>, ci: boolean): WaitingMark {
+  return { effectId: `${kind}:${pull.repo.replace("/", "--")}:${pull.number}:${pull.onHead}`, repoSource: source, args: markArgs(source, pull, labels, ci) };
 }
 
-/** A waiting mail from the hub's sender marks its head as held for CI and triages nothing; any other mail goes on to triage. */
+function marks(source: RepoSource, automatic: readonly unknown[]): boolean {
+  return marksWaiting(source, ACTION_KINDS.filter((kind) => automatic.includes(kind)));
+}
+
+/** The waiting marker on `headSha`, `Triage: Waiting for CI` only where the head has CI; none where triage does not write the verdict on this host. */
+export function waitingMark(source: RepoSource, { repo, number, headSha }: { repo: string; number: number; headSha: string }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, ci: boolean): WaitingMark | undefined {
+  if (!marks(source, automatic)) return undefined;
+  return mark("waiting", source, { repo, number, onHead: headSha }, labels, ci);
+}
+
+/**
+ * A waiting mail from the hub's sender marks its head as held for CI and triages nothing. A pull request mail from it goes on
+ * to triage once Ready is off its head on GitHub; Bitbucket's build status is per commit already. Any other mail goes on to triage.
+ */
 export async function waiting(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<WaitingOutput> {
   const request = triggerRequestOf(input);
-  if (request?.["kind"] !== WAITING_KIND || !isFromTriageSender(input)) return { waiting: false };
+  const held = request?.["kind"] === WAITING_KIND;
+  if (!request || !isFromTriageSender(input) || (!held && request["kind"] !== "pr")) return { waiting: false };
+  const source = repoSourceOf(request["repoSource"]);
   const { repo, prNumber, headSha, automatic } = request;
-  const pack = packFromInput(request["pack"]);
-  if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !pack) return { waiting: true };
-  const mark = waitingMark(repoSourceOf(request["repoSource"]), { repo, number: prNumber, headSha }, automatic, ownedLabels(pack.labels));
-  return mark ? { waiting: true, mark } : { waiting: true };
+  const pack = packFromInput(request["pack"] ?? request["checkPack"]);
+  if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !pack) return { waiting: held };
+  if (!marks(source, automatic) || (!held && source !== "github")) return { waiting: held };
+  const pull = { repo, number: prNumber, onHead: headSha };
+  if (held) return { waiting: true, mark: mark("waiting", source, pull, pack.labels, request["noCi"] !== true) };
+  return { waiting: false, mark: mark("unready", source, pull, pack.labels, false) };
 }
