@@ -45,8 +45,9 @@ run of the same image with the same `DATABASE_URL`.
 
 `compose.yml` runs Postgres, a `migrate` service for the
 [migrations](#migrations), and then the hub at `http://localhost:3000`. In `.env`
-set only the four secrets; compose sets `DATABASE_URL`, `HUB_DATA_DIR`, `PORT`
-and `BETTER_AUTH_BASE_URL`, and applies the [database role](#database-role)
+set only the four secrets; compose sets `DATABASE_URL`, `HUB_DATA_DIR` and
+`PORT`, takes `BETTER_AUTH_BASE_URL` from `.env` (default
+`http://localhost:3000`), and applies the [database role](#database-role)
 setting.
 
 ```sh
@@ -63,6 +64,50 @@ The `migrate` service runs to completion before the hub starts. The hub is
 ready when it logs `Started server: http://localhost:3000`; the portal is at
 that address. A `docker_sidecars_off` line is expected: triage needs no Docker,
 only code review does ([Where sidecars run](#where-sidecars-run)).
+
+### Plain VPS
+
+Compose with `compose.tls.yml`: Caddy gets a Let's Encrypt certificate for
+your domain and passes HTTPS and websockets to the hub, whose port 3000 then
+stays closed. The hub's address becomes `https://<domain>`, and sidecars dial
+it through Caddy.
+
+1. Install Docker with Compose 2.24 or later
+   ([Docker Engine](https://docs.docker.com/engine/install/)).
+2. Clone the repository:
+
+   ```sh
+   git clone https://github.com/corbitsdev/corbits-triage.git && cd corbits-triage
+   ```
+
+3. Create `.env` with the four secrets, each a different
+   `openssl rand -hex 32`, and your domain:
+
+   ```sh
+   BETTER_AUTH_SECRET=<hex>
+   CREDENTIAL_ENCRYPTION_KEY=<hex>
+   PRINCIPAL_KEY_ENCRYPTION_KEY=<hex>
+   SIDECAR_CREDENTIAL_ENCRYPTION_KEY=<hex>
+   DOMAIN=<domain>
+   ```
+
+4. Point an A record for the domain at the server's IP.
+5. Open ports 80 and 443 (TCP, and UDP 443 for HTTP/3), for example
+   `ufw allow 80,443/tcp && ufw allow 443/udp`. Caddy needs 80 to get the
+   certificate.
+6. Start it:
+
+   ```sh
+   docker compose -f compose.yml -f compose.tls.yml up -d
+   docker compose -f compose.yml -f compose.tls.yml logs hub
+   ```
+
+   Pass the same `-f` flags to later `docker compose` commands; add
+   `-f compose.docker.yml` for [code review](#where-sidecars-run) on this
+   machine.
+
+The hub is ready when it logs `Started server`; the portal is then at
+`https://<domain>`. Continue with [Set up in the portal](#set-up-in-the-portal).
 
 ### Railway
 

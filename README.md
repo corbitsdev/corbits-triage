@@ -22,7 +22,8 @@ You need a GitHub account that can create a GitHub App, an API key for the
 
 On this machine GitHub cannot reach the hub, so the GitHub App is created
 without a webhook and pull requests are picked up every five minutes. On a
-server or Railway, follow [docs/SELF_HOST.md](docs/SELF_HOST.md).
+server or Railway, follow [docs/SELF_HOST.md](docs/SELF_HOST.md); on a plain
+VPS, its [Plain VPS steps](docs/SELF_HOST.md#plain-vps).
 
 In the folder where you'll set it up, add the Corbits Triage skills to your coding agent, then give it the Setup Prompt:
 
