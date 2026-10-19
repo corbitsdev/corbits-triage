@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { type } from "arktype";
 import { triggerRequestOf } from "@corbits/triage-contracts";
 import { budgetTag, Checkout, DEFAULT_BUDGET, repositoryTag } from "@corbits/pr-code-review/actions/checkout";
+import { promptText } from "@corbits/pr-code-review/prompt-text";
 
 const USER_TEMPLATE = readFileSync(new URL("../prompts/finder-diff.user.txt", import.meta.url), "utf8");
 
@@ -19,7 +20,7 @@ const FinderRequest = type({
 type FinderRequest = typeof FinderRequest.infer;
 
 function render(request: FinderRequest): string {
-  const text = USER_TEMPLATE.replace(/\{\{(title|description|diff)\}\}/g, (_, key: "title" | "description" | "diff") => request[key]);
+  const text = USER_TEMPLATE.replace(/\{\{(title|description|diff)\}\}/g, (_, key: "title" | "description" | "diff") => promptText(request[key]));
   return request.checkout ? `${repositoryTag(request.checkout)}${budgetTag(request.budget ?? DEFAULT_BUDGET)}${text}` : text;
 }
 

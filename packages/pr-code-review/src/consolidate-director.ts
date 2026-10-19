@@ -4,6 +4,7 @@ import { type } from "arktype";
 import { checkoutOf, READ_FILE_TOOL, type Checkout } from "./actions/checkout.js";
 import { quotedLine, type Finding, type Site } from "./findings.js";
 import { packageName } from "./package-name.js";
+import { promptAttribute, promptText } from "./prompt-text.js";
 import type { CodeReviewProfile } from "./profile.js";
 
 // Lines read on each side of a finding's range, to find the line its quoted code names.
@@ -63,7 +64,7 @@ function numbered(lines: ReadonlyMap<number, string>, from: number, to: number):
 }
 
 function cited(index: number, site: Site, lines: ReadonlyMap<number, string>): string {
-  return `<finding index="${index}" path="${site.path}">\n${numbered(lines, site.start - SHOWN_AROUND, site.end + SHOWN_AROUND)}\n</finding>`;
+  return `<finding index="${index}" path="${promptAttribute(site.path)}">\n${promptText(numbered(lines, site.start - SHOWN_AROUND, site.end + SHOWN_AROUND))}\n</finding>`;
 }
 
 interface Range {

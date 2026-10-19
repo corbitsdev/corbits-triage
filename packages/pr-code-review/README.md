@@ -24,6 +24,12 @@ credential.
    each comment carries the code it quotes and how many finders reported
    it.
 
+Every message wraps pull request text in lowercase tags. Text from the pull
+request, its files or a model's reply about them has each `<` that would open
+or close one of those tags, spelled as the prompts write it, written as
+`\u003c`, and a `"` in a tag attribute as `&quot;`; all other text, code
+included (`<Finding>` and `<Title>` among it), reaches the model as written.
+
 The request is `{ kind: "code-review", title, description, diff, checkout }`
 with optional `number` (the pull request's), `efforts` per step,
 `budgets.repoFinder`, `check`, and `cut`
