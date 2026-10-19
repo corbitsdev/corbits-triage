@@ -1,9 +1,9 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { advisoryLabels, alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
-import { authorFailures } from "./render.js";
+import { authorFailures, isAdvisoryFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
 import { unrunnable } from "./execute-do.js";
 
@@ -42,6 +42,8 @@ export interface ActionInput {
   verdict: VerdictWord;
   reason: string;
   pack: CheckPack;
+  /** Each advisory rule's result, where the host has labels. */
+  advisory?: CheckResult[];
 }
 
 /** Catch-up runs the policy's actions whatever woke it. */
@@ -176,6 +178,20 @@ function stepSubject(facts: PrFacts): StepSubject {
 }
 
 /**
+ * After the verdict's own steps, one labels Do adds the label of each advisory rule that did not pass. Nothing says who
+ * put a label on, so one is never taken back: it may be a person's.
+ */
+function advisoryDo({ advisory, pack, facts, verdict: list }: ActionInput, reason: string): SuggestedAction[] {
+  if (!advisory?.length) return [];
+  const labels = advisoryLabels(pack);
+  const target = { labels: [...new Set(advisory.filter(isAdvisoryFinding).flatMap((c) => labels.get(c.check) ?? []))] };
+  if (satisfied("labels", target, facts)) return [];
+  const index = pack.actions[list].length;
+  const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: "labels", target });
+  return [{ list, index, kind: "labels", effectId, target, reason }];
+}
+
+/**
  * The Dos of the verdict's list on this head; none when the event does not wake the policy. A step whose conditions do
  * not hold, or cannot be told, is skipped, and one that does nothing is not listed. Suggest only: nothing here writes to GitHub.
  */
@@ -200,7 +216,7 @@ export function evaluateActions(input: ActionInput): SuggestedAction[] {
       out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
     }
   }
-  return out;
+  return [...out, ...advisoryDo(input, reason)];
 }
 
 /**

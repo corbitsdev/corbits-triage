@@ -1,4 +1,5 @@
 import {
+  advisoryLabels,
   catalogCheckEnabled,
   CLOSED_FINDING,
   classificationSources,
@@ -104,6 +105,8 @@ export interface DeterministicResult {
   checks: CheckResult[];
   needsJudgment: boolean;
   sources?: ReturnType<typeof classificationSources>;
+  /** The policy's advisory rules, which never decide the verdict, and the results of those read without the model; `checks` holds neither. */
+  advisory?: { ids: string[]; checks: CheckResult[] };
 }
 
 export const NEEDS_SETUP_REASON = "This repository still needs a policy.";
@@ -135,7 +138,10 @@ function rankTop(findings: Finding[]): Finding | null {
   );
 }
 
-function finish(findings: Finding[], checks: CheckResult[], facts: PrFacts, pack?: CheckPack): DeterministicResult {
+function finish(all: Finding[], results: CheckResult[], facts: PrFacts, pack?: CheckPack): DeterministicResult {
+  const ids = pack ? [...advisoryLabels(pack).keys()] : [];
+  const findings = all.filter((f) => !ids.includes(f.check));
+  const checks = results.filter((c) => !ids.includes(c.check));
   const top = rankTop(findings);
   const sources = pack ? classificationSources(pack) : undefined;
   // A draft cannot be merged, so it is never ready.
@@ -148,6 +154,7 @@ function finish(findings: Finding[], checks: CheckResult[], facts: PrFacts, pack
     checks,
     needsJudgment: sources !== undefined && facts.state === "open" && !facts.draft && hardFailures(checks).length === 0,
     ...(sources ? { sources } : {}),
+    ...(ids.length > 0 && { advisory: { ids, checks: results.filter((c) => ids.includes(c.check)) } }),
   };
 }
 

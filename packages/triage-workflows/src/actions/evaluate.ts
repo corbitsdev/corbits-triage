@@ -1,14 +1,14 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, hostKinds, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { ciRefusal } from "@corbits/github-reads";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
-import { hasModelChecks, type CheckResult, type DeterministicResult, type PrFacts } from "../logic/checks.js";
+import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
-import { choiceOver, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
+import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitAdvisory, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
 
@@ -100,13 +100,14 @@ export function choiceFirst(it: Item, { requests }: QualityEvaluation): boolean 
  * is not judged, or a first call failed or left a rule unanswered and the verdict degrades anyway.
  */
 export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[string, unknown]>): { request: JudgeRequest } | { judgeError: string } | undefined {
-  if (!it.det.needsJudgment || !hasModelChecks(it.det.sources) || !it.pack || it.judgeLimitExceeded || errorOf(first).judgeError !== undefined) return undefined;
+  if (!it.det.needsJudgment || !decidesByModel(it.det) || !it.pack || it.judgeLimitExceeded || errorOf(first).judgeError !== undefined) return undefined;
   const { facts, det } = it;
   const { plan, focused, requests } = evaluation;
   const model = evaluateModel({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, answers: answersOf(requests, first), plan, focused, stack: facts.stack });
+  const { deciding } = splitAdvisory(det, model.checks);
   // A judged rule that failed decides Fail on its own, so the verdict question is not asked.
-  if (model.unanswered || model.checks.some((check) => check.result === "fail")) return undefined;
-  return verdictRequest(facts, [...det.checks, ...model.checks].map((c) => policyRule(it.pack!, c)));
+  if (model.unanswered || deciding.some((check) => check.result === "fail")) return undefined;
+  return verdictRequest(facts, [...det.checks, ...deciding].map((c) => policyRule(it.pack!, c)));
 }
 
 function choiceAnswer(request: JudgeRequest, reply: [string, unknown]): Record<VerdictChoice, number> | undefined {
@@ -177,7 +178,9 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(it.noWait && { noWait: it.noWait }),
     });
-    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack } : undefined;
+    // Bitbucket Data Center has no labels, so there an advisory rule is only noted.
+    const advisory = hostKinds(it.repoSource ?? "github").includes("labels") ? rendered.advisory : undefined;
+    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, advisory } : undefined;
     // A degraded verdict is incomplete, a waiting one is not made yet, and a draft or closed pull request is not decided, so nothing is suggested from any.
     const decided = rendered.degraded === null && rendered.waiting === undefined && (it.det.needsJudgment || rendered.verdict === "fail");
     const suggested = actionInput && decided ? evaluateActions(actionInput) : [];

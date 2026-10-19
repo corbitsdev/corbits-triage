@@ -122,7 +122,10 @@ export type RuleNote = { text?: string; reason?: string; evidence?: string[] };
 
 const MAINTAINER_STATED = "maintainer-stated";
 
-export type CatalogCheck = RuleNote & {
+/** An advisory rule never decides the verdict: when it does not pass, Triage adds its `label` and notes it in the comment. */
+export type Advisory = { advisory?: true; label?: string };
+
+export type CatalogCheck = RuleNote & Advisory & {
   enabled: boolean;
   maxFiles?: number;
   maxLines?: number;
@@ -207,7 +210,7 @@ export type TextCheck = { fields: TextField[]; failWhen: TextMatch; phrases: str
  * A custom rule is asked of the decision model, or a text rule read from the pull request without it; `enabled` is
  * stored only as false, and an absent flag means it runs.
  */
-type CustomBase = RuleNote & { id: string; name: string; group: CheckPackGroup; enabled?: boolean };
+type CustomBase = RuleNote & Advisory & { id: string; name: string; group: CheckPackGroup; enabled?: boolean };
 export type ModelCustomCheck = CustomBase & { kind: "model" } & ModelCheck;
 export type TextCustomCheck = CustomBase & { kind: "text" } & TextCheck;
 export type CustomCheck = ModelCustomCheck | TextCustomCheck;
@@ -368,9 +371,11 @@ const EVIDENCE = /^(?:(?:[\w.-]+\/[\w.-]+)?#\d+|https:\/\/\S+|maintainer-stated)
 const EVIDENCE_MAX = 20;
 export const Evidence = type(EVIDENCE).atMostLength(LINE_MAX).array().atLeastLength(1).atMostLength(EVIDENCE_MAX);
 const NOTE = { "text?": Text, "reason?": Text, "evidence?": Evidence } as const;
+const ADVISORY = { "advisory?": "boolean", "label?": Label } as const;
 
 const CatalogCheckSchema = type({
   ...NOTE,
+  ...ADVISORY,
   enabled: "boolean",
   "maxFiles?": "number",
   "maxLines?": "number",
@@ -381,7 +386,7 @@ const CatalogCheckSchema = type({
 });
 
 export const CustomId = type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX);
-const CUSTOM_BASE = { ...NOTE, id: CustomId, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
+const CUSTOM_BASE = { ...NOTE, ...ADVISORY, id: CustomId, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
 const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
 const CustomCheckSchema = type({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Texts })
@@ -543,7 +548,8 @@ function parseGlobs(value: unknown, where: string): string[] | undefined {
 function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefined {
   const row = asRecord(raw);
   if (!row) return undefined;
-  const check: CatalogCheck = { enabled: row.enabled === false ? false : true, ...parseNote(row, CHECK_CATALOG[id].name) };
+  const where = CHECK_CATALOG[id].name;
+  const check: CatalogCheck = { enabled: row.enabled === false ? false : true, ...parseNote(row, where), ...parseAdvisory(row, id, where) };
   if (id === "max-files-changed") {
     const maxFiles = finiteNumber(row.maxFiles);
     if (maxFiles !== undefined) check.maxFiles = maxFiles;
@@ -654,6 +660,21 @@ function parseNote(row: Record<string, unknown>, where: string): RuleNote {
   };
 }
 
+const ADVISORY_LABELS: Partial<Record<CatalogId, string>> = { "max-files-changed": "size: large", "max-lines-changed": "size: large", docs: "docs: check" };
+
+function advisoryLabel(id: string, row: Advisory): string {
+  return row.label ?? ADVISORY_LABELS[id as CatalogId] ?? `${id}: check`;
+}
+
+function parseAdvisory(row: Record<string, unknown>, id: string, where: string): Advisory {
+  if (row.advisory !== undefined && typeof row.advisory !== "boolean") throw new Error(`${where} advisory must be true or false.`);
+  // Stored issue rules once kept a label of their own, which only an advisory rule reads.
+  if (row.advisory !== true) return {};
+  if (row.label !== undefined) return { advisory: true, label: text(row.label, `${where} label`, LABEL_MAX) };
+  if (advisoryLabel(id, {}).length > LABEL_MAX) throw new Error(`${where} needs a label of at most ${LABEL_MAX} characters.`);
+  return { advisory: true };
+}
+
 function parseScore(row: Record<string, unknown>, where: string): ModelCheck {
   const levels = distinctTexts(row.levels, `${where} levels`);
   if (levels.length < LEVELS_MIN || levels.length > LEVELS_MAX) throw new Error(`${where} levels must list ${LEVELS_MIN} to ${LEVELS_MAX} levels.`);
@@ -701,7 +722,7 @@ function parseCustomRow(row: Record<string, unknown>, index: number): CustomChec
   if (row.enabled !== undefined && typeof row.enabled !== "boolean") throw new Error(`${where} enabled must be true or false.`);
   if (row.kind === "rule") throw new Error(`${where} is a ${String(row.rule)} rule over GitHub data, which Triage no longer runs; remove it.`);
   const kind = oneOf(row.kind, ["model", "text"] as const, `${where} kind`);
-  const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }), ...parseNote(row, where) };
+  const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }), ...parseNote(row, where), ...parseAdvisory(row, row.id, where) };
   return kind === "text" ? { ...base, kind, ...parseText(row, where) } : { ...base, kind, ...parseModel(row, where) };
 }
 
@@ -983,7 +1004,7 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const custom = parseCustom(body.custom);
   const actions = parseActions(body.actions, dropped);
   const labels = parseLabels(body.labels);
-  return withDropped({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels }, dropped);
+  return withDropped(refuseTriageLabels({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels }), dropped);
 }
 
 /** Workspace policy titles start with this, so the stock artifact list finds them with `?query=`. */
@@ -1094,6 +1115,25 @@ export function dependsOnCi(pack: CheckPack): boolean {
 /** Whether any rule is switched on; with none, triage has nothing to decide and the hub starts no run. */
 export function hasEnabledRules(pack: CheckPack): boolean {
   return CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
+}
+
+/** Each switched-on advisory rule's id, and the label it adds when it does not pass. */
+export function advisoryLabels(pack: CheckPack): Map<string, string> {
+  const rows: Array<[string, Advisory]> = [
+    ...CATALOG_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id): [string, Advisory] => [id, pack.checks[id]!]),
+    ...pack.custom.filter(customCheckEnabled).map((row): [string, Advisory] => [row.id, row]),
+  ];
+  return new Map(rows.filter(([, row]) => row.advisory).map(([id, row]) => [id, advisoryLabel(id, row)]));
+}
+
+/** Triage takes back its verdict and `rule: …` labels, so an advisory rule adding one would fight it. */
+export function refuseTriageLabels(pack: CheckPack): CheckPack {
+  const verdictLabels = Object.values(pack.labels).map((label) => label.toLowerCase());
+  for (const [id, label] of advisoryLabels(pack)) {
+    const lower = label.toLowerCase();
+    if (lower.startsWith("triage:") || lower.startsWith(RULE_LABEL_PREFIX) || verdictLabels.includes(lower)) throw new Error(`Rule ${id} label ${label} is one Triage takes back; name another.`);
+  }
+  return pack;
 }
 
 export function isModelCheck(row: CustomCheck): row is ModelCustomCheck {

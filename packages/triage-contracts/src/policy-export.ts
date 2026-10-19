@@ -2,6 +2,7 @@
 // runs on, so a rule's wording, reason and evidence never count as a difference; what it checks and every step do.
 import { dump, JSON_SCHEMA } from "js-yaml";
 import {
+  advisoryLabels,
   AUTHOR_GROUPS,
   CATALOG_IDS,
   CONVENTIONAL_FIELDS,
@@ -9,6 +10,7 @@ import {
   POLICY_EVENTS,
   VERDICT_LABELS,
   VERDICTS,
+  type Advisory,
   type AuthorMatch,
   type CatalogCheck,
   type CatalogId,
@@ -30,8 +32,9 @@ export const VERDICT_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: 
 export type PolicyFileExport = { text: string; unexpressed: string[] };
 
 /** A rule as the file writes it: its sentence, what it checks, then why it exists. */
-function written(row: { reason?: string; evidence?: string[]; enabled?: boolean }, head: Record<string, unknown>, text: string, checks: Record<string, unknown>) {
-  return { ...head, text, ...checks, reason: row.reason ?? REASON, evidence: row.evidence ?? EVIDENCE, ...(row.enabled === false && { enabled: false }) };
+function written(row: Advisory & { reason?: string; evidence?: string[]; enabled?: boolean }, head: Record<string, unknown>, text: string, checks: Record<string, unknown>) {
+  const advisory = { ...(row.advisory && { advisory: true }), ...(row.label !== undefined && { label: row.label }) };
+  return { ...head, text, ...checks, ...advisory, reason: row.reason ?? REASON, evidence: row.evidence ?? EVIDENCE, ...(row.enabled === false && { enabled: false }) };
 }
 
 /** A built-in rule's parameters as schema 3 writes them; undefined when it has none it requires. */
@@ -142,7 +145,7 @@ function catalogChecks(pack: CheckPack, id: CatalogId): string | undefined {
   if (id === "ci-green" && row?.enabled === false) return CI_SKIPPED;
   if (!row?.enabled) return undefined;
   const conventional = id === "conventional-commits" && { types: sorted(row.types ?? CONVENTIONAL_TYPES), fields: row.fields ?? CONVENTIONAL_FIELDS };
-  return canonical({ maxFiles: row.maxFiles, maxLines: row.maxLines, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), ...conventional });
+  return canonical({ maxFiles: row.maxFiles, maxLines: row.maxLines, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), label: advisoryLabels(pack).get(id), ...conventional });
 }
 
 function modelAsks(row: ModelCustomCheck): Record<string, unknown> {
@@ -156,10 +159,11 @@ function modelAsks(row: ModelCustomCheck): Record<string, unknown> {
   }
 }
 
-function customChecks(row: CustomCheck | undefined): string | undefined {
+function customChecks(pack: CheckPack, row: CustomCheck | undefined): string | undefined {
   if (!row || row.enabled === false) return undefined;
-  if (row.kind === "text") return canonical({ kind: row.kind, fields: row.fields, failWhen: row.failWhen, phrases: sorted(row.phrases) });
-  return canonical({ kind: row.kind, shape: row.shape, ...modelAsks(row) });
+  const label = advisoryLabels(pack).get(row.id);
+  if (row.kind === "text") return canonical({ kind: row.kind, fields: row.fields, failWhen: row.failWhen, phrases: sorted(row.phrases), label });
+  return canonical({ kind: row.kind, shape: row.shape, ...modelAsks(row), label });
 }
 
 /** A step as it runs: who or what it is for is a set, so its order is not a difference; its place in the list is. */
@@ -191,7 +195,18 @@ const CATALOG_RULES: Partial<Record<CatalogId, string>> = {
 // CI green has three states: required, absent (merges still wait for CI) and written off (merges skip it).
 const CI_STATES = { [CI_SKIPPED]: "merges skip CI", absent: "merges wait for CI" } as const;
 
+/** An advisory rule's label, after what it checks. */
+function advisoryWords(pack: CheckPack, id: string): string[] {
+  const label = advisoryLabels(pack).get(id);
+  return label === undefined ? [] : [`advisory, labels ${label}`];
+}
+
 function catalogValues(pack: CheckPack, id: CatalogId): string[] {
+  const values = catalogLimits(pack, id);
+  return values.length ? [...values, ...advisoryWords(pack, id)] : values;
+}
+
+function catalogLimits(pack: CheckPack, id: CatalogId): string[] {
   const row = pack.checks[id];
   if (id === "ci-green" && row?.enabled === false) return [CI_STATES[CI_SKIPPED]];
   if (id === "ci-green" && !row?.enabled) return [CI_STATES.absent];
@@ -260,9 +275,10 @@ function customDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[
   const ids = [...new Set([...saved.custom, ...file.custom].map((row) => row.id))];
   return ids.flatMap(function differs(id) {
     const [savedRow, fileRow] = [saved.custom.find((row) => row.id === id), file.custom.find((row) => row.id === id)];
-    if (customChecks(savedRow) === customChecks(fileRow)) return [];
+    if (customChecks(saved, savedRow) === customChecks(file, fileRow)) return [];
     const rule = (savedRow ?? fileRow)!.name;
-    const [inSaved, inFile] = [customChecks(savedRow) ? [customSentence(savedRow!)] : [], customChecks(fileRow) ? [customSentence(fileRow!)] : []];
+    const inSaved = customChecks(saved, savedRow) ? [customSentence(savedRow!), ...advisoryWords(saved, id)] : [];
+    const inFile = customChecks(file, fileRow) ? [customSentence(fileRow!), ...advisoryWords(file, id)] : [];
     return [{ rule, saved: inSaved, file: inFile, instead: inFile.length && inSaved.length ? `${rule} will check something different.` : instead(rule, inSaved, inFile) }];
   });
 }

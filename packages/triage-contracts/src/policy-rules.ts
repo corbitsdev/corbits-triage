@@ -9,7 +9,7 @@ const Lines = Text.array().atLeastLength(1).atMostLength(50);
 const Limit = type("number.integer").atLeast(1);
 
 /** A built-in rule's id is its check; a model or text rule names its own. */
-const RULE_BASE = { "+": "reject", text: Text, reason: Text, evidence: Evidence, "enabled?": "boolean" } as const;
+const RULE_BASE = { "+": "reject", text: Text, reason: Text, evidence: Evidence, "enabled?": "boolean", "advisory?": "boolean", "label?": Label } as const;
 const OWN_RULE = { ...RULE_BASE, id: CustomId } as const;
 
 const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green"] as const satisfies readonly CatalogId[];
@@ -56,8 +56,12 @@ export function ruleNameOf(id: string): string {
   return `${words[0]!.toUpperCase()}${words.slice(1)}`;
 }
 
+function advisoryOf(rule: PolicyRule): Record<string, unknown> {
+  return rule.advisory ? { advisory: true, ...(rule.label !== undefined && { label: rule.label }) } : {};
+}
+
 function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>): Record<string, unknown> {
-  const row = { text: rule.text, reason: rule.reason, evidence: rule.evidence, enabled: rule.enabled !== false };
+  const row = { text: rule.text, reason: rule.reason, evidence: rule.evidence, enabled: rule.enabled !== false, ...advisoryOf(rule) };
   switch (rule.check) {
     case "max-files-changed":
       return { ...row, maxFiles: rule.max };
@@ -76,7 +80,7 @@ function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>): Record<str
 
 function customRow(rule: Extract<PolicyRule, { check: "model" | "text" }>): Record<string, unknown> {
   const { id } = rule;
-  const base = { id, name: ruleNameOf(id), group: "pull-request", reason: rule.reason, evidence: rule.evidence, ...(rule.enabled === false && { enabled: false }) };
+  const base = { id, name: ruleNameOf(id), group: "pull-request", reason: rule.reason, evidence: rule.evidence, ...(rule.enabled === false && { enabled: false }), ...advisoryOf(rule) };
   if (rule.check === "model") return { ...base, kind: "model", shape: "is-true", claim: rule.text };
   return { ...base, text: rule.text, kind: "text", fields: rule.fields, failWhen: rule.failWhen, phrases: rule.phrases };
 }
@@ -97,6 +101,7 @@ function mapRules(rules: PolicyRule[]): { checks: Record<string, unknown>; custo
     const id = ruleId(rule);
     if (seen.has(id)) refuse(`Rule ${id} is listed twice.`, ["rules", at]);
     seen.add(id);
+    if (rule.label !== undefined && !rule.advisory) refuse(`Rule ${id} label needs advisory: true.`, ["rules", at]);
     if (isCatalogRule(rule)) checks[id] = catalogRow(rule);
     else custom.push(customRow(rule));
   }

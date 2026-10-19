@@ -11,6 +11,7 @@ Every rule has:
 - `reason`: one line on why the rule exists.
 - `evidence`: a list of `maintainer-stated`, pull request references (`"#44"`, `"owner/name#44"`) or `https://` links. Quote `#` references.
 - `enabled: false` (optional) keeps a rule written down but off.
+- `advisory: true` (optional) makes a rule label the pull request instead of deciding its verdict. When it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and never takes the label off. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `advisory: true` is refused, and so is one starting `Triage:` or `rule: ` or naming a verdict label.
 
 A built-in rule is named only by `check`, never `id`, and each built-in may appear once. A `model` or `text` rule also needs its own `id`.
 
@@ -55,6 +56,8 @@ Start from the four starter rules (SKILL.md step 3). Add an extra only when the 
 
 `no-forbidden-paths` fails maintainers too, so never list `.github/**` or another path the team edits on purpose unless the user asks.
 
+When the user wants a rule to flag pull requests without failing them, such as size limits that atomic changes cross or a docs reminder, add `advisory: true` to it.
+
 ## Actions
 
 Optional. Without `actions`, Triage only sets its verdict label. Each verdict has an ordered list of at most 20 steps; a verdict left out has none.
@@ -86,7 +89,7 @@ A step may add `when`, and every condition in it must hold. An empty `when` is r
 
 Never write `for:` on a step; who it is for goes in `when.author`.
 
-Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person in the Inbox. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. On Bitbucket Data Center, `labels` and `assign` have no effect, `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
+Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person in the Inbox. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. An advisory rule's label is added the same way, as an Add labels action. On Bitbucket Data Center, `labels` and `assign` have no effect (an advisory rule only adds its note), `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
 
 ## Labels
 
