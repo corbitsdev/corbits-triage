@@ -14,7 +14,7 @@ portal setup, and every setting. Local development is in [DEV.md](DEV.md).
 - An API key for a System One model (Jev), from TypeSafe, Vercel AI Gateway,
   OpenCode Zen, or any System One–compatible provider.
 - Optional: a Google OAuth client for sign-in, an SMTP account for invite
-  emails, an Anthropic key and Docker for [code review](PRODUCT.md#code-review).
+  emails, an Anthropic key and Docker, E2B or Fly for [code review](PRODUCT.md#code-review).
 
 Size the hub for its sidecars: each triage and code review runs in a Bun
 process of its own (about 1 GiB at peak).
@@ -170,6 +170,9 @@ All optional; the defaults suit most installs.
 | `E2B_API_KEY` | unset | Registers the [E2B provisioner](provisioners/e2b.md), which runs each isolated sidecar in an E2B sandbox. |
 | `RAILWAY_SANDBOX_TOKEN`, `RAILWAY_SANDBOX_ENVIRONMENT_ID` | unset | A Railway workspace token and the environment the [Railway Sandboxes provisioner](provisioners/railway-sandboxes.md) creates sandboxes in. Set both or neither. |
 | `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | set by Railway on a service deployed from GitHub | The public repository and commit the Railway sidecar template checks out. Required with `RAILWAY_SANDBOX_TOKEN`. |
+| `FLY_API_TOKEN` | unset | With `FLY_APP`, registers the [Fly provisioner](provisioners/fly.md), which runs each isolated sidecar as a Fly Machine. |
+| `FLY_APP` | unset | The Fly app the Fly provisioner creates machines in; set with `FLY_API_TOKEN`. |
+| `FLY_REGION` | Fly's choice | The region Fly Machines start in. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `PG_SCHEMA` | default `search_path` | Postgres schema. |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |

@@ -50,6 +50,9 @@ const HubEnvSchema = type({
   "RAILWAY_GIT_COMMIT_SHA?": "string",
   "RAILWAY_GIT_REPO_OWNER?": "string",
   "RAILWAY_GIT_REPO_NAME?": "string",
+  "FLY_API_TOKEN?": "string",
+  "FLY_APP?": "string",
+  "FLY_REGION?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
@@ -132,7 +135,7 @@ export function dockerSettings(env: HubEnv): DockerSettings {
     ...(env.DOCKER_CONTEXT !== undefined && { dockerContext: env.DOCKER_CONTEXT }),
     ...(env.DOCKER_TLS_VERIFY !== undefined && { certPath: env.DOCKER_CERT_PATH ?? path.join(home, ".docker") }),
     home,
-    publicHubWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL),
+    publicHubWebSocketUrl: publicHubWebSocketUrl(env),
   };
 }
 
@@ -175,6 +178,27 @@ export function railwaySandboxSettings(env: HubEnv): RailwaySandboxSettings | un
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("RAILWAY_GIT_COMMIT_SHA must be a full commit hash");
   if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(name)) throw new Error("RAILWAY_GIT_REPO_OWNER and RAILWAY_GIT_REPO_NAME must be a GitHub owner and repository name");
   return { token, environmentId, repository: `https://github.com/${owner}/${name}`, commit, publicHubWebSocketUrl: publicHubWebSocketUrl(env) };
+}
+
+export type FlySettings = {
+  readonly token: string;
+  readonly app: string;
+  readonly region?: string;
+  /** Where machines reach the hub. */
+  readonly publicHubWebSocketUrl: string;
+};
+
+/** Unset `FLY_API_TOKEN` and `FLY_APP` mean no Fly provisioner. */
+export function flySettings(env: HubEnv): FlySettings | undefined {
+  const { FLY_API_TOKEN: token, FLY_APP: app, FLY_REGION: region } = env;
+  if ((token === undefined) !== (app === undefined)) throw new Error("FLY_API_TOKEN and FLY_APP must be set together");
+  if (token === undefined || app === undefined) return undefined;
+  return {
+    token,
+    app,
+    ...(region !== undefined && { region }),
+    publicHubWebSocketUrl: publicHubWebSocketUrl(env),
+  };
 }
 
 export type ChildProcessEnv = { PATH?: string; HOME?: string; TMPDIR?: string };

@@ -34,12 +34,14 @@ import {
 } from "@corbits/cron";
 import { runCronMigrations } from "@corbits/cron/migrations";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
+import { FLY_PLACE } from "@corbits/provisioner-fly";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
+import { connectFlySidecars, sweepFlySidecarsOf } from "./sidecar/fly.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
 import { connectRailwaySidecars, sweepRailwaySidecarsOf, type RailwaySidecarProvisioner } from "./sidecar/railway.js";
 import { createHostCapacity } from "./sidecar/host-capacity.js";
@@ -61,7 +63,7 @@ import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, 
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, flySettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -187,8 +189,11 @@ if (typeof e2b === "string") logJson({ level: "info", msg: "e2b_sidecars_off", r
 const railwaySettings = railwaySandboxSettings(env);
 const railway = railwaySettings === undefined ? undefined : await connectRailwaySidecars({ railway: railwaySettings, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
 if (typeof railway === "string") logJson({ level: "info", msg: "railway_sidecars_off", reason: railway });
-// First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, then Railway, the rest on the hub host.
-const workloadProvisioners = [dockerUp, e2b, railway].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
+const flyConfig = flySettings(env);
+const fly = flyConfig === undefined ? undefined : await connectFlySidecars({ fly: flyConfig, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+if (typeof fly === "string") logJson({ level: "info", msg: "fly_sidecars_off", reason: fly });
+// First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, then Railway, then Fly, the rest on the hub host.
+const workloadProvisioners = [dockerUp, e2b, railway, fly].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
 const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
 
 let shuttingDown = false;
@@ -272,6 +277,7 @@ if (railway !== undefined && typeof railway !== "string") {
   void buildRailwayTemplate(railway);
   void sweepRailway(railway);
 }
+if (fly !== undefined && typeof fly !== "string") logJson({ level: "info", msg: "fly_sidecars_swept", removed: await sweepFlySidecarsOf(composition.db, fly) });
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },
@@ -811,7 +817,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview }),
-  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
+  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }, { guide: FLY_PLACE, found: fly }] }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({

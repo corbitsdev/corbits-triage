@@ -108,14 +108,17 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   when `E2B_API_KEY` is set, does the same with one E2B sandbox per sidecar.
   The Railway Sandboxes provisioner (`packages/provisioner-railway`),
   registered after E2B when its token and environment are set, does the same
-  with one Railway sandbox per sidecar.
+  with one Railway sandbox per sidecar. The Fly provisioner
+  (`packages/provisioner-fly`), registered after Railway Sandboxes when
+  `FLY_API_TOKEN` and `FLY_APP` are set, does the same with one Fly Machine
+  per sidecar.
   [provisioners/](provisioners/README.md) describes each.
-  Code review requires `isolation:workload`; without Docker, E2B or Railway Sandboxes, stock
+  Code review requires `isolation:workload`; without Docker, E2B, Railway Sandboxes or Fly, stock
   Interchange refuses it with `provisioner_no_match`.
   `GET /api/integrations/code-review/{tenantId}/place` names the provisioner
   stock's plugin registry selects for it under the workspace's placement
   policies, or null, and lists every place the hub's provisioner packages
-  describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`, `RAILWAY_PLACE`) with the state the hub
+  describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`, `RAILWAY_PLACE`, `FLY_PLACE`) with the state the hub
   found at boot, for Settings → Code review. The hub's own machine is never
   one. While it is null the switch and **Review again** refuse
   (`no_isolated_place`), nothing is mailed, the host's code review

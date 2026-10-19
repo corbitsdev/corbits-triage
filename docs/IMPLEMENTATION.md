@@ -98,7 +98,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `repo-read-tool` | `read_file`, `grep` and `list`, confined to the step's working tree (no `..`, absolute path or symlink out); the host bundles add `*_checkout` and `*_read_file`. |
 | `pr-code-review`, `pr-code-review-anthropic` | The provider-neutral code review workflow and the Anthropic provider's package and eval; see [its README](../packages/pr-code-review/README.md). |
 | `policy-check-action` | The GitHub Action that checks `.corbits-triage.yml` as the hub reads it. |
-| `provisioner-docker`, `provisioner-template`, `provisioner-conformance` | The Docker provisioner, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
+| `provisioner-docker`, `provisioner-fly`, `provisioner-template`, `provisioner-conformance` | The Docker and Fly Machines provisioners, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
 | `openai-null-delta` | Inference adapter fix for null stream deltas. |
 | `common` | Dependency-free helpers shared across apps and packages. |
 
