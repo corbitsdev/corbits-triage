@@ -277,9 +277,9 @@ Code review reads each new commit of a pull request for bugs. It runs whether or
 
 Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up). [Settings → Code review](#code-review-2) says where it runs.
 
-A server without Docker set up for Triage has nowhere to run it. The switch is then replaced by **Code review needs an isolated place to run**, with **Set up Docker** and **All options**, which open the setup guides, and **Review again** is hidden in the Inbox. A repository that had code review on says **It is switched on here but not running**, with **Turn off**; nothing is reviewed until Docker is set up, and then it carries on without being switched on again.
+A server without Docker set up for Triage has nowhere to run it. The switch is then replaced by **Code review needs an isolated place to run**, with **Set one up**, which opens Settings → Code review, and **Review again** is hidden in the Inbox. A repository that had code review on says **It is switched on here but not running**, with **Turn off**; nothing is reviewed until Docker is set up, and then it carries on without being switched on again.
 
-![The Code review section on a server without Docker: Code review needs an isolated place to run, It is switched on here but not running, with Set up Docker, All options and Turn off](images/38.png)
+![The Code review section on a server with no isolated place: Code review needs an isolated place to run, with Set one up](images/38.png)
 
 ### Removing a repository
 
@@ -431,9 +431,15 @@ One switch per action. On, Triage carries that action out in every repository by
 
 ### Code review
 
-![The Code review section: Review code with Anthropic, No key, with the Anthropic key field and Save key, then Code review can't run yet: this server has no isolated place for it, with Set up Docker](images/43.png)
+![The Code review section: Review code with Anthropic, No key, with the Anthropic key field and Save key, then Where it runs: Docker on this machine, In use; Docker on another machine (TLS), Not set up, with its .env lines, Copy and Setup guide](images/43.png)
 
-[Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**; with no key, paste it and press **Save key**. **Change** and **Remove** work as for the decision model. Below it, a line says where code review runs, such as **Code review runs in a Docker container on your Triage server**, or **Code review can't run yet: this server has no isolated place for it**, with **Set up Docker**.
+[Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**; with no key, paste it and press **Save key**. **Change** and **Remove** work as for the decision model.
+
+Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine** and **Docker on another machine (TLS)**, each with a line on why you would choose it. Code review never runs on the Triage server itself. It runs in the first place in the list that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
+
+Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins also see why it is failing. Under a place that is not set up or failing are the lines to add to the Triage server's `.env`, with **Copy**, and its **Setup guide**. Add them, restart the server, and the place turns **Ready** or **In use**.
+
+![Where it runs on a server with no place set up: Docker on this machine and Docker on another machine (TLS), both Not set up, each with its setup lines and Setup guide](images/44.png)
 
 ### People
 

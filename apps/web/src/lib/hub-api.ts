@@ -133,6 +133,7 @@ export type PortalSnapshot = {
   decisionModel?: Inference;
   /** Absent when the hub refused to say where code review runs. */
   codeReviewPlace?: CodeReviewPlace["provisioner"];
+  codeReviewPlaces?: CodeReviewPlace["places"];
   denied: SectionDenied;
 };
 
@@ -1285,7 +1286,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
     ...(decisionModel && { decisionModel }),
-    ...(places && { codeReviewPlace: places.provisioner }),
+    ...(places && { codeReviewPlace: places.provisioner, codeReviewPlaces: places.places }),
     denied: {
       repos: tenant.denied,
       credentials: credentials.denied,

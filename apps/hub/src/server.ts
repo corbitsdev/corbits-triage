@@ -36,7 +36,7 @@ import { runCronMigrations } from "@corbits/cron/migrations";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
-import { connectDockerSidecars, sweepDockerSidecarsOf } from "./sidecar/docker.js";
+import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
@@ -173,9 +173,10 @@ const local = createLocalProcessSidecarProvisioner({
   log: logJson,
 });
 const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, root: ROOT, adapterManifest: sidecarAdapterManifest });
-if (typeof docker === "string") logJson({ level: "info", msg: "docker_sidecars_off", reason: docker });
+const dockerUp = "provisioner" in docker ? docker : undefined;
+if ("reason" in docker) logJson({ level: "info", msg: "docker_sidecars_off", reason: docker.reason });
 // First match wins: workflows and probes that require isolation:workload land on Docker, the rest on the hub host.
-const workloadProvisioners = typeof docker === "string" ? [] : [docker.provisioner];
+const workloadProvisioners = dockerUp ? [dockerUp.provisioner] : [];
 const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
 
 let shuttingDown = false;
@@ -222,7 +223,7 @@ const stock = composition.server;
 composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
 
 await restoreLocalSidecars(composition.db, local);
-if (typeof docker !== "string") logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, docker) });
+if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },
@@ -762,7 +763,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview }),
-  codeReviewPlace: createCodeReviewPlace(placeCodeReview),
+  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: dockerPlaces(docker) }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({

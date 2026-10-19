@@ -20,6 +20,7 @@ export {
   type DockerTls,
   type FindDockerHostOpts,
 } from "./engine.js";
+export { DOCKER_PLACE, DOCKER_REMOTE_PLACE } from "./places.js";
 
 const LABEL = {
   hub: "corbits.hub",

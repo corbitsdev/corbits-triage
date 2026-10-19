@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from "react";
-import { Button, Input } from "@corbits/react-ui";
+import { Badge, Button, Input, type BadgeTone } from "@corbits/react-ui";
 import { useMutation } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
-import { DOCKER_GUIDE } from "../../lib/code-review-place.ts";
+import type { CodeReviewPlaceOption } from "@corbits/triage-contracts";
 import { anthropicSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
 import { isActiveCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
+import { CopyButton } from "../CopyField.tsx";
 import { ExternalIcon } from "../inbox-icons.tsx";
 import { KeyRow } from "./KeyRow.tsx";
 
@@ -41,18 +42,59 @@ function AnthropicKeyForm({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-function ReviewPlace({ provisioner }: { provisioner: string | null | undefined }) {
-  if (provisioner === undefined) return null;
-  if (provisioner === null) {
-    return (
+const STATE: Record<CodeReviewPlaceOption["state"], { label: string; tone: BadgeTone }> = {
+  active: { label: "In use", tone: "success" },
+  ready: { label: "Ready", tone: "neutral" },
+  not_set_up: { label: "Not set up", tone: "neutral" },
+  failing: { label: "Failing", tone: "danger" },
+};
+
+function PlaceSetup({ place }: { place: CodeReviewPlaceOption }) {
+  const lines = place.env.join("\n");
+  return (
+    <div className="place-setup">
+      {lines ? (
+        <>
+          <span>Add these lines to the Triage server's <code>.env</code>, then restart it:</span>
+          <div className="sentence">
+            <pre className="txt mono small-text">{lines}</pre>
+            <CopyButton value={lines} label={`Copy the .env lines for ${place.label}`} />
+          </div>
+        </>
+      ) : (
+        <span>Nothing to add to <code>.env</code>; the setup guide has every step.</span>
+      )}
+      <a className="linkish" href={place.guide} target="_blank" rel="noreferrer">Setup guide <ExternalIcon /></a>
+    </div>
+  );
+}
+
+function Place({ place }: { place: CodeReviewPlaceOption }) {
+  const state = STATE[place.state];
+  return (
+    <div className="place">
       <div className="sentence">
-        <span className="txt">Code review can't run yet: this server has no isolated place for it.</span>
-        <Button asChild variant="outline" size="sm"><a href={DOCKER_GUIDE} target="_blank" rel="noreferrer">Set up Docker <ExternalIcon /></a></Button>
+        <span className="txt">{place.label}<span className="place-why">{place.why}</span></span>
+        <Badge tone={state.tone}>{state.label}</Badge>
       </div>
-    );
-  }
-  const where = provisioner === "docker" ? "a Docker container on your Triage server" : "an isolated place";
-  return <div className="sentence"><span className="txt">Code review runs in {where}.</span></div>;
+      {place.reason && <p className="field-error">{place.reason}</p>}
+      {(place.state === "not_set_up" || place.state === "failing") && <PlaceSetup place={place} />}
+    </div>
+  );
+}
+
+function WhereItRuns({ places }: { places: CodeReviewPlaceOption[] }) {
+  return (
+    <div className="gcard source" aria-labelledby="code-review-places" role="group">
+      <header>
+        <b id="code-review-places">Where it runs</b>
+        <span>Code review never runs on the Triage server itself. It runs in the first place below that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.</span>
+      </header>
+      <div className="sentences">
+        {places.map((place) => <Place key={place.id} place={place} />)}
+      </div>
+    </div>
+  );
 }
 
 export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
@@ -75,8 +117,8 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
             remove={removeAnthropic}
             editor={(onSaved) => <AnthropicKeyForm onSaved={onSaved} />}
           />
-          <ReviewPlace provisioner={snapshot.codeReviewPlace} />
         </div>
+        {snapshot.codeReviewPlaces && <WhereItRuns places={snapshot.codeReviewPlaces} />}
       </div>
     </section>
   );
