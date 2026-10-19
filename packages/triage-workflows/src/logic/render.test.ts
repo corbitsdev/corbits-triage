@@ -145,6 +145,15 @@ describe("focused rendering", () => {
     expect(focusedVerdict(focusedAnswer(0.5, 0.4), undefined, CHOICE.pass)).toMatchObject({ verdict: "unsure", reason: "the decision model passed it, but a rule could not be confirmed" });
   });
 
+  test("an unsure comment names every rule it could not confirm, running checks included, and the verdict keeps the decision model's probability", () => {
+    const running = { check: "ci-green", kind: "machine" as const, result: "unconfirmed" as const, reason: "checks are still running", evidence: ["build"], output: { kind: "could-not-check" as const, reason: "checks are still running" } };
+    const det = { ...FOCUSED_DET, checks: [running] };
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(focusedAnswer(0.5, 0.4)), focused: focusedPlan({}).focused, choice: CHOICE.pass });
+    expect(verdict).toMatchObject({ verdict: "unsure", score: 0.8 });
+    expect(verdict.waiting).toBeUndefined();
+    expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}\n\nWaiting on:\n- checks are still running: \`build\``);
+  });
+
   test.each([
     ["missing", ""],
     ["malformed", JSON.stringify({ id: "focused", type: "choice", choice: "one_thing", probabilities: { one_thing: 1 }, confidence: 2 })],
@@ -365,9 +374,9 @@ describe("a policy without a decision-model rule", () => {
   const det = (checks: DeterministicResult["checks"]): DeterministicResult => ({ state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks, needsJudgment: true, sources: { quality: [], custom: [] } });
   const ci = (result: "pass" | "unconfirmed") => ({ check: "ci-green", kind: "machine" as const, result, reason: "checks", evidence: [], output: { kind: "values" as const, values: {} } });
 
-  test("passes without the model when every rule passes, and is unsure while CI is pending", () => {
+  test("passes without the model when every rule passes, and waits while CI is pending", () => {
     expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("pass")]) })).toMatchObject({ verdict: "pass", score: null, reason: "every rule passed, and the policy has no decision-model rule" });
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("unconfirmed")]) })).toMatchObject({ verdict: "unsure", degraded: null, reason: "not every rule could be confirmed, and the policy has no decision-model rule" });
+    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("unconfirmed")]) })).toMatchObject({ waiting: true, degraded: null, reason: "checks", labels: ["Triage: Waiting for CI"], feedback: "" });
   });
 });
 

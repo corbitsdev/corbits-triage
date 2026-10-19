@@ -242,7 +242,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       const extra = queued.events === undefined
         ? { items: [{ prNumber: queued.number, headSha, ...(queued.judged && { judged: queued.judged }) }] }
         : { prNumber: queued.number, headSha, events: queued.events };
-      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, number: queued.number, headSha, source: "reconcile", payload: mailPayload(repo.record, repo.policy, repo, extra) });
+      const payload = mailPayload(repo.record, repo.policy, repo, { ...extra, ...(queued.noWait && { noWait: true }) });
+      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, number: queued.number, headSha, source: "reconcile", payload });
       deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, reason: queued.reason });
     }
   }

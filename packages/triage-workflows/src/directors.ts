@@ -22,7 +22,7 @@ import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount,
 import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import type { ApprovalOutput } from "./actions/approval.js";
-import type { WaitingOutput } from "./actions/waiting.js";
+import type { WaitingMark, WaitingOutput } from "./actions/waiting.js";
 import type { Judgment } from "./actions/evaluate.js";
 import type { History } from "./logic/history.js";
 import type { Judged } from "./logic/item.js";
@@ -201,6 +201,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   let automatic: ActionKind[] = [];
   let source: PolicySource | undefined;
   let repoSource: RepoSource = "github";
+  let noWait = false;
   function tool(name: string): string {
     return toolName(repoSource, name);
   }
@@ -291,7 +292,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           }, { repo, policy, pack, events, docs });
           const judged = carried.get(n);
           if ("error" in item) return item;
-          const stamped = { ...item, automatic, ...(source && { source }), ...(repoSource !== "github" && { repoSource }) };
+          const stamped = { ...item, automatic, ...(source && { source }), ...(repoSource !== "github" && { repoSource }), ...(noWait && { noWait: true as const }) };
           return judged === undefined ? stamped : { ...stamped, judged };
         }
         return then(numbers.map(itemFor));
@@ -380,6 +381,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     automatic = automaticKinds(message, input);
     source = policySource(input);
     repoSource = repoSourceOf(input?.repoSource);
+    noWait = input?.noWait === true;
     if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, ["catch-up"]);
     if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
     // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.
@@ -464,6 +466,7 @@ function dismissals(v: Verdict) {
 /** Whether the mirror writes anything for the verdict: what the pr-triage role is granted, or what an earlier Do left to take back. */
 function mirrors(v: Verdict): boolean {
   if (v.mirror !== true || !v.request || !Array.isArray(v.automatic)) return false;
+  if (v.waiting) return v.mark !== undefined;
   return MIRRORED_KINDS.some((kind) => v.automatic.includes(kind)) || Object.keys(dismissals(v)).length > 0;
 }
 
@@ -490,7 +493,12 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
     return caps.reply(JSON.stringify(batch ? { results: outcomes } : (outcomes[0] ?? { skipped: true })));
   }
 
+  function markCall(mark: WaitingMark): ToolCall {
+    return call(toolName(mark.repoSource, "mirror_auto"), mark.args, mark.effectId);
+  }
+
   function mirrorCall(v: Verdict): ToolCall {
+    if (v.mark) return markCall(v.mark);
     const r = v.request;
     const source = repoSourceOf(v.repoSource);
     const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
@@ -501,7 +509,7 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
 
   function markWaiting({ mark }: WaitingOutput & { waiting: true }) {
     if (!mark) return caps.reply(JSON.stringify({ skipped: true }));
-    return b.run([call(toolName(mark.repoSource, "mirror_auto"), mark.args, mark.effectId)], finish);
+    return b.run([markCall(mark)], finish);
   }
 
   return {

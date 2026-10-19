@@ -171,11 +171,20 @@ does.
    whose conditions do not hold. While CI is pending every runnable action is
    held and an approve that may not stand is skipped; the head settles, so
    the reconciler does not retry it, and the completed `check_run` (or the
-   reconciler's CI re-read) triages it again.
+   reconciler's CI re-read) triages it again. A verdict other than Fail whose
+   only unconfirmed rules are the host's (CI green pending, mergeability not
+   computed) is `waiting` instead: no comment, no actions, the waiting marker
+   as its mirror (`mark`). The hub records no verdict for it, nor for one on a
+   closed pull request (`closed`); a waiting run with CI pending turns the
+   head's row `waiting` within the 60-minute CI wait, which the coalescer or
+   reconciler releases like a head it held itself. A mail with `noWait`
+   (past the CI wait, a head's last attempt, or Triage again) is decided
+   instead of waiting.
 7. **mirror**: writes the verdict label when the `pr-triage` role holds
    Labels, and the marker comment when it holds Comment; on Bitbucket, Comment
    also writes the verdict as the `Corbits Triage` build status. It runs
    before execute, so a merge or close finds the final verdict on the head. A
+   waiting verdict writes only its waiting marker. A
    waiting mail skips every other step: `markWaiting` writes only the waiting
    label or `INPROGRESS` build status under the effect id
    `waiting:<owner>--<name>:<number>:<head sha>`, and nothing once the pull

@@ -15,6 +15,8 @@ export type ObservedRun = {
   unsettled?: string;
   /** The verdict only waits on GitHub for a machine check, so the head is retried after `unconfirmedRetryMs` rather than at once. */
   unconfirmed?: true;
+  /** The run waited for CI still running on the head instead of deciding, so the head waits for its CI. */
+  heldForCi?: true;
   /** Workflow package version of the deployment the run ran on; the row keeps it to reset failed heads on a later deployment and to carry judge answers. */
   workflowVersion?: string;
   trigger?: string;
@@ -76,6 +78,11 @@ export function waitsForCi(ci: CiState | undefined, firstSeenAt: string, now: Da
   return ci === "none" && waited < policy.ciStartGraceMs;
 }
 
+/** Past the CI wait the hub waits no longer for the host's checks, so the head is decided even while they are pending. */
+export function waitedOut(firstSeenAt: string, now: Date, policy: Pick<ReconcilePolicy, "ciWaitMaxMs">): boolean {
+  return now.getTime() - ms(firstSeenAt) >= policy.ciWaitMaxMs;
+}
+
 type RepoPlanInput = {
   name: string;
   prs: readonly OpenPr[];
@@ -96,8 +103,8 @@ export type TenantPlanInput = {
   offeringId?: string;
 };
 
-/** A head to queue, why, the judge answers its earlier runs got, and the events it waited on CI with. */
-export type QueuedPr = { number: number; reason: string; judged?: Judged; events?: TriageEvent[] };
+/** A head to queue, why, the judge answers its earlier runs got, the events it waited on CI with, and whether it is decided while the host's checks are pending. */
+export type QueuedPr = { number: number; reason: string; judged?: Judged; events?: TriageEvent[]; noWait?: true };
 
 /** Rows for exactly the open heads; queued heads are already marked queued. */
 export type RepoPlan = { rows: PrTriageRow[]; enqueue: QueuedPr[] };
@@ -128,7 +135,7 @@ function withStatus(row: PrTriageRow, { status, run, runId = run?.runId, error }
   return {
     ...rest,
     status,
-    ...(events !== undefined && inFlight({ status }) && { events }),
+    ...(events !== undefined && (inFlight({ status }) || status === "waiting") && { events }),
     ...(runId !== undefined && { runId }),
     ...(error !== undefined && { error }),
     ...(workflowVersion !== undefined && { workflowVersion }),
@@ -185,6 +192,8 @@ function observe(row: PrTriageRow, observed: readonly ObservedRun[], now: Date, 
   const current = sinceStale(row, observed, policy);
   const runs = waiting ? sinceQueued(row, current, policy) : current;
   const settled = runs.find((run) => run.status === "completed" && run.unsettled === undefined);
+  // Past the CI wait the head settles on the run that waited, and the check run that finishes CI triages it again.
+  if (settled?.heldForCi && waitsForCi("pending", row.firstSeenAt, now, policy)) return withStatus(row, { status: "waiting", run: settled }, at);
   if (settled) return withStatus(row, { status: "triaged", run: settled }, at);
   const live = pick(row, runs.filter((run) => run.status === "running" && !isStuck(run, now, policy)));
   if (live) return withStatus(row, { status: "running", run: live }, at);
@@ -333,7 +342,9 @@ export function planTenant({ repos, runs, now, policy, workflowVersion, offering
     // The events stay on the row while its run is in flight, so a check run finishing meanwhile is known to be covered by it.
     plan.rows[index] = { ...rest, status: "queued", ...(events !== undefined && { events }), attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
     const reason = row.status === "waiting" ? "waited for CI" : row.error ?? "never triaged";
-    plan.enqueue.push({ number: row.number, reason, ...(Object.keys(judged).length > 0 && { judged }), ...(events !== undefined && { events }) });
+    // Its last attempt is decided too, so a head never ends without a verdict.
+    const noWait = waitedOut(row.firstSeenAt, now, policy) || row.attempts + 1 >= policy.maxAttempts;
+    plan.enqueue.push({ number: row.number, reason, ...(Object.keys(judged).length > 0 && { judged }), ...(events !== undefined && { events }), ...(noWait && { noWait }) });
   }
   return plans;
 }

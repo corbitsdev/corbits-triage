@@ -8,7 +8,7 @@ import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { NOT_ASKED_REASON } from "@corbits/triage-workflows/logic/render";
-import { unsettledBy } from "@corbits/triage-workflows/logic/settled";
+import { heldForCi, unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import type { Judged } from "@corbits/triage-workflows/logic/item";
 import type { LiveDeployment } from "./deployment.js";
 import { runKey, type ObservedRun } from "./reconcile-plan.js";
@@ -24,7 +24,7 @@ const INLINE_PREFIX = "inline:";
 const NO_VERDICT = "run completed without a verdict";
 
 type Trigger = { repo: string; number: number; headSha: string; startedAt: string; event?: string };
-type Unsettled = Pick<ObservedRun, "unsettled" | "unconfirmed">;
+type Unsettled = Pick<ObservedRun, "unsettled" | "unconfirmed" | "heldForCi">;
 type Terminal = Unsettled & { status: Exclude<ObservedRun["status"], "running"> };
 type Summary = Omit<RecordedVerdict, "runId" | "repo" | "number" | "headSha" | "startedAt">;
 type Head = { trigger: Trigger; terminal?: Terminal; summary?: Summary; judged?: Judged };
@@ -236,8 +236,12 @@ function detailOf(verdict: Record<string, unknown>, ruled: Ruled | undefined): V
   return detail instanceof type.errors ? undefined : detail;
 }
 
-/** What the stats and the portal read of a verdict; none for one written before it carried these fields or made for another head. */
+/**
+ * What the stats and the portal read of a verdict; none for one written before it carried these fields, made for
+ * another head, still waiting on the host's checks, or made on a closed pull request.
+ */
 function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigger, mirrored: ReadonlySet<string>, ruled: Ruled | undefined): Summary | undefined {
+  if (verdict["waiting"] === true || verdict["closed"] === true) return undefined;
   const fields = SummaryFields(verdict);
   if (fields instanceof type.errors || typeof at !== "string" || verdict["repo"] !== trigger.repo || verdict["number"] !== trigger.number) return undefined;
   const detail = detailOf(verdict, ruled);
@@ -270,7 +274,7 @@ function judgedOf(verdict: Record<string, unknown>, trigger: Trigger): Judged | 
 
 function terminalOf(status: Terminal["status"], verdict: Record<string, unknown> | undefined, headSha: string): Terminal {
   if (!verdict) return { status, unsettled: NO_VERDICT };
-  return { status, ...unsettledBy(verdict, headSha) };
+  return { status, ...unsettledBy(verdict, headSha), ...(heldForCi(verdict) && { heldForCi: true }) };
 }
 
 function headVerdictOf<T>(verdicts: readonly T[], heads: number, index: number): T | undefined {
@@ -435,6 +439,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
           startedAt,
           ...(terminal?.unsettled !== undefined && { unsettled: terminal.unsettled }),
           ...(terminal?.unconfirmed && { unconfirmed: true }),
+          ...(terminal?.heldForCi && { heldForCi: true }),
           ...(trigger.event !== undefined && { trigger: trigger.event }),
           ...(judged && { judged }),
         };

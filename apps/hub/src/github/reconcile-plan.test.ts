@@ -113,6 +113,12 @@ describe("reconcile plan", () => {
     expect(status(capped, 1)).toMatchObject({ status: "failed", attempts: policy.maxAttempts });
   });
 
+  test("a head's last attempt is decided even while the host's checks are pending", () => {
+    const failed = (attempts: number) => row(1, { status: "failed", attempts, error: "unconfirmed checks: no-merge-conflicts", firstSeenAt: at(0).toISOString(), queuedAt: at(0).toISOString() });
+    expect(plan([pr(1)], [failed(policy.maxAttempts - 2)], at(41)).enqueue).toEqual([{ number: 1, reason: "unconfirmed checks: no-merge-conflicts" }]);
+    expect(plan([pr(1)], [failed(policy.maxAttempts - 1)], at(41)).enqueue).toEqual([{ number: 1, reason: "unconfirmed checks: no-merge-conflicts", noWait: true }]);
+  });
+
   test("a webhook run that failed is retried at once without spending backoff", () => {
     const result = plan([pr(1)], [], at(60), [[pr(1), [run("run_hook", "failed", 30)]]]);
     expect(enqueued(result)).toEqual([1]);
@@ -334,11 +340,15 @@ describe("a head waiting for CI", () => {
     expect(enqueued(release("pending", 59))).toEqual([]);
     expect(status(release("pending", 59), 1)).toEqual(waiting);
     expect(enqueued(release("none", 1))).toEqual([]);
-    for (const [ci, minute] of [["pending", 60], ["none", 2], ["success", 1], ["failure", 1], [undefined, 1]] as const) {
+    for (const [ci, minute] of [["none", 2], ["success", 1], ["failure", 1], [undefined, 1]] as const) {
       const released = release(ci, minute);
       expect(released.enqueue).toEqual([{ number: 1, reason: "waited for CI", events: ["opened"] }]);
       expect(status(released, 1)).toMatchObject({ status: "queued", events: ["opened"], attempts: 1, queuedAt: at(minute).toISOString() });
     }
+  });
+
+  test("past the CI wait a head whose CI still runs is queued to be decided anyway", () => {
+    expect(release("pending", 60).enqueue).toEqual([{ number: 1, reason: "waited for CI", events: ["opened"], noWait: true }]);
   });
 
   test("a head no webhook queued waits for its running CI too", () => {

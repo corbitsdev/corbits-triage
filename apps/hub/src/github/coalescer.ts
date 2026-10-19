@@ -22,7 +22,7 @@ import type { TriageJob } from "./coordinator.js";
 import type { PrMail } from "./normalize.js";
 import { sourceOf, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader } from "./tenant-open-heads.js";
-import { inFlight, waitsForCi, type ReconcilePolicy } from "./reconcile-plan.js";
+import { inFlight, waitedOut, waitsForCi, type ReconcilePolicy } from "./reconcile-plan.js";
 import { failHead, queueHead, restoreHead, waitHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 
@@ -211,7 +211,8 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       return;
     }
     try {
-      const payload = mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events });
+      const noWait = waitedOut(firstSeenAt, deps.now(), deps.ciWait);
+      const payload = mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events, ...(noWait && { noWait }) });
       await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", payload });
     } catch (err) {
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
