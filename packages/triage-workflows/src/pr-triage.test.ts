@@ -54,7 +54,7 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
-  const pr: { head: string; draft: boolean; ci: Ci; dismissible: boolean } = { head: "abc", draft: false, ci: "none", dismissible: true };
+  const pr: { head: string; state: "open" | "closed"; draft: boolean; ci: Ci; dismissible: boolean } = { head: "abc", state: "open", draft: false, ci: "none", dismissible: true };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
@@ -63,7 +63,7 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
     if (path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix`)) return Response.json([{ number: 1521, merge_commit_sha: "merge1521", merged_at: "2026-10-19T00:43:02Z" }, { number: 1490, merge_commit_sha: "elsewhere", merged_at: "2026-10-01T00:00:00Z" }]);
     if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title: "Fix #3", user: { login: "octocat" }, draft: pr.draft, head: { sha: pr.head } }]);
     if (path === `/repos/${REPO}/pulls/8`) {
-      return Response.json({ number: 8, title: "Fix #3", state: "open", draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base: { ref: "main", repo: { id: 1 } }, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
+      return Response.json({ number: 8, title: "Fix #3", state: pr.state, draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base: { ref: "main", repo: { id: 1 } }, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
     }
     if (path.includes("/check-runs")) return Response.json({ check_runs: RUNS[pr.ci] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
@@ -162,9 +162,9 @@ const VERDICT_PATH = { invoked: ["triage-facts", "triage-judge", "triage-mirror"
 // `judgeText` fails focused, so the judge is called again for its file questions; a failed judged rule decides Fail without the verdict question.
 const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-mirror", "triage-execute"], mirrors: ["mirror"] };
 
-type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
+type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; noWait?: true; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
 
-async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, automatic = ACTION_KINDS, from = "github@acme.test", github, source, ...seed }: TriageOptions = {}) {
+async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, noWait, automatic = ACTION_KINDS, from = "github@acme.test", github, source, ...seed }: TriageOptions = {}) {
   const { gh, requests } = github ?? fakeGithub(seed);
   const policy = { enabled: true, ...(source && { source }) };
   const invoked: string[] = [];
@@ -176,7 +176,7 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
     hasUpstreamSignalResolver: true,
     invokeStep: stepInvoker(gh, invoked, judged, judgeFails),
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
-    triggerPayload: hubMail(backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, policy, checkPack, automatic, events: ["opened"] }, from),
+    triggerPayload: hubMail(backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, policy, checkPack, automatic, events: ["opened"], ...(noWait && { noWait }) }, from),
   }).complete;
   expect(terminalStatus).toBe("completed");
   const mirrors = Object.keys(outputs).filter((id) => id.startsWith("mirror"));
@@ -446,6 +446,40 @@ describe("pr-triage body", () => {
     expect(moved.requests.filter((r) => r.method !== "GET")).toEqual([]);
     const { requests } = await triage(pack, { labels: [WAITING_LABEL] });
     expect(requests).toContainEqual({ method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Triage%3A%20Waiting%20for%20CI` });
+  });
+
+  test("CI still running holds the head under the waiting label and posts nothing; once CI completes the head passes", async () => {
+    const github = fakeGithub();
+    github.pr.ci = "pending";
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO };
+    const held = await triage(pack, { github });
+    expect(held.verdict).toMatchObject({ waiting: true, labels: [WAITING_LABEL], feedback: "", actions: [] });
+    expect(held.dos).toEqual([]);
+    expect(github.requests.filter((r) => r.method !== "GET")).toEqual([{ method: "POST", path: `/repos/${REPO}/issues/8/labels` }]);
+    expect(github.comments).toEqual([]);
+    github.pr.ci = "success";
+    const passed = await triage(pack, { github });
+    expect(passed.verdict).toMatchObject({ verdict: "pass", labels: ["Triage: Ready"], actions: [{ list: "pass", kind: "comment" }] });
+    expect(passed.dos).toEqual([expect.objectContaining({ status: "done" })]);
+    expect(github.comments.map((comment) => comment.body.split("\n")[1])).toEqual(["**Triage: Pass**", expect.any(String)]);
+  });
+
+  test("once the hub waits no longer, CI still running is Unsure and its comment names the running checks", async () => {
+    const github = fakeGithub();
+    github.pr.ci = "pending";
+    const { verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO }, { github, noWait: true });
+    expect(verdict).toMatchObject({ verdict: "unsure", reason: "not every rule could be confirmed, and the policy has no decision-model rule" });
+    expect(verdict.waiting).toBeUndefined();
+    expect(github.comments[0]!.body).toContain("Waiting on:\n- checks are still running");
+  });
+
+  test("a closed pull request gets no verdict: nothing is suggested or written", async () => {
+    const github = fakeGithub();
+    github.pr.state = "closed";
+    const { verdict, dos } = await triage({ ...emptyPack(REPO), actions: HELLO }, { github });
+    expect(verdict).toMatchObject({ closed: true, actions: [] });
+    expect(dos).toEqual([]);
+    expect(github.requests.filter((r) => r.method !== "GET")).toEqual([]);
   });
 
   test("an approval mail from anyone but the hub's sender writes nothing", async () => {

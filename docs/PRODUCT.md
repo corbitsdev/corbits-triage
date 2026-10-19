@@ -110,16 +110,17 @@ Each pull request head gets one verdict: **Pass**, **Fail** or **Unsure**.
    talk it into a pass.
 2. A policy with no decision-model rule never calls the model: every rule
    passing is **Pass**, and a rule the host has not settled yet, such as
-   pending CI, leaves it **Unsure**.
+   pending CI, makes it wait (see Waiting for CI).
 3. Otherwise one decision-model question decides: does this pull request pass
    this repository's policy? It reads every rule with its result and evidence
    and as much of the pull request as fits one request. **Pass** at 0.7 or
    above for pass, **Fail** at 0.7 or above for fail, **Unsure** otherwise. A
    judged rule left unconfirmed turns a pass into **Unsure**. The score shown
-   is the probability of pass.
+   is the probability of pass. An Unsure comment names each rule Triage could
+   not confirm.
 
-Draft and closed pull requests are not decided, and Triage never writes to a
-closed or merged one. A model that does not answer leaves the verdict Unsure
+Draft pull requests are not decided. A closed or merged one gets no verdict,
+and Triage never writes to it. A model that does not answer leaves the verdict Unsure
 and Triage checks it again.
 
 Triage keeps one comment on the pull request: the verdict, the reasons, and
@@ -196,8 +197,12 @@ minutes is taken as having no CI, and none waits longer than an hour; a run by
 hand does not wait. Meanwhile the Inbox shows **Waiting for CI**, and the pull
 request shows the `Triage: Waiting for CI` label on GitHub (or the `Corbits
 Triage` build status in progress on Bitbucket) until the verdict replaces it.
-A head triaged while CI still runs has every action held until its checks
-finish.
+A head triaged anyway while the only rules left to confirm are the host's own
+(CI still running, mergeability not computed yet) gets no verdict yet: it
+shows the same marker, nothing is posted or run, and it is triaged again once
+they are done. Past the hour, on Triage again, or on its last retry, it gets
+its verdict anyway. A head triaged while CI still runs for a step's CI condition
+has every action held until its checks finish.
 
 ### Labels
 

@@ -229,10 +229,10 @@ Size rules and facts the host already knows cost nothing and always give the sam
 ### How the verdict is decided
 
 1. If any rule fails, the verdict is **Fail** right away. That includes a Judgement rule the decision model answered no to.
-2. If the policy has no Judgement rules, there is nothing left to judge: the verdict is **Pass** when every rule passes, and **Unsure** when a rule could not be confirmed, such as CI that is still running.
+2. If the policy has no Judgement rules, there is nothing left to judge: the verdict is **Pass** when every rule passes. A rule still waiting on the host, such as CI that is still running, makes Triage wait (see Waiting for CI).
 3. Otherwise the decision model reads the whole pull request together with every rule's result and answers one question: does this pull request pass this repository's policy? If it is at least 70% sure the answer is yes, the verdict is **Pass**. If it is at least 70% sure the answer is no, the verdict is **Fail**. Anything in between is **Unsure**, which means a person should look. A pull request with a Judgement rule the model could not confirm is never more than Unsure.
 
-Draft and closed pull requests are not decided at all.
+Draft pull requests are not decided at all, and a closed pull request gets no verdict.
 
 ### Actions
 
@@ -259,7 +259,9 @@ Enabling a repository switches on Comment and Add labels (Comment only on Bitbuc
 
 When the policy depends on CI (the **CI must pass** rule is on, a step has a CI condition, or a step approves or merges), Triage waits for a pull request's CI to finish before it checks it, so it gives one result instead of an early Unsure. Meanwhile the Inbox shows **Waiting for CI** (**Waiting for CI · new commits since Triage checked** when an earlier result is still on show). A pull request that already needed you stays in Needs you meanwhile; one Triage has not checked yet waits under **Waiting**. The pull request's page notes **New commits since Triage checked** above the earlier result, which stays until the new one lands. The pull request itself shows **Triage: Waiting for CI**, as a label on GitHub where Triage adds labels on its own and as the **Corbits Triage** build status on Bitbucket where Triage comments on its own. The verdict replaces it once Triage has checked the pull request. Triage goes ahead as soon as any check fails, after two minutes when the repository has no CI, and after an hour at most. **Triage again** does not wait.
 
-If Triage checks a pull request while its CI is still running anyway, it holds every action, and its comment on the pull request lists them under **Waiting for checks to finish**. They go ahead once the checks are done.
+If Triage checks a pull request anyway while the only rules it cannot confirm yet are waiting on the host (CI still running, or the host has not yet worked out whether the pull request can merge), it gives no verdict yet: the pull request keeps **Triage: Waiting for CI**, nothing is posted and no action runs, and Triage checks it again once they are done. After an hour, on **Triage again**, or when the host still has not worked out mergeability after Triage's last retry, it gives the verdict anyway. If a step depends on CI that is still running, Triage holds every action, and its comment on the pull request lists them under **Waiting for checks to finish**. They go ahead once the checks are done.
+
+An **Unsure** comment lists each rule Triage could not confirm, with checks still running under **Waiting on**.
 
 ### Labels
 

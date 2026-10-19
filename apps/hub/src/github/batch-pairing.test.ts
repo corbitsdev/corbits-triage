@@ -6,6 +6,7 @@ import { triageDirectorFactory } from "@corbits/triage-workflows/directors";
 import { evaluate, parts, rules } from "@corbits/triage-workflows/actions/index";
 import type { RulesOutput, JudgeChunk } from "@corbits/triage-workflows/actions/rules";
 import { createTriageRuns } from "./triage-runs.js";
+import type { CiState } from "@corbits/github-reads";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR } from "@corbits/triage-workflows/logic/quality";
 import { NO_FACTS } from "@corbits/triage-workflows/logic/item";
@@ -14,7 +15,7 @@ const REPO = "acme/widgets";
 const DOMAIN = "acme.test";
 const ANCHOR = "run_live";
 
-type VerdictOptions = { pack?: CheckPack; pr?: Record<string, unknown>; skipJudge?: boolean };
+type VerdictOptions = { pack?: CheckPack; pr?: Record<string, unknown>; checks?: unknown[]; skipJudge?: boolean };
 
 const ctx = {} as never;
 const signal = new AbortController().signal;
@@ -53,7 +54,7 @@ async function judgeAndEvaluate(ruled: RulesOutput, first: (questions: Array<{ i
 }
 
 /** Drives the real facts director and the rules and evaluate actions for one batch mail and returns the verdict output; `skipJudge` evaluates as the build that never asked the decision model did. */
-async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack = emptyPack(REPO), pr = {}, skipJudge = false }: VerdictOptions = {}): Promise<string> {
+async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack = emptyPack(REPO), pr = {}, checks = [], skipJudge = false }: VerdictOptions = {}): Promise<string> {
   const replies: string[] = [];
   const called = new Set<string>();
   const caps = {
@@ -76,7 +77,7 @@ async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack =
     await done(`commits:${n}`, { commits: [] });
     await done(`files:${n}:0`, { files: [{ path: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }] });
   }
-  for (const n of numbers) if (!failGetPr.has(n)) await done(`checks:${n}`, { checks: [] });
+  for (const n of numbers) if (!failGetPr.has(n)) await done(`checks:${n}`, { checks });
   const ruled = await rules({ reply: replies[0] }, ctx, signal);
   if (!skipJudge) return (await judgeAndEvaluate(ruled)).reply;
   for (const item of ruled.items) item.det.needsJudgment = false;
@@ -87,12 +88,16 @@ function events(numbers: number[], output: string, at: string): WorkflowRunEvent
   const payload = stockTriggerMail({ kind: "pr", repo: REPO, items: numbers.map((n) => ({ prNumber: n, headSha: `sha${n}` })) });
   return [
     { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at, trigger: { type: "mail", payload } } },
-    { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${output}` } } },
+    { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, at, stepId: "evaluate", output: { ref: `inline:${output}` } } },
     { seq: 2, type: "RunCompleted", body: { type: "RunCompleted", seq: 2 } },
   ];
 }
 
 async function observe(numbers: number[], reply: string, runId = "run_batch", at = "2026-10-07T01:00:00.000Z") {
+  return (await observeRuns(numbers, reply, runId, at)).byRepo.get(REPO)!;
+}
+
+async function observeRuns(numbers: number[], reply: string, runId: string, at: string) {
   const log = events(numbers, reply, at);
   const reader = {
     async listRunIds() { return [runId]; },
@@ -103,8 +108,7 @@ async function observe(numbers: number[], reply: string, runId = "run_batch", at
     async resolveRefTip() { return "t"; },
     async hasRepository() { return true; },
   } as unknown as WorkflowRunReader;
-  const runs = await createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 })(ANCHOR, DOMAIN);
-  return runs.byRepo.get(REPO)!;
+  return createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 })(ANCHOR, DOMAIN);
 }
 
 describe("batch pairing through the real facts director and evaluate action", () => {
@@ -250,5 +254,34 @@ describe("verdicts the decision model was never asked about", () => {
     expect(plan([], ambiguous, 10).enqueue).toEqual([]);
     expect(outage[0]?.unsettled).toBe(`degraded: decision model unavailable: ${QUALITY_EVALUATION_LIMIT_ERROR}`);
     expect(plan([], outage, 10).enqueue.map((queued) => queued.reason)).toEqual([`degraded: decision model unavailable: ${QUALITY_EVALUATION_LIMIT_ERROR}`]);
+  });
+});
+
+describe("a head CI is still running on", () => {
+  const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+  const at = (minute: number) => new Date(Date.UTC(2026, 9, 7, 1, minute)).toISOString();
+
+  function plan(rows: PrTriageRow[], runs: ObservedRun[], ci: CiState, minute: number) {
+    const repos = [{ name: REPO, prs: [{ number: 1, headSha: "sha1", updatedAt: at(-60), draft: false }], rows, ci: new Map([["1@sha1", ci]]) }];
+    return planTenant({ repos, runs: new Map([[REPO, new Map([["1@sha1", runs]])]]), now: new Date(at(minute)), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined }).get(REPO)!;
+  }
+
+  test("records no verdict and waits for CI, then is triaged once CI finishes and records the pass", async () => {
+    const held = await observeRuns([1], await batchVerdicts([1], new Set(), { pack, checks: [{ name: "build", status: "in_progress", conclusion: null }] }), "run_held", at(0));
+    expect(held.verdicts).toEqual([]);
+    const runs = held.byRepo.get(REPO)!.get("1@sha1")!;
+    expect(runs).toMatchObject([{ status: "completed", heldForCi: true }]);
+    const running: PrTriageRow = { number: 1, headSha: "sha1", status: "running", attempts: 1, runId: "run_held", firstSeenAt: at(-1), queuedAt: at(-1), updatedAt: at(0), events: ["ready"] };
+    const waiting = plan([running], runs, "pending", 2);
+    expect(waiting.rows[0]).toMatchObject({ status: "waiting", events: ["ready"] });
+    expect(waiting.enqueue).toEqual([]);
+    expect(plan(waiting.rows, runs, "success", 4).enqueue).toEqual([{ number: 1, reason: "waited for CI", events: ["ready"] }]);
+    const passed = await observeRuns([1], await batchVerdicts([1], new Set(), { pack, checks: [{ name: "build", status: "completed", conclusion: "success" }] }), "run_pass", at(5));
+    expect(passed.verdicts).toMatchObject([{ number: 1, headSha: "sha1", detail: { verdict: "pass" } }]);
+  });
+
+  test("a closed pull request records no verdict", async () => {
+    const closed = await observeRuns([1], await batchVerdicts([1], new Set(), { pr: { state: "closed" } }), "run_closed", at(0));
+    expect(closed.verdicts).toEqual([]);
   });
 });

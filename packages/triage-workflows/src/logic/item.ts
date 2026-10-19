@@ -18,6 +18,8 @@ export interface Item {
   source?: PolicySource;
   /** Where the pull request lives; absent on GitHub. */
   repoSource?: RepoSource;
+  /** The hub waits no longer for the host's checks. */
+  noWait?: true;
   error?: string;
 }
 

@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { listPrFilesPage } from "@corbits/github-reads";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import { MAX_DOS_PER_RUN, triageDirectorFactory, type DoResult } from "./directors.js";
-import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS } from "@corbits/triage-contracts";
+import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
-import { unsettledBy } from "./logic/settled.js";
+import { heldForCi, unsettledBy } from "./logic/settled.js";
 import { NO_FACTS } from "./logic/item.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
@@ -405,16 +405,15 @@ describe("judge on a blocked pull request", () => {
     ]);
   });
 
-  test("running checks leave the pass unsure, settled, with every Do held until they finish", async () => {
+  test("running checks hold a pass for CI: no comment and no Do, the waiting label in place of a verdict", async () => {
     const hi = [{ do: "comment", target: { body: "hi" } }];
     const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), pass: hi, unsure: hi } };
     const running = [{ name: "build", status: "in_progress", conclusion: null }];
-    const { verdict } = await judgeAndEvaluate(await facts(running, true, false, { checkPack, automatic: ["comment"] }, code), undefined, []);
-    expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", nextAction: "Wait for checks to finish" });
+    const { verdict } = await judgeAndEvaluate(await facts(running, true, false, { checkPack }, code), undefined, []);
+    expect(verdict).toMatchObject({ waiting: true, reason: "checks are still running", nextAction: "Wait for checks to finish", labels: [WAITING_LABEL], feedback: "", actions: [] });
+    expect(verdict.score).toBeGreaterThan(0);
     expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "unconfirmed", reason: "checks are still running", evidence: ["build"] });
-    expect(verdict.actions).toEqual([expect.objectContaining({ list: "unsure", kind: "comment", held: true, reason: "CI has not finished on this head." })]);
-    expect(verdict.feedback.endsWith("\n\nWaiting for checks to finish: comment.")).toBe(true);
-    expect(unsettledBy(verdict)).toEqual({});
+    expect(heldForCi(verdict)).toBe(true);
   });
 
   test("a head with no check runs passes CI green as no checks configured", async () => {

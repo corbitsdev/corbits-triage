@@ -1,7 +1,8 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
+import type { WaitingMark } from "../actions/waiting.js";
 import type { SuggestedAction } from "./actions.js";
 import { hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
@@ -121,6 +122,8 @@ export interface RenderInput {
   choice?: Record<VerdictChoice, number>;
   /** Why the verdict question could not be asked: the pull request is too large for it. */
   choiceRefused?: string;
+  /** The hub waits no longer for the host's checks, so a verdict is made while they are pending. */
+  noWait?: true;
 }
 
 export type Actor = "author" | "maintainer" | "system";
@@ -157,6 +160,8 @@ export interface RenderOutput extends Rendered {
   nextAction: string;
   actor: Actor;
   feedback: string;
+  /** Only the host's own checks were left to confirm, CI still running or mergeability not computed yet: nothing is decided or posted, and the head shows the waiting marker. */
+  waiting?: true;
 }
 
 type Sources = DeterministicResult["sources"];
@@ -486,6 +491,11 @@ function unsure(c: CheckResult): boolean {
   return c.kind === "model" && c.result === "unconfirmed" && c.reason !== NOT_ASKED_REASON && c.reason !== UNAVAILABLE_REASON;
 }
 
+/** A rule the host had not computed yet: CI still running, or mergeability not computed. */
+function hostPending(c: CheckResult): boolean {
+  return c.kind === "machine" && c.result === "unconfirmed";
+}
+
 function outageCount(checks: CheckResult[]): number {
   return checks.filter((c) => c.kind === "model" && c.result === "unconfirmed" && c.reason === UNAVAILABLE_REASON).length;
 }
@@ -543,6 +553,7 @@ function authorComment({ author, repo, headSha, sources, purpose }: RenderContex
   const failing = checks.filter((c) => c.result === "fail");
   const mine = authorFailures(checks, sources);
   const unconfirmed = sources ? checks.filter(unsure) : [];
+  const pending = checks.filter(hostPending);
   const lines: string[] = [];
   if (mine.length) {
     lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
@@ -552,6 +563,10 @@ function authorComment({ author, repo, headSha, sources, purpose }: RenderContex
   if (unconfirmed.length) {
     if (lines.length) lines.push("");
     lines.push("Not yet confirmed, a maintainer will check:", ...unconfirmed.map((c) => `- ${passText(c.check, sources!)}`));
+  }
+  if (pending.length) {
+    if (lines.length) lines.push("");
+    lines.push("Waiting on:", ...pending.map((c) => `- ${c.reason}${failureEvidence(c, repo, headSha)}`));
   }
   if (outageCount(checks) > 0) {
     if (lines.length) lines.push("");
@@ -621,11 +636,12 @@ const UNCONFIRMED_REASON = "the decision model passed it, but a rule could not b
 
 /**
  * A failed hard rule decides Fail without the decision model; a draft or closed pull request is not decided, and is
- * unsure. A policy without a decision-model rule passes when every rule passes, and is unsure while any is unconfirmed.
- * Otherwise the verdict question decides, and a judge that did not answer leaves the verdict unsure and degraded.
+ * unsure. A policy without a decision-model rule passes when every rule passes. Otherwise the verdict question decides,
+ * and a judge that did not answer leaves the verdict unsure and degraded. A verdict that is not Fail and waits only on
+ * the host's own checks waits for them instead of being Unsure, unless the hub waits no longer.
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused } = input;
+  const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait } = input;
   const ctx = { author, repo, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose };
   const evaluated = evaluateModel(input);
   const checks = [...det.checks, ...evaluated.checks];
@@ -638,10 +654,14 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   }
   if (!hasModelChecks(det.sources)) {
     if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
-    return unsureOf(RULES_UNSURE_REASON);
+    return noWait ? unsureOf(RULES_UNSURE_REASON) : waitingOf(null);
   }
-  function unsureOf(reason: string, degraded: RenderOutput["degraded"] = null): RenderOutput {
-    return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, null, reasons, ctx);
+  function unsureOf(reason: string, degraded: RenderOutput["degraded"] = null, score: number | null = null): RenderOutput {
+    return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, score, reasons, ctx);
+  }
+  function waitingOf(score: number | null): RenderOutput {
+    const reason = checks.filter(hostPending).map((c) => c.reason).join("; ");
+    return { ...unsureOf(reason, null, score), waiting: true, labels: [WAITING_LABEL], feedback: "" };
   }
   if (judgeSkipped === true) return unsureOf(NEEDS_JUDGE_REASON);
   if (judgeLimitExceeded === true) return unsureOf(judgeError!);
@@ -653,7 +673,9 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   if (failing.length) return withChecks({ ...render(VERDICT_STATES.fail), verdict: "fail", degraded: null, reason: failing.join("; ") }, checks, null, reasons, ctx);
   if (choice === undefined) return unsureOf(outage, "inference-outage");
   const decided = decide(choice);
-  if (decided === "pass" && checks.some((check) => check.result === "unconfirmed")) return unsureOf(UNCONFIRMED_REASON);
+  const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
+  if (!noWait && decided !== "fail" && unconfirmed.length > 0 && unconfirmed.every(hostPending)) return waitingOf(choice.pass);
+  if (decided === "pass" && unconfirmed.length > 0) return unsureOf(UNCONFIRMED_REASON, null, choice.pass);
   return withChecks({ ...render(VERDICT_STATES[decided]), verdict: decided, degraded: null, reason: DECIDED_REASONS[decided] }, checks, choice.pass, reasons, ctx);
 }
 
@@ -698,6 +720,10 @@ export type Verdict = RenderOutput & {
   approvable?: boolean;
   /** Set when the pack has a request-changes Do: whether anything failed is the author's to fix on this head. */
   changesWanted?: boolean;
+  /** On a waiting verdict where triage writes the verdict: the marker the mirror writes in its place. */
+  mark?: WaitingMark;
+  /** Made on a closed pull request: not a verdict, so the hub records none. */
+  closed?: true;
 };
 
 /** `owned` is the labels the mirror takes back: triage's own, and the policy's verdict labels when there is a policy. */

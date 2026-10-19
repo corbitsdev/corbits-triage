@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, ownedLabels, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, ownedLabels, repoSourceOf, TRIAGE_LABELS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { ciRefusal } from "@corbits/github-reads";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
@@ -10,6 +10,7 @@ import type { Item, Judged } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
 import { choiceOver, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
+import { waitingMark } from "./waiting.js";
 
 export interface EvaluateInput {
   items: Item[];
@@ -174,11 +175,11 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const rendered = renderVerdict({
       author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, plan, focused, judgeError,
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
-      ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }),
+      ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(it.noWait && { noWait: it.noWait }),
     });
     const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack } : undefined;
-    // A degraded verdict is incomplete, and a draft or closed pull request is not decided, so nothing is suggested from either.
-    const decided = rendered.degraded === null && (it.det.needsJudgment || rendered.verdict === "fail");
+    // A degraded verdict is incomplete, a waiting one is not made yet, and a draft or closed pull request is not decided, so nothing is suggested from any.
+    const decided = rendered.degraded === null && rendered.waiting === undefined && (it.det.needsJudgment || rendered.verdict === "fail");
     const suggested = actionInput && decided ? evaluateActions(actionInput) : [];
     const wanted = actionInput && changesWanted(actionInput);
     const held = approvalHeldBy(rendered.verdict, it.facts.checks);
@@ -188,9 +189,15 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const feedback = withDos(rendered.feedback, actions);
     // What reading the policy left out is said on every verdict, so the policy can be fixed.
     const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
-    const labels = it.pack ? [it.pack.labels[rendered.verdict]] : rendered.labels;
-    const verdict = { ...stamp(it.facts, it), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
-    return { ...verdict, request: toMirrorRequest(verdict, it.pack ? ownedLabels(it.pack.labels) : undefined, it.source) };
+    const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
+    const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
+    const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, owned ?? TRIAGE_LABELS);
+    const verdict = {
+      ...stamp(it.facts, it), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }),
+      ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),
+      ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
+    };
+    return { ...verdict, request: toMirrorRequest(verdict, owned, it.source) };
   } catch (e) {
     const verdict = { ...stamp(undefined, it), ...degradedVerdict(`render failed: ${errorText(e)}`), automatic: it.automatic ?? [], actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
