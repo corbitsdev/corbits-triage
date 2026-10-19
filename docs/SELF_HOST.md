@@ -143,9 +143,10 @@ still set its own `capacityRetention`.
      Check suite, Push, Installation, Installation repositories.
 
    An App created before the Push event was added keeps working, but a change
-   to its repositories' `.corbits-triage.yml` is read only after the hub
-   restarts until Push is ticked under the App's settings → Permissions &
-   events. Contents
+   to its repositories' `.corbits-triage.yml` committed straight to the
+   default branch, rather than merged in a pull request, is read only after
+   the hub restarts until Push is ticked under the App's settings →
+   Permissions & events. Contents
    access already covers it, so installations are not asked to approve
    anything new. An App created before the Check suite event was added
    triages a head waiting for CI after the quiet time rather than 3 seconds

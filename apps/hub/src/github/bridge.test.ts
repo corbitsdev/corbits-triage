@@ -299,11 +299,12 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("a merge into the default branch re-checks that repository's other open pull requests", async () => {
+  test("a merge into the default branch reads the policy file again and re-checks that repository's other open pull requests", async () => {
     const sent: Sent[] = [];
     const rechecks: Recheck[] = [];
+    const refreshed: string[] = [];
     const db = stubDb([hookRow()], { corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: true }, { name: "octocat/other", connected: true, enabled: false }] } });
-    const handle = bridge({ db, sent, rechecks });
+    const handle = bridge({ db, sent, rechecks, refreshed });
     const pr = JSON.parse(prPayload);
     function closed(repo: string, merged: boolean, base: string) {
       return JSON.stringify({ ...pr, action: "closed", repository: { full_name: repo, default_branch: "main" }, pull_request: { ...pr.pull_request, state: "closed", merged, base: { ref: base } } });
@@ -319,6 +320,7 @@ describe("bridge handler", () => {
       expect(await res.json()).toEqual({ status });
     }
     expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7]]);
+    expect(refreshed).toEqual(["octocat/hello", "octocat/other"]);
     expect(sent).toHaveLength(0);
   });
 
