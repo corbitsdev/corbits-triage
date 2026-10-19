@@ -1,7 +1,7 @@
+import { createPrivateKey, X509Certificate } from "node:crypto";
 import { homedir } from "node:os";
-import path from "node:path";
 import { type, type ArkError } from "arktype";
-import type { FindDockerHostOpts } from "@corbits/provisioner-docker";
+import type { DockerTls, FindDockerHostOpts } from "@corbits/provisioner-docker";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 import type { CoalesceWindow } from "./github/coalescer.js";
@@ -17,6 +17,21 @@ const lifecycleDuration = type("string.trim").pipe(LifecycleDuration);
 
 const positiveDuration = lifecycleDuration.narrow((value, ctx) =>
   lifecycleDurationMs(value) > 0 || ctx.mustBe("greater than zero"));
+
+/** A PEM file encoded as one line of base64, which every .env format and variable UI keeps intact. */
+function base64Pem(parse: (pem: string) => unknown, expected: string) {
+  return type("string").pipe(function decodePem(value, ctx) {
+    const pem = Buffer.from(value, "base64").toString("utf8");
+    try {
+      parse(pem);
+      return pem;
+    } catch {
+      return ctx.error(expected);
+    }
+  });
+}
+const base64Certificate = base64Pem((pem) => new X509Certificate(pem), "a PEM certificate encoded as base64");
+const base64PrivateKey = base64Pem(createPrivateKey, "a PEM private key encoded as base64");
 
 const HubEnvSchema = type({
   DATABASE_URL: type("string").narrow((value, ctx) =>
@@ -43,8 +58,9 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
   "DOCKER_HOST?": "string",
   "DOCKER_CONTEXT?": "string",
-  "DOCKER_TLS_VERIFY?": "string",
-  "DOCKER_CERT_PATH?": "string",
+  "DOCKER_TLS_CA?": base64Certificate,
+  "DOCKER_TLS_CERT?": base64Certificate,
+  "DOCKER_TLS_KEY?": base64PrivateKey,
   "E2B_API_KEY?": "string",
   "RAILWAY_SANDBOX_TOKEN?": "string",
   "RAILWAY_SANDBOX_ENVIRONMENT_ID?": "string",
@@ -123,22 +139,24 @@ function publicHubWebSocketUrl(env: HubEnv): string {
 }
 
 export type DockerSettings = FindDockerHostOpts & {
-  /** The directory of `ca.pem`, `cert.pem` and `key.pem` when `DOCKER_TLS_VERIFY` is set. */
-  readonly certPath?: string;
+  readonly tls?: DockerTls;
   /** Where sidecars on another machine reach the hub. */
   readonly publicHubWebSocketUrl: string;
 };
 
 /**
  * Where to look for the Docker daemon and how to reach it, as the docker CLI does: `DOCKER_HOST`, `DOCKER_CONTEXT`, then
- * its config and sockets under `home`; TLS with `DOCKER_TLS_VERIFY`, from `DOCKER_CERT_PATH` or `~/.docker`.
+ * its config and sockets under `home`; TLS with the PEMs in `DOCKER_TLS_CA`, `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY`.
  */
 export function dockerSettings(env: HubEnv): DockerSettings {
   const home = env.HOME ?? homedir();
+  const { DOCKER_TLS_CA: ca, DOCKER_TLS_CERT: cert, DOCKER_TLS_KEY: key } = env;
+  const tlsSet = [ca, cert, key].filter((value) => value !== undefined).length;
+  if (tlsSet !== 0 && tlsSet !== 3) throw new Error("DOCKER_TLS_CA, DOCKER_TLS_CERT and DOCKER_TLS_KEY must be set together");
   return {
     ...(env.DOCKER_HOST !== undefined && { dockerHost: env.DOCKER_HOST }),
     ...(env.DOCKER_CONTEXT !== undefined && { dockerContext: env.DOCKER_CONTEXT }),
-    ...(env.DOCKER_TLS_VERIFY !== undefined && { certPath: env.DOCKER_CERT_PATH ?? path.join(home, ".docker") }),
+    ...(ca !== undefined && cert !== undefined && key !== undefined && { tls: { ca, cert, key } }),
     home,
     publicHubWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL),
   };

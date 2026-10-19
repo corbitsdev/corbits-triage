@@ -15,7 +15,6 @@ export {
   findDockerHost,
   isLocalDockerHost,
   isThisMachine,
-  readDockerTls,
   type DockerEngine,
   type DockerTls,
   type FindDockerHostOpts,

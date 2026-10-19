@@ -451,7 +451,7 @@ One switch per action. On, Triage carries that action out in every repository by
 
 Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine**, **Docker on another machine (TLS)** **E2B sandboxes** and **Railway Sandboxes**, each with a line on why you would choose it. Code review never runs on the Triage server itself. It runs in the first place in the list, in the order shown, that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
 
-Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins also see why it is failing. Under a place that is not set up or failing are the lines to add to the Triage server's `.env`, with **Copy**, and its **Setup guide**. Add them, restart the server, and the place turns **Ready** or **In use**.
+Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins also see why it is failing. Under a place that is not set up or failing are the lines to add to the Triage server's `.env`, with **Copy**, and its **Setup guide**. Add them, restart the server, and the place turns **Ready** or **In use**. For **Docker on another machine (TLS)**, the lines carry the certificates themselves, each as one line of base64, so nothing is copied onto the server's disk; its setup guide shows how to make them.
 
 ![Where it runs on a server with no place set up: Docker on this machine and Docker on another machine (TLS), both Not set up, each with its setup lines and Setup guide](images/44.png)
 

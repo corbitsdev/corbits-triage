@@ -12,7 +12,7 @@
    ```
 
 3. Start the hub. It looks for the daemon the way the docker CLI does:
-   - `DOCKER_HOST`, if set (`unix:///path` or `tcp://host:port`), over TLS when `DOCKER_TLS_VERIFY` is non-empty, with `ca.pem`, `cert.pem` and `key.pem` from `DOCKER_CERT_PATH` (default `$HOME/.docker`);
+   - `DOCKER_HOST`, if set (`unix:///path` or `tcp://host:port`), over mutual TLS when `DOCKER_TLS_CA`, `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY` hold `ca.pem`, `cert.pem` and `key.pem` as base64 ([Docker on another machine](docker-remote.md#6-point-the-hub-at-it));
    - else the docker CLI's context: `DOCKER_CONTEXT`, else the current context in `~/.docker/config.json`;
    - else `/var/run/docker.sock`, then `~/.docker/run/docker.sock` (Docker Desktop).
 4. Check the hub's boot log. With Docker registered there is no `docker_sidecars_off` line, and `docker_sidecars_swept` says how many leftover containers it removed.
@@ -41,8 +41,7 @@ The hub logs `docker_sidecars_off` with one of these reasons:
 | --- | --- |
 | `no Docker daemon found` | Start Docker, or set `DOCKER_HOST`. |
 | `Docker at … has no corbits-triage-sidecar image or does not answer` | Build the image (step 2); check the daemon is running and the address is `unix://` or `tcp://`. |
-| `Docker at … is refused (… is another machine; reach it over TLS …)` | Plain `tcp://` is refused for any host but this machine. Set `DOCKER_TLS_VERIFY` and `DOCKER_CERT_PATH` ([Docker on another machine](docker-remote.md)). |
-| `DOCKER_TLS_VERIFY is set but the TLS files cannot be read` | Put non-empty `ca.pem`, `cert.pem` and `key.pem` in `DOCKER_CERT_PATH`, readable by the hub. |
+| `Docker at … is refused (… is another machine; reach it over TLS …)` | Plain `tcp://` is refused for any host but this machine. Set `DOCKER_TLS_CA`, `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY` ([Docker on another machine](docker-remote.md)). |
 | `Docker at … is another machine, and its sidecars would dial the hub at … without TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address and leave `HUB_SIDECAR_WEBSOCKET_URL` unset. |
 | `Docker at … is another machine, and its sidecars would dial the hub at its own address …` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
 | `an adapter module is not in the sidecar image, as with GITHUB_API_ORIGIN set` | Unset `GITHUB_API_ORIGIN`: the module it generates under `HUB_DATA_DIR` is not in the image. |

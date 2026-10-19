@@ -175,8 +175,9 @@ All optional; the defaults suit most installs.
 | `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset for Docker [on another machine](provisioners/docker-remote.md), whose sidecars dial `BETTER_AUTH_BASE_URL` over `wss://`. |
 | `DOCKER_HOST` | the docker CLI's context, else its default sockets | The daemon for the [Docker provisioner](provisioners/docker.md). |
 | `DOCKER_CONTEXT` | the docker CLI's current context | The docker CLI context to use when `DOCKER_HOST` is unset. |
-| `DOCKER_TLS_VERIFY` | unset | Any non-empty value, even `0`, as with the docker CLI: reach the daemon over TLS. Required for a daemon on another machine. |
-| `DOCKER_CERT_PATH` | `$HOME/.docker` | Absolute path of the directory holding `ca.pem`, `cert.pem` and `key.pem`. |
+| `DOCKER_TLS_CA` | unset | `ca.pem`, the CA that signed the daemon's certificate, as one line of base64. With `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY`, turns on mutual TLS to the daemon. Required for a daemon on another machine. |
+| `DOCKER_TLS_CERT` | unset | `cert.pem`, the hub's client certificate, as one line of base64. |
+| `DOCKER_TLS_KEY` | unset | `key.pem`, the client certificate's key, as one line of base64. |
 | `E2B_API_KEY` | unset | Registers the [E2B provisioner](provisioners/e2b.md), which runs each isolated sidecar in an E2B sandbox. |
 | `RAILWAY_SANDBOX_TOKEN`, `RAILWAY_SANDBOX_ENVIRONMENT_ID` | unset | A Railway workspace token and the environment the [Railway Sandboxes provisioner](provisioners/railway-sandboxes.md) creates sandboxes in. Set both or neither. |
 | `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | set by Railway on a service deployed from GitHub | The public repository and commit the Railway sidecar template checks out. Required with `RAILWAY_SANDBOX_TOKEN`. |

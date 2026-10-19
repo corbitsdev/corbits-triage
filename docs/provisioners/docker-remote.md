@@ -40,9 +40,9 @@ openssl x509 -req -days 825 -sha256 -in client.csr -CA ca.pem -CAkey ca-key.pem 
 chmod 0400 ca-key.pem server-key.pem key.pem
 ```
 
-Keep `ca-key.pem` offline; it signs new certificates. The hub needs `ca.pem`, `cert.pem` and `key.pem`; the daemon needs `ca.pem`, `server-cert.pem` and `server-key.pem`.
+Keep `ca-key.pem` offline; it signs new certificates. The hub needs `ca.pem`, `cert.pem` and `key.pem`, as variables (step 6); the daemon needs `ca.pem`, `server-cert.pem` and `server-key.pem`.
 
-The certificates expire after 825 days. Before then, sign new server and client certificates with the same CA, replace them on the VPS and the hub, and restart both; the hub reads its files only at boot. A new CA means replacing `ca.pem` on both sides too. To cut off a leaked client key, make a new CA and new certificates; Docker has no revocation list.
+The certificates expire after 825 days. Before then, sign new server and client certificates with the same CA, replace them on the VPS and in the hub's variables, and restart both; the hub reads its variables only at boot. A new CA means replacing `ca.pem` on both sides too. To cut off a leaked client key, make a new CA and new certificates; Docker has no revocation list.
 
 ## 3. Turn on TLS in the daemon
 
@@ -113,9 +113,19 @@ Set on the hub:
 | Variable | Value |
 | --- | --- |
 | `DOCKER_HOST` | `tcp://docker.example.com:2376`, the name or address in the server certificate |
-| `DOCKER_TLS_VERIFY` | `1`; as with the docker CLI, any non-empty value turns TLS on, even `0` |
-| `DOCKER_CERT_PATH` | the absolute path of a directory holding `ca.pem`, `cert.pem` and `key.pem`; unset, `$HOME/.docker` |
+| `DOCKER_TLS_CA` | `ca.pem` as one line of base64 |
+| `DOCKER_TLS_CERT` | `cert.pem` as one line of base64 |
+| `DOCKER_TLS_KEY` | `key.pem` as one line of base64 |
 | `BETTER_AUTH_BASE_URL` | the hub's public `https://` address, as already set |
+
+The hub takes its TLS material only from these variables and writes no certificate files; it does not read `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH` or `~/.docker`. Set all three or none: the hub refuses to start with only some, or with a value that is not base64 of a PEM certificate (`DOCKER_TLS_CA`, `DOCKER_TLS_CERT`) or private key (`DOCKER_TLS_KEY`). Base64 keeps each PEM file on one line, which `.env` files and every platform's variable editor keep intact. From the directory holding the three files, print the `.env` lines:
+
+```sh
+printf 'DOCKER_TLS_CA=%s\nDOCKER_TLS_CERT=%s\nDOCKER_TLS_KEY=%s\n' \
+  "$(base64 < ca.pem | tr -d '\n')" "$(base64 < cert.pem | tr -d '\n')" "$(base64 < key.pem | tr -d '\n')"
+```
+
+`DOCKER_TLS_KEY` holds the client key, so treat it as a secret: whoever has it controls the VPS's Docker.
 
 Leave `HUB_SIDECAR_WEBSOCKET_URL` unset. Sidecars on the VPS then dial `BETTER_AUTH_BASE_URL` with `wss://` and `/api/sidecars/ws`, while the hub's own local sidecars keep dialling it on loopback. Setting it would send local sidecars out through the public address too.
 
@@ -123,17 +133,16 @@ Sidecars on another machine never get the loopback rewrite the hub's own Docker 
 
 ### On Railway
 
-Railway sets only variables, so the three files live in the hub's volume (`/data` in [SELF_HOST.md](../SELF_HOST.md#railway-or-render)). From the directory holding `ca.pem`, `cert.pem` and `key.pem`, with the Railway CLI linked to the hub's project and `hub` the hub's service name:
+From the directory holding `ca.pem`, `cert.pem` and `key.pem`, with the Railway CLI linked to the hub's project and `hub` the hub's service name:
 
 ```sh
-for f in ca.pem cert.pem key.pem; do
-  base64 < "$f" | railway ssh --service hub -- sh -c "umask 077; mkdir -p /data/docker-certs; base64 -d > /data/docker-certs/$f"
-done
-railway ssh --service hub -- ls -l /data/docker-certs
-railway variable set --service hub DOCKER_HOST=tcp://docker.example.com:2376 DOCKER_TLS_VERIFY=1 DOCKER_CERT_PATH=/data/docker-certs
+railway variable set --service hub DOCKER_HOST=tcp://docker.example.com:2376 \
+  "DOCKER_TLS_CA=$(base64 < ca.pem | tr -d '\n')" \
+  "DOCKER_TLS_CERT=$(base64 < cert.pem | tr -d '\n')" \
+  "DOCKER_TLS_KEY=$(base64 < key.pem | tr -d '\n')"
 ```
 
-Each file travels on standard input, so it never appears in a process's arguments, and `umask 077` leaves it readable only by the hub's user. Setting the variables redeploys the hub, which then reads the files. Repeat the copy and run `railway redeploy --service hub --yes` when you rotate the certificates.
+Or paste the lines the `printf` above prints into the service's Variables → Raw Editor. Setting the variables redeploys the hub. Set them again with the new files when you rotate the certificates.
 
 ## 7. Check
 
