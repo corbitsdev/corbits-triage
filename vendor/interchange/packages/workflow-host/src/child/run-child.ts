@@ -67,9 +67,9 @@ import {
   walkWorkflowSteps,
   LOOP_BODY_DESCENT,
 } from "@intx/workflow";
-import type { AuthzCallResult } from "@intx/inference";
 
 import type {
+  ActionCredentialsFactory,
   ActionHandler,
   RunResult,
   RuntimeWorkflowRun,
@@ -87,7 +87,6 @@ import type {
   WorkflowRuntimeEnv,
 } from "@intx/workflow";
 import {
-  baseStepId,
   createDefaultActionInvoker,
   createInMemoryEffectLedger,
   createLoopIterationHandle,
@@ -153,26 +152,14 @@ import type { ChildMailboxMutationBridge } from "./mailbox-mutation-bridge";
 import type { MailboxWatchRegistry } from "./mailbox-watch-registry";
 import { createWarmAgentCache, type WarmAgentCache } from "./warm-agent-cache";
 import { mergeCredentialDelivery } from "./credential-cell";
+import {
+  createCredentialsBackedAuthorize,
+  resolveSnapshotStepGrants,
+  type CredentialsSnapshotRef,
+  type GrantEvaluator,
+} from "./credentials-backed-authorize";
 
 const logger = getLogger(["workflow-host", "child"]);
-
-/**
- * `WorkflowAuthorize` closure factory shape. The child's authorize
- * evaluates a `(resource, action)` request against the active
- * credentialsSnapshot for the originating step. The closure used here
- * is intentionally permissive on missing context: the workflow runtime
- * supplies `stepId` from the `AuthorizeContext` it threads through
- * every step's invoker, so a bare-call without a step id is a
- * programming error rather than a security-sensitive path. The closure
- * surfaces it loudly.
- *
- * Read-site: the closure consults a mutable reference so a
- * `grants-updated` control frame swaps the snapshot in place without
- * the caller having to reconstruct the closure.
- */
-export type CredentialsSnapshotRef = {
-  current: CredentialsSnapshot | null;
-};
 
 /**
  * The deployment's decrypted credential material and per-handle descriptors,
@@ -199,68 +186,6 @@ export type CredentialMaterialRef = {
 export type SourcesSnapshotRef = {
   current: Record<string, InferenceSource[]>;
 };
-
-/**
- * Construct the workflow-level authorize closure backed by a
- * mutable credentialsSnapshot reference.
- *
- * The closure looks up the step's grants by `stepId`, then delegates
- * to the caller-supplied grant evaluator. The evaluator slot exists so
- * the host wires its own grant-rule semantics without leaking the
- * grant-rule grammar into the workflow-host package; tests inject a
- * spy that records inputs.
- */
-export type GrantEvaluator = (input: {
-  resource: string;
-  action: string;
-  stepId: string;
-  attempt: number | undefined;
-  runId: string | undefined;
-  grants: readonly unknown[];
-}) => Promise<AuthzCallResult>;
-
-export function createCredentialsBackedAuthorize(
-  ref: CredentialsSnapshotRef,
-  evaluate: GrantEvaluator,
-): WorkflowAuthorizeFn {
-  return async (resource, action, ctx) => {
-    const stepId = ctx?.stepId;
-    if (stepId === undefined) {
-      throw new Error(
-        "workflow-child authorize: missing stepId in AuthorizeContext; the runtime body must thread it through every step invocation",
-      );
-    }
-    const snapshot = ref.current;
-    if (snapshot === null) {
-      throw new Error(
-        "workflow-child authorize: no credentialsSnapshot active; the supervisor must push one before any step runs",
-      );
-    }
-    // The credentials snapshot is keyed per base step; a map iteration's
-    // scoped id `<base>[<index>]` resolves to its base entry so every
-    // iteration shares the base step's grants. `baseStepId` is the identity
-    // on an unscoped id, so a plain step is unaffected.
-    const lookupStepId = baseStepId(stepId);
-    const entry = snapshot.steps.find((s) => s.stepId === lookupStepId);
-    if (entry === undefined) {
-      const scopedNote =
-        lookupStepId === stepId
-          ? ""
-          : ` (normalized from scoped invocation id ${stepId})`;
-      throw new Error(
-        `workflow-child authorize: credentialsSnapshot has no entry for stepId ${lookupStepId}${scopedNote}`,
-      );
-    }
-    return evaluate({
-      resource,
-      action,
-      stepId,
-      attempt: ctx?.attempt,
-      runId: ctx?.runId,
-      grants: entry.grants,
-    });
-  };
-}
 
 /**
  * The workflow-host child's drain controller is the production
@@ -298,11 +223,12 @@ export type DrainController = WorkflowHostDrainController;
  * only reads it through to the adapter.
  */
 /**
- * Per-run credential inputs the top-level step invoker carries to the
- * substrate: the live material cell the control channel writes each delivery
- * into, and a resolver for a step's grants (which the substrate gates
+ * Per-run credential inputs the top-level step and action invokers carry to
+ * the substrate: the live material cell the control channel writes each
+ * delivery into, and a resolver for a step's grants (which the substrate gates
  * credential use against). The substrate combines these with its own static
- * provider registry to assemble each tool bundle's `credentials` capability.
+ * provider registry to assemble each tool bundle's and each action handler's
+ * `credentials` capability.
  *
  * Grants are typed `readonly unknown[]` here: this package owns no grant
  * grammar (the credentials snapshot's grants are `unknown[]` throughout), so
@@ -355,6 +281,13 @@ export interface RunWorkflowChildBindings {
    * with the host's per-step env builder; tests inject a stub.
    */
   invokeStep: ChildStepInvoker;
+  /**
+   * Builds the action credentials factory for a run from the run's credential
+   * wiring. The host combines the wiring with its provider registry, so an
+   * action handler resolves its declared handles against the run's live
+   * material and the action step's grants.
+   */
+  actionCredentials: (wiring: CredentialWiring) => ActionCredentialsFactory;
   /**
    * Terminal child-spawn callback the runtime body invokes for a
    * `childWorkflow` primitive when the deployment embeds NO inline child
@@ -479,11 +412,12 @@ export interface RunWorkflowChildBindings {
    */
   initialSources?: Record<string, InferenceSource[]>;
   /**
-   * Bootstrap credential material for the deployment's tools, decrypted
-   * hub-side and delivered on the deploy frame so it is resident before any
-   * step runs. Seeds the mutable `credentialMaterialRef` the gated capability
-   * reads. Absent when the deployment binds no credentials; a later
-   * `credentials-updated` control frame refreshes it on rotation.
+   * Bootstrap credential material for the deployment's binding consumers and
+   * inference sources, decrypted hub-side and delivered on the deploy frame so
+   * it is resident before any step runs. Seeds the mutable
+   * `credentialMaterialRef` the gated capability reads. Absent when the
+   * deployment binds no credentials; a later `credentials-updated` control
+   * frame refreshes it on rotation.
    */
   initialCredentialMaterial?: CredentialDelivery;
   /**
@@ -660,18 +594,15 @@ export async function runWorkflowChild(
       const snapshot = credentialsRef.current;
       if (snapshot === null) {
         throw new Error(
-          `workflow-child credential wiring: no credentials snapshot for step ${stepId}; a tool-bearing step cannot resolve its grants before the run carries any`,
+          `workflow-child credential wiring: no credentials snapshot for step ${stepId}; a step that uses credentials cannot resolve its grants before the run carries any`,
         );
       }
-      const entry = snapshot.steps.find(
-        (step) => step.stepId === baseStepId(stepId),
+      return resolveSnapshotStepGrants(
+        snapshot,
+        stepId,
+        (lookupStepId) =>
+          `workflow-child credential wiring: credentials snapshot has no entry for step ${lookupStepId}`,
       );
-      if (entry === undefined) {
-        throw new Error(
-          `workflow-child credential wiring: credentials snapshot has no entry for step ${baseStepId(stepId)}`,
-        );
-      }
-      return entry.grants;
     },
   };
   const clock = opts.bindings.clock ?? defaultClock;
@@ -1948,6 +1879,7 @@ function buildRuntimeEnv(args: {
     args.authorize,
     effects,
     args.actionResolver,
+    args.bindings.actionCredentials(args.credentialWiring),
   );
   return env;
 }

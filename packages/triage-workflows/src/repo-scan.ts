@@ -1,3 +1,4 @@
+import { githubRead } from "@corbits/github-tool";
 import { action, defineWorkflow, onTrigger, step } from "@intx/workflow";
 import { credentialBindings, triageAgents } from "./agents.js";
 
@@ -21,7 +22,7 @@ const perScan = defineWorkflow({
 
 export const workflow = defineWorkflow({
   id: REPO_SCAN_ADDRESS,
-  credentialBindings,
+  credentialBindings: credentialBindings.filter((binding) => binding.package === githubRead.id),
   steps: {
     events: onTrigger({ on: { type: "mail", to: REPO_SCAN_ADDRESS }, body: perScan, onBodyFailure: "tolerate" }),
   },

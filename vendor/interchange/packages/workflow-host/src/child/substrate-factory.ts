@@ -42,7 +42,6 @@ import {
   type AdapterManifest,
   parseAdapterManifestEnv,
 } from "@intx/types/adapter-manifest";
-import { evaluateGrants } from "@intx/authz";
 import type { GrantRule } from "@intx/authz";
 import { createDependencies, type AdapterRegistry } from "@intx/inference";
 import { loadAdapterRegistry } from "@intx/inference/providers";
@@ -86,6 +85,7 @@ import {
   emptyState,
   enumerateInlineLoopBodies,
   rewriteInlineChildWorkflowBodies,
+  unavailableActionCredentials,
   walkWorkflowSteps,
   LOOP_BODY_DESCENT,
   type ActionHandler,
@@ -134,6 +134,11 @@ import {
   loadWorkflowPluginFactoriesFromClosure,
   loadWorkflowPluginToolDefinitionsFromClosure,
 } from "../workflow-definition-loader";
+import {
+  createSidecarActionCredentialsFactory,
+  stepGrantsResolver,
+  type SidecarStepCredentialContext,
+} from "./action-credentials";
 import type { SubstrateFactory, SubstrateFactoryEnv } from "./from-process-env";
 import { createMailboxWatchRegistry } from "./mailbox-watch-registry";
 import type { ChildOutboundMailBridge } from "./outbound-mail-bridge";
@@ -141,9 +146,14 @@ import type { LoadParkedApproval } from "./parked-correlations";
 import { createProxyWorkflowRunRepoStore } from "./proxy-repo-store";
 import {
   createCredentialsBackedAuthorize,
-  eagerlyResolveActionHandlers,
+  createGrantEvaluator,
+  resolveSnapshotStepGrants,
   type CredentialsSnapshotRef,
   type GrantEvaluator,
+} from "./credentials-backed-authorize";
+import {
+  eagerlyResolveActionHandlers,
+  type CredentialWiring,
   type RunWorkflowChildBindings,
   type SourcesSnapshotRef,
 } from "./run-child";
@@ -878,25 +888,6 @@ async function materializeSourcePluginFactories(
  * being papered over with a stub: the single-step path now always runs
  * a real agent against real storage.
  */
-/**
- * The per-run credential inputs a build resolves the step's `credentials`
- * wiring from. The live material cell and the grants resolver ride in from the
- * run child (per-run state); the provider registry is sidecar-static and
- * combined in at the invoke-step boundary. Absent when no credential material
- * was threaded, which leaves the step's inference reader and tool credentials
- * unwired.
- */
-interface SidecarStepCredentialContext {
-  readonly materialCell: CredentialMaterialCell;
-  /**
-   * The step's grants, resolved live by base step id. The credentials
-   * snapshot types them `unknown[]`; this factory casts to `GrantRule[]`
-   * where `evaluateGrants` reads them.
-   */
-  readonly resolveStepGrants: (stepId: string) => readonly unknown[];
-  readonly providers: CredentialProviderRegistry;
-}
-
 export function createSidecarStepBuildEnv(
   deps: SidecarStepBuildEnvDeps,
 ): (
@@ -1197,17 +1188,15 @@ export function createSidecarStepBuildEnv(
     // threaded, in which case a credential-consuming tool fails closed and loud
     // at its own `resolve("credentials")`.
     if (credentialContext !== undefined) {
-      // Inference resolves its source's secret from the SAME live cell tool
-      // credentials resolve from, by `credentialId`, so the step's sources carry
-      // no inline key and the child never holds the cipher key.
+      // Inference resolves its source's secret from the SAME live cell binding
+      // credentials resolve from, by `credentialId`, so the step's sources
+      // carry no inline key and the child never holds the cipher key.
       env.readCurrentMaterial = createInferenceCredentialResolver(
         credentialContext.materialCell,
       );
       attachStepCredentialWiring(env, {
         materialCell: credentialContext.materialCell,
-        resolveGrants: () =>
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- resolveStepGrants returns unknown[]; evaluateGrants reads GrantRule
-          credentialContext.resolveStepGrants(stepId) as readonly GrantRule[],
+        resolveGrants: stepGrantsResolver(credentialContext, stepId),
         providers: credentialContext.providers,
       });
     }
@@ -1983,27 +1972,24 @@ async function buildChildRunEnv(args: {
   // Assemble the per-step credential context from the run's live material cell
   // (threaded in from the parent) when one is present, so the child's inference
   // resolves its source secret by `credentialId` against the parent's current
-  // delivery. Every spawned child's steps are tool-bearing, so the context
-  // resolves the child's capped grants (mirroring the top level's snapshot
-  // lookup) and carries the sidecar-static providers for the tool `credentials`
-  // capability. Absent when no material was threaded (a non-sidecar executor),
-  // which leaves the child's inference reader unset.
+  // delivery. Every spawned child's steps are tool-bearing and may run
+  // actions, so the context resolves the child's capped grants (mirroring the
+  // top level's snapshot lookup) and carries the sidecar-static providers for
+  // the tool and action `credentials` capabilities. Absent when no material was
+  // threaded (a non-sidecar executor), which leaves the child's inference
+  // reader unset and gives action handlers no credential source.
   const childCredentialContext: SidecarStepCredentialContext | undefined =
     materialCell === undefined
       ? undefined
       : {
           materialCell,
-          resolveStepGrants: (stepId) => {
-            const entry = credentialsSnapshot.steps.find(
-              (step) => step.stepId === baseStepId(stepId),
-            );
-            if (entry === undefined) {
-              throw new Error(
-                `sidecar child credential wiring: credentials snapshot has no entry for step ${baseStepId(stepId)}`,
-              );
-            }
-            return entry.grants;
-          },
+          resolveStepGrants: (stepId) =>
+            resolveSnapshotStepGrants(
+              credentialsSnapshot,
+              stepId,
+              (lookupStepId) =>
+                `sidecar child credential wiring: credentials snapshot has no entry for step ${lookupStepId}`,
+            ),
           providers: deps.credentialProviders,
         };
   // Per-step invocation seam. The runtime body invokes `env.invokeStep` with
@@ -2026,10 +2012,17 @@ async function buildChildRunEnv(args: {
   let invokeAction: ReturnType<typeof createDefaultActionInvoker> | undefined;
   if (actionResolver !== undefined) {
     effects = createInMemoryEffectLedger();
+    // An action handler resolves its declared handles against the run's live
+    // material and this body's capped grants. With no material threaded (a
+    // non-sidecar executor) there is no credential source, so an action that
+    // declares credentials fails before its handler runs.
     invokeAction = createDefaultActionInvoker(
       authorize,
       effects,
       actionResolver,
+      childCredentialContext === undefined
+        ? unavailableActionCredentials
+        : createSidecarActionCredentialsFactory(childCredentialContext),
     );
   }
   const env: WorkflowRuntimeEnv = {
@@ -2420,6 +2413,16 @@ export function createSidecarSubstrateFactory(
     const credentialProviders = createCredentialProviderRegistry(
       builtinCredentialProviders(),
     );
+    // The run's credential wiring combined with the sidecar-static providers:
+    // the context both a step's tool capabilities and an action handler's
+    // capability are built from.
+    const runCredentialContext = (
+      wiring: CredentialWiring,
+    ): SidecarStepCredentialContext => ({
+      materialCell: wiring.materialRef,
+      resolveStepGrants: wiring.resolveStepGrants,
+      providers: credentialProviders,
+    });
 
     // Spawned-child step build env (INTR-310). Every spawned child's steps --
     // a childWorkflow child's and an onTrigger section body's alike -- run real,
@@ -2607,11 +2610,11 @@ export function createSidecarSubstrateFactory(
         // complete credential context and the agentFactory can assemble each
         // bundle's consumer-scoped `credentials` capability.
         buildEnv: (buildReq) =>
-          buildStepEnv(buildReq, sourcesRef, {
-            materialCell: credentialWiring.materialRef,
-            resolveStepGrants: credentialWiring.resolveStepGrants,
-            providers: credentialProviders,
-          }),
+          buildStepEnv(
+            buildReq,
+            sourcesRef,
+            runCredentialContext(credentialWiring),
+          ),
         agentFactory: stepAgentFactory,
         onEvent,
         sourcesRef,
@@ -2622,44 +2625,9 @@ export function createSidecarSubstrateFactory(
         ...(driveReplies !== undefined ? { driveReplies } : {}),
       })(req);
 
-    const evaluateGrantsAdapter: GrantEvaluator = async ({
-      resource,
-      action,
-      stepId,
-      grants,
-    }) => {
-      // Merge the step's pinned-tool floor grants (derived and recorded
-      // by the env builder from the step's materialized factories) under
-      // the credentials snapshot's grants. The floor supplies the
-      // `tool:<name>` authority a pinned tool never got from the hub's
-      // capability walk. It is ADDITIVE: `evaluateGrants` ranks by
-      // specificity then effect, so a declared `deny` (priority 2) still
-      // beats the derived `ask`/`allow` and an explicit denial is
-      // honored -- the floor only raises the minimum authority to the
-      // tool's static mark.
-      //
-      // A missing floor entry (`?? []`) contributes no rows: this can
-      // only ever fail MORE closed (a pinned tool the hub also did not
-      // grant stays denied, the pre-#68 behavior), never open a hole, so
-      // it is safe as an additive default. The floor is keyed by base
-      // step id, so a `map` iteration's scoped id resolves to its base
-      // step's floor.
-      const floor = toolMarkFloorByStep.get(baseStepId(stepId)) ?? [];
-      const result = await evaluateGrants(
-        // The credentials snapshot types `grants` as `readonly unknown[]`.
-        // This factory imports `GrantRule` from `@intx/authz` and casts
-        // at the boundary where `evaluateGrants` reads the rows.
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- credentialsSnapshot.steps[*].grants is typed unknown[]; evaluateGrants reads GrantRule
-        [...(grants as readonly GrantRule[]), ...floor],
-        resource,
-        action,
-      );
-      return {
-        effect: result.effect,
-        matchingGrants: [],
-        resolvedBy: null,
-      };
-    };
+    const evaluateGrantsAdapter: GrantEvaluator = createGrantEvaluator({
+      floorFor: (stepId) => toolMarkFloorByStep.get(stepId) ?? [],
+    });
 
     const childRunDeps: SidecarRunChildDeps = {
       substrate,
@@ -2791,6 +2759,8 @@ export function createSidecarSubstrateFactory(
       workflowRunRef: validated.WORKFLOW_RUN_REF,
       principal,
       invokeStep,
+      actionCredentials: (wiring) =>
+        createSidecarActionCredentialsFactory(runCredentialContext(wiring)),
       initialSources: stepInferenceSources,
       runChild,
       runSuspendableChild,

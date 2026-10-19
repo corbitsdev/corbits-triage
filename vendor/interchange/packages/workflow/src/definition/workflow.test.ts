@@ -2288,3 +2288,70 @@ describe("onFailure straddler validation", () => {
     ).not.toThrow();
   });
 });
+
+describe("action credentials", () => {
+  test("rejects declared credentials without an effect capability", () => {
+    expect(() => action({ handler: "push", credentials: ["github"] })).toThrow(
+      'action "push" declares credential handles but no effect.requires',
+    );
+    expect(() =>
+      action({
+        handler: "push",
+        credentials: ["github"],
+        effect: { requires: [] },
+      }),
+    ).toThrow("no effect.requires");
+  });
+
+  test("keeps valid handles in the declared order", () => {
+    const declared = action({
+      handler: "push",
+      credentials: ["github", "npm.registry"],
+      effect: { requires: ["call"] },
+    });
+    expect(declared.credentials).toEqual(["github", "npm.registry"]);
+  });
+
+  test("rejects a malformed handle and names the handle grammar", () => {
+    expect(() =>
+      action({
+        handler: "push",
+        credentials: ["Not A Handle"],
+        effect: { requires: ["call"] },
+      }),
+    ).toThrow(
+      'action "push" declares credential handle "Not A Handle", which does not match /^[a-z0-9][a-z0-9._-]*$/',
+    );
+  });
+
+  test("rejects a duplicate handle", () => {
+    expect(() =>
+      action({
+        handler: "push",
+        credentials: ["github", "github"],
+        effect: { requires: ["call"] },
+      }),
+    ).toThrow(
+      /action "push" declares credential handle "github" more than once/,
+    );
+  });
+
+  test("an empty list leaves the field absent and the hash unchanged", () => {
+    const empty = action({ handler: "push", credentials: [] });
+    expect("credentials" in empty).toBe(false);
+    const workflowWith = (credentials?: readonly string[]) =>
+      defineWorkflow({
+        id: "credential-hash",
+        trigger: { type: "manual" },
+        steps: {
+          push: action({
+            handler: "push",
+            ...(credentials !== undefined ? { credentials } : {}),
+          }),
+        },
+      });
+    expect(hashDefinition(workflowWith([]))).toEqual(
+      hashDefinition(workflowWith()),
+    );
+  });
+});
