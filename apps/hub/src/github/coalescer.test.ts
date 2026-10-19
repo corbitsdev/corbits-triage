@@ -399,3 +399,18 @@ test("check runs finishing on a head held for CI fold on the quiet period and wr
   expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting", events: ["opened"] })]);
   expect({ reads: ci.reads - before.reads, saves: state.saves() - before.saves }).toEqual({ reads: 3, saves: 0 });
 });
+
+test("a new commit on a head held for CI carries the events it held, whether or not a window is open", async () => {
+  for (const between of [[], ["approved"]] as TriageEvent[][]) {
+    const { clock, state, mails, coalescer, ci, pack } = heldForCi();
+    await coalescer.accept({ ...delivery("opened", "sha1"), pack });
+    await clock.advance(WINDOW.burstMs);
+    for (const event of between) await coalescer.accept({ ...delivery(event, "sha1"), pack });
+
+    ci.checks = [{ name: "build", status: "completed", conclusion: "success" }];
+    await coalescer.accept({ ...delivery("updated", "sha2"), pack });
+    await clock.advance(WINDOW.burstMs);
+    expect(mails).toEqual([expect.objectContaining({ headSha: "sha2", events: ["opened", ...between, "updated"] })]);
+    expect(state.rows().filter((row) => row.status === "waiting")).toEqual([]);
+  }
+});

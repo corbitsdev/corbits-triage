@@ -12,7 +12,7 @@ export type QueuedHead = { tenantId: string; repo: string; number: number; headS
 export type Remembered = { prior: PrTriageRow | undefined; rows: PrTriageRow[]; version: TriageStateVersion };
 
 export type QueueOutcome =
-  | { status: "queued"; remembered: Remembered }
+  | { status: "queued"; remembered: Remembered; held: TriageEvent[] }
   | { status: "kept"; prior: PrTriageRow | undefined }
   | { status: "conflict" };
 
@@ -42,15 +42,24 @@ function withRow(rows: readonly PrTriageRow[], { number, headSha }: QueuedHead, 
   return next === undefined ? others : [...others, next];
 }
 
-/** Marks the head queued on top of what is stored now unless `keep` holds for its row; a write refused as stale is retried once on a fresh load, `keep` included. */
-export async function queueHead(store: TriageStateStore, head: QueuedHead, now: Date, keep: (prior: PrTriageRow | undefined) => boolean): Promise<QueueOutcome> {
+function replacedBy({ number, headSha }: QueuedHead, row: PrTriageRow): boolean {
+  return row.number === number && row.headSha !== headSha && row.status === "waiting";
+}
+
+/**
+ * Marks the head queued on top of what is stored now unless `keep` holds for its row; a write refused as stale is retried once on a fresh load, `keep` included.
+ * With `supersedes`, the same save removes the pull request's rows waiting for CI on heads a new commit replaced, and `held` is the events they held.
+ */
+export async function queueHead(store: TriageStateStore, head: QueuedHead, now: Date, keep: (prior: PrTriageRow | undefined) => boolean, supersedes: boolean): Promise<QueueOutcome> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const state = await store.load(head.tenantId, head.repo);
     const prior = rowOf(state.rows, head);
     if (keep(prior)) return { status: "kept", prior };
-    const rows = withRow(state.rows, head, queuedAgain(prior, head.number, head.headSha, now.toISOString()));
+    const replaced = supersedes ? state.rows.filter((row) => replacedBy(head, row)) : [];
+    const rows = withRow(state.rows.filter((row) => !replaced.includes(row)), head, queuedAgain(prior, head.number, head.headSha, now.toISOString()));
     try {
-      return { status: "queued", remembered: { prior, rows, version: await store.save(head.tenantId, head.repo, rows, state.version) } };
+      const version = await store.save(head.tenantId, head.repo, rows, state.version);
+      return { status: "queued", remembered: { prior, rows, version }, held: replaced.flatMap((row) => row.events ?? []) };
     } catch (err) {
       if (!(err instanceof TriageStateConflictError)) throw err;
     }

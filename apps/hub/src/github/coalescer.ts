@@ -11,7 +11,8 @@
 // even on a head already queued: a queued row does not say whether its run
 // has read facts yet. When the policy reads CI and CI on the head is still
 // running, the head waits instead, holding its events, and the window that
-// sees CI finish, or the reconciler, mails it. Check events on a waiting head
+// sees CI finish, or the reconciler, mails it; a new commit first takes over
+// the events an earlier head held. Check events on a waiting head
 // leave its row as it is until CI is read done, and a completed check suite
 // closes their window on the burst. The window map lives in
 // process: the hub runs as one replica.
@@ -97,6 +98,10 @@ function movedOn(prior: PrTriageRow | undefined): boolean {
 
 function heldForCi({ event }: CoalescedEvent, prior: PrTriageRow | undefined): boolean {
   return event === "checks" && prior?.status === "waiting";
+}
+
+function heldEvents(prior: PrTriageRow | undefined): TriageEvent[] {
+  return prior?.status === "waiting" ? prior.events ?? [] : [];
 }
 
 /** A check suite completes once per CI app, so its flush, which reads CI, can release the head soon after its last check. */
@@ -200,9 +205,9 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     const pending = prior?.status === "waiting" ? ci === "pending" : checks?.some(checkPending) === true;
     if (checksOnly && pending) return drop(open, entry, "checks_pending");
     // Undefined when the reconciler moved the head on since its window opened.
-    const { remembered } = open.remembered ? open : await queue(head, movedOn);
+    const { remembered } = open.remembered ? open : await queue(head, movedOn, false);
     if (remembered === undefined) return drop(open, entry, "released");
-    const events = [...new Set([...(prior?.status === "waiting" ? prior.events ?? [] : []), ...open.events])];
+    const events = [...new Set([...heldEvents(prior), ...open.events])];
     const firstSeenAt = remembered.rows.find((row) => row.number === head.number && row.headSha === head.headSha)!.firstSeenAt;
     if (readsCi && waitsForCi(ci, firstSeenAt, deps.now(), deps.ciWait)) {
       await waitHead(deps.store, head, events, deps.now());
@@ -232,22 +237,25 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     }
   }
 
-  /** Marks the head queued unless `keep` holds for its row, so its window's mail is the one that triages it. */
-  async function queue(head: QueuedHead, keep: (prior: PrTriageRow | undefined) => boolean): Promise<Pick<Open, "prior" | "remembered">> {
-    const outcome = await queueHead(deps.store, head, deps.now(), keep);
+  /** Marks the head queued unless `keep` holds for its row, so its window's mail is the one that triages it; a new commit takes over the events heads it replaced held. */
+  async function queue(head: QueuedHead, keep: (prior: PrTriageRow | undefined) => boolean, supersedes: boolean): Promise<Pick<Open, "prior" | "remembered"> & { held: TriageEvent[] }> {
+    const outcome = await queueHead(deps.store, head, deps.now(), keep, supersedes);
     if (outcome.status === "conflict") throw new TriageStateConflictError(head.repo);
-    if (outcome.status === "kept") return { prior: outcome.prior, remembered: undefined };
-    return { prior: outcome.remembered.prior, remembered: outcome.remembered };
+    if (outcome.status === "kept") return { prior: outcome.prior, remembered: undefined, held: [] };
+    return { prior: outcome.remembered.prior, remembered: outcome.remembered, held: outcome.held };
   }
 
   async function join(key: string, open: Open, input: CoalescedEvent, startsBurst: boolean): Promise<Accepted> {
     const moved = startsTriage(input) && input.headSha !== open.head.headSha;
     if (moved || (!open.remembered && input.event !== "checks")) {
       const head = moved ? headOf(input, input.headSha) : open.head;
-      const queued = await queue(head, never);
+      // The replaced head's row was queued when this window opened, so the events it held for CI are carried from the window.
+      const held = moved ? heldEvents(open.prior) : [];
+      const queued = await queue(head, never, moved);
       open.prior = queued.prior;
       open.remembered = queued.remembered;
       open.head = head;
+      open.events = [...new Set([...held, ...queued.held, ...open.events])];
     }
     open.latest = input;
     for (const event of eventsOf(input, open.remembered?.rows ?? [])) if (!open.events.includes(event)) open.events.push(event);
@@ -268,16 +276,16 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     if (open) return join(key, open, input, startsBurst);
     const head = headOf(input, newest.get(key) ?? input.headSha);
     // A check event leaves a head waiting for CI as it is, so a flush that finds CI still running writes nothing.
-    const { prior, remembered } = await queue(head, function waitingOnChecks(row) {
+    const { prior, remembered, held } = await queue(head, function waitingOnChecks(row) {
       return heldForCi(input, row);
-    });
+    }, starting);
     const closesOnBurst = startsBurst || mayReleaseHold(input, prior);
     windows.set(key, {
       latest: input,
       head,
       prior,
       remembered,
-      events: eventsOf(input, remembered?.rows ?? []),
+      events: [...new Set([...held, ...eventsOf(input, remembered?.rows ?? [])])],
       closesOnBurst,
       cancelQuiet: timer(key, closesOnBurst ? deps.window.burstMs : deps.window.quietMs),
       cancelDeadline: timer(key, deps.window.maxWaitMs),
