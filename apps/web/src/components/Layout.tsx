@@ -93,6 +93,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const pullPage = path.startsWith("/triage/pr/") || path.startsWith("/prs/");
   const room = roomOf(path, pullPage);
   const needsYouActive = path.startsWith("/inbox") || path.startsWith("/triage") || pullPage;
+  const readyActive = path.startsWith("/ready");
   const allOpenActive = path.startsWith("/open");
   // The inbox and the repositories table draw their own inset panels, so they skip the stage card.
   const ownPanels = room === "inbox" || room === "repos";
@@ -125,6 +126,10 @@ export default function Layout({ children }: { children: ReactNode }) {
             <InboxIcon />
             Needs you
             {openPullsUnanswered ? null : <span className="n">{counts["needs-you"]}</span>}
+          </Link>
+          <Link className="nav-a" to="/ready" aria-current={readyActive ? "true" : undefined}>
+            Ready
+            {openPullsUnanswered ? null : <span className="n">{counts.ready}</span>}
           </Link>
           <Link className="nav-a" to="/open" aria-current={allOpenActive ? "true" : undefined}>
             All open
