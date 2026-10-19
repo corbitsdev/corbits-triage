@@ -6,18 +6,18 @@ import { isBitbucketDatacenterRepo, switchBitbucketDatacenterTriage } from "./bi
 import { writeCheckPack } from "./check-pack.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import { loadRepoPolicy } from "./hub-api.ts";
-import { createHubTransport } from "./hub-transport.ts";
+import { createHubTransport, type Transport } from "./hub-transport.ts";
 import { createAutosave, type Autosave, type AutosaveState, type DraftUpdate } from "./pack-autosave.ts";
 import { fromPack, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
+import { POLICY_UPGRADES_QUERY_KEY } from "./policy-upgrades.ts";
 import { usePortal, useSignOutWhenRejected } from "./portal.tsx";
 import { openSession, saveDraft, unsavedChanges, type PackSession } from "./repo-pack-save.ts";
 import { draftPolicy, packArtifact, transportRepoPackStore, type LoadedRepoPack, type RepoPackStore } from "./repo-pack-store.ts";
 
 const REPO_POLICY_QUERY_KEY = "repo-policy";
 
-function hubRepoPackStore(queryClient: QueryClient, tenantId: string): RepoPackStore {
-  const transport = createHubTransport();
+export function hubRepoPackStore(queryClient: QueryClient, tenantId: string, transport: Transport): RepoPackStore {
   const direct = transportRepoPackStore(transport, tenantId);
   return {
     ...direct,
@@ -37,13 +37,17 @@ function hubRepoPackStore(queryClient: QueryClient, tenantId: string): RepoPackS
       queryClient.setQueryData(checkPackQuery(tenantId, pack.repo).queryKey, written);
       return { id: written.id, version: written.version };
     },
-    /** A Bitbucket Data Center repository is recorded, enabled and disabled by the hub's routes, after the pack it runs is saved. */
+    /**
+     * A Bitbucket Data Center repository is recorded, enabled and disabled by the hub's routes, after the pack it runs is
+     * saved. The policy file standing lists only enabled repositories, so it is read again.
+     */
     async writePolicy(repo, policy, packId) {
       if (isBitbucketDatacenterRepo(queryClient, tenantId, repo)) {
         const stored = await loadRepoPolicy(transport, tenantId, repo);
         if (stored.enabled !== policy.enabled) await switchBitbucketDatacenterTriage(queryClient, transport, tenantId, repo, policy.enabled);
       }
       await direct.writePolicy(repo, policy, packId);
+      await queryClient.invalidateQueries({ queryKey: [POLICY_UPGRADES_QUERY_KEY, tenantId] });
     },
   };
 }
@@ -52,7 +56,7 @@ export function useHubRepoPackStore(): RepoPackStore | null {
   const queryClient = useQueryClient();
   const tenantId = usePortal().snapshot?.workspace.tenantId;
   return useMemo(function hubStore() {
-    return tenantId ? hubRepoPackStore(queryClient, tenantId) : null;
+    return tenantId ? hubRepoPackStore(queryClient, tenantId, createHubTransport()) : null;
   }, [queryClient, tenantId]);
 }
 
