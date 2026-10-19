@@ -158,6 +158,10 @@ export const InviteRoles = type({
   assignableRoleIds: "string[]",
   sendsEmail: "boolean",
   signInLimit: type({ domains: "string[]", addresses: "boolean" }).or("null"),
+  /** On a hub that sends no email, people, members or invited, who signed up with email and password and have not verified it. */
+  unverifiedPrincipalIds: "string[]",
+  /** The caller is the hub's owner, its first account, on a hub that sends no email, so may mark those addresses verified. */
+  canMarkVerified: "boolean",
 });
 export type InviteRoles = typeof InviteRoles.infer;
 

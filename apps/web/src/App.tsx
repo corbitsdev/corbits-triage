@@ -18,6 +18,7 @@ import { AcceptInvite } from "./pages/AcceptInvite.tsx";
 import { Device, DEVICE_PATH } from "./pages/Device.tsx";
 import { ResetPassword } from "./pages/ResetPassword.tsx";
 import { RESET_PASSWORD_PATH } from "./lib/hub-auth.ts";
+import { VerifyEmail } from "./pages/VerifyEmail.tsx";
 import { Welcome } from "./pages/Welcome.tsx";
 import Audit from "./pages/Audit.tsx";
 import Inbox from "./pages/Inbox.tsx";
@@ -128,7 +129,7 @@ function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
 }
 
 function Gate() {
-  const { configured, loading, connected, loadError, snapshot, invitations } = usePortal();
+  const { configured, loading, connected, loadError, snapshot, invitations, unverified } = usePortal();
   const { ready, session } = useSession();
   const location = useLocation();
   const path = location.pathname;
@@ -138,6 +139,7 @@ function Gate() {
   if (path.startsWith(INVITE_PATH)) return <AcceptInvite tenantId={path.slice(INVITE_PATH.length)} />;
   if (path === RESET_PASSWORD_PATH) return <ResetPassword />;
   if (!session) return <Welcome />;
+  if (unverified) return <VerifyEmail email={session.email} />;
   if (path === DEVICE_PATH) return <Device />;
   if (!snapshot) {
     if (invitations.length > 0) return <InvitationGate invitations={invitations} />;

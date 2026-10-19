@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@corbits/react-ui";
+import { ApiError } from "@intx/hub-client";
 import { useLocation } from "react-router-dom";
 import { errorText } from "@corbits/common";
 import { acceptInvitation } from "../lib/hub-api.ts";
@@ -8,6 +9,7 @@ import { createHubTransport } from "../lib/hub-transport.ts";
 import { useOpenWorkspaceAfterSending } from "../lib/held-inbox.tsx";
 import { usePortal } from "../lib/portal.tsx";
 import { useSession } from "../lib/session.tsx";
+import { VerifyEmail } from "./VerifyEmail.tsx";
 import { Welcome } from "./Welcome.tsx";
 import { SignInShell } from "../components/SignInShell.tsx";
 
@@ -26,6 +28,7 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
   const fromEmail = params.get("from") === "email";
   const linkFailed = fromEmail && params.has("error");
   const [refusal, setRefusal] = useState("");
+  const [unverified, setUnverified] = useState(false);
   const [joining, setJoining] = useState(false);
   const accepted = useRef(false);
 
@@ -41,7 +44,8 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
       }
       await openWorkspace(tenantId, "/inbox");
     } catch (cause: unknown) {
-      setRefusal(errorText(cause));
+      if (cause instanceof ApiError && cause.code === "email_unverified") setUnverified(true);
+      else setRefusal(errorText(cause));
     }
   }, [openWorkspace, tenantId, warn]);
 
@@ -55,6 +59,7 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
     return refusal;
   }
 
+  if (session && unverified) return <VerifyEmail email={session.email} />;
   const message = failure();
   if (message) {
     return (

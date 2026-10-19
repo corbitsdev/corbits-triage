@@ -2,20 +2,21 @@
 // origin when the portal is hosted on another origin, device-code sign-in
 // for agents acting as a person, who then call the hub with a bearer token,
 // magic links that only invites send, signing the invitee in to accept, and
-// password reset when the hub sends email.
+// password reset and address verification when the hub sends email.
 import { schema, type DB } from "@intx/db";
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { makeSignature } from "better-auth/crypto";
 import { bearer, deviceAuthorization, magicLink } from "better-auth/plugins";
 import { and, eq, lt, ne } from "drizzle-orm";
 import { integer, text, timestamp } from "drizzle-orm/pg-core";
 import type { SignInSettings } from "./env.js";
-import type { SendResetEmail } from "./invitations/invite-email.js";
+import type { SendAuthEmail } from "./invitations/invite-email.js";
 import { triageSchema } from "./triage-db.js";
 
 export const AUTH_METHODS_PATH = "/api/integrations/auth-methods";
+const VERIFICATION_RESEND_MS = 60_000;
 
 /** The only client the device flow signs in: an agent acting for the person who approves its code. */
 const DEVICE_CLIENT_ID = "corbits-cli";
@@ -33,8 +34,8 @@ export type HubAuthConfig = SignInSettings & {
   secret: string;
   trustedOrigins: string[];
   portalOrigin: string;
-  /** Unset when the hub sends no email, which leaves password reset off. */
-  sendResetPassword?: SendResetEmail;
+  /** Unset when the hub sends no email, which leaves password reset and verification email off. */
+  email?: { resetPassword: SendAuthEmail; verifyEmail: SendAuthEmail };
 };
 
 const deviceCode = triageSchema.table("device_code", {
@@ -78,19 +79,20 @@ export function isEmailAllowed(email: string, allowedEmails: readonly string[]):
   return allowedEmails.includes(address) || allowedEmails.includes(domain);
 }
 
-export function authMethods(config: SignInSettings, sendsEmail: boolean): { google: boolean; emailPassword: boolean; passwordReset: boolean } {
-  const emailPassword = config.allowedEmails === undefined;
-  return { google: config.google !== undefined, emailPassword, passwordReset: emailPassword && sendsEmail };
+/** With an allowlist, email/password needs the hub to send email, since the address must be verified. */
+export function authMethods(config: SignInSettings, sendsEmail: boolean): { google: boolean; emailPassword: boolean; passwordReset: boolean; verificationEmail: boolean } {
+  return { google: config.google !== undefined, emailPassword: config.allowedEmails === undefined || sendsEmail, passwordReset: sendsEmail, verificationEmail: sendsEmail };
 }
 
 export type HubAuth = ReturnType<typeof createHubAuth>;
 
 export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
-  const { allowedEmails, google, sendResetPassword } = config;
+  const { allowedEmails, google, email } = config;
 
+  // When the hub sends verification email, an unverified allowed address may sign in and is held at the verify screen.
   function requireAllowed(user: { email: string; emailVerified: boolean } | null) {
     if (allowedEmails === undefined) return;
-    if (user === null || !user.emailVerified || !isEmailAllowed(user.email, allowedEmails)) {
+    if (user === null || (!user.emailVerified && email === undefined) || !isEmailAllowed(user.email, allowedEmails)) {
       throw new APIError("FORBIDDEN", { message: "This email is not allowed to sign in." });
     }
   }
@@ -112,6 +114,17 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     await db.delete(deviceCode).where(lt(deviceCode.expiresAt, new Date()));
   }
 
+  // better-auth keys its limits on a forwarded IP it cannot resolve behind a proxy, so resends are limited per account.
+  const recentResends = new Set<string>();
+  async function limitVerificationResend(ctx: AuthMiddlewareContext) {
+    if (ctx.path !== "/send-verification-email" || typeof ctx.body?.email !== "string") return;
+    const session = await getSessionFromCtx(ctx);
+    const key = session ? `user:${session.user.id}` : `email:${ctx.body.email.toLowerCase()}`;
+    if (recentResends.has(key)) throw new APIError("TOO_MANY_REQUESTS", { message: "Wait a minute before asking for another link." });
+    recentResends.add(key);
+    setTimeout(() => recentResends.delete(key), VERIFICATION_RESEND_MS).unref();
+  }
+
   async function signDeviceToken(ctx: AuthMiddlewareContext) {
     const body = ctx.context.returned;
     if (ctx.path !== "/device/token" || !isDeviceToken(body)) return;
@@ -124,12 +137,12 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     trustedOrigins: config.trustedOrigins,
     database: drizzleAdapter(db, { provider: "pg", schema: { ...schema, deviceCode } }),
     emailAndPassword: {
-      enabled: authMethods(config, sendResetPassword !== undefined).emailPassword,
+      enabled: authMethods(config, email !== undefined).emailPassword,
       // Also how someone signed in only by an invite's magic link sets a password.
-      ...(sendResetPassword && {
+      ...(email && {
         revokeSessionsOnPasswordReset: true,
         async sendResetPassword({ user, url }: { user: { email: string }; url: string }) {
-          await sendResetPassword(user.email, url);
+          await email.resetPassword(user.email, url);
         },
         // The reset link proves the mailbox, like a magic link: verify the address and drop provider links nobody proved.
         async onPasswordReset({ user }: { user: { id: string; emailVerified: boolean } }) {
@@ -139,6 +152,15 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
         },
       }),
     },
+    ...(email && {
+      emailVerification: {
+        sendOnSignUp: true,
+        autoSignInAfterVerification: true,
+        async sendVerificationEmail({ user, url }: { user: { email: string }; url: string }) {
+          await email.verifyEmail(user.email, url);
+        },
+      },
+    }),
     // Only invites send magic links, through auth.api.
     disabledPaths: ["/sign-in/magic-link"],
     // better-auth only rate-limits when NODE_ENV is production, which the deployment does not set.
@@ -155,7 +177,7 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
       magicLink({ expiresIn: MAGIC_LINK_TTL_SECONDS, disableSignUp: true, storeToken: "hashed", sendMagicLink }),
     ],
     // The device token is a raw session token; sign it like the session cookie so bearer() accepts only signed tokens.
-    hooks: { after: createAuthMiddleware(signDeviceToken) },
+    hooks: { before: createAuthMiddleware(limitVerificationResend), after: createAuthMiddleware(signDeviceToken) },
     databaseHooks: {
       user: { create: { before: requireAllowedNewUser } },
       // Also checked per session, so accounts that predate the allowlist are held to it.

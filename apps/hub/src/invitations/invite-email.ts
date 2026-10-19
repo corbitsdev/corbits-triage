@@ -5,14 +5,14 @@ type InviteEmail = { to: string; workspace: string; link: string; expiresAt: Dat
 
 export type SendInviteEmail = (email: InviteEmail) => Promise<void>;
 
-export type SendResetEmail = (to: string, link: string) => Promise<void>;
+export type SendAuthEmail = (to: string, link: string) => Promise<void>;
 
 /** Workspace names are user-chosen, so they go out as one line of plain text only. */
 function plainLine(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
 }
 
-export function createSmtpEmail(settings: EmailSettings): { invite: SendInviteEmail; passwordReset: SendResetEmail } {
+export function createSmtpEmail(settings: EmailSettings): { invite: SendInviteEmail; passwordReset: SendAuthEmail; verifyEmail: SendAuthEmail } {
   const transport = createTransport(settings.smtpUrl);
   async function invite(email: InviteEmail) {
     const workspace = plainLine(email.workspace);
@@ -35,5 +35,13 @@ export function createSmtpEmail(settings: EmailSettings): { invite: SendInviteEm
       text: [`Set a new password for ${to}: ${link}`, "The link expires in an hour. Ignore this email if you did not ask for it."].join("\n\n"),
     });
   }
-  return { invite, passwordReset };
+  async function verifyEmail(to: string, link: string) {
+    await transport.sendMail({
+      from: settings.from,
+      to,
+      subject: "Verify your Corbits Triage email",
+      text: [`Verify ${to} and open Corbits Triage: ${link}`, "The link expires in an hour. Ignore this email if you did not sign up."].join("\n\n"),
+    });
+  }
+  return { invite, passwordReset, verifyEmail };
 }

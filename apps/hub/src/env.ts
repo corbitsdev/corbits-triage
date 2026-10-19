@@ -255,8 +255,8 @@ export type SignInSettings = {
 };
 
 /**
- * An allowlist turns email/password off: those addresses are never verified,
- * so only a provider that verifies email (Google) can satisfy it.
+ * An allowlist admits only verified addresses: without email the hub cannot
+ * verify one, so only a provider that verifies email (Google) can satisfy it.
  */
 export function signInSettings(env: HubEnv): SignInSettings {
   const { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret, AUTH_ALLOWED_EMAILS: allowed } = env;
@@ -265,8 +265,8 @@ export function signInSettings(env: HubEnv): SignInSettings {
   }
   const allowedEmails = allowed?.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
   if (allowedEmails?.length === 0) throw new Error("AUTH_ALLOWED_EMAILS lists no address or @domain");
-  if (allowedEmails !== undefined && clientId === undefined) {
-    throw new Error("AUTH_ALLOWED_EMAILS requires Google sign-in (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)");
+  if (allowedEmails !== undefined && clientId === undefined && env.SMTP_URL === undefined) {
+    throw new Error("AUTH_ALLOWED_EMAILS requires Google sign-in (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET) or email (SMTP_URL)");
   }
   return {
     ...(clientId !== undefined && clientSecret !== undefined && { google: { clientId, clientSecret } }),

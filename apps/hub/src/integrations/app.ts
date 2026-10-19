@@ -61,7 +61,7 @@ export type IntegrationGuards = {
 };
 
 export type IntegrationHandlers = {
-  authMethods: { google: boolean; emailPassword: boolean; passwordReset: boolean };
+  authMethods: { google: boolean; emailPassword: boolean; passwordReset: boolean; verificationEmail: boolean };
   manifest: { start: (req: Request, tenantId: string) => Promise<Response>; callback: (req: Request) => Promise<Response> };
   syncInstallations: (member: Member) => Promise<Response>;
   prActions: BodyHandler<typeof ActionBody.infer>;
@@ -91,6 +91,7 @@ export type IntegrationHandlers = {
     roles: (member: Member) => Promise<Response>;
     resend: (req: Request, member: Member, principalId: string) => Promise<Response>;
     withdraw: (req: Request, member: Member, principalId: string) => Promise<Response>;
+    markVerified: (member: Member, principalId: string) => Promise<Response>;
     accept: (body: typeof AcceptBody.infer, user: SessionUser) => Promise<Response>;
   };
   bitbucketDatacenter: BitbucketHandlers;
@@ -104,7 +105,7 @@ const TAGS = ["integrations"];
 
 const Failure = type({ error: { code: "string", message: "string" } });
 const ManifestFailure = type({ error: "string" });
-const AuthMethods = type({ google: "boolean", emailPassword: "boolean", passwordReset: "boolean" });
+const AuthMethods = type({ google: "boolean", emailPassword: "boolean", passwordReset: "boolean", verificationEmail: "boolean" });
 const PackSchemas = type({ checkPack: "Record<string, unknown>", sharedPolicy: "Record<string, unknown>", policyOverride: "Record<string, unknown>", repoPolicy: "Record<string, unknown>", policyFile: "Record<string, unknown>" });
 const ManifestStart = type({ manifest: "Record<string, unknown>", state: "string" });
 const InstallationsSynced = type({ installations: "number", repos: "string[]" });
@@ -204,6 +205,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     AUTH_METHODS_PATH,
     describeRoute({
       summary: "Sign-in methods the hub accepts",
+      description: "Open to an unverified account. Every other `/api/` route outside `/api/auth/` and `/api/hooks/`, stock and custom, refuses a signed-in user whose address is not verified with 403 `email_unverified`, except the hub's first account when no allowlist is set. `verificationEmail`: email/password sign-ups are sent a link to verify their address, and can ask for it again through better-auth's `/api/auth/send-verification-email`.",
       tags: TAGS,
       responses: { 200: json("Enabled sign-in methods", AuthMethods) },
     }),
@@ -714,7 +716,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${INVITATIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Invite someone to the workspace by email",
-      description: "Needs `principal:*` create, and the caller must hold every permission the role grants (so only an owner invites into a `*:*` role). Creates the stock invited principal through `POST /api/tenants/{tenantId}/members/invite`; the invitee accepts on the portal's `/invite/{tenantId}` page. When the hub sends email, a plain-text better-auth magic link to that page is emailed (a new address gets an unverified user first); it signs the invitee in and verifies the address, works once and expires after 15 minutes. Without email set up on the hub, the page's link is returned to copy; it signs nobody in, and invitees must sign in with Google first. An existing account whose address is not verified cannot be invited. An address may be sent a limited number of invite links per hour.",
+      description: "Needs `principal:*` create, and the caller must hold every permission the role grants (so only an owner invites into a `*:*` role). Creates the stock invited principal through `POST /api/tenants/{tenantId}/members/invite`; the invitee accepts on the portal's `/invite/{tenantId}` page. When the hub sends email, a plain-text better-auth magic link to that page is emailed (a new address gets an unverified user first); it signs the invitee in and verifies the address, works once and expires after 15 minutes. Without email set up on the hub, the page's link is returned to copy; it signs nobody in, and invitees must sign in with Google first. With email, an existing account whose address is not verified cannot be invited; without, it can, and joins once the hub's owner marks it verified. An address may be sent a limited number of invite links per hour.",
       tags: TAGS,
       responses: {
         201: json("The invited principal and whether its link was emailed", InviteSent),
@@ -722,7 +724,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         401: failures[401],
         403: json("Not from the portal, not allowed to invite, a role granting more than the caller holds, or an email outside the sign-in allowlist", Failure),
         404: json("Role not found, or without email an address with no account", Failure),
-        409: json("Already a member or invited, or an account whose address is not verified", Failure),
+        409: json("Already a member or invited, or with email an account whose address is not verified", Failure),
         429: json("Too many invite links to this address in the last hour", Failure),
         502: json("The invite is saved but its email could not be sent", Failure),
       },
@@ -741,7 +743,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
       summary: "Roles the caller may invite people into",
       description: "Roles whose every permission the caller holds. Open invites are the stock principals with status `invited`.",
       tags: TAGS,
-      responses: { 200: json("Assignable role ids, email delivery and the sign-in allowlist", InviteRoles), 401: failures[401], 403: failures[403] },
+      responses: { 200: json("Assignable role ids, email delivery, the sign-in allowlist, who has not verified their address and whether the caller may mark it verified", InviteRoles), 401: failures[401], 403: failures[403] },
     }),
     member,
     requireGrant("principal:*", "create"),
@@ -789,6 +791,27 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     requireGrant("principal:*", "create"),
     function withdrawInvitation(c) {
       return handlers.invitations.withdraw(c.req.raw, memberOf(c), c.req.param("principalId"));
+    },
+  );
+
+  app.post(
+    `${INVITATIONS_PATH}/:tenantId/:principalId/verify`,
+    describeRoute({
+      summary: "Mark a person's email address verified",
+      description: "Only on a hub that sends no email, and only by the hub's owner, its first account, since verified holds hub-wide. Same grant as inviting. For a member or invitee of the workspace who signed up with email and password and has not verified the address: the owner vouches for it, so the person gets past the verify-email refusal and can accept an invite. Listed in `unverifiedPrincipalIds` of `GET /api/integrations/invitations/{tenantId}`, whose `canMarkVerified` says whether the caller may. Logged with who verified whom.",
+      tags: TAGS,
+      responses: {
+        204: { description: "Verified" },
+        401: failures[401],
+        403: json("Not from the portal, not allowed to invite, or not the hub's owner", Failure),
+        404: json("No one in this workspace with an unverified email and password account has this id", Failure),
+        409: json("`sends_email`: the hub sends email, so the person verifies with its link", Failure),
+      },
+    }),
+    member,
+    requireGrant("principal:*", "create"),
+    function markVerified(c) {
+      return handlers.invitations.markVerified(memberOf(c), c.req.param("principalId"));
     },
   );
 

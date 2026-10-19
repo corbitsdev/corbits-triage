@@ -511,6 +511,10 @@ export async function withdrawInvitation(transport: Transport, tenantId: string,
   await transport.fetch("DELETE", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}/${enc(requireId(principalId, "Principal id"))}`, {});
 }
 
+export async function markEmailVerified(transport: Transport, tenantId: string, principalId: string): Promise<void> {
+  await transport.fetch("POST", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}/${enc(requireId(principalId, "Principal id"))}/verify`, {});
+}
+
 export async function acceptInvitation(transport: Transport, tenantId: string): Promise<void> {
   await transport.fetch("POST", "/api/integrations/invite-accept", { tenantId: requireTenantId(tenantId) });
 }
