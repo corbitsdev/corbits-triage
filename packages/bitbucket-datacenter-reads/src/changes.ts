@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { PR_FILES_PAGE_CHARS, type PrCommit, type PrFilesPage } from "@corbits/github-reads";
-import { isoTime, jsonAll, repoPath, type BitbucketFetch } from "./client.js";
+import type { HeadChange } from "@corbits/triage-contracts";
+import { isoTime, jsonAll, PAGE_LIMIT, repoPath, type BitbucketFetch } from "./client.js";
 
 /** Line counts per file would cost a diff read per file, so only the pull request's totals carry them. */
 export type PrChange = { path: string; previousPath?: string; status: string };
@@ -49,4 +50,24 @@ function prCommit(row: unknown): PrCommit {
 
 export async function listPrCommits(bb: BitbucketFetch, repo: string, number: number): Promise<PrCommit[]> {
   return (await jsonAll(bb, `${repoPath(repo)}/pull-requests/${number}/commits`)).map(prCommit);
+}
+
+const MergedPr = type({ id: "number", "properties?": { "mergeCommit?": { id: "string" } } });
+
+/**
+ * The commits from `from` to `to`, and the pull requests merged into `branch`, a ref id, whose merge commit is one of
+ * them; a branch in a fork has none here. Only the newest page of merged pull requests is read, so an older merge is
+ * not named. Undefined when the instance no longer has `from`, such as after a force-push.
+ */
+export async function changesSince(bb: BitbucketFetch, repo: string, branch: string | undefined, from: string, to: string): Promise<HeadChange | undefined> {
+  const earlier = `${repoPath(repo)}/commits/${encodeURIComponent(from)}`;
+  const res = await bb(earlier, { headers: { accept: "application/json" } });
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new Error(`bitbucket GET ${earlier} -> ${res.status}`);
+  const commits = await jsonAll(bb, `${repoPath(repo)}/commits?since=${encodeURIComponent(from)}&until=${encodeURIComponent(to)}`);
+  if (branch === undefined) return { commits: commits.length, merged: [] };
+  const shas = new Set(commits.map((row) => Commit.assert(row).id));
+  const into = (await jsonAll(bb, `${repoPath(repo)}/pull-requests?state=MERGED&direction=INCOMING&at=${encodeURIComponent(branch)}`, PAGE_LIMIT, 1)).map((row) => MergedPr.assert(row));
+  const merged = into.filter((pr) => pr.properties?.mergeCommit !== undefined && shas.has(pr.properties.mergeCommit.id));
+  return { commits: commits.length, merged: merged.map((pr) => pr.id).sort((a, b) => a - b) };
 }

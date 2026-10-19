@@ -56,7 +56,7 @@ describe("GitHub App credential adapter", () => {
         return Response.json([{ number: 7, title: "PR", user: { login: "octo" }, head: { sha: "abc" } }]);
       }
       if (url.pathname.endsWith("/pulls/7") && request.method === "GET") {
-        return Response.json({ state: "open", head: { sha: "abc" }, labels: [] });
+        return Response.json({ state: "open", head: { sha: "abc" }, base: { repo: { id: 1 } }, labels: [] });
       }
       if (url.pathname.endsWith("/issues/7/comments") && request.method === "GET") {
         return Response.json([]);

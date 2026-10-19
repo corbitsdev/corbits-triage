@@ -9,7 +9,7 @@ type FakeReview = { id: number; user: { login: string; type: string }; state: st
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[] } = {}) {
-  const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc" }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
+  const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc" }, base: { repo: { id: 1 } }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc" })), ...(seed.approvals ?? [])];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];

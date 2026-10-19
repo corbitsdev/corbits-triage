@@ -1,6 +1,6 @@
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type AppLogin, type GithubFetch } from "@corbits/github-reads";
-import { findingHeadline, HTML_MARKERS, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingHeadline, HTML_MARKERS, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -52,7 +52,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput, login: AppLogin) {
   if (i.onHead !== undefined && i.onHead !== pr.head.sha) return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: HEAD_MOVED };
   // An empty comment means nothing is asked of the author, so an earlier one would be stale instructions.
   if (i.comment === "") await deleteTriageComments(gh, repo, number);
-  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header }, login) : null;
+  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined }, login) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
@@ -112,13 +112,32 @@ export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentI
   return upsertMarked(issueCommentHost(gh, input.repo, input.number), `${TRIAGE_COMMENT_MARKER}\n${input.body}`, current);
 }
 
+/**
+ * The commits from `from` to `to`, and the pull requests merged into `branch` whose merge commit is one of them; a
+ * branch in a fork has none here. A compare lists at most 250 commits and only the 100 most recently updated pull
+ * requests are read, so a merge past those is not named.
+ */
+async function changesSince(gh: GithubFetch, repo: string, branch: string | undefined, from: string, to: string): Promise<HeadChange | undefined> {
+  const path = `/repos/${repo}/compare/${from}...${to}`;
+  const res = await gh(path, { headers: { accept: "application/vnd.github+json" } });
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new Error(`github GET ${path} -> ${res.status}`);
+  const compare = await res.json() as { ahead_by: number; commits: Array<{ sha: string }> };
+  if (branch === undefined) return { commits: compare.ahead_by, merged: [] };
+  const shas = new Set(compare.commits.map((commit) => commit.sha));
+  const into: Array<{ number: number; merge_commit_sha: string | null; merged_at: string | null }> = await json(gh, `/repos/${repo}/pulls?state=closed&base=${encodeURIComponent(branch)}&sort=updated&direction=desc&per_page=100`);
+  const merged = into.filter((pr) => pr.merged_at !== null && pr.merge_commit_sha !== null && shas.has(pr.merge_commit_sha));
+  return { commits: compare.ahead_by, merged: merged.map((pr) => pr.number).sort((a, b) => a - b) };
+}
+
 /** Only the App's own comments are read, so a copied marker never decides what Triage writes. */
-async function writeTriageComment(gh: GithubFetch, input: TriageCommentInput & { header?: TriageHeader }, login: AppLogin): Promise<WrittenComment> {
-  const { repo, number, header } = input;
+async function writeTriageComment(gh: GithubFetch, input: TriageCommentInput & { header?: TriageHeader; branch: string | undefined }, login: AppLogin): Promise<WrittenComment> {
+  const { repo, number, header, branch } = input;
   if (!header) return upsertTriageComment(gh, input);
   const app = await login();
   const own = marked(await issueComments(gh, repo, number)).filter((c) => c.user?.login === app).map(markedComment);
-  return writeHeadedComment(issueCommentHost(gh, repo, number), HTML_MARKERS, own, header, input.body);
+  const host = { ...issueCommentHost(gh, repo, number), changesSince: (from: string, to: string) => changesSince(gh, repo, branch, from, to) };
+  return writeHeadedComment(host, HTML_MARKERS, own, header, input.body);
 }
 
 export const REVIEW_EVENTS = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const;

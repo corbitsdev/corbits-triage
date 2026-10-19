@@ -1,4 +1,4 @@
-import { jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
+import { changesSince, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
@@ -71,6 +71,8 @@ export type PullRequest = {
   state: "OPEN" | "DECLINED" | "MERGED";
   version: number;
   sha: string;
+  /** The source branch's ref id, unless it is in a fork. */
+  branch: string | undefined;
   url: string;
   author: { id: number; slug: string };
   reviewers: Participant[];
@@ -79,7 +81,7 @@ export type PullRequest = {
 
 export async function readPr(bb: BitbucketFetch, repo: string, number: number): Promise<PullRequest> {
   const pr = await json(bb, prPath(repo, number));
-  return { state: pr.state, version: pr.version, sha: pr.fromRef.latestCommit, url: pr.links.self[0].href, author: pr.author.user, reviewers: pr.reviewers, participants: pr.participants };
+  return { state: pr.state, version: pr.version, sha: pr.fromRef.latestCommit, branch: pr.fromRef.repository.id === pr.toRef.repository.id ? pr.fromRef.id : undefined, url: pr.links.self[0].href, author: pr.author.user, reviewers: pr.reviewers, participants: pr.participants };
 }
 
 export function statusOf(pr: PullRequest, user: TokenUser): ParticipantStatus | undefined {
@@ -145,10 +147,10 @@ function markedComment(comment: Comment): MarkedComment {
  * Only the token user's comments are read: an admin token could edit anyone's, and a copied marker must never decide
  * what Triage writes. Without a header the current comment is edited whatever it said before.
  */
-async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; number: number; body: string; header?: TriageHeader }, user: TokenUser): Promise<WrittenComment> {
-  const { repo, number, header } = input;
+async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; number: number; body: string; header?: TriageHeader; branch: string | undefined }, user: TokenUser): Promise<WrittenComment> {
+  const { repo, number, header, branch } = input;
   const own = marked(await listComments(bb, repo, number), user);
-  const host = commentHost(bb, repo, number, new Map(own.map((c) => [c.id, c.version])));
+  const host = { ...commentHost(bb, repo, number, new Map(own.map((c) => [c.id, c.version]))), changesSince: (from: string, to: string) => changesSince(bb, repo, branch, from, to) };
   const comments = own.map(markedComment);
   if (header) return writeHeadedComment(host, LINK_REFERENCE_MARKERS, comments, header, input.body);
   const current = comments.filter((c) => !LINK_REFERENCE_MARKERS.isSuperseded(c.body));
@@ -220,7 +222,7 @@ export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: Bitbucket
   if (pr.state !== "OPEN") return { commentId: null, updated: false, closed: false, sha: pr.sha, skipped: NOT_OPEN };
   if (i.onHead !== undefined && i.onHead !== pr.sha) return { commentId: null, updated: false, closed: false, sha: pr.sha, skipped: HEAD_MOVED };
   if (i.comment === "") await deleteTriageComments(bb, repo, number, await user());
-  const posted = i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header }, await user()) : null;
+  const posted = i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header, branch: pr.branch }, await user()) : null;
   const build = i.build ? await setVerdictBuild(bb, pr.sha, i.build, pr.url) : undefined;
   if (i.close) await declinePr(bb, { repo, number, version: pr.version });
   return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }), ...(build && { build: build.build, buildWritten: build.written }) };

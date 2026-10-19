@@ -57,7 +57,7 @@ function focusedPlan(separate: Record<string, number>, slices: Record<string, st
   const ids = Object.keys(separate).map((_, index) => `focused-file-${String(index + 1).padStart(3, "0")}`);
   const parts = Object.fromEntries(Object.keys(separate).map((path, index) => [ids[index]!, path]));
   const nouls = Object.values(separate).map((noul, index) => JSON.stringify({ id: ids[index], type: "noul", noul })).join("");
-  return { focused: { slices, unread, parts }, nouls };
+  return { focused: { purpose: "fix(session): release a settled approval overlay before delivering", slices, unread, parts }, nouls };
 }
 
 const CHOICE = {
@@ -97,9 +97,9 @@ describe("focused rendering", () => {
     }]);
     expect(verdict.reason).toBe("mixes unrelated changes: src/c.ts, src/d.ts, src/b.ts");
     expect(verdict.feedback.split("\n").slice(3)).toEqual([
-      "- Split out unrelated change: `src/c.ts`",
-      "- Split out unrelated change: `src/d.ts`",
-      "- Split out unrelated change: `src/b.ts`",
+      "- Split out unrelated change: `src/c.ts`, not part of `fix(session): release a settled approval overlay before delivering`",
+      "- Split out unrelated change: `src/d.ts`, not part of `fix(session): release a settled approval overlay before delivering`",
+      "- Split out unrelated change: `src/b.ts`, not part of `fix(session): release a settled approval overlay before delivering`",
     ]);
   });
 
@@ -107,7 +107,7 @@ describe("focused rendering", () => {
     const { focused, nouls } = focusedPlan({ "src/a.ts": 0.5 });
     const verdict = focusedVerdict(focusedAnswer(0.2, 0.8) + nouls, focused, CHOICE.fail);
     expect(verdict.checks[0]).toMatchObject({ result: "fail", evidence: [], output: { kind: "score", items: [] } });
-    expect(verdict.feedback.split("\n").slice(3)).toEqual(["- mixes unrelated changes"]);
+    expect(verdict.feedback.split("\n").slice(3)).toEqual(["- mixes unrelated changes, not part of `fix(session): release a settled approval overlay before delivering`"]);
     expect(verdict.nextAction).toBe("Split out unrelated changes");
   });
 
@@ -389,6 +389,7 @@ describe("author text in the comment", () => {
       repo: "acme/widgets",
       headSha: "abc123",
       det: { state: "blocked", reason: "required checks are failing", findings: [], checks, needsJudgment: false },
+      focused: { purpose: hostile[0]!, slices: {}, unread: [], parts: {} },
     });
     const lines = verdict.feedback.split("\n");
     expect(lines).toHaveLength(4 + hostile.length);

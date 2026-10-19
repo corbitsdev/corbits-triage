@@ -5,11 +5,12 @@ import { runAction } from "./sidecar-bundle";
 
 const BOT = { id: 7, slug: "triage-bot" };
 const AUTHOR = { id: 3, slug: "admin" };
-const PR_PATH = "/rest/api/1.0/projects/TRI/repos/widgets/pull-requests/1";
+const REPO_PATH = "/rest/api/1.0/projects/TRI/repos/widgets";
+const PR_PATH = `${REPO_PATH}/pull-requests/1`;
 
 // Shapes recorded from Bitbucket Data Center 10.5, trimmed to the fields read.
 function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown } = {}) {
-  const pr = { id: 1, version: 4, state: "OPEN", fromRef: { latestCommit: "abc" }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: [] as unknown[] };
+  const pr = { id: 1, version: 4, state: "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: [] as unknown[] };
   const comments: Comment[] = seed.comments ?? [];
   const builds: Array<Record<string, unknown>> = [];
   const writes: Array<{ method: string; path: string; body: any }> = [];
@@ -20,6 +21,9 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
     if (path === "/rest/api/1.0/application-properties") return Response.json({ version: "10.5.1" }, { headers: { "x-auserid": "7", "x-ausername": "triage-bot" } });
     if (path.startsWith("/rest/api/1.0/users?")) return Response.json({ values: [BOT], isLastPage: true });
     if (path === PR_PATH) return Response.json(pr);
+    if (path === `${REPO_PATH}/commits/abc`) return Response.json({ id: "abc" });
+    if (path.startsWith(`${REPO_PATH}/commits?since=abc&until=d36740c&`)) return Response.json({ values: ["merge1521", "d36740c"].map((id) => ({ id, message: id, author: { name: "admin" }, committerTimestamp: 0 })), isLastPage: true });
+    if (path.startsWith(`${REPO_PATH}/pull-requests?state=MERGED&direction=INCOMING&at=refs%2Fheads%2Ffix&`)) return Response.json({ values: [{ id: 1521, properties: { mergeCommit: { id: "merge1521" } } }, { id: 1490, properties: { mergeCommit: { id: "elsewhere" } } }], isLastPage: true });
     if (path.startsWith(`${PR_PATH}/activities?`)) {
       const values = comments.map((comment) => ({ action: "COMMENTED", commentAction: "ADDED", comment })).reverse();
       return Response.json({ values: [{ action: "OPENED" }, ...values], isLastPage: true });
@@ -68,6 +72,16 @@ describe("mirror", () => {
     expect(third).toMatchObject({ commentId: 11, updated: false, unchanged: expect.stringContaining("unchanged since") });
     expect(fake.comments.find((c) => c.id === 11)!.text).toBe(`[corbits-triage]: #${encodeURIComponent(JSON.stringify(HEADER))}\nStill pass`);
     expect(fake.comments.find((c) => c.id === 2)!.text).toBe("[corbits-triage]: #copied\nNot ours");
+  });
+
+  test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun", async () => {
+    const fake = fakeBitbucket();
+    await mirror(fake.bb, { ...REQUEST, header: HEADER, close: false }, user);
+    const failed = { ...REQUEST, comment: "Fail", header: { head: "d36740c", policy: null, verdict: "fail" }, close: false };
+    await mirror(fake.bb, failed, user);
+    await mirror(fake.bb, failed, user);
+    expect(fake.comments).toHaveLength(1);
+    expect(fake.comments[0]!.text).toEndWith("\nFail\n\nChanged since the last verdict (Pass at `abc`): 2 new commits, merging #1521 into this branch.");
   });
 });
 

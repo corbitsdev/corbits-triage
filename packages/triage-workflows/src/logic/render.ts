@@ -513,6 +513,13 @@ function failureEvidence(c: CheckResult, repo: string, headSha: string): string 
   return c.kind === "model" && c.check === "docs" ? ` for ${listed}` : `: ${listed}`;
 }
 
+/** Focused judged each file against the pull request's title, so the title is why a file is separate. */
+function focusedLines(c: CheckResult, purpose: string): string[] {
+  const why = `not part of ${inlineCode(purpose)}`;
+  if (!c.evidence.length) return [`- ${c.reason}, ${why}`];
+  return c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}, ${why}`);
+}
+
 /** The failed checks that are the author's to fix; a maintainer's requested changes are already in front of the author. */
 export function authorFailures(all: CheckResult[], sources: Sources): CheckResult[] {
   return all.filter((c) => c.result === "fail" && c.check !== NO_CHANGES_REQUESTED && failedStep(c, sources).actor === "author");
@@ -532,14 +539,14 @@ export const NOTHING_TO_CHANGE = "No changes needed from you. ";
  * maintainer's requested changes are already in front of the author, so they are left out, and a comment holding
  * nothing else is not posted.
  */
-function authorComment({ author, repo, headSha, sources }: RenderContext, checks: CheckResult[], verdict: VerdictWord): string {
+function authorComment({ author, repo, headSha, sources, purpose }: RenderContext, checks: CheckResult[], verdict: VerdictWord): string {
   const failing = checks.filter((c) => c.result === "fail");
   const mine = authorFailures(checks, sources);
   const unconfirmed = sources ? checks.filter(unsure) : [];
   const lines: string[] = [];
   if (mine.length) {
-    lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused" && c.evidence.length
-      ? c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}`)
+    lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
+      ? focusedLines(c, purpose!)
       : [`- ${c.reason}${failureEvidence(c, repo, headSha)}`]));
   }
   if (unconfirmed.length) {
@@ -576,6 +583,8 @@ interface RenderContext {
   headSha: string;
   sources: Sources;
   reviewers: string[];
+  /** Set whenever focused was asked. */
+  purpose?: string;
 }
 
 function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, reasons: string[], ctx: RenderContext): RenderOutput {
@@ -617,7 +626,7 @@ const UNCONFIRMED_REASON = "the decision model passed it, but a rule could not b
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
   const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused } = input;
-  const ctx = { author, repo, headSha, sources: det.sources, reviewers };
+  const ctx = { author, repo, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose };
   const evaluated = evaluateModel(input);
   const checks = [...det.checks, ...evaluated.checks];
   const reasons = reasonsOf(det, evaluated.checks);

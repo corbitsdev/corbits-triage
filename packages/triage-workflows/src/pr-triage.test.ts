@@ -59,9 +59,11 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
     const method = init?.method ?? "GET";
     requests.push({ method, path });
     if (missing && path.includes("/pulls/8")) return Response.json({ message: "Not Found" }, { status: 404 });
+    if (path.startsWith(`/repos/${REPO}/compare/`)) return Response.json({ ahead_by: 2, commits: [{ sha: "merge1521" }, { sha: pr.head }] });
+    if (path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix`)) return Response.json([{ number: 1521, merge_commit_sha: "merge1521", merged_at: "2026-10-19T00:43:02Z" }, { number: 1490, merge_commit_sha: "elsewhere", merged_at: "2026-10-01T00:00:00Z" }]);
     if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title: "Fix #3", user: { login: "octocat" }, draft: pr.draft, head: { sha: pr.head } }]);
     if (path === `/repos/${REPO}/pulls/8`) {
-      return Response.json({ number: 8, title: "Fix #3", state: "open", draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix" }, base: { ref: "main" }, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
+      return Response.json({ number: 8, title: "Fix #3", state: "open", draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base: { ref: "main", repo: { id: 1 } }, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
     }
     if (path.includes("/check-runs")) return Response.json({ check_runs: RUNS[pr.ci] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
@@ -534,6 +536,19 @@ describe("pr-triage body", () => {
     github.pr.ci = "success";
     await triage(pack, { github });
     expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
+  });
+
+  test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun", async () => {
+    const github = fakeGithub();
+    const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+    github.pr.ci = "success";
+    await triage(pack, { github });
+    github.pr.head = "d36740c";
+    github.pr.ci = "failure";
+    await triage(pack, { github });
+    await triage(pack, { github });
+    expect(github.comments).toHaveLength(1);
+    expect(github.comments[0]!.body).toEndWith("\n\nChanged since the last verdict (Pass at `abc`): 2 new commits, merging #1521 into this branch.");
   });
 
   test("a head that fails requests changes; a later head that passes merges, and the mirror takes the earlier request back", async () => {
