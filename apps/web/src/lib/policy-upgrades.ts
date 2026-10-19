@@ -20,8 +20,10 @@ function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyU
 
 const PULL_POLL_MS = 30_000;
 
+export const POLICY_UPGRADES_QUERY_KEY = "policy-upgrades";
+
 function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryClient) {
-  const queryKey = ["policy-upgrades", tenantId];
+  const queryKey = [POLICY_UPGRADES_QUERY_KEY, tenantId];
   const queryFn = tenantId === undefined ? skipToken : async function readPolicyUpgrades(): Promise<Upgrades> {
     const rows = await loadPolicyUpgrades(createHubTransport(), tenantId);
     const before = queryClient.getQueryData<Upgrades>(queryKey);
@@ -86,7 +88,7 @@ export function usePolicyUpgradeActions(repo: string, onSettled: () => void) {
   }
 
   async function reread() {
-    await Promise.all(["policy-upgrades", "policy-file", "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId] })));
+    await Promise.all([POLICY_UPGRADES_QUERY_KEY, "policy-file", "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId] })));
     onSettled();
   }
 
