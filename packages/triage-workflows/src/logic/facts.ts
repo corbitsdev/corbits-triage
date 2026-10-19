@@ -194,6 +194,8 @@ export interface PullData {
   commits: Array<{ message?: string }>;
   files: PrFileFacts[] | string;
   authorTeams: { teams?: unknown; unknown?: unknown } | null;
+  /** Unread when the pack does not ask focused. */
+  stack?: { includes?: unknown; onto?: unknown } | null;
 }
 
 /** Maps the read's slugs back to every spelling the steps use; a team the read did not answer, or another org's team, is unknown. */
@@ -210,7 +212,15 @@ function membership(read: PullData["authorTeams"], pack: CheckPack, repo: string
   return { authorTeams, authorTeamsUnknown };
 }
 
-type ItemFacts = Pick<PrFacts, "paths" | "files" | "commits" | "commitMessages" | "events" | "docs" | "rules" | "authorTeams" | "authorTeamsUnknown">;
+/** Set only on a stacked branch. */
+function stackOf(read: PullData["stack"]): Pick<PrFacts, "stack"> {
+  const includes = Array.isArray(read?.includes) ? read.includes.filter((number): number is number => optionalCount(number) !== undefined) : [];
+  const onto = optionalCount(read?.onto);
+  if (includes.length === 0 && onto === undefined) return {};
+  return { stack: onto === undefined ? { includes } : { includes, onto } };
+}
+
+type ItemFacts = Pick<PrFacts, "paths" | "files" | "commits" | "commitMessages" | "events" | "docs" | "rules" | "authorTeams" | "authorTeamsUnknown" | "stack">;
 
 export interface ItemContext {
   repo: string;
@@ -228,6 +238,6 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
   const commitMessages = data.commits.slice(0, COMMIT_MESSAGES_MAX).map((commit) => commit.message ?? "");
-  const facts: PrFacts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, ...docs, ...membership(data.authorTeams, pack, repo) };
+  const facts: PrFacts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack) };
   return { facts, pack };
 }

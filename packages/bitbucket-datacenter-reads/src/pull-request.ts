@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { isoTime, json, jsonAll, repoPath, type BitbucketFetch } from "./client.js";
+import { isoTime, json, jsonAll, PAGE_LIMIT, repoPath, type BitbucketFetch } from "./client.js";
 import { authorAssociation, type Association } from "./people.js";
 import { isBot, PullRequest } from "./shapes.js";
 
@@ -88,4 +88,17 @@ function openPr(row: unknown) {
 /** `authorAssociation` costs up to three reads per author, so the listing leaves it null; `getPr` reads it. */
 export async function listOpenPrs(bb: BitbucketFetch, repo: string) {
   return (await jsonAll(bb, `${repoPath(repo)}/pull-requests?state=OPEN`)).map(openPr);
+}
+
+/** The pull requests merged into this one's branch, and the open one whose branch it is based on; a fork's branch is not stacked on this repository's. The newest page of each is enough to tell. */
+export async function readStack(bb: BitbucketFetch, repo: string, number: number): Promise<{ includes: number[]; onto?: number }> {
+  const pr = PullRequest.assert(await json(bb, `${repoPath(repo)}/pull-requests/${number}`));
+  if (pr.fromRef.repository.id !== pr.toRef.repository.id) return { includes: [] };
+  const [into, from] = await Promise.all([
+    jsonAll(bb, `${repoPath(repo)}/pull-requests?state=MERGED&direction=INCOMING&at=${encodeURIComponent(pr.fromRef.id)}`, PAGE_LIMIT, 1),
+    jsonAll(bb, `${repoPath(repo)}/pull-requests?state=OPEN&direction=OUTGOING&at=${encodeURIComponent(pr.toRef.id)}`, PAGE_LIMIT, 1),
+  ]);
+  const includes = into.map((row) => PullRequest.assert(row)).filter((merged) => merged.toRef.id === pr.fromRef.id).map((merged) => merged.id);
+  const onto = from.map((row) => PullRequest.assert(row)).find((open) => open.id !== number && open.fromRef.id === pr.toRef.id)?.id;
+  return onto === undefined ? { includes } : { includes, onto };
 }

@@ -103,7 +103,7 @@ export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[
   if (!it.det.needsJudgment || !hasModelChecks(it.det.sources) || !it.pack || it.judgeLimitExceeded || errorOf(first).judgeError !== undefined) return undefined;
   const { facts, det } = it;
   const { plan, focused, requests } = evaluation;
-  const model = evaluateModel({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, answers: answersOf(requests, first), plan, focused });
+  const model = evaluateModel({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, answers: answersOf(requests, first), plan, focused, stack: facts.stack });
   // A judged rule that failed decides Fail on its own, so the verdict question is not asked.
   if (model.unanswered || model.checks.some((check) => check.result === "fail")) return undefined;
   return verdictRequest(facts, [...det.checks, ...model.checks].map((c) => policyRule(it.pack!, c)));
@@ -173,7 +173,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const choiceReply = [...early, ...late][0];
     const answered = asking && choiceReply ? choiceAnswer(asking, choiceReply) : undefined;
     const rendered = renderVerdict({
-      author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, plan, focused, judgeError,
+      author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, plan, focused, stack: it.facts.stack, judgeError,
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(it.noWait && { noWait: it.noWait }),
     });

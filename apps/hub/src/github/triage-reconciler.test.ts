@@ -128,6 +128,8 @@ function githubAnswer({ id, name }: ToolCall, pr: Record<string, unknown>): Reco
       return { comments: [] };
     case "github_get_checks":
       return { checks: [] };
+    case "github_get_stack":
+      return { includes: [] };
   }
   throw new Error(`unexpected call ${name}`);
 }

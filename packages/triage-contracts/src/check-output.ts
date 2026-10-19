@@ -15,13 +15,14 @@ export type CheckItem = typeof ItemsSchema.infer[number];
  * What a check found, beside its pass, fail or unconfirmed result. Values are facts named for what they state
  * (`hasConflicts: true`, `status: "pending"`, `files: 33`). A score is 0 to 100, how likely the check is fine, unrounded,
  * with the bar at which the check passes, the files or hunks behind it and any it could not read. A level is what a score
- * rule was rated, of its levels worst first. Met, not applicable and could not check are states, never numbers.
+ * rule was rated, of its levels worst first. Met, not applicable and could not check are states, never numbers; a check
+ * skipped for a reason, such as focused on a stacked branch, is not applicable with that reason.
  */
 export const CheckOutputSchema = type({ kind: "'values'", values: "Record<string, number | boolean | string>" })
   .or({ kind: "'score'", score: "0 <= number <= 100", passAt: "0 <= number <= 100", items: ItemsSchema, "unread?": "string[]" })
   .or({ kind: "'level'", level: "string", levels: "string[]", "failBelow?": "string" })
   .or({ kind: "'met'", items: ItemsSchema })
-  .or({ kind: "'not-applicable'" })
+  .or({ kind: "'not-applicable'", "reason?": "string" })
   .or({ kind: "'could-not-check'", reason: "string", "items?": ItemsSchema });
 
 export type CheckOutput = typeof CheckOutputSchema.infer;

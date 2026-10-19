@@ -272,6 +272,7 @@ describe("judge on a blocked pull request", () => {
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
       "files:8:0": { files },
+      "stack:8": { includes: [] },
       "comments:8": { comments: [] },
       "checks:8": { checks: checkRuns },
     };

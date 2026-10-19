@@ -118,6 +118,25 @@ export async function listOpenPrs(gh: GithubFetch, repo: string) {
   }));
 }
 
+/** A stacked branch: the pull requests merged into it, and the open pull request whose branch it is based on. */
+export type Stack = { includes: number[]; onto?: number };
+
+/** A fork's branch is not one of this repository's, so nothing here is stacked on it. The newest page of each is enough to tell, even for a long-lived branch with thousands. */
+export async function readStack(gh: GithubFetch, repo: string, number: number): Promise<Stack> {
+  const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
+  if (pr.head?.repo?.id === undefined || pr.head.repo.id !== pr.base?.repo?.id) return { includes: [] };
+  const head: string = pr.head.ref;
+  const base: string = pr.base.ref;
+  const owner = repo.split("/")[0];
+  const [into, from] = await Promise.all([
+    json(gh, `/repos/${repo}/pulls?state=closed&base=${encodeURIComponent(head)}&per_page=100`),
+    json(gh, `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${base}`)}&per_page=100`),
+  ]);
+  const includes = into.filter((p: any) => typeof p.merged_at === "string" && p.base?.ref === head).map((p: any) => p.number as number);
+  const onto = from.find((p: any) => p.number !== number && p.head?.ref === base && p.head?.repo?.id === pr.base.repo.id)?.number;
+  return onto === undefined ? { includes } : { includes, onto };
+}
+
 const CLOSED_PRS_PER_PAGE = 100;
 
 export type ClosedPr = { number: number; merged: boolean; closedAt: string };

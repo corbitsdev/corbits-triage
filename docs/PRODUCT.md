@@ -95,6 +95,9 @@ above, or 0.3 or below (0.6 for Focused). Anything inside the band, a missing
 answer or a failed model call leaves the rule unconfirmed rather than guessed.
 A repository whose rules are all over host data never calls the model.
 
+Focused is skipped on a stacked branch, one another pull request was merged
+into or one based on another open pull request's branch, and says why.
+
 The model reads the pull request and the repository's docs from its default
 branch. Custom rules also get the repository's contribution rules
 (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING`, the pull request template).

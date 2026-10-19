@@ -1,5 +1,6 @@
 import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
+import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { WaitingMark } from "../actions/waiting.js";
@@ -115,6 +116,7 @@ export interface RenderInput {
   answers?: ParsedAnswers | Record<string, number> | null;
   plan?: QualityPlan;
   focused?: FocusedPlan;
+  stack?: Stack;
   judgeError?: string;
   judgeLimitExceeded?: true;
   judgeSkipped?: true;
@@ -147,6 +149,18 @@ const NOT_APPLICABLE_REASON = "does not apply";
 const UNREAD_REASON = "file could not be read";
 
 const NOT_APPLICABLE: CheckOutput = { kind: "not-applicable" };
+
+/** A release branch can include hundreds, so the line names the first few. */
+const STACK_NAMED = 3;
+
+function stackText({ includes, onto }: Stack): string {
+  const parts: string[] = [];
+  if (onto !== undefined) parts.push(`based on #${onto}`);
+  const named = includes.slice(0, STACK_NAMED).map((number) => `#${number}`).join(", ");
+  if (includes.length > STACK_NAMED) parts.push(`includes ${named} and ${includes.length - STACK_NAMED} more`);
+  else if (includes.length > 0) parts.push(`includes ${named}`);
+  return `stacked branch, ${parts.join(", ")}`;
+}
 
 export interface RenderOutput extends Rendered {
   mirror: boolean;
@@ -249,7 +263,7 @@ function band(noul: number, yesPasses: boolean): Decided {
   return { result: "unconfirmed", reason: UNDECIDED_REASON };
 }
 
-export function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
+export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
   if (!det.sources) return { checks: [], unanswered: false };
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
@@ -331,10 +345,14 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
 
   /**
    * Focused asks each request-sized slice of the diff whether it serves the pull request's purpose: any separate slice fails
-   * it, every serving slice passes it, and with no lines to read it does not apply. A failure names the files
+   * it, every serving slice passes it, with no lines to read it does not apply, and a stacked branch skips it. A failure names the files
    * most likely to be the separate change, from the follow-up file questions. The score is the least serving slice's.
    */
   function focusedCheck(plan: FocusedPlan | undefined) {
+    if (stack) {
+      const reason = stackText(stack);
+      return push("focused", { result: "pass" }, { kind: "not-applicable", reason }, [], `skipped: ${reason}`);
+    }
     if (!plan) return push("focused", { result: "pass" }, NOT_APPLICABLE, [], NOT_APPLICABLE_REASON);
     const answered = Object.keys(plan.slices).flatMap((id) => {
       const side = sides(invalid ? undefined : parsed.decisions[id]);
@@ -541,6 +559,11 @@ export function commentTitle(verdict: VerdictWord): string {
   return `**Triage: ${VERDICT_TITLES[verdict]}**`;
 }
 
+/** A judged rule skipped for a reason, such as focused on a stacked branch. */
+function skippedLine(c: CheckResult, sources: NonNullable<Sources>): string[] {
+  return c.kind === "model" && c.output.kind === "not-applicable" && c.output.reason ? [`- ${passText(c.check, sources)}: ${c.output.reason}`] : [];
+}
+
 /** What a passing comment tells the author when nothing else is listed. */
 export const NOTHING_TO_CHANGE = "No changes needed from you. ";
 
@@ -576,6 +599,8 @@ function authorComment({ author, repo, headSha, sources, purpose }: RenderContex
     if (failing.some((c) => c.check === NO_CHANGES_REQUESTED)) return "";
     lines.push(`${verdict === "pass" ? NOTHING_TO_CHANGE : ""}A maintainer will review this pull request.`);
   }
+  const skipped = sources ? checks.flatMap((c) => skippedLine(c, sources)) : [];
+  if (skipped.length) lines.push("", "Skipped:", ...skipped);
   return bounded([commentTitle(verdict), "", ...lines]);
 }
 
