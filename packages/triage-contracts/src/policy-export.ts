@@ -2,21 +2,22 @@
 // runs on, so a rule's wording, reason and evidence never count as a difference; what it checks and every step do.
 import { dump, JSON_SCHEMA } from "js-yaml";
 import {
-  advisoryLabels,
   AUTHOR_GROUPS,
   CATALOG_IDS,
   CONVENTIONAL_FIELDS,
   CONVENTIONAL_TYPES,
+  labelRules,
   POLICY_EVENTS,
+  reviewRules,
   VERDICT_LABELS,
   VERDICTS,
-  type Advisory,
   type AuthorMatch,
   type CatalogCheck,
   type CatalogId,
   type CheckPack,
   type CustomCheck,
   type ModelCustomCheck,
+  type OnFail,
   type PeopleTarget,
   type Step,
   type VerdictWord,
@@ -32,9 +33,9 @@ export const VERDICT_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: 
 export type PolicyFileExport = { text: string; unexpressed: string[] };
 
 /** A rule as the file writes it: its sentence, what it checks, then why it exists. */
-function written(row: Advisory & { reason?: string; evidence?: string[]; enabled?: boolean }, head: Record<string, unknown>, text: string, checks: Record<string, unknown>) {
-  const advisory = { ...(row.advisory && { advisory: true }), ...(row.label !== undefined && { label: row.label }) };
-  return { ...head, text, ...checks, ...advisory, reason: row.reason ?? REASON, evidence: row.evidence ?? EVIDENCE, ...(row.enabled === false && { enabled: false }) };
+function written(row: OnFail & { reason?: string; evidence?: string[]; enabled?: boolean }, head: Record<string, unknown>, text: string, checks: Record<string, unknown>) {
+  const onFail = { ...(row.onFail && { onFail: row.onFail }), ...(row.label !== undefined && { label: row.label }) };
+  return { ...head, text, ...checks, ...onFail, reason: row.reason ?? REASON, evidence: row.evidence ?? EVIDENCE, ...(row.enabled === false && { enabled: false }) };
 }
 
 /** A built-in rule's parameters as schema 3 writes them; undefined when it has none it requires. */
@@ -145,7 +146,7 @@ function catalogChecks(pack: CheckPack, id: CatalogId): string | undefined {
   if (id === "ci-green" && row?.enabled === false) return CI_SKIPPED;
   if (!row?.enabled) return undefined;
   const conventional = id === "conventional-commits" && { types: sorted(row.types ?? CONVENTIONAL_TYPES), fields: row.fields ?? CONVENTIONAL_FIELDS };
-  return canonical({ maxFiles: row.maxFiles, maxLines: row.maxLines, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), label: advisoryLabels(pack).get(id), ...conventional });
+  return canonical({ maxFiles: row.maxFiles, maxLines: row.maxLines, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), onFail: onFailText(pack, id), ...conventional });
 }
 
 function modelAsks(row: ModelCustomCheck): Record<string, unknown> {
@@ -161,9 +162,9 @@ function modelAsks(row: ModelCustomCheck): Record<string, unknown> {
 
 function customChecks(pack: CheckPack, row: CustomCheck | undefined): string | undefined {
   if (!row || row.enabled === false) return undefined;
-  const label = advisoryLabels(pack).get(row.id);
-  if (row.kind === "text") return canonical({ kind: row.kind, fields: row.fields, failWhen: row.failWhen, phrases: sorted(row.phrases), label });
-  return canonical({ kind: row.kind, shape: row.shape, ...modelAsks(row), label });
+  const onFail = onFailText(pack, row.id);
+  if (row.kind === "text") return canonical({ kind: row.kind, fields: row.fields, failWhen: row.failWhen, phrases: sorted(row.phrases), onFail });
+  return canonical({ kind: row.kind, shape: row.shape, ...modelAsks(row), onFail });
 }
 
 /** A step as it runs: who or what it is for is a set, so its order is not a difference; its place in the list is. */
@@ -195,15 +196,21 @@ const CATALOG_RULES: Partial<Record<CatalogId, string>> = {
 // CI green has three states: required, absent (merges still wait for CI) and written off (merges skip it).
 const CI_STATES = { [CI_SKIPPED]: "merges skip CI", absent: "merges wait for CI" } as const;
 
-/** An advisory rule's label, after what it checks. */
-function advisoryWords(pack: CheckPack, id: string): string[] {
-  const label = advisoryLabels(pack).get(id);
-  return label === undefined ? [] : [`advisory, labels ${label}`];
+/** What a switched-on rule does when it fails, unless it fails the pull request. */
+export function onFailText(pack: CheckPack, id: string): string | undefined {
+  const label = labelRules(pack).get(id);
+  if (label !== undefined) return `on fail, labels ${label}`;
+  return reviewRules(pack).includes(id) ? "on fail, a maintainer reviews it" : undefined;
+}
+
+function onFailWords(pack: CheckPack, id: string): string[] {
+  const text = onFailText(pack, id);
+  return text === undefined ? [] : [text];
 }
 
 function catalogValues(pack: CheckPack, id: CatalogId): string[] {
   const values = catalogLimits(pack, id);
-  return values.length ? [...values, ...advisoryWords(pack, id)] : values;
+  return values.length ? [...values, ...onFailWords(pack, id)] : values;
 }
 
 function catalogLimits(pack: CheckPack, id: CatalogId): string[] {
@@ -277,8 +284,8 @@ function customDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[
     const [savedRow, fileRow] = [saved.custom.find((row) => row.id === id), file.custom.find((row) => row.id === id)];
     if (customChecks(saved, savedRow) === customChecks(file, fileRow)) return [];
     const rule = (savedRow ?? fileRow)!.name;
-    const inSaved = customChecks(saved, savedRow) ? [customSentence(savedRow!), ...advisoryWords(saved, id)] : [];
-    const inFile = customChecks(file, fileRow) ? [customSentence(fileRow!), ...advisoryWords(file, id)] : [];
+    const inSaved = customChecks(saved, savedRow) ? [customSentence(savedRow!), ...onFailWords(saved, id)] : [];
+    const inFile = customChecks(file, fileRow) ? [customSentence(fileRow!), ...onFailWords(file, id)] : [];
     return [{ rule, saved: inSaved, file: inFile, instead: inFile.length && inSaved.length ? `${rule} will check something different.` : instead(rule, inSaved, inFile) }];
   });
 }

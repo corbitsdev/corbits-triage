@@ -1,9 +1,9 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { advisoryLabels, alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, labelRules, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
-import { authorFailures, isAdvisoryFinding } from "./render.js";
+import { authorFailures, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
 import { unrunnable } from "./execute-do.js";
 
@@ -42,8 +42,8 @@ export interface ActionInput {
   verdict: VerdictWord;
   reason: string;
   pack: CheckPack;
-  /** Each advisory rule's result, where the host has labels. */
-  advisory?: CheckResult[];
+  /** Each labelling rule's result, where the host has labels. */
+  labelled?: CheckResult[];
 }
 
 /** Catch-up runs the policy's actions whatever woke it. */
@@ -178,13 +178,13 @@ function stepSubject(facts: PrFacts): StepSubject {
 }
 
 /**
- * After the verdict's own steps, one labels Do adds the label of each advisory rule that did not pass. Nothing says who
+ * After the verdict's own steps, one labels Do adds the label of each labelling rule that did not pass. Nothing says who
  * put a label on, so one is never taken back: it may be a person's.
  */
-function advisoryDo({ advisory, pack, facts, verdict: list }: ActionInput, reason: string): SuggestedAction[] {
-  if (!advisory?.length) return [];
-  const labels = advisoryLabels(pack);
-  const target = { labels: [...new Set(advisory.filter(isAdvisoryFinding).flatMap((c) => labels.get(c.check) ?? []))] };
+function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string): SuggestedAction[] {
+  if (!labelled?.length) return [];
+  const labels = labelRules(pack);
+  const target = { labels: [...new Set(labelled.filter(isLabelledFinding).flatMap((c) => labels.get(c.check) ?? []))] };
   if (satisfied("labels", target, facts)) return [];
   const index = pack.actions[list].length;
   const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: "labels", target });
@@ -216,7 +216,7 @@ export function evaluateActions(input: ActionInput): SuggestedAction[] {
       out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
     }
   }
-  return [...out, ...advisoryDo(input, reason)];
+  return [...out, ...labelDo(input, reason)];
 }
 
 /**

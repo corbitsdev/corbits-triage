@@ -5,7 +5,7 @@ import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { WaitingMark } from "../actions/waiting.js";
 import type { SuggestedAction } from "./actions.js";
-import { hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
+import { forReview, hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
@@ -176,8 +176,8 @@ export interface RenderOutput extends Rendered {
   feedback: string;
   /** Only the host's own checks were left to confirm, CI still running or mergeability not computed yet: nothing is decided or posted, and the head shows the waiting marker. */
   waiting?: true;
-  /** Each advisory rule's result, set when the policy has any; none of them decides the verdict. */
-  advisory?: CheckResult[];
+  /** Each labelling rule's result, set when the policy has any; none of them decides the verdict. */
+  labelled?: CheckResult[];
 }
 
 type Sources = DeterministicResult["sources"];
@@ -275,9 +275,9 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
   const checks: CheckResult[] = [];
   let anyUnanswered = false;
 
-  /** An advisory rule left unanswered never holds the verdict back. */
+  /** A labelling rule left unanswered never holds the verdict back. */
   function unansweredBy(check: string) {
-    anyUnanswered ||= !det.advisory?.ids.includes(check);
+    anyUnanswered ||= !det.labelled?.ids.includes(check);
   }
 
   function unavailableReason(): string {
@@ -437,6 +437,7 @@ function withoutLimit(evidence: string[]): string {
 }
 
 function failedStep(c: CheckResult, sources: Sources): Step {
+  if (c.onFail === "review") return { actor: "maintainer", action: `Review: ${c.reason}` };
   switch (c.check) {
     // Informational: marking a draft ready is the author's call, never asked of them.
     case NOT_A_DRAFT: return { actor: "maintainer", action: "Review once marked ready" };
@@ -521,20 +522,25 @@ function hostPending(c: CheckResult): boolean {
   return c.kind === "machine" && c.result === "unconfirmed";
 }
 
-/** An advisory rule's result that labels and notes the pull request. */
-export function isAdvisoryFinding(c: CheckResult): boolean {
+/** A labelling rule's result that labels and notes the pull request. */
+export function isLabelledFinding(c: CheckResult): boolean {
   return c.result === "fail" || unsure(c);
 }
 
-/** Judged rules that decide the verdict, and every advisory rule's result. */
-export function splitAdvisory(det: DeterministicResult, model: CheckResult[]): { deciding: CheckResult[]; advisory: CheckResult[] } {
-  const ids = det.advisory?.ids ?? [];
-  return { deciding: model.filter((c) => !ids.includes(c.check)), advisory: [...(det.advisory?.checks ?? []), ...model.filter((c) => ids.includes(c.check))] };
+/** A failed rule whose failure goes to a maintainer. */
+function isFlagged(c: CheckResult): boolean {
+  return c.result === "fail" && c.onFail === "review";
 }
 
-/** Whether a rule that is not advisory needs the decision model. */
+/** Judged rules that decide the verdict, and every labelling rule's result. */
+export function splitLabelled(det: DeterministicResult, model: CheckResult[]): { deciding: CheckResult[]; labelled: CheckResult[] } {
+  const ids = det.labelled?.ids ?? [];
+  return { deciding: model.filter((c) => !ids.includes(c.check)).map((c) => forReview(c, det.review)), labelled: [...(det.labelled?.checks ?? []), ...model.filter((c) => ids.includes(c.check))] };
+}
+
+/** Whether a rule that does not only label needs the decision model. */
 export function decidesByModel(det: DeterministicResult): boolean {
-  const ids = det.advisory?.ids ?? [];
+  const ids = det.labelled?.ids ?? [];
   return hasModelChecks(det.sources) && [...det.sources!.quality, ...det.sources!.custom].some((source) => !ids.includes(source.id));
 }
 
@@ -604,6 +610,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   const { author, repo, headSha, sources, purpose } = ctx;
   const failing = checks.filter((c) => c.result === "fail");
   const mine = authorFailures(checks, sources);
+  const flagged = checks.filter(isFlagged);
   const unconfirmed = sources ? checks.filter(unsure) : [];
   const pending = checks.filter(hostPending);
   const lines: string[] = [];
@@ -611,6 +618,10 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
     lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
       ? focusedLines(c, purpose!)
       : [`- ${c.reason}${failureEvidence(c, repo, headSha)}`]));
+  }
+  if (flagged.length) {
+    if (lines.length) lines.push("");
+    lines.push("A maintainer will review:", ...flagged.map((c) => `- ${c.reason}${failureEvidence(c, repo, headSha)}`));
   }
   if (unconfirmed.length) {
     if (lines.length) lines.push("");
@@ -630,7 +641,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   }
   const skipped = sources ? checks.flatMap((c) => skippedLine(c, sources)) : [];
   if (skipped.length) lines.push("", "Skipped:", ...skipped);
-  const notes = ctx.advisory.filter(isAdvisoryFinding);
+  const notes = ctx.labelled.filter(isLabelledFinding);
   if (notes.length) lines.push("", "Notes:", ...notes.map((c) => noteOf(c, ctx)));
   return bounded([commentTitle(verdict), "", ...lines]);
 }
@@ -656,7 +667,7 @@ interface RenderContext {
   reviewers: string[];
   /** Set whenever focused was asked. */
   purpose?: string;
-  advisory: CheckResult[];
+  labelled: CheckResult[];
 }
 
 function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, reasons: string[], ctx: RenderContext): RenderOutput {
@@ -669,7 +680,7 @@ function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number 
     reasons,
     feedback: authorComment(ctx, checks, rendered.verdict),
     checks,
-    ...(ctx.advisory.length > 0 && { advisory: ctx.advisory }),
+    ...(ctx.labelled.length > 0 && { labelled: ctx.labelled }),
   };
 }
 
@@ -694,16 +705,18 @@ const UNCONFIRMED_REASON = "the decision model passed it, but a rule could not b
 
 /**
  * A failed hard rule decides Fail without the decision model; a draft or closed pull request is not decided, and is
- * unsure. A policy without a decision-model rule passes when every rule passes. Otherwise the verdict question decides,
+ * unsure. A failed rule whose failure goes to a maintainer leaves it Unsure, unless another rule fails it. A policy
+ * without a decision-model rule passes when every rule passes. Otherwise the verdict question decides,
  * and a judge that did not answer leaves the verdict unsure and degraded. A verdict that is not Fail and waits only on
  * the host's own checks waits for them instead of being Unsure, unless the hub waits no longer.
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
   const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait } = input;
   const evaluated = evaluateModel(input);
-  const { deciding, advisory } = splitAdvisory(det, evaluated.checks);
-  const ctx = { author, repo, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, advisory };
+  const { deciding, labelled } = splitLabelled(det, evaluated.checks);
+  const ctx = { author, repo, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, labelled };
   const checks = [...det.checks, ...deciding];
+  const flaggedReason = checks.filter(isFlagged).map((check) => reasonOf(check, det.sources)).join("; ");
   const reasons = reasonsOf(det, deciding);
   const hard = hardFailures(det.checks);
   if (hard.length > 0) return withChecks({ ...render(det.state), verdict: "fail", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
@@ -711,9 +724,13 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     const verdict = withChecks({ ...render(det.state), verdict: "unsure", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
     return { ...verdict, feedback: "" };
   }
+  const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
+  const waitsOnHost = !noWait && unconfirmed.length > 0 && unconfirmed.every(hostPending);
   if (!decidesByModel(det)) {
     if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
-    return noWait ? unsureOf(RULES_UNSURE_REASON) : waitingOf(null);
+    if (waitsOnHost) return waitingOf(null);
+    if (flaggedReason) return unsureOf(flaggedReason);
+    return unsureOf(RULES_UNSURE_REASON);
   }
   function unsureOf(reason: string, degraded: RenderOutput["degraded"] = null, score: number | null = null): RenderOutput {
     return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, score, reasons, ctx);
@@ -728,12 +745,12 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const outage = `${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`;
   if (judgeError !== undefined || evaluated.unanswered) return unsureOf(outage, "inference-outage");
   // A judged rule's own answer decides it, so nothing the pull request says to the verdict question can pass it.
-  const failing = deciding.filter((check) => check.result === "fail").map((check) => reasonOf(check, det.sources));
+  const failing = deciding.filter((check) => check.result === "fail" && !isFlagged(check)).map((check) => reasonOf(check, det.sources));
   if (failing.length) return withChecks({ ...render(VERDICT_STATES.fail), verdict: "fail", degraded: null, reason: failing.join("; ") }, checks, null, reasons, ctx);
+  if (flaggedReason) return waitsOnHost ? waitingOf(null) : unsureOf(flaggedReason);
   if (choice === undefined) return unsureOf(outage, "inference-outage");
   const decided = decide(choice);
-  const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
-  if (!noWait && decided !== "fail" && unconfirmed.length > 0 && unconfirmed.every(hostPending)) return waitingOf(choice.pass);
+  if (decided !== "fail" && waitsOnHost) return waitingOf(choice.pass);
   if (decided === "pass" && unconfirmed.length > 0) return unsureOf(UNCONFIRMED_REASON, null, choice.pass);
   return withChecks({ ...render(VERDICT_STATES[decided]), verdict: decided, degraded: null, reason: DECIDED_REASONS[decided] }, checks, choice.pass, reasons, ctx);
 }

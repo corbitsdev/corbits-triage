@@ -3,13 +3,15 @@
 // the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, Evidence, ISSUE_TRACKERS, Label, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, withAuthorKinds, type CatalogId } from "./check-pack.js";
+import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, withAuthorKinds, type CatalogId } from "./check-pack.js";
 
 const Lines = Text.array().atLeastLength(1).atMostLength(50);
 const Limit = type("number.integer").atLeast(1);
 
+const OnFailWord = type.enumerated(...ON_FAILS);
+
 /** A built-in rule's id is its check; a model or text rule names its own. */
-const RULE_BASE = { "+": "reject", text: Text, reason: Text, evidence: Evidence, "enabled?": "boolean", "advisory?": "boolean", "label?": Label } as const;
+const RULE_BASE = { "+": "reject", text: Text, reason: Text, evidence: Evidence, "enabled?": "boolean", "onFail?": OnFailWord, "label?": Label } as const;
 const OWN_RULE = { ...RULE_BASE, id: CustomId } as const;
 
 const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green"] as const satisfies readonly CatalogId[];
@@ -23,10 +25,12 @@ const RuleSchema = type({ ...RULE_BASE, check: "'max-files-changed' | 'max-lines
   .or({ ...OWN_RULE, check: "'text'", fields: type.enumerated(...TEXT_FIELDS).array().atLeastLength(1), failWhen: type.enumerated(...TEXT_MATCHES), phrases: Lines });
 
 type PolicyRule = typeof RuleSchema.infer;
+type OnFailWord = typeof OnFailWord.infer;
 
 export const policyRulesSchema = type({
   "+": "reject",
   "extends?": Text,
+  "onFail?": OnFailWord,
   rules: RuleSchema.array(),
   "actions?": { "+": "reject", "on?": type.enumerated(...POLICY_EVENTS).array().atLeastLength(1), "pass?": stepListSchema, "fail?": stepListSchema, "unsure?": stepListSchema },
   "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
@@ -56,12 +60,14 @@ export function ruleNameOf(id: string): string {
   return `${words[0]!.toUpperCase()}${words.slice(1)}`;
 }
 
-function advisoryOf(rule: PolicyRule): Record<string, unknown> {
-  return rule.advisory ? { advisory: true, ...(rule.label !== undefined && { label: rule.label }) } : {};
+/** The stored policy keeps `onFail` only where it is not `fail`. */
+function onFailOf(rule: PolicyRule, onFail: OnFailWord): Record<string, unknown> {
+  if (onFail === "fail") return {};
+  return { onFail, ...(rule.label !== undefined && { label: rule.label }) };
 }
 
-function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>): Record<string, unknown> {
-  const row = { text: rule.text, reason: rule.reason, evidence: rule.evidence, enabled: rule.enabled !== false, ...advisoryOf(rule) };
+function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>, onFail: Record<string, unknown>): Record<string, unknown> {
+  const row = { text: rule.text, reason: rule.reason, evidence: rule.evidence, enabled: rule.enabled !== false, ...onFail };
   switch (rule.check) {
     case "max-files-changed":
       return { ...row, maxFiles: rule.max };
@@ -78,9 +84,9 @@ function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>): Record<str
   }
 }
 
-function customRow(rule: Extract<PolicyRule, { check: "model" | "text" }>): Record<string, unknown> {
+function customRow(rule: Extract<PolicyRule, { check: "model" | "text" }>, onFail: Record<string, unknown>): Record<string, unknown> {
   const { id } = rule;
-  const base = { id, name: ruleNameOf(id), group: "pull-request", reason: rule.reason, evidence: rule.evidence, ...(rule.enabled === false && { enabled: false }), ...advisoryOf(rule) };
+  const base = { id, name: ruleNameOf(id), group: "pull-request", reason: rule.reason, evidence: rule.evidence, ...(rule.enabled === false && { enabled: false }), ...onFail };
   if (rule.check === "model") return { ...base, kind: "model", shape: "is-true", claim: rule.text };
   return { ...base, text: rule.text, kind: "text", fields: rule.fields, failWhen: rule.failWhen, phrases: rule.phrases };
 }
@@ -93,7 +99,8 @@ function ruleId(rule: PolicyRule): string {
   return isCatalogRule(rule) ? rule.check : rule.id;
 }
 
-function mapRules(rules: PolicyRule[]): { checks: Record<string, unknown>; custom: Array<Record<string, unknown>> } {
+/** A rule without its own `onFail` takes the file's. */
+function mapRules(rules: PolicyRule[], byDefault: OnFailWord): { checks: Record<string, unknown>; custom: Array<Record<string, unknown>> } {
   const checks: Record<string, unknown> = {};
   const custom: Array<Record<string, unknown>> = [];
   const seen = new Set<string>();
@@ -101,9 +108,10 @@ function mapRules(rules: PolicyRule[]): { checks: Record<string, unknown>; custo
     const id = ruleId(rule);
     if (seen.has(id)) refuse(`Rule ${id} is listed twice.`, ["rules", at]);
     seen.add(id);
-    if (rule.label !== undefined && !rule.advisory) refuse(`Rule ${id} label needs advisory: true.`, ["rules", at]);
-    if (isCatalogRule(rule)) checks[id] = catalogRow(rule);
-    else custom.push(customRow(rule));
+    const onFail = rule.onFail ?? byDefault;
+    if (rule.label !== undefined && onFail !== "label") refuse(`Rule ${id} label needs onFail: label.`, ["rules", at]);
+    if (isCatalogRule(rule)) checks[id] = catalogRow(rule, onFailOf(rule, onFail));
+    else custom.push(customRow(rule, onFailOf(rule, onFail)));
   }
   return { checks, custom };
 }
@@ -134,7 +142,7 @@ export function rulesToPolicy(raw: Record<string, unknown>): Record<string, unkn
   const actions = actionsOf(file);
   return {
     ...(file.extends !== undefined && { extends: file.extends }),
-    ...mapRules(file.rules),
+    ...mapRules(file.rules, file.onFail ?? "fail"),
     ...(actions && { actions }),
     ...(file.labels && { labels: file.labels }),
   };
