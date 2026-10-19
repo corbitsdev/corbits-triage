@@ -11,7 +11,7 @@ Every rule has:
 - `reason`: one line on why the rule exists.
 - `evidence`: a list of `maintainer-stated`, pull request references (`"#44"`, `"owner/name#44"`) or `https://` links. Quote `#` references.
 - `enabled: false` (optional) keeps a rule written down but off.
-- `onFail` (optional) is what a failing rule does: `fail` (the default) fails the pull request for its author, `review` makes it Unsure and leaves it to a maintainer, and `label` makes the rule label the pull request instead of deciding its verdict. A top-level `onFail` sets the default for every rule in the file. With `label`, when it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and never takes the label off. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `onFail: label` is refused, and so is one starting `Triage:` or `rule: ` or naming a verdict label.
+- `onFail` (optional) is what a failing rule does: `fail` (the default) fails the pull request for its author, `ask` makes it Unsure and leaves it to a maintainer, and `label` makes the rule label the pull request instead of deciding its verdict. A top-level `onFail` sets the default for every rule in the file. With `label`, when it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and never takes the label off. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `onFail: label` is refused, and so is one starting `Triage:` or `rule: ` or naming a verdict label.
 
 A built-in rule is named only by `check`, never `id`, and each built-in may appear once. A `model` or `text` rule also needs its own `id`.
 
@@ -56,7 +56,7 @@ Start from the four starter rules (SKILL.md step 3). Add an extra only when the 
 
 `no-forbidden-paths` fails maintainers too, so never list `.github/**` or another path the team edits on purpose unless the user asks.
 
-When the user wants a rule to flag pull requests without failing them, such as size limits that atomic changes cross or a docs reminder, add `onFail: label` to it. When they want a person to decide instead of the author fixing it, use `onFail: review`.
+When the user wants a rule to flag pull requests without failing them, such as size limits that atomic changes cross or a docs reminder, add `onFail: label` to it. When they want a person to decide instead of the author fixing it, use `onFail: ask`.
 
 ## Actions
 

@@ -255,7 +255,7 @@ describe("pr-triage body", () => {
     expect((verdict as Verdict).request.comment).toStartWith(`**Triage: Fail**\n\n@octocat, please address the following:\n- ${reason}`);
   });
 
-  test("a failing labelling rule labels and notes the pull request without changing its verdict, the label waits without its grant, and a review rule leaves it Unsure for a maintainer once CI is done", async () => {
+  test("a failing labelling rule labels and notes the pull request without changing its verdict, the label waits without its grant, and an ask rule leaves it Unsure for a maintainer once CI is done", async () => {
     const issue = { enabled: true, tracker: "linear" as const };
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, "linked-issue": { ...issue, onFail: "label", label: "issue: missing" } } };
     const { verdict, dos, requests } = await triage(pack);
@@ -265,13 +265,13 @@ describe("pr-triage body", () => {
     expect(requests).toContainEqual({ method: "POST", path: `/repos/${REPO}/issues/8/labels` });
     expect((await triage(pack, { automatic: [] })).verdict).toMatchObject({ actions: [{ kind: "labels", held: true }] });
     expect((await triage({ ...pack, checks: { ...pack.checks, "linked-issue": issue } })).verdict).toMatchObject({ verdict: "fail", actions: [] });
-    const reviewPack: CheckPack = { ...pack, checks: { ...pack.checks, "linked-issue": { ...issue, onFail: "review" } } };
-    const review = (await triage(reviewPack)).verdict as Verdict;
-    expect(review).toMatchObject({ verdict: "unsure", state: "awaiting-review", actor: "maintainer", nextAction: "Review: pull request does not reference an issue", actions: [{ list: "unsure", kind: "request-review" }] });
-    expect(review.request.comment).toBe("**Triage: Unsure**\n\nA maintainer will review:\n- pull request does not reference an issue\n\nTriage will request review.");
+    const askPack: CheckPack = { ...pack, checks: { ...pack.checks, "linked-issue": { ...issue, onFail: "ask" } } };
+    const asked = (await triage(askPack)).verdict as Verdict;
+    expect(asked).toMatchObject({ verdict: "unsure", state: "awaiting-review", actor: "maintainer", nextAction: "Decide: pull request does not reference an issue", actions: [{ list: "unsure", kind: "request-review" }] });
+    expect(asked.request.comment).toBe("**Triage: Unsure**\n\nAsking a maintainer about:\n- pull request does not reference an issue\n\nTriage will request review.");
     const pending = fakeGithub();
     pending.pr.ci = "pending";
-    expect((await triage(reviewPack, { github: pending })).verdict).toMatchObject({ waiting: true, actions: [] });
+    expect((await triage(askPack, { github: pending })).verdict).toMatchObject({ waiting: true, actions: [] });
   });
 
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {

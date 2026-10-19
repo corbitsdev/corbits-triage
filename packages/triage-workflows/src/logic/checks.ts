@@ -1,4 +1,5 @@
 import {
+  askRules,
   catalogCheckEnabled,
   CLOSED_FINDING,
   classificationSources,
@@ -11,7 +12,6 @@ import {
   NO_CHANGES_REQUESTED,
   NOT_A_DRAFT,
   repoPolicy,
-  reviewRules,
   type AuthorKind,
   type CatalogId,
   type CheckOutput,
@@ -97,8 +97,8 @@ export interface CheckResult {
   reason: string;
   evidence: string[];
   output: CheckOutput;
-  /** Set on a rule whose failure goes to a maintainer, leaving the verdict Unsure instead of Fail. */
-  onFail?: "review";
+  /** Set on a rule whose failure is asked of a maintainer, leaving the verdict Unsure instead of Fail. */
+  onFail?: "ask";
 }
 
 export interface DeterministicResult {
@@ -110,8 +110,8 @@ export interface DeterministicResult {
   sources?: ReturnType<typeof classificationSources>;
   /** The policy's labelling rules, which never decide the verdict, and the results of those read without the model; `checks` holds neither. */
   labelled?: { ids: string[]; checks: CheckResult[] };
-  /** The policy's rules whose failure goes to a maintainer. */
-  review?: string[];
+  /** The policy's rules whose failure is asked of a maintainer. */
+  ask?: string[];
 }
 
 export const NEEDS_SETUP_REASON = "This repository still needs a policy.";
@@ -145,9 +145,9 @@ function rankTop(findings: Finding[]): Finding | null {
 
 function finish(all: Finding[], results: CheckResult[], facts: PrFacts, pack?: CheckPack): DeterministicResult {
   const ids = pack ? [...labelRules(pack).keys()] : [];
-  const review = pack ? reviewRules(pack) : [];
-  const findings = all.filter((f) => !ids.includes(f.check) && !review.includes(f.check));
-  const checks = results.filter((c) => !ids.includes(c.check)).map((c) => forReview(c, review));
+  const ask = pack ? askRules(pack) : [];
+  const findings = all.filter((f) => !ids.includes(f.check) && !ask.includes(f.check));
+  const checks = results.filter((c) => !ids.includes(c.check)).map((c) => forMaintainer(c, ask));
   const top = rankTop(findings);
   const sources = pack ? classificationSources(pack) : undefined;
   // A draft cannot be merged, so it is never ready.
@@ -161,12 +161,12 @@ function finish(all: Finding[], results: CheckResult[], facts: PrFacts, pack?: C
     needsJudgment: sources !== undefined && facts.state === "open" && !facts.draft && hardFailures(checks).length === 0,
     ...(sources ? { sources } : {}),
     ...(ids.length > 0 && { labelled: { ids, checks: results.filter((c) => ids.includes(c.check)) } }),
-    ...(review.length > 0 && { review }),
+    ...(ask.length > 0 && { ask }),
   };
 }
 
-export function forReview(c: CheckResult, review: readonly string[] | undefined): CheckResult {
-  return review?.includes(c.check) ? { ...c, onFail: "review" } : c;
+export function forMaintainer(c: CheckResult, ask: readonly string[] | undefined): CheckResult {
+  return ask?.includes(c.check) ? { ...c, onFail: "ask" } : c;
 }
 
 type RuleOutcome = Pick<CheckResult, "check" | "kind" | "result" | "onFail">;

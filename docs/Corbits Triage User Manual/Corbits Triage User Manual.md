@@ -232,7 +232,7 @@ Two rules always run: a draft pull request waits until it is ready for review, a
 Each rule's `onFail` says what happens when it fails:
 
 - `fail`, the default: the verdict is **Fail** and the comment asks the author to fix it.
-- `review`: the verdict is **Unsure** and the comment lists the rule under **A maintainer will review:**, so the pull request waits for you in **Needs you** instead of on its author.
+- `ask`: the verdict is **Unsure** and the comment lists the rule under **Asking a maintainer about:**, so the pull request waits for you in **Needs you** instead of on its author.
 - `label`: the verdict does not change. When the rule fails, or the decision model can't tell, Triage adds its label to the pull request and a line under **Notes:** in its comment. Triage never takes the label off, since a person may have added it; remove it once it no longer applies. The label is `size: large` for the size rules, `docs: check` for the docs rule and the rule's id followed by `: check` for any other; `label:` names a different one, but not one starting `Triage:` or `rule: ` or a verdict label, which Triage takes back itself. `onFail: label` suits rules that are hygiene rather than a gate, such as size limits an atomic change has to cross. A top-level `onFail` sets it for every rule in the file that does not set its own. The Policy section shows a rule that does not fail the pull request with what it does instead, such as "(on fail, labels size: large)".
 
 ```yaml
@@ -248,7 +248,7 @@ Size rules and facts the host already knows cost nothing and always give the sam
 
 ### How the verdict is decided
 
-1. If any rule fails, the verdict is **Fail** right away. That includes a Judgement rule the decision model answered no to. A failed rule set to `onFail: review` makes it **Unsure** instead, unless another rule fails it.
+1. If any rule fails, the verdict is **Fail** right away. That includes a Judgement rule the decision model answered no to. A failed rule set to `onFail: ask` makes it **Unsure** instead, unless another rule fails it.
 2. If the policy has no Judgement rules, there is nothing left to judge: the verdict is **Pass** when every rule passes. A rule still waiting on the host, such as CI that is still running, makes Triage wait (see Waiting for CI).
 3. Otherwise the decision model reads the whole pull request together with every rule's result and answers one question: does this pull request pass this repository's policy? If it is at least 70% sure the answer is yes, the verdict is **Pass**. If it is at least 70% sure the answer is no, the verdict is **Fail**. Anything in between is **Unsure**, which means a person should look. A pull request with a Judgement rule the model could not confirm is never more than Unsure.
 

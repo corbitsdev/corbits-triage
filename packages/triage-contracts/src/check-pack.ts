@@ -122,10 +122,10 @@ export type RuleNote = { text?: string; reason?: string; evidence?: string[] };
 
 const MAINTAINER_STATED = "maintainer-stated";
 
-export const ON_FAILS = ["fail", "review", "label"] as const;
+export const ON_FAILS = ["fail", "ask", "label"] as const;
 
 /**
- * What a rule's failure does, stored only when it is not `fail`: `fail` fails the pull request for its author, `review`
+ * What a rule's failure does, stored only when it is not `fail`: `fail` fails the pull request for its author, `ask`
  * leaves it Unsure for a maintainer, and `label` never changes the verdict: Triage adds its `label` and notes it in the comment.
  */
 export type OnFail = { onFail?: Exclude<(typeof ON_FAILS)[number], "fail">; label?: string };
@@ -676,7 +676,7 @@ function parseOnFail(row: Record<string, unknown>, id: string, where: string): O
   const onFail = row.onFail === undefined ? "fail" : oneOf(row.onFail, ON_FAILS, `${where} onFail`);
   // Stored issue rules once kept a label of their own, which only a labelling rule reads.
   if (onFail === "fail") return {};
-  if (onFail === "review") return { onFail };
+  if (onFail === "ask") return { onFail };
   if (row.label !== undefined) return { onFail, label: text(row.label, `${where} label`, LABEL_MAX) };
   if (labelOf(id, {}).length > LABEL_MAX) throw new Error(`${where} needs a label of at most ${LABEL_MAX} characters.`);
   return { onFail };
@@ -1136,9 +1136,9 @@ export function labelRules(pack: CheckPack): Map<string, string> {
   return new Map(enabledRows(pack).filter(([, row]) => row.onFail === "label").map(([id, row]) => [id, labelOf(id, row)]));
 }
 
-/** Each switched-on rule whose failure goes to a maintainer. */
-export function reviewRules(pack: CheckPack): string[] {
-  return enabledRows(pack).filter(([, row]) => row.onFail === "review").map(([id]) => id);
+/** Each switched-on rule whose failure is asked of a maintainer. */
+export function askRules(pack: CheckPack): string[] {
+  return enabledRows(pack).filter(([, row]) => row.onFail === "ask").map(([id]) => id);
 }
 
 /** Triage takes back its verdict and `rule: …` labels, so a labelling rule adding one would fight it. */
