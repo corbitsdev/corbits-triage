@@ -1,7 +1,7 @@
-// Requires PostgreSQL at TEST_DATABASE_URL.
-import { afterEach, expect, test } from "bun:test";
+// Requires PostgreSQL at TEST_DB. Each run gets a database of its own, dropped after.
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { type } from "arktype";
-import { createHmac, generateKeyPairSync } from "node:crypto";
+import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { count, eq, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
@@ -21,7 +21,9 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../../..");
-const TEST_DATABASE_URL = "postgres://postgres:postgres@localhost:5432/interchange";
+const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
+const DATABASE = { ...TEST_DB, database: `corbits_server_${randomBytes(6).toString("hex")}` };
+const TEST_DATABASE_URL = `postgres://postgres:postgres@localhost:5432/${DATABASE.database}`;
 // The hub shells out to `bunx`, which needs bun on PATH and a HOME for its cache.
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 const processes: Bun.Subprocess[] = [];
@@ -78,6 +80,24 @@ function openWebSocket(url: string): Promise<void> {
     }, { once: true });
   });
 }
+
+beforeAll(async () => {
+  const admin = createDB(TEST_DB);
+  try {
+    await admin.db.execute(sql.raw(`create database ${DATABASE.database}`));
+  } finally {
+    await admin.close();
+  }
+});
+
+afterAll(async () => {
+  const admin = createDB(TEST_DB);
+  try {
+    await admin.db.execute(sql.raw(`drop database if exists ${DATABASE.database} with (force)`));
+  } finally {
+    await admin.close();
+  }
+});
 
 afterEach(async () => {
   for (const child of processes.splice(0)) {
@@ -421,7 +441,7 @@ async function seedRun(db: Db, dataDir: string, tenantId: string, dos: SeededDo[
 test("a held Do is approved only as its own workspace's verdict recorded it, and only to a running pr-triage", async () => {
   const github = fakeGithub();
   const dataDir = temporaryDirectory();
-  const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  const { db, close } = createDB(DATABASE);
   try {
     const origin = await startHub({ GITHUB_API_ORIGIN: github.origin }, dataDir);
     const headers = await signedIn(origin);
@@ -472,7 +492,7 @@ const JUDGED_PACK = {
 
 test("a pack preview evaluates an open pull request without writing anything", async () => {
   const github = fakeGithub();
-  const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  const { db, close } = createDB(DATABASE);
   try {
     const origin = await startHub({ GITHUB_API_ORIGIN: github.origin });
     const headers = await signedIn(origin);
@@ -558,7 +578,7 @@ function statsVerdict(number: number, headSha: string, fields: Record<string, un
 test("triage stats count a repository's recorded verdicts and Dos", async () => {
   const github = fakeGithub();
   const dataDir = temporaryDirectory();
-  const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  const { db, close } = createDB(DATABASE);
   try {
     const origin = await startHub({ GITHUB_API_ORIGIN: github.origin, TRIAGE_RECONCILE_INTERVAL_MS: "200" }, dataDir);
     const headers = await signedIn(origin);
@@ -621,7 +641,7 @@ const HOOK_SECRET = "hook-secret";
 test("a burst of webhook deliveries for one pull request queues its head once and mails it once", async () => {
   const github = fakeGithub();
   const output: string[] = [];
-  const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  const { db, close } = createDB(DATABASE);
   try {
     const origin = await startHub({ GITHUB_API_ORIGIN: github.origin, TRIAGE_COALESCE_QUIET_MS: "1000" }, temporaryDirectory(), output);
     const headers = await signedIn(origin);
@@ -745,7 +765,7 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
   const otherTenantId = await createTenant(origin, owner);
   const landing = `${portal}/invite/${tenantId}`;
   const fromEmail = `${landing}?from=email`;
-  const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  const { db, close } = createDB(DATABASE);
   try {
     const roles = type({ data: type({ id: "string", name: "string" }).array() }).assert(await (await fetch(`${origin}/api/tenants/${tenantId}/roles`, { headers: owner })).json()).data;
     const member = roles.find((role) => role.name === "member")!.id;
