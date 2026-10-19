@@ -1,12 +1,13 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { presetFor, type RepoSource } from "@corbits/triage-contracts";
+import { useCheckPacks } from "../../lib/check-packs.ts";
 import { modelSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
 import { connectedSources, currentDeployment, isActiveCredential, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
 import { usePortal } from "../../lib/portal.tsx";
-import { triageReadyRepos } from "../../lib/repo-rows.ts";
+import { packsPending, triageEnabledRepos, triageReadyRepos } from "../../lib/repo-rows.ts";
 import type { TenantSection } from "../../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../DecisionModelForm.tsx";
 import { ActionsOnTheirOwn } from "./ActionsOnTheirOwn.tsx";
@@ -69,13 +70,15 @@ function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
 }
 
 export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: TenantSection<DeployedWorkflow> }) {
-  const ready = !deployed.denied && !deployed.loading && !deployed.unavailable;
+  const enabled = useMemo(() => [...triageEnabledRepos(snapshot.repos)], [snapshot.repos]);
+  const packs = useCheckPacks(enabled);
+  const ready = !deployed.denied && !deployed.loading && !deployed.unavailable && !packsPending(packs);
   const sources = connectedSources(snapshot.credentials);
   const status = {
     sources,
     undeployed: undeployedSources(deployed.rows, sources),
     model: snapshot.decisionModel !== undefined,
-    triaging: triageReadyRepos(snapshot.repos).size,
+    triaging: triageReadyRepos(snapshot.repos, packs).size,
     total: snapshot.repos.length,
   };
 

@@ -1,5 +1,4 @@
 import { repoPolicy, type RepoSource } from "@corbits/triage-contracts";
-import { repoNeedsCheckSetup } from "./check-pack.ts";
 import type { PackState } from "./check-packs.ts";
 import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
@@ -15,17 +14,19 @@ export function repoHealth(state: { needsSetup: boolean; enabled: boolean; catch
   return { tone: "idle", label: "No events yet" };
 }
 
-function triageReady(repo: RepoRecord): boolean {
-  return !repoNeedsCheckSetup(repo) && repoPolicy(repo).enabled;
+function policyRuns(state: PackState | undefined): boolean {
+  const found = state?.found;
+  return found !== undefined && found !== null && "pack" in found && hasRuleOn(found.pack);
 }
 
 /** Repositories whose policy cannot run: refused, missing, unreadable or with no rule on. One still loading or failing to load is not named. */
-export function reposNeedingSetup(packs: Map<string, PackState>): Set<string> {
-  const needing = [...packs].filter(function cannotRun([, state]) {
-    if (state.pending || state.error !== null) return false;
-    return state.found === null || !("pack" in state.found) || !hasRuleOn(state.found.pack);
-  });
+export function reposNeedingSetup(packs: ReadonlyMap<string, PackState>): Set<string> {
+  const needing = [...packs].filter(([, state]) => !state.pending && state.error === null && !policyRuns(state));
   return new Set(needing.map(([repo]) => repo));
+}
+
+export function packsPending(packs: ReadonlyMap<string, PackState>): boolean {
+  return [...packs.values()].some((state) => state.pending);
 }
 
 /** The stored repositories, then the Bitbucket Data Center repositories not recorded yet. */
@@ -38,8 +39,8 @@ export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
   return new Set(repos.filter((repo) => repoPolicy(repo).enabled).map((repo) => repo.name));
 }
 
-export function triageReadyRepos(repos: RepoRecord[]): Set<string> {
-  return new Set(repos.filter(triageReady).map((repo) => repo.name));
+export function triageReadyRepos(repos: RepoRecord[], packs: ReadonlyMap<string, PackState>): Set<string> {
+  return new Set(repos.filter((repo) => repoPolicy(repo).enabled && policyRuns(packs.get(repo.name))).map((repo) => repo.name));
 }
 
 type RepoPulls =
@@ -70,16 +71,18 @@ function pullsOf(open: PrItem[], ready: boolean): RepoPulls {
   };
 }
 
-/** `needsSetup` are the repositories whose policy cannot run; `items` the open pull requests; `active` the repositories with a verdict in the last 14 days or a run in flight; `pullsError` is the open pull request listing's own failure. */
+/** `packs` are the repositories' policies; `items` the open pull requests; `active` the repositories with a verdict in the last 14 days or a run in flight; `pullsError` is the open pull request listing's own failure. */
 export function repoRows(
   repos: RepoRecord[],
-  needsSetup: ReadonlySet<string>,
+  packs: ReadonlyMap<string, PackState>,
   items: PrItem[],
   active: ReadonlySet<string>,
   catchingUp: Set<string>,
   openPulls: OpenPulls | undefined,
   pullsError: Error | null,
 ): RepoRow[] {
+  const needsSetup = reposNeedingSetup(packs);
+  const ready = triageReadyRepos(repos, packs);
   const errors = new Map(openPulls?.repos.flatMap((row) => (row.error ? [[row.repo, row.error] as const] : [])));
   return repos.map(function repoRow(repo) {
     const { enabled } = repoPolicy(repo);
@@ -88,7 +91,7 @@ export function repoRows(
       name: repo.name,
       source: repo.source,
       href: `/repositories/${repo.name}`,
-      pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), triageReady(repo)) : { error },
+      pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), ready.has(repo.name)) : { error },
       health: repoHealth({ needsSetup: needsSetup.has(repo.name), enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: active.has(repo.name) }),
     };
   });
