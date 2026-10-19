@@ -1,8 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
-import { approveHeldDo, type HeldDoRef, type PrItem } from "./hub-api.ts";
+import { approveHeldDo, type HeldDoRef } from "./hub-api.ts";
 import { createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
-import { pendingDos, type PendingDo } from "./pending-dos.ts";
 import { usePortal } from "./portal.tsx";
 
 const HIDDEN_DOS_QUERY_KEY = "hidden-dos";
@@ -54,11 +53,13 @@ export function useHeldDoKeys(): HeldDoKeys {
   }, [queryClient, tenantId]);
 }
 
-export function usePendingDos(item: PrItem | undefined): PendingDo[] {
+export type DecidedDoKeys = { hidden: ReadonlySet<string>; sent: ReadonlySet<string> };
+
+export function useDecidedDoKeys(): DecidedDoKeys {
   const { snapshot } = usePortal();
   const hidden = useKeys(hiddenKey(snapshot?.workspace.tenantId));
   const sent = useKeys(SENT_DOS_QUERY_KEY);
-  return useMemo(() => (item === undefined ? [] : pendingDos(item, new Set(hidden), new Set(sent))), [item, hidden, sent]);
+  return useMemo(() => ({ hidden: new Set(hidden), sent: new Set(sent) }), [hidden, sent]);
 }
 
 /** `leaving` sends the approval as the page goes away, so the request must outlive it. */

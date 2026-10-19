@@ -12,8 +12,8 @@ import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
 import { approvedHead, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
-import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
-import { useApproveDo, useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
+import { offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
+import { useApproveDo, useHeldDoKeys } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import { VerdictChip } from "../components/VerdictChip.tsx";
 import { PrTimeline } from "../components/PrTimeline.tsx";
@@ -332,7 +332,7 @@ export default function PRDetail() {
     recommended && item?.number && !closed && !readOnly && !item.automatic.includes("comment") && handled[handledKey] !== "dismissed",
   );
   const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
-  const dos = usePendingDos(item);
+  const dos = useMemo(() => (item === undefined ? [] : pendingDos(item)), [item]);
   const approvePackDo = useApproveDo();
   const heldDoKeys = useHeldDoKeys();
   const diffLayout = useDiffLayout();
