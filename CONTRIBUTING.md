@@ -13,6 +13,9 @@ Thanks for your interest in Corbits Triage.
   [Contributor License Agreement](CLA.md) and the project license,
   [GPLv2 with AI Exception](LICENSE.md).
 - [docs/DEV.md](docs/DEV.md) covers local setup, including the GitHub emulator.
+- [AGENTS.md](AGENTS.md), and the AGENTS.md files under `apps/` and
+  `packages/`, hold the architecture and code rules every change follows,
+  whether a person or a coding agent writes it.
 
 ## The short version
 
@@ -23,5 +26,3 @@ Thanks for your interest in Corbits Triage.
    [VENDORED.md](vendor/interchange/VENDORED.md); `sh tooling/vendor-diff-check.sh`
    enforces it.
 5. Security issues go through [SECURITY.md](SECURITY.md), never a public issue.
-
-This document will grow as the project does.

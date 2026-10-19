@@ -135,36 +135,13 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 
 ## Measured accuracy
 
-`packages/triage-workflows/evals` replays labelled pull requests of this repository and of a small Go repository (`joho/godotenv`) through the deployed pr-triage definition on Interchange's local runner (`runLocal` with the production step invoker, agents and directors; `evals/run-definition.ts` over the shared `evals/run-local.ts`), triggered by the mail the hub sends, with GitHub served from fixtures fetched through `gh` on first use into the gitignored `evals/.cache/`, each at the head and base sha `labels.json` pins so later pushes do not change it, and the judge calling OpenCode Zen `jev-1.13`, with focused and docs enabled. Each judge call is attempted once, as deployed: the judge director answers an inference error as a judge error, so the step's retry never runs. The harness before CL-10638 retried timeouts, network errors, 429s and 5xx up to three times, which may account for its one or two fewer docs unsures. Each case expects the verdict to fail when docs or focused is expected to fail, and to pass otherwise.
+`packages/triage-workflows/evals` replays labelled pull requests of this repository and of a small Go repository (`joho/godotenv`) through the deployed pr-triage definition on Interchange's local runner (`runLocal` with the production step invoker, agents and directors; `evals/run-definition.ts` over the shared `evals/run-local.ts`), triggered by the mail the hub sends, with GitHub served from fixtures fetched through `gh` on first use into the gitignored `evals/.cache/`, each at the head and base sha `labels.json` pins so later pushes do not change it, and the judge calling OpenCode Zen `jev-1.13`, with focused and docs enabled. Each judge call is attempted once, as deployed: the judge director answers an inference error as a judge error, so the step's retry never runs. Each case expects the verdict to fail when docs or focused is expected to fail, and to pass otherwise.
 
 - **Cases**: 54 in `cases.jsonl`. These are 38 pull requests labelled in `labels.json` (needs docs), 34 of this repository and 4 of `joho/godotenv`, 5 variants with their docs removed (body and matching commit messages dropped too), 7 mixes of two unrelated pull requests that focused must fail, and 4 of those mixes again with a title and body describing both halves (`describedMixes`). #190 and #191 are one feature each spread across hub, portal, contracts and workflows, which focused must pass.
 - **Allowed misses**: docs 7, focused 2, verdict 4 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
-- **Recent results**, misses as reported in commit messages and pull requests, out of 58 cases up to `45f34e6`, out of 72 on the row that says so, out of 76 after, out of 49 once the tests rule and its cases were removed, and out of 54 with `joho/godotenv`:
+- **Latest result** (2026-10-16, 54 cases): docs 2 misses, focused 0, verdict 2, every miss an unsure answer on the two docs-removed variants of #186 and #187. Custom rules are unmeasured.
 
-| Commit | Date | docs | focused | verdict |
-| --- | --- | --- | --- | --- |
-| `e31d6ba` | 2026-10-11 | 8 | 10 | |
-| `4c7fead`, run 1 | 2026-10-11 | 5 | 1 | |
-| `4c7fead`, run 2 | 2026-10-11 | 6 | 1 | |
-| `45f34e6`, 72 cases | 2026-10-12 | 10 | 4 | |
-| #192, run 1 | 2026-10-12 | 9 | 0 | |
-| #192, run 2 | 2026-10-12 | 10 | 0 | |
-| tests removed, 49 cases (CL-10584) | 2026-10-12 | 5 | 0 | |
-| verdict question (CL-10604) | 2026-10-12 | 5 | 0 | 2, none unsure |
-| "fail means fail" wording, run 1 | 2026-10-13 | 5 | 0 | 2, none unsure |
-| "fail means fail" wording, run 2 | 2026-10-13 | 5 | 0 | 2, none unsure |
-| definition on the local runner (CL-10638), run 1 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
-| definition on the local runner (CL-10638), run 2 | 2026-10-13 | 7, all unsure | 0 | 2, none unsure |
-| definition on the local runner (CL-10638), run 3 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
-| author rules removed from the verdict question (CL-10611) | 2026-10-13 | 5 | 0 | 2 (186-no-docs, 187-no-docs), none unsure |
-| a failed judged rule decides Fail, an unconfirmed one blocks Pass, run 1 | 2026-10-13 | 5 | 0 | 4, all unsure (108, 113, 186-no-docs, 187-no-docs) |
-| same, run 2 | 2026-10-13 | 6 | 0 | 5, all unsure (106, 108, 186-no-docs, 187-no-docs, 190) |
-| docs as one Choice per file, `unaffected` first, run 1 | 2026-10-13 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 3, unsure (186-no-docs, 187-no-docs, 190) |
-| same, run 2 | 2026-10-13 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 2, unsure (186-no-docs, 187-no-docs) |
-| `joho/godotenv` cases added (CL-10549) | 2026-10-15 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 2, unsure (186-no-docs, 187-no-docs) |
-| policy file rules and step conditions (CL-10735) | 2026-10-16 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 2, unsure (186-no-docs, 187-no-docs) |
-
-Rows before CL-10549 cover this repository only. Custom rules are unmeasured.
+A change to how a rule is asked or decided states the eval's misses before and after in its pull request.
 
 ## Adding a decision-model rule
 
@@ -181,7 +158,7 @@ Rows before CL-10549 cover this repository only. Custom rules are unmeasured.
        evidence: ["acme/api#312"]
    ```
 
-   File- or hunk-scoped rules are written in the stored policy's shape. Use the rules section of the repository panel in the portal, or write the policy through the hub's stock artifact route: the artifact the repository's record pins by id under `/api/tenants/{tenantId}/artifacts`, with each save a new version. The portal pins the id when it saves; until then the newest artifact titled `check-pack/<owner>/<repo>` is read. A file-scoped rule in `custom`:
+   File- or hunk-scoped rules, and score and choose rules, are written in the stored policy's shape, which a policy file without `rules` is read in ([@corbits/triage-contracts](../packages/triage-contracts/README.md)). A file-scoped rule in `custom`:
 
    ```json
    {

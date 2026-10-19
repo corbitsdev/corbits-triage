@@ -29,7 +29,7 @@ with optional `number` (the pull request's), `efforts` per step,
 `budgets.repoFinder`, `check`, and `cut`
 (`{ lines, of }`) when the sender cut the diff for size, which the review
 carries.
-`docs/ARCHITECTURE.md` has the detail.
+`docs/ARCHITECTURE.md` has how the hub feeds reviews in and sends them to GitHub.
 
 ## Adding a provider
 

@@ -123,7 +123,7 @@ Sidecars on another machine never get the loopback rewrite the hub's own Docker 
 
 ### On Railway
 
-Railway sets only variables, so the three files live in the hub's volume (`/data` in [DEPLOY.md](../DEPLOY.md)). From the directory holding `ca.pem`, `cert.pem` and `key.pem`, with the Railway CLI linked to the hub's project and `hub` the hub's service name:
+Railway sets only variables, so the three files live in the hub's volume (`/data` in [SELF_HOST.md](../SELF_HOST.md#railway-or-render)). From the directory holding `ca.pem`, `cert.pem` and `key.pem`, with the Railway CLI linked to the hub's project and `hub` the hub's service name:
 
 ```sh
 for f in ca.pem cert.pem key.pem; do

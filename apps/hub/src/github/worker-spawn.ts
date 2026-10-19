@@ -2,8 +2,9 @@
 // live pr-triage listener (the seed), made the way rotation makes its copy and
 // marked a worker in its deploy content, fired with exactly one mail. The
 // worker keeps the listener shape, so its anchor stays live while the body
-// run's log lands (docs/plans/pr-triage-coordinator.md, 12.6); the deployment
-// is cancelled once that one body run has ended.
+// run's log lands: the hub refuses a run log pushed after its anchor ended,
+// which a one-run top-level deployment always does. The deployment is
+// cancelled once that one body run has ended.
 import { and, eq, ne, notInArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { WorkflowProvisioningError, type WorkflowLifecycleService } from "@intx/hub-sessions";

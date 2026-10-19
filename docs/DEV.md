@@ -1,6 +1,6 @@
 # Local development
 
-Runs the hub (`apps/hub`, :3000) and portal (`apps/web`, :5173) against a local Postgres. The portal sets everything else up after you sign in. Production setup lives in [DEPLOY.md](DEPLOY.md).
+Runs the hub (`apps/hub`, :3000) and portal (`apps/web`, :5173) against a local Postgres. The portal sets everything else up after you sign in. Running it for real is in [SELF_HOST.md](SELF_HOST.md).
 
 ## 1. Prerequisites
 
