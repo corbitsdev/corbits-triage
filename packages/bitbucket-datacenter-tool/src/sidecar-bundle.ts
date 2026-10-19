@@ -142,7 +142,7 @@ async function takeBack(bb: BitbucketFetch, a: Record<string, any>, sha: string,
 }
 
 /** Each file at a commit is fetched once per tool instance however many windows of it are read. */
-type Reads = { docs: ReturnType<typeof createDocsReader>; toolCwd: string; files: ReturnType<typeof cachedLoads<string | undefined>> };
+type Reads = { docs: ReturnType<typeof createDocsReader>; toolCwd: string | undefined; files: ReturnType<typeof cachedLoads<string | undefined>> };
 
 async function readWindow(bb: BitbucketFetch, reads: Reads, a: Record<string, any>) {
   checkTarget(a.repo, a.sha, a.path);
@@ -179,6 +179,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
     case "bitbucket_datacenter_read_file":
       return readWindow(bb, reads, a);
     case "bitbucket_datacenter_checkout":
+      if (reads.toolCwd === undefined) throw new Error("bitbucket_datacenter_checkout needs a working tree");
       return checkout(bb, a.repo, a.sha, reads.toolCwd);
     case "bitbucket_datacenter_mirror":
     case "bitbucket_datacenter_mirror_auto": {
@@ -195,7 +196,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
 }
 
 /** The token user, and each head's docs listing, are asked of Bitbucket once per tool instance, so once per step of a run. */
-function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Promise<BitbucketFetch>, toolCwd: string) {
+function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Promise<BitbucketFetch>, toolCwd: string | undefined) {
   let known: TokenUser | undefined;
   let reads: Reads | undefined;
   async function run(call: ToolCallInput) {
@@ -213,6 +214,11 @@ function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Pro
     }
   }
   return { definitions, run };
+}
+
+/** The tools' calls for a workflow action that holds the credential itself; it has no working tree to check out into. */
+export function bitbucketCalls(getFetch: () => Promise<BitbucketFetch>) {
+  return createBitbucketTools([], getFetch, undefined).run;
 }
 
 function defineBitbucketTool(id: string, definitions: ToolDefinition[], ask: readonly string[]) {

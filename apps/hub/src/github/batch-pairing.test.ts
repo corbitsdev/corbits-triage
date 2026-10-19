@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
+import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import type { WorkflowRunEvent, WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
-import { triageDirectorFactory } from "@corbits/triage-workflows/directors";
+import { triageJudgeDirector } from "@corbits/triage-workflows/directors";
 import { evaluate, parts, rules } from "@corbits/triage-workflows/actions/index";
+import { readFacts } from "@corbits/triage-workflows/actions/facts";
 import type { RulesOutput, JudgeChunk } from "@corbits/triage-workflows/actions/rules";
 import { createTriageRuns } from "./triage-runs.js";
 import type { CiState } from "@corbits/github-reads";
@@ -37,7 +38,7 @@ async function judge(chunks: JudgeChunk[], answer: (questions: Array<{ id: strin
       infer() { return { type: "infer" }; },
       reply(content: string) { reply = content; return { type: "reply", content }; },
     } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
+    const director = triageJudgeDirector.factory({}, {} as never, { systemPrompt: "" } as never);
     await director.decide({ type: "message.received", message: { content: JSON.stringify(chunk) } } as ReactorInboundEvent, {} as ReactorState, caps);
     await director.decide(answer(chunk.questions), {} as ReactorState, caps);
     output.push({ reply });
@@ -53,33 +54,31 @@ async function judgeAndEvaluate(ruled: RulesOutput, first: (questions: Array<{ i
   return { output, reply: JSON.stringify(await evaluate({ ...judged, judgeParts: { output: await judge(chunks, decisive) } }, ctx, signal)) };
 }
 
-/** Drives the real facts director and the rules and evaluate actions for one batch mail and returns the verdict output; `skipJudge` evaluates as the build that never asked the decision model did. */
+/** GitHub answering each call by its id, failing those `failed` names. */
+function github(results: Record<string, unknown>, failed: ReadonlySet<string> = new Set()) {
+  return async function host(asked: ToolCall): Promise<ToolResult> {
+    return failed.has(asked.id) ? { callId: asked.id, content: "404", isError: true } : { callId: asked.id, content: results[asked.id] as Record<string, unknown> };
+  };
+}
+
+/** Drives the real facts, rules and evaluate actions for one batch mail and returns the verdict output; `skipJudge` evaluates as the build that never asked the decision model did. */
 async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack = emptyPack(REPO), pr = {}, checks = [], skipJudge = false }: VerdictOptions = {}): Promise<string> {
-  const replies: string[] = [];
-  const called = new Set<string>();
-  const caps = {
-    executeTools(calls: ToolCall[]) { for (const { id } of calls) called.add(id); return { type: "execute_tools", calls }; },
-    reply(content: string) { replies.push(content); return { type: "reply", content }; },
-  } as unknown as ReactorCapabilities;
-  const facts = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
-  function done(callId: string, content: Record<string, unknown>, isError = false) {
-    return facts.decide({ type: "tool.done", result: { callId, content, isError } } as ReactorInboundEvent, {} as ReactorState, caps);
-  }
-  const mail = { kind: "pr", repo: REPO, items: numbers.map((n) => ({ prNumber: n, headSha: `sha${n}` })), policy: { enabled: true }, checkPack: pack };
-  await facts.decide({ type: "message.received", message: { content: JSON.stringify(mail) } } as ReactorInboundEvent, {} as ReactorState, caps);
-  await done("github_list_open_prs", { prs: numbers.map((n) => ({ number: n, title: `PR ${n}` })) });
-  if (called.has("docs:0")) await done("docs:0", { docs: [], rules: [], ref: "tree" });
+  const results: Record<string, unknown> = {
+    github_list_open_prs: { prs: numbers.map((n) => ({ number: n, title: `PR ${n}` })) },
+    "docs:0": { docs: [], rules: [], ref: "tree" },
+  };
   for (const n of numbers) {
-    if (failGetPr.has(n)) await done(`pr:${n}`, { error: "404" }, true);
-    else await done(`pr:${n}`, { title: `PR ${n}`, author: "octocat", sha: `sha${n}`, state: "open", draft: false, mergeable: true, requestedReviewers: 0, ...pr });
-    await done(`reviews:${n}`, { reviews: [] });
-    await done(`comments:${n}`, { comments: [] });
-    await done(`commits:${n}`, { commits: [] });
-    await done(`files:${n}:0`, { files: [{ path: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }] });
-    if (called.has(`stack:${n}`)) await done(`stack:${n}`, { includes: [] });
+    results[`pr:${n}`] = { title: `PR ${n}`, author: "octocat", sha: `sha${n}`, state: "open", draft: false, mergeable: true, requestedReviewers: 0, ...pr };
+    results[`reviews:${n}`] = { reviews: [] };
+    results[`comments:${n}`] = { comments: [] };
+    results[`commits:${n}`] = { commits: [] };
+    results[`files:${n}:0`] = { files: [{ path: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }] };
+    results[`stack:${n}`] = { includes: [] };
+    results[`checks:${n}`] = { checks };
   }
-  for (const n of numbers) if (!failGetPr.has(n)) await done(`checks:${n}`, { checks });
-  const ruled = await rules({ reply: replies[0] }, ctx, signal);
+  const failed = new Set([...failGetPr].map((n) => `pr:${n}`));
+  const mail = { kind: "pr", repo: REPO, items: numbers.map((n) => ({ prNumber: n, headSha: `sha${n}` })), policy: { enabled: true }, checkPack: pack };
+  const ruled = await rules(await readFacts(mail, () => github(results, failed)), ctx, signal);
   if (!skipJudge) return (await judgeAndEvaluate(ruled)).reply;
   for (const item of ruled.items) item.det.needsJudgment = false;
   return JSON.stringify(await evaluate(ruled, ctx, signal));
@@ -112,7 +111,7 @@ async function observeRuns(numbers: number[], reply: string, runId: string, at: 
   return createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 })(ANCHOR, DOMAIN);
 }
 
-describe("batch pairing through the real facts director and evaluate action", () => {
+describe("batch pairing through the real facts and evaluate actions", () => {
   test("a pull request whose facts fail mid-batch degrades only its own head", async () => {
     const reply = await batchVerdicts([1, 2, 3], new Set([2]));
     const byHead = await observe([1, 2, 3], reply);
@@ -131,28 +130,19 @@ describe("batch pairing through the real facts director and evaluate action", ()
 
 describe("a backlog run", () => {
   test("records a verdict for every pull request it could read, from a mail that names none", async () => {
-    const replies: string[] = [];
-    const caps = {
-      executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
-      reply(content: string) { replies.push(content); return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const facts = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
-    function done(callId: string, content: Record<string, unknown>, isError = false) {
-      return facts.decide({ type: "tool.done", result: { callId, content, isError } } as ReactorInboundEvent, {} as ReactorState, caps);
+    const results: Record<string, unknown> = {
+      github_list_open_prs: { prs: [{ number: 3 }, { number: 2 }] },
+      "pr:2": { title: "PR 2", author: "octocat", sha: "sha2", state: "open", draft: false, mergeable: true, requestedReviewers: 0 },
+      "checks:2": { checks: [] },
+    };
+    for (const n of [3, 2]) {
+      results[`reviews:${n}`] = { reviews: [] };
+      results[`comments:${n}`] = { comments: [] };
+      results[`commits:${n}`] = { commits: [] };
+      results[`files:${n}:0`] = { files: [] };
     }
     const mail = { kind: "backlog", repo: REPO, policy: { enabled: true }, checkPack: emptyPack(REPO) };
-    await facts.decide({ type: "message.received", message: { content: JSON.stringify(mail) } } as ReactorInboundEvent, {} as ReactorState, caps);
-    await done("github_list_open_prs", { prs: [{ number: 3 }, { number: 2 }] });
-    await done("pr:3", { error: "404" }, true);
-    await done("pr:2", { title: "PR 2", author: "octocat", sha: "sha2", state: "open", draft: false, mergeable: true, requestedReviewers: 0 });
-    for (const n of [3, 2]) {
-      await done(`reviews:${n}`, { reviews: [] });
-      await done(`comments:${n}`, { comments: [] });
-      await done(`commits:${n}`, { commits: [] });
-      await done(`files:${n}:0`, { files: [] });
-    }
-    await done("checks:2", { checks: [] });
-    const ruled = await rules({ reply: replies[0] }, ctx, signal);
+    const ruled = await rules(await readFacts(mail, () => github(results, new Set(["pr:3"]))), ctx, signal);
     const evaluated = await evaluate(ruled, ctx, signal);
     const at = "2026-10-07T01:00:00.000Z";
     const log: WorkflowRunEvent[] = [

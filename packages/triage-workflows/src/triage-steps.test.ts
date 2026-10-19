@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { listPrFilesPage } from "@corbits/github-reads";
-import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
-import { MAX_DOS_PER_RUN, triageDirectorFactory, type DoResult } from "./directors.js";
+import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
+import { triageJudgeDirector } from "./directors.js";
 import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
 import { heldForCi, unsettledBy } from "./logic/settled.js";
@@ -9,6 +9,10 @@ import { NO_FACTS } from "./logic/item.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
 import { evaluate, parts, rules, waiting } from "./actions/index.js";
+import { MAX_DOS_PER_RUN, executeDos } from "./actions/execute.js";
+import { readFacts } from "./actions/facts.js";
+import { mirrorVerdicts } from "./actions/mirror.js";
+import type { HostCall } from "./logic/host.js";
 import type { RulesOutput } from "./actions/rules.js";
 import type { EffectContext } from "@intx/workflow";
 
@@ -26,7 +30,7 @@ async function judgeChunks(ruled: RulesOutput, respond: (questions: Array<{ id: 
       infer(request: SystemOneRequest) { requests.push(request); return { type: "infer" }; },
       reply(content: string) { reply = content; return { type: "reply", content }; },
     } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
+    const director = triageJudgeDirector.factory({}, {} as never, { systemPrompt: "" } as never);
     await director.decide({ type: "message.received", message: { content: JSON.stringify(chunk) } } as ReactorInboundEvent, {} as ReactorState, caps);
     const response = respond(requests.at(-1)!.providerOptions.systemOne.questions, requests.length - 1);
     const event = typeof response === "string"
@@ -50,85 +54,35 @@ function verdictAnswer(verdict: "pass" | "fail") {
   return { id: "verdict", type: "choice", choice: verdict, probabilities, confidence: 0.9 };
 }
 
-describe("facts director policy", () => {
+/** The host answering each call with `results` by call id, recording every call it is asked. */
+function answering(results: Record<string, unknown> | ((call: ToolCall) => Promise<unknown> | unknown), calls: ToolCall[] = []): HostCall {
+  return async function host(asked) {
+    calls.push(asked);
+    const content = typeof results === "function" ? await results(asked) : results[asked.id];
+    return { callId: asked.id, content } as ToolResult;
+  };
+}
+
+describe("facts policy", () => {
   test("skips disabled draft findings from the run payload", async () => {
-    const replies: string[] = [];
-    const caps = {
-      executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
-      reply(content: string) { replies.push(content); return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
-    function decide(event: ReactorInboundEvent) {
-      return director.decide(event, {} as ReactorState, caps);
-    }
-    await decide({
-      type: "message.received",
-      message: {
-        content: JSON.stringify({
-          kind: "pr",
-          repo: "acme/widgets",
-          prNumber: 8,
-          policy: { enabled: true, checks: { draft: false } },
-          checkPack: emptyPack("acme/widgets"),
-        }),
+    const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true, checks: { draft: false } }, checkPack: emptyPack("acme/widgets") };
+    const read = await readFacts(request, () => answering({
+      github_list_open_prs: { prs: [{ number: 8, title: "Fix" }] },
+      "pr:8": { title: "Fix", author: "octocat", sha: "abc", state: "open", draft: true, mergeable: true, requestedReviewers: 1 },
+      "reviews:8": { reviews: [{ reviewer: "a", state: "APPROVED" }] },
+      "comments:8": { comments: [] },
+      "commits:8": { commits: [] },
+      "checks:8": { checks: [] },
+      "files:8:0": {
+        files: [
+          { path: "src/current.ts", previousPath: "src/previous.ts", status: "renamed", additions: 3, deletions: 2, patch: "@@ -1 +1 @@" },
+          { filename: "legacy.ts", previous_filename: "old-legacy.ts", status: 7, additions: "many", deletions: 4, patch: null },
+          null,
+          { path: "", filename: 7 },
+        ],
       },
-    } as ReactorInboundEvent);
-    await decide({
-      type: "tool.done",
-      result: { callId: "github_list_open_prs", content: { prs: [{ number: 8, title: "Fix" }] } },
-    } as ReactorInboundEvent);
-    await decide({
-      type: "tool.done",
-      result: {
-        callId: "pr:8",
-        content: { title: "Fix", author: "octocat", sha: "abc", state: "open", draft: true, mergeable: true, requestedReviewers: 1 },
-      },
-    } as ReactorInboundEvent);
-    await decide({
-      type: "tool.done",
-      result: { callId: "reviews:8", content: { reviews: [{ reviewer: "a", state: "APPROVED" }] } },
-    } as ReactorInboundEvent);
-    await decide({
-      type: "tool.done",
-      result: { callId: "comments:8", content: { comments: [] } },
-    } as ReactorInboundEvent);
-    await decide({
-      type: "tool.done",
-      result: { callId: "commits:8", content: { commits: [] } },
-    } as ReactorInboundEvent);
-    await decide({
-      type: "tool.done",
-      result: {
-        callId: "files:8:0",
-        content: {
-          files: [
-            {
-              path: "src/current.ts",
-              previousPath: "src/previous.ts",
-              status: "renamed",
-              additions: 3,
-              deletions: 2,
-              patch: "@@ -1 +1 @@",
-            },
-            {
-              filename: "legacy.ts",
-              previous_filename: "old-legacy.ts",
-              status: 7,
-              additions: "many",
-              deletions: 4,
-              patch: null,
-            },
-            null,
-            { path: "", filename: 7 },
-          ],
-        },
-      },
-    } as ReactorInboundEvent);
-    await decide({
-      type: "tool.done",
-      result: { callId: "checks:8", content: { checks: [] } },
-    } as ReactorInboundEvent);
-    const { items } = await rules({ reply: replies[0] }, ctx, signal);
+    }));
+    const { items } = await rules(read, ctx, signal);
     expect(items[0]!.det.findings.map((finding) => finding.check)).not.toContain("not-a-draft");
     expect(items[0]!.facts.paths).toEqual(["src/current.ts", "legacy.ts"]);
     expect(items[0]!.facts.files).toEqual([
@@ -145,85 +99,29 @@ describe("facts director policy", () => {
   });
 
   test("a backlog skips drafts, even under a stored policy that once triaged them", async () => {
-    const calls: ToolCall[][] = [];
-    const caps = {
-      executeTools(next: ToolCall[]) { calls.push(next); return { type: "execute_tools", calls: next }; },
-      reply(content: string) { return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
+    const calls: ToolCall[] = [];
     const policy = { enabled: true, triageDrafts: true };
-    const start = { kind: "backlog", repo: "acme/widgets", policy, checkPack: emptyPack("acme/widgets") };
-    await director.decide({ type: "message.received", message: { content: JSON.stringify(start) } } as ReactorInboundEvent, {} as ReactorState, caps);
     const listed = { prs: [{ number: 7, title: "WIP", draft: true }, { number: 8, title: "Fix", draft: false }] };
-    const done = { type: "tool.done", result: { callId: "github_list_open_prs", content: listed } };
-    await director.decide(done as ReactorInboundEvent, {} as ReactorState, caps);
-    expect(calls[1]?.map((call) => call.id)).toEqual(["pr:8", "reviews:8", "comments:8", "commits:8", "files:8:0"]);
+    await readFacts({ kind: "backlog", repo: "acme/widgets", policy, checkPack: emptyPack("acme/widgets") }, () => answering({ github_list_open_prs: listed }, calls));
+    expect(calls.slice(1, 6).map((call) => call.id)).toEqual(["pr:8", "reviews:8", "comments:8", "commits:8", "files:8:0"]);
   });
 
   test("a disabled repository replies an error item without fetching", async () => {
-    const calls: ToolCall[][] = [];
-    const replies: string[] = [];
-    const caps = {
-      executeTools(next: ToolCall[]) { calls.push(next); return { type: "execute_tools", calls: next }; },
-      reply(content: string) { replies.push(content); return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
-    await director.decide(
-      {
-        type: "message.received",
-        message: {
-          content: JSON.stringify({
-            kind: "pr",
-            repo: "acme/widgets",
-            prNumber: 8,
-            policy: { enabled: false },
-          }),
-        },
-      } as ReactorInboundEvent,
-      {} as ReactorState,
-      caps,
-    );
+    const calls: ToolCall[] = [];
+    const read = await readFacts({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: false } }, () => answering({}, calls));
     expect(calls).toEqual([]);
-    expect(JSON.parse(replies[0] ?? "{}")).toEqual({ items: [{ error: "Triage is disabled for this repository." }], batch: false });
+    expect(read).toEqual({ items: [{ error: "Triage is disabled for this repository." }], batch: false });
   });
 
   test("missing check pack skips classify without fetching", async () => {
-    const calls: ToolCall[][] = [];
-    const replies: string[] = [];
-    const caps = {
-      executeTools(next: ToolCall[]) { calls.push(next); return { type: "execute_tools", calls: next }; },
-      reply(content: string) { replies.push(content); return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
-    await director.decide(
-      {
-        type: "message.received",
-        message: {
-          content: JSON.stringify({
-            kind: "pr",
-            repo: "acme/widgets",
-            prNumber: 8,
-            policy: { enabled: true },
-          }),
-        },
-      } as ReactorInboundEvent,
-      {} as ReactorState,
-      caps,
-    );
+    const calls: ToolCall[] = [];
+    const read = await readFacts({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true } }, () => answering({}, calls));
     expect(calls).toEqual([]);
-    expect(JSON.parse(replies[0] ?? "{}")).toEqual({ items: [{ error: NEEDS_SETUP_REASON }], batch: false });
+    expect(read).toEqual({ items: [{ error: NEEDS_SETUP_REASON }], batch: false });
   });
 
-  async function factsThrough(filesContent: string) {
-    const pending: ToolCall[] = [];
-    let reply = "";
-    const caps = {
-      executeTools(next: ToolCall[]) { pending.push(...next); return { type: "execute_tools", calls: next }; },
-      reply(content: string) { reply = content; return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
+  async function factsThrough(filesContent: unknown) {
     const start = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") };
-    await director.decide({ type: "message.received", message: { content: JSON.stringify(start) } } as ReactorInboundEvent, {} as ReactorState, caps);
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
       "docs:0": { docs: [], rules: [], ref: "tree" },
@@ -232,40 +130,24 @@ describe("facts director policy", () => {
       "commits:8": { commits: [] },
       "checks:8": { checks: [] },
     };
-    while (pending.length) {
-      const next = pending.shift()!;
-      const content = next.name === "github_list_pr_files" ? filesContent : results[next.id];
-      await director.decide({ type: "tool.done", result: { callId: next.id, content } } as ReactorInboundEvent, {} as ReactorState, caps);
+    function content(asked: ToolCall) {
+      return asked.name === "github_list_pr_files" ? filesContent : results[asked.id];
     }
-    return rules({ reply }, ctx, signal);
+    return rules(await readFacts(start, () => answering(content)), ctx, signal);
   }
 
-  test.each([
-    ["cut off", `{"files":[{"path":"src/a.ts","status":"modified","patch":"@@ -1 +1 @@\\n+a"}\n[Tool output truncated: omitted 5000 chars. Full output available at tool-output:///files:8:0 -- use read_file with that URI to see the rest.]`],
-    ["unparsable", "not json"],
-  ])("a %s file list degrades the item instead of reading as no files", async (_name, content) => {
-    const ruled = await factsThrough(content);
-    expect(ruled.items[0]!.error).toMatch(/^github_list_pr_files result (was truncated|is unreadable) for #8$/);
+  test("an unreadable file list degrades the item instead of reading as no files", async () => {
+    const ruled = await factsThrough({ files: "not a list" });
+    expect(ruled.items[0]!.error).toBe("github_list_pr_files result is unreadable for #8");
     const verdict = await evaluate(ruled, ctx, signal) as Verdict;
     expect(verdict).toMatchObject({ degraded: "error", mirror: false });
   });
 });
 
 describe("judge on a blocked pull request", () => {
-  function director(role: "facts" | "judge", caps: Partial<Record<"executeTools" | "reply" | "infer", unknown>>) {
-    const d = triageDirectorFactory({ role }, {} as never, { systemPrompt: "" } as never);
-    return (event: unknown) => d.decide(event as ReactorInboundEvent, {} as ReactorState, caps as unknown as ReactorCapabilities);
-  }
-
-  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false, setup: Record<string, unknown> = {}, files: unknown[] = []): Promise<string> {
-    let reply = "";
-    const called = new Set<string>();
-    const decide = director("facts", {
-      executeTools(calls: ToolCall[]) { for (const { id } of calls) called.add(id); return { type: "execute_tools", calls }; },
-      reply(content: string) { reply = content; return { type: "reply", content }; },
-    });
-    await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets"), ...setup }) } });
-    const results: Record<string, unknown> = {
+  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false, setup: Record<string, unknown> = {}, files: unknown[] = []) {
+    const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets"), ...setup };
+    return readFacts(request, () => answering({
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
       "docs:0": { docs: [], rules: [], ref: "tree" },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
@@ -275,9 +157,7 @@ describe("judge on a blocked pull request", () => {
       "stack:8": { includes: [] },
       "comments:8": { comments: [] },
       "checks:8": { checks: checkRuns },
-    };
-    for (const [callId, content] of Object.entries(results)) if (called.has(callId)) await decide({ type: "tool.done", result: { callId, content } });
-    return reply;
+    }));
   }
 
   /** No file needs docs; focused is more than one thing when it is failing; the verdict fails when anything is failing; every other question is a noul pass or fail. */
@@ -290,8 +170,8 @@ describe("judge on a blocked pull request", () => {
     return { id, type: "choice", choice, probabilities, confidence: 0.9 };
   }
 
-  async function judgeAndEvaluate(factsReply: string, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; requests: SystemOneRequest[]; verdict: Verdict }> {
-    const ruled = await rules({ reply: factsReply }, ctx, signal);
+  async function judgeAndEvaluate(read: unknown, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; requests: SystemOneRequest[]; verdict: Verdict }> {
+    const ruled = await rules(read, ctx, signal);
     if (!ruled.needsJudgment) return { asked: [], requests: [], verdict: await evaluate(ruled, ctx, signal) as Verdict };
     const { requests, judged } = await judgeRounds(ruled, (questions) => (judgeError !== undefined
       ? { error: judgeError }
@@ -305,13 +185,7 @@ describe("judge on a blocked pull request", () => {
     async function gh() {
       return Response.json([{ filename: "src/big.ts", status: "modified", additions: 6, deletions: 0, patch }]);
     }
-    const pending: ToolCall[] = [];
-    let reply = "";
-    const decide = director("facts", {
-      executeTools(calls: ToolCall[]) { pending.push(...calls); return { type: "execute_tools", calls }; },
-      reply(content: string) { reply = content; return { type: "reply", content }; },
-    });
-    await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") }) } });
+    const start = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") };
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
       "docs:0": { docs: [], rules: [], ref: "tree" },
@@ -321,16 +195,13 @@ describe("judge on a blocked pull request", () => {
       "checks:8": { checks: [] },
     };
     let pages = 0;
-    async function filesPage(args: ToolCall["arguments"]) {
+    async function content(asked: ToolCall) {
+      if (asked.name !== "github_list_pr_files") return results[asked.id];
       pages++;
-      return listPrFilesPage(gh, "acme/widgets", 8, args as Parameters<typeof listPrFilesPage>[3]);
+      return listPrFilesPage(gh, "acme/widgets", 8, asked.arguments as Parameters<typeof listPrFilesPage>[3]);
     }
-    while (pending.length) {
-      const next = pending.shift()!;
-      const content = next.name === "github_list_pr_files" ? await filesPage(next.arguments) : results[next.id];
-      await decide({ type: "tool.done", result: { callId: next.id, content } });
-    }
-    const { verdict } = await judgeAndEvaluate(reply, undefined, []);
+    const read = await readFacts(start, () => answering(content));
+    const { verdict } = await judgeAndEvaluate(read, undefined, []);
     expect(pages).toBeGreaterThan(1);
     expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "pass" });
     expect(verdict.checks.find((check) => check.check === "focused")?.output).toEqual({ kind: "score", score: 70, passAt: 60, items: [] });
@@ -576,7 +447,7 @@ describe("focused judge input", () => {
   });
 });
 
-describe("mirror director grants", () => {
+describe("mirror grants", () => {
   const request = { repo: "acme/widgets", number: 8, labels: ["ready-monitoring"], owned: TRIAGE_LABELS, comment: "Looks good" };
   const verdict = {
     repo: "acme/widgets",
@@ -589,25 +460,20 @@ describe("mirror director grants", () => {
     humanGated: false,
   };
 
-  async function mirrorCalls(payload: Record<string, unknown>): Promise<ToolCall[][]> {
-    const calls: ToolCall[][] = [];
-    const caps = {
-      executeTools(next: ToolCall[]) { calls.push(next); return { type: "execute_tools", calls: next }; },
-      reply(content: string) { return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "mirror" }, {} as never, { systemPrompt: "" } as never);
-    await director.decide(
-      { type: "message.received", message: { content: JSON.stringify(payload) } } as ReactorInboundEvent,
-      {} as ReactorState,
-      caps,
-    );
+  async function mirrorCalls(payload: unknown): Promise<ToolCall[]> {
+    const calls: ToolCall[] = [];
+    async function write(_source: unknown, written: ToolCall): Promise<ToolResult> {
+      calls.push(written);
+      return { callId: written.id, content: {} };
+    }
+    await mirrorVerdicts(payload, write);
     return calls;
   }
 
   test("a Bitbucket Data Center verdict mirrors through its own tool, with the verdict as a build status beside its comment", async () => {
     const checks = [{ check: "ci-green", result: "fail" }, { check: "linked-issue", result: "pass" }];
     const { labels: _labels, owned: _owned, ...pull } = request;
-    const [[call]] = await mirrorCalls({ ...verdict, verdict: "fail", checks, repoSource: "bitbucket-datacenter", automatic: ["comment"] });
+    const [call] = await mirrorCalls({ ...verdict, verdict: "fail", checks, repoSource: "bitbucket-datacenter", automatic: ["comment"] });
     expect(call).toEqual({
       id: "mirror:acme--widgets:8",
       name: "bitbucket_datacenter_mirror_auto",
@@ -617,23 +483,23 @@ describe("mirror director grants", () => {
 
   test("a Bitbucket Data Center head held for CI shows the waiting build status where its verdict would, under its effect id", async () => {
     const mail = { headers: { from: "github@acme.test", to: ["run_1@acme.test"] }, kind: "waiting", repo: "acme/widgets", prNumber: 8, headSha: "abc", repoSource: "bitbucket-datacenter", pack: emptyPack("acme/widgets") };
-    expect(await mirrorCalls(await waiting({ ...mail, automatic: ["comment"] }, ctx, signal))).toEqual([[{
+    expect(await mirrorCalls(await waiting({ ...mail, automatic: ["comment"] }, ctx, signal))).toEqual([{
       id: "waiting:acme--widgets:8:abc",
       name: "bitbucket_datacenter_mirror_auto",
       arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], build: { state: "INPROGRESS", description: "Triage: Waiting for CI" } },
-    }]]);
+    }]);
     expect(await mirrorCalls(await waiting({ ...mail, automatic: ["labels"] }, ctx, signal))).toEqual([]);
   });
 
   test("a Bitbucket Data Center repository holding labels but not comment writes no build status", async () => {
-    const [[call]] = await mirrorCalls({ ...verdict, repoSource: "bitbucket-datacenter", automatic: ["labels"] });
+    const [call] = await mirrorCalls({ ...verdict, repoSource: "bitbucket-datacenter", automatic: ["labels"] });
     expect(call?.arguments).not.toHaveProperty("build");
   });
 
   test("comment alone posts the reply and leaves labels alone; approve alone still runs it to take approvals back", async () => {
     const { labels: _labels, owned: _owned, comment: _comment, ...pull } = request;
-    expect(await mirrorCalls({ ...verdict, automatic: ["comment"] })).toEqual([[{ id: "mirror:acme--widgets:8", name: "github_mirror_auto", arguments: { ...pull, comment: request.comment, labels: [], owned: [] } }]]);
-    expect(await mirrorCalls({ ...verdict, automatic: ["approve"] })).toEqual([[{ id: "mirror:acme--widgets:8", name: "github_mirror_auto", arguments: { ...pull, labels: [], owned: [] } }]]);
+    expect(await mirrorCalls({ ...verdict, automatic: ["comment"] })).toEqual([{ id: "mirror:acme--widgets:8", name: "github_mirror_auto", arguments: { ...pull, comment: request.comment, labels: [], owned: [] } }]);
+    expect(await mirrorCalls({ ...verdict, automatic: ["approve"] })).toEqual([{ id: "mirror:acme--widgets:8", name: "github_mirror_auto", arguments: { ...pull, labels: [], owned: [] } }]);
     expect(await mirrorCalls({ ...verdict, automatic: ["assign"] })).toEqual([]);
   });
 });
@@ -647,20 +513,17 @@ describe("execute", () => {
 
   async function execute(verdict: Record<string, unknown>) {
     const calls: ToolCall[] = [];
-    let reply: { dos: DoResult[] } | undefined;
-    const caps = {
-      executeTools(batch: ToolCall[]) { calls.push(...batch); return { type: "execute_tools", calls: batch }; },
-      reply(content: string) { reply = JSON.parse(content); return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "execute" }, {} as never, { systemPrompt: "" } as never);
-    let taken = [await director.decide({ type: "message.received", message: { content: JSON.stringify(verdict) } } as ReactorInboundEvent, {} as ReactorState, caps)].flat() as Array<{ type: string; calls?: ToolCall[] }>;
-    while (reply === undefined) {
-      const asked = taken.flatMap((action) => action.calls ?? []);
-      expect(asked).toHaveLength(1);
-      const result = { callId: asked[0]!.id, content: { status: "done" } };
-      taken = [await director.decide({ type: "tool.done", result } as ReactorInboundEvent, {} as ReactorState, caps)].flat() as typeof taken;
+    let writing = 0;
+    async function write(_source: unknown, written: ToolCall): Promise<ToolResult> {
+      expect(writing).toBe(0);
+      writing++;
+      calls.push(written);
+      await Promise.resolve();
+      writing--;
+      return { callId: written.id, content: { status: "done" } };
     }
-    return { calls, dos: reply.dos };
+    const { dos } = await executeDos(verdict, write);
+    return { calls, dos };
   }
 
   const verdict = { repo: "acme/widgets", number: 8, headSha: "abc", degraded: null, state: "ready", automatic: ["comment"], request: REQUEST, checks: [], actions: [comment(0)] };

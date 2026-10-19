@@ -11,7 +11,7 @@ const Input = type({
 
 const Failed = type({ items: type({ error: "string" }).array().atLeastLength(1) });
 
-/** The scan's per pull request records and merged-against-closed counts, from what the facts director read. */
+/** The scan's per pull request records and merged-against-closed counts, from what the facts action read. */
 export async function measure(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<Measured> {
   const json = stepJson(input);
   const failed = Failed(json);

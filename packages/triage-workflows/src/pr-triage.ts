@@ -1,5 +1,5 @@
 import { defineWorkflow, onTrigger } from "@intx/workflow";
-import { credentialBindingsFor, triageAgents, type Sources } from "./agents.js";
+import { credentialBindingsFor, type Sources } from "./agents.js";
 import { triageSteps } from "./triage-steps.js";
 
 export type { CheckResult } from "./logic/checks.js";
@@ -7,8 +7,8 @@ export type { CheckResult } from "./logic/checks.js";
 export const PR_TRIAGE_ADDRESS = "pr-triage";
 
 /**
- * The pr-triage definition for the given hosts under `id`, which is also its mail address: the same steps and directors
- * over those hosts' tool bundles, binding only their credentials, because an unresolved binding fails the deployment.
+ * The pr-triage definition for the given hosts under `id`, which is also its mail address: the same steps over those
+ * hosts' credentials, binding only theirs, because an unresolved binding fails the deployment.
  * The deployed packages are one per host (pr-triage-github, pr-triage-bitbucket-datacenter); the hub mails the one of
  * each pull request's host, and the mail names that host as `repoSource`.
  */
@@ -16,7 +16,7 @@ export function prTriage({ id = PR_TRIAGE_ADDRESS, sources }: { id?: string; sou
   const perPr = defineWorkflow({
     id: `${id}-run`,
     trigger: { type: "manual" },
-    steps: triageSteps(triageAgents(sources)),
+    steps: triageSteps(sources),
   });
   return defineWorkflow({
     id,

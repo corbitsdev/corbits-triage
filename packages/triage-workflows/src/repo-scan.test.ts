@@ -3,7 +3,6 @@ import type { WorkflowAuthorizeFn } from "@intx/workflow";
 import { runLocalWorkflow } from "../evals/run-local.js";
 import * as actions from "./actions/index.js";
 import { credentialBindings } from "./agents.js";
-import { triageDirector } from "./directors.js";
 import type { Measured } from "./logic/history.js";
 import { workflow } from "./repo-scan.js";
 
@@ -45,10 +44,9 @@ async function github(input: string | URL | Request): Promise<Response> {
   return Response.json([]);
 }
 
-test("repo-scan reads the last closed pull requests through the facts director and measures what was merged", async () => {
+test("repo-scan reads the last closed pull requests through the facts action and measures what was merged", async () => {
   const run = await runLocalWorkflow({
     workflow,
-    directors: [triageDirector.factory],
     actions,
     credentialBindings,
     authorize: allow,

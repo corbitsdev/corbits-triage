@@ -17,9 +17,9 @@ import type { ApprovedDo, RecordedVerdict, VerdictRecord } from "./verdict-recor
 import { createTriageReconciler } from "./triage-reconciler.js";
 import { markBaseMoved } from "./triage-queue.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
-import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
-import { triageDirectorFactory } from "@corbits/triage-workflows/directors";
+import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { evaluate, parts, rules } from "@corbits/triage-workflows/actions/index";
+import { readFacts } from "@corbits/triage-workflows/actions/facts";
 import type { JudgeChunk } from "@corbits/triage-workflows/actions/rules";
 import type { Verdict } from "@corbits/triage-workflows/logic/render";
 
@@ -93,22 +93,6 @@ function mailedNumbers(delivered: Delivered): number[] {
   return mailedHeads(delivered).map(([, number]) => number);
 }
 
-async function directorReply(role: "facts", event: ReactorInboundEvent): Promise<string> {
-  const replies: string[] = [];
-  const caps = {
-    executeTools(calls: unknown) {
-      return { type: "execute_tools", calls };
-    },
-    reply(content: string) {
-      replies.push(content);
-      return { type: "reply", content };
-    },
-  } as unknown as ReactorCapabilities;
-  const director = triageDirectorFactory({ role }, {} as never, { systemPrompt: "" } as never);
-  await director.decide(event, {} as ReactorState, caps);
-  return replies[0]!;
-}
-
 function githubAnswer({ id, name }: ToolCall, pr: Record<string, unknown>): Record<string, unknown> {
   const n = Number(id.split(":")[1]);
   switch (name) {
@@ -144,30 +128,13 @@ function focusedAnswers(questions: Array<{ id: string }>, related: number): stri
 }
 
 async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 0.8) {
-  const pending: ToolCall[] = [];
-  let reply: string | undefined;
-  const caps = {
-    executeTools(calls: ToolCall[]) {
-      pending.push(...calls);
-      return { type: "execute_tools", calls };
-    },
-    reply(content: string) {
-      reply = content;
-      return { type: "reply", content };
-    },
-  } as unknown as ReactorCapabilities;
-  const facts = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
-  // Stock hands the director the parsed headers and the text part alone as the body.
-  const mailParts = (mail as { parts?: Array<{ text?: string }> }).parts ?? [];
-  const message = { headers: (mail as { headers?: unknown }).headers, content: mailParts[0]?.text ?? JSON.stringify(mail) };
-  await facts.decide({ type: "message.received", message } as ReactorInboundEvent, {} as ReactorState, caps);
-  while (reply === undefined) {
-    const call = pending.shift()!;
-    await facts.decide({ type: "tool.done", result: { callId: call.id, content: githubAnswer(call, pr), isError: false } } as ReactorInboundEvent, {} as ReactorState, caps);
+  async function github(asked: ToolCall): Promise<ToolResult> {
+    return { callId: asked.id, content: githubAnswer(asked, pr) };
   }
+  const read = await readFacts(mail, () => github);
   const ctx = {} as never;
   const signal = new AbortController().signal;
-  const ruled = await rules({ reply }, ctx, signal);
+  const ruled = await rules(read, ctx, signal);
   function answer(chunks: JudgeChunk[]) {
     return chunks.map((chunk) => ({ reply: JSON.stringify({ judge: focusedAnswers(chunk.questions, related) }) }));
   }
@@ -529,16 +496,19 @@ describe("triage reconciler", () => {
   });
 
   test("a facts failure evaluates to a degraded verdict naming no head, which is queued again with the facts error", async () => {
-    const reply = await directorReply("facts", { type: "abort" } as ReactorInboundEvent);
+    function unreachable(): never {
+      throw new Error("facts read the host");
+    }
+    const read = await readFacts({ kind: "pr", repo: REPO, policy: { enabled: true }, checkPack: emptyPack(REPO) }, () => unreachable);
     const ctx = {} as never;
     const signal = new AbortController().signal;
-    const verdict = await evaluate(await rules({ reply }, ctx, signal), ctx, signal) as Record<string, unknown>;
-    expect(verdict).toMatchObject({ degraded: "error", headSha: null, reason: "facts interrupted: abort" });
+    const verdict = await evaluate(await rules(read, ctx, signal), ctx, signal) as Record<string, unknown>;
+    expect(verdict).toMatchObject({ degraded: "error", headSha: null, reason: "facts: pr input has no prNumber" });
     const logs: Logs = { [repoKey(LIVE.runId)]: { run_fail: [started(1), rendered(verdict), completed] } };
     const { reconcile, delivered, logged } = harness(logs, [head(1)]);
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([1]);
-    expect(logged.find((entry) => entry["msg"] === "triage_requeued")?.["reason"]).toBe("degraded: facts interrupted: abort");
+    expect(logged.find((entry) => entry["msg"] === "triage_requeued")?.["reason"]).toBe("degraded: facts: pr input has no prNumber");
   });
 
   test("a merge triages the repository's other settled heads again, not the merged one or another repository's", async () => {

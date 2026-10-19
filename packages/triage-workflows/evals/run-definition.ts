@@ -1,7 +1,7 @@
 import type { WorkflowAuthorizeFn } from "@intx/workflow";
 import * as actions from "../src/actions/index.js";
 import { credentialBindings } from "../src/agents.js";
-import { triageDirector } from "../src/directors.js";
+import { triageJudgeDirector } from "../src/directors.js";
 import type { Verdict } from "../src/logic/render.js";
 import { workflow } from "../src/pr-triage.js";
 import { runLocalWorkflow } from "./run-local.js";
@@ -58,7 +58,7 @@ export async function runDefinition({ fetch, apiKey, endpoint, triggerPayload }:
   const origin = new URL(endpoint.url).origin;
   const run = await runLocalWorkflow({
     workflow,
-    directors: [triageDirector.factory],
+    directors: [triageJudgeDirector.factory],
     actions,
     credentialBindings,
     authorize: loggedAuthorize,

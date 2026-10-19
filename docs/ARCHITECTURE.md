@@ -215,10 +215,16 @@ the host already shows it; a close, merge, comment or review is refused once
 the head has moved. The hub reads the approval run's outcome back onto the
 verdict that held it.
 
-Rules, routing, approval and evaluation are deterministic `action` steps.
-Facts, execute and mirror reach the host through the tool's bound credential,
-so on this Interchange pin they run as directors until actions can reach a
-bound credential.
+Every step but the judge is a deterministic `action`. Facts, mirror and
+execute reach the pull request's host through its credential, bound to each
+of those action handlers (`credentialBindings` with `action: <handler>`):
+each declares the host's handle in `credentials` and a capability in
+`effect.requires` (`pull-request.read` for facts, `pull-request.write` for
+mirror and execute), and calls the host only inside `ctx.perform`'s `run`.
+Facts is one effect; each mirror write and each Do is its own effect under
+its call id, the Do's effect id, so a resumed run does not write it again.
+The calls are the host tool's (`githubCalls`, `bitbucketCalls`), so a host
+operation has one implementation.
 
 ## Code review pipeline
 

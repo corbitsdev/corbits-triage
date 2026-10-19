@@ -9,7 +9,7 @@ import { createSidecarStepBuildEnv } from "../vendor/interchange/packages/workfl
 import { loadWorkflowDirectorRegistryFromClosure } from "../vendor/interchange/packages/workflow-host/src/workflow-definition-loader";
 
 const packageDir = resolve(import.meta.dirname, "../packages/triage-workflows");
-const directorRef = { id: "@corbits/triage-workflows/triage", config: { role: "facts" } };
+const directorRef = { id: "@corbits/triage-workflows/judge", config: {} };
 
 type BuildStepEnv = ReturnType<typeof createSidecarStepBuildEnv>;
 
