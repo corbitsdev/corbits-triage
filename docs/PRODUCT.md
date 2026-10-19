@@ -28,12 +28,14 @@ How to use the portal, screen by screen, is in the
 ## What you see
 
 - **Inbox**: open pull requests across repositories with triage on, in two
-  views, **Needs you** and **All open**. Each opens a reading pane: the status
+  views, **Needs you** and **All open**. A row is a state mark, the number
+  (with the repository's name, or the author when grouped by repository), the
+  title, its age and a short status. Each opens a reading pane: the status
   line, the problems (failed rules, unsure answers, rules that could not run),
   the description, and folded rows for the linked issue, the changed files and
   the rules that passed. A bar at the bottom offers the next step; merging
   from the portal is pinned to the commit Triage checked. Pull requests waiting
-  on the author, on CI or on Triage sit behind **Waiting**.
+  on the author, on CI or on Triage, and drafts, sit behind **Waiting**.
 - **Pulse**: what changed since your last visit and what is stuck.
 - **Repositories**: per repository, the triage switch and **Triage open pull
   requests again**, its policy file read back as sentences, code review, the

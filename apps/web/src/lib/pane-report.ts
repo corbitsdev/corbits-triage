@@ -1,7 +1,7 @@
 import { citationOf } from "@corbits/triage-contracts";
-import type { CheckResult, GithubPullDetail, PrItem, RunFailure } from "./hub-api.ts";
+import type { CheckResult, GithubPullDetail, PrItem, QueueState, RunFailure } from "./hub-api.ts";
 import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
-import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
+import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, postedLabel, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
 import { upperFirst } from "./triage-view.ts";
 
 /** A failed check is something to fix; a model check the judge did not settle is the maintainer's call; anything else unconfirmed could not be checked. */
@@ -87,6 +87,28 @@ function problemsText(item: PrItem, primary: MenuEntry | null, fix: number, chec
   return `${inboxStatus(item)} · ${things(fix)} to fix${rest}`;
 }
 
+const ROW_STATUS: Record<QueueState, string> = {
+  "needs-decision": "Your call",
+  "awaiting-review": "Needs review",
+  "needs-author-update": "Waiting on author",
+  blocked: "Blocked",
+  ready: "Ready",
+  stale: "Rechecking",
+  new: "Not triaged",
+};
+
+/** A few words for where the pull request stands, for its row in a list; `handled` is what you did, null in Needs you. */
+export function rowStatus(item: PrItem, handled: HandledMark | null): string {
+  if (item.running || item.waitingForCi) return inboxStatus(item);
+  if (item.draft) return "Draft";
+  const posted = handled === null ? null : postedLabel(item, handled);
+  if (posted !== null) return posted;
+  if (inboxAction(item) === "failed") return "Couldn't triage";
+  const fix = paneProblems(item.checks).filter((problem) => problem.severity === "fail").length;
+  if (fix > 0) return `${fix} to fix`;
+  return ROW_STATUS[isReReview(item) ? "awaiting-review" : item.state];
+}
+
 /** One line for where the pull request stands, read from the same verdict state, waits-on and actions as the list and the bar. */
 export function paneStatus({ item, detail, handled, approved, primary }: StatusInput): PaneStatus {
   const ended = endedText(item, detail, handled);
@@ -101,6 +123,7 @@ export function paneStatus({ item, detail, handled, approved, primary }: StatusI
   const unsure = problems.filter((problem) => problem.severity === "unsure").length;
   const check = problems.length - fix;
   const author = item.author === null ? "the author" : `@${item.author}`;
+  if (item.draft === true) return status("author", `Draft · waiting on ${author}`);
   if (handled?.kind === "approve") {
     if (fix === 0) return status("ready", "You approved · ready to merge");
     return status("you", `You approved · ${fix} ${fix === 1 ? "rule" : "rules"} failing`);

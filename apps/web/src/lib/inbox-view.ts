@@ -34,10 +34,6 @@ export function inboxStatus(item: StatusFields): string {
   return INBOX_STATUS_LABEL[isReReview(item) ? "awaiting-review" : item.state];
 }
 
-export function rowWhy(item: StatusFields & Pick<PrItem, "evidence">): string | null {
-  return item.running || item.waitingForCi ? inboxStatus(item) : (item.evidence[0] ?? null);
-}
-
 export const UNASSIGNED = "Unassigned";
 
 export type PrimaryAction = "reply" | "comment" | "approve" | "changes" | "close" | "merge" | "triage";
@@ -50,16 +46,6 @@ const PRIMARY_LABEL: Record<PrimaryAction, string> = {
   close: "Close pull request",
   merge: "Merge",
   triage: "Triage again",
-};
-
-const ROW_LABEL: Record<PrimaryAction, string> = {
-  reply: "Reply",
-  comment: "Comment",
-  approve: "Approve",
-  changes: "Request changes",
-  close: "Close",
-  merge: "Merge",
-  triage: "Retry",
 };
 
 export function inboxAction(item: PrItem): InboxAction | null {
@@ -96,10 +82,13 @@ function waitsOnAuthor(item: PrItem): boolean {
   return isPostedToAuthor(item) || (onlyRequestedChanges(item) && !item.reviewAnswered);
 }
 
-/** A pull request with a verdict that needs you stays while Triage checks it again or waits for CI, so it does not flicker out. */
+/**
+ * A pull request with a verdict that needs you stays while Triage checks it again or waits for CI, so it does not flicker out.
+ * A draft is its author's until marked ready, whatever its last verdict said.
+ */
 export function inNeedsYou(item: PrItem): boolean {
   if (item.pendingApprovalId !== null) return true;
-  return inboxAction(item) !== null && !waitsOnAuthor(item);
+  return item.draft !== true && inboxAction(item) !== null && !waitsOnAuthor(item);
 }
 
 /** A comment only counts as a draft when it holds non-empty text; a degraded verdict's empty feedback is nothing to post. */
@@ -108,6 +97,7 @@ export function hasDraftComment(comment: string | null): boolean {
 }
 
 export function primaryAction(item: PrItem, action: InboxAction | null): PrimaryAction | null {
+  if (item.draft === true) return null;
   switch (action) {
     case null:
       return null;
@@ -135,7 +125,7 @@ export type WaitsOn = "maintainer" | "author" | "ci" | "triage" | "setup" | "nob
 
 const WAITS_ON_ORDER: WaitsOn[] = ["maintainer", "author", "ci", "triage", "setup", "nobody"];
 
-export const WAITS_ON_LABEL: Record<WaitsOn, string> = {
+const WAITS_ON_LABEL: Record<WaitsOn, string> = {
   maintainer: "Waits on you",
   author: "Waits on author",
   ci: "Waits on CI",
@@ -177,10 +167,6 @@ export function postedLabel(item: Pick<PrItem, "posted">, entry: HandledMark | n
 
 export function primaryLabel(action: PrimaryAction): string {
   return PRIMARY_LABEL[action];
-}
-
-export function rowActionLabel(action: PrimaryAction): string {
-  return ROW_LABEL[action];
 }
 
 function waitingSince(item: PrItem): number {

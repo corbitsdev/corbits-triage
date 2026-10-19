@@ -315,25 +315,19 @@ Each view has a search box, a **Filter** button and quick filters such as Action
 
 ### Needs you
 
-![The Needs you view: pull requests grouped under Unblock and Merge, each with its title, the reason, its age and a button for the next step. The right pane shows TRI/widgets pull request 1, Blocked with three things to fix, and View on Bitbucket in its corner](images/11.png)
+![The Needs you view: pull requests grouped under Decide, Review, Unblock and Merge, each row with its state mark, a number such as gadgets#1520, its title, its age and a short status such as Your call, 1 to fix or Ready. The right pane shows acme/gadgets pull request 1520, Needs your decision, with Reply, Request changes and Close in the bottom bar](images/11.png)
 
-Pull requests are grouped by what you need to do: **Unblock** for ones that are stuck on something, **Merge** for ones that passed, and so on. Each row shows the author's login, a **Bot** chip when that applies, and on GitHub rows a **First-timer** or **New to GitHub** chip and the author's role when you hover the login (Bitbucket Data Center rows show the user slug only), the title, Triage's one-line reason, how long ago it was triaged, and a button for the most likely next step. Click anywhere on a row to open it in the reading pane on the right.
+Pull requests are grouped by what you need to do: **Unblock** for ones that are stuck on something, **Merge** for ones that passed, and so on. Each row shows a state mark, the pull request's number, its title, how long ago it was triaged, and a short status such as **Ready**, **Waiting for CI**, **1 to fix** or **Draft**. Grouped by Repo, the row shows the author after the title; grouped any other way, the number carries the repository's name, such as `widgets#12`. Click anywhere on a row to open it in the reading pane on the right, where the actions are.
 
-Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (drafts and ones waiting for CI among them), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval waiting always stays. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, each with a chip saying what it waits on; Needs you and Waiting together are All open. Click **Waiting** again to go back.
+Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval waiting always stays. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back.
 
-![The Waiting view grouped by Waits on: a failed pull request with feedback posted and a draft under Waits on author, a new pull request under Waits on Triage. The pane shows the failed pull request, Waiting on @lena-k to fix 1 thing](images/37.png)
+![The Waiting view grouped by Waits on: two drafts under Waits on author, one of them checked by Triage before it became a draft, and a pull request under Waits on CI. The pane shows the draft, Draft · waiting on @ivan-p](images/37.png)
 
 ### All open
 
-The **All open** view groups pull requests by repository and adds two chips to every row:
+The **All open** view groups pull requests by repository, with the same rows. Group by **Waits on** to see whose move it is: you, the author, CI, Triage or nobody. **Needs setup** collects pull requests Triage cannot check until their repository is set up: its policy is refused, missing, unreadable or has no rule on. Once you act on a pull request, its status says what you did, such as **Approved** or **Requested changes**.
 
-| Chip | Meaning |
-| --- | --- |
-| PASS, FAIL or UNSURE | The verdict. Green means pass, red means fail, and gray means Triage could not tell. |
-| WAITS ON YOU, WAITS ON AUTHOR, WAITS ON CI, WAITS ON TRIAGE, WAITS ON NOBODY | Whose move it is. |
-| NEEDS SETUP | Triage cannot check it until its repository is set up: its policy is refused, missing, unreadable or has no rule on. |
-
-A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. In **All open** and **Waiting** its chip is WAITS ON TRIAGE, or WAITS ON CI while Triage waits for its checks. A draft shows **Draft** and **Draft: Not evaluated** instead, since Triage waits until it is marked ready for review.
+A pull request that has not been checked yet shows **Not triaged** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. A draft shows **Draft**, since Triage waits until it is marked ready for review.
 
 ### The reading pane
 

@@ -152,6 +152,12 @@ describe("projectQueue from the hub's verdicts", () => {
     ]);
   });
 
+  test("a pull request is a draft when GitHub says so now, whatever its verdict read", () => {
+    const drafted = { repos: [{ repo: "acme/widgets", prs: [{ ...pr(8), draft: true }] }] };
+    const items = projectQueue([pull(8, { verdict: verdict("run-8", "awaiting-review", { facts: { draft: false } }) })], [], drafted);
+    expect(items.map(({ key, draft }) => ({ key, draft }))).toEqual([{ key: "acme/widgets#8", draft: true }]);
+  });
+
   test("a pull request's run in flight, ended early or not read yet shows, with or without a previous verdict", () => {
     const run = (status: "running" | "stuck" | "failed") => ({ runId: `run-${status}`, startedAt: "2026-10-01T01:30:00.000Z", status });
     const pulls = [
