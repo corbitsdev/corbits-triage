@@ -93,7 +93,7 @@ Needs `use` on the `bitbucket-datacenter` credential. Every repository the token
 (`GET /rest/api/1.0/repos`, all pages), merged with the stored records:
 
 ```json
-{ "repositories": [{ "name": "TRI/widgets", "connected": true, "source": "bitbucket-datacenter", "enabled": false, "checks": { "ci": true, "conflicts": true }, "approvedAuthors": [] }] }
+{ "repositories": [{ "name": "TRI/widgets", "connected": true, "source": "bitbucket-datacenter", "enabled": true, "defaultBranch": "main", "webhookId": 12 }] }
 ```
 
 A recorded repository the token no longer sees is listed with
@@ -144,30 +144,21 @@ URL: `POST {hub}/api/hooks/bitbucket-datacenter/{tenantId}`, signed with the
 `bitbucket-datacenter-hook` secret. Data Center signs as GitHub does, `sha256=`
 and the hex HMAC of the raw body, in `X-Hub-Signature`, with the event in
 `X-Event-Key` and the delivery id in `X-Request-Id`; the hook credential's
-`metadata.webhook.headers` names these three. The hub verifies it with the
-shared X-Hub-Signature verifier (`@corbits/common/x-hub-signature`), the scheme
-`@corbits/webhooks` 0.4 adds; once that release is in the hub, this route moves
-onto the stock hook routes. Events:
+`metadata.webhook.headers` names these three. Events:
 
 - Pull request: `pr:opened`, `pr:modified`, `pr:from_ref_updated`,
   `pr:reviewer:approved`, `pr:reviewer:unapproved`, `pr:reviewer:needs_work`,
   `pr:comment:added`, `pr:merged`, `pr:declined`, `pr:deleted`
 - Repository: `repo:refs_changed`
 
-Data Center sends no webhook when a build status finishes. A head held while
-its policy waits for CI is released by the reconciler pass that finds its
-build statuses no longer in progress, so it is triaged up to one reconcile
-interval after its builds end. While it waits, the `Corbits Triage` build
-status on the head reads `INPROGRESS` "Triage: Waiting for CI", where Comment
-is on, until the verdict overwrites it; the hub's own CI read leaves that
-status out. A verdict left waiting on `ci-green`, or failed
-by it, would likewise never catch up on its own. The hub
-re-reads the build statuses of such heads on the unconfirmed retry interval
-(5 minutes, doubling, up to the retry cap) and queues the head again once they
-changed: no longer pending, or no longer failing (`triage_requeued` with
-`reason: build_status_changed`). On GitHub the `check_run` webhook triages the
-head again; the same poll covers a completed check run whose event was lost or
-whose mail failed.
+Data Center sends no webhook when a build finishes, so the reconciler polls.
+A head waiting for CI is released by the pass that finds its build statuses no
+longer in progress, up to one reconcile interval after its builds end. While
+it waits, its `Corbits Triage` build status reads `INPROGRESS` "Triage:
+Waiting for CI" where Comment is on; the hub's own CI read leaves that status
+out. A verdict left unsure or failed by `ci-green` is re-read on the
+unconfirmed retry interval (5 minutes, doubling) and queued again once its
+builds changed (`triage_requeued` with `reason: build_status_changed`).
 
 A webhook triage created is removed when the repository is disabled or the
 instance disconnected; one set up by hand is not, and stays until a repository

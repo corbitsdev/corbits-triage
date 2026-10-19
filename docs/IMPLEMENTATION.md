@@ -1,5 +1,8 @@
 # Implementation
 
+Where the code lives. How it fits together is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Stack
 
 Bun, TypeScript, Postgres, Hono with hono-openapi and arktype on the hub,
@@ -11,149 +14,93 @@ with the `intx-src` export condition, so every hub command runs with
 
 | Path | Role |
 | --- | --- |
-| `src/env.ts` | Only reader of the environment. arktype schema plus the helpers that turn it into config. |
-| `src/server.ts` | Composition root: loads env, runs migrations, builds every component and injects config. |
+| `src/env.ts` | The only reader of the environment: arktype schema plus the helpers that turn it into config. |
+| `src/server.ts` | Composition root: loads env, runs migrations, builds every component, injects config, registers the sidecar provisioners. |
 | `migrations/*.sql`, `src/triage-db.ts` | Triage's tables in the `corbits_triage` schema, applied at start in one transaction under an advisory lock. |
-| `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database config, auth config, credential cipher and Interchange settings injected. |
-| `src/auth.ts` | better-auth config: stock settings, optional Google sign-in and email allowlist, `PORTAL_ORIGIN` as a trusted origin. |
+| `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database, auth, credential cipher and Interchange settings injected. |
+| `src/auth.ts`, `src/sessions.ts` | better-auth config (Google sign-in, email allowlist, device authorization, `PORTAL_ORIGIN`) and the caller's own sessions. |
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
-| `src/hooks.ts` | `@corbits/webhooks` mount and its migrations. |
+| `src/hooks.ts`, `src/provider-hooks/` | `@corbits/webhooks` mount; webhook intake for hosts other than GitHub. |
 | `src/integrations/app.ts` | The `/api/integrations/*` routes and their OpenAPI descriptions. |
-| `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role; gives admins the same on older policies at start. |
+| `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role. |
+| `src/audit-log.ts` | The audit list, read from what the workspace already recorded. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
-| `src/code-review.ts` | `POST /api/integrations/code-review/{tenantId}` turns code review on or off for one repository (`codeReview` on its record); on needs a provisioner code review can run on, the host connected and the Anthropic key. `…/place` names the provisioner stock's plugin registry selects for code review under the workspace's placement policies, or null, and lists each place `server.ts` probed at boot (`dockerPlaces` in `src/sidecar/docker.ts`) as active, ready, not set up or failing, with the failing reason only for those who may manage the workspace; while it is null `server.ts` treats no host as reviewed and releases code review deployments. `…/run` reviews a pull request's current head again. |
-| `src/code-review-feed.ts` | Sends each new non-draft head of a pull request with code review on to its host's `pr-code-review` once, with the host's diff cut past `DIFF_LIMIT`. |
-| `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore, and `host-capacity.ts`, which reads the box's free memory (cgroup, else `MemAvailable`); the provisioner declines a placement when it is below one sidecar's footprint for it and each sidecar still starting. |
+| `src/code-review.ts`, `src/code-review-feed.ts`, `src/code-review-runs.ts` | The code review switch; `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; the feed that mails each new head; the latest review, read from run logs. |
+| `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and Docker registration (`docker.ts`). |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
-| `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`; pull request, review, comment, `check_run` and `check_suite` events → coalescer; default-branch pushes touching the policy file and merges into the default branch → policy-file read again. |
-| `src/github/policy-file.ts` | Reads `.corbits-triage.yml` (or `.yaml`) on the default branch, kept in memory until a push touches it or a pull request merges into the default branch; reports each enabled repository's upgrade state and writes the stored policy to the file as a pull request. |
-| `src/github/policy-pull.ts`, `src/bitbucket-datacenter/policy-pull.ts` | The one pull request on `corbits-triage/policy` per repository: opened once, updated when asked again. |
-| `src/github/automation.ts` | Which action kinds triage writes unattended on a repository, from the grants of the tenant's `pr-triage` system role. |
-| `src/github/check-pack-store.ts` | Reads a repository's policy: its file, or its stored policy (the pinned artifact, else the newest titled one) while the two run differently, resolved over any workspace policy it extends; archives the stored policy once the file runs the same. |
-| `src/github/policy-read.ts` | The route that serves a repository's policy as triage reads it. |
-| `src/github/backlog-triage.ts` | The route that mails `pr-triage-historical` to triage a repository's open pull requests again. |
+| `src/bitbucket-datacenter/` | Bitbucket Data Center connection, repository and webhook routes, payload normalizing. |
+| `src/github/bridge.ts` | GitHub webhook verification and routing; `logJson`, the hub's one JSON-line logger, passed down as `log`. |
+| `src/github/tenant-config.ts` | Reads and writes `corbitsTriage` in tenant config; checks the stock tenant patch. |
+| `src/github/policy-file.ts`, `check-pack-store.ts`, `policy-read.ts`, `policy-pull.ts` | The policy file (read again when a push touches it or a pull request merges into the default branch), the stored policy and which applies, the policy route, and the one `corbits-triage/policy` pull request. |
+| `src/github/automation.ts` | Which action kinds triage writes unattended, from the `pr-triage` role's grants. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
-| `src/github/coordinator.ts`, `worker-spawn.ts`, `triage-queue-view.ts` | Every triage mail (webhook, retry, reconciler) and every code review mail is a job in one in-memory queue keyed per workflow and pull request, run in a worker deployment of its own; a spawn the provisioner declines for capacity, or one with no live deployment to copy yet, is retried with backoff. `GET /api/integrations/triage-queue/{tenantId}` lists the workspace's queued and running jobs. |
-| `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates `pr-triage` deployments and redeploys failed ones. |
+| `src/github/coordinator.ts`, `worker-spawn.ts`, `triage-queue-view.ts` | The job queue, one worker deployment per job, and the queue route. |
+| `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates deployments and redeploys failed ones. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
-| `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and coordinator worker runs and records verdicts. |
-| `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict records and the routes that serve them. The triage-stats route never waits on the host: it serves the last measured `outcomes`, or `measuring` while the first background read runs. The triage-verdicts list lists pull requests only for repositories with triage on, plus any a pending approval names. |
-| `src/github/pr-outcomes.ts` | Triage stats' `outcomes`: medians of time to merge or close, first response, first approval (over approved pull requests only) and longest wait, for up to 50 newest triaged pull requests against a baseline of pull requests closed before the policy was first saved (GitHub: the 50 newest-created; Bitbucket Data Center: the newest page holding any, at most 8 pages of 50). Read from the host with at most 8 reads at once, cached per pull request and per UTC day; failed reads are left out of the medians. |
-| `src/github/source-fetch.ts` | A connected repository's host fetch, as the tenant's GitHub App or Bitbucket Data Center token, for the PR view and outcomes. |
-| `src/github/manifest.ts` | GitHub App Manifest flow: start and callback. The setup state is an HMAC-SHA256 token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes and bound to the user who started it; nothing is stored. |
-| `src/github/pr-*.ts` | Pull request actions, details, previews (API only) and single-PR triage. |
-| `src/github/held-dos.ts` | Approves a held action by mailing it to `pr-triage`. |
-| `src/github/github-app-*` | Credential adapter: App JWT → installation token, cached per installation, pinned to the GitHub API origin. |
+| `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads run logs and records verdicts. |
+| `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts`, `pr-outcomes.ts` | Verdict records and the routes that serve them, including outcomes before and after Triage. Outcomes read at most the 50 newest-created pull requests on GitHub, or the newest page holding any (at most 8 pages of 50) on Bitbucket Data Center, with at most 8 reads at once, cached per pull request and per UTC day. |
+| `src/github/backlog-triage.ts` | Mails `pr-triage-historical` to triage a repository's open pull requests. |
+| `src/github/manifest.ts` | GitHub App Manifest flow; setup state is an HMAC token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes. |
+| `src/github/pr-*.ts`, `held-dos.ts` | Pull request actions, details, previews and single-PR triage; approving a held action. |
+| `src/github/github-app-*` | Credential adapter: App JWT to installation token, cached per installation. |
+| `src/github/source-fetch.ts` | A repository's host fetch, as the GitHub App or the Bitbucket token. |
 
-Hub code logs through one JSON-line logger, `logJson` in `src/github/bridge.ts`, passed down as `log`.
-
-### Non-default GitHub origin
-
-Workflow children start with a fresh environment, and Bun drops the query
-from `import.meta.url`, so the origin cannot reach the adapter at runtime.
-`sidecar-config.ts` writes a generated adapter entry module into
-`HUB_DATA_DIR` with the origin baked in.
+Workflow children start with a fresh environment, so a non-default
+`GITHUB_API_ORIGIN` cannot reach the adapter at runtime: `sidecar-config.ts`
+writes a generated adapter module into `HUB_DATA_DIR` with the origin baked in.
 
 ## Portal (`apps/web`)
 
 - `src/lib/portal.tsx`: convergence on sign-in.
-- `src/lib/model-catalog.ts`: the models the workflows name, each with its
-  provider (`decision` on `corbits-system-one`, `claude-opus-5-5` and
-  `claude-haiku-5-5` on `anthropic`). `reconcileModelCatalog` adds whatever
-  the tenant catalog lacks through the stock catalog routes, on each
-  converge and after a key is saved; a provider's offerings appear once its
-  key is in the vault. The `decision` offering is written by
-  `saveInference` instead, from the endpoint and model being saved.
-  `offeringsFor` picks each deploy's offerings from the
-  same list and refuses a model the tenant does not offer.
-- `src/lib/workflow-deploy.ts`: `ensureWorkflows` publishes the tool and workflow tarballs to the tenant's
-  `corbits` package registry and deploys each workflow pinned to its version
-  through the hub's workflow-deploy route, redeploying a workflow only when
-  its deployment runs another version or its model's key was saved. A
-  host's code review (`pr-code-review-github`,
-  `pr-code-review-bitbucket-datacenter`) deploys only while one of its
-  connected repositories has code review on and a code review provider's key
-  is stored, from that provider's package (`codeReviewProvider` in
-  `src/lib/hub-api.ts`); removing the key releases it. Before
-  publishing it removes every tarball neither this build nor a live
-  deployment pins, since Interchange delivers the registry's whole tree under
-  a 32 MiB cap; removed versions stay in the asset's git history.
-- `scripts/build-workflows.ts`: packs the host read tools and each workflow of
-  `packages/triage-workflows` and each `packages/pr-code-review-<provider>` as
-  tarballs into `public/packages/`, listed in
-  `index.json`. Each version is `<base>-sha-<8 hex>`, a SHA-256 over the
-  package manifest and files (`tooling/pack-tarball.ts`), so any change to
-  the tool or a workflow publishes a new version.
 - `src/lib/hub-api.ts`: typed calls over the hub routes.
-- Decision model presets (`@corbits/triage-contracts`): TypeSafe, Vercel AI
-  Gateway, OpenCode Zen, all serving Jev, plus a custom provider. Saving
-  stores the key as a vault credential and the choice in the model catalog:
-  the `corbits-system-one` provider's `baseURL` is the endpoint, and the
-  `decision` offering names the provider's own model (`quirks.model`). The
-  portal reads the saved model back from those rows.
-- The Anthropic key (Settings, Code review) is a vault credential named
-  `anthropic`. Removing it, or the decision model key, first releases the
-  workflows that use it (code review or triage), then deletes its catalog
-  provider and offerings before the key, because the vault keeps a key a
-  catalog provider uses.
+- `src/lib/model-catalog.ts`: the models the workflows name (`decision` on
+  `corbits-system-one`, `claude-opus-5-5` and `claude-haiku-5-5` on
+  `anthropic`); adds what the tenant catalog lacks through the stock catalog
+  routes, and picks each deploy's offerings.
+- `src/lib/workflow-deploy.ts`: publishes the tool and workflow tarballs to the
+  tenant's `corbits` package registry and deploys each workflow pinned to its
+  version, redeploying only when the version or its model's key changed. Code
+  review deploys only while a connected repository has it on and a provider
+  key is stored. Before publishing it removes tarballs neither this build nor
+  a live deployment pins, since Interchange delivers the registry's whole tree
+  under a 32 MiB cap.
+- `scripts/build-workflows.ts`: packs the tools and workflows into
+  `public/packages/` with `index.json`. Each version is
+  `<base>-sha-<8 hex>` over the package's files (`tooling/pack-tarball.ts`),
+  so any change publishes a new version.
 
-### Decision model
+The workflows name one decision model, `corbits-system-one:decision`, so their
+source is the same for every tenant. Saving a model key stores it in the vault
+and writes the `decision` offering (endpoint as the provider's `baseURL`, the
+provider's own model as `quirks.model`), then redeploys, because a deployment
+resolves its offering when deployed. Removing a key first releases the
+workflows that use it, then deletes its catalog provider and offerings, since
+the vault keeps a key a catalog provider uses.
 
-The workflows declare one catalog model, `corbits-system-one:decision`, so
-their source is identical for every tenant. The tenant's offering for
-`decision` picks the provider (`baseURL` + `/systemone`) and wire model
-(`@corbits/system-one` 0.3.1). Saving a model redeploys, because a deployment
-resolves its offering when deployed.
+The portal reads two build-time variables: `VITE_HUB_URL` (the hub's origin
+when the portal is hosted apart) and `VITE_GITHUB_API_ORIGIN` (the GitHub
+emulator).
 
 ## Extension (`apps/extension`)
 
-A WXT browser extension that triages the open GitHub pull request locally; see `apps/extension/README.md`.
+A WXT browser extension that checks the open GitHub pull request locally; see
+[its README](../apps/extension/README.md).
 
 ## Packages
 
-- `triage-workflows`: `pr-triage`, `pr-triage-historical`, `repo-scan`, their
-  steps (`triage-steps.ts`, `repo-scan.ts`), directors and the deterministic
-  logic under `logic/`.
-- `github-reads`: GitHub read helpers and types.
-- `github-tool`: the mirror write (marker-comment upsert), actions and the sidecar
-  tool bundles.
-- `github-write-tool`: build wrapper for the write bundle.
-- `repo-read-tool`: `read_file`, `grep` and `list`, read-only and confined to
-  the step's working tree (no `..`, absolute path or symlink out). The GitHub
-  and Bitbucket Data Center read bundles add `*_checkout`, which unpacks a
-  repository at a commit into that tree, and `*_read_file`, which reads lines
-  of one file at a commit through the host API.
-- `pr-code-review`: the provider-neutral `pr-code-review` workflow, its
-  agents, directors, deterministic steps (`src/actions/`) and prompts
-  (`prompts/*.txt`), each built from a provider profile (`src/profile.ts`).
-- `pr-code-review-anthropic`: the Anthropic profile and the deployed entry
-  points (`pr-code-review-github`, `pr-code-review-bitbucket-datacenter`),
-  plus the code review eval.
-- `triage-contracts`: policy schema (`schemaVersion` 2) with the workspace
-  policy and override schemas, `resolve-policy.ts` (a repository policy over
-  the workspace policy it extends), repository settings, triage state,
-  verdict labels, trigger mail and shared types.
-- `provisioner-template`: a minimal `SidecarProvisioner` to copy for a new
-  backend; see [provisioners/writing-your-own.md](provisioners/writing-your-own.md).
-- `provisioner-docker`: a `SidecarProvisioner` that runs each sidecar in its
-  own Docker container; the hub registers it in `src/sidecar/docker.ts`. See
-  [provisioners/docker.md](provisioners/docker.md).
-- `provisioner-conformance`: bun tests any `SidecarProvisioner` runs to prove
-  the stock contract.
-- `openai-null-delta`: inference adapter fix for null stream deltas.
-- `common`: dependency-free helpers shared across apps and packages.
-
-## Environment
-
-The hub reads the environment only in `apps/hub/src/env.ts`. Every variable
-is described in [SELF_HOST.md](SELF_HOST.md#configuration) and in
-`.env.example`. GitHub App credentials and model keys are not environment:
-they live in the hub vault.
-
-The portal reads two build-time variables: `VITE_HUB_URL` (the hub's origin
-when the portal is hosted apart from it) and `VITE_GITHUB_API_ORIGIN` (the
-GitHub emulator).
+| Package | Holds |
+| --- | --- |
+| `triage-workflows` | `pr-triage-github`, `pr-triage-bitbucket-datacenter`, `pr-triage-historical`, `repo-scan`, their steps, directors and the deterministic logic under `logic/`, and the decision-model eval. |
+| `triage-contracts` | Policy schema and parsers, the policy file, workspace policy resolution, repository settings, triage state, labels, trigger mail and shared types; see [its README](../packages/triage-contracts/README.md). |
+| `github-reads`, `bitbucket-datacenter-reads` | Host read helpers, both returning the GitHub shapes. |
+| `github-tool`, `github-write-tool`, `bitbucket-datacenter-tool` | The sidecar tool bundles: reads, the mirror, and actions. |
+| `repo-read-tool` | `read_file`, `grep` and `list`, confined to the step's working tree (no `..`, absolute path or symlink out); the host bundles add `*_checkout` and `*_read_file`. |
+| `pr-code-review`, `pr-code-review-anthropic` | The provider-neutral code review workflow and the Anthropic provider's package and eval; see [its README](../packages/pr-code-review/README.md). |
+| `policy-check-action` | The GitHub Action that checks `.corbits-triage.yml` as the hub reads it. |
+| `provisioner-docker`, `provisioner-template`, `provisioner-conformance` | The Docker provisioner, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
+| `openai-null-delta` | Inference adapter fix for null stream deltas. |
+| `common` | Dependency-free helpers shared across apps and packages. |
 
 ## Scripts
 
@@ -164,17 +111,14 @@ GitHub emulator).
 | `bun run check` | Typecheck tooling, portal, extension, hub and packages, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run lint` | oxlint. |
-| `bun run holdback`, `injection`, `report` | Eval scripts: holdback replay, prompt-injection run, cost and latency report. |
-| `bun run eval` in `packages/triage-workflows` | Decision-model eval over `packages/triage-workflows/evals`. |
-| `bun run eval:scan` in `packages/triage-workflows` | Repository scan eval over recorded fixtures; see `packages/triage-workflows/evals/SCAN.md`. |
+| `bun run eval` in `packages/triage-workflows` | Decision-model eval; see [DECISION_MODEL.md](DECISION_MODEL.md#measured-accuracy). |
+| `bun run eval:scan` in `packages/triage-workflows` | Repository scan eval; see `packages/triage-workflows/evals/SCAN.md`. |
+| `bun run eval:review` | Code review eval; see `packages/pr-code-review-anthropic/evals/README.md`. |
+| `bun run holdback`, `injection`, `report` | Holdback replay, prompt-injection run, cost and latency report. |
 | `bun run vendor:health`, `sh tooling/vendor-diff-check.sh` | Vendored Interchange health and drift gate. |
 
-## Build and deploy
+## Build
 
-One image, the root `Dockerfile`: the hub, serving the built portal from
-`PORTAL_DIR`. Its base, `oven/bun:1.4`, matches the Bun minor CI runs. See [DEPLOY.md](DEPLOY.md).
-
-## Vendored deltas
-
-Each delta, its reason and its kill date are in
-`vendor/interchange/VENDORED.md`.
+One image, the root `Dockerfile`: the hub serving the built portal from
+`PORTAL_DIR`, on `oven/bun:1.4`, the Bun minor CI runs. Its `sidecar` target is
+the image the Docker provisioner runs. See [SELF_HOST.md](SELF_HOST.md).

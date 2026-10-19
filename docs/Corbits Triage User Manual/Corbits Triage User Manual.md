@@ -8,7 +8,7 @@ Oct 16, 2026 · @Brian J. Fox
 2. [Getting started](#getting-started)
 3. [Setting up a repository: rules, verdicts and actions](#setting-up-a-repository-rules-verdicts-and-actions)
 4. [Day to day: the Inbox](#day-to-day-the-inbox)
-5. [Settings: people, access and workspace configuration](#settings-people-access-and-workspace-configuration)
+5. [Settings: Triage, code review and people](#settings-triage-code-review-and-people)
 6. [The audit log](#the-audit-log)
 7. [Glossary and common questions](#glossary-and-common-questions)
 
@@ -224,7 +224,7 @@ A rule asks one question about a pull request and answers pass, fail or unconfir
 
 Two rules always run: a draft pull request waits until it is ready for review, and a pull request with changes requested fails. Once the author pushes a new commit or replies, it still fails but waits on the reviewer, in **Needs you** as ready for re-review, until that reviewer approves or requests changes again.
 
-Size rules and facts the host already knows cost nothing and always give the same answer for the same pull request. Judgement rules cost one model request per pull request.
+Size rules and facts the host already knows cost nothing and always give the same answer for the same pull request. Judgement rules call the decision model, a few requests per pull request, each billed by your model provider.
 
 ### How the verdict is decided
 
