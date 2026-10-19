@@ -120,5 +120,5 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 ## Build
 
 One image, the root `Dockerfile`: the hub serving the built portal from
-`PORTAL_DIR`, on `oven/bun:1.4`, the Bun minor CI runs. Its `sidecar` target is
+`PORTAL_DIR`, on `oven/bun:1.4.2`, the Bun the Railway sidecar template installs and the Bun minor CI runs. Its `sidecar` target is
 the image the Docker provisioner runs. See [SELF_HOST.md](SELF_HOST.md).

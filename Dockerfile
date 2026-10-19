@@ -1,11 +1,11 @@
-FROM oven/bun:1.4 AS base
+FROM oven/bun:1.4.2 AS base
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile
 
 # One container per sidecar; the hub's Docker provisioner starts it with the sidecar's env.
 # It holds what a sidecar loads: Interchange, the workspace packages and the hub's adapter modules.
-FROM oven/bun:1.4 AS sidecar
+FROM oven/bun:1.4.2 AS sidecar
 WORKDIR /app
 COPY --from=base /app/package.json /app/tsconfig.json ./
 COPY --from=base /app/node_modules node_modules

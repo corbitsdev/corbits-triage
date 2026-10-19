@@ -275,7 +275,7 @@ Code review reads each new commit of a pull request for bugs. It runs whether or
 
 ### Where code review runs
 
-Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up), or in an [E2B](../provisioners/e2b.md) sandbox in the cloud. [Settings → Code review](#code-review-2) says where it runs.
+Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up), or in an [E2B](../provisioners/e2b.md) or [Railway](../provisioners/railway-sandboxes.md) sandbox in the cloud. [Settings → Code review](#code-review-2) says where it runs.
 
 A server with no isolated place set up for Triage has nowhere to run it. The switch is then replaced by **Code review needs an isolated place to run**, with **Set one up**, which opens Settings → Code review, and **Review again** is hidden in the Inbox. A repository that had code review on says **It is switched on here but not running**, with **Turn off**; nothing is reviewed until a place is set up, and then it carries on without being switched on again.
 
@@ -435,7 +435,7 @@ One switch per action. On, Triage carries that action out in every repository by
 
 [Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**; with no key, paste it and press **Save key**. **Change** and **Remove** work as for the decision model.
 
-Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine**, **Docker on another machine (TLS)** and **E2B sandboxes**, each with a line on why you would choose it. Code review never runs on the Triage server itself. It runs in the first place in the list, in the order shown, that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
+Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine**, **Docker on another machine (TLS)** **E2B sandboxes** and **Railway Sandboxes**, each with a line on why you would choose it. Code review never runs on the Triage server itself. It runs in the first place in the list, in the order shown, that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
 
 Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins also see why it is failing. Under a place that is not set up or failing are the lines to add to the Triage server's `.env`, with **Copy**, and its **Setup guide**. Add them, restart the server, and the place turns **Ready** or **In use**.
 
