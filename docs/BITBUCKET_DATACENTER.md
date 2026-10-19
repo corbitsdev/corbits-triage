@@ -62,9 +62,10 @@ only when every address returned for the host is public, or the host is
 listed in `BITBUCKET_EGRESS_ALLOWLIST` and those addresses are only private
 or loopback. A lookup that throws or returns no addresses is a refusal, as
 is any loopback (`127.0.0.0/8`, `::1`), private (`10.0.0.0/8`,
-`172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), link-local (`169.254.0.0/16`,
-`fe80::/10`) or unspecified (`0.0.0.0`, `::`) address. The hostnames
-`metadata` and `metadata.google.internal`, and any link-local or unspecified
+`172.16.0.0/12`, `192.168.0.0/16`, and `fc00::/7` other than `fd00:ec2::254`),
+link-local (`169.254.0.0/16`, `fe80::/10`) or unspecified (`0.0.0.0`, `::`)
+address. The hostnames `metadata` and `metadata.google.internal`, the EC2
+IPv6 metadata address `fd00:ec2::254`, and any link-local or unspecified
 address, stay refused even if listed. `BITBUCKET_EGRESS_ALLOWLIST` is a hub
 environment variable, not a tenant setting.
 

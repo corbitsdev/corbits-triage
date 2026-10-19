@@ -62,3 +62,11 @@ test("the allowlist unlocks a private or loopback host, not link-local, unspecif
   expect(await resolveInstanceBaseUrl("http://metadata.google.internal", addresses(["203.0.113.10"]), listed)).toBeUndefined();
   expect(await resolveInstanceBaseUrl("http://[::1]", addresses(["203.0.113.10"]), listed)).toBe("http://[::1]");
 });
+
+test("fd00:ec2::254 stays refused when listed; other unique-local addresses do not", async () => {
+  expect(instanceBaseUrl("http://[fd00:ec2::254]/", ["fd00:ec2::254"])).toBeUndefined();
+  expect(await resolveInstanceBaseUrl("http://git.internal", addresses(["fd00:ec2::254"]), ["git.internal"])).toBeUndefined();
+  expect(instanceBaseUrl("http://[fc00::1]", ["fc00::1"])).toBe("http://[fc00::1]");
+  expect(instanceBaseUrl("http://[fd00::1]", ["fd00::1"])).toBe("http://[fd00::1]");
+  expect(await resolveInstanceBaseUrl("http://git.internal", addresses(["fd12:3456::1"]), ["git.internal"])).toBe("http://git.internal");
+});

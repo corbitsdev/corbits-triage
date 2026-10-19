@@ -57,11 +57,15 @@ const LINK_LOCAL = new BlockList();
 LINK_LOCAL.addSubnet("169.254.0.0", 16, "ipv4");
 LINK_LOCAL.addSubnet("fe80::", 10, "ipv6");
 
+// EC2 IPv6 instance metadata. It sits inside fc00::/7, which is otherwise allowlistable.
+const METADATA_ADDRESS = new BlockList();
+METADATA_ADDRESS.addAddress("fd00:ec2::254", "ipv6");
+
 const UNSPECIFIED = new BlockList();
 UNSPECIFIED.addAddress("0.0.0.0", "ipv4");
 UNSPECIFIED.addAddress("::", "ipv6");
 
-type AddressKind = "public" | "loopback" | "private" | "link-local" | "unspecified";
+type AddressKind = "public" | "loopback" | "private" | "link-local" | "unspecified" | "metadata";
 
 /** An IPv6-mapped IPv4 address (`::ffff:169.254.169.254` or `::ffff:a9fe:a9fe`) in dotted form; anything else as given. */
 function unmapped(host: string): string {
@@ -85,6 +89,7 @@ function addressKind(address: string): AddressKind | undefined {
   if (UNSPECIFIED.check(host, ipType)) return "unspecified";
   if (LINK_LOCAL.check(host, ipType)) return "link-local";
   if (LOOPBACK.check(host, ipType)) return "loopback";
+  if (METADATA_ADDRESS.check(host, ipType)) return "metadata";
   if (PRIVATE.check(host, ipType)) return "private";
   return "public";
 }
@@ -101,7 +106,7 @@ function allowlisted(hostname: string, allowlist: readonly string[]): boolean {
   return allowlist.some((entry) => bareHost(entry) === host);
 }
 
-/** A listed literal may be private or loopback. Link-local, unspecified, and metadata names stay refused. */
+/** A listed literal may be private or loopback. Link-local, unspecified, metadata names, and fd00:ec2::254 stay refused. */
 function allowlistedLiteral(hostname: string, allowlist: readonly string[]): boolean {
   if (!allowlisted(hostname, allowlist)) return false;
   const kind = addressKind(bareHost(hostname));
