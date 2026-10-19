@@ -45,7 +45,7 @@ type ConnectOpts = {
  * The Postgres cluster's system identifier, the database's oid and the schema: the same however DATABASE_URL names
  * the database, and different for every other database.
  */
-async function hubIdOf(database: DatabaseConfig): Promise<string> {
+export async function hubIdOf(database: DatabaseConfig): Promise<string> {
   const { db, close } = createDB(database);
   try {
     const [row] = await db.execute(sql`select (select system_identifier from pg_control_system())::text as cluster, (select oid from pg_database where datname = current_database())::text as database`);
@@ -57,7 +57,7 @@ async function hubIdOf(database: DatabaseConfig): Promise<string> {
 }
 
 /** The manifest at the image's paths, or undefined when a module is not in the image, such as the entry a GITHUB_API_ORIGIN override writes under HUB_DATA_DIR. */
-function inImage(manifest: AdapterManifest, root: string): AdapterManifest | undefined {
+export function inImage(manifest: AdapterManifest, root: string): AdapterManifest | undefined {
   const hostPrefix = pathToFileURL(`${root}/`).href;
   const relocated = manifest.map(function relocate(entry) {
     if (!entry.specifier.startsWith("file:")) return entry;
@@ -74,14 +74,14 @@ async function daemonId(engine: DockerEngine): Promise<string> {
   return DaemonInfo.assert(await engine.request("GET", "/info")).ID;
 }
 
-/** Why sidecars on another machine cannot dial the hub at `hubUrl`: its token and credentials cross that socket. */
-function remoteHubProblem(host: string, hubUrl: string): string | undefined {
+/** Why sidecars on another machine (`where`) cannot dial the hub at `hubUrl`: its token and credentials cross that socket. */
+export function remoteHubProblem(where: string, hubUrl: string): string | undefined {
   const url = new URL(hubUrl);
   if (url.protocol !== "wss:") {
-    return `Docker at ${host} is on another machine, which reaches Triage only over TLS; set BETTER_AUTH_BASE_URL to Triage's https:// address`;
+    return `${where} is on another machine, which reaches Triage only over TLS; set BETTER_AUTH_BASE_URL to Triage's https:// address`;
   }
   if (isThisMachine(url.hostname)) {
-    return `Docker at ${host} is on another machine, which cannot reach Triage at its own address; set BETTER_AUTH_BASE_URL to Triage's public address`;
+    return `${where} is on another machine, which cannot reach Triage at its own address; set BETTER_AUTH_BASE_URL to Triage's public address`;
   }
   return undefined;
 }
@@ -109,7 +109,7 @@ export async function connectDockerSidecars({ docker, database, root, adapterMan
   }
   const manifest = inImage(adapterManifest, root);
   if (manifest === undefined) return off("Code review cannot run in Docker while GITHUB_API_ORIGIN is set; unset it");
-  const hubProblem = remote ? remoteHubProblem(host, docker.publicHubWebSocketUrl) : undefined;
+  const hubProblem = remote ? remoteHubProblem(`Docker at ${host}`, docker.publicHubWebSocketUrl) : undefined;
   if (hubProblem !== undefined) return off(hubProblem);
   let tls: DockerTls | undefined;
   try {
@@ -158,9 +158,13 @@ export function dockerPlaces(docker: DockerSidecarProvisioner | DockerOff): Plac
   });
 }
 
+/** The ids of the active allocations and probes placed on a provisioner. */
+export async function activeSidecarIds(db: DB["db"], provisionerId: string): Promise<Set<string>> {
+  const [allocations, probes] = await Promise.all([createSidecarAllocationStore(db).listActive(), createWorkflowProbeStore(db).listActive()]);
+  return new Set([...allocations, ...probes].filter((row) => row.provisionerId === provisionerId).map((row) => row.id));
+}
+
 /** Removes Docker sidecars no active allocation or probe holds. */
 export async function sweepDockerSidecarsOf(db: DB["db"], docker: DockerSidecarProvisioner): Promise<number> {
-  const [allocations, probes] = await Promise.all([createSidecarAllocationStore(db).listActive(), createWorkflowProbeStore(db).listActive()]);
-  const active = new Set([...allocations, ...probes].filter((row) => row.provisionerId === docker.provisioner.id).map((row) => row.id));
-  return sweepDockerSidecars(docker, active);
+  return sweepDockerSidecars(docker, await activeSidecarIds(db, docker.provisioner.id));
 }

@@ -33,10 +33,12 @@ import {
   type CronTicker,
 } from "@corbits/cron";
 import { runCronMigrations } from "@corbits/cron/migrations";
+import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
+import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
@@ -57,7 +59,7 @@ import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, 
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, dockerSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -134,6 +136,8 @@ const WORKER_FIRE_TIMEOUT_MS = 120_000;
 const WORKER_POLL_MS = 2_000;
 /** A tenant whose logs could not be read is left at most this long before the recording loop tries again. */
 const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
+/** How often E2B sandboxes are swept and extended; well inside their one-hour timeout. */
+const E2B_TEND_MS = 10 * 60_000;
 
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
@@ -175,8 +179,11 @@ const local = createLocalProcessSidecarProvisioner({
 const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, root: ROOT, adapterManifest: sidecarAdapterManifest });
 const dockerUp = "provisioner" in docker ? docker : undefined;
 if ("reason" in docker) logJson({ level: "info", msg: "docker_sidecars_off", reason: docker.reason });
-// First match wins: workflows and probes that require isolation:workload land on Docker, the rest on the hub host.
-const workloadProvisioners = dockerUp ? [dockerUp.provisioner] : [];
+const e2bConfig = e2bSettings(env);
+const e2b = e2bConfig === undefined ? undefined : await connectE2bSidecars({ e2b: e2bConfig, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+if (typeof e2b === "string") logJson({ level: "info", msg: "e2b_sidecars_off", reason: e2b });
+// First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, the rest on the hub host.
+const workloadProvisioners = [dockerUp, e2b].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
 const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
 
 let shuttingDown = false;
@@ -185,6 +192,7 @@ let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
 let coordinator: Coordinator | undefined;
+let e2bTender: ReturnType<typeof setInterval> | undefined;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -193,6 +201,7 @@ async function shutdown(): Promise<void> {
   recordLoop?.stop();
   coalescer?.stop();
   coordinator?.stop();
+  clearInterval(e2bTender);
   try {
     await local.shutdown();
   } finally {
@@ -224,6 +233,17 @@ composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connect
 
 await restoreLocalSidecars(composition.db, local);
 if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
+async function tendE2b(sidecars: E2bSidecarProvisioner): Promise<void> {
+  try {
+    logJson({ level: "info", msg: "e2b_sidecars_tended", removed: await tendE2bSidecarsOf(composition.db, sidecars) });
+  } catch (error) {
+    logJson({ level: "error", msg: "e2b_sidecars_tend_failed", error: String(error) });
+  }
+}
+if (e2b !== undefined && typeof e2b !== "string") {
+  await tendE2b(e2b);
+  e2bTender = setInterval(tendE2b, E2B_TEND_MS, e2b);
+}
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },
@@ -763,7 +783,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview }),
-  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: dockerPlaces(docker) }),
+  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }] }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({

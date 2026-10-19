@@ -60,7 +60,7 @@ triage on and its policy has a rule.
 - [docs/BITBUCKET_DATACENTER.md](docs/BITBUCKET_DATACENTER.md): connecting
   Bitbucket Data Center.
 - [docs/provisioners/README.md](docs/provisioners/README.md): where sidecars
-  run, and setting up Docker for code review.
+  run, and setting up Docker or E2B for code review.
 - [docs/DECISION_MODEL.md](docs/DECISION_MODEL.md): how judged rules are asked,
   their cost and measured accuracy.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and

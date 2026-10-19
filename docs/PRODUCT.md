@@ -323,6 +323,4 @@ answers for anything unchanged.
 
 - The repository scan measures a repository's closed pull requests but does
   not propose a policy yet, and the hub does not run it.
-- Code review runs only where the hub has Docker; there is no cloud
-  provisioner yet.
 - Code review findings are not sent to Bitbucket Data Center pull requests.

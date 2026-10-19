@@ -167,6 +167,7 @@ All optional; the defaults suit most installs.
 | `DOCKER_CONTEXT` | the docker CLI's current context | The docker CLI context to use when `DOCKER_HOST` is unset. |
 | `DOCKER_TLS_VERIFY` | unset | Any non-empty value, even `0`, as with the docker CLI: reach the daemon over TLS. Required for a daemon on another machine. |
 | `DOCKER_CERT_PATH` | `$HOME/.docker` | Absolute path of the directory holding `ca.pem`, `cert.pem` and `key.pem`. |
+| `E2B_API_KEY` | unset | Registers the [E2B provisioner](provisioners/e2b.md), which runs each isolated sidecar in an E2B sandbox. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `PG_SCHEMA` | default `search_path` | Postgres schema. |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |
@@ -216,9 +217,11 @@ across sites.
 ## Where sidecars run
 
 Sidecars run as child processes on the hub's machine by default. Code review
-needs a sidecar of its own, so it runs only once Docker is set up, on the hub's
-machine or another one. [provisioners/README.md](provisioners/README.md) covers
-each option.
+needs a sidecar of its own, so it runs only once an isolated place is set up.
+Settings → Code review → **Where it runs** lists every place this server
+offers, with the `.env` lines and guide for each; code review uses the first
+ready one in the order shown and waits there when it is full.
+[provisioners/README.md](provisioners/README.md) covers each option.
 
 ## Backups
 

@@ -104,13 +104,15 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   registered after it when a daemon with the sidecar image answers, runs each
   sidecar in a container of its own and declares `isolation:workload`;
   workflows that require it land there, and probes then require it too.
-  [provisioners/](provisioners/README.md) describes both.
-  Code review requires `isolation:workload`; without Docker, stock
+  The E2B provisioner (`packages/provisioner-e2b`), registered after Docker
+  when `E2B_API_KEY` is set, does the same with one E2B sandbox per sidecar.
+  [provisioners/](provisioners/README.md) describes each.
+  Code review requires `isolation:workload`; without Docker or E2B, stock
   Interchange refuses it with `provisioner_no_match`.
   `GET /api/integrations/code-review/{tenantId}/place` names the provisioner
   stock's plugin registry selects for it under the workspace's placement
   policies, or null, and lists every place the hub's provisioner packages
-  describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`) with the state the hub
+  describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`) with the state the hub
   found at boot, for Settings → Code review. The hub's own machine is never
   one. While it is null the switch and **Review again** refuse
   (`no_isolated_place`), nothing is mailed, the host's code review
