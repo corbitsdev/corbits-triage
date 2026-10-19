@@ -170,6 +170,8 @@ All optional; the defaults suit most installs.
 | `E2B_API_KEY` | unset | Registers the [E2B provisioner](provisioners/e2b.md), which runs each isolated sidecar in an E2B sandbox. |
 | `RAILWAY_SANDBOX_TOKEN`, `RAILWAY_SANDBOX_ENVIRONMENT_ID` | unset | A Railway workspace token and the environment the [Railway Sandboxes provisioner](provisioners/railway-sandboxes.md) creates sandboxes in. Set both or neither. |
 | `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | set by Railway on a service deployed from GitHub | The public repository and commit the Railway sidecar template checks out. Required with `RAILWAY_SANDBOX_TOKEN`. |
+| `QEMU_PROVISIONER_URL` | unset | The `https://` address of the [QEMU host agent](provisioners/qemu.md). With `QEMU_PROVISIONER_TOKEN`, registers the QEMU provisioner. |
+| `QEMU_PROVISIONER_TOKEN` | unset | The agent's bearer token, `QEMU_AGENT_TOKEN` in `/etc/corbits-qemu/agent.env` on the QEMU host. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `PG_SCHEMA` | default `search_path` | Postgres schema. |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |

@@ -63,6 +63,7 @@
         "@corbits/pr-code-review": "workspace:*",
         "@corbits/provisioner-docker": "workspace:*",
         "@corbits/provisioner-e2b": "workspace:*",
+        "@corbits/provisioner-qemu": "workspace:*",
         "@corbits/provisioner-railway": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-workflows": "workspace:*",
@@ -266,6 +267,20 @@
         "@intx/hub-sessions": "0.5.0",
         "@intx/types": "workspace:*",
         "e2b": "2.52.1",
+      },
+      "devDependencies": {
+        "@corbits/provisioner-conformance": "workspace:*",
+      },
+    },
+    "packages/provisioner-qemu": {
+      "name": "@corbits/provisioner-qemu",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/provisioner-template": "workspace:*",
+        "@corbits/triage-contracts": "workspace:*",
+        "@intx/hub-sessions": "0.5.0",
+        "@intx/types": "workspace:*",
+        "arktype": "catalog:",
       },
       "devDependencies": {
         "@corbits/provisioner-conformance": "workspace:*",
@@ -898,6 +913,8 @@
     "@corbits/provisioner-docker": ["@corbits/provisioner-docker@workspace:packages/provisioner-docker"],
 
     "@corbits/provisioner-e2b": ["@corbits/provisioner-e2b@workspace:packages/provisioner-e2b"],
+
+    "@corbits/provisioner-qemu": ["@corbits/provisioner-qemu@workspace:packages/provisioner-qemu"],
 
     "@corbits/provisioner-railway": ["@corbits/provisioner-railway@workspace:packages/provisioner-railway"],
 
