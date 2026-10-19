@@ -4,7 +4,7 @@ import { ApiError, type Transport } from "@intx/hub-client";
 import { createHoldQueue, HOLD_MS } from "./held-actions.ts";
 import { approveHeldDo, projectQueue, type PrItem } from "./hub-api.ts";
 import { doWrite } from "./inbox-pane.ts";
-import { pendingDos, type PendingDo } from "./pending-dos.ts";
+import { pendingDos, withoutDecidedDos, type PendingDo } from "./pending-dos.ts";
 
 const NOW = "2026-10-01T02:00:00.000Z";
 const pull = { repo: "acme/widgets", number: 8 };
@@ -31,7 +31,7 @@ function labels(dos: PendingDo[]): string[] {
 
 describe("pendingDos", () => {
   test("a held merge off a Fail list says the verdict was not pass", () => {
-    expect(labels(pendingDos(verdict([step("merge", {}, 0)]), NONE, NONE))).toEqual(["Merge (the verdict was fail, not pass)"]);
+    expect(labels(pendingDos(verdict([step("merge", {}, 0)])))).toEqual(["Merge (the verdict was fail, not pass)"]);
   });
 
   test("each held kind is labelled and approved through the hub by reference only", async () => {
@@ -41,7 +41,7 @@ describe("pendingDos", () => {
       step("request-review", { users: ["bob"], teams: ["core"] }, 2),
       step("comment", { body: "Please split this." }, 3),
       step("close", {}, 4),
-    ]), NONE, NONE);
+    ]));
     expect(labels(dos)).toEqual(["Add labels size/xl, needs-split", "Assign alice", "Request review from @acme/core, bob", "Comment", "Close"]);
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const transport: Transport = {
@@ -60,7 +60,7 @@ describe("pendingDos", () => {
   });
 
   test("the hub's refusal is said plainly", async () => {
-    const [pending] = pendingDos(verdict([step("assign", { users: ["alice"] })]), NONE, NONE);
+    const [pending] = pendingDos(verdict([step("assign", { users: ["alice"] })]));
     const transport: Transport = {
       fetch: async () => {
         throw new ApiError(409, "do_not_held", "The verdict does not hold this Do.");
@@ -72,7 +72,7 @@ describe("pendingDos", () => {
   });
 
   test("Dos written or not held, skipped actions and steps, unresolved targets, agents and hidden Dos are not offered; a failed automatic Do is", () => {
-    const dos = pendingDos(verdict([
+    const dos = pendingDos(withoutDecidedDos(verdict([
             { list: "fail", index: 0, effectId: "effect-0", kind: "assign", held: true, skipped: true, reason: "Role ops is not defined." },
       step("request-review", { unresolved: "codeowners" }),
       step("labels", { unresolved: "derive", from: "paths" }),
@@ -83,21 +83,21 @@ describe("pendingDos", () => {
       { ...step("labels", { labels: ["refused"] }, 10), held: false, status: "failed" },
       step("assign", { users: ["alice"] }, 6),
       step("assign", { users: ["skipped"] }, 7),
-    ]), new Set(["effect-7"]), NONE);
+    ]), new Set(["effect-7"]), NONE));
     expect(labels(dos)).toEqual(["Add label refused", "Assign alice"]);
   });
 
   test("a Do sent for approval stays hidden until its run fails it, then is offered again with why", () => {
     const sent = new Set([`effect-0:held`]);
-    expect(pendingDos(verdict([step("comment", { body: "Hi" }, 0)]), NONE, sent)).toEqual([]);
-    const [failed] = pendingDos(verdict([{ ...step("comment", { body: "Hi" }, 0), status: "failed", error: "github POST -> 500" }]), NONE, sent);
+    expect(pendingDos(withoutDecidedDos(verdict([step("comment", { body: "Hi" }, 0)]), NONE, sent))).toEqual([]);
+    const [failed] = pendingDos(withoutDecidedDos(verdict([{ ...step("comment", { body: "Hi" }, 0), status: "failed", error: "github POST -> 500" }]), NONE, sent));
     expect(failed).toMatchObject({ label: "Comment", error: "github POST -> 500" });
   });
 
   test("a Do approved is hidden and offered again on Undo, without reaching the hub", () => {
     const item = verdict([step("labels", { labels: ["size/xl"] }, 0), step("comment", { body: "Hi" }, 1)]);
     const queue = createHoldQueue({ set: () => 1, clear: () => {} }, HOLD_MS);
-    const [first] = pendingDos(item, NONE, NONE);
+    const [first] = pendingDos(item);
     if (first === undefined || item.number === null) throw new Error("no Do offered");
     let held = new Set([first.sentKey]);
     const sent: unknown[] = [];
@@ -114,9 +114,9 @@ describe("pendingDos", () => {
       restore: () => write.restore?.(),
       failText: (error) => error,
     });
-    expect(labels(pendingDos(item, NONE, held))).toEqual(["Comment"]);
+    expect(labels(pendingDos(withoutDecidedDos(item, NONE, held)))).toEqual(["Comment"]);
     expect(queue.undo()).toBe(true);
-    expect(labels(pendingDos(item, NONE, held))).toEqual(["Add label size/xl", "Comment"]);
+    expect(labels(pendingDos(withoutDecidedDos(item, NONE, held)))).toEqual(["Add label size/xl", "Comment"]);
     expect(sent).toEqual([]);
   });
 });

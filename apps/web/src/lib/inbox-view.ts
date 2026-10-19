@@ -1,5 +1,6 @@
 import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
 import type { PrItem, QueueState } from "./hub-api.ts";
+import { holdsActionForYou } from "./pending-dos.ts";
 import { priorityRank } from "./triage-view.ts";
 
 export type InboxAction = "decide" | "review" | "unblock" | "merge" | "failed";
@@ -82,12 +83,16 @@ function waitsOnAuthor(item: PrItem): boolean {
   return isPostedToAuthor(item) || (onlyRequestedChanges(item) && !item.reviewAnswered);
 }
 
+function awaitsYourDecision(item: PrItem): boolean {
+  return item.pendingApprovalId !== null || holdsActionForYou(item);
+}
+
 /**
  * A pull request with a verdict that needs you stays while Triage checks it again or waits for CI, so it does not flicker out.
- * A draft is its author's until marked ready, whatever its last verdict said.
+ * A draft is its author's until marked ready, whatever its last verdict said, unless something waits on your approval.
  */
 export function inNeedsYou(item: PrItem): boolean {
-  if (item.pendingApprovalId !== null) return true;
+  if (awaitsYourDecision(item)) return true;
   return item.draft !== true && inboxAction(item) !== null && !waitsOnAuthor(item);
 }
 
@@ -138,7 +143,7 @@ const AUTHOR_TURN: ReadonlySet<HandledKind | null> = new Set(["changes", "reply"
 
 /** Who must act next, checked in order; `entry` is the pull request's handled mark, null while it is in Needs you. */
 export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
-  if ((entry === null && inNeedsYou(item)) || item.pendingApprovalId !== null) return "maintainer";
+  if ((entry === null && inNeedsYou(item)) || awaitsYourDecision(item)) return "maintainer";
   if (item.draft === true || item.state === "needs-author-update" || (entry !== null && AUTHOR_TURN.has(entry.kind))) return "author";
   if (item.ci === "pending" || item.waitingForCi) return "ci";
   if (inboxAction(item) === null) return "triage";
@@ -220,13 +225,13 @@ export function repoOf(key: string): string {
 
 export type OpenItem = { item: PrItem; handled: HandledMark | null };
 
-/** A pending approval still needs a person after its repository's triage is turned off. */
+/** A pending approval or held action still needs a person after its repository's triage is turned off. */
 export function allOpen(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
-  return open.filter((entry) => enabled.has(entry.item.repo) || entry.item.pendingApprovalId !== null);
+  return open.filter((entry) => enabled.has(entry.item.repo) || awaitsYourDecision(entry.item));
 }
 
 function needsYouEntry(entry: OpenItem): boolean {
-  return entry.item.pendingApprovalId !== null || entry.handled === null;
+  return awaitsYourDecision(entry.item) || entry.handled === null;
 }
 
 /** All open less what you acted on, before `inNeedsYou` sets aside what waits on others. */

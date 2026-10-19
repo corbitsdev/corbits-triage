@@ -43,7 +43,16 @@ function awaitsApproval({ held, status }: SuggestedAction): boolean {
   return status === undefined ? held : status === "failed" || status === "skipped";
 }
 
-function offeredDos(item: PrItem): PendingDo[] {
+function sentKeyOf(action: SuggestedAction): string {
+  return `${action.effectId}:${action.status ?? "held"}`;
+}
+
+/** Drops the Dos skipped in this browser or waiting on their approval to send, so the pull request holds only those left to decide. */
+export function withoutDecidedDos(item: PrItem, hidden: ReadonlySet<string>, sent: ReadonlySet<string>): PrItem {
+  return { ...item, actions: item.actions.filter((action) => !hidden.has(action.effectId) && !sent.has(sentKeyOf(action))) };
+}
+
+export function pendingDos(item: PrItem): PendingDo[] {
   const { repo, number, runId } = item;
   if (number === null || runId === null) return [];
   const out: PendingDo[] = [];
@@ -51,21 +60,21 @@ function offeredDos(item: PrItem): PendingDo[] {
     const text = awaitsApproval(action) ? label(action, repo) : null;
     if (text === null) continue;
     const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind };
-    const sentKey = `${action.effectId}:${action.status ?? "held"}`;
     // A merge may be approved off a Fail or Unsure list, and the card says so.
     const shown = action.kind === "merge" && action.list !== "pass" ? `${text} (the verdict was ${action.list}, not pass)` : text;
-    out.push({ key: action.effectId, sentKey, label: shown, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
+    out.push({ key: action.effectId, sentKey: sentKeyOf(action), label: shown, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
   }
   return out;
 }
 
-export function pendingDos(item: PrItem, hidden: ReadonlySet<string>, sent: ReadonlySet<string>): PendingDo[] {
-  return offeredDos(item).filter((pending) => !hidden.has(pending.key) && !sent.has(pending.sentKey));
-}
-
 /** The pack's close stands in for the plain one, so only one Close is offered. */
 export function offersClose(item: PrItem): boolean {
-  return offeredDos(item).some((pending) => pending.kind === "close");
+  return pendingDos(item).some((pending) => pending.kind === "close");
+}
+
+/** Only a held action waits on a person: the next run tries an unattended one again, and a refused one cannot run. */
+export function holdsActionForYou(item: PrItem): boolean {
+  return item.actions.some((action) => action.held && (action.status === undefined || action.status === "failed") && label(action, item.repo) !== null);
 }
 
 export type DoGroup = { list: VerdictWord; reason: string; dos: PendingDo[] };

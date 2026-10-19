@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
+import { withoutDecidedDos } from "./pending-dos.ts";
 import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, postedLabel, primaryAction, readyToMerge, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
@@ -159,6 +160,16 @@ describe("requested changes", () => {
     const pending = { ...reviewed, pendingApprovalId: "a1" };
     expect(listCounts(entries(pending), READY)["needs-you"]).toBe(1);
     expect(waitsOn(pending, null)).toBe("maintainer");
+  });
+
+  test("a held action keeps it in Needs you until it is approved, refused or skipped", () => {
+    const action = { list: "fail", index: 0, effectId: "e", kind: "request-changes", reason: "Size failed.", target: {}, held: true } as const;
+    const held = { ...reviewed, posted: true, actions: [action] };
+    expect(listCounts(entries(held), READY)["needs-you"]).toBe(1);
+    expect(listCounts(entries({ ...held, actions: [{ ...action, status: "failed" }] }), READY)["needs-you"]).toBe(1);
+    expect(listCounts(entries({ ...held, actions: [{ ...action, status: "done" }] }), READY)["needs-you"]).toBe(0);
+    expect(listCounts(entries({ ...held, actions: [{ ...action, status: "skipped" }] }), READY)["needs-you"]).toBe(0);
+    expect(listCounts(entries(withoutDecidedDos(held, new Set(["e"]), new Set())), READY)["needs-you"]).toBe(0);
   });
 });
 

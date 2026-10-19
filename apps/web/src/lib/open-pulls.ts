@@ -3,6 +3,8 @@ import { useIsRestoring, useQuery, useQueryClient, type Query, type UseQueryResu
 import { projectQueue, type PrItem, type PullTriage } from "./hub-api.ts";
 import { repoOf, type HandledKind, type HandledMark, type OpenItem } from "./inbox-view.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
+import { useDecidedDoKeys } from "./held-dos.ts";
+import { withoutDecidedDos } from "./pending-dos.ts";
 import { usePortal } from "./portal.tsx";
 import { triageEnabledRepos } from "./repo-rows.ts";
 import { useApprovals, useApprovalsFirstLoad } from "./tenant-entities.ts";
@@ -211,12 +213,13 @@ function usePullRequestItems(pulls: PullTriage[] = NO_PULLS): PrItem[] {
   const approvals = useApprovals();
   const { data } = useOpenPulls();
   const sent = useSentReplies();
+  const decided = useDecidedDoKeys();
   return useMemo(function projectWithSentReplies() {
     const listed = verdicts.data?.pulls ?? NO_PULLS;
     const extra = pulls.filter((pull) => !listed.some((open) => open.repo === pull.repo && open.number === pull.number));
-    const items = projectQueue([...listed, ...extra], approvals.rows, data);
+    const items = projectQueue([...listed, ...extra], approvals.rows, data).map((item) => withoutDecidedDos(item, decided.hidden, decided.sent));
     return items.map((item) => (item.runId !== null && sent[item.key] === item.runId ? { ...item, posted: true } : item));
-  }, [verdicts.data, pulls, approvals.rows, data, sent]);
+  }, [verdicts.data, pulls, approvals.rows, data, sent, decided]);
 }
 
 export function usePullPageItems(repo: string | null, number: number | null): PrItem[] {
