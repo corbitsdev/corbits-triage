@@ -56,11 +56,17 @@ grants for the writes.
 
 Body: `{ "baseUrl": "https://bitbucket.example.com", "token": "..." }`.
 
-`baseUrl` may name a private-network or localhost host, since Data Center
-commonly lives on a private network. Link-local hosts (`169.254.0.0/16`),
-`fd00::/8` addresses and `metadata.google.internal` are refused: a cloud
-runtime answers its own metadata there, and the hub's token check would reach
-it.
+The hub resolves `baseUrl` at connect and again whenever the stored URL is
+used to send the token or to answer `GET /connection`. The URL is stored
+only when every address returned for the host is public, or the host is
+listed in `BITBUCKET_EGRESS_ALLOWLIST` and those addresses are only private
+or loopback. A lookup that throws or returns no addresses is a refusal, as
+is any loopback (`127.0.0.0/8`, `::1`), private (`10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), link-local (`169.254.0.0/16`,
+`fe80::/10`) or unspecified (`0.0.0.0`, `::`) address. The hostnames
+`metadata` and `metadata.google.internal`, and any link-local or unspecified
+address, stay refused even if listed. `BITBUCKET_EGRESS_ALLOWLIST` is a hub
+environment variable, not a tenant setting.
 
 The token is tried once against `GET /rest/api/1.0/application-properties`
 and stored only if the instance signs it in. A webhook secret is generated

@@ -20,5 +20,7 @@ test("disconnecting disconnects and disables only Bitbucket repositories and for
 
 test("a stored base URL the connect route would refuse reads back as no connection", () => {
   expect(bitbucketConnection({ bitbucketDatacenter: { baseUrl: "http://169.254.169.254/latest" } })).toBeUndefined();
+  expect(bitbucketConnection({ bitbucketDatacenter: { baseUrl: "http://127.0.0.1:7990" } })).toBeUndefined();
+  expect(bitbucketConnection({ bitbucketDatacenter: { baseUrl: "http://10.0.0.5:7990" } })).toBeUndefined();
   expect(bitbucketConnection({ bitbucketDatacenter: { baseUrl: "https://bitbucket.example", user: "triage" } })).toEqual({ baseUrl: "https://bitbucket.example", user: "triage" });
 });

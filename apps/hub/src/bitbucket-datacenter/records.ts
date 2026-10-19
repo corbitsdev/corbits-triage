@@ -8,12 +8,12 @@ export { PROVIDER, TOKEN_CREDENTIAL, HOOK_CREDENTIAL };
 /** `user` is the slug the token acts as, recorded at connect; a connection recorded before it has none. */
 type BitbucketConnection = { baseUrl: string; user?: string };
 
-/** The stored base URL passes the same check as at connect, so a host it would refuse is never sent the token. */
-export function bitbucketConnection(ns: CorbitsTriageNs): BitbucketConnection | undefined {
+/** The stored base URL passes the same literal check as at connect, so a refused literal is never sent the token. */
+export function bitbucketConnection(ns: CorbitsTriageNs, allowlist: readonly string[] = []): BitbucketConnection | undefined {
   const connection = asRecord(ns.bitbucketDatacenter);
   const stored = connection?.["baseUrl"];
   const user = connection?.["user"];
-  const baseUrl = typeof stored === "string" ? instanceBaseUrl(stored) : undefined;
+  const baseUrl = typeof stored === "string" ? instanceBaseUrl(stored, allowlist) : undefined;
   return baseUrl === undefined ? undefined : { baseUrl, ...(typeof user === "string" && { user }) };
 }
 

@@ -1,3 +1,5 @@
+import { lookup as dnsLookup } from "node:dns/promises";
+import { BlockList, isIP } from "node:net";
 import { type } from "arktype";
 import { repoPath as repoPathOf, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 
@@ -37,9 +39,29 @@ export function bitbucketFetch(fetchImpl: typeof fetch, baseUrl: string, token: 
   };
 }
 
-// Private-network and localhost hosts are allowed, since Data Center commonly lives on a private network; the hosts a
-// cloud runtime answers its own metadata on are not, because the hub's token-check request would reach them.
-const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata", "169.254.169.254"]);
+// The token must not be sent to loopback, private, link-local, unspecified, or cloud-metadata hosts. An operator
+// allowlist may name a host whose addresses are only private or loopback; it cannot unlock the rest.
+const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata"]);
+
+const LOOPBACK = new BlockList();
+LOOPBACK.addSubnet("127.0.0.0", 8, "ipv4");
+LOOPBACK.addAddress("::1", "ipv6");
+
+const PRIVATE = new BlockList();
+PRIVATE.addSubnet("10.0.0.0", 8, "ipv4");
+PRIVATE.addSubnet("172.16.0.0", 12, "ipv4");
+PRIVATE.addSubnet("192.168.0.0", 16, "ipv4");
+PRIVATE.addSubnet("fc00::", 7, "ipv6");
+
+const LINK_LOCAL = new BlockList();
+LINK_LOCAL.addSubnet("169.254.0.0", 16, "ipv4");
+LINK_LOCAL.addSubnet("fe80::", 10, "ipv6");
+
+const UNSPECIFIED = new BlockList();
+UNSPECIFIED.addAddress("0.0.0.0", "ipv4");
+UNSPECIFIED.addAddress("::", "ipv6");
+
+type AddressKind = "public" | "loopback" | "private" | "link-local" | "unspecified";
 
 /** An IPv6-mapped IPv4 address (`::ffff:169.254.169.254` or `::ffff:a9fe:a9fe`) in dotted form; anything else as given. */
 function unmapped(host: string): string {
@@ -51,19 +73,47 @@ function unmapped(host: string): string {
   return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
 }
 
-function isMetadataHost(hostname: string): boolean {
-  const host = unmapped(hostname.replace(/^\[|\]$/g, "").toLowerCase());
+function bareHost(hostname: string): string {
+  return unmapped(hostname.replace(/^\[|\]$/g, "").toLowerCase());
+}
+
+function addressKind(address: string): AddressKind | undefined {
+  const host = bareHost(address);
+  const family = isIP(host);
+  if (family === 0) return undefined;
+  const ipType = family === 4 ? "ipv4" : "ipv6";
+  if (UNSPECIFIED.check(host, ipType)) return "unspecified";
+  if (LINK_LOCAL.check(host, ipType)) return "link-local";
+  if (LOOPBACK.check(host, ipType)) return "loopback";
+  if (PRIVATE.check(host, ipType)) return "private";
+  return "public";
+}
+
+function isBlockedHost(hostname: string): boolean {
+  const host = bareHost(hostname);
   if (METADATA_HOSTS.has(host)) return true;
-  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-  // fd00::/8 holds the metadata addresses cloud runtimes publish over IPv6, such as fd00:ec2::254.
-  return /^fd[0-9a-f]{2}:/i.test(host);
+  const kind = addressKind(host);
+  return kind !== undefined && kind !== "public";
+}
+
+function allowlisted(hostname: string, allowlist: readonly string[]): boolean {
+  const host = bareHost(hostname);
+  return allowlist.some((entry) => bareHost(entry) === host);
+}
+
+/** A listed literal may be private or loopback. Link-local, unspecified, and metadata names stay refused. */
+function allowlistedLiteral(hostname: string, allowlist: readonly string[]): boolean {
+  if (!allowlisted(hostname, allowlist)) return false;
+  const kind = addressKind(bareHost(hostname));
+  return kind === "private" || kind === "loopback";
 }
 
 /**
  * An http(s) URL without credentials, query or fragment, kept with its context path
  * (an instance can live under one) and without a trailing slash.
+ * A literal in a refused range is dropped unless `allowlist` names that literal and it is only private or loopback.
  */
-export function instanceBaseUrl(value: string): string | undefined {
+export function instanceBaseUrl(value: string, allowlist: readonly string[] = []): string | undefined {
   let url: URL;
   try {
     url = new URL(value.trim());
@@ -71,8 +121,36 @@ export function instanceBaseUrl(value: string): string | undefined {
     return undefined;
   }
   if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password || url.search || url.hash) return undefined;
-  if (isMetadataHost(url.hostname)) return undefined;
+  if (isBlockedHost(url.hostname) && !allowlistedLiteral(url.hostname, allowlist)) return undefined;
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+export type AddressLookup = (hostname: string) => Promise<readonly { address: string; family: number }[]>;
+
+export function lookupAddresses(hostname: string): Promise<readonly { address: string; family: number }[]> {
+  return dnsLookup(hostname, { all: true, verbatim: true });
+}
+
+/**
+ * The normalized base URL, or undefined when it is not acceptable or any resolved address is blocked.
+ * A listed hostname is still accepted when every blocked address is private or loopback. The result keeps the original host.
+ */
+export async function resolveInstanceBaseUrl(value: string, lookup: AddressLookup, allowlist: readonly string[] = []): Promise<string | undefined> {
+  const accepted = instanceBaseUrl(value, allowlist);
+  if (accepted === undefined) return undefined;
+  const hostname = new URL(accepted).hostname;
+  if (isIP(bareHost(hostname)) !== 0) return accepted;
+  let addresses: readonly { address: string; family: number }[];
+  try {
+    addresses = await lookup(hostname);
+  } catch {
+    return undefined;
+  }
+  if (addresses.length === 0) return undefined;
+  const blocked = addresses.map((entry) => addressKind(entry.address)).filter((kind) => kind !== "public");
+  if (blocked.length === 0) return accepted;
+  if (allowlisted(hostname, allowlist) && blocked.every((kind) => kind === "private" || kind === "loopback")) return accepted;
+  return undefined;
 }
 
 export async function pagedValues(bb: BitbucketFetch, path: string): Promise<unknown[]> {

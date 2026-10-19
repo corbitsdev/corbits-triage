@@ -13,8 +13,8 @@ import type { Member } from "../integrations/app.js";
 import { triageWorkflowFor } from "../github/source-workflow.js";
 import { asCaller } from "../stock-caller.js";
 import {
-  BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, instanceBaseUrl, pagedValues, readRepo,
-  WEBHOOK_EVENTS, webhookExists,
+  BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, lookupAddresses, pagedValues, readRepo,
+  resolveInstanceBaseUrl, WEBHOOK_EVENTS, webhookExists, type AddressLookup,
 } from "./client.js";
 import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, splitName, TOKEN_CREDENTIAL } from "./records.js";
 
@@ -49,6 +49,10 @@ type BitbucketDeps = PortalCredentialDeps & {
   /** The hub's public origin; behind a TLS proxy the request URL is not. */
   publicOrigin: string;
   fetchImpl: typeof fetch;
+  /** Resolves the instance host. Defaults to DNS. Tests inject it so nothing is looked up for real. */
+  lookup?: AddressLookup;
+  /** Hostnames or literal IPs the operator allows even when they are private or loopback. */
+  egressAllowlist?: readonly string[];
   /** Called once a repository is enabled, so its open pull requests are triaged without waiting for the next pass. */
   onEnabled: (tenantId: string) => void;
   /** Called after connect and disconnect: the deployed pr-triage entry follows the connected hosts. */
@@ -65,6 +69,15 @@ function instanceFailed(err: unknown): Response {
 
 export function createBitbucketIntegration(deps: BitbucketDeps) {
   const { db } = deps;
+  const egressAllowlist = deps.egressAllowlist ?? [];
+
+  function hostLookup(hostname: string): Promise<readonly { address: string; family: number }[]> {
+    return (deps.lookup ?? lookupAddresses)(hostname);
+  }
+
+  function reachableBaseUrl(value: string): Promise<string | undefined> {
+    return resolveInstanceBaseUrl(value, hostLookup, egressAllowlist);
+  }
 
   function hookUrl(tenantId: string): string {
     return `${deps.publicOrigin}${BITBUCKET_HOOK_PATH}/${encodeURIComponent(tenantId)}`;
@@ -89,11 +102,13 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   }
 
   async function instance(member: Member): Promise<BitbucketFetch | Response> {
-    const connection = bitbucketConnection(await tenantNs(member.tenantId));
+    const connection = bitbucketConnection(await tenantNs(member.tenantId), egressAllowlist);
     if (!connection) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
+    const baseUrl = await reachableBaseUrl(connection.baseUrl);
+    if (baseUrl === undefined) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
     const token = await secretOf(member, TOKEN_CREDENTIAL);
     if (token instanceof Response) return token;
-    return bitbucketFetch(deps.fetchImpl, connection.baseUrl, token);
+    return bitbucketFetch(deps.fetchImpl, baseUrl, token);
   }
 
   function stock(req: Request, method: string, path: string, body?: unknown): Promise<Response> {
@@ -187,10 +202,10 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   async function connect(body: typeof ConnectBody.infer, member: Member, req: Request): Promise<Response> {
     const refused = await manageRefusal(member);
     if (refused) return refused;
-    const baseUrl = instanceBaseUrl(body.baseUrl);
-    if (!baseUrl) return failure(400, "invalid_request", "baseUrl must be an http(s) URL without credentials, query or fragment.");
+    const baseUrl = await reachableBaseUrl(body.baseUrl);
+    if (!baseUrl) return failure(400, "invalid_request", "baseUrl must be an http(s) URL without credentials, query, or fragment, and the host must not resolve to a loopback, private, link-local, or unspecified address unless the hub operator allowlisted that host.");
     const ns = await tenantNs(member.tenantId);
-    const current = bitbucketConnection(ns);
+    const current = bitbucketConnection(ns, egressAllowlist);
     if (current && current.baseUrl !== baseUrl && repoRecords(ns).some(isBitbucketRecord)) {
       return failure(409, "bitbucket_datacenter_connected_elsewhere", `This workspace is connected to ${current.baseUrl}. Disconnect it first.`);
     }
@@ -215,9 +230,11 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   }
 
   async function connection(member: Member): Promise<Response> {
-    const current = bitbucketConnection(await tenantNs(member.tenantId));
+    const current = bitbucketConnection(await tenantNs(member.tenantId), egressAllowlist);
     if (!current) return failure(404, "bitbucket_datacenter_not_connected", "Bitbucket is not connected.");
-    return Response.json({ baseUrl: current.baseUrl, hookUrl: hookUrl(member.tenantId) });
+    const baseUrl = await reachableBaseUrl(current.baseUrl);
+    if (baseUrl === undefined) return failure(404, "bitbucket_datacenter_not_connected", "Bitbucket is not connected.");
+    return Response.json({ baseUrl, hookUrl: hookUrl(member.tenantId) });
   }
 
   /** Webhooks triage created that could not be removed, by repository name; without `use` on the token every one is left. */
