@@ -241,8 +241,10 @@ Each new non-draft head of a pull request in such a repository is mailed once,
 whether or not triage is on, with the host's unified diff cut at a line
 boundary past 100,000 characters; on GitHub a diff too large for the diff API
 is built from the files' patches. `…/run` reviews the current head again. Code
-review only reads: its tools are the host read bundle and the confined
-repository reads.
+review only reads: a checkout action downloads the head through the host
+credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>`, and
+its tools are the host read bundle and repository reads confined to that
+folder.
 
 Sending a review to GitHub is a person's write through
 `POST /api/integrations/github-actions/{tenantId}` (`action: "code-review"`,

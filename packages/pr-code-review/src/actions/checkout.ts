@@ -1,20 +1,88 @@
+import { rename, rm, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { checkout as bitbucketCheckout } from "@corbits/bitbucket-datacenter-tool";
+import { checkout as githubCheckout } from "@corbits/github-tool";
+import { checkoutsUnder, checkTarget, sidecarDataDir } from "@corbits/repo-read-tool";
+import type { EffectContext, PerformScope } from "@intx/workflow";
 import { type } from "arktype";
 
 export const Checkout = type({ source: "'github' | 'bitbucket-datacenter'", repo: "string", sha: /^[0-9a-f]{40}$/ });
 export type Checkout = typeof Checkout.infer;
 
-export const CHECKOUT_TOOL = { github: "github_checkout", "bitbucket-datacenter": "bitbucket_datacenter_checkout" } as const;
-
 export const READ_FILE_TOOL = { github: "github_read_file", "bitbucket-datacenter": "bitbucket_datacenter_read_file" } as const;
 
-// A director that checks the repository out reads the checkout from the first line of its input message.
+/** The effect capability the checkout action declares: it reads the repository from its host. */
+export const READ_REPOSITORY = "repository.read";
+
+type HostFetch = (path: string, init?: RequestInit) => Promise<Response>;
+
+const DOWNLOAD: Record<Checkout["source"], (host: HostFetch, repo: string, sha: string, dir: string) => Promise<unknown>> = {
+  github: githubCheckout,
+  "bitbucket-datacenter": bitbucketCheckout,
+};
+
+/** Where the sidecar keeps the checkout of `repo` at `sha`: one folder per host, repository and head. */
+export function checkoutPath(dataDir: string, { source, repo, sha }: Checkout): string {
+  checkTarget(repo, sha);
+  return join(checkoutsUnder(dataDir), source, ...repo.split("/"), sha);
+}
+
+/** Whether the checkout is there; its folder exists only once complete. */
+export async function isCheckedOut(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
+ * Downloads beside the checkout, replacing what an interrupted download left there, and renames it into place, so a
+ * partial download is never read. Each review is a worker deployment of its own, whose sidecar, checkout included, is
+ * removed when its run ends, so no other run downloads the same head.
+ */
+async function download(host: HostFetch, { source, repo, sha }: Checkout, path: string) {
+  const staging = `${path}.partial`;
+  try {
+    await DOWNLOAD[source](host, repo, sha, staging);
+    await rename(staging, path);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+}
+
+/** The checkout action over the sidecar data dir `dataDir` names: the head's folder, downloaded through the host's credential unless already there. */
+export function checkoutUnder(dataDir: () => string) {
+  return async function checkout(input: unknown, ctx: EffectContext): Promise<{ path: string }> {
+    const parsed = Checkout(input);
+    if (parsed instanceof type.errors) throw new Error(`checkout: invalid input: ${parsed.summary}`);
+    const target: Checkout = parsed;
+    const path = checkoutPath(dataDir(), target);
+    async function run({ credentials }: PerformScope) {
+      if (await isCheckedOut(path)) return { path };
+      const mediated = await credentials.resolve(target.source);
+      if (mediated.kind !== "http") throw new Error(`${target.source} credential must be http, got ${mediated.kind}`);
+      function host(hostPath: string, init?: RequestInit) {
+        return mediated.fetch(hostPath, init);
+      }
+      await download(host, target, path);
+      return { path };
+    }
+    return (await ctx.perform({ effectId: "checkout", capability: READ_REPOSITORY, run })) as { path: string };
+  };
+}
+
+export const checkout = checkoutUnder(sidecarDataDir);
+
+// The repository finder's and consolidate directors read the repository and head from the first line of their input message.
 const REPOSITORY_TAG = /^<repository host="(github|bitbucket-datacenter)" name="([^"]+)" head="([0-9a-f]{40})"\/>\n/;
 
 export function repositoryTag({ source, repo, sha }: Checkout): string {
   return `<repository host="${source}" name="${repo}" head="${sha}"/>\n`;
 }
 
-/** The checkout an input message names, if any. */
+/** The repository and head an input message names, if any. */
 export function checkoutOf(text: string): Checkout | undefined {
   const match = REPOSITORY_TAG.exec(text);
   if (!match) return undefined;
@@ -24,7 +92,7 @@ export function checkoutOf(text: string): Checkout | undefined {
 
 export const DEFAULT_BUDGET = 400_000;
 
-// A director that reads the repository on a budget of billable tokens reads it from the line after the checkout.
+// A director that reads the repository on a budget of billable tokens reads it from its own line.
 const BUDGET_TAG = /^<budget tokens="(\d+)"\/>\n/m;
 
 export function budgetTag(tokens: number): string {

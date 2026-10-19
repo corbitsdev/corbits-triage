@@ -19,6 +19,7 @@
   "dependencies": {
     "@corbits/github-tool": "workspace:*",
     "@corbits/pr-code-review": "workspace:*",
+    "@corbits/repo-read-tool": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/types": "workspace:*",

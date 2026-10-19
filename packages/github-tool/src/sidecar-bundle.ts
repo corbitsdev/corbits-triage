@@ -36,7 +36,6 @@ import {
 } from "./github";
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
 import { cachedLoads, checkTarget, linesOf, MAX_LINES } from "@corbits/repo-read-tool";
-import { checkout } from "./checkout";
 
 export const CREDENTIAL_HANDLE = "github";
 
@@ -124,11 +123,6 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     description: `Read lines start to end (1-based, inclusive) of a file at a commit sha, at most ${MAX_LINES} lines, each prefixed with its line number.`,
     inputSchema: obj({ repo, sha: str, path: str, start: { type: "integer" }, end: { type: "integer" } }, ["repo", "sha", "path"]),
   },
-  {
-    name: "github_checkout",
-    description: "Download a repository's files at a commit sha into the step's working tree, replacing what is there.",
-    inputSchema: obj({ repo, sha: str }),
-  },
 ];
 
 const ARTIFACT_REF = obj({ id: str, version: { type: "number" } });
@@ -209,7 +203,6 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
 
 interface Env extends BaseEnv {
   capabilities: RuntimeCapabilities;
-  toolCwd: string;
 }
 
 type ToolCallInput = { id: string; name: string; arguments: Record<string, any> };
@@ -235,7 +228,7 @@ async function readWindow(fileAt: FileAt, a: Record<string, any>) {
   return linesOf(a.path, text, a.start, a.end);
 }
 
-async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, toolCwd: string | undefined, fileAt: FileAt): Promise<unknown> {
+async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, fileAt: FileAt): Promise<unknown> {
   const a = call.arguments;
   switch (call.name) {
     case "github_get_app":
@@ -272,9 +265,6 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, t
       return authorTeams(gh, { repo: a.repo, author: a.author, teams: a.teams });
     case "github_read_file":
       return readWindow(fileAt, a);
-    case "github_checkout":
-      if (toolCwd === undefined) throw new Error("github_checkout needs a working tree");
-      return checkout(gh, a.repo, a.sha, toolCwd);
     case "github_mirror":
     case "github_mirror_auto": {
       const mirrored = await mirror(gh, {
@@ -318,7 +308,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, t
 }
 
 /** The App's login and each file read are asked of GitHub once per tool instance, so once per step of a run. */
-function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>, toolCwd: string | undefined) {
+function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>) {
   let known: string | undefined;
   const files = cachedLoads<string | undefined>();
   async function run(call: ToolCallInput) {
@@ -331,7 +321,7 @@ function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promis
       function fileAt(repo: string, sha: string, path: string) {
         return files(`${repo}@${sha}:${path}`, () => readFileAt(gh, repo, sha, path));
       }
-      const content = await dispatch(gh, call, login, toolCwd, fileAt);
+      const content = await dispatch(gh, call, login, fileAt);
       return { callId: call.id, content: content as Record<string, unknown> };
     } catch (err) {
       return {
@@ -344,15 +334,15 @@ function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promis
   return { definitions, run };
 }
 
-/** The tools' calls for a workflow action that holds the credential itself; it has no working tree to check out into. */
+/** The tools' calls for a workflow action that holds the credential itself. */
 export function githubCalls(getFetch: () => Promise<GithubFetch>) {
-  return createGithubTools([], getFetch, undefined).run;
+  return createGithubTools([], getFetch).run;
 }
 
 function defineGithubTool(id: string, definitions: ToolDefinition[], ask: readonly string[]) {
   return defineTool<Env>({
     id,
-    requires: ["capabilities", "toolCwd"],
+    requires: ["capabilities"],
     definitions: definitions.map((d) => ({
       name: d.name,
       ...(ask.includes(d.name) ? { approval: "ask" as const } : {}),
@@ -369,7 +359,7 @@ function defineGithubTool(id: string, definitions: ToolDefinition[], ask: readon
           return mediated.fetch(path, init);
         };
       }
-      return createGithubTools(definitions, resolveGithubFetch, env.toolCwd);
+      return createGithubTools(definitions, resolveGithubFetch);
     },
   });
 }

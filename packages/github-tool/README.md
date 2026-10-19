@@ -1,8 +1,8 @@
 # @corbits/github-tool
 
-The GitHub sidecar tools for Interchange: `githubRead` (`github_*` reads and the checkout) and `githubWrite` (the
-mirror, actions and other writes), both on the `github` credential. The portal packs it beside the workflows it
-deploys; the hub and the workflow packages import its tools and action logic.
+The GitHub sidecar tools for Interchange: `githubRead` (`github_*` reads) and `githubWrite` (the mirror, actions and
+other writes), both on the `github` credential, and `checkout`, which unpacks a repository at a commit. The portal
+packs it beside the workflows it deploys; the hub and the workflow packages import its tools and action logic.
 
 ## Use
 

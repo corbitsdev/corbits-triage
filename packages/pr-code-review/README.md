@@ -15,9 +15,10 @@ for size, which the review carries.
 
 ### Process
 
-1. **plan** names the risky changed areas and the code outside the diff they depend on.
-2. **findDiff** reads the diff; **findRepo** checks the head out and reads the repository within a token budget. They
-   run in parallel.
+1. **plan** names the risky changed areas and the code outside the diff they depend on; meanwhile **checkout** puts the
+   head in a folder on the sidecar. Each review runs in a worker deployment of its own; releasing it when the run ends,
+   failed or not, removes the sidecar and the checkout with it.
+2. **findDiff** reads the diff; **findRepo** reads that folder within a token budget. They run in parallel.
 3. **candidates** folds exact duplicates (same file, overlapping lines, same first quoted line) and remembers which
    finders reported each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
@@ -40,10 +41,10 @@ package of its own, `packages/pr-code-review-<provider>`, shaped like
 1. `src/profile.ts`: a `CodeReviewProfile` with the workspace package name, the catalog provider, the model and
    default effort for each step, and `billableTokens`, the tokens of one repository finder turn charged to its budget
    (count what the provider bills anew each turn).
-2. Build the directors once with `codeReviewDirectors(profile)` and the agents once with
-   `codeReviewAgents(profile, directors)`. `src/directors.ts` exports the directors' factories and nothing else;
-   `src/actions/index.ts` re-exports the actions of `@corbits/pr-code-review/actions/review` with
-   `reviewInput = reviewInputFor(profile)`.
+2. Build the directors once with `codeReviewDirectors(profile, sidecarDataDir)` and the agents once with
+   `codeReviewAgents(profile, directors, sidecarDataDir)`. `src/directors.ts` exports the directors' factories and
+   nothing else; `src/actions/index.ts` re-exports the actions of `@corbits/pr-code-review/actions/review` with
+   `reviewInput = reviewInputFor(profile)`, and `checkout` from `@corbits/pr-code-review/actions/checkout`.
 3. `src/pr-code-review.ts` is `codeReviewWorkflow(agents)`, and one entry per host builds it under
    `PR_CODE_REVIEW_GITHUB_ADDRESS` or `PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS`, so the hub mails it whichever
    provider runs it.

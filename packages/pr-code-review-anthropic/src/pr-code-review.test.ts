@@ -1,10 +1,145 @@
-import { expect, test } from "bun:test";
-import { projectLiveToInert } from "@intx/workflow";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { InferenceEvent } from "@intx/types/inference-events";
+import type { ToolResult } from "@intx/types/runtime";
+import { projectLiveToInert, type StepInvokeRequest, type WorkflowAuthorizeFn } from "@intx/workflow";
+import { checkoutUnder } from "@corbits/pr-code-review/actions/checkout";
+import { codeReviewAgents, credentialBindingsFor } from "@corbits/pr-code-review/agents";
+import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
+import { codeReviewWorkflow } from "@corbits/pr-code-review/pr-code-review";
+import { stockTriggerMail } from "@corbits/triage-contracts";
+import { runLocalWorkflow } from "../../triage-workflows/evals/run-local.js";
+import * as actions from "./actions/index.js";
 import { workflow as bitbucket } from "./pr-code-review-bitbucket-datacenter.js";
 import { workflow as github } from "./pr-code-review-github.js";
+import { ANTHROPIC } from "./profile.js";
 
 test("every deployed code review requires a sidecar of its own", () => {
   for (const definition of [github, bitbucket]) {
     expect(projectLiveToInert(definition).sidecarPlacement).toEqual({ capabilities: [{ capability: "isolation:workload", effect: "require" }] });
   }
+});
+
+const REPO = "acme/widgets";
+const SHA = "0123456789abcdef0123456789abcdef01234567";
+const FILE = "export function add(a: number, b: number) {\n  return a - b;\n}\n";
+const DIFF = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,3 +1,3 @@\n export function add(a: number, b: number) {\n-  return a + b;\n+  return a - b;\n }\n";
+const FINDING = { path: "src/a.ts", start: 2, end: 2, priority: 1, confidence: 0.9, title: "add subtracts", why: "it uses -", trigger: "add(1, 1)", code: "  return a - b;" };
+
+let dir: string;
+let tarball: Uint8Array;
+let model: ReturnType<typeof Bun.serve>;
+const fetched: string[] = [];
+
+const allow: WorkflowAuthorizeFn = async function allow() {
+  return { effect: "allow", matchingGrants: [], resolvedBy: null };
+};
+
+async function host(input: string | URL | Request): Promise<Response> {
+  const { pathname } = new URL(input instanceof Request ? input.url : input);
+  fetched.push(pathname);
+  if (pathname === `/repos/${REPO}/tarball/${SHA}`) return new Response(tarball);
+  if (pathname === `/repos/${REPO}/contents/src/a.ts`) return new Response(FILE);
+  return new Response("not found", { status: 404 });
+}
+
+interface MessagesRequest {
+  model: string;
+  system: unknown;
+  messages: unknown[];
+}
+
+/** Each step's answer by its prompt; the repository finder reads three times, then answers. */
+function answer(body: MessagesRequest) {
+  const system = JSON.stringify(body.system);
+  const sent = JSON.stringify(body.messages);
+  if (system.includes("<tools>") && !sent.includes("tool_result")) {
+    return [
+      { type: "tool_use", id: "read", name: "read_file", input: { path: "src/a.ts" } },
+      { type: "tool_use", id: "grep", name: "grep", input: { pattern: "add" } },
+      { type: "tool_use", id: "escape", name: "read_file", input: { path: join(dir, "head/src/a.ts") } },
+    ];
+  }
+  let text: unknown = { findings: [FINDING] };
+  if (system.includes("<cited_code>")) text = { groups: [{ defect: "add subtracts", members: [0], representative: 0 }] };
+  if (sent.includes("Plan the review")) text = { areas: [], outside_diff: [] };
+  if (sent.includes("Write the review.")) text = { summary: "One defect.", comments: [{ finding: 0, title: "add subtracts", body: "Use +." }] };
+  return [{ type: "text", text: JSON.stringify(text) }];
+}
+
+beforeAll(function serve() {
+  dir = mkdtempSync(join(tmpdir(), "code-review-"));
+  mkdirSync(join(dir, "head/src"), { recursive: true });
+  writeFileSync(join(dir, "head/src/a.ts"), FILE);
+  execFileSync("tar", ["-czf", join(dir, "head.tgz"), "-C", dir, "head"], { env: { PATH: "/usr/bin:/bin", COPYFILE_DISABLE: "1" } });
+  tarball = readFileSync(join(dir, "head.tgz"));
+  model = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = (await req.json()) as MessagesRequest;
+      const content = answer(body);
+      const stop = content[0]!.type === "tool_use" ? "tool_use" : "end_turn";
+      const usage = { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+      return Response.json({ id: "msg", type: "message", role: "assistant", model: body.model, content, stop_reason: stop, stop_sequence: null, usage });
+    },
+  });
+});
+
+afterAll(function stop() {
+  model.stop(true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/** A review whose checkout action writes under `checkoutDir` and whose repository finder reads under `readerDir`. */
+async function review(checkoutDir: string, readerDir = checkoutDir) {
+  const origin = `http://localhost:${model.port}`;
+  const results: ToolResult[] = [];
+  function readerDataDir() {
+    return readerDir;
+  }
+  const directors = codeReviewDirectors(ANTHROPIC, readerDataDir);
+  function sourceFor(req: StepInvokeRequest) {
+    return { id: req.agent.id, provider: "anthropic", baseURL: origin, credentialId: "inference", model: req.agent.inference.sources[0]!.model };
+  }
+  function onEvent(event: InferenceEvent) {
+    if (event.type === "tool.done") results.push(event.data.result);
+  }
+  const request = { kind: "code-review", title: "Add", description: "", diff: DIFF, checkout: { source: "github", repo: REPO, sha: SHA } };
+  const run = await runLocalWorkflow({
+    workflow: codeReviewWorkflow(codeReviewAgents(ANTHROPIC, directors, readerDataDir))({ sources: ["github"] }),
+    directors: Object.values(directors).map((d) => d.factory),
+    actions: { ...actions, checkout: checkoutUnder(() => checkoutDir) },
+    credentialBindings: credentialBindingsFor(["github"]),
+    authorize: allow,
+    github: host,
+    inference: { credentialId: "inference", origin, apiKey: "local" },
+    sourceFor,
+    triggerPayload: stockTriggerMail(request),
+    onEvent,
+  });
+  return { run, results };
+}
+
+test("the repository finder reads the head the checkout action put on the sidecar, confined to it, and a second review of the head reuses it", async () => {
+  const first = await review(join(dir, "data"));
+  expect(first.run.terminalStatus).toBe("completed");
+  expect(first.run.outputs["checkout"]).toEqual({ path: join(dir, "data/checkouts/github/acme/widgets", SHA) });
+  const results = Object.fromEntries(first.results.map((r) => [r.callId, r]));
+  expect(results["read"]).toMatchObject({ content: { path: "src/a.ts", text: "1\texport function add(a: number, b: number) {\n2\t  return a - b;\n3\t}\n4\t" } });
+  expect(results["grep"]).toMatchObject({ content: { matches: [{ path: "src/a.ts", line: 1 }] } });
+  expect(results["escape"]).toMatchObject({ content: `${join(dir, "head/src/a.ts")} is outside the repository`, isError: true });
+  expect(first.run.outputs["review"]).toMatchObject({ summary: "One defect.", comments: [{ path: "src/a.ts", start: 2, title: "add subtracts", agreement: { finders: 2 } }] });
+
+  const second = await review(join(dir, "data"));
+  expect(second.run.terminalStatus).toBe("completed");
+  expect(fetched.filter((path) => path.includes("/tarball/"))).toHaveLength(1);
+});
+
+test("a review whose checkout is not on this sidecar fails at the repository finder", async () => {
+  const { run } = await review(join(dir, "here"), join(dir, "elsewhere"));
+  expect(run.terminalStatus).not.toBe("completed");
+  expect(run.outputs["findRepo"]).toBeUndefined();
 });

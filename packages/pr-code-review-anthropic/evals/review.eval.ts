@@ -15,7 +15,8 @@
 //
 // Inference is native Anthropic when ANTHROPIC_API_KEY is set, else OpenCode Zen with OPENCODE_API_KEY.
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { InferenceEvent } from "@intx/types/inference-events";
@@ -24,9 +25,9 @@ import type { AgentDefinition } from "@intx/agent";
 import type { StepInvokeRequest, WorkflowAuthorizeFn } from "@intx/workflow";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { runLocalWorkflow } from "../../triage-workflows/evals/run-local.js";
-import { githubRead } from "@corbits/github-tool";
 import * as actions from "../src/actions/index.js";
 import { BUDGET_EXHAUSTED } from "@corbits/pr-code-review/actions/checkout";
+import { credentialBindingsFor } from "@corbits/pr-code-review/agents";
 import { finderAgent, repoFinderAgent, type Sources } from "../src/agents.js";
 import * as directors from "../src/directors.js";
 import { prCodeReview } from "../src/pr-code-review.js";
@@ -60,6 +61,10 @@ const PRICES: Record<string, ModelPrice> = {
 
 // The cases are GitHub pull requests.
 const GITHUB: Sources = ["github"];
+
+// Heads are checked out under a throwaway folder, named as the sidecar names its data dir.
+const DATA_DIR = mkdtempSync(join(tmpdir(), "code-review-eval-"));
+process.env.SIDECAR_DATA_DIR = DATA_DIR;
 
 const EFFORTS = ["low", "medium", "high"] as const;
 type Effort = (typeof EFFORTS)[number];
@@ -167,7 +172,7 @@ async function runCase(testCase: Case, systemPrompt: string, effort: Effort, mod
     workflow: prCodeFinder({ systemPrompt }),
     directors: Object.values(directors),
     actions: { ...actions, finderInput },
-    credentialBindings: repo ? [{ handle: "github", package: githubRead.id }] : [],
+    credentialBindings: repo ? credentialBindingsFor(GITHUB) : [],
     authorize: allow,
     github: repo?.github ?? noGithub,
     inference: { credentialId: "inference", origin: source.origin, apiKey: source.apiKey },
@@ -401,7 +406,7 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     workflow: prCodeReview({ sources: GITHUB }),
     directors: Object.values(directors),
     actions,
-    credentialBindings: [{ handle: "github", package: githubRead.id }],
+    credentialBindings: credentialBindingsFor(GITHUB),
     authorize: allow,
     github,
     inference: { credentialId: "inference", origin: source.origin, apiKey: source.apiKey },
@@ -522,7 +527,7 @@ async function main() {
   if (!effort) throw new Error(`--effort must be one of ${EFFORTS.join(", ")}`);
   const maxTokens = Number(values["max-tokens"]);
   if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw new Error("--max-tokens must be a positive integer");
-  const model = values.model ?? deployedModel(values.repo ? repoFinderAgent(GITHUB) : finderAgent());
+  const model = values.model ?? deployedModel(values.repo ? repoFinderAgent() : finderAgent());
   priceOf(model);
   const systemPrompt = readFileSync(values.prompt, "utf8");
   const source = provider();
@@ -548,4 +553,8 @@ async function main() {
   console.log(`results: ${out}`);
 }
 
-await main();
+try {
+  await main();
+} finally {
+  rmSync(DATA_DIR, { recursive: true, force: true });
+}

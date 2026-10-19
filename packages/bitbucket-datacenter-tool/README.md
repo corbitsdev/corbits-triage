@@ -1,7 +1,8 @@
 # @corbits/bitbucket-datacenter-tool
 
-The Bitbucket Data Center sidecar tools for Interchange: `bitbucketRead` (`bitbucket_datacenter_*` reads and the
-checkout) and `bitbucketWrite` (the mirror and actions), both on the `bitbucket-datacenter` credential. The portal
+The Bitbucket Data Center sidecar tools for Interchange: `bitbucketRead` (`bitbucket_datacenter_*` reads) and
+`bitbucketWrite` (the mirror and actions), both on the `bitbucket-datacenter` credential, and `checkout`, which unpacks
+a repository at a commit into a folder. The portal
 packs it beside the workflows it deploys; the hub and the workflow packages import its tools and action logic.
 
 ## Use

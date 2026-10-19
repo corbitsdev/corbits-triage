@@ -95,7 +95,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `triage-contracts` | Policy schema and parsers, the policy file, workspace policy resolution, repository settings, triage state, labels, trigger mail and shared types; see [its README](../packages/triage-contracts/README.md). |
 | `github-reads`, `bitbucket-datacenter-reads` | Host read helpers, both returning the GitHub shapes. |
 | `github-tool`, `bitbucket-datacenter-tool` | The sidecar tool bundles: reads, the mirror, and actions. |
-| `repo-read-tool` | `read_file`, `grep` and `list`, confined to the step's working tree (no `..`, absolute path or symlink out); the host bundles add `*_checkout` and `*_read_file`. |
+| `repo-read-tool` | `read_file`, `grep` and `list`, read-only and confined to a checkout folder under the sidecar data dir's `checkouts` (no `..`, absolute path or symlink out); the host tool packages export `checkout` and their read bundles add `*_read_file`. |
 | `pr-code-review`, `pr-code-review-anthropic` | The provider-neutral code review workflow and the Anthropic provider's package and eval; see [its README](../packages/pr-code-review/README.md). |
 | `policy-check-action` | The GitHub Action that checks `.corbits-triage.yml` as the hub reads it. |
 | `provisioner-docker`, `provisioner-template`, `provisioner-conformance` | The Docker provisioner, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
