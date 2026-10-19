@@ -218,7 +218,7 @@ A rule asks one question about a pull request and answers pass, fail or unconfir
   - **Never accept changes to** certain paths, such as vendored code.
   - **Fail when …**, a text rule of your own, such as "Fail when any commit message contains "Co-Authored-By:"". It names where to look (the title, the description, any commit message, or several of them), whether the rule fails when the text **contains** or **does not contain** its phrases, and the phrases. Case does not matter. Only the first 100 commits are read. The rule's evidence quotes the line that matched. Text rules count toward the eight rules of your own.
 - **Judgement**, questions the decision model answers from the diff and the documentation:
-  - **Check the change is focused on one thing.**
+  - **Check the change is focused on one thing.** On a stacked branch, one another pull request was merged into or one based on another open pull request's branch, this rule is skipped, and the comment says why, such as "stacked branch, includes #1521".
   - **Check docs are updated when behavior changes.**
   - **Is it true that …**, a yes-or-no question of your own, such as "Is it true that the title says what changed?" The rule fails when the answer is no.
 

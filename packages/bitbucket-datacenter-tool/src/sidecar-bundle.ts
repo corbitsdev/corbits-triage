@@ -14,6 +14,7 @@ import {
   listPrFilesPage,
   readFileAt,
   readRepoDocsPage,
+  readStack,
   repoPath,
 } from "@corbits/bitbucket-datacenter-reads";
 import { cachedLoads, checkTarget, linesOf, MAX_LINES, unpackArchive } from "@corbits/repo-read-tool";
@@ -32,6 +33,7 @@ function obj(properties: Record<string, unknown>, required = Object.keys(propert
 const READ_DEFINITIONS: ToolDefinition[] = [
   { name: "bitbucket_datacenter_list_open_prs", description: "List open pull requests for a repository.", inputSchema: obj({ repo }) },
   { name: "bitbucket_datacenter_get_pr", description: "Get one pull request.", inputSchema: obj({ repo, number: { type: "integer" } }) },
+  { name: "bitbucket_datacenter_get_stack", description: "Get the pull requests merged into a pull request's branch, and the open pull request whose branch it is based on.", inputSchema: obj({ repo, number: { type: "integer" } }) },
   { name: "bitbucket_datacenter_get_checks", description: "Get build statuses for a commit sha as check runs, without triage's own verdict status.", inputSchema: obj({ repo, sha: str }) },
   { name: "bitbucket_datacenter_get_reviews", description: "Get each reviewer's standing status on a pull request as a review, marking the token user's own needs-work as triageRequest.", inputSchema: obj({ repo, number: { type: "integer" } }) },
   { name: "bitbucket_datacenter_list_pr_commits", description: "List commits on a pull request.", inputSchema: obj({ repo, number: { type: "integer" } }) },
@@ -156,6 +158,8 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return { prs: await listOpenPrs(bb, a.repo) };
     case "bitbucket_datacenter_get_pr":
       return getPr(bb, a.repo, a.number);
+    case "bitbucket_datacenter_get_stack":
+      return readStack(bb, a.repo, a.number);
     case "bitbucket_datacenter_get_checks":
       return { checks: await getChecks(bb, a.sha) };
     case "bitbucket_datacenter_get_reviews":

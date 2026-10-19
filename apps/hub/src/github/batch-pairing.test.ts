@@ -76,6 +76,7 @@ async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack =
     await done(`comments:${n}`, { comments: [] });
     await done(`commits:${n}`, { commits: [] });
     await done(`files:${n}:0`, { files: [{ path: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }] });
+    if (called.has(`stack:${n}`)) await done(`stack:${n}`, { includes: [] });
   }
   for (const n of numbers) if (!failGetPr.has(n)) await done(`checks:${n}`, { checks });
   const ruled = await rules({ reply: replies[0] }, ctx, signal);

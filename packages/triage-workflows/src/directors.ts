@@ -10,7 +10,7 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, classificationSources, emptyPack, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, ruleLabel, triageEventsOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, catalogCheckEnabled, classificationSources, emptyPack, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, ruleLabel, triageEventsOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoInput, DoOutcome } from "@corbits/github-tool/do";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
@@ -213,6 +213,9 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   }
 
   function fetchTargets(repo: string, numbers: number[], { policy, pack, events, docs, firstFiles, wholeReads }: FetchContext, then: (items: RulesItem[]) => DirectorActions) {
+    // Focused is skipped on a stacked branch, so only a pack that asks it reads the stack.
+    const focused = catalogCheckEnabled(pack, "focused");
+
     function prCalls(n: number): ToolCall[] {
       return [
         call(tool("get_pr"), { repo, number: n }, `pr:${n}`),
@@ -220,6 +223,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         call(tool("list_issue_comments"), { repo, number: n }, `comments:${n}`),
         call(tool("list_pr_commits"), { repo, number: n }, `commits:${n}`),
         filesCall(n, firstFiles),
+        ...(focused ? [call(tool("get_stack"), { repo, number: n }, `stack:${n}`)] : []),
       ];
     }
 
@@ -287,6 +291,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
             reviews: data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [],
             comments: data<{ comments: IssueComment[] }>(r1.get(`comments:${n}`))?.comments ?? [],
             commits: data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits ?? [],
+            stack: data<NonNullable<PullData["stack"]>>(r1.get(`stack:${n}`)),
             files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
             authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
           }, { repo, policy, pack, events, docs });

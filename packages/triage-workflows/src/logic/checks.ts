@@ -19,6 +19,7 @@ import {
   type WorkflowState,
 } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
+import type { Stack } from "@corbits/github-reads";
 import { globMatch } from "./glob.js";
 
 export interface PrFileFacts {
@@ -71,6 +72,8 @@ export interface PrFacts {
   authorTeamsUnknown: string[];
   /** Empty for webhook actions no pack event names. */
   events: TriageEvent[];
+  /** Set only on a stacked branch: the pull requests merged into it, and the open one it is based on. */
+  stack?: Stack;
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */

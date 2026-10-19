@@ -368,7 +368,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const changed = facts.files.filter((file) => file.status !== "removed" && isDocPath(file.path));
     plan.docs = { changed: changed.map((file) => file.path), asked: {}, unread: [] };
   }
-  const focused: FocusedPlan | undefined = isFocused(sources) ? { purpose: facts.title, slices: {}, unread: [], parts: {} } : undefined;
+  // A stacked branch's diff holds the changes of the pull requests it includes, so focused is skipped rather than asked.
+  const focused: FocusedPlan | undefined = isFocused(sources) && !facts.stack ? { purpose: facts.title, slices: {}, unread: [], parts: {} } : undefined;
   const scoped = sources.custom.filter(isScoped);
   for (const row of scoped) plan[row.id] = { changed: [], asked: {}, unread: [] };
   const listed = pathList(facts, focused !== undefined);

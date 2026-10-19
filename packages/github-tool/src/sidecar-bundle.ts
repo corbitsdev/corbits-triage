@@ -20,6 +20,7 @@ import {
   listInstallationRepositories,
   readFileAt,
   readRepoDocsPage,
+  readStack,
   type AppLogin,
   type GithubFetch,
 } from "@corbits/github-reads";
@@ -66,6 +67,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_get_pr",
     description: "Get one pull request.",
+    inputSchema: obj({ repo, number: { type: "integer" } }),
+  },
+  {
+    name: "github_get_stack",
+    description: "Get the pull requests merged into a pull request's branch, and the open pull request whose branch it is based on.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
   },
   {
@@ -244,6 +250,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, t
       return listClosedPrsPage(gh, a.repo, a.page);
     case "github_get_pr":
       return getPr(gh, a.repo, a.number);
+    case "github_get_stack":
+      return readStack(gh, a.repo, a.number);
     case "github_get_checks":
       return { checks: await getChecks(gh, a.repo, a.sha) };
     case "github_get_reviews":

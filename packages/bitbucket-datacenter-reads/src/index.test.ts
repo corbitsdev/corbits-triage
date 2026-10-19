@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkFailed, checkPending, latestDecisive, reviewedOnHead } from "@corbits/github-reads";
-import { getChecks, getPr, getReviews, isTriageComment, listIssueComments, listPrTimeline, readRepoFile, type BitbucketFetch } from "./index.js";
+import { getChecks, getPr, getReviews, isTriageComment, listIssueComments, listPrTimeline, readRepoFile, readStack, type BitbucketFetch } from "./index.js";
 import activities from "./fixtures/activities.json";
 import buildStatus from "./fixtures/build-status.json";
 import pullRequest from "./fixtures/pull-request.json";
@@ -109,4 +109,25 @@ test("readRepoFile: the file at the default branch head, its sha the commit that
     url: "https://bitbucket.example/projects/TRI/repos/widgets/browse/.corbits-triage.yaml",
   });
   expect(await readRepoFile(instance(routes.slice(0, 1)), "TRI/widgets", ".corbits-triage.yaml")).toBeUndefined();
+});
+
+describe("readStack", () => {
+  const fix = { ...pullRequest.fromRef, id: "refs/heads/fix", displayId: "fix" };
+  const parent = { ...pullRequest.toRef, id: "refs/heads/parent", displayId: "parent" };
+  const stacked = { ...pullRequest, fromRef: fix, toRef: parent };
+
+  test("names the pull requests merged into the branch and the open one whose branch it is based on", async () => {
+    const merged = [{ ...pullRequest, id: 9, toRef: fix }, { ...pullRequest, id: 10, toRef: parent }];
+    const routes: Routes = [
+      [`${REPO}/pull-requests?state=MERGED&direction=INCOMING&at=refs%2Fheads%2Ffix&`, page(merged)],
+      [`${REPO}/pull-requests?state=OPEN&direction=OUTGOING&at=refs%2Fheads%2Fparent&`, page([{ ...pullRequest, id: 7, fromRef: parent }])],
+      [`${REPO}/pull-requests/1`, stacked],
+    ];
+    expect(await readStack(instance(routes), "TRI/widgets", 1)).toEqual({ includes: [9], onto: 7 });
+  });
+
+  test("a fork's branch is not stacked on this repository's", async () => {
+    const fork = { ...stacked, fromRef: { ...fix, repository: { id: 3 } } };
+    expect(await readStack(instance([[`${REPO}/pull-requests/1`, fork]]), "TRI/widgets", 1)).toEqual({ includes: [] });
+  });
 });

@@ -48,9 +48,10 @@ const RUNS: Record<Ci, unknown[]> = {
   success: [{ name: "build", status: "completed", conclusion: "success" }],
   failure: [{ name: "build", status: "completed", conclusion: "failure" }],
 };
-type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean };
+/** `stacked` is corbitsdev/corbits-code#1520's shape, with #9 to #13 merged into its branch and #14 closed unmerged; the branch is based on open #7's. */
+type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean };
 
-function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false }: GithubSeed = {}) {
+function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
@@ -59,11 +60,14 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
     const method = init?.method ?? "GET";
     requests.push({ method, path });
     if (missing && path.includes("/pulls/8")) return Response.json({ message: "Not Found" }, { status: 404 });
+    const base = stacked ? { ref: "parent", repo: { id: 1 } } : { ref: "main", repo: { id: 1 } };
+    if (stacked && path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix&per_page`)) return Response.json([9, 10, 11, 12, 13, 14].map((number) => ({ number, merged_at: number === 14 ? null : "2026-10-19T00:43:02Z", base: { ref: "fix" } })));
+    if (stacked && path.startsWith(`/repos/${REPO}/pulls?state=open&head=acme%3Aparent&`)) return Response.json([{ number: 7, head: { ref: "parent", repo: { id: 1 } } }]);
     if (path.startsWith(`/repos/${REPO}/compare/`)) return Response.json({ ahead_by: 2, commits: [{ sha: "merge1521" }, { sha: pr.head }] });
     if (path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix`)) return Response.json([{ number: 1521, merge_commit_sha: "merge1521", merged_at: "2026-10-19T00:43:02Z" }, { number: 1490, merge_commit_sha: "elsewhere", merged_at: "2026-10-01T00:00:00Z" }]);
     if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title: "Fix #3", user: { login: "octocat" }, draft: pr.draft, head: { sha: pr.head } }]);
     if (path === `/repos/${REPO}/pulls/8`) {
-      return Response.json({ number: 8, title: "Fix #3", state: pr.state, draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base: { ref: "main", repo: { id: 1 } }, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
+      return Response.json({ number: 8, title: "Fix #3", state: pr.state, draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
     }
     if (path.includes("/check-runs")) return Response.json({ check_runs: RUNS[pr.ci] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
@@ -288,6 +292,15 @@ describe("pr-triage body", () => {
       { kind: "score", score: expect.closeTo(20), passAt: 60, items: ["src/flag.ts"] },
       { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["src/flag.ts"] },
     ]);
+  });
+
+  test("a stacked branch skips focused, saying why, and the other rules run as usual", async () => {
+    const { judged, verdict } = await triage(recommendedPack(REPO), { stacked: true });
+    const skipped = "stacked branch, based on #7, includes #9, #10, #11 and 2 more";
+    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001"]]);
+    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "pass"], ["docs", "fail"]]);
+    expect((verdict as Verdict).checks.find((c) => c.check === "focused")).toMatchObject({ reason: `skipped: ${skipped}`, output: { kind: "not-applicable", reason: skipped } });
+    expect((verdict as Verdict).request.comment).toContain(`Skipped:\n- makes one focused change: ${skipped}`);
   });
 
   test("a file list past the tool-result cap still shows the judge its docs changes", async () => {
