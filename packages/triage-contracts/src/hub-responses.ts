@@ -182,8 +182,16 @@ export const DeployedVersions = type({
 });
 export type DeployedVersions = typeof DeployedVersions.infer;
 
-/** The provisioner the workspace's code review deploys to; null when none can run it. */
-export const CodeReviewPlace = type({ provisioner: "string | null" });
+/** A place code review can run, as a provisioner package describes it: `env` holds the `.env` lines that set it up, `guide` its setup guide. */
+export const PlaceGuide = type({ id: "string", label: "string", why: "string", env: "string[]", guide: "string" });
+export type PlaceGuide = typeof PlaceGuide.infer;
+
+/** `active`: code review runs here. `ready`: registered, but another is first. `failing`: set up, but the hub could not register it, for `reason`. */
+export const CodeReviewPlaceOption = PlaceGuide.and({ state: "'active' | 'ready' | 'not_set_up' | 'failing'", "reason?": "string" });
+export type CodeReviewPlaceOption = typeof CodeReviewPlaceOption.infer;
+
+/** The provisioner the workspace's code review deploys to, null when none can run it, and every place this hub knows. */
+export const CodeReviewPlace = type({ provisioner: "string | null", places: CodeReviewPlaceOption.array() });
 export type CodeReviewPlace = typeof CodeReviewPlace.infer;
 
 /** One thing the workspace recorded; `actor` is a person's email or principal id, `Triage` for the workflow, `hub` for the hub itself, or `unknown`. */

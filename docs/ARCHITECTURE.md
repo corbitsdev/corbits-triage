@@ -158,11 +158,14 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   lands on Docker, and without Docker stock Interchange refuses it with
   `provisioner_no_match`. `GET /api/integrations/code-review/{tenantId}/place`
   names the provisioner stock's plugin registry selects for it under the
-  workspace's sidecar placement policies, or null. While it is null the
+  workspace's sidecar placement policies, or null, and lists every place the
+  hub's provisioner packages describe (Docker's `DOCKER_PLACE` and
+  `DOCKER_REMOTE_PLACE`) with the state the hub found at boot, for Settings →
+  Code review. The hub's own machine is never one. While it is null the
   switch and "Review again" refuse (`no_isolated_place`), the feed sends
   nothing, the host's code review deployments are released
   (`no_isolated_place`), and the portal shows a setup card linking
-  [provisioners/](provisioners/README.md) in place of the switch.
+  Settings → Code review in place of the switch.
 - **Portal** (`apps/web`): owns setup. After sign-in it converges the tenant,
   GitHub credentials, inference offering, workflow sources and deployments
   over stock hub routes. The hub seeds nothing for it. It is a wrapper over

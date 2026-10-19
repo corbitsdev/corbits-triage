@@ -2,7 +2,7 @@ import { type } from "arktype";
 import { resolveTenantSidecarCapabilityPolicies, type DB } from "@intx/db";
 import type { SidecarPluginRegistry } from "@intx/hub-sessions";
 import { CODE_REVIEW_PLACEMENT } from "@corbits/pr-code-review/pr-code-review";
-import { REPO_SOURCES } from "@corbits/triage-contracts";
+import { REPO_SOURCES, type CodeReviewPlace, type CodeReviewPlaceOption, type PlaceGuide } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { connectedSources, hasCodeReviewKey } from "./github/source-workflow.js";
 import { tenantConfigOf } from "./github/bridge.js";
@@ -33,9 +33,25 @@ export function createCodeReviewPlacement(db: DB["db"], plugins: Pick<SidecarPlu
   };
 }
 
-export function createCodeReviewPlace(place: PlaceCodeReview) {
-  return async function codeReviewPlace({ tenantId }: Member): Promise<Response> {
-    return Response.json({ provisioner: await place(tenantId) });
+const GUIDES = "https://github.com/corbitsdev/corbits-triage/blob/main/docs/provisioners";
+
+/** A place and what boot found there: undefined when it is not set up, why it could not be registered, or what was. */
+export type PlaceProbe = { readonly guide: PlaceGuide; readonly found: { readonly provisioner: { readonly id: string } } | string | undefined };
+
+function placeOption({ guide, found }: PlaceProbe, active: string | null, showReason: boolean): CodeReviewPlaceOption {
+  const option = { ...guide, guide: `${GUIDES}/${guide.guide}` };
+  if (found === undefined) return { ...option, state: "not_set_up" };
+  if (typeof found === "string") return { ...option, state: "failing", ...(showReason && { reason: found }) };
+  return { ...option, state: found.provisioner.id === active ? "active" : "ready" };
+}
+
+type CodeReviewPlaceDeps = Pick<CodeReviewDeps, "authorize" | "place"> & { probes: readonly PlaceProbe[] };
+
+/** A failing place's reason names the server's own setup, so only those who may manage the workspace see it. */
+export function createCodeReviewPlace(deps: CodeReviewPlaceDeps) {
+  return async function codeReviewPlace({ tenantId, principalId }: Member): Promise<Response> {
+    const [provisioner, manages] = await Promise.all([deps.place(tenantId), deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage")]);
+    return Response.json({ provisioner, places: deps.probes.map((probe) => placeOption(probe, provisioner, manages)) } satisfies CodeReviewPlace);
   };
 }
 

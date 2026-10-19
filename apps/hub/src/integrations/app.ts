@@ -677,9 +677,9 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${CODE_REVIEW_PATH}/:tenantId/place`,
     describeRoute({
       summary: "Where the workspace's code review runs",
-      description: "The id of the registered sidecar provisioner Interchange selects for code review, which requires `isolation:workload`, under the workspace's sidecar placement policies. Null when none matches: Interchange would refuse it with `provisioner_no_match`, so code review cannot be turned on and is not run.",
+      description: "`provisioner`: the id of the registered sidecar provisioner Interchange selects for code review, which requires `isolation:workload`, under the workspace's sidecar placement policies. Null when none matches: Interchange would refuse it with `provisioner_no_match`, so code review cannot be turned on and is not run. `places`: every isolated place this hub's provisioner packages offer, never the hub's own machine, each with its label, why to choose it, the `.env` lines that set it up, its setup guide and its state: `active` (code review runs there), `ready` (registered, but another comes first), `not_set_up`, or `failing`, with the `reason` the hub could not register it at boot for callers who may `manage` the workspace.",
       tags: TAGS,
-      responses: { 200: json("The provisioner, or null", CodeReviewPlace), 401: failures[401], 403: failures[403] },
+      responses: { 200: json("The provisioner and every place", CodeReviewPlace), 401: failures[401], 403: failures[403] },
     }),
     member,
     function codeReviewPlace(c) {

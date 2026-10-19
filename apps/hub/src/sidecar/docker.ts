@@ -4,6 +4,8 @@ import { type } from "arktype";
 import {
   connectDocker,
   createDockerSidecarProvisioner,
+  DOCKER_PLACE,
+  DOCKER_REMOTE_PLACE,
   findDockerHost,
   isLocalDockerHost,
   isThisMachine,
@@ -17,6 +19,7 @@ import { createDB, createSidecarAllocationStore, createWorkflowProbeStore, type 
 import type { SidecarProvisioner } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
 import { sql } from "drizzle-orm";
+import type { PlaceProbe } from "../code-review.js";
 import type { DatabaseConfig, DockerSettings } from "../env.js";
 
 /** Built from the root Dockerfile's `sidecar` stage, which holds IMAGE_PATHS of the repository at IMAGE_ROOT. */
@@ -28,7 +31,7 @@ const PING_TIMEOUT_MS = 2_000;
 const DatabaseIdentity = type({ cluster: "string", database: "string" });
 const DaemonInfo = type({ ID: "string" });
 
-export type DockerSidecarProvisioner = DockerSidecars & { readonly provisioner: SidecarProvisioner };
+export type DockerSidecarProvisioner = DockerSidecars & { readonly remote: boolean; readonly provisioner: SidecarProvisioner };
 
 type ConnectOpts = {
   readonly docker: DockerSettings;
@@ -75,60 +78,67 @@ async function daemonId(engine: DockerEngine): Promise<string> {
 function remoteHubProblem(host: string, hubUrl: string): string | undefined {
   const url = new URL(hubUrl);
   if (url.protocol !== "wss:") {
-    return `Docker at ${host} is another machine, and its sidecars would dial the hub at ${hubUrl} without TLS; set BETTER_AUTH_BASE_URL to the hub's https:// address`;
+    return `Docker at ${host} is on another machine, which reaches Triage only over TLS; set BETTER_AUTH_BASE_URL to Triage's https:// address`;
   }
   if (isThisMachine(url.hostname)) {
-    return `Docker at ${host} is another machine, and its sidecars would dial the hub at its own address ${hubUrl}; set BETTER_AUTH_BASE_URL to the hub's public address`;
+    return `Docker at ${host} is on another machine, which cannot reach Triage at its own address; set BETTER_AUTH_BASE_URL to Triage's public address`;
   }
   return undefined;
 }
 
+/** Why Docker is not registered, and whether the daemon it found is on another machine; `remote` is absent when none was found. */
+export type DockerOff = { readonly remote?: boolean; readonly reason: string };
+
 /** The Docker provisioner, or why it is not registered. */
-export async function connectDockerSidecars({ docker, database, root, adapterManifest }: ConnectOpts): Promise<DockerSidecarProvisioner | string> {
-  const manifest = inImage(adapterManifest, root);
-  if (manifest === undefined) return "an adapter module is not in the sidecar image, as with GITHUB_API_ORIGIN set";
+export async function connectDockerSidecars({ docker, database, root, adapterManifest }: ConnectOpts): Promise<DockerSidecarProvisioner | DockerOff> {
   let host: string | undefined;
   try {
     host = await findDockerHost(docker);
   } catch (error) {
-    return `the docker CLI's context cannot be read (${String(error)})`;
+    return { remote: false, reason: `The Docker CLI's settings on this server cannot be read (${String(error)})` };
   }
-  if (host === undefined) return "no Docker daemon found";
+  if (host === undefined) return { reason: "no Docker daemon found" };
   let remote: boolean;
   try {
     remote = !isLocalDockerHost(host);
   } catch {
-    return `Docker host ${host} is not a URL`;
+    return { remote: true, reason: `The Docker address ${host} is not a URL` };
   }
+  function off(reason: string): DockerOff {
+    return { remote, reason };
+  }
+  const manifest = inImage(adapterManifest, root);
+  if (manifest === undefined) return off("Code review cannot run in Docker while GITHUB_API_ORIGIN is set; unset it");
   const hubProblem = remote ? remoteHubProblem(host, docker.publicHubWebSocketUrl) : undefined;
-  if (hubProblem !== undefined) return hubProblem;
+  if (hubProblem !== undefined) return off(hubProblem);
   let tls: DockerTls | undefined;
   try {
     tls = docker.certPath === undefined ? undefined : await readDockerTls(docker.certPath);
   } catch (error) {
-    return `DOCKER_TLS_VERIFY is set but the TLS files cannot be read (${String(error)})`;
+    return off(`DOCKER_TLS_VERIFY is set but the certificates in DOCKER_CERT_PATH cannot be read (${String(error)})`);
   }
   let engine: DockerEngine;
   try {
     engine = connectDocker(host, tls);
   } catch (error) {
-    return `Docker at ${host} is refused (${String(error)})`;
+    return off(`Triage cannot connect to Docker at ${host} (${String(error)})`);
   }
   let id: string;
   try {
     id = await daemonId(engine);
   } catch (error) {
-    return `Docker at ${host} has no ${SIDECAR_IMAGE} image or does not answer (${String(error)}); build it with docker build --target sidecar -t ${SIDECAR_IMAGE} .`;
+    return off(`Docker at ${host} has no ${SIDECAR_IMAGE} image or does not answer (${String(error)}); build it with docker build --target sidecar -t ${SIDECAR_IMAGE} .`);
   }
   let hubId: string;
   try {
     hubId = await hubIdOf(database);
   } catch (error) {
-    return `the database does not tell this hub apart from others (${String(error)})`;
+    return off(`Triage cannot read its database's identity, which keeps its containers apart from other servers' (${String(error)})`);
   }
   return {
     engine,
     hubId,
+    remote,
     provisioner: createDockerSidecarProvisioner({
       engine,
       hubId,
@@ -138,6 +148,14 @@ export async function connectDockerSidecars({ docker, database, root, adapterMan
       ...(remote && { hubWebSocketUrl: docker.publicHubWebSocketUrl }),
     }),
   };
+}
+
+/** Docker on this machine and on another one; the daemon the hub found decides which of the two it is. */
+export function dockerPlaces(docker: DockerSidecarProvisioner | DockerOff): PlaceProbe[] {
+  return [DOCKER_PLACE, DOCKER_REMOTE_PLACE].map(function probe(guide): PlaceProbe {
+    if (docker.remote !== (guide === DOCKER_REMOTE_PLACE)) return { guide, found: undefined };
+    return { guide, found: "provisioner" in docker ? docker : docker.reason };
+  });
 }
 
 /** Removes Docker sidecars no active allocation or probe holds. */

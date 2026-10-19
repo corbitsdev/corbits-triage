@@ -5,7 +5,9 @@ import { eq, sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { createSidecarPluginRegistry, type SidecarProvisioner } from "@intx/hub-sessions";
 import type { SidecarCapabilityDeclaration } from "@intx/types";
-import { createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
+import { DOCKER_PLACE, DOCKER_REMOTE_PLACE } from "@corbits/provisioner-docker";
+import type { CodeReviewPlace } from "@corbits/triage-contracts";
+import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
 import type { Offered } from "./code-review-feed.js";
 import { codeReviewSources } from "./github/source-workflow.js";
 import { repoRecords, triageNs } from "./github/tenant-config.js";
@@ -46,6 +48,25 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
     expect(await nowhere(TENANT)).toBeNull();
     await db.insert(schema.tenant).values({ id: "tnt_blocked", name: "Blocked", slug: "blocked", domain: "blocked.test", config: { sidecarPlacement: { capabilities: [{ capability: "isolation:workload", effect: "block" }] } } });
     expect(await place("tnt_blocked")).toBeNull();
+    const probes = [
+      { guide: DOCKER_PLACE, found: { provisioner: { id: "docker" } } },
+      { guide: DOCKER_REMOTE_PLACE, found: "Docker at tcp://vps:2376 does not answer" },
+      { guide: { ...DOCKER_PLACE, id: "later" }, found: { provisioner: { id: "later" } } },
+      { guide: { ...DOCKER_PLACE, id: "unset" }, found: undefined },
+    ];
+    async function statesOf(tenantId: string, manages: boolean) {
+      const codeReviewPlace = createCodeReviewPlace({ authorize: async () => manages, place, probes });
+      const body = await (await codeReviewPlace({ tenantId, principalId: "prn_member" })).json() as CodeReviewPlace;
+      return body.places.map(({ id, state, reason }) => ({ id, state, reason }));
+    }
+    expect(await statesOf(TENANT, true)).toEqual([
+      { id: "docker", state: "active", reason: undefined },
+      { id: "docker-remote", state: "failing", reason: "Docker at tcp://vps:2376 does not answer" },
+      { id: "later", state: "ready", reason: undefined },
+      { id: "unset", state: "not_set_up", reason: undefined },
+    ]);
+    expect((await statesOf(TENANT, false))[1]).toEqual({ id: "docker-remote", state: "failing", reason: undefined });
+    expect((await statesOf("tnt_blocked", true))[0]?.state).toBe("ready");
     const changed: string[] = [];
     const setCodeReview = createCodeReviewSwitch({
       db,

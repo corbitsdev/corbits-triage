@@ -2,10 +2,8 @@ import { Button, Switch } from "@corbits/react-ui";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { errorText } from "@corbits/common";
-import { DOCKER_GUIDE, PLACES_GUIDE } from "../../lib/code-review-place.ts";
 import { codeReviewProvider, type RepoRecord } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
-import { ExternalIcon } from "../inbox-icons.tsx";
 
 const SENTENCE = "Review the code in every pull request for bugs";
 
@@ -19,8 +17,7 @@ function NeedsPlace({ switchedOn, busy, turnOff }: NeedsPlaceProps) {
         <span>{switchedOn ? "It is switched on here but not running. " : ""}Each review runs apart from everything else, and this server has no such place set up yet.</span>
       </header>
       <div className="acts">
-        <Button asChild size="sm"><a href={DOCKER_GUIDE} target="_blank" rel="noreferrer">Set up Docker <ExternalIcon /></a></Button>
-        <Button asChild variant="ghost" size="sm"><a href={PLACES_GUIDE} target="_blank" rel="noreferrer">All options <ExternalIcon /></a></Button>
+        <Button asChild size="sm"><Link to="/settings/code-review">Set one up</Link></Button>
         {switchedOn ? <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={turnOff}>Turn off</Button> : null}
       </div>
     </section>
