@@ -19,6 +19,12 @@
 
 Containers dial the hub at `HUB_SIDECAR_WEBSOCKET_URL`, with a loopback host replaced by `host.docker.internal`. Containers on [another machine](docker-remote.md) dial the hub's public `wss://` address instead. A hub that itself runs in a container needs the daemon's socket mounted and its port published to the Docker host.
 
+Under Docker Compose, `compose.docker.yml` builds the `corbits-triage-sidecar` image before the hub starts and mounts the host's Docker socket into the hub at `/var/run/docker.sock`, where the hub finds it; `compose.yml` already publishes the hub's port. The host socket is `/var/run/docker.sock` unless `DOCKER_SOCKET` in `.env` names another, such as rootless Docker's `$XDG_RUNTIME_DIR/docker.sock` or Podman's. The hub then controls that Docker, which on Linux is root on the host: whoever takes over the hub takes over the machine.
+
+```sh
+docker compose -f compose.yml -f compose.docker.yml up --build -d
+```
+
 ## Memory
 
 Each container may use 2 GiB of memory and 1024 processes. The provisioner declines a new sidecar while the daemon's memory (on Docker Desktop, the memory given to its VM), less 2 GiB for each of this hub's containers and each one it is starting, is below 2 GiB. Docker therefore needs more than 2 GiB of memory for one sidecar: a VM given exactly 2 GiB reports about 1986 MiB and fits none. The hub retries a declined sidecar with backoff, up to Interchange's 10 ensure attempts; after the tenth the deployment fails. Give Docker Desktop more memory to run more at once.

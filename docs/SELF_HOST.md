@@ -262,10 +262,20 @@ ready one in the order shown and waits there when it is full.
 
 For Docker, build the sidecar image before starting the hub: the hub looks for
 it only at start ([Docker](provisioners/docker.md#set-up)). The stock
-`compose.yml` mounts no Docker socket. For code review on Docker under Compose,
-either mount the socket and publish the hub's port
-([Docker](provisioners/docker.md#set-up)), which gives the hub control of that
-Docker, or set `DOCKER_HOST` in `.env` to
+`compose.yml` mounts no Docker socket. For code review on the same machine's
+Docker under Compose, start it with `compose.docker.yml` as well:
+
+```sh
+docker compose -f compose.yml -f compose.docker.yml up --build -d
+```
+
+That builds the sidecar image and mounts the Docker socket into the hub. The
+hub then controls that machine's Docker, which on Linux is root on the
+machine: whoever takes over the hub takes over the machine. For a socket
+elsewhere, such as rootless Docker's or Podman's, set `DOCKER_SOCKET` in
+`.env` to its path. Pass the same `-f` flags to
+later `docker compose` commands. Settings → Code review → **Where it runs**
+then shows **Docker on this machine** ready. Or set `DOCKER_HOST` in `.env` to
 [another machine](provisioners/docker-remote.md).
 
 ## Backups

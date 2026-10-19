@@ -24,8 +24,12 @@ triage on and its policy has a rule.
    Compose sets every other variable, so the rest of `.env` can stay as it is.
    Once the hub logs `Started server`, the portal is at http://localhost:3000.
    A `docker_sidecars_off` line is expected: triage needs no Docker, only
-   [code review](docs/SELF_HOST.md#where-sidecars-run) does. GitHub cannot deliver
-   webhooks to localhost, so pull requests are picked up every five minutes
+   [code review](docs/SELF_HOST.md#where-sidecars-run) does. To run code
+   review on this machine's Docker, start it with
+   `docker compose -f compose.yml -f compose.docker.yml up --build -d`. That
+   gives the hub control of that Docker, which on Linux is root on the
+   machine: whoever takes over the hub takes over the machine. GitHub cannot deliver webhooks to
+   localhost, so pull requests are picked up every five minutes
    and a policy file change is read after a restart. To work on the code
    instead, see [docs/DEV.md](docs/DEV.md).
 2. **Connect GitHub.** Sign up, press **Create GitHub App**, choose
