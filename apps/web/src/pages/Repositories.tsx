@@ -17,7 +17,7 @@ import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
-import { repoRows, reposNeedingSetup, type RepoRow } from "../lib/repo-rows.ts";
+import { repoRows, type RepoRow } from "../lib/repo-rows.ts";
 import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
@@ -84,14 +84,13 @@ export default function Repositories() {
   const { data: openPulls, error: pullsError } = useOpenPulls();
   const names = useMemo(() => repos.map((repo) => repo.name), [repos]);
   const packs = useCheckPacks(names);
-  const needsSetup = useMemo(() => reposNeedingSetup(packs), [packs]);
   const upgrades = usePolicyUpgrades();
   const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
   const active = useMemo(() => new Set(verdicts.data?.active), [verdicts.data]);
   const catchingUp = useMemo(() => catchingUpRepos(logs, runs.rows, triaged), [logs, runs.rows, triaged]);
   const rows = useMemo(
-    () => repoRows(repos, needsSetup, items, active, catchingUp, openPulls, pullsError),
-    [repos, needsSetup, items, active, catchingUp, openPulls, pullsError],
+    () => repoRows(repos, packs, items, active, catchingUp, openPulls, pullsError),
+    [repos, packs, items, active, catchingUp, openPulls, pullsError],
   );
   const accounts = [...new Set(repos.filter((repo) => repo.source === "github").map((repo) => repo.name.split("/")[0]!))];
   const fromBitbucket = repos.some((repo) => repo.source === "bitbucket-datacenter");

@@ -84,7 +84,3 @@ export async function writeCheckPack(transport: Transport, tenantId: string, rep
     : await createCheckPack(transport, tenantId, title, content);
   return { kind: "pack", ...stored, pack: parsed };
 }
-
-export function repoNeedsCheckSetup(repo: { checkPack?: { name?: string } } | null | undefined): boolean {
-  return !(repo?.checkPack?.name?.trim());
-}

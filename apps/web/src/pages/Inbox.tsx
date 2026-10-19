@@ -78,7 +78,7 @@ import { leavesOpen, useOpenItems, useOpenPulls, useOpenPullsUnanswered, useQueu
 import { usePortal } from "../lib/portal.tsx";
 import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
-import { reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
+import { packsPending, reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
@@ -598,10 +598,10 @@ export default function Inbox({ view }: { view: ListView }) {
   const searchRef = useRef<HTMLInputElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
-  const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? []), [snapshot]);
   const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
   const enabledNames = useMemo(() => [...enabled], [enabled]);
   const packs = useCheckPacks(enabledNames);
+  const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? [], packs), [snapshot, packs]);
   const needsSetup = useMemo(() => reposNeedingSetup(packs), [packs]);
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
   const waiting = view === "needs-you" && searchParams.has(WAITING_PARAM);
@@ -741,7 +741,7 @@ export default function Inbox({ view }: { view: ListView }) {
     <div className={`inbox${selected ? " has-selection" : ""}`} ref={paneRef} tabIndex={-1}>
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
-          <div className="lh-top"><h1>{listTitle}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && !waiting && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}<PulseLine /></div>
+          <div className="lh-top"><h1>{listTitle}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && !waiting && !packsPending(packs) && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}<PulseLine /></div>
           <div className="tools">
             <label className="search">
               <SearchIcon />

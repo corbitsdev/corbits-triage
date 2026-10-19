@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { listCheckPacks, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
+import { listCheckPacks, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
 import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
 import { loadRepoCheckPack } from "./hub-api.ts";
 
@@ -49,10 +49,5 @@ describe("check-pack client", () => {
     await expect(unseen).rejects.toBeInstanceOf(StaleCheckPackError);
     expect(hub.artifacts).toHaveLength(1);
     expect(JSON.parse(hub.artifacts[0]!.content)).toEqual(widgets);
-  });
-
-  test("repoNeedsCheckSetup is true until a pack pointer exists", () => {
-    expect(repoNeedsCheckSetup({ name: "acme/widgets" })).toBe(true);
-    expect(repoNeedsCheckSetup({ checkPack: { name: "check-pack/acme/widgets" } })).toBe(false);
   });
 });
