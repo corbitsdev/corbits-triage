@@ -61,7 +61,7 @@ function pullJson(pull: (typeof pulls)[number]) {
 test("the Bitbucket pull request is made once from a new branch, then brought up to date in place", async () => {
   const server = Bun.serve({ port: 0, fetch: bitbucket });
   try {
-    const bb = bitbucketFetch(fetch, `http://127.0.0.1:${server.port}`, "token");
+    const bb = bitbucketFetch(fetch, { baseUrl: `http://127.0.0.1:${server.port}`, address: "127.0.0.1" }, "token");
     expect(await openPolicyPull(bb, REPO)).toBeUndefined();
     const change = { path: PATH, text: "rules: []\n", title: "chore: keep the rules in the file", body: "first" };
     const opened = await proposePolicy(bb, REPO, "main", change);

@@ -52,7 +52,7 @@ import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
-import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
+import { checkedBitbucketSpawner, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
@@ -652,7 +652,7 @@ async function failCoordinatedJob(job: TriageJob, error: string): Promise<void> 
 }
 await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleService, logJson);
 coordinator = createCoordinator({
-  spawner: createWorkerSpawner({
+  spawner: checkedBitbucketSpawner(createWorkerSpawner({
     db: composition.db,
     redeploy: github.rotation.redeploy,
     deliver: deliverToDeployment,
@@ -660,7 +660,7 @@ coordinator = createCoordinator({
     sleep: Bun.sleep,
     fireTimeoutMs: WORKER_FIRE_TIMEOUT_MS,
     pollMs: WORKER_POLL_MS,
-  }),
+  }), tenantBitbucket),
   retry: { minMs: TRIAGE_RETRY_MS, maxMs: TRIAGE_RETRY_MAX_MS },
   failed: failCoordinatedJob,
   setTimer,

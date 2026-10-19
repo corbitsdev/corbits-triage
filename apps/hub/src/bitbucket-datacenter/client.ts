@@ -1,6 +1,6 @@
 import { lookup as dnsLookup } from "node:dns/promises";
-import { BlockList, isIP } from "node:net";
 import { type } from "arktype";
+import ipaddr from "ipaddr.js";
 import { repoPath as repoPathOf, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 
 export class BitbucketFailed extends Error {
@@ -28,99 +28,72 @@ export const InstanceRepo = type({ slug: "string", project: { key: "string" } })
 const DefaultBranch = type({ displayId: "string" });
 const Webhook = type({ id: "number" });
 
-export function bitbucketFetch(fetchImpl: typeof fetch, baseUrl: string, token: string): BitbucketFetch {
+/** Every request connects to the checked address, so the host is not resolved again between the check and the request. */
+export function bitbucketFetch(fetchImpl: typeof fetch, instance: Instance, token: string): BitbucketFetch {
+  const named = new URL(instance.baseUrl);
+  const pinned = new URL(instance.baseUrl);
+  pinned.hostname = instance.address.includes(":") ? `[${instance.address}]` : instance.address;
+  const pinnedBase = `${pinned.origin}${pinned.pathname.replace(/\/+$/, "")}`;
+  // Certificates are checked against the name, not the address.
+  const tls = named.protocol === "https:" && addressOf(named.hostname) === undefined ? { tls: { serverName: named.hostname } } : {};
   return function withToken(path, init) {
     const headers = new Headers(init?.headers);
+    headers.set("host", named.host);
     headers.set("authorization", `Bearer ${token}`);
     headers.set("accept", "application/json");
     // A form sets its own content type, with the boundary its parts are split on.
     if (init?.body !== undefined && !(init.body instanceof FormData)) headers.set("content-type", "application/json");
-    return fetchImpl(`${baseUrl}${path}`, { ...init, headers, redirect: "manual" });
+    return fetchImpl(`${pinnedBase}${path}`, { ...init, headers, redirect: "manual", ...tls });
   };
 }
 
-// The token must not be sent to loopback, private, link-local, unspecified, or cloud-metadata hosts. An operator
-// allowlist may name a host whose addresses are only private or loopback; it cannot unlock the rest.
+// The token reaches public unicast addresses only. An operator allowlist may name a host whose addresses are private or
+// loopback; it cannot unlock the rest.
 const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata"]);
+// EC2 IPv6 instance metadata sits inside the otherwise allowlistable fc00::/7.
+const EC2_METADATA = ipaddr.parse("fd00:ec2::254").toString();
+// ipaddr.js names site-local fec0::/10 and IPv4-compatible ::a.b.c.d "unicast"; public IPv6 is global unicast only.
+const GLOBAL_UNICAST = ipaddr.parseCIDR("2000::/3");
+const ALLOWLISTABLE = new Set(["private", "uniqueLocal", "loopback"]);
 
-const LOOPBACK = new BlockList();
-LOOPBACK.addSubnet("127.0.0.0", 8, "ipv4");
-LOOPBACK.addAddress("::1", "ipv6");
+type AddressKind = "public" | "allowlistable" | "refused";
 
-const PRIVATE = new BlockList();
-PRIVATE.addSubnet("10.0.0.0", 8, "ipv4");
-PRIVATE.addSubnet("172.16.0.0", 12, "ipv4");
-PRIVATE.addSubnet("192.168.0.0", 16, "ipv4");
-PRIVATE.addSubnet("fc00::", 7, "ipv6");
-
-const LINK_LOCAL = new BlockList();
-LINK_LOCAL.addSubnet("169.254.0.0", 16, "ipv4");
-LINK_LOCAL.addSubnet("fe80::", 10, "ipv6");
-
-// EC2 IPv6 instance metadata. It sits inside fc00::/7, which is otherwise allowlistable.
-const METADATA_ADDRESS = new BlockList();
-METADATA_ADDRESS.addAddress("fd00:ec2::254", "ipv6");
-
-const UNSPECIFIED = new BlockList();
-UNSPECIFIED.addAddress("0.0.0.0", "ipv4");
-UNSPECIFIED.addAddress("::", "ipv6");
-
-type AddressKind = "public" | "loopback" | "private" | "link-local" | "unspecified" | "metadata";
-
-/** An IPv6-mapped IPv4 address (`::ffff:169.254.169.254` or `::ffff:a9fe:a9fe`) in dotted form; anything else as given. */
-function unmapped(host: string): string {
-  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
-  if (dotted) return dotted[1]!;
-  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  if (!hex) return host;
-  const [high, low] = [parseInt(hex[1]!, 16), parseInt(hex[2]!, 16)];
-  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+/** The literal address a host names, with IPv4-mapped IPv6 unwrapped; undefined for a name. */
+function addressOf(host: string): ipaddr.IPv4 | ipaddr.IPv6 | undefined {
+  const bare = host.replace(/^\[|\]$/g, "");
+  return ipaddr.isValid(bare) ? ipaddr.process(bare) : undefined;
 }
 
-function bareHost(hostname: string): string {
-  return unmapped(hostname.replace(/^\[|\]$/g, "").toLowerCase());
+function kindOf(address: ipaddr.IPv4 | ipaddr.IPv6): AddressKind {
+  const range = address.range();
+  if (range === "unicast") {
+    if (address instanceof ipaddr.IPv6 && !address.match(GLOBAL_UNICAST)) return "refused";
+    return "public";
+  }
+  if (address.toString() === EC2_METADATA) return "refused";
+  return ALLOWLISTABLE.has(range) ? "allowlistable" : "refused";
 }
 
-function addressKind(address: string): AddressKind | undefined {
-  // dns.lookup can return a scoped link-local (`fe80::1%1`). isIP accepts the zone id; BlockList does not.
-  const host = bareHost(address).split("%", 1)[0]!;
-  const family = isIP(host);
-  if (family === 0) return undefined;
-  const ipType = family === 4 ? "ipv4" : "ipv6";
-  if (UNSPECIFIED.check(host, ipType)) return "unspecified";
-  if (LINK_LOCAL.check(host, ipType)) return "link-local";
-  if (LOOPBACK.check(host, ipType)) return "loopback";
-  if (METADATA_ADDRESS.check(host, ipType)) return "metadata";
-  if (PRIVATE.check(host, ipType)) return "private";
-  return "public";
+function hostKey(host: string): string {
+  const address = addressOf(host);
+  return address === undefined ? host.toLowerCase().replace(/\.+$/, "") : address.toString();
 }
 
-function isBlockedHost(hostname: string): boolean {
-  const host = bareHost(hostname);
-  // A trailing dot is the same name (`metadata.google.internal.`).
-  if (METADATA_HOSTS.has(host.replace(/\.+$/, ""))) return true;
-  const kind = addressKind(host);
-  return kind !== undefined && kind !== "public";
+function allowlisted(host: string, allowlist: readonly string[]): boolean {
+  const key = hostKey(host);
+  return allowlist.some((entry) => hostKey(entry) === key);
 }
 
-function allowlisted(hostname: string, allowlist: readonly string[]): boolean {
-  const host = bareHost(hostname);
-  return allowlist.some((entry) => bareHost(entry) === host);
-}
-
-/** A listed literal may be private or loopback. Link-local, unspecified, metadata names, and fd00:ec2::254 stay refused. */
-function allowlistedLiteral(hostname: string, allowlist: readonly string[]): boolean {
-  if (!allowlisted(hostname, allowlist)) return false;
-  const kind = addressKind(bareHost(hostname));
-  return kind === "private" || kind === "loopback";
+function permitted(address: ipaddr.IPv4 | ipaddr.IPv6, listed: boolean): boolean {
+  const kind = kindOf(address);
+  return kind === "public" || (listed && kind === "allowlistable");
 }
 
 /**
  * An http(s) URL without credentials, query or fragment, kept with its context path
- * (an instance can live under one) and without a trailing slash.
- * A literal in a refused range is dropped unless `allowlist` names that literal and it is only private or loopback.
+ * (an instance can live under one) and without a trailing slash. The host is not checked.
  */
-export function instanceBaseUrl(value: string, allowlist: readonly string[] = []): string | undefined {
+export function instanceUrl(value: string): string | undefined {
   let url: URL;
   try {
     url = new URL(value.trim());
@@ -128,8 +101,18 @@ export function instanceBaseUrl(value: string, allowlist: readonly string[] = []
     return undefined;
   }
   if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password || url.search || url.hash) return undefined;
-  if (isBlockedHost(url.hostname) && !allowlistedLiteral(url.hostname, allowlist)) return undefined;
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+/** An instance URL whose host is not a metadata name and, when a literal address, one the token may reach. */
+function instanceBaseUrl(value: string, allowlist: readonly string[] = []): string | undefined {
+  const baseUrl = instanceUrl(value);
+  if (baseUrl === undefined) return undefined;
+  const { hostname } = new URL(baseUrl);
+  if (METADATA_HOSTS.has(hostKey(hostname))) return undefined;
+  const address = addressOf(hostname);
+  if (address !== undefined && !permitted(address, allowlisted(hostname, allowlist))) return undefined;
+  return baseUrl;
 }
 
 export type AddressLookup = (hostname: string) => Promise<readonly { address: string; family: number }[]>;
@@ -138,26 +121,29 @@ export function lookupAddresses(hostname: string): Promise<readonly { address: s
   return dnsLookup(hostname, { all: true, verbatim: true });
 }
 
-/**
- * The normalized base URL, or undefined when it is not acceptable or any resolved address is blocked.
- * A listed hostname is still accepted when every blocked address is private or loopback. The result keeps the original host.
- */
-export async function resolveInstanceBaseUrl(value: string, lookup: AddressLookup, allowlist: readonly string[] = []): Promise<string | undefined> {
-  const accepted = instanceBaseUrl(value, allowlist);
-  if (accepted === undefined) return undefined;
-  const hostname = new URL(accepted).hostname;
-  if (isIP(bareHost(hostname)) !== 0) return accepted;
-  let addresses: readonly { address: string; family: number }[];
+/** A checked instance: `address` is what its host resolved to, and every request goes there. */
+export type Instance = { baseUrl: string; address: string };
+
+/** Resolved once; undefined when the URL is refused, the lookup fails, or any address is one the token may not reach. */
+export async function resolveInstance(value: string, lookup: AddressLookup, allowlist: readonly string[] = []): Promise<Instance | undefined> {
+  const baseUrl = instanceBaseUrl(value, allowlist);
+  if (baseUrl === undefined) return undefined;
+  const { hostname } = new URL(baseUrl);
+  const literal = addressOf(hostname);
+  if (literal !== undefined) return { baseUrl, address: literal.toString() };
+  let answers: readonly { address: string }[];
   try {
-    addresses = await lookup(hostname);
+    answers = await lookup(hostname);
   } catch {
     return undefined;
   }
-  if (addresses.length === 0) return undefined;
-  const blocked = addresses.map((entry) => addressKind(entry.address)).filter((kind) => kind !== "public");
-  if (blocked.length === 0) return accepted;
-  if (allowlisted(hostname, allowlist) && blocked.every((kind) => kind === "private" || kind === "loopback")) return accepted;
-  return undefined;
+  const listed = allowlisted(hostname, allowlist);
+  const addresses = answers.map((answer) => addressOf(answer.address));
+  if (addresses.length === 0 || !addresses.every((address) => address !== undefined && permitted(address, listed))) return undefined;
+  // Only the pinned address is tried, with no fallback to another answer, so IPv4 goes first: a host without IPv6
+  // egress cannot connect to an IPv6 answer.
+  const pinned = addresses.find((address) => address?.kind() === "ipv4") ?? addresses[0]!;
+  return { baseUrl, address: pinned.toString() };
 }
 
 export async function pagedValues(bb: BitbucketFetch, path: string): Promise<unknown[]> {

@@ -19,7 +19,7 @@ const HOOK_ID = `crd_${HOOK_CREDENTIAL.replaceAll("-", "_")}`;
 
 async function lookupBitbucket(hostname: string): Promise<readonly { address: string; family: number }[]> {
   if (hostname !== "bitbucket.test") throw new Error(`unexpected host ${hostname}`);
-  return [{ address: "203.0.113.10", family: 4 }];
+  return [{ address: "8.8.8.8", family: 4 }];
 }
 
 function instanceFetch(webhookStatus: number) {

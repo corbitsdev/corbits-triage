@@ -14,13 +14,14 @@ import { triageWorkflowFor } from "../github/source-workflow.js";
 import { asCaller } from "../stock-caller.js";
 import {
   BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, lookupAddresses, pagedValues, readRepo,
-  resolveInstanceBaseUrl, WEBHOOK_EVENTS, webhookExists, type AddressLookup,
+  resolveInstance, WEBHOOK_EVENTS, webhookExists, type AddressLookup, type Instance,
 } from "./client.js";
 import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, splitName, TOKEN_CREDENTIAL } from "./records.js";
 
 export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
 const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
 const NO_STORE = { headers: { "Cache-Control": "no-store" } };
+const HOST_REFUSED = "The host must resolve only to public addresses; a private-network instance needs the hub operator to allowlist it.";
 const HOOK_METADATA = xHubHookMetadata(triageWorkflowFor("bitbucket-datacenter").id, BITBUCKET_DATACENTER_HOOK_HEADERS);
 
 export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
@@ -69,14 +70,10 @@ function instanceFailed(err: unknown): Response {
 
 export function createBitbucketIntegration(deps: BitbucketDeps) {
   const { db } = deps;
-  const egressAllowlist = deps.egressAllowlist ?? [];
+  const lookup = deps.lookup ?? lookupAddresses;
 
-  function hostLookup(hostname: string): Promise<readonly { address: string; family: number }[]> {
-    return (deps.lookup ?? lookupAddresses)(hostname);
-  }
-
-  function reachableBaseUrl(value: string): Promise<string | undefined> {
-    return resolveInstanceBaseUrl(value, hostLookup, egressAllowlist);
+  function reachable(value: string): Promise<Instance | undefined> {
+    return resolveInstance(value, lookup, deps.egressAllowlist);
   }
 
   function hookUrl(tenantId: string): string {
@@ -102,13 +99,13 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   }
 
   async function instance(member: Member): Promise<BitbucketFetch | Response> {
-    const connection = bitbucketConnection(await tenantNs(member.tenantId), egressAllowlist);
+    const connection = bitbucketConnection(await tenantNs(member.tenantId));
     if (!connection) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
-    const baseUrl = await reachableBaseUrl(connection.baseUrl);
-    if (baseUrl === undefined) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
+    const checked = await reachable(connection.baseUrl);
+    if (checked === undefined) return failure(409, "bitbucket_datacenter_host_refused", HOST_REFUSED);
     const token = await secretOf(member, TOKEN_CREDENTIAL);
     if (token instanceof Response) return token;
-    return bitbucketFetch(deps.fetchImpl, baseUrl, token);
+    return bitbucketFetch(deps.fetchImpl, checked, token);
   }
 
   function stock(req: Request, method: string, path: string, body?: unknown): Promise<Response> {
@@ -177,10 +174,10 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   }
 
   /** The token is tried once against the instance and stored only when the instance accepts it; resolves to the user it acts as. */
-  async function verifyToken(baseUrl: string, token: string): Promise<Response | string> {
+  async function verifyToken(checked: Instance, token: string): Promise<Response | string> {
     let res: Response;
     try {
-      res = await bitbucketFetch(deps.fetchImpl, baseUrl, token)("/rest/api/1.0/application-properties");
+      res = await bitbucketFetch(deps.fetchImpl, checked, token)("/rest/api/1.0/application-properties");
     } catch (err) {
       return instanceFailed(err);
     }
@@ -202,14 +199,15 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   async function connect(body: typeof ConnectBody.infer, member: Member, req: Request): Promise<Response> {
     const refused = await manageRefusal(member);
     if (refused) return refused;
-    const baseUrl = await reachableBaseUrl(body.baseUrl);
-    if (!baseUrl) return failure(400, "invalid_request", "baseUrl must be an http(s) URL without credentials, query, or fragment, and the host must not resolve to a loopback, private, link-local, or unspecified address unless the hub operator allowlisted that host.");
+    const checked = await reachable(body.baseUrl);
+    if (!checked) return failure(400, "invalid_request", `baseUrl must be an http(s) URL without credentials, query, or fragment. ${HOST_REFUSED}`);
+    const { baseUrl } = checked;
     const ns = await tenantNs(member.tenantId);
-    const current = bitbucketConnection(ns, egressAllowlist);
+    const current = bitbucketConnection(ns);
     if (current && current.baseUrl !== baseUrl && repoRecords(ns).some(isBitbucketRecord)) {
       return failure(409, "bitbucket_datacenter_connected_elsewhere", `This workspace is connected to ${current.baseUrl}. Disconnect it first.`);
     }
-    const user = await verifyToken(baseUrl, body.token);
+    const user = await verifyToken(checked, body.token);
     if (user instanceof Response) return user;
     const providerId = await ensureProvider(req, member.tenantId, baseUrl);
     if (providerId instanceof Response) return providerId;
@@ -230,11 +228,9 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   }
 
   async function connection(member: Member): Promise<Response> {
-    const current = bitbucketConnection(await tenantNs(member.tenantId), egressAllowlist);
+    const current = bitbucketConnection(await tenantNs(member.tenantId));
     if (!current) return failure(404, "bitbucket_datacenter_not_connected", "Bitbucket is not connected.");
-    const baseUrl = await reachableBaseUrl(current.baseUrl);
-    if (baseUrl === undefined) return failure(404, "bitbucket_datacenter_not_connected", "Bitbucket is not connected.");
-    return Response.json({ baseUrl, hookUrl: hookUrl(member.tenantId) });
+    return Response.json({ baseUrl: current.baseUrl, hookUrl: hookUrl(member.tenantId) });
   }
 
   /** Webhooks triage created that could not be removed, by repository name; without `use` on the token every one is left. */

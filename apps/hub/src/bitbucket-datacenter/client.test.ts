@@ -1,34 +1,27 @@
 import { expect, test } from "bun:test";
-import { instanceBaseUrl, resolveInstanceBaseUrl, type AddressLookup } from "./client.js";
+import { bitbucketFetch, resolveInstance, type AddressLookup } from "./client.js";
 
-const REFUSED = [
-  "https://user:pw@git.example",
-  "https://git.example/?a=1",
-  "ftp://git.example",
-  "http://10.0.0.5:7990",
-  "http://127.0.0.1",
-  "http://[::1]",
-  "http://10.1.2.3",
-  "http://172.16.0.1",
-  "http://192.168.1.1",
-  "http://0.0.0.0",
-  "http://[::]",
-  "http://[fe80::1]",
-  "http://[fc00::1]",
-  "http://169.254.169.254/latest",
-  "http://[fd00:ec2::254]",
-  "http://[::ffff:a9fe:a9fe]",
-  "http://[::ffff:10.0.0.5]",
-  "http://metadata.google.internal",
-  "http://metadata",
+const PUBLIC = "8.8.8.8";
+
+// Every address the token must not reach, as a URL literal and as a DNS answer.
+const REFUSED_ADDRESSES = [
+  "127.0.0.1", "::1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "fc00::1",
+  "0.0.0.0", "0.1.2.3", "::", "169.254.169.254", "fe80::1", "fd00:ec2::254",
+  "100.64.0.1", "100.100.100.200", "192.0.0.192", "198.18.0.1", "224.0.0.1", "255.255.255.255",
+  "64:ff9b::a9fe:a9fe", "2002:a9fe:a9fe::1", "::7f00:1", "::ffff:0:a00:5", "fec0::1", "::ffff:a9fe:a9fe", "::ffff:10.0.0.5",
 ];
 
-test("an instance URL keeps its context path; private, loopback, link-local, unspecified and metadata hosts are refused", () => {
-  expect(instanceBaseUrl(" https://git.example/bitbucket/ ")).toBe("https://git.example/bitbucket");
-  expect(instanceBaseUrl("http://203.0.113.10:7990")).toBe("http://203.0.113.10:7990");
-  expect(instanceBaseUrl("http://0.0.0.1")).toBe("http://0.0.0.1");
-  for (const refused of REFUSED) expect(instanceBaseUrl(refused)).toBeUndefined();
-});
+function literal(address: string): string {
+  return address.includes(":") ? `http://[${address}]` : `http://${address}`;
+}
+
+async function noLookup(): Promise<never> {
+  throw new Error("a literal is not looked up");
+}
+
+async function instanceBaseUrl(value: string, allowlist: readonly string[] = []): Promise<string | undefined> {
+  return (await resolveInstance(value, noLookup, allowlist))?.baseUrl;
+}
 
 function addresses(rows: readonly string[]): AddressLookup {
   return async function lookup() {
@@ -36,51 +29,61 @@ function addresses(rows: readonly string[]): AddressLookup {
   };
 }
 
-test("a name is refused when lookup fails or any address is loopback or private", async () => {
-  expect(await resolveInstanceBaseUrl("https://git.internal/bitbucket", addresses(["127.0.0.1"]))).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.internal/bitbucket", addresses(["10.0.0.5"]))).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.internal/bitbucket", addresses(["203.0.113.10", "10.0.0.5"]))).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.internal/bitbucket", async function fail() { throw new Error("servfail"); })).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.internal/bitbucket", addresses([]))).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.internal/bitbucket", addresses(["::ffff:10.0.0.5"]))).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["203.0.113.10"]))).toBe("https://git.example/bitbucket");
+test("an instance URL keeps its context path; refused shapes, metadata names and non-public literals are dropped", async () => {
+  expect(await resolveInstance(" https://git.example/bitbucket/ ", addresses([PUBLIC]))).toEqual({ baseUrl: "https://git.example/bitbucket", address: PUBLIC });
+  expect(await instanceBaseUrl(`http://${PUBLIC}:7990`)).toBe(`http://${PUBLIC}:7990`);
+  expect(await instanceBaseUrl("http://[2606:4700::1111]")).toBe("http://[2606:4700::1111]");
+  expect(await instanceBaseUrl("http://[::127.0.0.1]")).toBeUndefined();
+  for (const refused of ["https://user:pw@git.example", "https://git.example/?a=1", "ftp://git.example", "http://metadata.google.internal", "http://metadata./"]) {
+    expect(await instanceBaseUrl(refused)).toBeUndefined();
+  }
+  for (const address of REFUSED_ADDRESSES) expect(await instanceBaseUrl(literal(address))).toBeUndefined();
 });
 
-test("the allowlist unlocks a private or loopback host, not link-local, unspecified, or metadata", async () => {
-  const listed = ["git.internal", "10.0.0.5", "169.254.169.254", "metadata.google.internal", "::1"];
-  expect(await resolveInstanceBaseUrl("http://git.internal:7990", addresses(["10.0.0.5"]), listed)).toBe("http://git.internal:7990");
-  expect(await resolveInstanceBaseUrl("http://Git.Internal:7990", addresses(["10.0.0.5"]), ["GIT.INTERNAL"])).toBe("http://git.internal:7990");
-  expect(await resolveInstanceBaseUrl("http://git.internal:7990", addresses(["10.0.0.5"]))).toBeUndefined();
-  expect(instanceBaseUrl("http://10.0.0.5:7990", ["10.0.0.5"])).toBe("http://10.0.0.5:7990");
-  expect(instanceBaseUrl("http://10.0.0.5:7990")).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("http://10.0.0.5:7990", addresses(["203.0.113.10"]), ["10.0.0.5"])).toBe("http://10.0.0.5:7990");
-  expect(instanceBaseUrl("http://169.254.169.254/latest", listed)).toBeUndefined();
-  expect(instanceBaseUrl("http://[fe80::1]", ["fe80::1"])).toBeUndefined();
-  expect(instanceBaseUrl("http://0.0.0.0", ["0.0.0.0"])).toBeUndefined();
-  expect(instanceBaseUrl("http://[::]", ["::"])).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("http://git.internal", addresses(["169.254.169.254"]), ["git.internal"])).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("http://metadata.google.internal", addresses(["203.0.113.10"]), listed)).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("http://[::1]", addresses(["203.0.113.10"]), listed)).toBe("http://[::1]");
+test("a name is pinned to an IPv4 answer first, and refused when the lookup fails, is empty, or any answer is not public", async () => {
+  expect(await resolveInstance("https://git.example/bitbucket", addresses([PUBLIC]))).toEqual({ baseUrl: "https://git.example/bitbucket", address: PUBLIC });
+  expect(await resolveInstance("https://git.example", addresses(["2606:4700::1111", PUBLIC]))).toEqual({ baseUrl: "https://git.example", address: PUBLIC });
+  expect(await resolveInstance("https://git.example", async function fail() { throw new Error("servfail"); })).toBeUndefined();
+  expect(await resolveInstance("https://git.example", addresses([]))).toBeUndefined();
+  expect(await resolveInstance("https://git.example", addresses(["fe80::1%1"]))).toBeUndefined();
+  for (const address of REFUSED_ADDRESSES) {
+    expect(await resolveInstance("https://git.example", addresses([address]))).toBeUndefined();
+    expect(await resolveInstance("https://git.example", addresses([PUBLIC, address]))).toBeUndefined();
+  }
 });
 
-test("fd00:ec2::254 stays refused when listed; other unique-local addresses do not", async () => {
-  expect(instanceBaseUrl("http://[fd00:ec2::254]/", ["fd00:ec2::254"])).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("http://git.internal", addresses(["fd00:ec2::254"]), ["git.internal"])).toBeUndefined();
-  expect(instanceBaseUrl("http://[fc00::1]", ["fc00::1"])).toBe("http://[fc00::1]");
-  expect(instanceBaseUrl("http://[fd00::1]", ["fd00::1"])).toBe("http://[fd00::1]");
-  expect(await resolveInstanceBaseUrl("http://git.internal", addresses(["fd12:3456::1"]), ["git.internal"])).toBe("http://git.internal");
+test("the allowlist unlocks a private or loopback host, nothing else", async () => {
+  expect(await resolveInstance("http://Git.Internal:7990", addresses(["10.0.0.5"]), ["GIT.INTERNAL"])).toEqual({ baseUrl: "http://git.internal:7990", address: "10.0.0.5" });
+  expect(await resolveInstance("http://git.internal", addresses(["fd12:3456::1"]), ["git.internal"])).toBeDefined();
+  expect(await instanceBaseUrl("http://10.0.0.5:7990", ["10.0.0.5"])).toBe("http://10.0.0.5:7990");
+  expect(await instanceBaseUrl("http://[::1]", ["::1"])).toBe("http://[::1]");
+  for (const address of ["169.254.169.254", "fd00:ec2::254", "100.100.100.200", "192.0.0.192", "0.0.0.0", "fe80::1", "64:ff9b::a9fe:a9fe"]) {
+    expect(await instanceBaseUrl(literal(address), [address])).toBeUndefined();
+    expect(await resolveInstance("http://git.internal", addresses([address]), ["git.internal"])).toBeUndefined();
+  }
+  expect(await resolveInstance("http://metadata.google.internal", addresses([PUBLIC]), ["metadata.google.internal"])).toBeUndefined();
 });
 
-test("a scoped link-local lookup is refused with or without the allowlist", async () => {
-  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["fe80::1%1"]))).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["203.0.113.10", "fe80::1%1"]))).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["fe80::402:1928:d695:e027%11"]), ["git.example"])).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["203.0.113.10", "fe80::1%1"]), ["git.example"])).toBeUndefined();
-});
-
-test("a trailing dot does not hide a metadata host name", async () => {
-  expect(instanceBaseUrl("http://metadata.google.internal./")).toBeUndefined();
-  expect(instanceBaseUrl("http://metadata./")).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("http://metadata.google.internal./", addresses(["203.0.113.10"]))).toBeUndefined();
-  expect(await resolveInstanceBaseUrl("http://metadata./", addresses(["203.0.113.10"]))).toBeUndefined();
+test("requests go to the address that was checked, with the name as Host and TLS server name, however DNS answers later", async () => {
+  const answers = [PUBLIC, "169.254.169.254"];
+  let lookups = 0;
+  async function rebinding() {
+    const address = answers[Math.min(lookups++, answers.length - 1)]!;
+    return [{ address, family: 4 }];
+  }
+  const sent: Array<{ url: string; host: string | null; serverName: string | undefined }> = [];
+  async function record(input: string | URL | Request, init?: RequestInit & { tls?: { serverName?: string } }): Promise<Response> {
+    sent.push({ url: String(input), host: new Headers(init?.headers).get("host"), serverName: init?.tls?.serverName });
+    return new Response("{}");
+  }
+  const checked = await resolveInstance("https://git.example:8443/bitbucket", rebinding);
+  expect(checked).toBeDefined();
+  const bb = bitbucketFetch(record as typeof fetch, checked!, "token");
+  await bb("/rest/api/1.0/repos");
+  await bb("/rest/api/1.0/projects");
+  expect(lookups).toBe(1);
+  expect(sent).toEqual([
+    { url: `https://${PUBLIC}:8443/bitbucket/rest/api/1.0/repos`, host: "git.example:8443", serverName: "git.example" },
+    { url: `https://${PUBLIC}:8443/bitbucket/rest/api/1.0/projects`, host: "git.example:8443", serverName: "git.example" },
+  ]);
 });
