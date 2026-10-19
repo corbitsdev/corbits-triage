@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { triggerRequestOf } from "@corbits/triage-contracts";
 import { changedFiles, parseFindings, quotedLine, samePath, type Finding, type Site } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
+import { promptAttribute, promptText } from "../prompt-text.js";
 import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, repositoryTag } from "./checkout.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
@@ -97,11 +98,6 @@ interface WriteInput {
   inference: StepInference;
 }
 
-/** Replace angle brackets so pull-request text cannot close the tags around it. */
-export function escapePromptText(text: string): string {
-  return text.replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
-}
-
 function replyOf(output: unknown): string {
   if (typeof output === "object" && output !== null && "reply" in output && typeof output.reply === "string") return output.reply;
   throw new Error(`step output has no reply: ${JSON.stringify(output)?.slice(0, 200)}`);
@@ -124,12 +120,12 @@ function stepOutput<K extends keyof Steps>(steps: Steps, id: K): NonNullable<Ste
 }
 
 function aboutPullRequest(request: ReviewRequest): string {
-  return `<pull_request>\n<title>${escapePromptText(request.title)}</title>\n<description>${escapePromptText(request.description)}</description>\n</pull_request>`;
+  return `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n</pull_request>`;
 }
 
 function pullRequest(request: ReviewRequest): string {
   const cut = request.cut ? `\n\nThe diff shows its first ${request.cut.lines} of ${request.cut.of} lines; the rest was left out for size.` : "";
-  return `${aboutPullRequest(request)}\n\n<diff>\n${escapePromptText(request.diff)}\n</diff>${cut}`;
+  return `${aboutPullRequest(request)}\n\n<diff>\n${promptText(request.diff)}\n</diff>${cut}`;
 }
 
 /** The reviewInput action: the request from the trigger mail, the plan's user message and every role's per-call options; a role's effort is the request's, else the profile's. */
@@ -146,7 +142,7 @@ export function reviewInputFor({ efforts }: Pick<CodeReviewProfile, "efforts">) 
 export async function findersInput(steps: Steps) {
   const { request } = stepOutput(steps, "reviewInput");
   const plan = replyOf(stepOutput(steps, "plan"));
-  const message = `${pullRequest(request)}\n\n<plan>\n${plan}\n</plan>\n\nReview the diff above and report the defects this change introduces.`;
+  const message = `${pullRequest(request)}\n\n<plan>\n${promptText(plan)}\n</plan>\n\nReview the diff above and report the defects this change introduces.`;
   return { diff: message, repo: `${repositoryTag(request.checkout)}${budgetTag(request.budgets?.repoFinder ?? DEFAULT_BUDGET)}${message}` };
 }
 
@@ -178,7 +174,7 @@ function withoutDuplicates(found: readonly Candidate[]): Candidate[] {
 
 function consolidateMessage(request: ReviewRequest, kept: readonly Candidate[]): string {
   const listed = kept.map(({ path, start, end, code, title, why, trigger }, index) => ({ index, path, start, end, code, title, why, trigger }));
-  return `${repositoryTag(request.checkout)}${aboutPullRequest(request)}\n\n<findings>\n${JSON.stringify(listed, null, 2)}\n</findings>\n\nGroup the findings by the defect they describe.`;
+  return `${repositoryTag(request.checkout)}${aboutPullRequest(request)}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nGroup the findings by the defect they describe.`;
 }
 
 /** Both finders' findings, those left once exact duplicates are folded together, whether the repository finder's budget ran out, and the consolidate step's message. */
@@ -246,9 +242,9 @@ function checkMessage(request: ReviewRequest, finding: Reported, excerpt: string
   const claim = { title: finding.title, why: finding.why, trigger: finding.trigger };
   return [
     aboutPullRequest(request),
-    `<candidate path="${finding.path}" start="${finding.start}" end="${finding.end}">\n${JSON.stringify(claim, null, 2)}\n</candidate>`,
-    `<quoted_code>\n${finding.code}\n</quoted_code>`,
-    `<file path="${finding.path}">\n${excerpt}\n</file>`,
+    `<candidate path="${promptAttribute(finding.path)}" start="${finding.start}" end="${finding.end}">\n${promptText(JSON.stringify(claim, null, 2))}\n</candidate>`,
+    `<quoted_code>\n${promptText(String(finding.code))}\n</quoted_code>`,
+    `<file path="${promptAttribute(finding.path)}">\n${promptText(excerpt)}\n</file>`,
     "Is this defect real?",
   ].join("\n\n");
 }
@@ -278,8 +274,8 @@ export async function writeInput(steps: Steps): Promise<WriteInput> {
   const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
   const findings = request.check ? checked.filter((_, i) => verdicts[i]?.verdict === "real") : checked;
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
-  const change = `<pull_request>\n<title>${escapePromptText(request.title)}</title>\n<description>${escapePromptText(request.description)}</description>\n<changed_files>\n${changedFiles(request.diff).map(escapePromptText).join("\n")}\n</changed_files>\n</pull_request>`;
-  const text = `${change}\n\n<findings>\n${JSON.stringify(listed, null, 2)}\n</findings>\n\n${budgetExhausted ? STOPPED_EARLY : ""}Write the review.`;
+  const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
+  const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\n${budgetExhausted ? STOPPED_EARLY : ""}Write the review.`;
   return { budgetExhausted, verdicts, findings, text, inference: inference.write };
 }
 
