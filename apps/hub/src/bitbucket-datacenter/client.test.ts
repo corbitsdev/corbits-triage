@@ -70,3 +70,17 @@ test("fd00:ec2::254 stays refused when listed; other unique-local addresses do n
   expect(instanceBaseUrl("http://[fd00::1]", ["fd00::1"])).toBe("http://[fd00::1]");
   expect(await resolveInstanceBaseUrl("http://git.internal", addresses(["fd12:3456::1"]), ["git.internal"])).toBe("http://git.internal");
 });
+
+test("a scoped link-local lookup is refused with or without the allowlist", async () => {
+  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["fe80::1%1"]))).toBeUndefined();
+  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["203.0.113.10", "fe80::1%1"]))).toBeUndefined();
+  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["fe80::402:1928:d695:e027%11"]), ["git.example"])).toBeUndefined();
+  expect(await resolveInstanceBaseUrl("https://git.example/bitbucket", addresses(["203.0.113.10", "fe80::1%1"]), ["git.example"])).toBeUndefined();
+});
+
+test("a trailing dot does not hide a metadata host name", async () => {
+  expect(instanceBaseUrl("http://metadata.google.internal./")).toBeUndefined();
+  expect(instanceBaseUrl("http://metadata./")).toBeUndefined();
+  expect(await resolveInstanceBaseUrl("http://metadata.google.internal./", addresses(["203.0.113.10"]))).toBeUndefined();
+  expect(await resolveInstanceBaseUrl("http://metadata./", addresses(["203.0.113.10"]))).toBeUndefined();
+});

@@ -82,7 +82,8 @@ function bareHost(hostname: string): string {
 }
 
 function addressKind(address: string): AddressKind | undefined {
-  const host = bareHost(address);
+  // dns.lookup can return a scoped link-local (`fe80::1%1`). isIP accepts the zone id; BlockList does not.
+  const host = bareHost(address).split("%", 1)[0]!;
   const family = isIP(host);
   if (family === 0) return undefined;
   const ipType = family === 4 ? "ipv4" : "ipv6";
@@ -96,7 +97,8 @@ function addressKind(address: string): AddressKind | undefined {
 
 function isBlockedHost(hostname: string): boolean {
   const host = bareHost(hostname);
-  if (METADATA_HOSTS.has(host)) return true;
+  // A trailing dot is the same name (`metadata.google.internal.`).
+  if (METADATA_HOSTS.has(host.replace(/\.+$/, ""))) return true;
   const kind = addressKind(host);
   return kind !== undefined && kind !== "public";
 }
