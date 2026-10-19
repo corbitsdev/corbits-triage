@@ -66,7 +66,7 @@ Unless you are the first person to use this Corbits Triage, you then see **Verif
 
 ![Verify your email on a server that cannot send email: Ask whoever runs this Triage to verify your address, with a Sign out button](images/46.png)
 
-Creating an account also creates a **workspace**, the shared space your whole team will use. Teammates do not create their own workspaces. Instead, you invite them from Settings, and they join yours. If someone has already invited you, open the link in the invitation email instead of creating an account from scratch.
+Creating an account also creates a **workspace**, the shared space your whole team will use. Invite teammates from Settings to join yours. If someone has already invited you, open the link in the invitation email instead of creating an account from scratch. Someone who signs in without an invitation gets a workspace of their own; inviting them later adds yours, and they switch between the two from the workspace menu.
 
 ### First-time setup
 

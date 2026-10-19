@@ -127,7 +127,9 @@ anyone in its workspace, member or invited, verified under **Settings → People
 
 ### Email
 
-Admins invite teammates from the portal; the invitee gets a one-time sign-in
+Admins invite teammates from the portal. Someone who signs in without an
+invitation gets a workspace of their own; an invitation later adds the
+inviting workspace to theirs. The invitee gets a one-time sign-in
 link that works once, expires after 15 minutes and can be resent. With email
 set up, an account whose address is not verified (an email and password
 sign-up) cannot be invited. With email set up, anyone can also reset their password from the
