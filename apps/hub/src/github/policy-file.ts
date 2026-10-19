@@ -1,8 +1,8 @@
 // A repository's policy kept in `.corbits-triage.yml` (or `.yaml`) on its default branch. When the file is there, triage
 // reads it as the policy unless the repository's saved rules run differently (see check-pack-store.ts), and a file it
 // refuses stops triage until it is fixed rather than falling back. Each read is kept in memory until a push to the
-// default branch touches the file. Saved rules, or a starter policy when there are none, are written to the file through a
-// pull request (policy-pull.ts).
+// default branch touches the file, or for a minute where no push is heard. Saved rules, or a starter policy when there
+// are none, are written to the file through a pull request (policy-pull.ts).
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
@@ -81,8 +81,19 @@ function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
   return { status: "ok", file, policy: checked.policy };
 }
 
+/** How long a read of a repository the hub hears no push from is kept. */
+const UNHEARD_MAX_AGE_MS = 60_000;
+
+/**
+ * A read is kept until a push re-reads it, except where none is heard: any GitHub repository in the App's installations
+ * is, a Bitbucket one only through the webhook triage registers while it is enabled.
+ */
+function maxAgeOf(record: RepoRecord): number {
+  return sourceOf(record) === "bitbucket-datacenter" && record.enabled !== true ? UNHEARD_MAX_AGE_MS : Infinity;
+}
+
 export function createPolicyFile(deps: PolicyFileDeps) {
-  const cache = new Map<string, Promise<PolicyFileState>>();
+  const cache = new Map<string, { read: Promise<PolicyFileState>; at: number }>();
 
   /** A Bitbucket repository the token sees has no record until it is enabled, so rules can be written for it first, as for GitHub. */
   async function visibleBitbucketRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
@@ -130,16 +141,16 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   }
 
   /** A failed read is not kept, so the next trigger reads again rather than run on a stale answer. */
-  async function cached(tenantId: string, record: RepoRecord, fresh: boolean): Promise<PolicyFileState> {
+  async function cached(tenantId: string, record: RepoRecord, maxAgeMs: number): Promise<PolicyFileState> {
     const key = `${tenantId}\n${record.name}`;
-    const kept = fresh ? undefined : cache.get(key);
-    if (kept) return kept;
-    const pending = load(tenantId, record);
-    cache.set(key, pending);
+    const kept = cache.get(key);
+    if (kept && Date.now() - kept.at < maxAgeMs) return kept.read;
+    const entry = { read: load(tenantId, record), at: Date.now() };
+    cache.set(key, entry);
     try {
-      return await pending;
+      return await entry.read;
     } catch (err) {
-      if (cache.get(key) === pending) cache.delete(key);
+      if (cache.get(key) === entry) cache.delete(key);
       throw err;
     }
   }
@@ -147,13 +158,13 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   /** The repository's policy file as triage takes it; absent when the repository is not connected. */
   async function current(tenantId: string, repo: string): Promise<PolicyFileState> {
     const record = await connectedRecord(tenantId, repo);
-    return record ? cached(tenantId, record, false) : { status: "absent" };
+    return record ? cached(tenantId, record, maxAgeOf(record)) : { status: "absent" };
   }
 
   /** A push to the default branch that touched the file reads it again; undefined when the repository is not connected. */
   async function onPush(tenantId: string, repo: string): Promise<PolicyFileState | undefined> {
     const record = await connectedRecord(tenantId, repo);
-    return record && cached(tenantId, record, true);
+    return record && cached(tenantId, record, 0);
   }
 
   async function grantedRecord(member: Member, repo: string, action: "read" | "use"): Promise<RepoRecord | Response> {
@@ -173,7 +184,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     if (record instanceof Response) return record;
     let state: PolicyFileState;
     try {
-      state = await cached(member.tenantId, record, false);
+      state = await cached(member.tenantId, record, maxAgeOf(record));
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_file_status_failed", tenantId: member.tenantId, repo, error: errorText(err) });
       return githubFailed(`read ${POLICY_FILE_PATH} from`, err);

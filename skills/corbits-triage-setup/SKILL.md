@@ -78,7 +78,7 @@ Run it as its own command. With no remote, any `owner/name` such as `local/<fold
 - `::error file=…,line=N::message`, one per problem: fix each and run it again.
 - `No .corbits-triage.yml or .corbits-triage.yaml to check.`: the file was not written where you think; write it at the repository root and run it again.
 
-Never report the file as done before it prints valid. With `extends`, valid does not prove the workspace policy id exists; tell the user to confirm it.
+Never report the file as done before it prints valid. With `extends`, valid does not prove the repository or workspace policy it names can be read; tell the user to confirm it.
 
 ## 6. Finish
 

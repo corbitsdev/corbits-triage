@@ -2,12 +2,14 @@
 // which the portal writes when it saves the policy. A repository not saved since pins existed, or whose pinned policy is
 // archived, reads the newest artifact titled for it. While a repository has both and they run differently, the saved
 // rules apply until the maintainer settles it; once they run the same, the saved rules are archived and the file is the
-// policy. A policy that extends a workspace policy is resolved against that policy's current version here, so each mail
+// policy. A policy that extends a workspace policy is resolved against that policy's current version here, and a policy
+// file that extends another repository against that repository's policy file as the hub last read it, so each mail
 // carries the pack and the versions it was built from.
 import { eq } from "drizzle-orm";
 import { findArtifactByTitle, getArtifact, setArtifactArchived, type ArtifactDb, type ArtifactRow } from "@corbits/artifacts";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, exportPolicyFile, extendsOf, policyDifferences, readCheckPack, readPolicyFile, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade } from "@corbits/triage-contracts";
+import { asRepo } from "@corbits/common";
+import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type SharedFileRef } from "@corbits/triage-contracts";
 import type { PolicyFileState } from "./policy-file.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 
@@ -63,6 +65,7 @@ function resolved(tenantId: string, repo: string, content: unknown, shared: Arti
 
 async function sharedOf(artifacts: ArtifactDb, content: unknown): Promise<ArtifactRow | null | undefined> {
   const id = extendsOf(content);
+  if (id !== undefined && asRepo(id) !== undefined) throw new Error("Only a policy file can extend another repository's policy.");
   return id === undefined ? undefined : getArtifact(artifacts, id);
 }
 
@@ -92,17 +95,34 @@ export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, 
 
 type FileRead = Extract<CheckPackRead, { status: "ok" | "invalid" }>;
 
-async function fileRead(deps: CheckPackStoreDeps, tenantId: string, repo: string, file: Exclude<PolicyFileState, { status: "absent" }>): Promise<FileRead> {
+type PolicyFileReader = (tenantId: string, repo: string) => Promise<PolicyFileState>;
+
+/** Over the policy file of the repository `extends` names, read with this workspace's own access to it. */
+async function overSharedFile(policyFile: PolicyFileReader, tenantId: string, repo: string, content: Record<string, unknown>, shared: string): Promise<Pick<StoredPack, "pack"> & { sharedFile: SharedFileRef }> {
+  const state = await policyFile(tenantId, shared);
+  if (state.status === "absent") throw new Error(`${shared} is not connected to this workspace or has no policy file.`);
+  if (state.status === "invalid") throw new Error(`${shared}'s policy file is refused: ${state.reason}`);
+  return { pack: extendedFilePack(repo, content, { repo: shared, policy: state.policy }), sharedFile: { repo: shared, path: state.file.path, sha: state.file.sha } };
+}
+
+async function fileResolved(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, content: Record<string, unknown>) {
+  const shared = extendsOf(content);
+  if (shared !== undefined && asRepo(shared) !== undefined) return overSharedFile(deps.policyFile, tenantId, repo, content, shared);
+  return resolved(tenantId, repo, content, await sharedOf(deps.artifacts, content));
+}
+
+async function fileRead(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, file: Exclude<PolicyFileState, { status: "absent" }>): Promise<FileRead> {
   if (file.status === "invalid") return { status: "invalid", reason: file.reason, path: file.path };
-  let read: ReturnType<typeof resolved>;
+  let read: Awaited<ReturnType<typeof fileResolved>>;
   try {
-    read = resolved(tenantId, repo, file.policy, await sharedOf(deps.artifacts, file.policy));
+    read = await fileResolved(deps, tenantId, repo, file.policy);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     return { status: "invalid", reason: error.message, path: file.file.path };
   }
-  const source: PolicySource = { file: { path: file.file.path, sha: file.file.sha }, ...(read.shared && { shared: read.shared }) };
-  return { status: "ok", pack: read.pack, source, automatic: await deps.automaticKinds(tenantId, repo) };
+  const { pack, ...from } = read;
+  const source: PolicySource = { file: { path: file.file.path, sha: file.file.sha }, ...from };
+  return { status: "ok", pack, source, automatic: await deps.automaticKinds(tenantId, repo) };
 }
 
 /** Archiving hides and keeps restorable; every saved policy titled for the repository goes, since an older one would otherwise become the saved rules. */
@@ -130,7 +150,7 @@ export type PolicySettled = { read: CheckPackRead; upgrade: PolicyUpgrade; saved
  * saved rules and no file is `upgrade`; both, running differently or with a file triage refuses, is `differs`, and the
  * saved rules apply; else the file or the saved rules alone apply and it is `ok`.
  */
-export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: (tenantId: string, repo: string) => Promise<PolicyFileState> }, tenantId: string, repo: string): Promise<PolicySettled> {
+export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string): Promise<PolicySettled> {
   const file = await deps.policyFile(tenantId, repo);
   const stored = await loadCheckPack(deps, tenantId, repo);
   const saved = stored.status === "ok" ? stored : undefined;

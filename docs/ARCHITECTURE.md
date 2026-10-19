@@ -329,6 +329,12 @@ read it, and passes the rest of the request to stock.
   verdict's steps and each verdict's label come from the repository only when
   it sets them. An archived workspace policy still applies. Each trigger mail
   names the versions its pack was resolved from under `policy.source`.
+- A policy file whose `extends` is a repository name is resolved the same way
+  over that repository's policy file, read through the same per-repository
+  cache, at the time the policy is read; `policy.source.sharedFile` names the
+  file and its blob. A push or merge to the shared repository refreshes its
+  cache entry, so no dependent is tracked. A Bitbucket repository that is not
+  enabled has no triage webhook, so its file is kept for a minute instead.
 - Triage's tables, in the `corbits_triage` schema: `verdict` (verdicts per
   head, with the outcomes of the actions their run executed) and
   `device_code` (better-auth's device authorization, for agents a signed-in

@@ -242,7 +242,8 @@ the verdict there.
 A repository's policy is `.corbits-triage.yml` at the root of its default
 branch (`.corbits-triage.yaml` when there is no `.yml`), so policy changes are
 reviewed like code. It lists `rules`, `actions` and `labels`, and may
-`extends` a workspace policy; any other key is refused.
+`extends` another repository's policy file or a workspace policy; any other key
+is refused.
 
 Each rule is one sentence (`text`), how it is checked (`check`: a built-in
 rule's id, `model` for a yes/no question about the whole pull request, or
@@ -304,6 +305,16 @@ keep running until they move into the file through a pull request the portal
 opens; [the manual](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#moving-saved-rules-into-the-file)
 walks through it. Wording, reasons and evidence never count as a difference
 between the two.
+
+### Shared policies
+
+`extends: owner/name` (`PROJECT/slug` on Bitbucket) starts from that
+repository's policy file on its default branch, merged as a workspace policy
+is below. The repository must be connected to the same workspace and its file
+must not extend another; otherwise triage refuses the file and says why. A
+push or merge to that file reaches every repository extending it from their
+next verdict. The pull request check validates the file itself, not the
+policy it extends.
 
 ### Workspace policies
 
