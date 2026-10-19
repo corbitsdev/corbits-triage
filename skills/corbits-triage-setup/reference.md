@@ -24,6 +24,7 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | `ci-green` | none | no | Fails when checks fail; unconfirmed while they run; passes when there are no checks. |
 | `linked-issue` | `tracker:` `github`, `linear` or `either` (optional, default `either`) | no | Fails unless the title, description, a commit or the branch name references an issue. `github` reads `#123`, GitHub issue links and branches like `123-title`; `linear` reads any key like `ABC-123` (so Jira keys match too), Linear links and branches like `abc-123-title` in any case. |
 | `no-forbidden-paths` | `paths:` list of 1–50 globs (required) | no | Fails when any changed file matches; for every author, maintainers too. `*` stays within a folder, `**` crosses folders. |
+| `conventional-commits` | `types:` list of words (optional, default `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `ci`, `build`, `style`, `revert`); `fields:` `title`, `commits` or both (optional, default both) | no | Fails unless the title and each commit's first line (first 100 commits) start `type: `, `type(scope): ` or `type!: ` with a listed type, in any case. Merges and `Revert "…"` commits are skipped. |
 | `focused` | none | yes | The decision model checks the change is focused on one thing. |
 | `docs` | none | yes | The decision model checks docs are updated when behaviour changes. |
 
@@ -47,7 +48,7 @@ Start from the four starter rules (SKILL.md step 3). Add an extra only when the 
 | --- | --- |
 | Issue links or `ABC-123` keys in most commits or branches (not squash-merge `(#123)` suffixes) | `linked-issue`: `github` for `#123`, `linear` for `ABC-123` keys from any tracker, `either` for both |
 | Vendored or generated folders that pull requests should never touch | `no-forbidden-paths` listing them |
-| Commits mostly follow conventional commits | `conventional-title` below. Copy its phrases exactly and add `type:`, `type(`, `type!:` for each other type in the history (at most 5 more; 50 phrases in all). It checks the title contains a type, not that it starts with one. |
+| Commits mostly follow conventional commits | `conventional-commits`; add `types` only when the history uses a type outside the default list, and `fields: [title]` when pull requests are squash-merged |
 | The user bars tool attribution | `no-tool-attribution` below. Add the user's tool trailers to its phrases; never a bare `Co-Authored-By:`, which also fails human co-authors. |
 | A decision model is set up and pull requests often mix changes | `focused` |
 | A decision model is set up and the repository keeps user docs beside its code | `docs` |
@@ -140,45 +141,8 @@ rules:
     paths: ["vendor/**"]
     reason: Generated or vendored code is changed by its own process.
     evidence: [maintainer-stated]
-  - id: conventional-title
-    check: text
-    text: The title contains a conventional commit type such as feat or fix.
-    fields: [title]
-    failWhen: not-contains
-    phrases:
-      - "feat:"
-      - "feat("
-      - "feat!:"
-      - "fix:"
-      - "fix("
-      - "fix!:"
-      - "docs:"
-      - "docs("
-      - "docs!:"
-      - "style:"
-      - "style("
-      - "style!:"
-      - "refactor:"
-      - "refactor("
-      - "refactor!:"
-      - "perf:"
-      - "perf("
-      - "perf!:"
-      - "test:"
-      - "test("
-      - "test!:"
-      - "build:"
-      - "build("
-      - "build!:"
-      - "ci:"
-      - "ci("
-      - "ci!:"
-      - "chore:"
-      - "chore("
-      - "chore!:"
-      - "revert:"
-      - "revert("
-      - "revert!:"
+  - check: conventional-commits
+    text: Require a conventional commit title and messages.
     reason: The repository's commits follow conventional commits.
     evidence: [maintainer-stated]
   - id: no-tool-attribution

@@ -4,6 +4,8 @@ import { dump, JSON_SCHEMA } from "js-yaml";
 import {
   AUTHOR_GROUPS,
   CATALOG_IDS,
+  CONVENTIONAL_FIELDS,
+  CONVENTIONAL_TYPES,
   POLICY_EVENTS,
   VERDICT_LABELS,
   VERDICTS,
@@ -44,6 +46,8 @@ function catalogParams(id: CatalogId, row: CatalogCheck): Record<string, unknown
       return row.tracker === undefined ? {} : { tracker: row.tracker };
     case "no-forbidden-paths":
       return row.forbiddenGlobs?.length ? { paths: row.forbiddenGlobs } : undefined;
+    case "conventional-commits":
+      return { ...(row.types && { types: row.types }), ...(row.fields && { fields: row.fields }) };
     default:
       return {};
   }
@@ -137,7 +141,8 @@ function catalogChecks(pack: CheckPack, id: CatalogId): string | undefined {
   const row = pack.checks[id];
   if (id === "ci-green" && row?.enabled === false) return CI_SKIPPED;
   if (!row?.enabled) return undefined;
-  return canonical({ maxFiles: row.maxFiles, maxLines: row.maxLines, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs) });
+  const conventional = id === "conventional-commits" && { types: sorted(row.types ?? CONVENTIONAL_TYPES), fields: row.fields ?? CONVENTIONAL_FIELDS };
+  return canonical({ maxFiles: row.maxFiles, maxLines: row.maxLines, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), ...conventional });
 }
 
 function modelAsks(row: ModelCustomCheck): Record<string, unknown> {
@@ -180,6 +185,7 @@ const CATALOG_RULES: Partial<Record<CatalogId, string>> = {
   "max-lines-changed": "Most lines changed",
   "linked-issue": "Require a linked issue from",
   "no-forbidden-paths": "Never accept changes to",
+  "conventional-commits": "Conventional commits",
 };
 
 // CI green has three states: required, absent (merges still wait for CI) and written off (merges skip it).
@@ -199,6 +205,8 @@ function catalogValues(pack: CheckPack, id: CatalogId): string[] {
       return [ISSUE_TRACKER_NAMES[row.tracker && row.tracker !== "off" ? row.tracker : "either"]];
     case "no-forbidden-paths":
       return row.forbiddenGlobs ?? [];
+    case "conventional-commits":
+      return [catalogSentence(id, pack)];
     default:
       return ["on"];
   }

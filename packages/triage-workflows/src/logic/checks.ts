@@ -2,6 +2,8 @@ import {
   catalogCheckEnabled,
   CLOSED_FINDING,
   classificationSources,
+  CONVENTIONAL_FIELDS,
+  CONVENTIONAL_TYPES,
   customCheckEnabled,
   isTextCheck,
   parseCheckPack,
@@ -12,6 +14,7 @@ import {
   type CatalogId,
   type CheckOutput,
   type CheckPack,
+  type ConventionalField,
   type IssueTracker,
   type TextCustomCheck,
   type TriageEvent,
@@ -225,12 +228,41 @@ function textResult(rule: TextCustomCheck, facts: PrFacts): { failed: boolean; r
   return { failed: missing.length > 0, reason: missing.length ? `${what} does not contain ${phrases}` : `contains ${phrases}`, evidence: missing.map((item) => item.where).slice(0, TEXT_EVIDENCE_MAX) };
 }
 
+// `type(scope)!: subject`; the type is checked against the policy's list once it parses, ignoring case as the spec asks.
+const CONVENTIONAL_SUBJECT = /^([^\s():!]+)(?:\([^()]+\))?!?: \S/;
+// Subjects git and the hosts write themselves: merges, and the revert button's `Revert "…"`.
+const GENERATED_SUBJECT = /^(?:Merge (?:pull request|branch|remote-tracking branch|commit|tag) |Revert ")/;
+const OFFENDERS_SHOWN = 3;
+
+type ConventionalRule = { types: readonly string[]; fields: readonly ConventionalField[] };
+
+function isConventional(subject: string, types: readonly string[]): boolean {
+  const type = CONVENTIONAL_SUBJECT.exec(subject)?.[1]?.toLowerCase();
+  return type !== undefined && types.some((allowed) => allowed.toLowerCase() === type);
+}
+
+function offenderReason(subject: string): string {
+  return `\`${excerpt(subject).replaceAll("`", "'")}\` isn't a conventional commit`;
+}
+
+/** Each title or commit subject that is not `type(scope)!: subject` with an allowed type; merges and reverts are left out. */
+function conventionalResult(facts: PrFacts, { types, fields }: ConventionalRule): { failed: boolean; reason: string } {
+  const commits = facts.commitMessages.map((message) => message.split("\n", 1)[0]!);
+  const subjects = [...(fields.includes("title") ? [facts.title] : []), ...(fields.includes("commits") ? commits : [])].map((subject) => subject.trim());
+  const offenders = [...new Set(subjects.filter((subject) => !GENERATED_SUBJECT.test(subject) && !isConventional(subject, types)))];
+  if (offenders.length === 0) return { failed: false, reason: "follows conventional commits" };
+  const shown = offenders.slice(0, OFFENDERS_SHOWN).map(offenderReason);
+  const more = offenders.length - shown.length;
+  return { failed: true, reason: [...shown, ...(more > 0 ? [`and ${more} more`] : [])].join("; ") };
+}
+
 interface CheckRules {
   enabled(id: CatalogId): boolean;
   maxFiles?: number;
   maxLines?: number;
   forbiddenGlobs: string[];
   tracker: IssueTracker;
+  conventional?: ConventionalRule;
 }
 
 function resultOf(failed: boolean | null): CheckResult["result"] {
@@ -320,6 +352,11 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
         values: { linkedIssue: ref !== null },
       });
     }
+    if (on("conventional-commits") && rules.conventional) {
+      const { failed, reason } = conventionalResult(facts, rules.conventional);
+      if (failed) add("conventional-commits", "needs-author-update", reason);
+      result("conventional-commits", failed, reason, [], { kind: "values", values: { conventional: !failed } });
+    }
     for (const rule of pack?.custom.filter(isTextCheck).filter(customCheckEnabled) ?? []) {
       const { failed, reason, evidence } = textResult(rule, facts);
       if (failed) add(rule.id, "needs-author-update", reason);
@@ -337,6 +374,7 @@ function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
     maxLines: pack.checks["max-lines-changed"]?.maxLines,
     forbiddenGlobs: pack.checks["no-forbidden-paths"]?.forbiddenGlobs ?? [],
     tracker: pack.checks["linked-issue"]?.tracker ?? "either",
+    conventional: { types: pack.checks["conventional-commits"]?.types ?? CONVENTIONAL_TYPES, fields: pack.checks["conventional-commits"]?.fields ?? CONVENTIONAL_FIELDS },
   }, pack);
 }
 

@@ -49,9 +49,9 @@ const RUNS: Record<Ci, unknown[]> = {
   failure: [{ name: "build", status: "completed", conclusion: "failure" }],
 };
 /** `stacked` is corbitsdev/corbits-code#1520's shape, with #9 to #13 merged into its branch and #14 closed unmerged; the branch is based on open #7's. */
-type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean };
+type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; commits?: string[] };
 
-function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false }: GithubSeed = {}) {
+function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", commits = [] }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
@@ -65,10 +65,11 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
     if (stacked && path.startsWith(`/repos/${REPO}/pulls?state=open&head=acme%3Aparent&`)) return Response.json([{ number: 7, head: { ref: "parent", repo: { id: 1 } } }]);
     if (path.startsWith(`/repos/${REPO}/compare/`)) return Response.json({ ahead_by: 2, commits: [{ sha: "merge1521" }, { sha: pr.head }] });
     if (path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix`)) return Response.json([{ number: 1521, merge_commit_sha: "merge1521", merged_at: "2026-10-19T00:43:02Z" }, { number: 1490, merge_commit_sha: "elsewhere", merged_at: "2026-10-01T00:00:00Z" }]);
-    if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title: "Fix #3", user: { login: "octocat" }, draft: pr.draft, head: { sha: pr.head } }]);
+    if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title, user: { login: "octocat" }, draft: pr.draft, head: { sha: pr.head } }]);
     if (path === `/repos/${REPO}/pulls/8`) {
-      return Response.json({ number: 8, title: "Fix #3", state: pr.state, draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
+      return Response.json({ number: 8, title, state: pr.state, draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
     }
+    if (path.startsWith(`/repos/${REPO}/pulls/8/commits?`)) return Response.json(commits.map((message, index) => ({ sha: `c${index}`, commit: { message } })));
     if (path.includes("/check-runs")) return Response.json({ check_runs: RUNS[pr.ci] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
     if (path.startsWith(`/repos/${REPO}/git/trees/`)) return Response.json({ sha: "tree", tree: DOCS.map(([doc, text], index) => ({ path: doc, type: "blob", sha: `blob${index}`, size: bytes(text) })) });
@@ -243,6 +244,16 @@ describe("pr-triage body", () => {
     expect(judged).toEqual([]);
     expect(verdict).toMatchObject({ verdict: "pass", score: null, reason: RULES_PASS_REASON, reasons: [], actions: [{ list: "pass", kind: "comment" }] });
     expect((verdict as Verdict).request.labels).toEqual(["Triage: Ready"]);
+  });
+
+  test("conventional commits fails a title and commits without a type, naming each", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "conventional-commits": { enabled: true } } };
+    const commits = ["Add tests for live run stream", "Update docs: live run stream", "Merge branch 'main' into chat-live-run"];
+    const { path, verdict } = await triage(pack, { title: "Chat: stream live run progress", commits });
+    const reason = "`Chat: stream live run progress` isn't a conventional commit; `Add tests for live run stream` isn't a conventional commit; `Update docs: live run stream` isn't a conventional commit";
+    expect(path).toEqual(RULES_PATH);
+    expect(verdict).toMatchObject({ verdict: "fail", reasons: [reason] });
+    expect((verdict as Verdict).request.comment).toStartWith(`**Triage: Fail**\n\n@octocat, please address the following:\n- ${reason}`);
   });
 
   test("requested changes wait on the author, then on the reviewer once the author pushes, until the reviewer reviews again", async () => {
