@@ -31,7 +31,7 @@ function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [
   let nextId = 100;
   const { gh, requests } = recorder(function respond(path, init) {
     const body = typeof init?.body === "string" ? JSON.parse(init.body).body : undefined;
-    if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: "abc123" }, labels: labels.map((name) => ({ name })) };
+    if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: "abc123" }, base: { repo: { id: 1 } }, labels: labels.map((name) => ({ name })) };
     if (path.includes("/comments?per_page")) return comments;
     if (path.endsWith("/issues/8/comments") && init?.method === "POST") {
       const created = { id: nextId++, user: APP, body };
@@ -147,7 +147,7 @@ type TimedComment = FakeComment & { updated_at: string };
 
 function timedGithub(state = "open", seed: TimedComment[] = []) {
   let clock = 0;
-  const pr = { state, user: { login: "alice" }, head: { sha: "abc" }, labels: [] as Array<{ name: string }> };
+  const pr = { state, user: { login: "alice" }, head: { sha: "abc" }, base: { repo: { id: 1 } }, labels: [] as Array<{ name: string }> };
   const comments = [...seed];
   function tick() {
     return new Date(Date.UTC(2026, 9, 13, 0, 0, clock++)).toISOString();
@@ -295,7 +295,7 @@ describe("sendCodeReview", () => {
     return recorder(function respond(path, init) {
       if (path.includes("/reviews?per_page")) return [];
       if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: PATCH }];
-      if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: head } };
+      if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: head }, base: { repo: { id: 1 } } };
       return { id: 9 };
     });
   }

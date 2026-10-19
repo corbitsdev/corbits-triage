@@ -88,7 +88,7 @@ test("quality preflight shows the whole-pull-request question every file of a wi
   const evaluation = prepareQualityEvaluation(facts(files), sources);
   expect(evaluation.requests).toHaveLength(1);
   expect(evaluation.requests[0]!.state.pullRequest.files).toHaveLength(120);
-  expect(evaluation.focused).toEqual({ slices: { focused: files.map((file) => file.path) }, unread: [], parts: {} });
+  expect(evaluation.focused).toEqual({ purpose: "Réorganiser 設定", slices: { focused: files.map((file) => file.path) }, unread: [], parts: {} });
 });
 
 test("quality preflight does not ask focused when only generated files changed", () => {

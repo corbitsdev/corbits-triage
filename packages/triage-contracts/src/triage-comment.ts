@@ -1,4 +1,6 @@
 import { type } from "arktype";
+import type { VerdictWord } from "./check-pack.js";
+import { VERDICT_NAMES } from "./policy-export.js";
 import type { ArtifactRef, PolicySource } from "./resolve-policy.js";
 
 /** What a Triage comment was written for, kept in its marker so a later run can tell what changed. */
@@ -9,10 +11,15 @@ export type MarkedComment = { id: number; body: string; updatedAt?: string };
 
 export type WrittenComment = { commentId: number; updated: boolean; unchanged?: string };
 
+/** What reached the head since an earlier one: how many commits, and the pull requests merged into the branch among them. */
+export type HeadChange = { commits: number; merged: number[] };
+
 /** How one host reads and writes a pull request's comments; `edit` is undefined when the host refuses the edit. */
 export type CommentHost = {
   edit(id: number, body: string): Promise<number | undefined>;
   post(body: string): Promise<number>;
+  /** Undefined when the host no longer has `from`, such as after a force-push. */
+  changesSince?(from: string, to: string): Promise<HeadChange | undefined>;
 };
 
 const ArtifactRefShape = type({ id: "string", version: "number" });
@@ -29,6 +36,7 @@ export type MarkerFormat = {
 };
 
 const SUPERSEDES_NOTE = "This supersedes the comment above because the rules changed";
+const CHANGED_NOTE = "Changed since the last verdict";
 const HTML_SUPERSEDED = "<!-- corbits-triage-superseded";
 
 export function parseHeader(json: string): TriageHeader | undefined {
@@ -91,6 +99,29 @@ function supersedesNote(before: TriageHeader, after: TriageHeader): string {
   return `${SUPERSEDES_NOTE}: ${changes.join(", ")}.`;
 }
 
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+function changedNote(before: TriageHeader, change: HeadChange): string {
+  const merged = change.merged.length > 0 ? `, merging ${change.merged.map((number) => `#${number}`).join(", ")} into this branch` : "";
+  return `${CHANGED_NOTE} (${VERDICT_NAMES[before.verdict as VerdictWord]} at \`${before.head.slice(0, 7)}\`): ${plural(change.commits, "new commit")}${merged}.`;
+}
+
+/**
+ * A verdict that changed on a new head says what reached the branch since; a rerun on the same head keeps what the
+ * comment already said.
+ */
+async function withChangedNote(host: CommentHost, latest: MarkedComment | undefined, before: TriageHeader | undefined, header: TriageHeader, text: string): Promise<string> {
+  if (!latest || !before) return text;
+  if (before.head === header.head) {
+    const at = latest.body.lastIndexOf(`\n\n${CHANGED_NOTE}`);
+    return at === -1 ? text : `${text}${latest.body.slice(at)}`;
+  }
+  const change = before.verdict !== header.verdict && host.changesSince ? await host.changesSince(before.head, header.head) : undefined;
+  return change ? `${text}\n\n${changedNote(before, change)}` : text;
+}
+
 function unchangedSince(markers: MarkerFormat, latest: MarkedComment, header: TriageHeader, text: string): string | undefined {
   const before = markers.headerOf(latest.body);
   if (!before || before.head !== header.head || before.verdict !== header.verdict || !samePolicy(before.policy, header.policy)) return undefined;
@@ -126,14 +157,15 @@ export async function upsertMarked(host: CommentHost, body: string, current: Mar
 export async function writeHeadedComment(host: CommentHost, markers: MarkerFormat, own: MarkedComment[], header: TriageHeader, text: string): Promise<WrittenComment> {
   const current = own.filter((c) => !markers.isSuperseded(c.body));
   const latest = current[0];
-  const since = latest && unchangedSince(markers, latest, header, text);
-  if (latest && since) return { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
   const before = latest && markers.headerOf(latest.body);
+  const shown = await withChangedNote(host, latest, before, header, text);
+  const since = latest && unchangedSince(markers, latest, header, shown);
+  if (latest && since) return { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
   const superseded = before !== undefined && supersedes(before, header)
     && await host.edit(latest!.id, `${markers.superseded(before)}\nSuperseded by the comment below.`) !== undefined;
   const earlier = earlierHeader(markers, own, current, superseded);
-  if (earlier && supersedes(earlier, header)) return { commentId: await host.post(`${markers.current(header)}\n${supersedesNote(earlier, header)}\n\n${text}`), updated: false };
-  return upsertMarked(host, `${markers.current(header)}\n${text}`, current);
+  if (earlier && supersedes(earlier, header)) return { commentId: await host.post(`${markers.current(header)}\n${supersedesNote(earlier, header)}\n\n${shown}`), updated: false };
+  return upsertMarked(host, `${markers.current(header)}\n${shown}`, current);
 }
 
 const LINK_REFERENCE_PREFIX = "[corbits-triage";

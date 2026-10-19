@@ -296,6 +296,8 @@ export function judgeKey({ state, questions }: JudgeRequest): string {
 }
 
 export interface FocusedPlan {
+  /** What every slice and file is judged against: the pull request's title. */
+  purpose: string;
   slices: Record<string, string[]>;
   /** Files with lines changed whose patch the judge could not get whole: GitHub left it out, or reading it stopped. */
   unread: string[];
@@ -366,7 +368,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const changed = facts.files.filter((file) => file.status !== "removed" && isDocPath(file.path));
     plan.docs = { changed: changed.map((file) => file.path), asked: {}, unread: [] };
   }
-  const focused: FocusedPlan | undefined = isFocused(sources) ? { slices: {}, unread: [], parts: {} } : undefined;
+  const focused: FocusedPlan | undefined = isFocused(sources) ? { purpose: facts.title, slices: {}, unread: [], parts: {} } : undefined;
   const scoped = sources.custom.filter(isScoped);
   for (const row of scoped) plan[row.id] = { changed: [], asked: {}, unread: [] };
   const listed = pathList(facts, focused !== undefined);
