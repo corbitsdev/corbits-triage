@@ -158,7 +158,7 @@ export function dockerSettings(env: HubEnv): DockerSettings {
     ...(env.DOCKER_CONTEXT !== undefined && { dockerContext: env.DOCKER_CONTEXT }),
     ...(ca !== undefined && cert !== undefined && key !== undefined && { tls: { ca, cert, key } }),
     home,
-    publicHubWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL),
+    publicHubWebSocketUrl: publicHubWebSocketUrl(env),
   };
 }
 
@@ -171,7 +171,7 @@ export type E2bSettings = {
 /** Unset `E2B_API_KEY` means no E2B provisioner. */
 export function e2bSettings(env: HubEnv): E2bSettings | undefined {
   if (env.E2B_API_KEY === undefined) return undefined;
-  return { apiKey: env.E2B_API_KEY, publicHubWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? websocketUrlOf(env.BETTER_AUTH_BASE_URL) };
+  return { apiKey: env.E2B_API_KEY, publicHubWebSocketUrl: publicHubWebSocketUrl(env) };
 }
 
 export type RailwaySandboxSettings = {

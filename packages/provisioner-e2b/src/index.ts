@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { RateLimitError } from "e2b";
 import type {
   DestroySidecarRequest,
@@ -7,6 +6,7 @@ import type {
   EnsureSidecarResult,
   SidecarProvisioner,
 } from "@intx/hub-sessions";
+import { sidecarEnv } from "@corbits/provisioner-template";
 import type { AdapterManifest } from "@intx/types";
 import type { E2bApi, E2bSandbox } from "./e2b.js";
 
@@ -93,15 +93,7 @@ export function createE2bSidecarProvisioner({ e2b, hubId, adapterManifest, hubWe
     return e2b.create(metadata, {
       cmd: `mkdir -p ${DATA_DIR} && exec bun --conditions=intx-src apps/sidecar/src/index.ts`,
       cwd: INTERCHANGE_DIR,
-      envs: {
-        HUB_WS_URL: hubWebSocketUrl,
-        SIDECAR_ID: request.sidecarId,
-        SIDECAR_TOKEN: request.token,
-        SIDECAR_DATA_DIR: DATA_DIR,
-        SIDECAR_CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
-        SIDECAR_ADAPTER_MANIFEST: JSON.stringify(adapterManifest),
-        HOME: DATA_DIR,
-      },
+      envs: sidecarEnv({ hubWebSocketUrl, sidecarId: request.sidecarId, token: request.token, dataDir: DATA_DIR, adapterManifest }),
     });
   }
 

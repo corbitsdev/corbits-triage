@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { type } from "arktype";
 import type {
   DestroySidecarRequest,
@@ -7,6 +6,7 @@ import type {
   EnsureSidecarResult,
   SidecarProvisioner,
 } from "@intx/hub-sessions";
+import { sidecarEnv } from "@corbits/provisioner-template";
 import type { AdapterManifest } from "@intx/types";
 import { DockerEngineError, isThisMachine, type DockerEngine } from "./engine.js";
 
@@ -133,16 +133,13 @@ export function createDockerSidecarProvisioner({
   }
 
   async function create(request: EnsureSidecarRequest): Promise<string> {
-    const env = {
-      HUB_WS_URL: hubWebSocketUrl ?? hubUrlFromContainer(request.hubWebSocketUrl),
-      SIDECAR_ID: request.sidecarId,
-      SIDECAR_TOKEN: request.token,
-      SIDECAR_DATA_DIR: DATA_DIR,
-      SIDECAR_CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
-      SIDECAR_ADAPTER_MANIFEST: JSON.stringify(adapterManifest),
-      HOME: DATA_DIR,
-      TMPDIR: "/tmp",
-    };
+    const env = sidecarEnv({
+      hubWebSocketUrl: hubWebSocketUrl ?? hubUrlFromContainer(request.hubWebSocketUrl),
+      sidecarId: request.sidecarId,
+      token: request.token,
+      dataDir: DATA_DIR,
+      adapterManifest,
+    });
     const body = {
       Image: image,
       Env: Object.entries(env).map(([name, value]) => `${name}=${value}`),

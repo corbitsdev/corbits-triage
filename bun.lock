@@ -239,6 +239,7 @@
       "name": "@corbits/provisioner-docker",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/provisioner-template": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/hub-sessions": "0.5.0",
         "@intx/types": "workspace:*",
@@ -252,6 +253,7 @@
       "name": "@corbits/provisioner-e2b",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/provisioner-template": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/hub-sessions": "0.5.0",
         "@intx/types": "workspace:*",
