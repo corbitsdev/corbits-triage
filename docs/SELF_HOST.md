@@ -63,7 +63,9 @@ alter role <hub role> set idle_in_transaction_session_timeout = '10min';
 
 ## Set up in the portal
 
-1. **Sign up.** The first sign-in creates your workspace.
+1. **Sign up.** The first account on the server creates its workspace and
+   owns it. Everyone else joins that workspace by invite: someone who signs up
+   without one is asked to get an owner to invite their address.
 2. **Create the GitHub App** with **Create GitHub App** and confirm the
    prefilled form on GitHub. The private key goes to the hub's vault and never
    reaches the browser. The App's webhook URL is built from the address that

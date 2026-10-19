@@ -180,12 +180,13 @@ const membership = (tenantSlug: string, status: Membership["status"]): Membershi
   roles: [],
 });
 
-function membershipHub(memberships: Membership[]) {
+function membershipHub(memberships: Membership[], exists = true) {
   const created: unknown[] = [];
   const transport: Transport = {
     fetch: async (method, path, body) => {
       if (method === "GET" && path === "/api/me") return { id: "user", name: "ada", email: "ada@example.com" } as never;
       if (method === "GET" && path.startsWith("/api/me/principals")) return { data: memberships, nextCursor: null } as never;
+      if (method === "GET" && path === "/api/integrations/workspaces/exists") return { exists } as never;
       if (method === "POST" && path === "/api/tenants") {
         created.push(body);
         memberships.unshift(membership("corbits-triage-ada-user", "active"));
@@ -211,10 +212,16 @@ describe("workspace resolution", () => {
     expect(hub.created).toEqual([]);
   });
 
-  test("a user with no triage membership or invitation gets a workspace of their own, named for them", async () => {
-    const hub = membershipHub([membership("corbits-triage-team", "suspended")]);
+  test("the first user on a hub with no workspace gets one, named for them", async () => {
+    const hub = membershipHub([], false);
     expect(await ensureWorkspace(hub.transport, null)).toMatchObject({ kind: "member", workspace: { tenantId: "t-corbits-triage-ada-user" } });
     expect(hub.created).toEqual([{ name: "ada's workspace", slug: "corbits-triage-ada-user" }]);
+  });
+
+  test("a user with no triage membership or invitation on a hub that has a workspace is told to ask for an invite", async () => {
+    const hub = membershipHub([membership("corbits-triage-team", "suspended")]);
+    expect(await ensureWorkspace(hub.transport, null)).toEqual({ kind: "uninvited" });
+    expect(hub.created).toEqual([]);
   });
 
   test("a stray workspace of the user's own does not hide the team's, even when newer or sorted first", async () => {

@@ -127,8 +127,21 @@ function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
   );
 }
 
+function UninvitedGate({ email }: { email: string }) {
+  const signOut = useSignOutAfterSending();
+  return (
+    <div className="gate">
+      <section className="onboarding centered-setup" aria-label="Waiting for an invitation">
+        <h1>Waiting for an invitation</h1>
+        <p className="muted">Ask an owner of this Triage to invite you as {email}.</p>
+        <Button type="button" variant="outline" onClick={() => void signOut()}>Sign out</Button>
+      </section>
+    </div>
+  );
+}
+
 function Gate() {
-  const { configured, loading, connected, loadError, snapshot, invitations } = usePortal();
+  const { configured, loading, connected, loadError, snapshot, invitations, uninvited } = usePortal();
   const { ready, session } = useSession();
   const location = useLocation();
   const path = location.pathname;
@@ -141,6 +154,7 @@ function Gate() {
   if (path === DEVICE_PATH) return <Device />;
   if (!snapshot) {
     if (invitations.length > 0) return <InvitationGate invitations={invitations} />;
+    if (uninvited) return <UninvitedGate email={session.email} />;
     if (loading || !loadError) return <LoadingGate />;
     return <HubOutage message={loadError || "Could not reach the service."} />;
   }

@@ -166,6 +166,8 @@ export const SessionList = type({
 });
 export type SessionList = typeof SessionList.infer;
 
+export const WorkspaceExists = type({ exists: "boolean" });
+
 const PackageVersion = type({ name: "string", version: "string" });
 
 export const DeployedVersions = type({

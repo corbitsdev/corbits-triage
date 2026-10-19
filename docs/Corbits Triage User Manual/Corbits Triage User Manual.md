@@ -62,7 +62,11 @@ If you are the first person from your team, click **Sign up for an account**. Th
 
 ![The create-account form with Name, Email and Password fields](images/02.png)
 
-Creating an account also creates a **workspace**, the shared space your whole team will use. Teammates do not create their own workspaces. Instead, you invite them from Settings, and they join yours. If someone has already invited you, open the link in the invitation email instead of creating an account from scratch.
+The first account on your Triage server also creates its **workspace**, the shared space your whole team will use, and makes you its owner. Teammates do not get workspaces of their own. Instead, you invite them from Settings, and they join yours. If someone has already invited you, open the link in the invitation email instead of creating an account from scratch.
+
+If you create an account on a server that already has a workspace and no one has invited you, the portal shows **Waiting for an invitation** with the email address you signed up with. Send that address to an owner, and once they invite it, the screen shows the invitation.
+
+![The Waiting for an invitation screen: Ask an owner of this Triage to invite you, with the signed-up email address, and a Sign out button](images/45.png)
 
 ### First-time setup
 

@@ -36,6 +36,7 @@ import {
   WAITING_FOR_WORKFLOW,
   type HubGrant,
   type InvitedAccess,
+  type UninvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
   type RunLog,
@@ -63,6 +64,8 @@ interface PortalContextValue {
   snapshot: PortalSnapshot | null;
   /** Workspaces the user is invited to but not yet a member of, while they are a member of none. */
   invitations: WorkspaceOption[];
+  /** The hub has a workspace, but the user is neither in it nor invited to it. */
+  uninvited: boolean;
   loadError: string;
   notify: (message: string) => void;
   warn: (message: string) => void;
@@ -185,14 +188,15 @@ function hostsOf(snapshot: PortalSnapshot): DeployHosts {
   return { connected: connectedSources(snapshot.credentials), codeReview: codeReviewSources(snapshot), codeReviewProvider: codeReviewProvider(snapshot.credentials) };
 }
 
-type PortalLoad = PortalSnapshot | InvitedAccess;
+type NoWorkspace = InvitedAccess | UninvitedAccess;
+type PortalLoad = PortalSnapshot | NoWorkspace;
 
-function isInvited(load: PortalLoad): load is InvitedAccess {
+function isNoWorkspace(load: PortalLoad): load is NoWorkspace {
   return "kind" in load;
 }
 
 function snapshotOf(load: PortalLoad | undefined): PortalSnapshot | null {
-  return load && !isInvited(load) ? load : null;
+  return load && !isNoWorkspace(load) ? load : null;
 }
 
 export function PortalProvider({ children }: { children: ReactNode }) {
@@ -213,7 +217,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     try {
       const current = opened.current?.userId === userId ? opened.current.tenantId : readChosenWorkspace(userId);
       const access = await ensureWorkspace(transport, current);
-      if (access.kind === "invited") return access;
+      if (access.kind !== "member") return access;
       const tenantId = access.workspace.tenantId;
       opened.current = { userId, tenantId };
       async function hasPack(repo: string) {
@@ -260,7 +264,9 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   });
 
   const snapshot = enabled ? snapshotOf(portalQuery.data) : null;
-  const invitations = enabled && portalQuery.data && isInvited(portalQuery.data) ? portalQuery.data.invitations : NO_INVITATIONS;
+  const noWorkspace = enabled && portalQuery.data && isNoWorkspace(portalQuery.data) ? portalQuery.data : null;
+  const invitations = noWorkspace?.kind === "invited" ? noWorkspace.invitations : NO_INVITATIONS;
+  const uninvited = noWorkspace?.kind === "uninvited";
   const loading = enabled && portalQuery.isPending;
   const unauthorized = portalQuery.error instanceof ApiError && portalQuery.error.status === 401;
   const readOnly = Boolean(enabled && !portalQuery.data && portalQuery.isError && !unauthorized);
@@ -528,6 +534,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         connected: snapshot ? portalConnected(snapshot) : false,
         snapshot,
         invitations,
+        uninvited,
         loadError,
         notify,
         warn,
@@ -559,6 +566,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       readOnly,
       snapshot,
       invitations,
+      uninvited,
       loadError,
       notify,
       warn,

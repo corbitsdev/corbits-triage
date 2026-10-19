@@ -78,6 +78,7 @@ import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { createSessions } from "./sessions.js";
+import { createWorkspaceExists } from "./workspaces.js";
 import { migrateTriageTables } from "./triage-db.js";
 import { createTriageStats } from "./github/triage-stats.js";
 import { createHostReads, createOutcomeReader } from "./github/pr-outcomes.js";
@@ -843,6 +844,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     log: logJson,
   }),
   sessions: createSessions(composition.db),
+  workspaceExists: createWorkspaceExists(composition.db),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them
 // through routeRequest before the stock logger.

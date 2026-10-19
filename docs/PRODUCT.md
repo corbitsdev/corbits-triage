@@ -19,8 +19,10 @@ How to use the portal, screen by screen, is in the
 
 - **Maintainers** use the portal: verdicts, reasons and suggested actions for
   each open pull request.
-- **Teams** share a workspace. Admins invite teammates by email; steps name
-  users or teams for assignment and review.
+- **Teams** share a workspace. The first account on a server creates it;
+  everyone after joins by invite, and someone signing up without one is asked
+  to get invited. Admins invite teammates by email; steps name users or teams
+  for assignment and review.
 - **Authors** see only what the repository's actions write on the pull
   request: labels, review requests, assignees, comments, and on Bitbucket a
   build status.

@@ -7,7 +7,7 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import type { DB } from "@intx/db";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts, WorkspaceExists } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
@@ -32,6 +32,7 @@ import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
 import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, RepoWebhook, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
 import { SESSIONS_PATH } from "../sessions.js";
+import { WORKSPACES_EXISTS_PATH } from "../workspaces.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
@@ -98,6 +99,7 @@ export type IntegrationHandlers = {
     list: (caller: Caller) => Promise<Response>;
     revoke: (caller: Caller, sessionId: string) => Promise<Response>;
   };
+  workspaceExists: () => Promise<Response>;
 };
 
 const TAGS = ["integrations"];
@@ -837,6 +839,20 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     signedIn,
     function revokeSession(c) {
       return handlers.sessions.revoke(callerOf(c), c.req.param("sessionId"));
+    },
+  );
+
+  app.get(
+    WORKSPACES_EXISTS_PATH,
+    describeRoute({
+      summary: "Whether this hub has a triage workspace",
+      description: "Only a yes or no, never which workspace. The portal creates a workspace for a new user only when there is none; after that, people join by invite.",
+      tags: TAGS,
+      responses: { 200: json("Whether a triage workspace exists", WorkspaceExists), 401: failures[401], 403: failures[403] },
+    }),
+    signedIn,
+    function workspaceExists() {
+      return handlers.workspaceExists();
     },
   );
 

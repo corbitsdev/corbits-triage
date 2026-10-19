@@ -6,11 +6,9 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, isTriageSlug, SessionList, TriageStats, TriageVerdicts, WORKSPACE_SLUG, WorkspaceExists, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
-const WORKSPACE_SLUG =
-  (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
 export const BACKLOG_WORKFLOW = "pr-triage-historical";
 const GITHUB_PROVIDER = "github";
 const GITHUB_PROVIDER_PLUGIN = "http";
@@ -53,6 +51,7 @@ export type WorkspaceOption = { tenantId: string; name: string; slug: string };
 
 export type MemberAccess = { kind: "member"; workspace: Workspace; workspaces: WorkspaceOption[]; invitations: WorkspaceOption[] };
 export type InvitedAccess = { kind: "invited"; invitations: WorkspaceOption[] };
+export type UninvitedAccess = { kind: "uninvited" };
 type WorkspaceAccess = MemberAccess | InvitedAccess | { kind: "none" };
 
 type Page<T> = { data: T[]; nextCursor: string | null };
@@ -453,10 +452,6 @@ function rowName(row: unknown): unknown {
   return row && typeof row === "object" ? (row as { name?: unknown }).name : undefined;
 }
 
-function isTriageSlug(slug: string | undefined): boolean {
-  return slug === WORKSPACE_SLUG || Boolean(slug?.startsWith(`${WORKSPACE_SLUG}-`));
-}
-
 function optionOf(entry: Membership): WorkspaceOption {
   return { tenantId: entry.tenantId, name: entry.tenantName, slug: entry.tenantSlug };
 }
@@ -553,10 +548,12 @@ async function createWorkspace(transport: Transport): Promise<MemberAccess | Inv
   return resolved;
 }
 
-/** Opens a workspace the user is active in, else reports their invitations; only a user with neither gets a workspace of their own. */
-export async function ensureWorkspace(transport: Transport, chosen: string | null): Promise<MemberAccess | InvitedAccess> {
+/** Opens a workspace the user is active in, else reports their invitations; only the hub's first user gets a workspace created. */
+export async function ensureWorkspace(transport: Transport, chosen: string | null): Promise<MemberAccess | InvitedAccess | UninvitedAccess> {
   const existing = await resolveWorkspace(transport, chosen);
   if (existing.kind !== "none") return existing;
+  const { exists } = WorkspaceExists.assert(await transport.fetch<unknown>("GET", "/api/integrations/workspaces/exists"));
+  if (exists) return { kind: "uninvited" };
   return createWorkspace(transport);
 }
 

@@ -251,6 +251,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/invite-accept": ["post"],
     "/api/integrations/sessions": ["get"],
     "/api/integrations/sessions/{sessionId}": ["delete"],
+    "/api/integrations/workspaces/exists": ["get"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/connection": ["put", "get", "delete"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/repositories": ["get"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/repositories/{project}/{slug}/enable": ["post"],
@@ -884,5 +885,30 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
   } finally {
     await close();
     smtp.stop();
+  }
+}, 60_000);
+
+test("a fresh hub has no triage workspace until its first user makes one, and says only that", async () => {
+  const database = `corbits_fresh_${crypto.randomUUID().slice(0, 8)}`;
+  const admin = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  await admin.db.execute(sql.raw(`create database ${database}`));
+  try {
+    const origin = await startHub({ DATABASE_URL: `postgres://postgres:postgres@localhost:5432/${database}` });
+    const exists = `${origin}/api/integrations/workspaces/exists`;
+    async function existsFor(headers: Record<string, string>) {
+      const res = await fetch(exists, { headers });
+      return { status: res.status, body: await res.json() };
+    }
+    const first = await signedIn(origin);
+    expect(await existsFor(first)).toEqual({ status: 200, body: { exists: false } });
+    await createTenant(origin, first);
+    expect(await existsFor(first)).toEqual({ status: 200, body: { exists: false } });
+    const created = await fetch(`${origin}/api/tenants`, { method: "POST", headers: first, body: JSON.stringify({ name: "First's workspace", slug: "corbits-triage-first" }) });
+    expect(created.status).toBe(201);
+    expect(await existsFor(await signedIn(origin))).toEqual({ status: 200, body: { exists: true } });
+    expect((await fetch(exists, { headers: { origin } })).status).toBe(401);
+  } finally {
+    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
+    await admin.close();
   }
 }, 60_000);
