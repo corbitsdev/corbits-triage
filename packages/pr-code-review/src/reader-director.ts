@@ -1,9 +1,9 @@
 import { defineDirector } from "@intx/agent";
 import { getLogger } from "@intx/log";
-import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent, TokenUsage, ToolCall, ToolResult } from "@intx/types/runtime";
+import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent, TokenUsage, ToolCall } from "@intx/types/runtime";
 import { type } from "arktype";
-import { refused, REPO_READ_DEFINITIONS } from "@corbits/repo-read-tool";
-import { BUDGET_EXHAUSTED, budgetOf, CHECKOUT_TOOL, checkoutOf } from "./actions/checkout.js";
+import { refused, REPO_READ_DEFINITIONS, rootedAt } from "@corbits/repo-read-tool";
+import { BUDGET_EXHAUSTED, budgetOf, checkoutOf, checkoutPath, isCheckedOut } from "./actions/checkout.js";
 import { TOOL_PROMPTS } from "./prompts.js";
 import { packageName } from "./package-name.js";
 import type { CodeReviewProfile } from "./profile.js";
@@ -25,28 +25,24 @@ function turnText(turn: AssistantTurn): string {
   return turn.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
 }
 
-function resultText(result: ToolResult): string {
-  return typeof result.content === "string" ? result.content : JSON.stringify(result.content);
-}
-
 export interface ReaderDirectorConfig {
   /** The tools section appended to the system prompt while the model reads. */
   tools: keyof typeof TOOL_PROMPTS;
 }
 
 /**
- * Checks the repository out at the head the input names, out of the model's history, then lets the model read it with
- * the read tools alone until it answers; the reply is the model's final text. An input that names no head gets one
- * call with no tools. Every call keeps the system prompt and tools, which earlier thinking blocks are bound to, so once
- * the input's budget of billable tokens is spent each further tool call is answered with BUDGET_SPENT; after
- * REFUSED_ROUNDS such rounds the model's latest text is the reply. A reply whose calls were refused starts with
- * BUDGET_EXHAUSTED.
+ * Lets the model read the checkout of the head the input names under `dataDir` with the read tools alone, each call
+ * confined to its folder, until it answers; the reply is the model's final text. An input that names no head gets one
+ * call with no tools; a head not checked out on this sidecar fails the step. Every call keeps the system prompt and
+ * tools, which earlier thinking blocks are bound to, so once the input's budget of billable tokens is spent each
+ * further tool call is answered with BUDGET_SPENT; after REFUSED_ROUNDS such rounds the model's latest text is the
+ * reply. A reply whose calls were refused starts with BUDGET_EXHAUSTED.
  */
-function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }: ReaderDirectorConfig, billableTokens: (usage: TokenUsage) => number): ReactorDirector {
+function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }: ReaderDirectorConfig, billableTokens: (usage: TokenUsage) => number, dataDir: () => string): ReactorDirector {
   const systemPrompt = `${basePrompt.trimEnd()}\n\n${TOOL_PROMPTS[tools]}`;
   let budget = 0;
   let spent = 0;
-  let checkedOut = false;
+  let root = "";
   let refusedRounds = 0;
   let pending = 0;
 
@@ -58,14 +54,17 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }
     return caps.reply(refusedRounds > 0 ? `${BUDGET_EXHAUSTED}${text}` : text);
   }
 
-  function start(content: string) {
+  async function start(content: string) {
     const checkout = checkoutOf(content);
     if (!checkout) return caps.infer({ systemPrompt: basePrompt, tools: [] });
     const tokens = budgetOf(content);
     if (tokens === undefined) return caps.reply("reader: the input names no token budget");
+    const path = checkoutPath(dataDir(), checkout);
+    // The checkout action left it on the sidecar that ran it; a run resumed on another sidecar fails here.
+    if (!(await isCheckedOut(path))) throw new Error(`reader: no checkout at ${path} on this sidecar`);
     budget = tokens;
-    const call = { id: "checkout", name: CHECKOUT_TOOL[checkout.source], arguments: { repo: checkout.repo, sha: checkout.sha } };
-    return caps.executeTools([call], false, false);
+    root = path;
+    return read();
   }
 
   function onTurn(turn: AssistantTurn, usage: TokenUsage) {
@@ -77,7 +76,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }
     pending = calls.length;
     if (spent < budget) {
       for (const c of calls) log.info("reader tool {name} {arguments}", { name: c.name, arguments: c.arguments });
-      return caps.executeTools(calls, true);
+      return caps.executeTools(calls.map((c) => rootedAt(c, root)), true);
     }
     if (++refusedRounds > REFUSED_ROUNDS) {
       log.warn("reader kept calling tools past its budget of {budget} tokens; answering with its text", { budget });
@@ -86,12 +85,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }
     return caps.executeTools(calls.map((c) => refused(c, BUDGET_SPENT)), true);
   }
 
-  function onToolDone(result: ToolResult) {
-    if (!checkedOut) {
-      if (result.isError) return caps.reply(`reader: checkout failed: ${resultText(result)}`);
-      checkedOut = true;
-      return read();
-    }
+  function onToolDone() {
     if (--pending > 0) return [];
     return read();
   }
@@ -102,7 +96,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }
         case "message.received":
           return start(event.message.content ?? "");
         case "tool.done":
-          return onToolDone(event.result);
+          return onToolDone();
         case "inference.done":
           return onTurn(event.turn, event.usage);
         case "inference.error":
@@ -125,13 +119,14 @@ function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDir
   };
 }
 
-export function readerDirectorOf(profile: CodeReviewProfile) {
+/** The reader over the checkouts under the sidecar data dir `dataDir` names. */
+export function readerDirectorOf(profile: CodeReviewProfile, dataDir: () => string) {
   return defineDirector<ReaderDirectorConfig>({
     id: `${packageName(profile.packageName)}/reader`,
     configSchema: type({ tools: type.enumerated(...Object.keys(TOOL_PROMPTS)) }),
     factory: function buildReaderDirector(config, _env, agent) {
       return lazy(function buildDirector(caps) {
-        return readerDirector(caps, agent.systemPrompt, config, profile.billableTokens);
+        return readerDirector(caps, agent.systemPrompt, config, profile.billableTokens, dataDir);
       });
     },
   });

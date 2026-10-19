@@ -1,5 +1,8 @@
-import { defineTool, type BaseEnv } from "@intx/agent";
+import { realpath } from "node:fs/promises";
+import { isAbsolute, relative, sep } from "node:path";
+import { defineTool } from "@intx/agent";
 import type { ToolDefinition } from "@intx/types/runtime";
+import { checkoutsUnder, sidecarDataDir } from "./checkouts";
 import { grep, list, MAX_ENTRIES, MAX_LINES, MAX_MATCHES, readLines } from "./repo-read";
 
 const str = { type: "string" };
@@ -33,9 +36,39 @@ export function refused<T extends ToolCallInput>(call: T, reason: string): T {
   return { ...call, arguments: { refusal: reason } };
 }
 
-async function dispatch(root: string, call: ToolCallInput): Promise<unknown> {
+/**
+ * The call confined to the checkout at `root`. The tools hold no root of their own: the director that runs them names
+ * the checkout on every call, over whatever the model passed; the model's own call stays in history.
+ */
+export function rootedAt<T extends ToolCallInput>(call: T, root: string): T {
+  return { ...call, arguments: { ...call.arguments, root } };
+}
+
+function isBelow(base: string, path: string): boolean {
+  const rel = relative(base, path);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+async function realpathOf(path: string): Promise<string | undefined> {
+  try {
+    return await realpath(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The real path of a root inside `checkouts`; any other root, however it is spelled or linked, is refused. */
+async function confineRoot(root: unknown, checkouts: string): Promise<string> {
+  if (typeof root !== "string" || !isAbsolute(root)) throw new Error("the call names no checkout to read");
+  const [base, real] = await Promise.all([realpathOf(checkouts), realpathOf(root)]);
+  if (!base || !real || !isBelow(base, real)) throw new Error(`${root} is not a checkout on this sidecar`);
+  return real;
+}
+
+async function dispatch(call: ToolCallInput, checkouts: string): Promise<unknown> {
   const a = call.arguments;
   if (typeof a.refusal === "string") throw new Error(a.refusal);
+  const root = await confineRoot(a.root, checkouts);
   switch (call.name) {
     case "read_file":
       return readLines(root, a.path, a.start, a.end);
@@ -48,27 +81,25 @@ async function dispatch(root: string, call: ToolCallInput): Promise<unknown> {
   }
 }
 
-function createRepoReadTools(root: string) {
+/**
+ * Read-only, uncredentialed and unmarked, so it runs unattended; every path is confined to the checkout its call names,
+ * which must be inside the checkouts folder of the sidecar data dir `dataDir` names.
+ */
+export function repoReadUnder(dataDir: () => string) {
   async function run(call: ToolCallInput) {
     try {
-      return { callId: call.id, content: (await dispatch(root, call)) as Record<string, unknown> };
+      return { callId: call.id, content: (await dispatch(call, checkoutsUnder(dataDir()))) as Record<string, unknown> };
     } catch (err) {
       return { callId: call.id, content: err instanceof Error ? err.message : String(err), isError: true };
     }
   }
-  return { definitions: REPO_READ_DEFINITIONS, run };
+  return defineTool({
+    id: "@corbits/repo-read-tool/sidecar-bundle",
+    definitions: REPO_READ_DEFINITIONS.map((d) => ({ name: d.name })),
+    factory: function repoReadToolFactory() {
+      return { definitions: REPO_READ_DEFINITIONS, run };
+    },
+  });
 }
 
-interface Env extends BaseEnv {
-  toolCwd: string;
-}
-
-/** Read-only, uncredentialed and unmarked, so it runs unattended; every path is confined to the step's working tree. */
-export const repoRead = defineTool<Env>({
-  id: "@corbits/repo-read-tool/sidecar-bundle",
-  requires: ["toolCwd"],
-  definitions: REPO_READ_DEFINITIONS.map((d) => ({ name: d.name })),
-  factory: function repoReadToolFactory(env) {
-    return createRepoReadTools(env.toolCwd);
-  },
-});
+export const repoRead = repoReadUnder(sidecarDataDir);

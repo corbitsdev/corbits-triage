@@ -15,9 +15,8 @@ import {
   readFileAt,
   readRepoDocsPage,
   readStack,
-  repoPath,
 } from "@corbits/bitbucket-datacenter-reads";
-import { cachedLoads, checkTarget, linesOf, MAX_LINES, unpackArchive } from "@corbits/repo-read-tool";
+import { cachedLoads, checkTarget, linesOf, MAX_LINES } from "@corbits/repo-read-tool";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
 import { BitbucketRefusal, mirror, readPr, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
@@ -58,11 +57,6 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "bitbucket_datacenter_read_file",
     description: `Read lines start to end (1-based, inclusive) of a file at a commit sha, at most ${MAX_LINES} lines, each prefixed with its line number.`,
     inputSchema: obj({ repo, sha: str, path: str, start: { type: "integer" }, end: { type: "integer" } }, ["repo", "sha", "path"]),
-  },
-  {
-    name: "bitbucket_datacenter_checkout",
-    description: "Download a repository's files at a commit sha into the step's working tree, replacing what is there.",
-    inputSchema: obj({ repo, sha: str }),
   },
 ];
 
@@ -107,16 +101,6 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
 
 interface Env extends BaseEnv {
   capabilities: RuntimeCapabilities;
-  toolCwd: string;
-}
-
-async function checkout(bb: BitbucketFetch, repo: string, sha: string, dir: string) {
-  checkTarget(repo, sha);
-  const path = `${repoPath(repo)}/archive?at=${sha}&format=tar.gz`;
-  const res = await bb(path);
-  if (!res.ok || !res.body) throw new Error(`bitbucket GET ${path} -> ${res.status}`);
-  await unpackArchive(res.body, dir, 0);
-  return { repo, sha };
 }
 
 type ToolCallInput = { id: string; name: string; arguments: Record<string, any> };
@@ -142,7 +126,7 @@ async function takeBack(bb: BitbucketFetch, a: Record<string, any>, sha: string,
 }
 
 /** Each file at a commit is fetched once per tool instance however many windows of it are read. */
-type Reads = { docs: ReturnType<typeof createDocsReader>; toolCwd: string | undefined; files: ReturnType<typeof cachedLoads<string | undefined>> };
+type Reads = { docs: ReturnType<typeof createDocsReader>; files: ReturnType<typeof cachedLoads<string | undefined>> };
 
 async function readWindow(bb: BitbucketFetch, reads: Reads, a: Record<string, any>) {
   checkTarget(a.repo, a.sha, a.path);
@@ -178,9 +162,6 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return authorTeams(bb, { repo: a.repo, author: a.author, teams: a.teams });
     case "bitbucket_datacenter_read_file":
       return readWindow(bb, reads, a);
-    case "bitbucket_datacenter_checkout":
-      if (reads.toolCwd === undefined) throw new Error("bitbucket_datacenter_checkout needs a working tree");
-      return checkout(bb, a.repo, a.sha, reads.toolCwd);
     case "bitbucket_datacenter_mirror":
     case "bitbucket_datacenter_mirror_auto": {
       const mirrored = await mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, build: a.build, onHead: a.onHead, close: false }, user);
@@ -196,13 +177,13 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
 }
 
 /** The token user, and each head's docs listing, are asked of Bitbucket once per tool instance, so once per step of a run. */
-function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Promise<BitbucketFetch>, toolCwd: string | undefined) {
+function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Promise<BitbucketFetch>) {
   let known: TokenUser | undefined;
   let reads: Reads | undefined;
   async function run(call: ToolCallInput) {
     try {
       const bb = await getFetch();
-      reads ??= { docs: createDocsReader(bb), toolCwd, files: cachedLoads() };
+      reads ??= { docs: createDocsReader(bb), files: cachedLoads() };
       async function user() {
         known ??= await tokenUser(bb);
         return known;
@@ -216,15 +197,15 @@ function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Pro
   return { definitions, run };
 }
 
-/** The tools' calls for a workflow action that holds the credential itself; it has no working tree to check out into. */
+/** The tools' calls for a workflow action that holds the credential itself. */
 export function bitbucketCalls(getFetch: () => Promise<BitbucketFetch>) {
-  return createBitbucketTools([], getFetch, undefined).run;
+  return createBitbucketTools([], getFetch).run;
 }
 
 function defineBitbucketTool(id: string, definitions: ToolDefinition[], ask: readonly string[]) {
   return defineTool<Env>({
     id,
-    requires: ["capabilities", "toolCwd"],
+    requires: ["capabilities"],
     definitions: definitions.map((d) => ({ name: d.name, ...(ask.includes(d.name) ? { approval: "ask" as const } : {}) })),
     factory: function bitbucketToolFactory(env) {
       async function resolveBitbucketFetch(): Promise<BitbucketFetch> {
@@ -234,7 +215,7 @@ function defineBitbucketTool(id: string, definitions: ToolDefinition[], ask: rea
           return mediated.fetch(path, init);
         };
       }
-      return createBitbucketTools(definitions, resolveBitbucketFetch, env.toolCwd);
+      return createBitbucketTools(definitions, resolveBitbucketFetch);
     },
   });
 }

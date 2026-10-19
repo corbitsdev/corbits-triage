@@ -1,7 +1,7 @@
 import { defineAgent } from "@intx/agent";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 import { githubRead } from "@corbits/github-tool";
-import { repoRead } from "@corbits/repo-read-tool";
+import { repoReadUnder } from "@corbits/repo-read-tool";
 import type { RepoSource } from "@corbits/triage-contracts";
 import type { CodeReviewDirectors } from "./directors.js";
 import type { CodeReviewProfile, Role } from "./profile.js";
@@ -15,9 +15,15 @@ function readsOf(sources: Sources) {
   return sources.map((source) => READS[source]);
 }
 
-/** Each host's read bundle bound to the tenant's credential for that host; an unresolved binding fails the deployment, so only the given hosts are bound. */
+/**
+ * Each host's read bundle and the checkout action bound to the tenant's credential for that host, whose handle is the
+ * host's name; an unresolved binding fails the deployment, so only the given hosts are bound.
+ */
 export function credentialBindingsFor(sources: Sources) {
-  return sources.map((source) => ({ package: READS[source].id, handle: source, provider: source, name: source, locator: "tenant" }) as const);
+  return sources.flatMap((source) => [
+    { package: READS[source].id, handle: source, provider: source, name: source, locator: "tenant" } as const,
+    { action: "checkout", handle: source, provider: source, name: source, locator: "tenant" } as const,
+  ]);
 }
 
 const PLAN_SCHEMA = {
@@ -88,8 +94,11 @@ const WRITE_SCHEMA = {
   },
 };
 
-/** The review's agents, each declaring its step's model on the profile's provider and run by the provider's directors. */
-export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolidate, structured }: CodeReviewDirectors) {
+/**
+ * The review's agents, each declaring its step's model on the profile's provider and run by the provider's directors;
+ * the repository finder reads checkouts under the sidecar data dir `dataDir` names.
+ */
+export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolidate, structured }: CodeReviewDirectors, dataDir: () => string) {
   function inference(role: Role) {
     return { sources: [{ provider: profile.provider, model: profile.models[role] }] };
   }
@@ -103,12 +112,12 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
     return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference: inference("diffFinder") });
   }
 
-  /** The repository finder: its director checks the head out with the host's read bundle, and the model reads it with the confined read tools. */
-  function repoFinderAgent(sources: Sources, systemPrompt = SYSTEM_PROMPTS["finder-repo"]) {
+  /** The repository finder: the model reads the checkout its input names with the read tools, confined to it. */
+  function repoFinderAgent(systemPrompt = SYSTEM_PROMPTS["finder-repo"]) {
     return defineAgent({
       id: "code-review-finder-repo",
       systemPrompt,
-      tools: [...readsOf(sources), repoRead],
+      tools: [repoReadUnder(dataDir)],
       capabilities: [],
       inference: inference("repoFinder"),
       director: reader.build({ tools: "finder-repo" }),
