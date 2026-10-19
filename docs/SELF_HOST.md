@@ -153,7 +153,7 @@ still set its own `capacityRetention`.
    already covers it.
 3. **Choose repositories on GitHub**. The hub records them from GitHub's
    installation events, with triage off; nothing runs yet.
-4. **Add the decision model** (during onboarding, or the **Models** section of Settings). Pick
+4. **Add the decision model** (during onboarding, or the **Triage** section of Settings). Pick
    TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API key, or **Add
    my own provider** with a System One–compatible base URL (requests go to
    it + `/systemone`), model and key. The key goes to the hub's vault. Every

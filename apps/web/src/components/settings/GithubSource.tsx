@@ -7,26 +7,21 @@ import { DeniedNotice } from "../../lib/denied.tsx";
 import { githubAppPickerUrl, githubWebhookUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../../lib/github-return-sync.ts";
 import { useGithubManageAccess } from "../../lib/github-sync.ts";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, type PortalSnapshot, type RepoRecord } from "../../lib/hub-api.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CopyField } from "../CopyField.tsx";
 import { CredentialRow } from "./CredentialRow.tsx";
-
-function repoName(repo: RepoRecord): string {
-  return repo.connected ? repo.name : `${repo.name} (not connected)`;
-}
 
 export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
   const { syncFromGithub } = usePortal();
   const [error, setError] = useState("");
   const canManage = useGithubManageAccess().data === true;
   const { credentials } = snapshot;
-  const repos = snapshot.repos.filter((repo) => repo.source !== "bitbucket-datacenter");
   const ready = hasActiveGithubCredential(credentials);
   const secrets = namedSecrets(githubSecrets(credentials));
   const others = namedSecrets(otherSecrets(credentials));
-  const installed = repos.filter((repo) => repo.connected).length;
+  const installed = snapshot.repos.filter((repo) => repo.source !== "bitbucket-datacenter" && repo.connected).length;
   const slug = githubAppSlugFromCredentials(credentials);
 
   async function syncAfterGithub() {
@@ -52,6 +47,17 @@ export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
     arm();
   }
 
+  if (!ready && !snapshot.denied.credentials && secrets.length === 0 && others.length === 0) {
+    return (
+      <div className="gcard source" aria-labelledby="source-github" role="group">
+        <div className="sentence">
+          <span className="txt" id="source-github"><b>GitHub</b> is not connected.</span>
+          <Button asChild variant="outline" size="sm"><Link to="/connect">Connect</Link></Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="gcard source" aria-labelledby="source-github" role="group">
       <header>
@@ -68,13 +74,6 @@ export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
             {!ready && <Link className="linkish" to="/connect">Connect it</Link>}
             {ready && canManage && <Button type="button" variant="outline" size="sm" onClick={chooseOnGithub}>Choose repositories on GitHub</Button>}
           </div>
-          {snapshot.denied.repos && <DeniedNotice section="repositories" />}
-          {repos.length > 0 && (
-            <div className="sentence">
-              <span className="txt mono small-text">{repos.map(repoName).join(", ")}</span>
-              <Link className="linkish" to="/repositories">Open Repositories</Link>
-            </div>
-          )}
           {secrets.map(({ credential, name }) => <CredentialRow key={credential.id} credential={credential} name={name} replaceable />)}
         </div>
         {others.length > 0 && (

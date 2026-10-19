@@ -59,7 +59,7 @@ export default function CodeReviewCard({ repo, disabled }: { repo: RepoRecord; d
           </div>
         </div>
       </div>
-      {keyStored ? null : <p className="help">Needs an Anthropic key in <Link to="/settings/models">Settings → Models</Link>.</p>}
+      {keyStored ? null : <p className="help">Needs an Anthropic key in <Link to="/settings/code-review">Settings → Code review</Link>.</p>}
       {change.error ? <p role="alert" className="error">Could not change code review. {errorText(change.error)}</p> : null}
     </section>
   );

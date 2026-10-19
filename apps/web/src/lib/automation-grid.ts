@@ -1,43 +1,13 @@
-import { ACTION_KINDS, ANY_DO_RESOURCE, DO_GRANT_ACTION, DO_GRANT_PREFIX, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { ANY_DO_RESOURCE, DO_GRANT_ACTION, DO_GRANT_PREFIX, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
 import type { HubGrant, HubRole } from "./hub-api.ts";
-
-export const GRID_KINDS = ACTION_KINDS;
 
 /** Grants name a repository lowercased; `repos` gives it back the host's casing. */
 export function hostCased(repos: readonly string[], repo: string): string {
   return repos.find((name) => name.toLowerCase() === repo) ?? repo;
 }
 
-/**
- * `grants` are the role's grants of the kind, on every repository (`*`) or on some; `repos` names those some. Turning
- * a cell off removes them all. A locked cell holds the kind through a wider grant and cannot change here.
- */
-export type GridCell = { granted: boolean; locked: boolean; grants: HubGrant[]; repos: string[] };
-
-function system(role: HubRole, name: string): boolean {
-  return role.isSystem === true && role.name === name;
-}
-
-export function gridCell(role: HubRole, kind: ActionKind, grants: readonly HubGrant[]): GridCell {
-  if (system(role, "owner")) return { granted: true, locked: true, grants: [], repos: [] };
-  const held = grants.filter((grant) => grant.roleId === role.id && grant.action === DO_GRANT_ACTION && grant.effect === "allow");
-  if (held.some((grant) => grant.resource === ANY_DO_RESOURCE)) return { granted: true, locked: true, grants: [], repos: [] };
-  const prefix = `${DO_GRANT_PREFIX}:${kind}:`;
-  const own = held.filter((grant) => grant.resource.startsWith(prefix));
-  const repos = own.map((grant) => grant.resource.slice(prefix.length)).filter((repo) => repo !== "*");
-  return { granted: own.length > 0, locked: false, grants: own, repos };
-}
-
-export function gridRoles(roles: readonly HubRole[]): HubRole[] {
-  function rank(role: HubRole): number {
-    if (system(role, "owner")) return 0;
-    return system(role, "admin") ? 1 : 2;
-  }
-  return roles.filter((role) => !isTriageRole(role)).sort((a, b) => rank(a) - rank(b));
-}
-
 export function findTriageRole(roles: readonly HubRole[]): HubRole | undefined {
-  return roles.find((role) => system(role, TRIAGE_ROLE));
+  return roles.find(isTriageRole);
 }
 
 /**

@@ -92,7 +92,7 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   the `corbits-system-one` provider's `baseURL` is the endpoint, and the
   `decision` offering names the provider's own model (`quirks.model`). The
   portal reads the saved model back from those rows.
-- The Anthropic key (Settings, Models) is a vault credential named
+- The Anthropic key (Settings, Code review) is a vault credential named
   `anthropic`. Removing it, or the decision model key, first releases the
   workflows that use it (code review or triage), then deletes its catalog
   provider and offerings before the key, because the vault keeps a key a

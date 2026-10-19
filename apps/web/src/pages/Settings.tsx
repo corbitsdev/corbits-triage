@@ -1,20 +1,19 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useParams } from "react-router-dom";
-import { isPerson, type HubPrincipal, type PortalSnapshot } from "../lib/hub-api.ts";
+import { connectedSources, isPerson, type HubPrincipal, type PortalSnapshot } from "../lib/hub-api.ts";
 import { counted } from "../lib/plural.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useDeployedWorkflows, usePrincipals, type TenantSection } from "../lib/tenant-entities.ts";
-import { AccessSection } from "../components/settings/AccessSection.tsx";
+import { InvitePeople } from "../components/InvitePeople.tsx";
 import { AccountSection } from "../components/settings/AccountSection.tsx";
-import { ModelsSection } from "../components/settings/ModelsSection.tsx";
-import { SourcesSection } from "../components/settings/SourcesSection.tsx";
+import { CodeReviewSection } from "../components/settings/CodeReviewSection.tsx";
+import { SupportVersions } from "../components/settings/SupportVersions.tsx";
 import { TriageSection } from "../components/settings/TriageSection.tsx";
 
 const SECTIONS = [
   { id: "triage", label: "Triage" },
-  { id: "sources", label: "Sources" },
-  { id: "models", label: "Models" },
-  { id: "access", label: "Access" },
+  { id: "code-review", label: "Code review" },
+  { id: "people", label: "People" },
   { id: "account", label: "Your account" },
 ] as const;
 
@@ -83,10 +82,10 @@ export default function Settings() {
         {SECTIONS.map((section) => <span key={section.id}><Link className="linkish quiet" to={`/settings/${section.id}`} replace onClick={() => jumpTo(section.id)}>{section.label}</Link></span>)}
       </nav>
       <TriageSection snapshot={snapshot} deployed={deployed} />
-      <SourcesSection snapshot={snapshot} />
-      <ModelsSection snapshot={snapshot} />
-      <AccessSection repos={snapshot.repos} />
+      <CodeReviewSection snapshot={snapshot} />
+      <InvitePeople onSetupPage={false} />
       <AccountSection />
+      {!deployed.denied && !deployed.loading && !deployed.unavailable && <SupportVersions deployments={deployed.rows} sources={connectedSources(snapshot.credentials)} />}
     </main>
   );
 }

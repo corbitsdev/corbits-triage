@@ -195,7 +195,7 @@ export default function Repositories() {
           {bitbucket.error && <p role="alert" className="rt-note error">Could not read your repositories from Bitbucket Data Center. {bitbucket.error.message}</p>}
           {verdicts.error && <p role="alert" className="rt-note error">Could not read triage results. {verdicts.error.message}</p>}
           {sync.isFetching && repos.length === 0 && <p className="rt-empty" role="status">Reading your repositories from GitHub…</p>}
-          {repos.length === 0 && !denied && !sync.isFetching && !reposPending && <p className="rt-empty">{githubConnected ? "No repositories yet. Use Manage repositories on GitHub to add some." : <>No repositories yet. <Link to="/settings/sources">Connect a source in Settings.</Link></>}</p>}
+          {repos.length === 0 && !denied && !sync.isFetching && !reposPending && <p className="rt-empty">{githubConnected ? "No repositories yet. Use Manage repositories on GitHub to add some." : <>No repositories yet. <Link to="/settings/triage">Connect a source in Settings.</Link></>}</p>}
           {rows.length > 0 && (
             <>
               <table className="rt">

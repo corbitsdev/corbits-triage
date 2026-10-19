@@ -227,7 +227,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
     );
   }
   return (
-    <section className="sec" aria-labelledby="sec-people">
+    <section className="sec" id="people" aria-labelledby="sec-people">
       <header>
         <h2 id="sec-people">People</h2>
         {intro}

@@ -1,30 +1,21 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { RepoSource } from "@corbits/triage-contracts";
+import { presetFor, type RepoSource } from "@corbits/triage-contracts";
+import { modelSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
-import { connectedSources, currentDeployment, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
+import { connectedSources, currentDeployment, isActiveCredential, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
+import { usePortal } from "../../lib/portal.tsx";
 import { triageReadyRepos } from "../../lib/repo-rows.ts";
 import type { TenantSection } from "../../lib/tenant-entities.ts";
-import { WORKFLOW_PACKAGES } from "../../lib/workflow-packages.ts";
-import { CopyButton } from "../CopyField.tsx";
+import { DecisionModelForm } from "../DecisionModelForm.tsx";
+import { ActionsOnTheirOwn } from "./ActionsOnTheirOwn.tsx";
+import { BitbucketDatacenterSource } from "./BitbucketDatacenterSource.tsx";
+import { GithubSource } from "./GithubSource.tsx";
+import { KeyRow } from "./KeyRow.tsx";
+import { PolicyFiles } from "./PolicyFiles.tsx";
 
 const SOURCE_NAME: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" };
-
-/** Each connected host's workflows' versions, then the tools those deployments carry, each once, as one line to paste into a bug report. */
-function versionLine(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): string {
-  const parts: string[] = [];
-  const tools = new Set<string>();
-  for (const workflow of WORKFLOW_PACKAGES.filter((row) => sources.includes(row.source))) {
-    const deployment = currentDeployment(deployments, workflow.name);
-    if (!deployment) {
-      parts.push(`${workflow.name} not deployed`);
-      continue;
-    }
-    parts.push(`${workflow.name} ${deployment.package?.version ?? "not from the package registry"}`);
-    for (const tool of deployment.tools) tools.add(`${tool.name} ${tool.version}`);
-  }
-  return [...parts, ...tools].join(" · ");
-}
 
 /** The connected hosts whose pr-triage workflow has no deployment. */
 function undeployedSources(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): RepoSource[] {
@@ -42,6 +33,41 @@ function statusText({ sources, undeployed, model, triaging, total }: Status): st
   return `Triage is running on ${triaging} of ${counted(total, "repository", "repositories")}.`;
 }
 
+/** A preset by its name; your own provider by its endpoint and model. */
+function judgeModel(saved: { endpoint: string; model: string }): ReactNode {
+  const preset = presetFor(saved);
+  if (preset.id !== "custom") return <b>{preset.label}</b>;
+  return <><b>{saved.endpoint}</b> · <span className="mono small-text">{saved.model}</span></>;
+}
+
+function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
+  const { removeDecisionModel } = usePortal();
+  const saved = snapshot.decisionModel;
+  const words = saved ? <>Judge pull requests with {judgeModel(saved)}</> : "Judge pull requests with a decision model";
+
+  return (
+    <div className="gcard source" aria-labelledby="triage-model" role="group">
+      <header>
+        <b id="triage-model">Decision model</b>
+        <span>Answers your policies' Judgement rules and chooses the verdict.</span>
+      </header>
+      <div className="source-body">
+        {snapshot.denied.credentials && <DeniedNotice section="credentials" />}
+        <div className="sentences">
+          <KeyRow
+            words={words}
+            name="decision model"
+            keys={modelSecrets(snapshot.credentials).filter(isActiveCredential)}
+            denied={snapshot.denied.credentials}
+            remove={removeDecisionModel}
+            editor={(onSaved) => <DecisionModelForm onSaved={onSaved} />}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: TenantSection<DeployedWorkflow> }) {
   const ready = !deployed.denied && !deployed.loading && !deployed.unavailable;
   const sources = connectedSources(snapshot.credentials);
@@ -52,7 +78,6 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
     triaging: triageReadyRepos(snapshot.repos).size,
     total: snapshot.repos.length,
   };
-  const versions = versionLine(deployed.rows, sources);
 
   return (
     <section className="sec" id="triage" aria-labelledby="sec-triage">
@@ -68,15 +93,13 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
               <span className="txt">{statusText(status)}</span>
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
-            <div className="sentence">
-              <span className="txt">A failed hard rule decides Fail on its own; otherwise the decision model answers one question to choose the verdict.</span>
-            </div>
-            <div className="sentence">
-              <code className="txt mono small-text">{versions}</code>
-              <CopyButton value={versions} label="Copy the versions Triage runs" />
-            </div>
           </div>
         )}
+        <GithubSource snapshot={snapshot} />
+        <BitbucketDatacenterSource />
+        <PolicyFiles snapshot={snapshot} />
+        <DecisionModel snapshot={snapshot} />
+        <ActionsOnTheirOwn repos={snapshot.repos.map((repo) => repo.name)} />
       </div>
     </section>
   );

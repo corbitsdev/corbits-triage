@@ -943,7 +943,7 @@ export async function setCodeReview(transport: Transport, tenantId: string, repo
   await transport.fetch("POST", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}`, { repo: validateRepo(repo.name), source: repo.source, enabled });
 }
 
-/** The provider the workspace runs code review on: the one whose key it stores in Settings → Models. */
+/** The provider the workspace runs code review on: the one whose key it stores in Settings → Code review. */
 export function codeReviewProvider(credentials: readonly HubCredential[]): CodeReviewProvider | undefined {
   return codeReviewProviderOf(credentials.filter(isActiveCredential).map((credential) => credential.name));
 }

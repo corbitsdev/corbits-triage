@@ -40,9 +40,12 @@ wakes the policy as if it were opened.
 - **Repositories**: per repository, the triage switch and **Triage open pull
   requests again**, its policy file read back, code review, and the actions
   Triage takes on its own.
-- **Settings**: the deployed workflow versions, the sources, the decision
-  model and Anthropic keys (Models), invitations, workspace roles, the grid of
-  action kinds by role, and the account.
+- **Settings**: Triage (the sources, each repository's policy file, the
+  decision model key, and one switch per action kind for every repository),
+  Code review (the provider's key and where reviews run), people and
+  invitations, the account, and the deployed workflow versions for support.
+  Roles and grants are not edited in the portal; the hub routes still change
+  them.
 
 A repository's panel is one scroll. The triage switch comes first; while it is
 off, everything under it is dimmed and cannot be changed. Policy reads the
@@ -50,7 +53,7 @@ repository's `.corbits-triage.yml` back as sentences: each rule that is on,
 then the steps for Pass, Fail and Unsure and whom each is for, with **Change on
 GitHub** (or Bitbucket) linking the file. Rules and actions change only in the
 file. Then Code review, and **Actions Triage takes on its own**: one switch per
-action kind, from the grants in Settings → Access. Outcomes and **Remove
+action kind, from the grants of the `pr-triage` role. Outcomes and **Remove
 repository** close the panel.
 
 The portal shows the verdict, its score and the reasons. Evidence for a file or a change
@@ -191,10 +194,11 @@ The policy holds one **When** and three ordered lists of steps: **On Pass**,
   runs the policy whatever it names.
 - **On Unsure** asks CODEOWNERS for review by default.
 - **Action**: approve, merge, close, comment, request changes, request review (from
-  users, teams or code owners), assign, labels, or nothing. Settings → Access
-  holds one grid, action kind by role: a role's people may approve held actions of the
-  kinds it holds, and actions of the kinds Triage holds run on GitHub during
-  triage; the rest wait in the Inbox for a click. New workspaces automate
+  users, teams or code owners), assign, labels, or nothing. A role's people
+  may approve held actions of the kinds it holds, and actions of the kinds the
+  `pr-triage` role holds run on the host during triage, switched per kind for
+  every repository in Settings → Triage or per repository on its page; the rest
+  wait in the Inbox for a click. New workspaces automate
   nothing.
 - **When**: conditions that must all hold for the step to run, beside the
   verdict its list is for. Left out, the step runs for every pull request.
@@ -448,12 +452,12 @@ is on for a repository, every new commit of a pull request that is not a
 draft is reviewed, and "Review again" reviews the current commit once more.
 A diff over 100,000 characters is cut to its first lines, and the review says
 how many it read. A workspace turns it on by saving an Anthropic key under
-Settings → Models and switching it on per repository; each reviewed commit is
+Settings → Code review and switching it on per repository; each reviewed commit is
 billed to the workspace's Anthropic account. Each review runs in an isolated
 place of its own, apart from other work, because it checks out the pull
 request's code. Until the server has one, the repository page shows a card
 linking the setup guides in place of the switch, a repository left switched
-on is not reviewed, and Settings → Models says code review can't run yet.
+on is not reviewed, and Settings → Code review says code review can't run yet.
 Findings show in the portal, in the pull request's reading pane, as the
 first comment of a thread of their own. On a GitHub pull request, "Send to
 GitHub" posts the newest finished review as one comment review by the Triage

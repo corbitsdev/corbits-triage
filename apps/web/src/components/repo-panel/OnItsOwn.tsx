@@ -41,7 +41,7 @@ export default function OnItsOwn({ repo, source, roles, grants, disabled }: OnIt
       <div key={kind} className={`sentence${on ? "" : " off"}`}>
         <span className="txt">
           {doName(source, kind)}
-          {wider ? <span className="wide">On in every repository (<Link to="/settings/access">Settings → Access</Link>)</span> : null}
+          {wider ? <span className="wide">On in every repository (<Link to="/settings/triage">Settings → Triage</Link>)</span> : null}
         </span>
         <Switch className="sw" checked={on} onCheckedChange={(next) => change.mutate({ roleId: triage.id, kind, on: next, own })} label={`${DO_NAMES[kind]} on its own`} disabled={disabled || change.isPending || wider || !own.every(canRemoveGrant)} />
       </div>

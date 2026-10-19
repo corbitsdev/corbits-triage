@@ -43,10 +43,22 @@ export function BitbucketDatacenterSource() {
   const connection = useBitbucketDatacenterConnection();
   const disconnect = useDisconnectBitbucketDatacenter();
   const connected = connection.data;
+  const [connecting, setConnecting] = useState(false);
 
   function confirmDisconnect() {
     if (!window.confirm("Disconnect Bitbucket Data Center? Triage stops on every Bitbucket Data Center repository and removes the webhooks it created.")) return;
     disconnect.mutate();
+  }
+
+  if (connection.data === null && !connecting) {
+    return (
+      <div className="gcard source" aria-labelledby="source-bitbucket-datacenter" role="group">
+        <div className="sentence">
+          <span className="txt" id="source-bitbucket-datacenter"><b>Bitbucket Data Center</b> is not connected.</span>
+          <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={() => setConnecting(true)}>Connect</Button>
+        </div>
+      </div>
+    );
   }
 
   return (

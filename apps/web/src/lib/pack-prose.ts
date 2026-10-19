@@ -13,7 +13,7 @@ export const DO_NAMES: Record<StepKind, string> = {
   "request-review": "Request review",
   comment: "Comment",
   approve: "Approve",
-  "request-changes": "Request changes on the pull request",
+  "request-changes": "Request changes",
   close: "Close",
   merge: "Merge",
   nothing: "Do nothing",

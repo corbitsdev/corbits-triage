@@ -280,7 +280,7 @@ step here.
 Code review is switched on per repository through
 `POST /api/integrations/code-review/{tenantId}`, which needs the host
 connected and a code review provider's key. A workspace runs one code review
-provider, the one whose key it stores in Settings → Models
+provider, the one whose key it stores in Settings → Code review
 (`CODE_REVIEW_PROVIDERS` in `triage-contracts`; only Anthropic today). The
 portal then deploys that host's `pr-code-review-<host>` from the provider's
 package with an offering for each model it names (on Anthropic, Opus 5.5 for
