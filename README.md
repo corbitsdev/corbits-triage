@@ -16,11 +16,15 @@ triage on and its policy has a rule.
    [docs/SELF_HOST.md](docs/SELF_HOST.md). To try it on your machine:
 
    ```sh
-   cp .env.example .env   # fill the four secrets: openssl rand -hex 32 each
-   docker compose up --build
+   cp .env.example .env   # paste a different `openssl rand -hex 32` into each of the four secrets at its top
+   docker compose up --build -d
+   docker compose logs -f hub   # Ctrl-C once it logs Started server
    ```
 
-   The portal is then at http://localhost:3000. GitHub cannot deliver
+   Compose sets every other variable, so the rest of `.env` can stay as it is.
+   Once the hub logs `Started server`, the portal is at http://localhost:3000.
+   A `docker_sidecars_off` line is expected: triage needs no Docker, only
+   [code review](docs/SELF_HOST.md#where-sidecars-run) does. GitHub cannot deliver
    webhooks to localhost, so pull requests are picked up every five minutes
    and a policy file change is read after a restart. To work on the code
    instead, see [docs/DEV.md](docs/DEV.md).
