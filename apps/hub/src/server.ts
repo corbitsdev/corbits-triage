@@ -106,8 +106,8 @@ import { createGithubManifestIntegration } from "./github/manifest.js";
 import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
-import { githubRead, githubWrite } from "@corbits/github-tool";
-import { bitbucketRead, bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
+import { githubRead } from "@corbits/github-tool";
+import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 
 // Per host: a workspace deploys a host's workflow and tools once that host's credential exists; pr-triage-historical
 // reads GitHub only. A workspace with both hosts runs both pr-triage workflows. A host's code review deploys while a
@@ -119,14 +119,14 @@ const EXPECTED_DEPLOYMENT_SET = {
       { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
       { address: codeReviewWorkflowFor("github").id, id: codeReviewWorkflowFor("github").id },
     ],
-    tools: [githubRead.id, githubWrite.id],
+    tools: [githubRead.id],
   },
   "bitbucket-datacenter": {
     workflows: [
       { address: triageWorkflowFor("bitbucket-datacenter").address, id: triageWorkflowFor("bitbucket-datacenter").id },
       { address: codeReviewWorkflowFor("bitbucket-datacenter").id, id: codeReviewWorkflowFor("bitbucket-datacenter").id },
     ],
-    tools: [bitbucketRead.id, bitbucketWrite.id],
+    tools: [bitbucketRead.id],
   },
 };
 

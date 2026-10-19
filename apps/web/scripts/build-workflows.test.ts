@@ -39,7 +39,8 @@ test("packs each workflow deterministically, importing the host tools instead of
     // The sidecar deploys only a package's own workflow entry.
     expect(manifest.interchange.workflow).toBe(workflow.entry);
     const imports = await importsOf(path.join(extracted, "package", workflow.entry));
-    for (const tool of tools) expect(imports).toContain(tool.name);
+    const chunkImports = await Promise.all(imports.filter((specifier) => specifier.startsWith("./chunk-")).map((chunk) => importsOf(path.join(extracted, "package", path.posix.dirname(workflow.entry), chunk))));
+    for (const tool of tools) expect([...imports, ...chunkImports.flat()]).toContain(tool.name);
     // Directors and actions import the workflow's chunks instead of carrying their own copy of its dependencies.
     for (const entry of [manifest.interchange.directors, manifest.interchange.actions]) {
       const chunks = (await importsOf(path.join(extracted, "package", entry))).map((specifier) => path.posix.join(path.posix.dirname(entry), specifier));

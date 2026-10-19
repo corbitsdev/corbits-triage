@@ -91,10 +91,10 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 
 | Package | Holds |
 | --- | --- |
-| `triage-workflows` | `pr-triage-github`, `pr-triage-bitbucket-datacenter`, `pr-triage-historical`, `repo-scan`, their steps, directors and the deterministic logic under `logic/`, and the decision-model eval. |
+| `triage-workflows` | `pr-triage-github`, `pr-triage-bitbucket-datacenter`, `pr-triage-historical`, `repo-scan`, their steps, the judge's director, the actions under `actions/`, the deterministic logic under `logic/`, and the decision-model eval. |
 | `triage-contracts` | Policy schema and parsers, the policy file, workspace policy resolution, repository settings, triage state, labels, trigger mail and shared types; see [its README](../packages/triage-contracts/README.md). |
 | `github-reads`, `bitbucket-datacenter-reads` | Host read helpers, both returning the GitHub shapes. |
-| `github-tool`, `github-write-tool`, `bitbucket-datacenter-tool` | The sidecar tool bundles: reads, the mirror, and actions. |
+| `github-tool`, `bitbucket-datacenter-tool` | The sidecar tool bundles: reads, the mirror, and actions. |
 | `repo-read-tool` | `read_file`, `grep` and `list`, confined to the step's working tree (no `..`, absolute path or symlink out); the host bundles add `*_checkout` and `*_read_file`. |
 | `pr-code-review`, `pr-code-review-anthropic` | The provider-neutral code review workflow and the Anthropic provider's package and eval; see [its README](../packages/pr-code-review/README.md). |
 | `policy-check-action` | The GitHub Action that checks `.corbits-triage.yml` as the hub reads it. |

@@ -4,3 +4,6 @@ export { parts } from "./parts.js";
 export { approval } from "./approval.js";
 export { waiting } from "./waiting.js";
 export { measure } from "./measure.js";
+export { facts } from "./facts.js";
+export { mirror } from "./mirror.js";
+export { execute } from "./execute.js";

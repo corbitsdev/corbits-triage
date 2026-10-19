@@ -1,5 +1,5 @@
-// Scan eval: runs the repo-scan definition on Interchange's local runner (the production step invoker, agents and
-// directors) over GitHub responses recorded to fixtures, and prints what each repository's history measures. `--record`
+// Scan eval: runs the repo-scan definition on Interchange's local runner (the production actions and their
+// credentials) over GitHub responses recorded to fixtures, and prints what each repository's history measures. `--record`
 // reads GitHub live through `gh` and rewrites the fixtures; each fixture names the head sha of every pull request it holds.
 //
 //   bun --conditions=intx-src evals/scan.eval.ts [--record]   (in packages/triage-workflows)
@@ -8,7 +8,6 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import type { WorkflowAuthorizeFn } from "@intx/workflow";
 import * as actions from "../src/actions/index.js";
 import { credentialBindings } from "../src/agents.js";
-import { triageDirector } from "../src/directors.js";
 import type { Bucket, Measured } from "../src/logic/history.js";
 import { REPO_SCAN_ADDRESS, workflow } from "../src/repo-scan.js";
 import { runLocalWorkflow } from "./run-local.js";
@@ -84,7 +83,6 @@ function scanMail(repo: string) {
 async function scan(repo: string, github: Parameters<typeof runLocalWorkflow>[0]["github"]): Promise<Measured> {
   const run = await runLocalWorkflow({
     workflow,
-    directors: [triageDirector.factory],
     actions,
     credentialBindings,
     authorize: allow,

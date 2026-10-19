@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { createSizeCapTransform } from "@intx/inference";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker, type WorkflowAuthorizeFn } from "@intx/workflow";
-import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
+import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
 import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, WAITING_LABEL, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
+import { localActionCredentials } from "../evals/run-local.js";
 import * as actions from "./actions/index.js";
-import { triageDirectorFactory, type DoResult } from "./directors.js";
+import type { ExecuteOutput } from "./actions/execute.js";
+import { credentialBindings } from "./agents.js";
+import { triageJudgeDirector } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { RULES_PASS_REASON, type Verdict } from "./logic/render.js";
@@ -126,36 +128,23 @@ function judgeText({ questions, state }: SystemOne) {
   return questions.map((q) => JSON.stringify(answer(q))).join("");
 }
 
-/** Under Interchange's tool-result cap. */
-function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], judgeFails: boolean): StepInvoker {
-  const env = { capabilities: { resolve: () => ({ resolve: async () => ({ kind: "http", fetch: gh }) }) } };
-  const sizeCap = createSizeCapTransform({ maxChars: 10_000, contextStore: { writeBlob: async () => {} } });
+/** Runs the judge's director over `judgeText`'s answers; the judge is the only agent step. */
+function judgeInvoker(judged: SystemOne[], judgeFails: boolean): StepInvoker {
   return async function invokeStep({ agent, input }) {
-    invoked.push(agent.id);
-    const tools = agent.toolFactories.map((factory) => factory(env as never) as unknown as { run(call: ToolCall): Promise<ToolResult> });
     let reply: string | undefined;
     const caps = {
-      executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
       infer(request: { providerOptions: { systemOne: SystemOne } }) { return { type: "infer", request }; },
       reply(content: string) { reply = content; return { type: "reply", content }; },
     } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory(agent.director!.config as never, {} as never, agent as never);
+    const director = triageJudgeDirector.factory({}, {} as never, agent as never);
     const queue: ReactorInboundEvent[] = [{ type: "message.received", message: delivered(input) } as ReactorInboundEvent];
     for (let event = queue.shift(); event !== undefined && reply === undefined; event = queue.shift()) {
-      const taken = [await director.decide(event, {} as ReactorState, caps)].flat() as unknown as Array<{ type: string; calls?: ToolCall[]; request?: { providerOptions: { systemOne: SystemOne } } }>;
-      for (const action of taken) {
-        if (action.type === "execute_tools") {
-          for (const call of action.calls!) {
-            const { output } = await sizeCap.apply({ call, result: await tools[0]!.run(call) }, {} as never);
-            queue.push({ type: "tool.done", result: output } as ReactorInboundEvent);
-          }
-        }
-        if (action.type === "infer") {
-          judged.push(action.request!.providerOptions.systemOne);
-          queue.push((judgeFails
-            ? { type: "inference.error", error: { message: "upstream 503" } }
-            : { type: "inference.done", turn: { content: [{ type: "text", text: judgeText(action.request!.providerOptions.systemOne) }] } }) as ReactorInboundEvent);
-        }
+      const taken = [await director.decide(event, {} as ReactorState, caps)].flat() as unknown as Array<{ type: string; request?: { providerOptions: { systemOne: SystemOne } } }>;
+      for (const action of taken.filter((next) => next.type === "infer")) {
+        judged.push(action.request!.providerOptions.systemOne);
+        queue.push((judgeFails
+          ? { type: "inference.error", error: { message: "upstream 503" } }
+          : { type: "inference.done", turn: { content: [{ type: "text", text: judgeText(action.request!.providerOptions.systemOne) }] } }) as ReactorInboundEvent);
       }
     }
     if (reply === undefined) throw new Error(`${agent.id} never replied`);
@@ -163,32 +152,51 @@ function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], ju
   };
 }
 
-const RULES_PATH = { invoked: ["triage-mirror", "triage-facts", "triage-mirror", "triage-execute"], mirrors: ["mirrorRules"] };
+/** The fake answers GitHub paths; the credential's fetch asks for absolute URLs on its origin. */
+function servedBy(gh: GithubFetch) {
+  return async function github(input: string | URL | Request, init?: RequestInit) {
+    const url = new URL(input instanceof Request ? input.url : input);
+    return gh(`${url.pathname}${url.search}`, init);
+  };
+}
+
+function runTriage(gh: GithubFetch, judged: SystemOne[], judgeFails: boolean, triggerPayload: unknown, backlog = false) {
+  const body = ((backlog ? historical : workflow).steps.events as OnTriggerPrimitive).body;
+  if (!("inline" in body)) throw new Error("triage body is not inline");
+  return runLocal(body.inline, {
+    authorize: allow,
+    hasUpstreamSignalResolver: true,
+    invokeStep: judgeInvoker(judged, judgeFails),
+    actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
+    actionCredentials: localActionCredentials(credentialBindings, servedBy(gh)),
+    triggerPayload,
+  }).complete;
+}
+
+const HOST_STEPS = ["unready", "facts", "markWaiting", "mirror", "mirrorRules", "execute", "executeRules", "executeApproved"];
+
+function hostSteps(outputs: Record<string, unknown>): string[] {
+  return HOST_STEPS.filter((id) => id in outputs);
+}
+
+const RULES_PATH = { hostSteps: ["unready", "facts", "mirrorRules", "executeRules"], judgeCalls: 0 };
 // Without judged rules to ask first, the verdict question is the judge's only call.
-const VERDICT_PATH = { invoked: ["triage-mirror", "triage-facts", "triage-judge", "triage-mirror", "triage-execute"], mirrors: ["mirror"] };
+const VERDICT_PATH = { hostSteps: ["unready", "facts", "mirror", "execute"], judgeCalls: 1 };
 // `judgeText` fails focused, so the judge is called again for its file questions; a failed judged rule decides Fail without the verdict question.
-const JUDGE_PATH = { invoked: ["triage-mirror", "triage-facts", "triage-judge", "triage-judge", "triage-mirror", "triage-execute"], mirrors: ["mirror"] };
+const JUDGE_PATH = { hostSteps: ["unready", "facts", "mirror", "execute"], judgeCalls: 2 };
 
 type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; noWait?: true; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
 
 async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, noWait, automatic = ACTION_KINDS, from = "github@acme.test", github, source, ...seed }: TriageOptions = {}) {
   const { gh, requests, pr } = github ?? fakeGithub(seed);
   const policy = { enabled: true, ...(source && { source }) };
-  const invoked: string[] = [];
   const judged: SystemOne[] = [];
-  const body = ((backlog ? historical : workflow).steps.events as OnTriggerPrimitive).body;
-  if (!("inline" in body)) throw new Error("triage body is not inline");
-  const { terminalStatus, outputs } = await runLocal(body.inline, {
-    authorize: allow,
-    hasUpstreamSignalResolver: true,
-    invokeStep: stepInvoker(gh, invoked, judged, judgeFails),
-    actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
-    triggerPayload: hubMail(backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, headSha: pr.head, policy, checkPack, automatic, events: ["opened"], ...(noWait && { noWait }) }, from),
-  }).complete;
+  const request = backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, headSha: pr.head, policy, checkPack, automatic, events: ["opened"], ...(noWait && { noWait }) };
+  const { terminalStatus, outputs } = await runTriage(gh, judged, judgeFails, hubMail(request, from), backlog);
   expect(terminalStatus).toBe("completed");
-  const mirrors = Object.keys(outputs).filter((id) => id.startsWith("mirror"));
-  const executed = (outputs["execute"] ?? outputs["executeRules"]) as { reply: string };
-  return { path: { invoked, mirrors }, mirrored: mirrors.map((id) => outputs[id]), requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
+  const mirrors = ["mirror", "mirrorRules"].filter((id) => id in outputs);
+  const executed = (outputs["execute"] ?? outputs["executeRules"]) as ExecuteOutput;
+  return { path: { hostSteps: hostSteps(outputs), judgeCalls: judged.length }, mirrored: mirrors.map((id) => outputs[id]), requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: executed.dos };
 }
 
 function hubMail(request: Record<string, unknown>, from: string) {
@@ -209,18 +217,9 @@ function approvalMail(verdict: Verdict, step: SuggestedDo, from = "github@acme.t
 }
 
 async function approve(github: ReturnType<typeof fakeGithub>, mail: ReturnType<typeof approvalMail>) {
-  const body = (workflow.steps.events as OnTriggerPrimitive).body;
-  if (!("inline" in body)) throw new Error("triage body is not inline");
-  const invoked: string[] = [];
-  const { terminalStatus, outputs } = await runLocal(body.inline, {
-    authorize: allow,
-    hasUpstreamSignalResolver: true,
-    invokeStep: stepInvoker(github.gh, invoked, [], false),
-    actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
-    triggerPayload: mail,
-  }).complete;
-  const executed = outputs["executeApproved"] as { reply: string } | undefined;
-  return { terminalStatus, invoked, dos: executed && (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
+  const { terminalStatus, outputs } = await runTriage(github.gh, [], false, mail);
+  const executed = outputs["executeApproved"] as ExecuteOutput | undefined;
+  return { terminalStatus, hostSteps: hostSteps(outputs), dos: executed?.dos };
 }
 
 describe("pr-triage body", () => {
@@ -340,10 +339,9 @@ describe("pr-triage body", () => {
     expect((verdict as Verdict).request.comment).toContain(`Skipped:\n- makes one focused change: ${skipped}`);
   });
 
-  test("a file list past the tool-result cap still shows the judge its docs changes", async () => {
+  test("a file list over several pages still shows the judge its docs changes", async () => {
     const sources = Array.from({ length: 150 }, (_, index) => ({ ...FLAG, filename: `src/modules/feature-${index}/index.ts` }));
     const files = [...sources, { ...FLAG, filename: "docs/flag.md" }];
-    expect(JSON.stringify(files).length).toBeGreaterThan(10_000);
     const pack = emptyPack(REPO);
     const { judged, verdict } = await triage({ ...pack, checks: { docs: { enabled: true } } }, { files });
     expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["verdict"]);
@@ -368,7 +366,7 @@ describe("pr-triage body", () => {
     expect(sources.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(MAX_SYSTEM_ONE_STATE_BYTES);
     const files = [...sources, { ...FLAG, filename: "docs/flag.md" }];
     const { path, verdict } = await triage(recommendedPack(REPO), { files });
-    expect(path.invoked.filter((agent) => agent === "triage-judge").length).toBeGreaterThanOrEqual(2);
+    expect(path.judgeCalls).toBeGreaterThanOrEqual(2);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toHaveLength(3);
   });
@@ -427,7 +425,7 @@ describe("pr-triage body", () => {
     const v2 = { repo: { id: "policy-1", version: 2 } };
     await triage(emptyPack(REPO), { github, source: v1 });
     const again = await triage(emptyPack(REPO), { github, source: v1 });
-    expect(again.mirrored).toEqual([expect.objectContaining({ reply: expect.stringContaining("unchanged since") })]);
+    expect(again.mirrored).toEqual([expect.objectContaining({ unchanged: expect.stringContaining("unchanged since") })]);
     const strict = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } }, { github, source: v2 });
     expect(strict.verdict).toMatchObject({ verdict: "fail" });
     const commentWrites = github.requests.filter((r) => r.method !== "GET" && r.path.includes("comments"));
@@ -470,7 +468,7 @@ describe("pr-triage body", () => {
     expect(dos).toEqual([]);
     const mail = approvalMail(verdict as Verdict, held);
     const first = await approve(github, mail);
-    expect(first).toMatchObject({ terminalStatus: "completed", invoked: ["triage-execute"], dos: [{ effectId: held.effectId, status: "done" }] });
+    expect(first).toMatchObject({ terminalStatus: "completed", hostSteps: ["executeApproved"], dos: [{ effectId: held.effectId, status: "done" }] });
     expect((await approve(github, mail)).dos).toEqual([{ effectId: held.effectId, status: "satisfied" }]);
     expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([expect.objectContaining({ body: `${doMarker(held.effectId)}\nhi` })]);
     const forged = approvalMail(verdict as Verdict, { ...held, target: { body: "spam" } });
@@ -485,11 +483,11 @@ describe("pr-triage body", () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
     const waiting = { kind: "waiting", repo: REPO, prNumber: 8, headSha: "abc", pack, automatic: ["labels"] };
     const held = fakeGithub();
-    expect(await approve(held, hubMail(waiting, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", invoked: ["triage-mirror"] });
+    expect(await approve(held, hubMail(waiting, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", hostSteps: ["markWaiting"] });
     expect(held.requests.filter((r) => r.method !== "GET")).toEqual([{ method: "POST", path: `/repos/${REPO}/issues/8/labels` }]);
     expect(held.labels).toEqual([WAITING_LABEL]);
     const ungranted = fakeGithub();
-    expect(await approve(ungranted, hubMail({ ...waiting, automatic: ["comment"] }, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", invoked: ["triage-mirror"] });
+    expect(await approve(ungranted, hubMail({ ...waiting, automatic: ["comment"] }, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", hostSteps: ["markWaiting"] });
     expect(ungranted.requests).toEqual([]);
     const moved = fakeGithub();
     await approve(moved, hubMail({ ...waiting, headSha: "old" }, "github@acme.test"));

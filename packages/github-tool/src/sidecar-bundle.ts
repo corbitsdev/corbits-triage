@@ -235,7 +235,7 @@ async function readWindow(fileAt: FileAt, a: Record<string, any>) {
   return linesOf(a.path, text, a.start, a.end);
 }
 
-async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, toolCwd: string, fileAt: FileAt): Promise<unknown> {
+async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, toolCwd: string | undefined, fileAt: FileAt): Promise<unknown> {
   const a = call.arguments;
   switch (call.name) {
     case "github_get_app":
@@ -273,6 +273,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, t
     case "github_read_file":
       return readWindow(fileAt, a);
     case "github_checkout":
+      if (toolCwd === undefined) throw new Error("github_checkout needs a working tree");
       return checkout(gh, a.repo, a.sha, toolCwd);
     case "github_mirror":
     case "github_mirror_auto": {
@@ -317,7 +318,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, t
 }
 
 /** The App's login and each file read are asked of GitHub once per tool instance, so once per step of a run. */
-function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>, toolCwd: string) {
+function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>, toolCwd: string | undefined) {
   let known: string | undefined;
   const files = cachedLoads<string | undefined>();
   async function run(call: ToolCallInput) {
@@ -341,6 +342,11 @@ function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promis
     }
   }
   return { definitions, run };
+}
+
+/** The tools' calls for a workflow action that holds the credential itself; it has no working tree to check out into. */
+export function githubCalls(getFetch: () => Promise<GithubFetch>) {
+  return createGithubTools([], getFetch, undefined).run;
 }
 
 function defineGithubTool(id: string, definitions: ToolDefinition[], ask: readonly string[]) {

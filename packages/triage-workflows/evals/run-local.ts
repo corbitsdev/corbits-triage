@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkflowDirectorRegistry } from "@intx/agent";
-import { buildCredentialCapabilities, createCredentialProviderRegistry, createHttpCredentialProvider, createInferenceCredentialResolver } from "@intx/harness";
+import { actionConsumer, toolConsumer } from "@intx/authz";
+import { buildCredentialCapabilities, createActionCredentialsFactory, createCredentialProviderRegistry, createHttpCredentialProvider, createInferenceCredentialResolver } from "@intx/harness";
 import { createDependencies } from "@intx/inference";
 import { loadAdapterRegistry } from "@intx/inference/providers";
 import { createIsogitStore } from "@intx/storage-isogit/node";
@@ -17,15 +18,20 @@ const GITHUB_ORIGIN = "https://api.github.com";
 
 type Source = { id: string; provider: string; baseURL: string; credentialId: string; model: string; quirks?: Record<string, unknown> };
 
+/** The GitHub bindings, of tool packages and of action handlers. */
+type Bindings = readonly ({ handle: string; package: string } | { handle: string; action: string })[];
+
+type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 interface RunLocalInput {
   workflow: WorkflowDefinition;
   /** The workflow's director factories, as its package exports them; none when every agent runs the stock director. */
   directors?: Parameters<typeof createWorkflowDirectorRegistry>[0];
   actions: Record<string, unknown>;
-  credentialBindings: readonly { handle: string; package: string }[];
+  credentialBindings: Bindings;
   authorize: WorkflowAuthorizeFn;
   /** GitHub's requests, reads and writes alike. */
-  github: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  github: Fetch;
   /** The inference credential every source names. */
   inference: { credentialId: string; origin: string; apiKey: string };
   /** The inference source an agent's step runs on. */
@@ -37,37 +43,49 @@ interface RunLocalInput {
   onStepDone?: (agentId: string, ms: number) => void;
 }
 
+function consumerOf(binding: Bindings[number]): string {
+  return "package" in binding ? toolConsumer(binding.package) : actionConsumer(binding.action);
+}
+
 /** The credential-use grants the hub stamps on a run from a definition's bindings. */
-function grantsFor(bindings: RunLocalInput["credentialBindings"]): GrantRule[] {
+function grantsFor(bindings: Bindings): GrantRule[] {
   return bindings.map((binding, index) => ({
     id: `grant-${index}`,
     resource: "credential:github",
     action: "use",
     effect: "allow",
     origin: "system",
-    conditions: { tool: `tool:${binding.package}` },
+    conditions: { tool: consumerOf(binding) },
     expiresAt: null,
     roleId: null,
     principalId: null,
   }));
 }
 
+/** What the hub delivers a run from a definition's GitHub bindings, with any other `materials` its steps use. */
+function delivered(bindings: Bindings, materials: CredentialDelivery["materials"] = []): { current: CredentialDelivery } {
+  return {
+    current: {
+      bindings: bindings.map((binding) => ({ handle: binding.handle, credentialId: "github", consumer: consumerOf(binding) })),
+      materials: [{ credentialId: "github", providerKey: "http", origin: GITHUB_ORIGIN, secret: "local" }, ...materials],
+    },
+  };
+}
+
+/** The credentials a deployed run's action handlers resolve, as the sidecar builds them, with GitHub served by `github`. */
+export function localActionCredentials(bindings: Bindings, github: Fetch, cell = delivered(bindings)) {
+  const providers = createCredentialProviderRegistry([createHttpCredentialProvider({ fetch: github })]);
+  return createActionCredentialsFactory({ materialCell: cell, resolveStepGrants: () => grantsFor(bindings), providers });
+}
+
 /**
- * Runs a pr-* workflow body through Interchange's local runner with the production step invoker, agents and directors.
- * Returns the finished run; callers read the outputs they score.
+ * Runs a pr-* workflow body through Interchange's local runner with the production step invoker, agents, directors and
+ * action credentials. Returns the finished run; callers read the outputs they score.
  */
 export async function runLocalWorkflow(input: RunLocalInput) {
   const { workflow, authorize, inference } = input;
   const grants = grantsFor(input.credentialBindings);
-  const cell: { current: CredentialDelivery } = {
-    current: {
-      bindings: input.credentialBindings.map((binding) => ({ handle: binding.handle, credentialId: "github", consumer: `tool:${binding.package}` })),
-      materials: [
-        { credentialId: "github", providerKey: "http", origin: GITHUB_ORIGIN, secret: "local" },
-        { credentialId: inference.credentialId, providerKey: "http", origin: inference.origin, secret: inference.apiKey },
-      ],
-    },
-  };
+  const cell = delivered(input.credentialBindings, [{ credentialId: inference.credentialId, providerKey: "http", origin: inference.origin, secret: inference.apiKey }]);
   const providers = createCredentialProviderRegistry([createHttpCredentialProvider({ fetch: input.github })]);
   const adapters = await loadAdapterRegistry([{ provider: "corbits-system-one", specifier: "@corbits/system-one", export: "createSystemOneAdapterFactory" }]);
   const directors = createWorkflowDirectorRegistry(input.directors ?? []);
@@ -124,6 +142,7 @@ export async function runLocalWorkflow(input: RunLocalInput) {
       hasUpstreamSignalResolver: true,
       invokeStep,
       actionResolver: resolveAction,
+      actionCredentials: localActionCredentials(input.credentialBindings, input.github, cell),
       triggerPayload: input.triggerPayload,
     }).complete;
   } finally {

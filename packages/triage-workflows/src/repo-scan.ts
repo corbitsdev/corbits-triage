@@ -1,16 +1,14 @@
-import { githubRead } from "@corbits/github-tool";
-import { action, defineWorkflow, onTrigger, step } from "@intx/workflow";
-import { credentialBindings, triageAgents } from "./agents.js";
+import { action, defineWorkflow, onTrigger } from "@intx/workflow";
+import { credentialBindings } from "./agents.js";
+import { hostAction } from "./triage-steps.js";
 
 export const REPO_SCAN_ADDRESS = "repo-scan";
 
-const STEP = { retry: { maxAttempts: 3, initialBackoffMs: 5_000, maxBackoffMs: 60_000 }, timeout: 30 * 60_000 } as const;
-
-/** Reads a repository's last closed pull requests with pr-triage's facts director and measures what maintainers merged. */
-function scanSteps({ facts } = triageAgents(["github"])) {
+/** Reads a repository's last closed pull requests with pr-triage's facts action and measures what maintainers merged. */
+function scanSteps() {
   return {
-    history: step({ agent: facts, input: { from: "trigger.payload" }, ...STEP }),
-    measure: action({ handler: "measure", input: { project: { from: "steps.history.output" }, fields: ["reply"] }, after: ["history"] }),
+    history: hostAction("facts", ["github"], { from: "trigger.payload" }, []),
+    measure: action({ handler: "measure", input: { from: "steps.history.output" }, after: ["history"] }),
   };
 }
 
@@ -22,7 +20,7 @@ const perScan = defineWorkflow({
 
 export const workflow = defineWorkflow({
   id: REPO_SCAN_ADDRESS,
-  credentialBindings: credentialBindings.filter((binding) => binding.package === githubRead.id),
+  credentialBindings: credentialBindings.filter((binding) => binding.action === "facts"),
   steps: {
     events: onTrigger({ on: { type: "mail", to: REPO_SCAN_ADDRESS }, body: perScan, onBodyFailure: "tolerate" }),
   },
