@@ -97,6 +97,11 @@ interface WriteInput {
   inference: StepInference;
 }
 
+/** Replace angle brackets so pull-request text cannot close the tags around it. */
+export function escapePromptText(text: string): string {
+  return text.replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
+}
+
 function replyOf(output: unknown): string {
   if (typeof output === "object" && output !== null && "reply" in output && typeof output.reply === "string") return output.reply;
   throw new Error(`step output has no reply: ${JSON.stringify(output)?.slice(0, 200)}`);
@@ -119,12 +124,12 @@ function stepOutput<K extends keyof Steps>(steps: Steps, id: K): NonNullable<Ste
 }
 
 function aboutPullRequest(request: ReviewRequest): string {
-  return `<pull_request>\n<title>${request.title}</title>\n<description>${request.description}</description>\n</pull_request>`;
+  return `<pull_request>\n<title>${escapePromptText(request.title)}</title>\n<description>${escapePromptText(request.description)}</description>\n</pull_request>`;
 }
 
 function pullRequest(request: ReviewRequest): string {
   const cut = request.cut ? `\n\nThe diff shows its first ${request.cut.lines} of ${request.cut.of} lines; the rest was left out for size.` : "";
-  return `${aboutPullRequest(request)}\n\n<diff>\n${request.diff}\n</diff>${cut}`;
+  return `${aboutPullRequest(request)}\n\n<diff>\n${escapePromptText(request.diff)}\n</diff>${cut}`;
 }
 
 /** The reviewInput action: the request from the trigger mail, the plan's user message and every role's per-call options; a role's effort is the request's, else the profile's. */
@@ -273,7 +278,7 @@ export async function writeInput(steps: Steps): Promise<WriteInput> {
   const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
   const findings = request.check ? checked.filter((_, i) => verdicts[i]?.verdict === "real") : checked;
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
-  const change = `<pull_request>\n<title>${request.title}</title>\n<description>${request.description}</description>\n<changed_files>\n${changedFiles(request.diff).join("\n")}\n</changed_files>\n</pull_request>`;
+  const change = `<pull_request>\n<title>${escapePromptText(request.title)}</title>\n<description>${escapePromptText(request.description)}</description>\n<changed_files>\n${changedFiles(request.diff).map(escapePromptText).join("\n")}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${JSON.stringify(listed, null, 2)}\n</findings>\n\n${budgetExhausted ? STOPPED_EARLY : ""}Write the review.`;
   return { budgetExhausted, verdicts, findings, text, inference: inference.write };
 }

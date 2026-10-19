@@ -24,6 +24,8 @@ credential.
    each comment carries the code it quotes and how many finders reported
    it.
 
+Title, description, and diff are angle-bracket-escaped before they are placed in the prompt, so pull-request text cannot close those tags.
+
 The request is `{ kind: "code-review", title, description, diff, checkout }`
 with optional `number` (the pull request's), `efforts` per step,
 `budgets.repoFinder`, `check`, and `cut`
