@@ -77,9 +77,7 @@ export function createAutomation(deps: AutomationDeps) {
   }
 
   /** Bitbucket repositories enabled before their host's kinds were known hold labels grants; a GitHub repository of the same name keeps its own. */
-  async function dropHostlessGrants(tenantId: string, records: RepoRecord[]): Promise<void> {
-    const roleId = await findRole(deps.db, tenantId);
-    if (!roleId) return;
+  async function dropHostlessGrants(tenantId: string, roleId: string, records: RepoRecord[]): Promise<void> {
     const github = new Set(records.filter((record) => sourceOf(record) === "github").map((record) => record.name.toLowerCase()));
     const resources = records
       .filter((record) => sourceOf(record) !== "github" && !github.has(record.name.toLowerCase()))
@@ -89,11 +87,16 @@ export function createAutomation(deps: AutomationDeps) {
     await deps.db.delete(grant).where(and(eq(grant.tenantId, tenantId), eq(grant.roleId, roleId), inArray(grant.resource, resources)));
   }
 
+  /** Locks only the tenants with something to carry; locking every workspace made a start grow with their number. A role created here holds only its host's kinds, so it has nothing to drop. */
   async function startUp(): Promise<void> {
-    const tenants = await deps.db.select({ id: schema.tenant.id, config: schema.tenant.config }).from(schema.tenant);
-    for (const tenant of tenants) {
-      await patchCorbitsTriage(deps.db, tenant.id, carryPostingMode(tenant.id));
-      await dropHostlessGrants(tenant.id, repoRecords(triageNs(tenant.config)));
+    const { role, tenant } = schema;
+    const tenants = await deps.db.select({ id: tenant.id, config: tenant.config, roleId: role.id })
+      .from(tenant)
+      .leftJoin(role, and(eq(role.tenantId, tenant.id), eq(role.name, TRIAGE_ROLE), eq(role.isSystem, true)));
+    for (const { id, config, roleId } of tenants) {
+      const records = repoRecords(triageNs(config)) as Array<RepoRecord & Record<string, unknown>>;
+      if (roleId === null || records.some((record) => postingMode(record) !== undefined)) await patchCorbitsTriage(deps.db, id, carryPostingMode(id));
+      if (roleId !== null) await dropHostlessGrants(id, roleId, records);
     }
   }
 
