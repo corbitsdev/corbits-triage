@@ -49,17 +49,72 @@ docker compose logs -f hub
 
 The hub is ready when it logs `Started server: http://localhost:3000`.
 
-### Railway or Render
+### Railway
 
-1. Add a Postgres service.
-2. Add a service from this repository (it builds the root `Dockerfile`) with a
-   public domain on port 3000 and a volume at `/data`. Variables: the four
-   secrets, `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `BETTER_AUTH_BASE_URL`
-   (the public URL), `HUB_DATA_DIR=/data`, `PORT=3000`, and on Railway
-   `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`.
+Deploy the hub from GitHub, not with `railway up`: Railway sets the
+`RAILWAY_GIT_*` variables only on a service deployed from GitHub, and
+[Railway Sandboxes](provisioners/railway-sandboxes.md) for code review need
+them from a public repository: this one or your public fork. With the
+[Railway CLI](https://docs.railway.com/cli) logged in:
 
-Render is the same: a Postgres instance and one Docker web service with a disk
-at `HUB_DATA_DIR`.
+1. Create the project. With more than one Railway workspace, `railway init`
+   needs `--workspace`; `railway whoami --json` lists yours:
+
+   ```sh
+   railway init --name corbits-triage --workspace <workspace>
+   ```
+
+2. Add Postgres:
+
+   ```sh
+   railway add --database postgres
+   ```
+
+3. Add the hub service from GitHub. It builds the root `Dockerfile` and
+   deploys at once; that first deploy fails until step 5 sets the variables.
+
+   ```sh
+   railway add --service hub --repo <owner>/corbits-triage --branch main
+   ```
+
+4. Generate its domain on port 3000. It prints the `https://…up.railway.app`
+   address near the top; `BETTER_AUTH_BASE_URL` is that address.
+
+   ```sh
+   railway domain --service hub --port 3000
+   ```
+
+5. Set the variables. Each of the four secrets is a different
+   `openssl rand -hex 32`.
+
+   ```sh
+   railway variable set --service hub \
+     BETTER_AUTH_SECRET=<hex> CREDENTIAL_ENCRYPTION_KEY=<hex> \
+     PRINCIPAL_KEY_ENCRYPTION_KEY=<hex> SIDECAR_CREDENTIAL_ENCRYPTION_KEY=<hex> \
+     'DATABASE_URL=${{Postgres.DATABASE_URL}}' \
+     BETTER_AUTH_BASE_URL=https://<domain from step 4> \
+     HUB_DATA_DIR=/data PORT=3000 RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30
+   ```
+
+6. Add a volume at `/data`:
+
+   ```sh
+   railway service hub
+   railway volume add --mount-path /data
+   ```
+
+7. Set the [database role](#database-role) setting. Once the deploys started
+   by steps 5 and 6 have finished, redeploy the hub
+   (`railway redeploy --service hub --yes`).
+
+The hub is ready when its deploy logs show `Started server`.
+
+### Render
+
+A Postgres instance and one Docker web service from this repository, with a
+disk at `/data`. Variables as on Railway, without
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS`. Render sets no `RAILWAY_GIT_*`, so
+Railway Sandboxes need them set by hand.
 
 ### Any other host
 
@@ -79,6 +134,13 @@ lock and the sidecar pushes again:
 
 ```sql
 alter role <hub role> set idle_in_transaction_session_timeout = '10min';
+```
+
+Railway's Postgres has no public address by default, so run it from inside
+the Postgres service; its role is `postgres`:
+
+```sh
+railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres set idle_in_transaction_session_timeout = '10min';\""
 ```
 
 ## Set up in the portal
