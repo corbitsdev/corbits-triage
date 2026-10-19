@@ -12,11 +12,13 @@ test("allowlist matches exact addresses and @domains only", () => {
   expect(isEmailAllowed("evil@notcorbits.dev", ALLOWED)).toBe(false);
 });
 
-test("an allowlist requires Google and turns email/password off", () => {
+test("an allowlist requires Google or email, and admits email/password only when the hub can verify it", () => {
   const google = { GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret" } as HubEnv;
-  expect(() => signInSettings({ AUTH_ALLOWED_EMAILS: "@corbits.dev" } as HubEnv)).toThrow("requires Google");
+  expect(() => signInSettings({ AUTH_ALLOWED_EMAILS: "@corbits.dev" } as HubEnv)).toThrow("requires Google sign-in");
+  expect(signInSettings({ AUTH_ALLOWED_EMAILS: "@corbits.dev", SMTP_URL: "smtp://mail.test" } as HubEnv)).toEqual({ allowedEmails: ["@corbits.dev"] });
   expect(() => signInSettings({ GOOGLE_CLIENT_ID: "id" } as HubEnv)).toThrow("must be set together");
   expect(() => signInSettings({ ...google, AUTH_ALLOWED_EMAILS: " , " })).toThrow("lists no address");
-  expect(authMethods(signInSettings({ ...google, AUTH_ALLOWED_EMAILS: "@corbits.dev" }), true)).toEqual({ google: true, emailPassword: false, passwordReset: false });
-  expect(authMethods(signInSettings(google), false)).toEqual({ google: true, emailPassword: true, passwordReset: false });
+  expect(authMethods(signInSettings({ ...google, AUTH_ALLOWED_EMAILS: "@corbits.dev" }), false)).toEqual({ google: true, emailPassword: false, passwordReset: false, verificationEmail: false });
+  expect(authMethods(signInSettings({ ...google, AUTH_ALLOWED_EMAILS: "@corbits.dev", SMTP_URL: "smtp://mail.test" } as HubEnv), true)).toEqual({ google: true, emailPassword: true, passwordReset: true, verificationEmail: true });
+  expect(authMethods(signInSettings(google), false)).toEqual({ google: true, emailPassword: true, passwordReset: false, verificationEmail: false });
 });

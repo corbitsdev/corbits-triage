@@ -62,6 +62,10 @@ If you are the first person from your team, click **Sign up for an account**. Th
 
 ![The create-account form with Name, Email and Password fields](images/02.png)
 
+Unless you are the first person to use this Corbits Triage, you then see **Verify your email** until you prove the address is yours. Open the link in the email Corbits Triage sent you, and the portal opens. If the email has not arrived, press **Resend link**; you can ask for a new one once a minute. **Sign out** leaves the screen. If the service cannot send email, the screen asks you to have whoever runs this Corbits Triage verify your address; once they have, reload the page. Signing in with Google never asks for this.
+
+![Verify your email on a server that cannot send email: Ask whoever runs this Triage to verify your address, with a Sign out button](images/46.png)
+
 Creating an account also creates a **workspace**, the shared space your whole team will use. Teammates do not create their own workspaces. Instead, you invite them from Settings, and they join yours. If someone has already invited you, open the link in the invitation email instead of creating an account from scratch.
 
 ### First-time setup
@@ -447,6 +451,8 @@ Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins als
 ### People
 
 **People** lists everyone in the workspace with their role. To add a teammate, type their email, choose a role and press **Invite**. They receive a sign-in link that works once and expires after 15 minutes. If your server is not set up to send email, the portal shows you the link to copy and send yourself.
+
+If your server is not set up to send email, someone who signed up with an email and password shows **Email not verified**, or **Invite pending** while invited, and if you are the first person who used this Corbits Triage, a **Mark verified** button. Press it only if you know the address is theirs: it lets them into the portal, and they can then accept your invite.
 
 There are three roles:
 

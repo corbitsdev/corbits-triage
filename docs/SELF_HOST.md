@@ -115,20 +115,26 @@ they live in the hub's vault.
 ### Sign-in
 
 By default anyone who reaches the hub can create an account with email and
-password.
+password. Every account but the hub's first must verify its address before it
+can use the portal or the API: with email set up, sign-up sends a link to open;
+without it, Google accounts are verified, and the hub's first account can mark
+anyone in its workspace, member or invited, verified under **Settings → People**.
 
 | Variable | Value |
 | --- | --- |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Enable "Continue with Google". Set both or neither. Create a Google Cloud OAuth client (Web application) with redirect URI `<BETTER_AUTH_BASE_URL>/api/auth/callback/google`. |
-| `AUTH_ALLOWED_EMAILS` | Comma-separated exact emails and `@domains`, for example `@example.com,friend@example.org`. Requires Google and turns email/password sign-in off, since only Google verifies the address. Checked at every sign-in, so existing accounts outside it are locked out, and invites outside it are refused. |
+| `AUTH_ALLOWED_EMAILS` | Comma-separated exact emails and `@domains`, for example `@example.com,friend@example.org`. Admits only verified addresses, the first account included. Without email set up it requires Google and turns email/password sign-in off; with email, email/password sign-ups in it verify their address first. Checked at every sign-in, so existing accounts outside it are locked out, and invites outside it are refused. |
 
 ### Email
 
 Admins invite teammates from the portal; the invitee gets a one-time sign-in
-link that works once, expires after 15 minutes and can be resent. An account
-whose address is not verified (an email and password sign-up) cannot be
-invited. With email set up, anyone can also reset their password from the
-sign-in page.
+link that works once, expires after 15 minutes and can be resent. With email
+set up, an account whose address is not verified (an email and password
+sign-up) cannot be invited. With email set up, anyone can also reset their password from the
+sign-in page, and an email and password sign-up is sent a link to verify its
+address, valid for an hour. Until it opens the link it sees only **Verify your
+email**, with **Resend link** (once a minute) and **Sign out**. Existing
+unverified accounts see the same screen once email is set up.
 
 | Variable | Value |
 | --- | --- |
@@ -136,7 +142,11 @@ sign-in page.
 | `EMAIL_FROM` | The sender, for example `Triage <triage@example.com>`, on a domain the provider accepts. |
 
 Set both or neither. Without them the portal shows each invite link to copy
-and send yourself, and invitees must sign in with Google.
+and send yourself, and invitees sign in with Google or with email and password.
+An email and password account other than the first then sees **Verify your
+email**, asking whoever runs the hub to verify it, until the hub's first
+account invites it to its workspace and presses **Mark verified** beside it
+under **Settings → People**. Do that only for an address you know is theirs.
 
 ### Portal hosting
 

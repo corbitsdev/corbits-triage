@@ -78,6 +78,8 @@ import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { createSessions } from "./sessions.js";
+import { createVerifiedGate } from "./verified-gate.js";
+import { createHubOwner } from "./hub-owner.js";
 import { migrateTriageTables } from "./triage-db.js";
 import { createTriageStats } from "./github/triage-stats.js";
 import { createHostReads, createOutcomeReader } from "./github/pr-outcomes.js";
@@ -226,7 +228,7 @@ const smtp = email === undefined ? undefined : createSmtpEmail(email);
 const composition = await createInterchangeHub({
   database,
   settings: interchangeSettings(env),
-  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { sendResetPassword: smtp.passwordReset }) },
+  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { email: { resetPassword: smtp.passwordReset, verifyEmail: smtp.verifyEmail } }) },
   credentialCipher,
   adapterManifest: sidecarAdapterManifest,
   sidecarProvisioners,
@@ -737,6 +739,7 @@ function tenantHintFrom(req: Request, pathTenant: string | undefined): string | 
   return hint ?? req.headers.get("x-tenant-id") ?? url.searchParams.get("tenant") ?? undefined;
 }
 
+const isHubOwner = createHubOwner(composition.db);
 const integrations = createIntegrationsApp({ db: composition.db, getSession: composition.getSession, requireGrant, trustedPortalOrigins, log: logJson }, {
   authMethods: authMethods(signIn, smtp !== undefined),
   manifest: githubManifest,
@@ -825,6 +828,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     allowedEmails: signIn.allowedEmails,
     linkOrigin: inviteLinkOrigin(env),
     sendEmail: smtp?.invite,
+    isHubOwner,
     now,
     log: logJson,
   }),
@@ -849,14 +853,12 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
 composition.app.route("/", integrations);
 composition.app.route("/", providerHooks);
 
+const refuseUnverified = createVerifiedGate({ isHubOwner, getSession: composition.getSession, allowedEmails: signIn.allowedEmails });
 const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
 
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
   if (servePortal && isPortalRequest(req)) return servePortal(req);
   const url = new URL(req.url);
-  // Intercept before the stock Hono logger: callback query values include the
-  // one-time GitHub code and must never enter request/access logs.
-  if (url.pathname.startsWith(INTEGRATIONS_PREFIX)) return integrations.fetch(req);
   if (url.pathname === HOOK_MOUNT_PATH || url.pathname.startsWith(`${HOOK_MOUNT_PATH}/`)) {
     // Fail fast on bodies the stock hook app would reject with 413, before
     // hook lookup, decrypt or HMAC work. The bridge re-checks actual bytes
@@ -878,6 +880,11 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     target.pathname = rest === "" || rest === "/" ? "/" : rest;
     return hookApp.fetch(new Request(target.href, req));
   }
+  const unverified = await refuseUnverified(req);
+  if (unverified) return unverified;
+  // Intercept before the stock Hono logger: callback query values include the
+  // one-time GitHub code and must never enter request/access logs.
+  if (url.pathname.startsWith(INTEGRATIONS_PREFIX)) return integrations.fetch(req);
   if (req.method === "PATCH") {
     const tenantMatch = /^\/api\/tenants\/([^/]+)$/.exec(url.pathname);
     if (tenantMatch) {

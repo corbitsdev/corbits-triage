@@ -82,9 +82,14 @@ export function signInHub(input: { email: string; password: string }): Promise<H
   return emailAuth("/sign-in/email", input, "sign in");
 }
 
+/** Where the hub's verification link lands once the address is verified. */
+function verifiedLanding(): string {
+  return `${window.location.origin}/`;
+}
+
 /** Creates the hub account; a blank display name falls back to the email's local part. */
 export function signUpHub({ name, ...input }: { name?: string; email: string; password: string }): Promise<HubUser> {
-  return emailAuth("/sign-up/email", { ...input, name: name?.trim() || (input.email.split("@")[0] ?? input.email) }, "create the account");
+  return emailAuth("/sign-up/email", { ...input, name: name?.trim() || (input.email.split("@")[0] ?? input.email), callbackURL: verifiedLanding() }, "create the account");
 }
 
 export async function signOutHub(): Promise<void> {
@@ -98,16 +103,16 @@ export async function signOutHub(): Promise<void> {
   }
 }
 
-export type AuthMethods = { google: boolean; emailPassword: boolean; passwordReset: boolean };
+export type AuthMethods = { google: boolean; emailPassword: boolean; passwordReset: boolean; verificationEmail: boolean };
 
 export async function getAuthMethods(): Promise<AuthMethods> {
   const response = await fetch(`${requestOrigin()}/api/integrations/auth-methods`, { credentials: "include" });
   if (!response.ok) throw new ApiError(response.status, "unknown", `Could not load sign-in options (HTTP ${response.status}).`);
   const body = await response.json() as Partial<AuthMethods>;
-  if (typeof body.google !== "boolean" || typeof body.emailPassword !== "boolean" || typeof body.passwordReset !== "boolean") {
+  if (typeof body.google !== "boolean" || typeof body.emailPassword !== "boolean" || typeof body.passwordReset !== "boolean" || typeof body.verificationEmail !== "boolean") {
     throw new ApiError(response.status, "unknown", "The hub returned malformed sign-in options.");
   }
-  return { google: body.google, emailPassword: body.emailPassword, passwordReset: body.passwordReset };
+  return { google: body.google, emailPassword: body.emailPassword, passwordReset: body.passwordReset, verificationEmail: body.verificationEmail };
 }
 
 export async function signInWithGoogle(): Promise<void> {
@@ -154,6 +159,10 @@ async function postAuth(path: string, body: Record<string, string>, failed: stri
 
 export function requestPasswordReset(email: string): Promise<void> {
   return postAuth("/request-password-reset", { email, redirectTo: `${window.location.origin}${RESET_PASSWORD_PATH}` }, "Could not send the reset email.");
+}
+
+export function resendVerificationEmail(email: string): Promise<void> {
+  return postAuth("/send-verification-email", { email, callbackURL: verifiedLanding() }, "Could not send the link.");
 }
 
 export function resetPassword(token: string, newPassword: string): Promise<void> {

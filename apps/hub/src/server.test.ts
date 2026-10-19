@@ -167,7 +167,17 @@ async function startHub(extraEnv: Record<string, string> = {}, dataDir = tempora
 
 let memberCount = 0;
 
-async function signedIn(origin: string, email = `member-${crypto.randomUUID()}@example.com`): Promise<Record<string, string>> {
+async function verify(email: string): Promise<void> {
+  const { db, close } = createDB(DATABASE);
+  try {
+    await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.email, email));
+  } finally {
+    await close();
+  }
+}
+
+/** Verified unless asked otherwise, as every hub route outside sign-in needs. */
+async function signedIn(origin: string, email = `member-${crypto.randomUUID()}@example.com`, verified = true): Promise<Record<string, string>> {
   const headers = { "content-type": "application/json", origin };
   // Each member signs up from its own address so sign-up rate limits apply per member.
   memberCount += 1;
@@ -177,6 +187,7 @@ async function signedIn(origin: string, email = `member-${crypto.randomUUID()}@e
     body: JSON.stringify({ email, password: "password-123456", name: "Member" }),
   });
   expect(signUp.status).toBe(200);
+  if (verified) await verify(email);
   const cookie = signUp.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
   return { ...headers, cookie };
 }
@@ -268,6 +279,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/invitations/{tenantId}": ["post", "get"],
     "/api/integrations/invitations/{tenantId}/{principalId}/resend": ["post"],
     "/api/integrations/invitations/{tenantId}/{principalId}": ["delete"],
+    "/api/integrations/invitations/{tenantId}/{principalId}/verify": ["post"],
     "/api/integrations/invite-accept": ["post"],
     "/api/integrations/sessions": ["get"],
     "/api/integrations/sessions/{sessionId}": ["delete"],
@@ -757,7 +769,8 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
   const portal = "http://portal.test";
   const output: string[] = [];
   const origin = await startHub({ PORTAL_ORIGIN: portal, SMTP_URL: smtp.url, EMAIL_FROM: "Triage <triage@example.com>" }, temporaryDirectory(), output);
-  const noEmail = await startHub({ PORTAL_ORIGIN: portal });
+  const noEmailOutput: string[] = [];
+  const noEmail = await startHub({ PORTAL_ORIGIN: portal }, temporaryDirectory(), noEmailOutput);
   const emailOf = (name: string) => `${name}-${crypto.randomUUID().slice(0, 8)}@example.com`;
   const [boss, ann, bob, cat, dee, eve, fay, gil, bounce] = ["boss", "ann", "bob", "cat", "dee", "eve", "fay", "gil", "bounce"].map(emailOf) as [string, string, string, string, string, string, string, string, string];
   const owner = await signedIn(origin, boss);
@@ -767,8 +780,13 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
   const fromEmail = `${landing}?from=email`;
   const { db, close } = createDB(DATABASE);
   try {
-    const roles = type({ data: type({ id: "string", name: "string" }).array() }).assert(await (await fetch(`${origin}/api/tenants/${tenantId}/roles`, { headers: owner })).json()).data;
-    const member = roles.find((role) => role.name === "member")!.id;
+    async function memberRole(tenant: string, headers = owner) {
+      const roles = type({ data: type({ id: "string", name: "string" }).array() }).assert(await (await fetch(`${headers.origin}/api/tenants/${tenant}/roles`, { headers })).json()).data;
+      return roles.find((role) => role.name === "member")!.id;
+    }
+    // The hub's first account: older than every other but those the next test makes.
+    await db.update(schema.user).set({ createdAt: new Date(1000) }).where(eq(schema.user.email, boss));
+    const member = await memberRole(tenantId);
     const Sent = type({ principalId: "string", email: "string", emailed: "boolean", "link?": "string" });
     async function invite(hub: string, email: string) {
       const res = await fetch(`${hub}/api/integrations/invitations/${tenantId}`, { method: "POST", headers: { ...owner, origin: hub }, body: JSON.stringify({ email, roleId: member }) });
@@ -861,9 +879,9 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     expect(await passwordSignIn(gil, "password-777777", "198.51.100.214")).toBe(200);
 
     // Whoever registered an address unverified may not own it, so it is neither invited nor able to accept.
-    const squatter = await signedIn(origin, bob);
+    const squatter = await signedIn(origin, bob, false);
     expect(await invite(origin, bob)).toMatchObject({ status: 409, body: { error: { code: "unverified_email" } } });
-    expect(await accept(squatter)).toMatchObject({ status: 403, body: { error: { code: "unverified_email" } } });
+    expect(await accept(squatter)).toMatchObject({ status: 403, body: { error: { code: "email_unverified" } } });
 
     const catInvite = Sent.assert((await invite(origin, cat)).body);
     await db.execute(sql`UPDATE verification SET expires_at = now() WHERE value LIKE ${`%${cat}%`}`);
@@ -887,20 +905,113 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     for (let sent = 0; sent < 5; sent++) expect(await withdraw(Sent.assert((await invite(origin, fay)).body).principalId)).toBe(204);
     expect(await invite(origin, fay)).toMatchObject({ status: 429 });
 
-    // Without email the inviter holds the link, so it signs nobody in and only a verified invitee can accept.
+    // Without email the inviter holds the link, so it signs nobody in and only an invitee an admin has verified can accept.
     expect(await invite(noEmail, emailOf("nobody"))).toMatchObject({ status: 404, body: { error: { message: expect.stringContaining("sign in with Google first") } } });
-    const deeSession = { ...await signedIn(noEmail, dee), origin: noEmail };
-    expect(await invite(noEmail, dee)).toMatchObject({ status: 409 });
-    await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.email, dee));
+    const deeSession = { ...await signedIn(noEmail, dee, false), origin: noEmail };
     const copied = Sent.assert((await invite(noEmail, dee)).body);
     expect(copied).toMatchObject({ emailed: false, link: landing });
     expect(await statusOf(dee)).toMatchObject({ status: "invited" });
+    expect(await accept(deeSession, tenantId, noEmail)).toMatchObject({ status: 403, body: { error: { code: "email_unverified" } } });
+    expect((await refusal(owner, "GET", "")).body).toMatchObject({ unverifiedPrincipalIds: [] });
+    expect(await refusal(owner, "POST", `/${copied.principalId}/verify`)).toMatchObject({ status: 409, body: { error: { code: "sends_email" } } });
+    async function onNoEmail(headers: Record<string, string>, method: string, path: string) {
+      const res = await fetch(`${noEmail}/api/integrations/invitations/${tenantId}${path}`, { method, headers: { ...headers, origin: noEmail } });
+      return { status: res.status, body: res.status === 204 ? null : await res.json() };
+    }
+    expect((await onNoEmail(owner, "GET", "")).body).toMatchObject({ unverifiedPrincipalIds: [copied.principalId], canMarkVerified: true });
+
+    // Verified holds hub-wide, so only the hub's first account verifies, never another workspace's admin, and only someone in its own workspace.
+    const otherAdmin = await signedIn(noEmail);
+    const theirTenantId = await createTenant(noEmail, otherAdmin);
+    const theirInvite = await fetch(`${noEmail}/api/integrations/invitations/${theirTenantId}`, { method: "POST", headers: otherAdmin, body: JSON.stringify({ email: dee, roleId: await memberRole(theirTenantId, otherAdmin) }) });
+    const deeInTheirs = Sent.assert(await theirInvite.json()).principalId;
+    const theirs = await fetch(`${noEmail}/api/integrations/invitations/${theirTenantId}`, { headers: otherAdmin });
+    expect(await theirs.json()).toMatchObject({ unverifiedPrincipalIds: [deeInTheirs], canMarkVerified: false });
+    const vouched = await fetch(`${noEmail}/api/integrations/invitations/${theirTenantId}/${deeInTheirs}/verify`, { method: "POST", headers: otherAdmin });
+    expect({ status: vouched.status, body: await vouched.json() }).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
+    const outsider = `outsider-${crypto.randomUUID().slice(0, 8)}@example.com`;
+    await signedIn(noEmail, outsider, false);
+    const elsewhere = await fetch(`${noEmail}/api/integrations/invitations/${otherTenantId}`, { method: "POST", headers: { ...owner, origin: noEmail }, body: JSON.stringify({ email: outsider, roleId: await memberRole(otherTenantId) }) });
+    const outsiderId = Sent.assert(await elsewhere.json()).principalId;
+    expect(await onNoEmail(owner, "POST", `/${outsiderId}/verify`)).toMatchObject({ status: 404, body: { error: { code: "not_found" } } });
+    expect(await onNoEmail(gilHeaders, "POST", `/${copied.principalId}/verify`)).toEqual(noGrant);
+    expect((await onNoEmail(owner, "POST", `/${copied.principalId}/verify`)).status).toBe(204);
+    expect(noEmailOutput.filter((line) => line.includes("email_marked_verified")).map((line) => JSON.parse(line))).toMatchObject([{ tenantId, principalId: copied.principalId, byPrincipalId: expect.any(String) }]);
+    expect(await onNoEmail(owner, "POST", `/${copied.principalId}/verify`)).toMatchObject({ status: 404 });
     expect(await accept(deeSession, tenantId, noEmail)).toEqual({ status: 200, body: { tenantId } });
     expect(await statusOf(dee)).toMatchObject({ status: "active" });
 
     expect(await invite(origin, bounce)).toMatchObject({ status: 502, body: { error: { code: "email_failed" } } });
     expect(output.filter((line) => line.includes("invite_email_failed")).map((line) => JSON.parse(line))).toMatchObject([{ code: "EENVELOPE" }]);
     expect(output.join("\n")).not.toContain(bounce);
+  } finally {
+    await close();
+    smtp.stop();
+  }
+}, 60_000);
+
+test("an unverified account reaches only sign-in and verification until it follows its emailed link, except the hub's first account", async () => {
+  const smtp = smtpSink();
+  const mail = { SMTP_URL: smtp.url, EMAIL_FROM: "Triage <triage@example.com>" };
+  const origin = await startHub(mail);
+  const noEmail = await startHub();
+  const allowlisted = await startHub({ ...mail, AUTH_ALLOWED_EMAILS: "@allowed.test" });
+  const { db, close } = createDB(DATABASE);
+  try {
+    async function status(hub: string, headers: Record<string, string>, method: string, path: string, body?: unknown) {
+      const res = await fetch(`${hub}${path}`, { method, headers: { ...headers, origin: hub }, ...(body !== undefined && { body: JSON.stringify(body) }) });
+      return { status: res.status, body: await res.json() };
+    }
+    const refused = { status: 403, body: { error: { code: "email_unverified", message: "Verify your email address to use Corbits Triage." } } };
+    function verifyLinks(email: string): string[] {
+      return smtp.sent().filter((sent) => sent.headers.to === email).map((sent) => /http\S+verify-email\S+/.exec(sent.text)?.[0]).filter((link) => link !== undefined);
+    }
+    async function follow(link: string) {
+      const res = await fetch(link, { redirect: "manual" });
+      return { location: res.headers.get("location"), cookie: res.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ") };
+    }
+
+    // Without email, only the hub's first account is let through unverified.
+    const first = `first-${crypto.randomUUID().slice(0, 8)}@example.com`;
+    const firstSession = await signedIn(noEmail, first, false);
+    await db.update(schema.user).set({ createdAt: new Date(0) }).where(eq(schema.user.email, first));
+    const secondSession = await signedIn(noEmail, undefined, false);
+    expect(await status(noEmail, firstSession, "GET", "/api/me")).toMatchObject({ status: 200, body: { email: first } });
+    expect(await status(noEmail, secondSession, "GET", "/api/me")).toEqual(refused);
+    expect(await status(noEmail, secondSession, "GET", "/api/integrations/auth-methods")).toMatchObject({ status: 200, body: { verificationEmail: false } });
+
+    const ann = `ann-${crypto.randomUUID().slice(0, 8)}@example.com`;
+    const annSession = await signedIn(origin, ann, false);
+    expect(await status(origin, annSession, "GET", "/api/me")).toEqual(refused);
+    expect(await status(origin, annSession, "POST", "/api/tenants", { name: "Ann", slug: `ann-${crypto.randomUUID().slice(0, 8)}` })).toEqual(refused);
+    expect(await status(origin, annSession, "GET", "/api/integrations/sessions")).toEqual(refused);
+    expect(await status(origin, annSession, "GET", "/api/auth/get-session")).toMatchObject({ status: 200, body: { user: { email: ann, emailVerified: false } } });
+    expect(await status(origin, annSession, "GET", "/api/integrations/auth-methods")).toMatchObject({ status: 200, body: { verificationEmail: true } });
+    expect(await status(origin, annSession, "POST", "/api/hooks/nothing", {})).toEqual({ status: 404, body: { error: "unknown_hook" } });
+    expect(smtp.sent().find((sent) => sent.headers.to === ann)?.headers).toMatchObject({ subject: "Verify your Corbits Triage email" });
+
+    // Limited per account, whatever address the request claims to come from.
+    const resend = { email: ann, callbackURL: "/inbox" };
+    expect((await status(origin, { ...annSession, "x-forwarded-for": "198.51.100.240" }, "POST", "/api/auth/send-verification-email", resend)).status).toBe(200);
+    expect((await status(origin, { ...annSession, "x-forwarded-for": "198.51.100.242" }, "POST", "/api/auth/send-verification-email", resend)).status).toBe(429);
+    const links = verifyLinks(ann);
+    expect(links).toHaveLength(2);
+    expect(await follow(links[1]!)).toMatchObject({ location: "/inbox" });
+    expect(await status(origin, annSession, "GET", "/api/me")).toMatchObject({ status: 200, body: { email: ann } });
+
+    // An allowlist with email admits email/password sign-ups in it once verified, and exempts nobody.
+    const outsider = await fetch(`${allowlisted}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: allowlisted, "x-forwarded-for": "198.51.100.241" },
+      body: JSON.stringify({ email: `out-${crypto.randomUUID().slice(0, 8)}@example.com`, password: "password-123456", name: "Out" }),
+    });
+    expect(outsider.status).toBe(403);
+    const ally = `ally-${crypto.randomUUID().slice(0, 8)}@allowed.test`;
+    const allySession = await signedIn(allowlisted, ally, false);
+    await db.update(schema.user).set({ createdAt: new Date(-1) }).where(eq(schema.user.email, ally));
+    expect(await status(allowlisted, allySession, "GET", "/api/me")).toEqual(refused);
+    const allyIn = await follow(verifyLinks(ally)[0]!);
+    expect(await status(allowlisted, { cookie: allyIn.cookie }, "GET", "/api/me")).toMatchObject({ status: 200, body: { email: ally } });
   } finally {
     await close();
     smtp.stop();

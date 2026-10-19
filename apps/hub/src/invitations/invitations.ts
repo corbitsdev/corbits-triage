@@ -3,12 +3,13 @@
 // better-auth magic link that lands there signs them in and verifies it; without
 // email, they must have signed in with Google first.
 import { type } from "arktype";
-import { and, count, eq, gt, inArray, like, notExists, sql } from "drizzle-orm";
+import { and, count, eq, exists, gt, inArray, like, notExists, sql } from "drizzle-orm";
 import { schema } from "@intx/db";
 import { TRIAGE_ROLE, type InviteRoles } from "@corbits/triage-contracts";
 import { isEmailAllowed, MAGIC_LINK_TTL_SECONDS, type HubAuth } from "../auth.js";
 import type { SessionUser } from "@intx/hub-api";
 import { failure, type PortalCredentialDeps } from "../github/portal-credential.js";
+import type { IsHubOwner } from "../hub-owner.js";
 import type { Member } from "../integrations/app.js";
 import { asCaller } from "../stock-caller.js";
 import type { SendInviteEmail } from "./invite-email.js";
@@ -36,6 +37,7 @@ export type InvitationDeps = PortalCredentialDeps & {
   allowedEmails: readonly string[] | undefined;
   linkOrigin: string;
   sendEmail: SendInviteEmail | undefined;
+  isHubOwner: IsHubOwner;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -121,12 +123,10 @@ export function createInvitations(deps: InvitationDeps) {
     if (refused) return refused;
     const { internalAdapter } = await deps.auth.$context;
     const existing = await internalAdapter.findUserByEmail(email, { includeAccounts: true });
-    // Whoever set up an unverified account may not own the address, so it must not be told about, or join, the workspace.
-    if (existing && !existing.user.emailVerified && existing.accounts.length > 0) {
-      const verify = deps.sendEmail === undefined
-        ? "Without email set up on this hub it cannot be verified; invite an address that signs in with Google."
-        : "Its owner can verify it with Reset password on the sign-in page.";
-      return failure(409, "unverified_email", `${email} has an account whose address is not verified, so it cannot be invited. ${verify}`);
+    // Whoever set up an unverified account may not own the address, so the emailed link must not sign it in.
+    // Without email nothing is sent, and it can join only once the hub's owner marks it verified.
+    if (existing && !existing.user.emailVerified && existing.accounts.length > 0 && deps.sendEmail !== undefined) {
+      return failure(409, "unverified_email", `${email} has an account whose address is not verified, so it cannot be invited. Its owner can verify it with Reset password on the sign-in page.`);
     }
     let created: string | undefined;
     if (!existing) {
@@ -189,6 +189,40 @@ export function createInvitations(deps: InvitationDeps) {
     return new Response(null, { status: 204 });
   }
 
+  /** People in the workspace, members or invited, who signed up with email and password and have not verified it. */
+  function unverifiedPeople(tenantId: string, principalId?: string) {
+    return db
+      .select({ principalId: schema.principal.id, userId: schema.user.id })
+      .from(schema.principal)
+      .innerJoin(schema.user, eq(schema.user.id, schema.principal.refId))
+      .where(and(
+        eq(schema.principal.tenantId, tenantId),
+        principalId === undefined ? undefined : eq(schema.principal.id, principalId),
+        eq(schema.principal.kind, "user"),
+        eq(schema.user.emailVerified, false),
+        exists(db.select({ id: schema.account.id }).from(schema.account).where(and(eq(schema.account.userId, schema.user.id), eq(schema.account.providerId, "credential")))),
+      ));
+  }
+
+  async function callerIsHubOwner(principalId: string): Promise<boolean> {
+    const [caller] = await db.select({ userId: schema.principal.refId }).from(schema.principal).where(eq(schema.principal.id, principalId));
+    return caller !== undefined && await deps.isHubOwner(caller.userId);
+  }
+
+  /**
+   * The hub's owner vouches for an address, as a hub without email cannot prove it. Verified holds hub-wide, and any
+   * verified account can bring others into a workspace of its own, so no workspace admin may vouch.
+   */
+  async function markVerified({ tenantId, principalId }: Member, targetId: string): Promise<Response> {
+    if (deps.sendEmail !== undefined) return failure(409, "sends_email", "This hub sends email, so they verify their address with the link it sent them.");
+    if (!await callerIsHubOwner(principalId)) return failure(403, "forbidden", "Only whoever runs this Triage may verify an address.");
+    const [row] = await unverifiedPeople(tenantId, targetId);
+    if (!row) return failure(404, "not_found", "No one in this workspace with an unverified address has this id.");
+    await db.update(schema.user).set({ emailVerified: true, updatedAt: deps.now() }).where(eq(schema.user.id, row.userId));
+    deps.log({ level: "info", msg: "email_marked_verified", tenantId, byPrincipalId: principalId, principalId: targetId, userId: row.userId });
+    return new Response(null, { status: 204 });
+  }
+
   async function roles({ tenantId, principalId }: Member): Promise<Response> {
     const rows = await db.select({ id: schema.role.id, name: schema.role.name, isSystem: schema.role.isSystem }).from(schema.role).where(eq(schema.role.tenantId, tenantId));
     const people = rows.filter((row) => !isTriageRole(row)).map((row) => row.id);
@@ -196,7 +230,14 @@ export function createInvitations(deps: InvitationDeps) {
     const signInLimit = allowedEmails === undefined
       ? null
       : { domains: allowedEmails.filter((entry) => entry.startsWith("@")), addresses: allowedEmails.some((entry) => !entry.startsWith("@")) };
-    const body: InviteRoles = { assignableRoleIds: [...await assignableRoles(principalId, tenantId, people)], sendsEmail: deps.sendEmail !== undefined, signInLimit };
+    const unverified = deps.sendEmail === undefined ? await unverifiedPeople(tenantId) : [];
+    const body: InviteRoles = {
+      assignableRoleIds: [...await assignableRoles(principalId, tenantId, people)],
+      sendsEmail: deps.sendEmail !== undefined,
+      signInLimit,
+      unverifiedPrincipalIds: unverified.map((row) => row.principalId),
+      canMarkVerified: deps.sendEmail === undefined && await callerIsHubOwner(principalId),
+    };
     return Response.json(body);
   }
 
@@ -218,5 +259,5 @@ export function createInvitations(deps: InvitationDeps) {
     return Response.json({ tenantId: body.tenantId });
   }
 
-  return { create, resend, withdraw, roles, accept };
+  return { create, resend, withdraw, markVerified, roles, accept };
 }

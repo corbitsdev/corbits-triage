@@ -252,6 +252,31 @@ eval and its numbers in
 
 ## Tenancy and authority
 
+A signed-in user whose address is not verified reaches no hub route until it
+is: the hub's front door (`apps/hub/src/verified-gate.ts`) answers every
+`/api/` request from such a session with 403 `email_unverified`, before the
+custom and stock routes. Open to it: better-auth under `/api/auth/` (session,
+sign-out, `send-verification-email`, `verify-email`, magic links) and
+`/api/integrations/auth-methods`. Webhooks under `/api/hooks/` are routed
+before the gate; sidecar sockets and git and agent-state tokens carry no user
+session, so it lets them through. The hub's first account (the oldest user)
+is exempt unless `AUTH_ALLOWED_EMAILS` is set, so a hub without email can be
+set up. Without email, that first account vouches for the rest: the invite
+route lets an admin invite an unverified email and password account, and
+`/api/integrations/invitations/{tenantId}/{principalId}/verify` sets
+`emailVerified` for a member or invitee of the caller's workspace, under the
+invite grant, logged as `email_marked_verified` with both principals. It
+refuses anyone but the first account (`apps/hub/src/hub-owner.ts`): verified
+holds hub-wide, and any verified account can create a workspace and bring any
+account into it through stock invites, so a workspace admin's vouch would be
+too weak. A hub that sends email refuses it and leaves the proof to the
+emailed link. Resending that link is limited to once a minute per signed-in
+account, or per address without a session, rather than by better-auth's
+per-IP limit, which cannot resolve a client behind a proxy. Stock has no unverified state of its own: tenant creation gives any
+signed-in user an active owner membership, and the stock tenant middleware
+refuses only inactive memberships, so it covers neither `/api/me` nor tenant
+creation.
+
 A workspace is an Interchange tenant; repositories are tenant config
 (`corbitsTriage.repos`) plus a per-repository policy and triage state, both
 tenant artifacts. Runs act under the grants materialized for their deployment.

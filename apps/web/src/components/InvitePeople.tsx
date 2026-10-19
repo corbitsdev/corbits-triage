@@ -7,7 +7,7 @@ import type { InviteRoles, InviteSent } from "@corbits/triage-contracts";
 import { isTriageRole, roleName } from "../lib/automation-grid.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { initialsOf } from "../lib/inbox-view.ts";
-import { createInvitation, inviteRoles, isPerson, listInvited, resendInvitation, withdrawInvitation, type HubPrincipal } from "../lib/hub-api.ts";
+import { createInvitation, inviteRoles, isPerson, listInvited, markEmailVerified, resendInvitation, withdrawInvitation, type HubPrincipal } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { INVITATIONS_QUERY_KEY, usePortal, useSignOutWhenRejected } from "../lib/portal.tsx";
 import { usePrincipals, useRoles } from "../lib/tenant-entities.ts";
@@ -46,7 +46,7 @@ function signInLimitText(limit: SignInLimit): string {
 
 function deliveryText(sendsEmail: boolean): string {
   if (sendsEmail) return "The hub emails each invitee a one-time sign-in link that works for 15 minutes.";
-  return "This hub sends no email, so copy the invite link shown after inviting and send it yourself; they sign in with Google first.";
+  return "This hub sends no email, so copy the invite link shown after inviting and send it yourself; they sign in with Google, or with a password once whoever runs this Triage marks them verified.";
 }
 
 function inviteBlocker(email: string, roleId: string, limit: SignInLimit): string | null {
@@ -69,7 +69,7 @@ function PeopleHeader({ first }: { first: string }) {
   );
 }
 
-function MemberRow({ person, you }: { person: HubPrincipal; you: boolean }) {
+function MemberRow({ person, you, unverified, actions }: { person: HubPrincipal; you: boolean; unverified: boolean; actions: ReactNode }) {
   const name = person.displayName || addressOf(person);
   return (
     <TableRow>
@@ -77,13 +77,13 @@ function MemberRow({ person, you }: { person: HubPrincipal; you: boolean }) {
         <span className="person"><span className="av">{initialsOf(name)}</span><span>{name}{you && " (you)"}{person.email !== name && <span className="muted small-text person-email">{person.email}</span>}</span></span>
       </TableCell>
       <TableCell>{roleNames(person)}</TableCell>
-      <TableCell><Badge tone="success">Active</Badge></TableCell>
-      <TableCell />
+      <TableCell>{unverified ? <Badge tone="warning">Email not verified</Badge> : <Badge tone="success">Active</Badge>}</TableCell>
+      <TableCell>{actions}</TableCell>
     </TableRow>
   );
 }
 
-function PeopleTable({ you, children }: { you: string | undefined; children: ReactNode }) {
+function PeopleTable({ you, unverified, actions, children }: { you: string | undefined; unverified: readonly string[]; actions: (person: HubPrincipal) => ReactNode; children: ReactNode }) {
   const members = usePrincipals();
   if (members.denied) return <DeniedNotice section="people" />;
   if (members.loading || members.unavailable) return null;
@@ -91,7 +91,7 @@ function PeopleTable({ you, children }: { you: string | undefined; children: Rea
     <Table>
       <PeopleHeader first="Name" />
       <TableBody>
-        {members.rows.filter(isPerson).map((person) => <MemberRow key={person.id} person={person} you={person.id === you} />)}
+        {members.rows.filter(isPerson).map((person) => <MemberRow key={person.id} person={person} you={person.id === you} unverified={unverified.includes(person.id)} actions={actions(person)} />)}
         {children}
       </TableBody>
     </Table>
@@ -127,7 +127,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   const denied = query.error instanceof ApiError && query.error.status === 403;
   if (denied) return onSetupPage ? null : <DeniedNotice section="invites" />;
   if (!tenantId || !query.data) return null;
-  const { invited, assignableRoleIds, sendsEmail, signInLimit } = query.data;
+  const { invited, assignableRoleIds, sendsEmail, signInLimit, unverifiedPrincipalIds, canMarkVerified } = query.data;
   const choices = roles.rows.filter((role) => assignableRoleIds.includes(role.id) && !isTriageRole(role));
   const chosenRole = roleId || choices.find((role) => role.name === DEFAULT_ROLE)?.id || "";
 
@@ -174,6 +174,23 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
     });
   }
 
+  function markVerified(person: HubPrincipal) {
+    if (!tenantId || !window.confirm(`Mark ${addressOf(person)} verified? Do this only if you know the address is theirs.`)) return;
+    void act(`verify:${person.id}`, async function verifyAddress() {
+      await markEmailVerified(createHubTransport(), tenantId, person.id);
+      notify(`Marked ${addressOf(person)} verified.`);
+    });
+  }
+
+  function verifyButton(person: HubPrincipal) {
+    if (!canMarkVerified || !unverifiedPrincipalIds.includes(person.id)) return null;
+    return (
+      <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => markVerified(person)}>
+        {pending === `verify:${person.id}` ? "Verifying…" : "Mark verified"}
+      </Button>
+    );
+  }
+
   const blocker = inviteBlocker(email, chosenRole, signInLimit);
   const intro = <p>{signInLimitText(signInLimit)} {deliveryText(sendsEmail)}</p>;
   const notice = <>
@@ -204,6 +221,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
       <TableCell>{roleNames(person)}</TableCell>
       <TableCell><Badge tone="warning">Invite pending</Badge></TableCell>
       <TableCell>
+        {verifyButton(person)}
         {person.roles.every((role) => assignableRoleIds.includes(role.id)) && (
           <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => resend(person)}>
             {pending === `resend:${person.id}` ? "Sending…" : "Resend"}
@@ -233,7 +251,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
         {intro}
       </header>
       <div>
-        <PeopleTable you={snapshot?.workspace.principalId}>{invitedRows}</PeopleTable>
+        <PeopleTable you={snapshot?.workspace.principalId} unverified={unverifiedPrincipalIds} actions={verifyButton}>{invitedRows}</PeopleTable>
         {notice}
         {form}
       </div>

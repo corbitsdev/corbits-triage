@@ -63,6 +63,8 @@ interface PortalContextValue {
   snapshot: PortalSnapshot | null;
   /** Workspaces the user is invited to but not yet a member of, while they are a member of none. */
   invitations: WorkspaceOption[];
+  /** The hub refuses this account until its address is verified. */
+  unverified: boolean;
   loadError: string;
   notify: (message: string) => void;
   warn: (message: string) => void;
@@ -263,7 +265,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const invitations = enabled && portalQuery.data && isInvited(portalQuery.data) ? portalQuery.data.invitations : NO_INVITATIONS;
   const loading = enabled && portalQuery.isPending;
   const unauthorized = portalQuery.error instanceof ApiError && portalQuery.error.status === 401;
-  const readOnly = Boolean(enabled && !portalQuery.data && portalQuery.isError && !unauthorized);
+  const unverified = enabled && portalQuery.error instanceof ApiError && portalQuery.error.code === "email_unverified";
+  const readOnly = Boolean(enabled && !portalQuery.data && portalQuery.isError && !unauthorized && !unverified);
   const loadError = readOnly ? errorText(portalQuery.error) : "";
 
   useEffect(function clearSnapshotWhenDisabled() {
@@ -528,6 +531,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         connected: snapshot ? portalConnected(snapshot) : false,
         snapshot,
         invitations,
+        unverified,
         loadError,
         notify,
         warn,
@@ -559,6 +563,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       readOnly,
       snapshot,
       invitations,
+      unverified,
       loadError,
       notify,
       warn,
