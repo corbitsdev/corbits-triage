@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { connectDocker, isLocalDockerHost, readDockerTls, type DockerTls } from "./engine.js";
+import { connectDocker, isLocalDockerHost, type DockerTls } from "./engine.js";
 
 test("plain tcp:// reaches only this machine; another machine needs TLS", () => {
   for (const host of ["tcp://LOCALHOST:2375", "tcp://localhost.:2375", "tcp://127.1:2375", "tcp://0x7f.0.0.1:2375", "tcp://127.9.9.9:2375", "tcp://0.0.0.0:2375", "tcp://[::1]:2375", "tcp://[::ffff:127.0.0.1]:2375"]) {
@@ -64,18 +64,14 @@ describe("Docker over mutual TLS", () => {
     await issue("wrongname", "ca", "/CN=docker.example.com", "extendedKeyUsage = serverAuth\nsubjectAltName = DNS:docker.example.com\n");
     await issue("client", "ca", "/CN=hub", "extendedKeyUsage = clientAuth\n");
     await issue("rogue", "other-ca", "/CN=hub", "extendedKeyUsage = clientAuth\n");
-    await fs.mkdir(path.join(dir, "certs"));
-    for (const [from, to] of [["ca.pem", "ca.pem"], ["client-cert.pem", "cert.pem"], ["client-key.pem", "key.pem"]] as const) {
-      await fs.copyFile(path.join(dir, from), path.join(dir, "certs", to));
-    }
   });
 
   afterEach(() => server?.stop(true));
   afterAll(() => fs.rm(dir, { recursive: true, force: true }));
 
-  test("reaches a daemon whose certificate our CA signed for the name dialled, with the client certificate from DOCKER_CERT_PATH", async () => {
+  test("reaches a daemon whose certificate our CA signed for the name dialled, with our client certificate", async () => {
     const port = await serve("good");
-    const tls = await readDockerTls(path.join(dir, "certs"));
+    const tls = await clientTls();
     expect(await connectDocker(`tcp://127.0.0.1:${port}`, tls).request("GET", "/info")).toEqual({ ok: 1 });
     expect(await connectDocker(`tcp://localhost:${port}`, tls).request("GET", "/info")).toEqual({ ok: 1 });
   });
@@ -91,10 +87,5 @@ describe("Docker over mutual TLS", () => {
   test("the daemon refuses a client certificate our CA did not sign", async () => {
     const port = await serve("good");
     await expect(connectDocker(`tcp://127.0.0.1:${port}`, await clientTls("rogue")).request("GET", "/info")).rejects.toThrow();
-  });
-
-  test("an empty TLS file is refused before any connection", async () => {
-    await fs.writeFile(path.join(dir, "certs", "ca.pem"), "");
-    await expect(readDockerTls(path.join(dir, "certs"))).rejects.toThrow("is empty");
   });
 });

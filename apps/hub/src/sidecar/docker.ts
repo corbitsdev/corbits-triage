@@ -9,11 +9,9 @@ import {
   findDockerHost,
   isLocalDockerHost,
   isThisMachine,
-  readDockerTls,
   sweepDockerSidecars,
   type DockerEngine,
   type DockerSidecars,
-  type DockerTls,
 } from "@corbits/provisioner-docker";
 import { createDB, createSidecarAllocationStore, createWorkflowProbeStore, type DB } from "@intx/db";
 import type { SidecarProvisioner } from "@intx/hub-sessions";
@@ -111,15 +109,9 @@ export async function connectDockerSidecars({ docker, database, root, adapterMan
   if (manifest === undefined) return off("Code review cannot run in Docker while GITHUB_API_ORIGIN is set; unset it");
   const hubProblem = remote ? remoteHubProblem(`Docker at ${host}`, docker.publicHubWebSocketUrl) : undefined;
   if (hubProblem !== undefined) return off(hubProblem);
-  let tls: DockerTls | undefined;
-  try {
-    tls = docker.certPath === undefined ? undefined : await readDockerTls(docker.certPath);
-  } catch (error) {
-    return off(`DOCKER_TLS_VERIFY is set but the certificates in DOCKER_CERT_PATH cannot be read (${String(error)})`);
-  }
   let engine: DockerEngine;
   try {
-    engine = connectDocker(host, tls);
+    engine = connectDocker(host, docker.tls);
   } catch (error) {
     return off(`Triage cannot connect to Docker at ${host} (${String(error)})`);
   }

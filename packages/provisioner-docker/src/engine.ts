@@ -26,23 +26,12 @@ export type DockerEngine = {
   request(method: string, path: string, opts?: DockerRequestOpts): Promise<unknown>;
 };
 
-/** Docker's client TLS files, as `DOCKER_CERT_PATH` holds them. */
+/** The PEMs of the CA that signed the daemon's certificate, and of the client certificate and its key. */
 export type DockerTls = {
   readonly ca: string;
   readonly cert: string;
   readonly key: string;
 };
-
-/** Reads `ca.pem`, `cert.pem` and `key.pem` from `certPath`, as the docker CLI does with `DOCKER_TLS_VERIFY` set. */
-export async function readDockerTls(certPath: string): Promise<DockerTls> {
-  async function read(file: string): Promise<string> {
-    const text = await fs.readFile(path.join(certPath, file), "utf8");
-    if (text.trim() === "") throw new Error(`${path.join(certPath, file)} is empty`);
-    return text;
-  }
-  const [ca, cert, key] = await Promise.all([read("ca.pem"), read("cert.pem"), read("key.pem")]);
-  return { ca, cert, key };
-}
 
 /**
  * Whether a hostname names this machine: `localhost`, 127.0.0.0/8 in any IPv4 spelling, `0.0.0.0`, `::`, `::1` and
@@ -78,7 +67,7 @@ export function connectDocker(host: string, tls?: DockerTls): DockerEngine {
     throw new Error(`Docker host ${host} must be unix:// or tcp://`);
   }
   if (tls === undefined && !isLocalDockerHost(host)) {
-    throw new Error(`Docker host ${host} is another machine; reach it over TLS with DOCKER_TLS_VERIFY and DOCKER_CERT_PATH`);
+    throw new Error(`Docker host ${host} is another machine; reach it over TLS with DOCKER_TLS_CA, DOCKER_TLS_CERT and DOCKER_TLS_KEY`);
   }
   const scheme = tls === undefined ? "http" : "https";
   const base = address.protocol === "unix:" ? "http://docker" : `${scheme}://${address.host}`;
