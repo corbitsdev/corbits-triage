@@ -5,7 +5,7 @@ import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { WaitingMark } from "../actions/waiting.js";
 import type { SuggestedAction } from "./actions.js";
-import { forReview, hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
+import { forMaintainer, hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
@@ -437,7 +437,7 @@ function withoutLimit(evidence: string[]): string {
 }
 
 function failedStep(c: CheckResult, sources: Sources): Step {
-  if (c.onFail === "review") return { actor: "maintainer", action: `Review: ${c.reason}` };
+  if (c.onFail === "ask") return { actor: "maintainer", action: `Decide: ${c.reason}` };
   switch (c.check) {
     // Informational: marking a draft ready is the author's call, never asked of them.
     case NOT_A_DRAFT: return { actor: "maintainer", action: "Review once marked ready" };
@@ -527,15 +527,15 @@ export function isLabelledFinding(c: CheckResult): boolean {
   return c.result === "fail" || unsure(c);
 }
 
-/** A failed rule whose failure goes to a maintainer. */
+/** A failed rule whose failure is asked of a maintainer. */
 function isFlagged(c: CheckResult): boolean {
-  return c.result === "fail" && c.onFail === "review";
+  return c.result === "fail" && c.onFail === "ask";
 }
 
 /** Judged rules that decide the verdict, and every labelling rule's result. */
 export function splitLabelled(det: DeterministicResult, model: CheckResult[]): { deciding: CheckResult[]; labelled: CheckResult[] } {
   const ids = det.labelled?.ids ?? [];
-  return { deciding: model.filter((c) => !ids.includes(c.check)).map((c) => forReview(c, det.review)), labelled: [...(det.labelled?.checks ?? []), ...model.filter((c) => ids.includes(c.check))] };
+  return { deciding: model.filter((c) => !ids.includes(c.check)).map((c) => forMaintainer(c, det.ask)), labelled: [...(det.labelled?.checks ?? []), ...model.filter((c) => ids.includes(c.check))] };
 }
 
 /** Whether a rule that does not only label needs the decision model. */
@@ -621,7 +621,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   }
   if (flagged.length) {
     if (lines.length) lines.push("");
-    lines.push("A maintainer will review:", ...flagged.map((c) => `- ${c.reason}${failureEvidence(c, repo, headSha)}`));
+    lines.push("Asking a maintainer about:", ...flagged.map((c) => `- ${c.reason}${failureEvidence(c, repo, headSha)}`));
   }
   if (unconfirmed.length) {
     if (lines.length) lines.push("");

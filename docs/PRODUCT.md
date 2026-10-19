@@ -127,7 +127,7 @@ Each pull request head gets one verdict: **Pass**, **Fail** or **Unsure**.
    is the probability of pass. An Unsure comment names each rule Triage could
    not confirm.
 
-A rule's `onFail` changes what its failure does. `review` makes it Unsure
+A rule's `onFail` changes what its failure does. `ask` makes it Unsure
 for a maintainer instead of Fail, unless another rule fails it, and the
 verdict question is not asked. `label` rules are left out of all three: they
 never decide Fail or Unsure, and the verdict question neither asks about nor
@@ -258,7 +258,7 @@ its setting as `max` (size limits), `tracker` (linked issue), `paths`
 (forbidden paths) or `types` and `fields` (conventional commits);
 `enabled: false` keeps it written down but off.
 `onFail` says what a failing rule does: `fail` (the default) fails the pull
-request for its author, `review` makes it Unsure and lists the rule for a
+request for its author, `ask` makes it Unsure and lists the rule for a
 maintainer instead of the author, and `label` makes the rule label the pull
 request instead of deciding its verdict. A top-level `onFail` is the default
 for the file's rules. With `label`, when the rule fails or stays unsure, the

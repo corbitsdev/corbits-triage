@@ -2,13 +2,13 @@
 // runs on, so a rule's wording, reason and evidence never count as a difference; what it checks and every step do.
 import { dump, JSON_SCHEMA } from "js-yaml";
 import {
+  askRules,
   AUTHOR_GROUPS,
   CATALOG_IDS,
   CONVENTIONAL_FIELDS,
   CONVENTIONAL_TYPES,
   labelRules,
   POLICY_EVENTS,
-  reviewRules,
   VERDICT_LABELS,
   VERDICTS,
   type AuthorMatch,
@@ -200,7 +200,7 @@ const CI_STATES = { [CI_SKIPPED]: "merges skip CI", absent: "merges wait for CI"
 export function onFailText(pack: CheckPack, id: string): string | undefined {
   const label = labelRules(pack).get(id);
   if (label !== undefined) return `on fail, labels ${label}`;
-  return reviewRules(pack).includes(id) ? "on fail, a maintainer reviews it" : undefined;
+  return askRules(pack).includes(id) ? "on fail, asks a maintainer" : undefined;
 }
 
 function onFailWords(pack: CheckPack, id: string): string[] {

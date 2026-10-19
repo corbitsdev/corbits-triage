@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { labelRules, POLICY_EVENTS, readCheckPack, reviewRules, type CheckPack } from "./check-pack.ts";
+import { askRules, labelRules, POLICY_EVENTS, readCheckPack, type CheckPack } from "./check-pack.ts";
 import { exportPolicyFile } from "./policy-export.ts";
 import { checkPolicyFile, readPolicyFile } from "./policy-file.ts";
 import { extendedFilePack } from "./resolve-policy.ts";
@@ -113,14 +113,14 @@ actions:
     const labelled = readPolicyFile(`rules:\n${rule}    onFail: label\n${files}    onFail: label\n    label: big\n`, REPO) as CheckPack;
     expect([...labelRules(labelled)]).toEqual([["max-files-changed", "big"], ["docs", "docs: check"]]);
     expect(readPolicyFile(exportPolicyFile(labelled, false).text, REPO)).toEqual(labelled);
-    const review = readPolicyFile(`onFail: review\nrules:\n${rule}${files}    onFail: fail\n`, REPO) as CheckPack;
-    expect(reviewRules(review)).toEqual(["docs"]);
-    expect(readPolicyFile(exportPolicyFile(review, false).text, REPO)).toEqual(review);
-    const shared = { repo: "acme/shared", policy: readPolicyFile(`rules:\n${rule}    onFail: review\n${files}    onFail: label\n`, "acme/shared") };
+    const ask = readPolicyFile(`onFail: ask\nrules:\n${rule}${files}    onFail: fail\n`, REPO) as CheckPack;
+    expect(askRules(ask)).toEqual(["docs"]);
+    expect(readPolicyFile(exportPolicyFile(ask, false).text, REPO)).toEqual(ask);
+    const shared = { repo: "acme/shared", policy: readPolicyFile(`rules:\n${rule}    onFail: ask\n${files}    onFail: label\n`, "acme/shared") };
     const extending = extendedFilePack(REPO, readPolicyFile(`extends: acme/shared\nrules:\n${rule}    onFail: fail\n${files}`, REPO), shared);
-    expect([reviewRules(extending), [...labelRules(extending)]]).toEqual([[], []]);
-    expect(reviewRules(extendedFilePack(REPO, readPolicyFile(`extends: acme/shared\nonFail: review\nrules:\n${files}`, REPO), shared))).toEqual(["max-files-changed", "docs"]);
-    expect(() => readCheckPack({ ...review, checks: { docs: { enabled: true, advisory: true } } }, REPO)).toThrow("write onFail: label instead");
+    expect([askRules(extending), [...labelRules(extending)]]).toEqual([[], []]);
+    expect(askRules(extendedFilePack(REPO, readPolicyFile(`extends: acme/shared\nonFail: ask\nrules:\n${files}`, REPO), shared))).toEqual(["max-files-changed", "docs"]);
+    expect(() => readCheckPack({ ...ask, checks: { docs: { enabled: true, advisory: true } } }, REPO)).toThrow("write onFail: label instead");
     expect(checkPolicyFile(`rules:\n${rule}    advisory: true\n`, REPO)).toMatchObject({ ok: false });
     expect(checkPolicyFile(`rules:\n${rule}    label: docs\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label needs onFail: label.", line: 2 }] });
     expect(checkPolicyFile(`rules:\n${rule}    onFail: label\n    label: "rule: docs"\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label rule: docs is one Triage takes back; name another." }] });
