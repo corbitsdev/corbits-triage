@@ -343,6 +343,14 @@ test("a head held for CI where triage writes labels is mailed to be marked waiti
   expect(mails.map((mail) => mail.kind)).toEqual(["waiting", "pr"]);
 });
 
+test("a head with no checks yet is mailed to be marked waiting as having no CI", async () => {
+  const { clock, mails, coalescer } = harness([], { headChecks: async () => [] });
+  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+  await coalescer.accept({ ...delivery("updated", "sha2"), pack, automatic: ["labels" as const] });
+  await clock.advance(WINDOW.burstMs);
+  expect(mails).toEqual([expect.objectContaining({ kind: "waiting", headSha: "sha2", noCi: true })]);
+});
+
 function suiteCompleted(headSha: string): CoalescedEvent {
   const input = delivery("checks", headSha);
   return { ...input, mail: { ...input.mail, event: "check_suite" } };

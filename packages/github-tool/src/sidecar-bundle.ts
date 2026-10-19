@@ -132,6 +132,7 @@ const MIRROR_INPUT = obj({
   number: { type: "integer" },
   labels: { type: "array", items: str },
   owned: { type: "array", items: str },
+  keep: { type: "array", items: str, description: "While the pull request carries any of these labels, its labels are left as they are" },
   comment: str,
   header: {
     ...obj({
@@ -150,13 +151,13 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_mirror",
     description:
-      "Post (or update) the triage comment on a pull request when comment is given, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request. Never merges.",
+      "Post (or update) the triage comment on a pull request when comment is given, add labels and remove any owned label not in labels, unless it carries a keep label. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_mirror_auto",
     description:
-      "Post (or update) the triage comment on a pull request when comment is given, without waiting for a human approval, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request. Never merges.",
+      "Post (or update) the triage comment on a pull request when comment is given, without waiting for a human approval, add labels and remove any owned label not in labels, unless it carries a keep label. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
@@ -272,6 +273,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, t
         number: a.number,
         labels: a.labels,
         owned: a.owned,
+        keep: a.keep,
         comment: a.comment,
         header: a.header,
         onHead: a.onHead,
