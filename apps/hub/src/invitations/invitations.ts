@@ -1,7 +1,7 @@
 // An invite is a stock invited principal. The invitee accepts on the portal's
 // /invite/{tenantId} page, signed in with a verified address: with email, the
 // better-auth magic link that lands there signs them in and verifies it; without
-// email, they must have signed in with Google first.
+// email, they must have signed in first.
 import { type } from "arktype";
 import { and, count, eq, exists, gt, inArray, like, notExists, sql } from "drizzle-orm";
 import { schema } from "@intx/db";
@@ -20,7 +20,6 @@ export const ACCEPT_PATH = "/api/integrations/invite-accept";
 const LINKS_PER_ADDRESS_PER_HOUR = 5;
 const HOUR_MS = 60 * 60 * 1000;
 const RESEND_INTERVAL_MS = 60 * 1000;
-const GOOGLE_FIRST = "Without email set up on this hub, invitees must sign in with Google first.";
 
 export const InviteBody = type({ email: "string.email", roleId: "string > 0" });
 export const AcceptBody = type({ tenantId: "string > 0" });
@@ -130,7 +129,7 @@ export function createInvitations(deps: InvitationDeps) {
     }
     let created: string | undefined;
     if (!existing) {
-      if (deps.sendEmail === undefined) return failure(404, "not_found", `No account uses ${email}. ${GOOGLE_FIRST}`);
+      if (deps.sendEmail === undefined) return failure(404, "not_found", `${email} has not signed in here yet. Ask them to sign in, then invite them again.`);
       // Stock invites only existing users; this one can do nothing until the magic link proves the address.
       try {
         created = (await internalAdapter.createUser({ email, name: "", emailVerified: false }, { method: "magic-link" })).id;
