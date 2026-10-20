@@ -24,7 +24,7 @@ function app(appId: string, installations: number[]): App {
 /** GitHub as the hub sees it: each App's slug, installations and installation tokens, named `ghs_<appId>_<n>`. */
 function fakeGithub(apps: App[]) {
   let minted = 0;
-  const hooks = { async onMint(): Promise<void> {} };
+  const hooks = { down: false, async onMint(): Promise<void> {} };
   function signer(authorization: string | null): App | undefined {
     const [header, payload, signature] = (authorization ?? "").replace(/^Bearer /, "").split(".");
     if (!payload || !signature) return undefined;
@@ -34,6 +34,7 @@ function fakeGithub(apps: App[]) {
   }
   async function github(req: Request): Promise<Response> {
     const { pathname } = new URL(req.url);
+    if (hooks.down) return new Response(null, { status: 503 });
     const signed = signer(req.headers.get("authorization"));
     if (!signed) return new Response(null, { status: 401 });
     if (pathname === "/app") return Response.json({ slug: `app-${signed.appId}` });
@@ -151,6 +152,27 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
     expect(await secretOf("github")).toBe("ghs_2_7_4");
     expect(pushed().at(-1)).toEqual({ address: LISTENER, secrets: ["ghs_2_7_4"] });
     expect(JSON.stringify([sent, launch])).not.toContain("PRIVATE KEY");
+
+    // GitHub down: the reason is kept, and a token past its expiry is no longer resolved for a launch.
+    async function githubRow() {
+      return (await db.query.credential.findFirst({ where: eq(schema.credential.id, "crd_github") }))!;
+    }
+    function launchable() {
+      return buildCredentialDelivery({ db, tenantId: TENANT, bindings: credentialBindingsFor(["github"]), creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher });
+    }
+    github.hooks.down = true;
+    expect(await renewal.renewAll()).toEqual({ retry: true });
+    expect(await githubRow()).toMatchObject({ status: "active", metadata: { appSlug: "app-2", tokenError: expect.stringContaining("503") } });
+    await db.update(schema.credential).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(schema.credential.id, "crd_github"));
+    await expect(renewal.ensure(TENANT)).rejects.toThrow("503");
+    expect((await githubRow()).status).toBe("expired");
+    expect((await launchable()).ok).toBe(false);
+
+    github.hooks.down = false;
+    await renewal.ensure(TENANT);
+    expect(await githubRow()).toMatchObject({ status: "active", metadata: { appSlug: "app-2" } });
+    expect((await githubRow()).metadata).not.toHaveProperty("tokenError");
+    expect((await launchable()).ok).toBe(true);
   });
 }, 120_000);
 

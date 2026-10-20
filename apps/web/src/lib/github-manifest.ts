@@ -84,7 +84,7 @@ export async function saveExistingGithubApp(input: {
 }
 
 /** The hub checks the App with GitHub and keeps its key out of the credential triage's workflows use. */
-async function connectGithubApp(tenantId: string, app: { appId: string; privateKey: string }): Promise<void> {
+export async function connectGithubApp(tenantId: string, app: { appId: string; privateKey: string }): Promise<void> {
   const response = await fetch(`${requestOrigin()}/api/integrations/github-app/${encodeURIComponent(tenantId)}`, {
     method: "PUT",
     credentials: "include",

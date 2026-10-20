@@ -6,10 +6,10 @@ import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
-import { asRecord, errorText } from "@corbits/common";
+import { errorText } from "@corbits/common";
 import type { Member } from "../integrations/app.js";
 import { grantAdminGithub } from "./admin-github-grant.js";
-import { GITHUB_CREDENTIAL, lockedCredential, lockGithubCredentials, storeAppKey } from "./app-key.js";
+import { GITHUB_CREDENTIAL, lockedCredential, lockGithubCredentials, renewedMetadata, storeAppKey } from "./app-key.js";
 import { ensureTriageRole } from "./automation.js";
 import type { GithubTokenRenewal, IssuedApp } from "./installation-token.js";
 import { validGithubProvider } from "./manifest.js";
@@ -42,7 +42,7 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
       const values = {
         secret: await cipher.encrypt(issued.token?.token ?? "", credentialAad(id, "secret")),
         expiresAt: issued.token ? new Date(issued.token.expiresAt) : stamp,
-        metadata: { ...asRecord(current?.metadata), appSlug: issued.slug },
+        metadata: renewedMetadata(current?.metadata, issued.slug),
         providerId, status: "active" as const, updatedAt: stamp,
       };
       if (current) {

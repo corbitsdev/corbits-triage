@@ -479,7 +479,7 @@ token, never the App key. The vault holds the App as
 webhook secret under `github-hook`. The manifest callback and
 `PUT /api/integrations/github-app/:tenantId` write the key and the token minted
 from it in one transaction; App JSON a stock credential write leaves in
-`github` is moved to `github-app` when the hub next reads the key. The hub
+`github` is moved to `github-app` when the hub next reads the key: the next worker deploy, portal read, installation sync or token loop pass, so at most 45 minutes later; until then that credential holds App JSON and a deployment launched from it is handed the key. The hub
 mints the token before it deploys a GitHub worker (when under 15 minutes are
 left) and renews it on boot and every 45 minutes. Every write holds the
 tenant's advisory lock, and a renewal stores its token only while the key it
@@ -490,7 +490,13 @@ since a secret update alone reaches a deployment only when its sidecar
 reconnects. One token covers one installation: the workspace uses the one its
 repositories came from, else the oldest; installation sync and the
 installation webhook leave out other accounts' repositories. A `github-app`
-key whose `github` credential was deleted is dropped by the renewal loop.
+key whose `github` credential was deleted is dropped by the renewal loop. A
+failed renewal keeps its reason as `tokenError` on the credential's metadata,
+shown on the portal's GitHub App row; once the token is past its expiry the
+credential is marked `expired`, which stock launch resolution skips, so no
+worker deploys with it. The next good renewal sets it `active` again; running
+deployments still re-resolve an expired credential, as stock drops only
+revoked ones.
 Hub routes that reach GitHub for the portal sign with the App key on the hub.
 Each GitHub mail names the App's bot account (`<slug>[bot]`, the slug GitHub
 answers for `GET /app`, refreshed on every renewal) as `appLogin`, and only

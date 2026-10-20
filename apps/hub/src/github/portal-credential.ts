@@ -53,6 +53,12 @@ export function credentialSecret(cipher: CredentialCipher, credential: { id: str
   return cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
 }
 
+/** As `activeCredential`, but an expired one too: GitHub's is still connected while its token is expired, and the hub acts with the App key. */
+export async function heldCredential(db: DB["db"], tenantId: string, name: string) {
+  const credential = await resolveCredentialByName(db, tenantId, name);
+  return credential && credential.status !== "revoked" && credential.principalId === null ? credential : undefined;
+}
+
 /** Why a member may not act with a host's credential: 409 when neither the workspace nor a parent has one, the same for every member; 403 when this member lacks the grant. */
 export type CredentialRefusal = { status: 403 | 409; code: string; message: string };
 
@@ -63,7 +69,7 @@ const HOST_CREDENTIAL = {
 
 async function hostCredential(d: GrantDeps, principalId: string, tenantId: string, source: RepoSource, action: CredentialAction) {
   const host = HOST_CREDENTIAL[source];
-  const credential = await activeCredential(d.db, tenantId, host.name);
+  const credential = await heldCredential(d.db, tenantId, host.name);
   if (!credential) return { status: 409, code: `${source.replace("-", "_")}_not_connected`, message: host.connect } satisfies CredentialRefusal;
   if (!(await holds(d, principalId, tenantId, `credential:${credential.id}`, action))) {
     return { status: 403, code: "forbidden", message: `You do not have access to the ${host.label} credential.` } satisfies CredentialRefusal;

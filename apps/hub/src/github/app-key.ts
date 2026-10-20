@@ -22,6 +22,15 @@ export function githubAppLogin(row: { metadata: unknown }): string {
   return `${slug}[bot]`;
 }
 
+/** Why the last renewal of the `github` credential's token failed, kept on its metadata for the portal. */
+export const TOKEN_ERROR = "tokenError";
+
+/** The `github` credential's metadata for the App GitHub names `slug`, once a renewal has worked. */
+export function renewedMetadata(metadata: unknown, slug: string): Record<string, unknown> {
+  const kept = Object.entries(asRecord(metadata) ?? {}).filter(([key]) => key !== TOKEN_ERROR);
+  return { ...Object.fromEntries(kept), appSlug: slug };
+}
+
 export function decryptSecret(cipher: CredentialCipher, row: { id: string; secret: string }): Promise<string> {
   return cipher.decrypt(row.secret, credentialAad(row.id, "secret"));
 }
