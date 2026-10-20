@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CATALOG_IDS, catalogCheckEnabled, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type PolicyActions, type Step } from "@corbits/triage-contracts";
-import { freshStepId, fromPack, packChanges, savable, setCatalogCheck, setSteps, stepEntries, toPack, validate } from "./pack-draft.ts";
+import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type PolicyActions, type Step } from "@corbits/triage-contracts";
+import { freshStepId, fromPack, packChanges, savable, setSteps, stepEntries, toPack, validate } from "./pack-draft.ts";
 
 const repo = "acme/widgets";
 
@@ -48,17 +48,6 @@ describe("pack draft", () => {
       expect(validate(draft, draft)).toBeNull();
     });
   }
-
-  test("toggling a catalog check back restores the saved row, present or absent", () => {
-    for (const stored of Object.values(packs)) {
-      const saved = fromPack(stored, policy);
-      for (const id of CATALOG_IDS) {
-        const enabled = catalogCheckEnabled(stored, id);
-        const back = setCatalogCheck(setCatalogCheck(saved, stored, id, { enabled: !enabled }), stored, id, { enabled });
-        expect(back.pack).toEqual(stored);
-      }
-    }
-  });
 
   test("each verdict list is one change; a new unfinished step waits, and a saved one mid-edit keeps its saved version", () => {
     const saved = fromPack(packs["every Do target"]!, policy);

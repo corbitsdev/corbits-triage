@@ -2,14 +2,10 @@ import {
   CATALOG_IDS,
   catalogCheckEnabled,
   customCheckEnabled,
-  customRuleId,
   defaultActions,
   emptyPack,
   LABEL_MAX,
   readCheckPack,
-  RECOMMENDED_ISSUE,
-  RECOMMENDED_PATHS,
-  RECOMMENDED_SIZE,
   teamSlug,
   VERDICTS,
   type CatalogCheck,
@@ -74,40 +70,6 @@ export function fromPack(pack: CheckPack, policy: DraftPolicy): RepoDraft {
 
 export function toPack(draft: RepoDraft): CheckPack {
   return readCheckPack(draft.pack);
-}
-
-function withPack(draft: RepoDraft, pack: Partial<CheckPack>): RepoDraft {
-  return { ...draft, pack: { ...draft.pack, ...pack } };
-}
-
-/** What a catalog check the pack lacks reads as, switched off; switching it on writes these values. */
-const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>> = {
-  "max-files-changed": { maxFiles: RECOMMENDED_SIZE.maxFiles },
-  "max-lines-changed": { maxLines: RECOMMENDED_SIZE.maxLines },
-  "linked-issue": RECOMMENDED_ISSUE,
-  "no-forbidden-paths": { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
-};
-
-/**
- * Writes only the keys that differ, so a stored row never gains values the user did not set.
- * A check the saved pack lacks goes back to absent once it reads as absent again.
- */
-export function setCatalogCheck(draft: RepoDraft, saved: CheckPack, id: CatalogId, row: Partial<CatalogCheck>): RepoDraft {
-  const absent: CatalogCheck = { enabled: false, ...CATALOG_DEFAULTS[id] };
-  const current = draft.pack.checks[id];
-  const base = current ?? absent;
-  const changed = Object.entries(row).filter(([key, value]) => value !== undefined && !same(base[key as keyof CatalogCheck], value));
-  const next: CatalogCheck = { ...base, ...Object.fromEntries(changed) };
-  if (!saved.checks[id] && same(next, absent)) {
-    return current ? withPack(draft, { checks: Object.fromEntries(Object.entries(draft.pack.checks).filter(([key]) => key !== id)) }) : draft;
-  }
-  if (current && changed.length === 0) return draft;
-  return withPack(draft, { checks: { ...draft.pack.checks, [id]: next } });
-}
-
-/** So two rows never share a key. */
-export function freshRuleId(draft: RepoDraft, name: string): string {
-  return customRuleId(name, [...draft.pack.custom.map((row) => row.id), ...Object.values(draft.ruleKeys ?? {})]);
 }
 
 /** A renamed rule keeps the key it was shown under. */
