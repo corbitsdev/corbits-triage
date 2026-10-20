@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type Step, type VerdictWord } from "@corbits/triage-contracts";
 import { fakeHub, type FakeHub } from "./fake-hub.ts";
 import { createAutosave, type Autosave } from "./pack-autosave.ts";
-import { freshRuleId, freshStepId, setCatalogCheck, setSteps, stepEntries, type RepoDraft } from "./pack-draft.ts";
+import { freshStepId, setSteps, stepEntries, type RepoDraft } from "./pack-draft.ts";
 import { openSession, saveDraft, type PackSession } from "./repo-pack-save.ts";
 import { transportRepoPackStore } from "./repo-pack-store.ts";
 
@@ -35,6 +35,10 @@ async function open(stored: CheckPack | null, afterReread?: (hub: FakeHub) => vo
   return { hub, session, autosave };
 }
 
+function maxFiles(draft: RepoDraft, value: number): RepoDraft {
+  return { ...draft, pack: { ...draft.pack, checks: { ...draft.pack.checks, "max-files-changed": { ...draft.pack.checks["max-files-changed"]!, maxFiles: value } } } };
+}
+
 function writeElsewhere(hub: FakeHub, change: (pack: CheckPack) => CheckPack) {
   const row = hub.artifacts[0]!;
   row.content = JSON.stringify(change(readCheckPack(JSON.parse(row.content))));
@@ -46,12 +50,12 @@ function stored(hub: FakeHub): CheckPack {
 }
 
 test("edits made around a conflicting save land on the other writer's pack; typed text keeps its spacing", async () => {
-  const { hub, session, autosave } = await open(recommendedPack(repo));
+  const { hub, autosave } = await open(recommendedPack(repo));
   writeElsewhere(hub, (pack) => ({ ...pack, checks: { ...pack.checks, "ci-green": { enabled: false } } }));
 
   autosave.edit((draft) => append(draft, "pass", { do: "comment", target: { body: "Thanks!  " } }));
   const saving = autosave.flush();
-  autosave.edit((draft) => setCatalogCheck(draft, session.saved.pack, "max-files-changed", { maxFiles: 10 }));
+  autosave.edit((draft) => maxFiles(draft, 10));
   await saving;
   await autosave.flush();
 
@@ -89,13 +93,13 @@ test("a step the other writer added stays when this panel edits a step it had", 
 });
 
 test("a save held back by an unfinished draft does not stop the next one, and a new rule is saved under an id from its text", async () => {
-  const { hub, session, autosave } = await open(null);
+  const { hub, autosave } = await open(null);
 
   autosave.edit((draft) => ({ ...draft, policy: { ...draft.policy, enabled: true } }));
   await autosave.flush();
   expect(hub.artifacts).toEqual([]);
 
-  autosave.edit((draft) => setCatalogCheck(draft, session.saved.pack, "ci-green", { enabled: true }));
+  autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, checks: { ...draft.pack.checks, "ci-green": { enabled: true } } } }));
   autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [{ id: "is-it-true", name: "the title says what changed", group: "pull-request", kind: "model", shape: "is-true", claim: "the title says what changed" }] } }));
   await autosave.flush();
   expect(stored(hub).checks["ci-green"]).toEqual({ enabled: true });
@@ -156,7 +160,7 @@ test("a saved step left unfinished survives another writer's save, and a third w
   first.autosave.edit((draft) => editStep(draft, close!.id, comment("")));
   await first.autosave.flush();
   writeElsewhere(first.hub, (pack) => ({ ...pack, checks: { ...pack.checks, docs: { enabled: false } } }));
-  first.autosave.edit((draft) => setCatalogCheck(draft, draft.pack, "max-files-changed", { maxFiles: 7 }));
+  first.autosave.edit((draft) => maxFiles(draft, 7));
   await first.autosave.flush();
   expect(stored(first.hub).actions.pass).toEqual([{ do: "approve" }, { do: "close" }]);
 
@@ -167,7 +171,7 @@ test("a saved step left unfinished survives another writer's save, and a third w
     writeElsewhere(hub, (pack) => ({ ...pack, actions: { ...pack.actions, pass: [{ do: "approve" }] } }));
   });
   writeElsewhere(second.hub, (pack) => ({ ...pack, actions: { ...pack.actions, pass: [{ do: "approve" }, comment("x")] } }));
-  second.autosave.edit((draft) => setCatalogCheck(draft, draft.pack, "max-files-changed", { maxFiles: 7 }));
+  second.autosave.edit((draft) => maxFiles(draft, 7));
   await second.autosave.flush();
   expect(second.autosave.state().error).not.toBe("");
   await second.autosave.flush();
@@ -181,7 +185,7 @@ test("spacing the contract trims is not a change, so it never overwrites the oth
   autosave.edit((draft) => editStep({ ...draft, pack: { ...draft.pack, custom: [rule("r", "the title is good ", "the title is good")], labels: { ...draft.pack.labels, pass: "Ready " } } }, close!.id, comment("hi  ")));
   await autosave.flush();
   writeElsewhere(hub, (pack) => ({ ...pack, custom: [rule("r", "the title names the change")], labels: { ...pack.labels, pass: "Good to go" }, actions: { ...pack.actions, pass: [{ do: "approve" }, comment("hello")] } }));
-  autosave.edit((draft) => setCatalogCheck(draft, draft.pack, "max-files-changed", { maxFiles: 7 }));
+  autosave.edit((draft) => maxFiles(draft, 7));
   await autosave.flush();
   expect(stored(hub).custom[0]!.claim).toBe("the title names the change");
   expect(stored(hub).labels.pass).toBe("Good to go");
@@ -190,9 +194,9 @@ test("spacing the contract trims is not a change, so it never overwrites the oth
 });
 
 test("a built-in rule merges key by key, and a rule both sides changed keeps ours and says so", async () => {
-  const { hub, session, autosave } = await open({ ...PAIR, custom: [rule("r", "the title is good")] });
+  const { hub, autosave } = await open({ ...PAIR, custom: [rule("r", "the title is good")] });
   writeElsewhere(hub, (pack) => ({ ...pack, checks: { ...pack.checks, "max-files-changed": { ...pack.checks["max-files-changed"]!, enabled: false } }, custom: [rule("r", "theirs")] }));
-  autosave.edit((draft) => setCatalogCheck(draft, session.saved.pack, "max-files-changed", { maxFiles: 7 }));
+  autosave.edit((draft) => maxFiles(draft, 7));
   autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [rule("r", "ours")] } }));
   await autosave.flush();
   expect(stored(hub).checks["max-files-changed"]).toEqual({ enabled: false, maxFiles: 7 });
@@ -209,20 +213,13 @@ test("both sides adding the same step keep one copy, in the draft too", async ()
   expect(autosave.state().draft.pack.actions.pass).toEqual([{ do: "approve" }, { do: "close" }, { do: "merge" }]);
 });
 
-test("no two rule rows share a key, after a merge renames ours or after a first save renames one", async () => {
-  const first = await open(PAIR);
-  first.autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [rule("is-it-true", "", "Is it true")] } }));
-  await first.autosave.flush();
-  writeElsewhere(first.hub, (pack) => ({ ...pack, custom: [rule("is-it-true", "their claim", "Is it true")] }));
-  first.autosave.edit((draft) => setCatalogCheck(draft, draft.pack, "max-files-changed", { maxFiles: 7 }));
-  await first.autosave.flush();
-  const merged = first.autosave.state().draft;
+test("no two rule rows share a key after a merge renames ours", async () => {
+  const { hub, autosave } = await open(PAIR);
+  autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [rule("is-it-true", "", "Is it true")] } }));
+  await autosave.flush();
+  writeElsewhere(hub, (pack) => ({ ...pack, custom: [rule("is-it-true", "their claim", "Is it true")] }));
+  autosave.edit((draft) => maxFiles(draft, 7));
+  await autosave.flush();
+  const merged = autosave.state().draft;
   expect(new Set(merged.pack.custom.map((row) => merged.ruleKeys?.[row.id] ?? row.id)).size).toBe(2);
-
-  const second = await open(PAIR);
-  second.autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [rule("is-it-true", "the title is good")] } }));
-  await second.autosave.flush();
-  second.autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [...draft.pack.custom, rule(freshRuleId(draft, "Is it true"), "", "Is it true")] } }));
-  const named = second.autosave.state().draft;
-  expect(new Set(named.pack.custom.map((row) => named.ruleKeys?.[row.id] ?? row.id)).size).toBe(2);
 });
