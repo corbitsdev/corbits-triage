@@ -107,9 +107,9 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
     return defineAgent({ id, systemPrompt: SYSTEM_PROMPTS[name], tools: [], capabilities: [], inference: inference(name), director: structured.build({ name, schema }) });
   }
 
-  /** The diff finder: one model turn over the pull request's diff, no tools. */
+  /** The diff finder: one model turn over the pull request's diff, no tools, run by the reader so an unreadable answer fails its step. */
   function finderAgent(systemPrompt = SYSTEM_PROMPTS["finder-diff"]) {
-    return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference: inference("diffFinder") });
+    return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference: inference("diffFinder"), director: reader.build({}) });
   }
 
   /** The repository finder: the model reads the checkout its input names with the read tools, confined to it. */

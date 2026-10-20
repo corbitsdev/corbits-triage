@@ -19,7 +19,10 @@ names in a prompt.
 1. **plan** names the risky changed areas and the code outside the diff they depend on; meanwhile **checkout** puts the
    head in a folder on the sidecar. Each review runs in a worker deployment of its own; releasing it when the run ends,
    failed or not, removes the sidecar and the checkout with it.
-2. **findDiff** reads the diff; **findRepo** reads that folder within a token budget. They run in parallel.
+2. **findDiff** reads the diff; **findRepo** reads that folder within a token budget. They run in parallel. A failed
+   model call or an answer with no findings list fails the finder's step, which tries again twice, 5 and 10 seconds
+   later; a repository finder that spent its budget before answering found nothing and the review says it stopped
+   early.
 3. **candidates** folds exact duplicates (same file, overlapping lines, same first quoted line) and remembers which
    finders reported each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
