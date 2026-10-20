@@ -66,6 +66,7 @@ import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettin
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
 import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
+import { createGithubAppConnection } from "./github/app-connection.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
 import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
@@ -419,8 +420,14 @@ async function renewGithubToken(tenantId: string): Promise<void> {
   }
 }
 const GITHUB_JOB_WORKFLOWS = new Set([triageWorkflowFor("github").id, codeReviewWorkflowFor("github").id]);
+/** A token that could not be renewed may still have time left, so the worker goes ahead and the token loop retries. */
 async function readyWorkerCredentials(job: TriageJob): Promise<void> {
-  if (GITHUB_JOB_WORKFLOWS.has(job.workflow)) await githubToken.ensure(job.tenantId);
+  if (!GITHUB_JOB_WORKFLOWS.has(job.workflow)) return;
+  try {
+    await githubToken.ensure(job.tenantId);
+  } catch (err) {
+    logJson({ level: "error", msg: "github_token_renew_failed", tenantId: job.tenantId, error: String(err) });
+  }
 }
 /** A hook credential written before hosts names `pr-triage`; its mail goes to the GitHub workflow that replaced it. */
 async function sendBridgeMail(tenantId: string, workflow: string, payload: unknown): Promise<void> {
@@ -853,6 +860,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   authMethods: authMethods(signIn, smtp !== undefined),
   manifest: githubManifest,
   syncInstallations,
+  connectGithubApp: createGithubAppConnection({ db: composition.db, cipher: composition.credentialCipher, authorize: authorizePortal, githubApiOrigin: githubOrigin, renewal: githubToken }),
   prActions: githubPrActions,
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,

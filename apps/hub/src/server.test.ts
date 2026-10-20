@@ -254,6 +254,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-manifest/{tenantId}/start": ["post"],
     "/api/integrations/github-manifest/callback": ["get"],
     "/api/integrations/github-installations/{tenantId}/sync": ["post"],
+    "/api/integrations/github-app/{tenantId}": ["put"],
     "/api/integrations/github-actions/{tenantId}": ["post"],
     "/api/integrations/github-held-dos/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}": ["post"],

@@ -270,6 +270,11 @@ export function applyInstallationListing(ns: CorbitsTriageNs, listings: readonly
   return next;
 }
 
+/** One installation token serves the workspace, so another account's repositories are not added. */
+function fromAnotherInstallation(ns: CorbitsTriageNs, installationId: number): boolean {
+  return repoRecords(ns).some((record) => sourceOf(record) === "github" && record.installationId !== undefined && record.installationId !== installationId);
+}
+
 function applyInstallAction(
   event: string,
   action: string,
@@ -277,6 +282,7 @@ function applyInstallAction(
   fields: InstallationFields,
   ns: CorbitsTriageNs,
 ): InstallPatch | undefined {
+  if ((action === "created" || action === "added") && fromAnotherInstallation(ns, fields.installationId)) return undefined;
   if (event === "installation" && action === "created") {
     return applyCreatedOrAdded(ns, listedRepos(payload["repositories"], payload["repositories_truncated"]), fields);
   }

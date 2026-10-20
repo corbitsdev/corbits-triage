@@ -44,7 +44,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/manifest.ts` | GitHub App Manifest flow; setup state is an HMAC token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes. |
 | `src/github/pr-*.ts`, `held-dos.ts` | Pull request actions, details and single-PR triage; approving a held action. |
 | `src/github/github-app-credential-adapter.ts` | The hub's GitHub fetch: App JWT to installation token, cached per installation. |
-| `src/github/app-key.ts`, `installation-token.ts` | The hub-only App key; the `github` credential's installation token, minted and renewed on the hub and pushed to running deployments. |
+| `src/github/app-key.ts`, `installation-token.ts`, `app-connection.ts` | The hub-only App key; the `github` credential's installation token, minted and renewed on the hub and pushed to running deployments; connecting an existing App. |
 | `src/github/source-fetch.ts` | A repository's host fetch, as the GitHub App or the Bitbucket token. |
 
 ## Portal (`apps/web`)

@@ -41,7 +41,6 @@ describe("GitHub App manifest browser handoff", () => {
       appId: "42",
       privateKey: "pem",
       webhookSecret: "hook-secret",
-      appSlug: "corbits-triage",
       replace: false,
       credentials: existing,
     }, transport)).rejects.toEqual(expect.objectContaining({ reason: "replacement_confirmation_required" }));

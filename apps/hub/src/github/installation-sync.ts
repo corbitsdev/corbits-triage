@@ -4,6 +4,7 @@ import { errorText } from "@corbits/common";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { applyInstallationListing, type InstallationListing } from "./bridge.js";
 import { githubLimited } from "./github-refusal.js";
+import { primaryInstallation, recordedInstallations } from "./installation-token.js";
 import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { patchCorbitsTriage } from "./tenant-config.js";
@@ -23,6 +24,10 @@ async function listingFor(gh: GithubFetch, installation: GithubInstallation): Pr
   return { fields, suspended: false, names: await listInstallationRepositories(gh, installation.id) };
 }
 
+function accountOf(installation: GithubInstallation): string {
+  return installation.account ?? `installation ${installation.id}`;
+}
+
 export function createInstallationSync(deps: PortalCredentialDeps & { githubApiOrigin: string; onSynced: (tenantId: string) => void }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
@@ -32,9 +37,14 @@ export function createInstallationSync(deps: PortalCredentialDeps & { githubApiO
     if (app instanceof Response) return app;
     const gh = appGithubFetch(appFetch, deps.githubApiOrigin, app.appJson);
 
+    let installations: GithubInstallation[];
     let listings: InstallationListing[];
     try {
-      listings = await Promise.all((await listInstallations(gh)).map((installation) => listingFor(gh, installation)));
+      installations = await listInstallations(gh);
+      // One installation token serves the workspace, so only one account's repositories are kept.
+      const primary = primaryInstallation(installations.filter((installation) => !installation.suspended), await recordedInstallations(deps.db, tenantId));
+      const kept = installations.filter((installation) => installation.suspended || installation.id === primary?.id);
+      listings = await Promise.all(kept.map((installation) => listingFor(gh, installation)));
     } catch (err) {
       return githubLimited(err) ?? failure(502, "github_failed", `Could not read the App's installations from GitHub: ${errorText(err)}.`);
     }
@@ -45,6 +55,12 @@ export function createInstallationSync(deps: PortalCredentialDeps & { githubApiO
     if (next === undefined) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
     deps.onSynced(tenantId);
 
+    const kept = new Set(listings.map((listing) => listing.fields.installationId));
+    const others = installations.filter((installation) => !installation.suspended && !kept.has(installation.id));
+    if (others.length > 0) {
+      const used = installations.find((installation) => kept.has(installation.id) && !installation.suspended)!;
+      return failure(409, "github_second_installation", `Triage connects one GitHub account per workspace and uses ${accountOf(used)}. Remove the App from ${others.map(accountOf).join(", ")} on GitHub.`);
+    }
     const repos = listings.flatMap((listing) => (listing.suspended ? [] : listing.names));
     return Response.json({ installations: listings.length, repos });
   };

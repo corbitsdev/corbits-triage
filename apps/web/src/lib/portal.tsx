@@ -11,13 +11,11 @@ import { ApiError, createHubTransport, createLeavingHubTransport } from "./hub-t
 import {
   ANTHROPIC_PROVIDER,
   INFERENCE_PROVIDER,
-  configureGithubApp,
   configureGithubHook,
   createGrant,
   ensureWorkspace,
   loadPortal,
   legacyHookCredentials,
-  legacyGithubCredentials,
   connectedSources,
   portalConnected,
   replaceCredential,
@@ -70,7 +68,6 @@ interface PortalContextValue {
   refreshNow: () => Promise<PortalSnapshot | null>;
   openWorkspace: (tenantId: string) => void;
   syncFromGithub: () => Promise<SyncResult>;
-  configureApp: (secret: string) => Promise<void>;
   configureHook: (secret: string) => Promise<string>;
   removeRepo: (repo: string) => Promise<void>;
   runBacklog: (repo: string, message?: string) => Promise<void>;
@@ -305,22 +302,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     return snapshot;
   }, [readOnly, snapshot]);
 
-  const configureApp = useCallback(
-    async function configureApp(secret: string) {
-      const current = requireSnapshot();
-      const transport = createHubTransport();
-      await configureGithubApp(
-        transport,
-        current.workspace.tenantId,
-        secret,
-        legacyGithubCredentials(current.credentials).map((row) => row.id),
-      );
-      notify("GitHub App saved.");
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
   const configureHook = useCallback(
     async function configureHook(secret: string) {
       const current = requireSnapshot();
@@ -526,7 +507,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         refreshNow,
         openWorkspace,
         syncFromGithub,
-        configureApp,
         configureHook,
         removeRepo,
         runBacklog,
@@ -557,7 +537,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       refreshNow,
       openWorkspace,
       syncFromGithub,
-      configureApp,
       configureHook,
       removeRepo,
       runBacklog,
