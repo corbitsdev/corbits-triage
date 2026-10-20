@@ -1,8 +1,9 @@
-import { defineAgent } from "@intx/agent";
+import { defineAgent, defineTool } from "@intx/agent";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 import { githubRead } from "@corbits/github-tool";
 import { repoReadUnder } from "@corbits/repo-read-tool";
 import type { RepoSource } from "@corbits/triage-contracts";
+import { READ_FILE_TOOL } from "./actions/checkout.js";
 import type { CodeReviewDirectors } from "./directors.js";
 import type { CodeReviewProfile, Role } from "./profile.js";
 import { SYSTEM_PROMPTS } from "./prompts.js";
@@ -11,8 +12,21 @@ export type Sources = readonly RepoSource[];
 
 const READS: Record<RepoSource, typeof githubRead> = { github: githubRead, "bitbucket-datacenter": bitbucketRead };
 
-function readsOf(sources: Sources) {
-  return sources.map((source) => READS[source]);
+/** Each host's read bundle cut down to its file read, the one call the consolidate director makes; a call to any other tool is unknown. */
+function fileReadsOf(sources: Sources) {
+  return sources.map(function fileRead(source) {
+    const reads = READS[source];
+    const only = (definition: { name: string }) => definition.name === READ_FILE_TOOL[source];
+    return defineTool({
+      id: reads.id,
+      requires: reads.requires,
+      definitions: reads.definitions.filter(only),
+      factory: function fileReadFactory(env: Parameters<typeof reads>[0]) {
+        const bundle = reads(env);
+        return { ...bundle, definitions: bundle.definitions.filter(only) };
+      },
+    });
+  });
 }
 
 /**
@@ -129,7 +143,7 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
     return defineAgent({
       id: "code-review-consolidate",
       systemPrompt: SYSTEM_PROMPTS.consolidate,
-      tools: readsOf(sources),
+      tools: fileReadsOf(sources),
       capabilities: [],
       inference: inference("consolidate"),
       director: consolidate.build({ name: "consolidate", schema: CONSOLIDATE_SCHEMA }),
