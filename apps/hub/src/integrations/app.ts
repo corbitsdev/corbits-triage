@@ -22,7 +22,7 @@ import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
-import { PolicyFileBody } from "../github/policy-file.js";
+import { PolicyExportBody, PolicyFileBody } from "../github/policy-file.js";
 import { PolicyQuery } from "../github/policy-read.js";
 import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
@@ -69,7 +69,7 @@ export type IntegrationHandlers = {
   prTriage: BodyHandler<typeof TriageBody.infer>;
   policyRead: BodyHandler<typeof PolicyQuery.infer>;
   policyFileRead: BodyHandler<typeof PolicyFileBody.infer>;
-  policyFileExport: BodyHandler<typeof PolicyFileBody.infer>;
+  policyFileExport: BodyHandler<typeof PolicyExportBody.infer>;
   policyUpgrades: (member: Member) => Promise<Response>;
   backlog: BodyHandler<typeof BacklogBody.infer>;
   openPulls: (member: Member) => Promise<Response>;
@@ -104,6 +104,7 @@ export type IntegrationHandlers = {
 const TAGS = ["integrations"];
 
 const Failure = type({ error: { code: "string", message: "string" } });
+const PolicyPullOpen = type({ error: { code: "'policy_pull_open'", message: "string", url: "string", number: "number" } });
 const ManifestFailure = type({ error: "string" });
 const AuthMethods = type({ google: "boolean", emailPassword: "boolean", passwordReset: "boolean", verificationEmail: "boolean" });
 const PackSchemas = type({ checkPack: "Record<string, unknown>", sharedPolicy: "Record<string, unknown>", policyOverride: "Record<string, unknown>", repoPolicy: "Record<string, unknown>", policyFile: "Record<string, unknown>" });
@@ -146,6 +147,7 @@ const failures = {
   409: json("GitHub, the workspace or the repository is not ready", Failure),
 };
 const invalid = { 400: json("Invalid request", Failure) };
+const policyBodyLimit = bodyLimit({ maxSize: 4 * POLICY_FILE_MAX_BYTES, onError: function tooLarge() { return failure(413, "too_large", "The policy file is too large."); } });
 const CODE_REVIEW_SEND_REFUSALS = [
   "GitHub, the workspace or the repository is not ready. For code-review:",
   "`no_code_review`: no finished review;",
@@ -235,7 +237,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
       tags: TAGS,
       responses: { 200: json("The policy the file holds, or why it is refused", PolicyValidated), ...invalid, 413: json("The body is too large", Failure) },
     }),
-    bodyLimit({ maxSize: 4 * POLICY_FILE_MAX_BYTES, onError: function tooLarge() { return failure(413, "too_large", "The policy file is too large."); } }),
+    policyBodyLimit,
     body(PolicyValidateBody),
     function policyValidate(c) {
       const { repo, text } = c.req.valid("json");
@@ -412,13 +414,22 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.post(
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/export`,
     describeRoute({
-      summary: "Open a pull request writing the repository's saved rules, or a starter policy, to its policy file",
-      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository whose saved rules differ from its policy file or have no file, or an enabled one with neither. Writes the saved rules as a schema 3 file at the existing file's path, else `.corbits-triage.yml`, on `corbits-triage/policy`, and opens a pull request listing what the file cannot hold; an enabled repository with neither gets a starter `.corbits-triage.yml` instead, and asking again while its pull request is open answers that pull request unchanged. Otherwise asking again updates the open pull request instead of opening another.",
+      summary: "Open a pull request writing the repository's saved rules, a starter policy or a chosen file to its policy file",
+      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository whose saved rules differ from its policy file or have no file, or an enabled one with neither. Writes the saved rules as a schema 3 file at the existing file's path, else `.corbits-triage.yml`, on `corbits-triage/policy`, and opens a pull request listing what the file cannot hold; an enabled repository with neither gets a starter `.corbits-triage.yml` instead, and asking again while its pull request is open answers that pull request unchanged. Otherwise asking again updates the open pull request instead of opening another. With `text`, the repository need not be enabled: the text is written to `.corbits-triage.yml` and a new pull request opened, only for a repository with no policy file on its default branch (read fresh from the host), no saved rules and no policy pull request open, which is left as it is. The text is refused as triage would refuse it once merged, `extends` resolved against this workspace.",
       tags: TAGS,
-      responses: { 200: json("The pull request opened or brought up to date", PolicyExported), ...invalid, ...failures, 502: json("The host refused", Failure) },
+      responses: {
+        200: json("The pull request opened or brought up to date", PolicyExported),
+        ...invalid,
+        ...failures,
+        409: json("GitHub, the workspace or the repository is not ready. With `text`: `policy_file_present`, the repository has a policy file; `saved_rules`, it has saved rules; `policy_pull_open`, its policy pull request is open, given as `url` and `number`", Failure.or(PolicyPullOpen)),
+        413: json("The body is too large", Failure),
+        422: json("`policy_file_invalid`: triage refuses `text`, or the policy it `extends`; `message` holds each problem, one per line, led by its line", Failure),
+        502: json("The host refused", Failure),
+      },
     }),
     member,
-    body(PolicyFileBody),
+    policyBodyLimit,
+    body(PolicyExportBody),
     function policyFileExport(c) {
       return handlers.policyFileExport(c.req.valid("json"), memberOf(c));
     },

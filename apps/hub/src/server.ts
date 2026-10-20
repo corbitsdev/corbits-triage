@@ -94,7 +94,7 @@ import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
 import { createGithubPolicyRead } from "./github/policy-read.js";
 import { createGithubBacklog } from "./github/backlog-triage.js";
-import { loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
+import { fileRefusal, loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
@@ -412,6 +412,7 @@ const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, db: compo
 const policyFile = createPolicyFile({
   db: composition.db,
   settle: settleRepoPolicy,
+  refusal: chosenFileRefusal,
   cipher: composition.credentialCipher,
   authorize: authorizePortal,
   tenantGithub,
@@ -425,6 +426,9 @@ function readStoredCheckPack(tenantId: string, repo: string) {
 }
 function settleRepoPolicy(tenantId: string, repo: string) {
   return settlePolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo);
+}
+function chosenFileRefusal(tenantId: string, repo: string, policy: Record<string, unknown>) {
+  return fileRefusal({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, policy);
 }
 async function readCheckPack(tenantId: string, repo: string) {
   return (await settleRepoPolicy(tenantId, repo)).read;

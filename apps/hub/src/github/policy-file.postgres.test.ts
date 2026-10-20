@@ -7,7 +7,7 @@ import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { createArtifact, findArtifactByTitle, runArtifactMigrations } from "@corbits/artifacts";
 import { checkPackName, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, starterPack, type CheckPack } from "@corbits/triage-contracts";
-import { settlePolicy } from "./check-pack-store.js";
+import { fileRefusal, settlePolicy } from "./check-pack-store.js";
 import { createPolicyFile } from "./policy-file.js";
 import { POLICY_BRANCH } from "./policy-pull.js";
 import { createMemberOpenPulls, createOpenPullsCache } from "./open-pulls.js";
@@ -22,6 +22,9 @@ const STARTER = "acme/starter";
 const OFF = "acme/off";
 const SHARED = "acme/shared";
 const EXTENDS = "acme/extends";
+const CHOSEN = "acme/chosen";
+const CHOSEN_SAVED = "acme/chosen-saved";
+const CHOSEN_RACED = "acme/chosen-raced";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 const FILE = `rules:
   - check: ci-green
@@ -42,6 +45,8 @@ const pulls: Array<{ repo: string; number: number; head: string; base: string; t
 let commits = 0;
 /** Each request GitHub got, as `METHOD path`. */
 const requests: string[] = [];
+/** Set, the next commit is followed by another caller opening this pull request first. */
+let raced: (typeof pulls)[number] | undefined;
 
 function onMain(repo: string, path: string, text: string | null, sha = `blob${++commits}`): void {
   files.set(`${repo}@main/${path}`, { sha, text });
@@ -70,6 +75,8 @@ async function github(req: Request): Promise<Response> {
     if (!refs.has(`${repo}:${branch}`)) return Response.json({ message: "Branch not found" }, { status: 404 });
     if (files.get(`${repo}@${branch}/${at}`)?.sha !== sha) return Response.json({ message: "sha does not match" }, { status: 409 });
     files.set(`${repo}@${branch}/${at}`, { sha: `blob${++commits}`, text: Buffer.from(content, "base64").toString("utf8") });
+    if (raced) pulls.push(raced);
+    raced = undefined;
     return Response.json({ content: { sha: `blob${commits}` } }, { status: 201 });
   }
   if (req.method === "GET" && path === "") return Response.json({ default_branch: "main" });
@@ -98,6 +105,7 @@ async function github(req: Request): Promise<Response> {
   }
   if (req.method === "POST" && path === "pulls") {
     const body = await req.json() as { head: string; base: string; title: string; body: string };
+    if (pulls.some((pull) => pull.repo === repo && pull.open && pull.head === body.head && pull.base === body.base)) return Response.json({ message: "Validation Failed" }, { status: 422 });
     pulls.push({ repo, number: pulls.length + 1, open: true, ...body });
     return Response.json({ number: pulls.length, html_url: `https://github.com/${repo}/pull/${pulls.length}` }, { status: 201 });
   }
@@ -124,7 +132,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }];
+  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_SAVED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -144,6 +152,7 @@ beforeAll(async () => {
     db,
     openPulls: createMemberOpenPulls({ db, cipher, authorize, list, cache: createOpenPullsCache(() => new Date()) }),
     settle: settled,
+    refusal: refused,
     cipher,
     tenantBitbucket: async () => undefined,
     authorize,
@@ -163,6 +172,10 @@ function settled(tenantId: string, repo: string) {
   return settlePolicy({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {}, policyFile: policyFile.current }, tenantId, repo);
 }
 
+function refused(tenantId: string, repo: string, policy: Record<string, unknown>) {
+  return fileRefusal({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {}, policyFile: policyFile.current }, tenantId, repo, policy);
+}
+
 async function readPack(repo: string) {
   return (await settled(TENANT, repo)).read;
 }
@@ -175,8 +188,8 @@ async function upgradeOf(repo: string): Promise<Record<string, unknown> | undefi
   return (await upgrades()).find((row) => row.repo === repo);
 }
 
-async function exportOf(repo: string): Promise<Record<string, unknown>> {
-  const res = await policyFile.exportRoute({ repo }, MEMBER);
+async function exportOf(repo: string, text?: string): Promise<Record<string, unknown>> {
+  const res = await policyFile.exportRoute({ repo, ...(text !== undefined && { text }) }, MEMBER);
   return { http: res.status, ...(await res.json() as Record<string, unknown>) };
 }
 
@@ -343,6 +356,34 @@ test("PostgreSQL: an enabled repository with no rules and no file is offered a s
   expect(read.status === "ok" && policyDifferences(starterPack(STARTER), read.pack)).toMatchObject([{ rule: "Most files changed", saved: ["30"], file: ["40"] }]);
   expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "ok" } });
   expect(await exportOf(STARTER)).toMatchObject({ http: 409, error: { code: "policy_settled" } });
+}, 60_000);
+
+test("PostgreSQL: a file chosen for a repository with no file, saved rules or open pull request is opened as triage would run it, and the open pull request is left as it is", async () => {
+  expect(await exportOf(CHOSEN, "rules: [")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: expect.stringContaining("Line 2: The policy file is not YAML") } });
+  expect(await exportOf(CHOSEN, "extends: acme/nowhere\nchecks: {}\n")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: "acme/nowhere is not connected to this workspace or has no policy file." } });
+  await writePolicy(CHOSEN_SAVED, JSON.stringify(starterPack(CHOSEN_SAVED)));
+  expect(await exportOf(CHOSEN_SAVED, FILE)).toMatchObject({ http: 409, error: { code: "saved_rules" } });
+  expect(pulls.filter((row) => row.repo === CHOSEN || row.repo === CHOSEN_SAVED)).toEqual([]);
+
+  const number = pulls.length + 1;
+  const url = `https://github.com/${CHOSEN}/pull/${number}`;
+  expect(await exportOf(CHOSEN, FILE)).toEqual({ http: 200, status: "opened", url, number });
+  expect(pulls.filter((row) => row.repo === CHOSEN)).toMatchObject([{ head: POLICY_BRANCH, base: "main", title: `chore: add a Corbits Triage policy in ${YML}` }]);
+  expect(files.get(`${CHOSEN}@${POLICY_BRANCH}/${YML}`)!.text).toBe(FILE);
+
+  expect(await exportOf(CHOSEN, FILE.replace("CI passes.", "CI is green."))).toMatchObject({ http: 409, error: { code: "policy_pull_open", url, number } });
+  expect(files.get(`${CHOSEN}@${POLICY_BRANCH}/${YML}`)!.text).toBe(FILE);
+
+  // Merged where no push is heard, the file is still found.
+  onMain(CHOSEN, YML, FILE);
+  pulls.find((row) => row.repo === CHOSEN)!.open = false;
+  expect(await exportOf(CHOSEN, FILE)).toMatchObject({ http: 409, error: { code: "policy_file_present" } });
+
+  // Another caller opening it between the check and the create is answered with theirs.
+  const theirs = pulls.length + 1;
+  raced = { repo: CHOSEN_RACED, number: theirs, head: POLICY_BRANCH, base: "main", title: "theirs", body: "", open: true };
+  expect(await exportOf(CHOSEN_RACED, FILE)).toMatchObject({ http: 200, number: theirs });
+  expect(pulls.filter((row) => row.repo === CHOSEN_RACED)).toHaveLength(1);
 }, 60_000);
 
 async function writePolicy(repo: string, content: string): Promise<void> {

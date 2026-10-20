@@ -10,6 +10,8 @@ const PATH = ".corbits-triage.yml";
 const branches = new Map<string, { text?: string; commit: string }>([["main", { commit: "c0" }]]);
 const pulls: Array<{ id: number; version: number; title: string; description: string; fromRef: { id: string }; toRef: { id: string }; open: boolean }> = [];
 const edits: Array<Record<string, string>> = [];
+/** Set, the next commit is followed by another caller opening the pull request first. */
+let raced: (typeof pulls)[number] | undefined;
 
 async function bitbucket(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -35,12 +37,15 @@ async function bitbucket(req: Request): Promise<Response> {
     const from = branches.get(form.sourceBranch ?? form.branch!)!;
     if (form.sourceCommitId !== (from.text === undefined ? undefined : from.commit)) return new Response(null, { status: 409 });
     branches.set(form.branch!, { text: form.content, commit: `c${edits.length}` });
+    if (raced) pulls.push(raced);
+    raced = undefined;
     return Response.json({ id: `c${edits.length}` });
   }
   if (req.method === "GET" && path === "/pull-requests") {
     return Response.json({ values: pulls.filter((pull) => pull.open && pull.fromRef.id === url.searchParams.get("at")).map(pullJson), isLastPage: true });
   }
   if (req.method === "POST" && path === "/pull-requests") {
+    if (pulls.some((pull) => pull.open && pull.fromRef.id === "refs/heads/corbits-triage/policy")) return new Response(null, { status: 409 });
     pulls.push({ id: pulls.length + 1, version: 0, open: true, ...(await req.json() as Omit<(typeof pulls)[number], "id" | "version" | "open">) });
     return Response.json(pullJson(pulls.at(-1)!), { status: 201 });
   }
@@ -80,6 +85,12 @@ test("the Bitbucket pull request is made once from a new branch, then brought up
     branches.set("main", { text: "rules: []\nlabels: { pass: Ready }\n", commit: "c9" });
     expect(await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\n", body: "third" })).toMatchObject({ number: 2 });
     expect(edits[2]).toEqual({ content: "rules: []\n", message: change.title, branch: "corbits-triage/policy", sourceBranch: "main", sourceCommitId: "c9" });
+
+    // Another caller opening it between the check and the create is answered with theirs.
+    pulls[1]!.open = false;
+    raced = { id: 3, version: 0, title: change.title, description: "theirs", fromRef: { id: "refs/heads/corbits-triage/policy" }, toRef: { id: "refs/heads/main" }, open: true };
+    expect(await proposePolicy(bb, REPO, "main", { ...change, body: "fourth" })).toMatchObject({ number: 3 });
+    expect(pulls.filter((pull) => pull.open)).toHaveLength(1);
   } finally {
     server.stop(true);
   }

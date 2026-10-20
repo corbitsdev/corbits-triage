@@ -13,7 +13,7 @@ export type PortalCredentialDeps = {
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
 };
 
-export function failure(status: number, code: string, message: string, details?: Record<string, string>): Response {
+export function failure(status: number, code: string, message: string, details?: Record<string, string | number>): Response {
   return Response.json({ error: { ...details, code, message } }, { status });
 }
 
