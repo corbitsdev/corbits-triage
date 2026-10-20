@@ -1,7 +1,4 @@
-import { useState, type FormEvent } from "react";
-import { Badge, Button, Input, type BadgeTone } from "@corbits/react-ui";
-import { useMutation } from "@tanstack/react-query";
-import { errorText } from "@corbits/common";
+import { Badge, type BadgeTone } from "@corbits/react-ui";
 import type { CodeReviewPlaceOption } from "@corbits/triage-contracts";
 import { anthropicSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
@@ -9,38 +6,8 @@ import { isActiveCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CopyButton } from "../CopyField.tsx";
 import { ExternalIcon } from "../inbox-icons.tsx";
+import { AnthropicKeyForm } from "./AnthropicKeyForm.tsx";
 import { KeyRow } from "./KeyRow.tsx";
-
-function AnthropicKeyForm({ onSaved }: { onSaved: () => void }) {
-  const { saveAnthropic, readOnly } = usePortal();
-  const [key, setKey] = useState("");
-  const save = useMutation({
-    mutationFn: saveAnthropic,
-    onSuccess: function clearKey() {
-      setKey("");
-      onSaved();
-    },
-  });
-  const disabled = readOnly || save.isPending;
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    save.mutate(key);
-  }
-
-  return (
-    <form className="sentence" aria-label="Anthropic key" onSubmit={submit}>
-      <div className="rmain">
-        <label className="rline">
-          <span className="w">Anthropic key</span>
-          <Input className="val w" type="password" placeholder="sk-ant-…" value={key} onChange={(event) => setKey(event.target.value)} disabled={disabled} autoComplete="off" />
-        </label>
-        {save.error && <p role="alert" className="field-error">Could not save the Anthropic key. {errorText(save.error)}</p>}
-      </div>
-      <Button type="submit" size="sm" disabled={disabled || !key.trim()}>{save.isPending ? "Saving…" : "Save key"}</Button>
-    </form>
-  );
-}
 
 const STATE: Record<CodeReviewPlaceOption["state"], { label: string; tone: BadgeTone }> = {
   active: { label: "In use", tone: "success" },
@@ -115,7 +82,7 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
             keys={anthropicSecrets(snapshot.credentials).filter(isActiveCredential)}
             denied={snapshot.denied.credentials}
             remove={removeAnthropic}
-            editor={(onSaved) => <AnthropicKeyForm onSaved={onSaved} />}
+            editor={(onSaved) => <AnthropicKeyForm layout="row" submitLabel="Save key" onCancel={null} onSaved={onSaved} />}
           />
         </div>
         {snapshot.codeReviewPlaces && <WhereItRuns places={snapshot.codeReviewPlaces} />}
