@@ -67,7 +67,20 @@ finder, Haiku 5.5 for the rest. `--<role>-model` overrides one.
 `review.eval.ts`: a finder alone with any prompt (`--prompt`) and rescoring
 saved finder runs (`--rescore`).
 
-## Current numbers
+## Baseline
+
+`bun run eval:review -- --e2e --baseline` runs every case and writes
+`evals/results/pr-code-review.baseline.json`: the commit, each step's
+provider and model, each provider and model's tokens with its price, source
+and `pricesAsOf` date, the cost (null where a used price is unknown), every
+case's bugs caught and missed and where each finding sat with the bug it hit,
+and each stage's totals. It refuses on a dirty working tree or when any case's
+repository is not public. The writer and the price table it reads are shared
+with the triage judge eval, in `packages/triage-workflows/evals/`.
+
+### Numbers at 0b689d27 (2026-10-16)
+
+Final review: 44/52 bugs caught, 34 false alarms, $3.25 for all 25 cases.
 
 All 25 cases, the models above, no check, every other step at medium effort:
 

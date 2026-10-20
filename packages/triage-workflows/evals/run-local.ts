@@ -23,7 +23,7 @@ type Bindings = readonly ({ handle: string; package: string } | { handle: string
 
 type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-interface RunLocalInput {
+export interface RunLocalInput {
   workflow: WorkflowDefinition;
   /** The workflow's director factories, as its package exports them; none when every agent runs the stock director. */
   directors?: Parameters<typeof createWorkflowDirectorRegistry>[0];
