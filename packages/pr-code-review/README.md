@@ -57,11 +57,11 @@ package of its own, `packages/pr-code-review-<provider>`, shaped like
 
 ## Test
 
-No tests of its own; a provider package's tests and eval run it:
-
 ```sh
-bun --conditions=intx-src test packages/pr-code-review-anthropic
+bun --conditions=intx-src test packages/pr-code-review
 ```
+
+A provider package's tests and eval run the whole workflow (`packages/pr-code-review-anthropic`).
 
 ## Docs
 

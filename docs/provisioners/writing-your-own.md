@@ -31,7 +31,7 @@ describeProvisionerConformance("my-backend", async () => ({
 
 `live` must read the backend, not the provisioner's memory. Every capability the provisioner declares available needs a check that throws when a running sidecar lacks it. The suite assumes one sidecar per allocation, so it expects `cleanup: "confirmed"` from every destroy.
 
-`packages/provisioner-template/src/index.test.ts`, `packages/provisioner-docker/src/index.test.ts`, `packages/provisioner-railway/src/index.test.ts` and `apps/hub/src/sidecar/local-provisioner.conformance.test.ts` run it against the template, Docker, Railway Sandboxes (over a fake Railway API; [railway-sandboxes.md](railway-sandboxes.md#proving-it-against-railway) runs it against real sandboxes) and the hub's local-process provisioner. `packages/provisioner-docker` is a worked example on a real backend; [docker.md](docker.md) describes it. [README.md](README.md) explains how the hub picks among provisioners.
+`packages/provisioner-template/src/index.test.ts`, `packages/provisioner-docker/src/index.test.ts`, `packages/provisioner-e2b/src/index.test.ts`, `packages/provisioner-railway/src/index.test.ts` and `apps/hub/src/sidecar/local-provisioner.conformance.test.ts` run it against the template, Docker, E2B and Railway Sandboxes (over fake E2B and Railway APIs; [e2e/README.md](../../e2e/README.md) runs both against real sandboxes) and the hub's local-process provisioner. `packages/provisioner-docker` is a worked example on a real backend; [docker.md](docker.md) describes it. [README.md](README.md) explains how the hub picks among provisioners.
 
 ## Register it
 

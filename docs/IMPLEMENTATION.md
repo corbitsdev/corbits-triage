@@ -78,9 +78,9 @@ resolves its offering when deployed. Removing a key first releases the
 workflows that use it, then deletes its catalog provider and offerings, since
 the vault keeps a key a catalog provider uses.
 
-The portal reads two build-time variables: `VITE_HUB_URL` (the hub's origin
-when the portal is hosted apart) and `VITE_GITHUB_API_ORIGIN` (the GitHub
-emulator).
+The portal reads three build-time variables: `VITE_HUB_URL` (the hub's origin
+when the portal is hosted apart), `VITE_GITHUB_API_ORIGIN` (the GitHub
+emulator) and `VITE_WORKSPACE_SLUG` (default `corbits-triage`).
 
 ## Extension (`apps/extension`)
 

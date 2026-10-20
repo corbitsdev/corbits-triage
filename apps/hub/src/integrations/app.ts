@@ -716,7 +716,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${INVITATIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Invite someone to the workspace by email",
-      description: "Needs `principal:*` create, and the caller must hold every permission the role grants (so only an owner invites into a `*:*` role). Creates the stock invited principal through `POST /api/tenants/{tenantId}/members/invite`; the invitee accepts on the portal's `/invite/{tenantId}` page. When the hub sends email, a plain-text better-auth magic link to that page is emailed (a new address gets an unverified user first); it signs the invitee in and verifies the address, works once and expires after 15 minutes. Without email set up on the hub, the page's link is returned to copy; it signs nobody in, and invitees must sign in with Google first. With email, an existing account whose address is not verified cannot be invited; without, it can, and joins once the hub's owner marks it verified. An address may be sent a limited number of invite links per hour.",
+      description: "Needs `principal:*` create, and the caller must hold every permission the role grants (so only an owner invites into a `*:*` role). Creates the stock invited principal through `POST /api/tenants/{tenantId}/members/invite`; the invitee accepts on the portal's `/invite/{tenantId}` page. When the hub sends email, a plain-text better-auth magic link to that page is emailed (a new address gets an unverified user first); it signs the invitee in and verifies the address, works once and expires after 15 minutes. Without email set up on the hub, the page's link is returned to copy; it signs nobody in, and invitees sign in first, with Google or with an email and password account the hub's first account marks verified. With email, an existing account whose address is not verified cannot be invited; without, it can, and joins once the hub's owner marks it verified. An address may be sent a limited number of invite links per hour.",
       tags: TAGS,
       responses: {
         201: json("The invited principal and whether its link was emailed", InviteSent),
@@ -819,7 +819,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     ACCEPT_PATH,
     describeRoute({
       summary: "Accept the signed-in user's invite to a workspace",
-      description: "Activates the signed-in user's invited principal in the workspace. Their address must be verified: an invite's magic link verifies it, and without email set up on the hub, invitees must sign in with Google first. Accepting again answers the same.",
+      description: "Activates the signed-in user's invited principal in the workspace. Their address must be verified: an invite's magic link verifies it, and without email set up on the hub, the hub's first account marks an email and password account verified. Accepting again answers the same.",
       tags: TAGS,
       responses: {
         200: json("The workspace joined", Accepted),

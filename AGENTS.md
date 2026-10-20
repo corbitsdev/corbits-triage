@@ -54,7 +54,7 @@ Check these for a stock route or primitive before touching the hub, sidecars or 
 ## Tests
 
 - Only load-bearing tests, end to end where possible.
-- Tests beside the code are fast and offline; anything that runs real services lives in `e2e/`.
+- Tests beside the code are fast and offline; anything that runs real services lives in `e2e/`, or for the extension in `apps/extension/e2e/`, and is listed in e2e/README.md.
 - Never read `process.env` in tests.
 - A change to how a workflow judges or reviews states its package's eval result before and after.
 

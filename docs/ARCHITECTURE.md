@@ -32,8 +32,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     repository's policy from `.corbits-triage.yml` (or `.yaml`) on its default
     branch, naming the file and its blob sha as the source. The hub keeps each
     read in memory, nothing stored; a push to the default branch that touches
-    the file (GitHub `push`, Bitbucket `repo:refs_changed`) reads it again,
-    and a failed read is not kept. While a repository also has a stored
+    the file (GitHub `push`, Bitbucket `repo:refs_changed`), or a pull request
+    merged into it, reads it again, and a failed read is not kept. While a repository also has a stored
     policy and the two run differently (compared rule by rule and step by
     step, never as text), or the file is refused, the stored policy applies;
     once they run the same, the hub archives the stored policy. A refused file

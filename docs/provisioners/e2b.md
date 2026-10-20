@@ -45,3 +45,13 @@ With `E2B_API_KEY` set, the place says **Failing** with one of these reasons, al
 | `Triage cannot read its database's identity` | Postgres refused the hub id query; the error says why. |
 
 A missing template is not checked at boot: the first sidecar fails with E2B's error, and the deployment with it.
+
+## Proving it against E2B
+
+The [conformance suite](writing-your-own.md) runs against real sandboxes by hand only, since it creates and destroys about ten of them from the sidecar template. With an E2B API key saved in a file readable only by you:
+
+```sh
+bun e2e/provisioners/e2b.ts --token-file ~/e2b-key
+```
+
+The key goes to the suite on standard input, never in a command's arguments or environment. The suite destroys every sandbox it created, and only those.
