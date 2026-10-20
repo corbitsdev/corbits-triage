@@ -40,6 +40,8 @@ interface Agreement {
 interface Reported extends Finding {
   defect: string;
   agreement: Agreement;
+  /** Set when no member of its group had a line read, so its lines are the finder's alone. */
+  unverified?: true;
 }
 
 interface Steps {
@@ -220,6 +222,12 @@ function joinedAtAnchors(groups: readonly Group[], kept: readonly Candidate[], s
   return joined;
 }
 
+/** The group with a member whose lines were read as its representative, when its own were not and one was. */
+function readRepresentative(group: Group, unreadFindings: readonly number[]): Group {
+  const read = group.members.find((i) => !unreadFindings.includes(i));
+  return unreadFindings.includes(group.representative) && read !== undefined ? { ...group, representative: read } : group;
+}
+
 /** The group's representative, at its anchored site, with the most severe priority and the agreement of all its members. */
 function reportedOf(group: Group, kept: readonly Candidate[], sites: readonly Site[]): Reported {
   const members = group.members.map((i) => kept[i]!);
@@ -253,9 +261,11 @@ function checkMessage(request: ReviewRequest, finding: Reported, excerpt: string
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { kept } = stepOutput(steps, "candidates");
-  const { groups, sites, excerpts } = jsonReply<{ groups: Group[]; sites: Site[]; excerpts: string[] }>(stepOutput(steps, "consolidate"));
-  function reported(group: Group) {
-    return { finding: reportedOf(group, kept, sites), excerpt: excerpts[group.representative]! };
+  const { groups, sites, excerpts, unreadFindings } = jsonReply<{ groups: Group[]; sites: Site[]; excerpts: string[]; unreadFindings: number[] }>(stepOutput(steps, "consolidate"));
+  function reported(joined: Group) {
+    const group = readRepresentative(joined, unreadFindings);
+    const finding = reportedOf(group, kept, sites);
+    return { finding: unreadFindings.includes(group.representative) ? { ...finding, unverified: true as const } : finding, excerpt: excerpts[group.representative]! };
   }
   const ordered = joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
   function check({ finding, excerpt }: (typeof ordered)[number]) {
@@ -289,17 +299,18 @@ function ownWords({ title, defect, why, trigger, path, start }: Reported) {
 }
 
 /**
- * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes and
- * its agreement, and whether it stopped early. A finding the write step left without a comment gets one in its finder's words.
+ * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes, its
+ * agreement and whether its lines went unread, and whether it stopped early. A finding the write step left without a
+ * comment gets one in its finder's words.
  */
 export async function review(steps: Steps) {
   const { request } = stepOutput(steps, "reviewInput");
   const { findings, budgetExhausted } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
-    const { path, start, end, agreement, priority, code } = finding;
+    const { path, start, end, agreement, priority, code, unverified } = finding;
     const { title, body } = written.comments.find((c) => c.finding === index) ?? ownWords(finding);
-    return { path, start, end, title, body, ...(priority !== undefined && { priority }), ...(code !== undefined && { quoted: code }), agreement };
+    return { path, start, end, title, body, ...(priority !== undefined && { priority }), ...(code !== undefined && { quoted: code }), agreement, ...(unverified && { unverified }) };
   }
   return { summary: written.summary, comments: findings.map(comment), budgetExhausted, ...(request.cut && { cut: request.cut }) };
 }

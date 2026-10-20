@@ -1,6 +1,6 @@
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type AppLogin, type GithubFetch } from "@corbits/github-reads";
-import { findingHeadline, HTML_MARKERS, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingHeadline, HTML_MARKERS, UNVERIFIED_FINDING, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -266,14 +266,18 @@ function alsoCovers(finding: CodeReviewComment, at: Lines): string[] {
   return ranges.length ? [`Also lines ${ranges.join(" and ")}.`] : [];
 }
 
+function unverifiedNote(finding: CodeReviewComment): string[] {
+  return finding.unverified ? [`_${UNVERIFIED_FINDING}._`] : [];
+}
+
 function inlineComment(finding: CodeReviewComment, at: Lines): ReviewComment {
-  const body = [findingHeadline(finding), finding.body, ...alsoCovers(finding, at)].join("\n\n");
+  const body = [findingHeadline(finding), finding.body, ...alsoCovers(finding, at), ...unverifiedNote(finding)].join("\n\n");
   if (at.start === at.end) return { path: finding.path, line: at.end, side: "RIGHT", body };
   return { path: finding.path, start_line: at.start, start_side: "RIGHT", line: at.end, side: "RIGHT", body };
 }
 
 function bodySection(finding: CodeReviewComment): string {
-  return `${findingHeadline(finding)} · \`${finding.path}:${lineRange(finding)}\`\n\n${finding.body}`;
+  return [`${findingHeadline(finding)} · \`${finding.path}:${lineRange(finding)}\``, finding.body, ...unverifiedNote(finding)].join("\n\n");
 }
 
 /** The summary and as many sections as fit under GitHub's limit, then how many more the portal holds. */

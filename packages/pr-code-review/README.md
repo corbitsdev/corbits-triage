@@ -23,7 +23,7 @@ names in a prompt.
 3. **candidates** folds exact duplicates (same file, overlapping lines, same first quoted line) and remembers which
    finders reported each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
-   findings by defect.
+   findings by defect. A group none of whose findings had a line of its file shown to the model is marked `unverified`.
 5. **check** confirms each group, only when the request sets `check`.
 6. **write** comments on every group, most severe and most agreed-on first; each comment carries the code it quotes
    and how many finders reported it.

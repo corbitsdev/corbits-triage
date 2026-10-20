@@ -11,8 +11,14 @@ export function notReviewedNote(files: number): string {
   return `Not reviewed in full: ${files === 1 ? "1 file" : `${files} files`}, over the size limit.`;
 }
 
-/** One finding of a code review: its lines in the reviewed head, what is wrong, its priority (0 is the most severe) and the code it quotes. */
-export const CodeReviewComment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", "priority?": "number", "quoted?": "string" });
+/** Shown with a finding none of whose file's lines could be read. */
+export const UNVERIFIED_FINDING = "Not checked against the file";
+
+/**
+ * One finding of a code review: its lines in the reviewed head, what is wrong, its priority (0 is the most severe), the
+ * code it quotes and, when none of its lines could be read, `unverified`.
+ */
+export const CodeReviewComment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", "priority?": "number", "quoted?": "string", "unverified?": "true" });
 export type CodeReviewComment = typeof CodeReviewComment.infer;
 
 /** A finding's title as people read it, after its priority when it has one. */

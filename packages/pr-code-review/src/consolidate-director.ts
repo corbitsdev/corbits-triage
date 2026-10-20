@@ -63,8 +63,12 @@ function numbered(lines: ReadonlyMap<number, string>, from: number, to: number):
   return shown.map(([line, row]) => `${line}\t${row}`).join("\n");
 }
 
+function shown(site: Site, lines: ReadonlyMap<number, string>): string {
+  return numbered(lines, site.start - SHOWN_AROUND, site.end + SHOWN_AROUND);
+}
+
 function cited(index: number, site: Site, lines: ReadonlyMap<number, string>): string {
-  return `<finding index="${index}" path="${promptAttribute(site.path)}">\n${promptText(numbered(lines, site.start - SHOWN_AROUND, site.end + SHOWN_AROUND))}\n</finding>`;
+  return `<finding index="${index}" path="${promptAttribute(site.path)}">\n${promptText(shown(site, lines))}\n</finding>`;
 }
 
 interface Range {
@@ -97,8 +101,8 @@ function readsOf(findings: readonly Finding[]): Read[] {
  * Reads the lines around each finding the input lists at the head it names, through the host's `*_read_file`, out of
  * the model's history, each stretch of a file once, and moves each finding onto the line its quoted code names. Then
  * one model call, with the cited lines appended to the system prompt, decoded against the schema. The reply is the
- * model's JSON with `sites`, each finding's anchored range by index, and `excerpts`, the numbered lines read around
- * each. A finding whose file cannot be read keeps its range and shows no lines.
+ * model's JSON with `sites`, each finding's anchored range by index, `excerpts`, the numbered lines read around
+ * each, and `unreadFindings`, the index of each finding the model was shown no line of, which keeps its range.
  */
 function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { name, schema }: ConsolidateDirectorConfig): ReactorDirector {
   const reads = new Map<string, Read>();
@@ -143,7 +147,7 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
     if (!named) return caps.reply(`${name}: the input names no repository head`);
     checkout = named;
     findings = findingsIn(content);
-    if (findings.length === 0) return caps.reply(JSON.stringify({ groups: [], sites: [], excerpts: [] }));
+    if (findings.length === 0) return caps.reply(JSON.stringify({ groups: [], sites: [], excerpts: [], unreadFindings: [] }));
     return run(readsOf(findings).map(read));
   }
 
@@ -174,7 +178,8 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
     const text = turnText(turn);
     try {
       const excerpts = sites.map((site) => numbered(linesOf(site.path), site.start - READ_AROUND, site.end + READ_AROUND));
-      return caps.reply(JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), sites, excerpts }));
+      const unreadFindings = sites.flatMap((site, i) => (shown(site, linesOf(site.path)) === "" ? [i] : []));
+      return caps.reply(JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), sites, excerpts, unreadFindings }));
     } catch {
       return caps.reply(`${name}: replied without JSON: ${text.slice(0, 200)}`);
     }

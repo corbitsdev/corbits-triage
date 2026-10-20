@@ -1,5 +1,5 @@
 import { errorText } from "@corbits/common";
-import { BUDGET_EXHAUSTED_NOTE } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, UNVERIFIED_FINDING } from "@corbits/triage-contracts";
 import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-review.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { relativeTime } from "../lib/duration.ts";
@@ -53,6 +53,7 @@ function Thread({ comment, review }: { comment: CodeReviewComment; review: CodeR
           <p className="pb-c">
             {comment.priority === undefined ? null : <b>P{comment.priority}</b>}
             <span className="mono">{location(comment)}</span>
+            {comment.unverified ? <span>{UNVERIFIED_FINDING}</span> : null}
           </p>
           <QuotedCode comment={comment} />
         </div>

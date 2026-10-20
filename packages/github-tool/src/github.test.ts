@@ -295,8 +295,8 @@ describe("sendCodeReview", () => {
     summary: "",
     comments: [
       { path: "src/a.ts", start: 8, end: 12, title: "Spans the hunk's start", body: "B." },
-      { path: "src/a.ts", start: 20, end: 30, title: "Between hunks", body: "C." },
-      { path: "src/a.ts", start: 12, end: 41, title: "Spans both hunks", body: "D." },
+      { path: "src/a.ts", start: 20, end: 30, title: "Between hunks", body: "C.", unverified: true as const },
+      { path: "src/a.ts", start: 12, end: 41, title: "Spans both hunks", body: "D.", unverified: true as const },
     ],
   };
 
@@ -309,16 +309,16 @@ describe("sendCodeReview", () => {
     });
   }
 
-  test("anchors a range to the first hunk that shows it, names the lines past it, and keeps lines between hunks in the body", async () => {
+  test("anchors a range to the first hunk that shows it, names the lines past it, and keeps lines between hunks in the body, and marks unverified findings", async () => {
     const { gh, requests } = pull("abc123");
     expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true });
     expect(requests.at(-1)?.body).toEqual({
       commit_id: "abc123",
       event: "COMMENT",
-      body: "**Between hunks** · `src/a.ts:20–30`\n\nC.\n\n<!-- corbits-code-review -->",
+      body: "**Between hunks** · `src/a.ts:20–30`\n\nC.\n\n_Not checked against the file._\n\n<!-- corbits-code-review -->",
       comments: [
         { path: "src/a.ts", start_line: 10, start_side: "RIGHT", line: 12, side: "RIGHT", body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9." },
-        { path: "src/a.ts", start_line: 12, start_side: "RIGHT", line: 13, side: "RIGHT", body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41." },
+        { path: "src/a.ts", start_line: 12, start_side: "RIGHT", line: 13, side: "RIGHT", body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._" },
       ],
     });
   });

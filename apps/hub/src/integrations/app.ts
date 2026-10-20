@@ -304,7 +304,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_ACTIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Act on a pull request",
-      description: "Needs `use` on the GitHub App credential and `invoke` on `triage-do:<kind>:<owner/name>` for the Do kind the action is: comment (comment, reply and code-review), labels, assign, request-review, approve or request-changes (review), close or merge. `code-review` sends the pull request's newest finished code review, which must be of `headSha`, as one COMMENT review on that head: findings the diff shows are inline comments (one whose lines run past its hunk names the rest), the others are in the review's body, as many as fit GitHub's limit and then how many more the portal holds. It is sent once per head; sending it again answers `sent: false` with the review already there.",
+      description: "Needs `use` on the GitHub App credential and `invoke` on `triage-do:<kind>:<owner/name>` for the Do kind the action is: comment (comment, reply and code-review), labels, assign, request-review, approve or request-changes (review), close or merge. `code-review` sends the pull request's newest finished code review, which must be of `headSha`, as one COMMENT review on that head: findings the diff shows are inline comments (one whose lines run past its hunk names the rest, and one marked `unverified` says it was not checked against the file), the others are in the review's body, as many as fit GitHub's limit and then how many more the portal holds. It is sent once per head; sending it again answers `sent: false` with the review already there.",
       tags: TAGS,
       responses: {
         200: json("GitHub's answer", type("unknown")),
@@ -674,7 +674,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${CODE_REVIEW_PATH}/:tenantId`,
     describeRoute({
       summary: "A pull request's latest code review",
-      description: "Needs `workflow-run:*` read. Read from the run logs of the host's code review deployments (`source` absent means GitHub), newest first among the workspace's recent reviews: `running`, `failed`, or `completed` with the summary, each finding's comment (path, lines, title, explanation, priority and the code it quotes) and `cut` when the diff was cut for size, with the files it left `unread`. `completed` is the newest finished review, the same as `review` unless a newer one is running or failed; both are null when the pull request has none. Nothing is posted to the host.",
+      description: "Needs `workflow-run:*` read. Read from the run logs of the host's code review deployments (`source` absent means GitHub), newest first among the workspace's recent reviews: `running`, `failed`, or `completed` with the summary, each finding's comment (path, lines, title, explanation, priority, the code it quotes and `unverified` when none of its file's lines could be read) and `cut` when the diff was cut for size, with the files it left `unread`. `completed` is the newest finished review, the same as `review` unless a newer one is running or failed; both are null when the pull request has none. Nothing is posted to the host.",
       tags: TAGS,
       responses: { 200: json("The latest review, or null", CodeReviewFound), ...invalid, 401: failures[401], 403: failures[403] },
     }),
