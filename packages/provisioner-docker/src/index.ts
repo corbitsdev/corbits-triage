@@ -29,7 +29,7 @@ const LABEL = {
 } as const;
 const DATA_DIR = "/data";
 const MiB = 1024 ** 2;
-/** One sidecar's memory limit and footprint; docs/provisioners/docker.md has the measurements. */
+/** One sidecar's memory limit and footprint; docs/ARCHITECTURE.md (Sidecars) has the measurements. */
 const SIDECAR_BYTES = 2048 * MiB;
 const SIDECAR_PIDS = 1024;
 

@@ -74,7 +74,7 @@ than `fd00:ec2::254`) or loopback addresses; nothing else can be listed.
 that is refused answers `bitbucket_datacenter_host_refused` where the token
 would be sent. A workflow run's sidecar resolves the host again itself, so
 deny sidecar egress to metadata addresses at the network layer
-([SELF_HOST.md](SELF_HOST.md)).
+([SELF_HOST.md](SELF_HOST.md#hub-and-sidecars)).
 
 The token is tried once against `GET /rest/api/1.0/application-properties`
 and stored only if the instance signs it in. A webhook secret is generated

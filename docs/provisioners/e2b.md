@@ -11,7 +11,7 @@
    bun packages/provisioner-e2b/template.ts
    ```
 
-   E2B builds it from the repository's files, skipping what `.dockerignore` lists, so no registry is needed. E2B builds single-stage Dockerfiles only, so the script holds the root Dockerfile's base stage, which carries everything the `sidecar` stage does. The provisioner starts the sidecar itself.
+   E2B builds it from the repository's files, skipping what `.dockerignore` lists, so no registry is needed. The provisioner starts the sidecar itself.
 
 3. Give the hub a public `https://` address in `BETTER_AUTH_BASE_URL`: sandboxes dial it as `wss://…/api/sidecars/ws`, or `HUB_SIDECAR_WEBSOCKET_URL` when that is set. A hub on your laptop needs a tunnel, such as `cloudflared tunnel --url http://127.0.0.1:<PORT>`.
 4. Add this line to the hub's `.env` and restart it:
@@ -38,7 +38,7 @@ With `E2B_API_KEY` set, the place says **Failing** with one of these reasons, al
 
 | Reason | Fix |
 | --- | --- |
-| `An E2B sandbox is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address, or `HUB_SIDECAR_WEBSOCKET_URL` to a `wss://` one. |
+| `An E2B sandbox is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address (leave `HUB_SIDECAR_WEBSOCKET_URL` unset, or set it to a public `wss://` one). |
 | `An E2B sandbox is on another machine, which cannot reach Triage at its own address` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
 | `E2B refused E2B_API_KEY or did not answer` | Check the key in the E2B dashboard. |
 | `Code review cannot run in E2B while GITHUB_API_ORIGIN is set` | Unset `GITHUB_API_ORIGIN`: the module it generates under `HUB_DATA_DIR` is not in the template. |

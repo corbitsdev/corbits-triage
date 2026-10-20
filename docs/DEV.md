@@ -27,7 +27,7 @@ createdb interchange
 cp .env.example .env
 ```
 
-Set the four secrets to different `openssl rand -hex 32` values and set `DATABASE_URL` to your database. Nothing else is required. Run everything from the repo root so both services inherit the root `.env`.
+Set the four secrets to different `openssl rand -hex 32` values and change `DATABASE_URL` only if your database is not the Docker one above. Nothing else is required. Run everything from the repo root so both services inherit the root `.env`.
 
 ## 4. Run
 
@@ -72,14 +72,14 @@ bun run check    # typecheck apps, packages and tooling; bundle the hub
 bun run lint
 ```
 
-Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` and ignore `DATABASE_URL`.
+Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` and ignore `DATABASE_URL` (the Docker one-liner above provides it; on Homebrew create that role).
 
 Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
 ## Troubleshooting
 
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
-- **"The workspace has no decision model"**: store a decision model key in the **Triage** section of Settings.
+- **"Triage is not running: no decision model is connected."**: save a decision model key in Settings → Triage.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
 - **New PRs never reach triage**: the hub logs `triage_reconcile_skipped` with reason `no_live_deployment` when the workspace has no live pr-triage deployment. Reload the portal; the next reconcile pass also redeploys it.
 - **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.

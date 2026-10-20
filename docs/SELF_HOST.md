@@ -38,8 +38,8 @@ Size the hub for its sidecars: each triage run is a Bun process of its own
 `compose.yml` runs Postgres and the hub at `http://localhost:3000`. In `.env`
 set the four secrets; compose sets `DATABASE_URL`, `HUB_DATA_DIR` and
 `PORT`, takes `BETTER_AUTH_BASE_URL` from `.env` (default
-`http://localhost:3000`), and applies the [database role](#database-role)
-setting.
+`http://localhost:3000`), and sets the same idle-transaction timeout on its
+Postgres ([Database role](#database-role)).
 
 ```sh
 cp .env.example .env   # set the four secrets: openssl rand -hex 32 each
@@ -48,6 +48,7 @@ docker compose logs -f hub
 ```
 
 The hub is ready when it logs `Started server: http://localhost:3000`.
+Continue with [Set up in the portal](#set-up-in-the-portal).
 
 ### Plain VPS
 
@@ -101,11 +102,11 @@ Deploy the hub from GitHub, not with `railway up`: Railway sets the
 them from a public repository: this one or your public fork. With the
 [Railway CLI](https://docs.railway.com/cli) logged in:
 
-1. Create the project. With more than one Railway workspace, `railway init`
-   needs `--workspace`; `railway whoami --json` lists yours:
+1. Create the project; add `--workspace <workspace>` if you have more than
+   one (`railway whoami --json` lists them):
 
    ```sh
-   railway init --name corbits-triage --workspace <workspace>
+   railway init --name corbits-triage
    ```
 
 2. Add Postgres:
@@ -147,8 +148,14 @@ them from a public repository: this one or your public fork. With the
    railway volume add --mount-path /data
    ```
 
-7. Set the [database role](#database-role) setting. Once the deploys started
-   by steps 5 and 6 have finished, redeploy the hub
+7. Set the [database role](#database-role) setting from inside the Postgres
+   service, which has no public address; its role is `postgres`:
+
+   ```sh
+   railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres set idle_in_transaction_session_timeout = '10min';\""
+   ```
+
+   Once the deploys started by steps 5 and 6 have finished, redeploy the hub
    (`railway redeploy --service hub --yes`).
 
 The hub is ready when its deploy logs show `Started server`. Continue with
@@ -172,13 +179,6 @@ lock and the sidecar pushes again:
 
 ```sql
 alter role <hub role> set idle_in_transaction_session_timeout = '10min';
-```
-
-Railway's Postgres has no public address by default, so run it from inside
-the Postgres service; its role is `postgres`:
-
-```sh
-railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres set idle_in_transaction_session_timeout = '10min';\""
 ```
 
 ## Set up in the portal
@@ -249,14 +249,12 @@ password. Every account but the hub's first must verify its address
 
 Admins invite teammates from the portal. Someone who signs in without an
 invitation gets a workspace of their own; an invitation later adds the
-inviting workspace to theirs. The invitee gets a sign-in
-link that works once, expires after 15 minutes and can be resent. With email
-set up, an account whose address is not verified (an email and password
-sign-up) cannot be invited. With email set up, anyone can also reset their password from the
-sign-in page, and an email and password sign-up is sent a link to verify its
-address, valid for an hour. Until it opens the link it sees only **Verify your
-email**, with **Resend link** (once a minute) and **Sign out**. Existing
-unverified accounts see the same screen once email is set up.
+inviting workspace to theirs. With email set up: invitees get a one-time
+sign-in link (15 minutes, resendable); email and password sign-ups get a
+verification link (one hour) and see only **Verify your email** (**Resend
+link** once a minute, **Sign out**) until they open it, as do existing
+unverified accounts; anyone can reset their password; an unverified account
+cannot be invited.
 
 | Variable | Value |
 | --- | --- |
@@ -294,7 +292,7 @@ All optional; the defaults suit most installs.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. |
-| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset for Docker [on another machine](provisioners/docker-remote.md), whose sidecars dial `BETTER_AUTH_BASE_URL` over `wss://`. `compose.tls.yml` sets it to `wss://<domain>`, which remote sidecars can also dial. |
+| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset for Docker [on another machine](provisioners/docker-remote.md), whose sidecars dial `BETTER_AUTH_BASE_URL` over `wss://`. |
 | `DOCKER_HOST` | the docker CLI's context, else its default sockets | The daemon for the [Docker provisioner](provisioners/docker.md). |
 | `DOCKER_CONTEXT` | the docker CLI's current context | The docker CLI context to use when `DOCKER_HOST` is unset. |
 | `DOCKER_TLS_CA` | unset | `ca.pem`, the CA that signed the daemon's certificate, as one line of base64. With `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY`, turns on mutual TLS to the daemon. Required for a daemon on another machine. |
@@ -304,7 +302,7 @@ All optional; the defaults suit most installs.
 | `RAILWAY_SANDBOX_TOKEN`, `RAILWAY_SANDBOX_ENVIRONMENT_ID` | unset | A Railway workspace token and the environment the [Railway Sandboxes provisioner](provisioners/railway-sandboxes.md) creates sandboxes in. Set both or neither. |
 | `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | set by Railway on a service deployed from GitHub | The public repository and commit the Railway sidecar template checks out. Required with `RAILWAY_SANDBOX_TOKEN`. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
-| `BITBUCKET_EGRESS_ALLOWLIST` | unset | Comma-separated hostnames or IPs of Bitbucket Data Center instances on a private network. The hub sends a Bitbucket token only to public addresses, plus private or loopback addresses of a host listed here. Set it before upgrading when a workspace is already connected to a private-network instance: until then that workspace's Bitbucket requests and runs are refused. Workflow runs resolve the instance in their sidecar, so on cloud hosts also deny sidecar egress to metadata addresses (`169.254.0.0/16`, `fd00:ec2::254`, `100.100.100.200`) at the network layer. See [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md). |
+| `BITBUCKET_EGRESS_ALLOWLIST` | unset | Comma-separated hostnames or IPs of Bitbucket Data Center instances on a private network. The hub sends a Bitbucket token only to public addresses, plus private or loopback addresses of a host listed here. Until a private-network instance is listed, Bitbucket requests and runs to it are refused. Workflow runs resolve the instance in their sidecar, so on cloud hosts also deny sidecar egress to metadata addresses (`169.254.0.0/16`, `fd00:ec2::254`, `100.100.100.200`) at the network layer. See [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md). |
 | `PG_SCHEMA` | default `search_path` | Postgres schema. |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |
 
@@ -357,12 +355,8 @@ nothing more. Code review runs only once an isolated place is set up:
 Settings → Code review → **Where it runs** lists each with its `.env` lines,
 and [provisioners/README.md](provisioners/README.md) covers each option.
 
-For code review on the same machine's Docker under Compose, add
-`compose.docker.yml` ([Docker](provisioners/docker.md#set-up)):
-
-```sh
-docker compose -f compose.yml -f compose.docker.yml up --build -d
-```
+For code review on this machine's Docker under Compose, see
+[Docker](provisioners/docker.md#set-up).
 
 ## Backups
 
@@ -374,8 +368,12 @@ docker compose -f compose.yml -f compose.docker.yml up --build -d
 
 ## Upgrading
 
-Pull the new version, rebuild the image and redeploy. The hub runs its
-migrations on every start.
+Pull the new version, rebuild the image and redeploy; on a VPS, `git pull`
+and rerun the same `docker compose … up --build -d`. The hub runs its
+migrations on every start. A Railway hub deployed from `main` follows `main`:
+every push upgrades it. Also rebuild a
+[remote Docker sidecar image](provisioners/docker-remote.md#5-put-the-sidecar-image-on-the-vps)
+from the same commit, and the [E2B template](provisioners/e2b.md#set-up).
 
 ## Known limitations
 

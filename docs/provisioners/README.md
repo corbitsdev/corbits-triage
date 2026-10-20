@@ -13,7 +13,7 @@ Every triage run, code review and workflow probe runs in a sidecar: a process th
 
 Workflows and tenants state the capabilities a sidecar needs, such as `isolation:workload`; provisioners declare the capabilities they offer. The hub tries provisioners in the order it registered them (local process, Docker, E2B, then Railway Sandboxes) and takes the first whose capabilities satisfy every rule. A workflow with no rule therefore runs on the local process provisioner. When no provisioner matches, the deployment fails with `provisioner_no_match` and names what each provisioner lacked.
 
-Code review requires `isolation:workload`, so it never runs as a process beside the hub. When several places are ready, it uses the first one registered (Docker, E2B, then Railway Sandboxes); there is no per-workspace choice, because a tenant placement rule would move every workflow, triage included. A place that is full declines the review's sidecar with `capacity_unavailable`; the hub defers the review and retries it on the same place, never the next one, since the place is chosen by capabilities alone. Without a ready place, code review cannot be turned on.
+Code review requires `isolation:workload`, so it never runs as a process beside the hub. There is no per-workspace choice of place. A place that is full declines the review's sidecar with `capacity_unavailable`; the hub defers the review and retries it on the same place, never the next one, since the place is chosen by capabilities alone. Without a ready place, code review cannot be turned on.
 
 Settings → Code review → **Where it runs** lists every place, its state and the `.env` lines that set it up ([user manual](../Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#where-code-review-runs)).
 

@@ -17,7 +17,7 @@
    - else `/var/run/docker.sock`, then `~/.docker/run/docker.sock` (Docker Desktop).
 4. Check the hub's boot log. With Docker registered there is no `docker_sidecars_off` line, and `docker_sidecars_swept` says how many leftover containers it removed.
 
-Containers dial the hub at `HUB_SIDECAR_WEBSOCKET_URL`, with a loopback host replaced by `host.docker.internal`. Containers on [another machine](docker-remote.md) dial the hub's public `wss://` address instead. A hub that itself runs in a container needs the daemon's socket mounted and its port published to the Docker host.
+Containers dial the hub at `HUB_SIDECAR_WEBSOCKET_URL`, with a loopback host replaced by `host.docker.internal`. Containers on [another machine](docker-remote.md) dial the hub's public `wss://` address instead. A hub that itself runs in a container needs the daemon's socket mounted, and its port published to the Docker host unless `HUB_SIDECAR_WEBSOCKET_URL` names a public `wss://` address, as `compose.tls.yml` sets.
 
 Under Docker Compose, `compose.docker.yml` builds the `corbits-triage-sidecar` image before the hub starts and mounts the host's Docker socket into the hub at `/var/run/docker.sock`, where the hub finds it; `compose.yml` already publishes the hub's port. The host socket is `/var/run/docker.sock` unless `DOCKER_SOCKET` in `.env` names another, such as rootless Docker's `$XDG_RUNTIME_DIR/docker.sock` or Podman's. The hub then controls that Docker, which on Linux is root on the host: whoever takes over the hub takes over the machine.
 
@@ -44,7 +44,7 @@ The hub logs `docker_sidecars_off` with one of these reasons:
 | `no Docker daemon found` | Start Docker, or set `DOCKER_HOST`. |
 | `Docker at … has no corbits-triage-sidecar image or does not answer` | Build the image (step 2); check the daemon is running and the address is `unix://` or `tcp://`. |
 | `Triage cannot connect to Docker at … (… is another machine; reach it over TLS …)` | Plain `tcp://` is refused for any host but this machine. Set `DOCKER_TLS_CA`, `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY` ([Docker on another machine](docker-remote.md)). |
-| `Docker at … is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address, or `HUB_SIDECAR_WEBSOCKET_URL` to a `wss://` one. |
+| `Docker at … is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address (leave `HUB_SIDECAR_WEBSOCKET_URL` unset, or set it to a public `wss://` one). |
 | `Docker at … is on another machine, which cannot reach Triage at its own address` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
 | `Code review cannot run in Docker while GITHUB_API_ORIGIN is set` | Unset `GITHUB_API_ORIGIN`: the module it generates under `HUB_DATA_DIR` is not in the image. |
 | `The Docker CLI's settings on this server cannot be read` | Fix or remove `~/.docker/config.json`, or the context `DOCKER_CONTEXT` names; or set `DOCKER_HOST`. |

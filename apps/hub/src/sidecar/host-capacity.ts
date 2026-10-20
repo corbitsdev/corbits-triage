@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 const MiB = 1024 ** 2;
-/** One sidecar's footprint: a pr-triage worker peaked at 784 to 860 MiB RSS over a run (docs/provisioners/local.md, Capacity). */
+/** One sidecar's footprint: a pr-triage worker peaked at 784 to 860 MiB RSS over a run (docs/ARCHITECTURE.md, Sidecars). */
 export const SIDECAR_BYTES = 1024 * MiB;
 
 /** The code a provisioner declines a placement with for want of room; the spawn is retried, not failed. */

@@ -8,7 +8,7 @@ It starts one sidecar per allocation as a child process of the hub, with a data 
 
 ## Isolation it does not give
 
-Sidecars run on the hub's machine as the hub's user. They can read the hub's files and environment, and each other's. The provisioner declares no `isolation:workload`, so a workflow or tenant that requires it is never placed here. Use [Docker](docker.md) for those.
+Sidecars run on the hub's machine as the hub's user. They can read the hub's files and environment, and each other's. The provisioner declares no `isolation:workload`, so a workflow or workspace that requires it is never placed here. Use [Docker](docker.md) for those.
 
 ## Capacity
 

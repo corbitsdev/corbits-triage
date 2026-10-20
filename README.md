@@ -45,8 +45,8 @@ triage on and its policy has a rule.
 
 - **Install skill.** [skills/corbits-triage-install](skills/corbits-triage-install/SKILL.md)
   walks a coding agent through installing Triage with you, from choosing a
-  host to the first verdict. Copy it like the setup skill below and ask the
-  agent to install Corbits Triage.
+  host to the first verdict. Copy the folder into your agent's skills folder
+  (such as `.claude/skills/`) and ask the agent to install Corbits Triage.
 - **Setup skill.** [skills/corbits-triage-setup](skills/corbits-triage-setup/SKILL.md)
   lets a coding agent write and check `.corbits-triage.yml`. Copy the folder
   into your agent's skills folder (such as `.claude/skills/` or

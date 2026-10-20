@@ -62,7 +62,7 @@ railway sandbox list --environment sidecars
 
 ## What is isolated
 
-Each sidecar has a sandbox of its own: its own machine, filesystem and processes. The sandbox's own variables hold only the four labels above. The sidecar's hub token and a credential key of its own are given to the sidecar's command alone, so other commands run in the sandbox do not inherit them. A command running as the same user can still read them from `/proc`; repository code must run apart from the sidecar, in the code-running tool's own sandbox.
+Each sidecar has a sandbox of its own: its own machine, filesystem and processes. The sandbox's own variables hold only four labels (`CORBITS_HUB`, `CORBITS_ALLOCATION`, `CORBITS_GENERATION`, `CORBITS_SIDECAR`). The sidecar's hub token and a credential key of its own are given to the sidecar's command alone, so other commands run in the sandbox do not inherit them. A command running as the same user can still read them from `/proc`; repository code must run apart from the sidecar, in the code-running tool's own sandbox.
 
 A sandbox lives until the hub destroys it. If the sidecar process stops, nothing restarts it: the hub notices it is gone and replaces it after `WORKFLOW_DEFAULT_MAX_DISCONNECTED` (15 minutes by default).
 
@@ -78,7 +78,7 @@ With the variables set, the place says **Failing** with one of these reasons, al
 
 | Reason | Fix |
 | --- | --- |
-| `A Railway sandbox is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address and leave `HUB_SIDECAR_WEBSOCKET_URL` unset or set it to a `wss://` one. |
+| `A Railway sandbox is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address (leave `HUB_SIDECAR_WEBSOCKET_URL` unset, or set it to a public `wss://` one). |
 | `A Railway sandbox is on another machine, which cannot reach Triage at its own address` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
 | `Code review cannot run in Railway sandboxes while GITHUB_API_ORIGIN is set` | Unset `GITHUB_API_ORIGIN`: the module it generates under `HUB_DATA_DIR` is not in the repository. |
 | `Triage cannot read its database's identity` | Postgres refused the hub id query; the error says why. |

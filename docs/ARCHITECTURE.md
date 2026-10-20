@@ -109,7 +109,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   The Railway Sandboxes provisioner (`packages/provisioner-railway`),
   registered after E2B when its token and environment are set, does the same
   with one Railway sandbox per sidecar.
-  [provisioners/](provisioners/README.md) describes each.
+  [provisioners/](provisioners/README.md) describes each. Per-sidecar memory
+  is measured (2026-10-17): a pr-triage worker peaked at 784 to 860 MiB RSS
+  (1 GiB local), a Docker review container at about 867 MiB (2 GiB limit).
   Code review requires `isolation:workload`; without Docker, E2B or Railway Sandboxes, stock
   Interchange refuses it with `provisioner_no_match`.
   `GET /api/integrations/code-review/{tenantId}/place` names the provisioner
