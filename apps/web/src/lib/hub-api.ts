@@ -134,6 +134,8 @@ export type PortalSnapshot = {
   /** Absent when the hub refused to say where code review runs. */
   codeReviewPlace?: CodeReviewPlace["provisioner"];
   codeReviewPlaces?: CodeReviewPlace["places"];
+  /** Set when the hub failed to list the keys for a reason other than access, so an empty `credentials` does not mean no key is stored. */
+  credentialsError?: string;
   denied: SectionDenied;
 };
 
@@ -1230,13 +1232,13 @@ function isSessionDead(cause: unknown): boolean {
   return cause instanceof ApiError && cause.status === 401;
 }
 
-async function tolerateSection<T>(work: Promise<T>, fallback: T): Promise<{ value: T; denied: boolean }> {
+async function tolerateSection<T>(work: Promise<T>, fallback: T): Promise<{ value: T; denied: boolean; failure?: ApiError }> {
   try {
     return { value: await work, denied: false };
   } catch (cause) {
     if (isSessionDead(cause)) throw cause;
     if (isAuthDenied(cause)) return { value: fallback, denied: true };
-    if (cause instanceof ApiError) return { value: fallback, denied: false };
+    if (cause instanceof ApiError) return { value: fallback, denied: false, failure: cause };
     throw cause;
   }
 }
@@ -1291,6 +1293,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     credentials: credentials.value,
     ...(decisionModel && { decisionModel }),
     ...(places && { codeReviewPlace: places.provisioner, codeReviewPlaces: places.places }),
+    ...(credentials.failure && { credentialsError: credentials.failure.message }),
     denied: {
       repos: tenant.denied,
       credentials: credentials.denied,

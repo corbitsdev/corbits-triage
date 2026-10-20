@@ -38,7 +38,7 @@ Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center on
 
 Code review reads each new commit of a pull request for bugs: mistakes in the changed lines and breakage the change causes elsewhere in the repository. It is separate from the verdict and optional.
 
-- **Turning it on.** Save an Anthropic API key under [Settings → Code review](#code-review-2), then switch on **Review the code in every pull request for bugs** in each repository's [Code review section](#code-review-1). Switch it off there to stop.
+- **Turning it on.** Switch on **Review the code in every pull request for bugs** in each repository's [Code review section](#code-review-1). When no key is saved, it asks for the workspace's Anthropic API key; you can also save it under [Settings → Code review](#code-review-2). Switch it off there to stop.
 - **What it costs.** Each commit it reviews is billed to your Anthropic account. It reviews a pull request when it is opened and after every push while it is not a draft, and **Review again** is one more review.
 - **Where you see it.** In the Inbox's reading pane, under **Code review**: each bug with how severe it is, its file and line, and the code it points at. **Review again** reviews the latest commit once more. A very large change is read up to a size limit, and the review says how much of it was read.
 - **Sending it to GitHub.** On a GitHub pull request, **Send to GitHub** posts the review as one review from the Triage App: each finding on a changed line is a comment on that line, and the rest are listed in the review. A finding whose lines run past the changed ones sits on its first changed lines and names the others. A review too long for GitHub lists what fits and says how many more are in the portal. It is sent once per commit; the section then says **Sent to GitHub**, and sending it again only tells you it is already there. A review of a newer commit is sent as a new review, and the earlier one stays.
@@ -293,9 +293,11 @@ On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repos
 
 ### Code review
 
-![The Code review section of a repository page: Review the code in every pull request for bugs, with its switch off, and Needs an Anthropic key in Settings → Code review below it](images/27.png)
+Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop.
 
-Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. It needs the workspace's Anthropic key: until one is saved, the section says **Needs an Anthropic key in Settings → Code review**, with a link to [Code review](#code-review-2).
+![The popup Code review needs an Anthropic key, with the Anthropic key field, You won't see it again, Cancel and Save and turn on](images/27.png)
+
+It needs the workspace's Anthropic key. If none is saved yet, switching it on opens **Code review needs an Anthropic key**: paste the key and press **Save and turn on**, and code review is on. You won't see the key again. **Cancel** leaves it off, and the popup cannot be closed while the key is saving. The key is saved for the whole workspace, so other repositories use it too, and [Settings → Code review](#code-review-2) shows it. If you are not allowed to see the workspace's keys, the switch stays off and the section asks you to have an owner add the key; if Triage could not read the keys, the section says **Could not read the workspace's keys** with the reason, and the switch stays off until they can be read.
 
 ### Where code review runs
 
