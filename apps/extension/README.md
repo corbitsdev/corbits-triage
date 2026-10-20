@@ -53,7 +53,6 @@ A review that cannot be read is said so without failing the rules.
 - Every read needs a GitHub token. A fine-grained token with read-only access to public repositories is enough;
   private repositories need read access to their contents and pull requests.
 - Author team membership is not read, so a step meant for a team is skipped.
-- Approved authors are set on the hub, not in the policy, so the extension treats no author as approved.
 - The token is kept in the extension's `storage.local`, which every part of the extension can read, the content
   script on github.com included. Only the background reads it, and changing or removing it clears every saved check
   and policy file.

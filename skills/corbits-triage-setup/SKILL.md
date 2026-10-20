@@ -28,7 +28,7 @@ Ask in one message together with the proposal from step 3, giving your suggested
 - What should Triage do on Pass, Fail and Unsure beyond its verdict label (a build status on Bitbucket Data Center)? Suggest nothing, or asking code owners to review on Unsure when the repository has CODEOWNERS or is on Bitbucket Data Center (where code owners are its default reviewers).
 - Should every pull request link an issue? Only when step 1 found issue references; suggest yes, with the tracker from "When to add".
 - Should pull requests never change these paths, even from maintainers? Only when step 1 found vendored or generated code; suggest yes.
-- Is a decision model set up in Corbits Triage (Settings → Models)? Only before adding `focused`, `docs` or a `model` rule.
+- Is a decision model set up in Corbits Triage (Settings → Triage → Decision model)? Only before adding `focused`, `docs` or a `model` rule.
 - Is the repository on GitHub or Bitbucket Data Center? Only when there is no remote.
 - On GitHub, add a pull request check that checks this file whenever it changes? Suggest yes.
 

@@ -50,8 +50,9 @@ package of its own, `packages/pr-code-review-<provider>`, shaped like
    provider runs it.
 4. Add the provider, the credential that holds its key and its models to `CODE_REVIEW_PROVIDERS` in
    `triage-contracts`, its models and catalog provider to `DECLARED_MODELS` in `apps/web/src/lib/model-catalog.ts`,
-   and one row per host to `WORKFLOW_PACKAGES` in `apps/web/src/lib/workflow-packages.ts` with its own `packageName`
-   and the same `name`. The portal deploys the rows of the provider whose key the workspace stores.
+   and one row per host to `WORKFLOW_PACKAGES` in `apps/web/src/lib/workflow-packages.ts`, shaped like the Anthropic
+   rows (`kind: "code-review"`, its `provider` and `workspace`, the host's `source`), with its own `packageName` and the
+   same `name`. The portal deploys the rows of the provider whose key the workspace stores.
 5. Give it an eval like [pr-code-review-anthropic/evals](../pr-code-review-anthropic/evals/README.md).
 
 ## Test

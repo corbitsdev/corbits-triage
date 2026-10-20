@@ -21,7 +21,7 @@ Ask, suggesting the first that fits:
 | --- | --- | --- |
 | This machine, Docker Compose | Trying it. GitHub can't reach localhost, so pull requests are picked up every five minutes. | [Docker Compose](../../docs/SELF_HOST.md#docker-compose) |
 | Railway | A real deployment with no server to manage. | [Railway](../../docs/SELF_HOST.md#railway) |
-| A server of their own (VPS) with Docker Compose 2.24+ | A real deployment on their own machine. `.env` holds the four secrets and `DOMAIN` only; start with `docker compose -f compose.yml -f compose.tls.yml up --build -d`. | [Plain VPS](../../docs/SELF_HOST.md#plain-vps) |
+| A server of their own (VPS) with Docker Compose 2.24+ | A real deployment on their own machine. | [Plain VPS](../../docs/SELF_HOST.md#plain-vps) |
 
 What each needs: [What you need](../../docs/SELF_HOST.md#what-you-need).
 
@@ -56,7 +56,7 @@ The person opens the repository under Repositories and turns on **Triage pull re
 
 ## Optional: code review
 
-Needs an Anthropic key, which the person saves under Settings → Code review, and an isolated place to run, never the hub's own machine: [Where sidecars run](../../docs/SELF_HOST.md#where-sidecars-run) and [provisioners/README.md](../../docs/provisioners/README.md#which-to-use).
+Needs an Anthropic key, which the person saves under Settings → Code review, and an isolated place to run (a container or sandbox, never inside the hub's own process or container): [Where sidecars run](../../docs/SELF_HOST.md#where-sidecars-run) and [provisioners/README.md](../../docs/provisioners/README.md#which-to-use).
 
 - Compose on the same machine: add `-f compose.docker.yml` to the `docker compose` flags already in use, such as `docker compose -f compose.yml -f compose.docker.yml up --build -d`. Tell the person this gives the hub control of that Docker, which on Linux is root on the machine.
 - Railway: [Railway Sandboxes](../../docs/provisioners/railway-sandboxes.md), [E2B](../../docs/provisioners/e2b.md) or [Docker on another machine](../../docs/provisioners/docker-remote.md).

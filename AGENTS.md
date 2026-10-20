@@ -25,7 +25,7 @@ Repository-wide rules. `apps/*` and some `packages/*` have their own AGENTS.md w
 - **Effects are idempotent** under their effect id, host writes included.
 - **Grants decide automation.** Whether an action runs on its own is decided from the workspace's role grants, never a hard-coded limit.
 - **Downstream work is another workflow.** Reviewing, fixing or cleaning up a pull request is a workflow of its own, started by mail or a signal from an action; never a step inside pr-triage.
-- **API first.** Every custom hub route is described in `/openapi.json`. The portal and the extension wrap those routes and are never the only way to do anything.
+- **API first.** Every custom hub route is described in `/openapi.json`. The portal wraps those routes and is never the only way to do anything.
 - **Credentials, grants and tenants are Interchange's.** Secrets live in the hub vault and reach sidecars at launch and rotation; never read them anywhere else, never persist them.
 - **Hosts.** GitHub and Bitbucket Data Center. A repository record carries `source` (absent = GitHub), every mail names it as `repoSource`, and each host has its own pr-triage package. A change to host behaviour covers both, or says why not.
 

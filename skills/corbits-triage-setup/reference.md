@@ -1,6 +1,6 @@
 # .corbits-triage.yml reference
 
-The file holds `rules` (required), and optionally `actions`, `labels` and `extends`. Any other key is refused. YAML only, at most 64 KB; YAML aliases (`*name`) are refused. Triage reads `.corbits-triage.yml` and ignores `.corbits-triage.yaml` when both exist, so keep one.
+The file holds `rules` (required), and optionally `onFail`, `actions`, `labels` and `extends`. Any other key is refused. YAML only, at most 64 KB; YAML aliases (`*name`) are refused. Triage reads `.corbits-triage.yml` and ignores `.corbits-triage.yaml` when both exist, so keep one.
 
 ## Rules
 
@@ -31,7 +31,7 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 
 ### Rules of your own
 
-At most 8 in total. `id` is lowercase letters, digits and single hyphens, at most 64 characters; it must not be a built-in id, start with `docs-` or `focused-`, or end in `-file`, `-hunk` or `-slice` followed by numbers.
+At most 8 in total. `id` is lowercase letters, digits and single hyphens, at most 64 characters; it must not be a built-in id, start with `docs-` or `focused-`, or end in `-file`, `-hunk` or `-slice` followed by numbers, nor be `all`, `verdict`, `state` or an old built-in id (`size`, `issue`, `conflicts`, `ci`, `paths`, `draft`, `review`, `duplicate`, `reviewers`, `drift`, `tests`).
 
 - `check: model` (needs a model): `text` is a statement the decision model answers yes or no about the whole pull request; the rule fails on no. Example `text`: `The title says what changed.`
 - `check: text` (no model): fails on a phrase match, case ignored. A phrase matches anywhere in the field; there is no prefix or pattern match.
@@ -39,7 +39,7 @@ At most 8 in total. `id` is lowercase letters, digits and single hyphens, at mos
   - `failWhen`: `contains` (fail when any field has any phrase) or `not-contains` (fail when a field has none of them).
   - `phrases`: 1–50 strings.
 
-A model rule costs one model request per pull request and needs a decision model set up in Corbits Triage (Settings → Models). Rules without a model always give the same answer for the same pull request and cost nothing.
+A model rule adds a question to the decision model's requests for each pull request and needs a decision model set up in Corbits Triage (Settings → Triage → Decision model). Rules without a model always give the same answer for the same pull request and cost nothing.
 
 ### When to add
 
@@ -60,7 +60,7 @@ When the user wants a rule to flag pull requests without failing them, such as s
 
 ## Actions
 
-Optional. Without `actions`, Triage only sets its verdict label. Each verdict has an ordered list of at most 20 steps; a verdict left out has none.
+Optional. Without `actions`, Triage only posts its comment and verdict label. Each verdict has an ordered list of at most 20 steps; a verdict left out has none.
 
 ```yaml
 actions:
@@ -89,7 +89,7 @@ A step may add `when`, and every condition in it must hold. An empty `when` is r
 
 Never write `for:` on a step; who it is for goes in `when.author`.
 
-Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person in the Inbox. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. An advisory rule's label is added the same way, as an Add labels action. On Bitbucket Data Center, `labels` and `assign` have no effect (an advisory rule only adds its note), `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
+Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person in the Inbox. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. A rule's `onFail: label` label is added the same way, as an Add labels action. On Bitbucket Data Center, `labels` and `assign` have no effect (an `onFail: label` rule only adds its note), `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
 
 ## Labels
 

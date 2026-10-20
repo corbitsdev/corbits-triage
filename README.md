@@ -57,7 +57,7 @@ triage on and its policy has a rule.
 - **Browser extension.** [apps/extension](apps/extension/README.md) checks the
   GitHub pull request you are viewing against its policy and shows each rule's
   result on the page, with your own GitHub token and no hub. Build and load it
-  in Chrome or Firefox ([install](apps/extension/README.md#install)).
+  in Chrome or Firefox ([install](apps/extension/README.md#use)).
 
 ## Read next
 

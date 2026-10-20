@@ -1,6 +1,6 @@
 # The decision model
 
-Triage answers its judged rules (focused, docs and custom model rules) and decides each pull request's verdict with a decision model: TypeSafe's Jev, a System One model. Every other rule is a hard rule over GitHub data. This page describes how Triage asks the model, how it reads the answers, the limits it works within, what it costs and how accurate it has measured.
+Triage answers its judged rules (focused, docs and custom model rules) and decides each pull request's verdict with a decision model: TypeSafe's Jev, a System One model. Every other rule is a hard rule over host data. This page describes how Triage asks the model, how it reads the answers, the limits it works within, what it costs and how accurate it has measured.
 
 TypeSafe's docs: [index (llms.txt)](https://docs.typesafe.ai/llms.txt), [System One](https://docs.typesafe.ai/concepts/system-one.md), [models and limits](https://docs.typesafe.ai/models.md), [primitives](https://docs.typesafe.ai/primitives.md), [confidence](https://docs.typesafe.ai/confidence.md), [jev-1.13 jagged edges](https://docs.typesafe.ai/model-jaggedness/jev-1.13.md).
 
@@ -12,7 +12,7 @@ A System One model does not generate text. A request carries a JSON `state` and 
 - **Choice**: one option from a fixed set, answered with the chosen option, a probability per option and a confidence.
 - **Score**: ordered, described levels, answered with a position across them, a probability per level and a confidence. Score rules use it.
 
-Triage reaches the model through Interchange inference. The agents name the tenant model alias `decision` on the `corbits-system-one` provider (`packages/triage-workflows/src/agents.ts`). The operator picks the endpoint and model behind that alias in the portal's decision model settings (presets in `packages/triage-contracts/src/decision-models.ts`):
+Triage reaches the model through Interchange inference. The agents name the tenant model alias `decision` on the `corbits-system-one` provider (`packages/triage-workflows/src/agents.ts`). The operator picks the endpoint and model behind that alias under Settings → Triage → **Decision model** (presets in `packages/triage-contracts/src/decision-models.ts`):
 
 | Preset | Endpoint | Model |
 | --- | --- | --- |
@@ -68,7 +68,7 @@ Rules learned while tuning, which match TypeSafe's [jagged edges](https://docs.t
 - **One judgment per question.** Split "and" conditions into separate questions and combine them in code.
 - **Phrase it so yes means yes.** Negated or inverted questions do worse.
 - **Choice leans toward the first option.** Reorder options and check the answer holds.
-- **Keep counting, math, dates and paths in code.** Built-in rules over GitHub data cover size, paths, issues, conflicts and CI.
+- **Keep counting, math, dates and paths in code.** Built-in rules over host data cover size, paths, issues, conflicts and CI.
 - **Irrelevant state costs accuracy.** TypeSafe reports accuracy falling as unrelated content grows.
 
 ## The unsure band and pass marks
@@ -146,7 +146,7 @@ A change to how a rule is asked or decided states the eval's misses before and a
 
 ## Adding a decision-model rule
 
-1. **Prefer a built-in rule.** If GitHub data decides it, a built-in rule over GitHub data (size, linked issue, conflicts, CI, forbidden paths) costs no model call. Who opened the pull request, whether it links an issue, its CI and its size are a step's `when` conditions, decided in code after the verdict; they never reach the model.
+1. **Prefer a built-in rule.** If host data decides it, a built-in rule over host data (size, linked issue, conflicts, CI, forbidden paths) costs no model call. Who opened the pull request, whether it links an issue, its CI and its size are a step's `when` conditions, decided in code after the verdict; they never reach the model.
 2. **Write the question** by the rules above.
 3. **Add it to the repository's policy.** In the policy file, a yes/no question about the whole pull request is a rule with `check: model`; its `text` is the question's claim:
 

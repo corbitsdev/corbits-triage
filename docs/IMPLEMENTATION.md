@@ -26,8 +26,8 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/audit-log.ts` | The audit list, read from what the workspace already recorded. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
-| `src/code-review.ts`, `src/code-review-feed.ts`, `src/code-review-runs.ts` | The code review switch; `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; the feed that mails each new head; the latest review, read from run logs. |
-| `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and Docker registration (`docker.ts`). |
+| `src/code-review.ts`, `src/code-review-feed.ts`, `src/code-review-runs.ts` | The code review switch; `…/place`, the selected provisioner and each place probed at boot (built in `server.ts`); `…/run`; the feed that mails each new head; the latest review, read from run logs. |
+| `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and the Docker, E2B and Railway Sandboxes registrations (`docker.ts`, `e2b.ts`, `railway.ts`). |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/bitbucket-datacenter/` | Bitbucket Data Center connection, repository and webhook routes, payload normalizing. |
 | `src/github/bridge.ts` | GitHub webhook verification and routing; `logJson`, the hub's one JSON-line logger, passed down as `log`. |
@@ -98,7 +98,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `repo-read-tool` | `read_file`, `grep` and `list`, read-only and confined to a checkout folder under the sidecar data dir's `checkouts` (no `..`, absolute path or symlink out); the host tool packages export `checkout` and their read bundles add `*_read_file`. |
 | `pr-code-review`, `pr-code-review-anthropic` | The provider-neutral code review workflow and the Anthropic provider's package and eval; see [its README](../packages/pr-code-review/README.md). |
 | `policy-check-action` | The GitHub Action that checks `.corbits-triage.yml` as the hub reads it. |
-| `provisioner-docker`, `provisioner-template`, `provisioner-test` | The Docker provisioner, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
+| `provisioner-docker`, `provisioner-e2b`, `provisioner-railway`, `provisioner-template`, `provisioner-test` | The Docker, E2B and Railway Sandboxes provisioners, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
 | `openai-null-delta` | Inference adapter fix for null stream deltas. |
 | `common` | Dependency-free helpers shared across apps and packages. |
 

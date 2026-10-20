@@ -116,8 +116,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   stock's plugin registry selects for it under the workspace's placement
   policies, or null, and lists every place the hub's provisioner packages
   describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`, `RAILWAY_PLACE`) with the state the hub
-  found at boot, for Settings → Code review. The hub's own machine is never
-  one. While it is null the switch and **Review again** refuse
+  found at boot, for Settings → Code review. The local-process provisioner is
+  never one. While it is null the switch and **Review again** refuse
   (`no_isolated_place`), nothing is mailed, the host's code review
   deployments are released, and the portal links Settings → Code review in
   place of the switch.
@@ -144,7 +144,7 @@ name per tenant; no deployment ids are configured anywhere.
   again**, and records its verdicts like pr-triage's.
 - `repo-scan`: one run that reads a repository's most recently updated closed
   pull requests (200 by default) and measures what maintainers merged and
-  closed. Not deployed by the hub yet.
+  closed. Not deployed yet.
 - `pr-code-review-github` and `pr-code-review-bitbucket-datacenter`: one mail
   names one pull request and the run returns a review.
 
@@ -221,8 +221,8 @@ of those action handlers (`credentialBindings` with `action: <handler>`):
 each declares the host's handle in `credentials` and a capability in
 `effect.requires` (`pull-request.read` for facts, `pull-request.write` for
 mirror and execute), and calls the host only inside `ctx.perform`'s `run`.
-Facts is one effect; each mirror write and each Do is its own effect under
-its call id, the Do's effect id, so a resumed run does not write it again.
+Facts is one effect; each mirror write and each action is its own effect under
+its call id, the action's effect id, so a resumed run does not write it again.
 The calls are the host tool's (`githubCalls`, `bitbucketCalls`), so a host
 operation has one implementation.
 

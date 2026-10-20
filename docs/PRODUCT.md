@@ -49,7 +49,8 @@ How to use the portal, screen by screen, is in the
 
 The portal shows the verdict, its score and the reasons. Evidence for a file
 cites its changed lines (`src/router.ts:40-58`) and links them at the commit
-that was judged. The pull request sees only the actions.
+that was judged. The pull request sees Triage's comment, its verdict label and
+the actions.
 
 ## Rules
 
@@ -57,7 +58,7 @@ A rule answers one question about a pull request: pass, fail, or unconfirmed.
 
 | Kind | Evaluates | Cost | Use it for |
 | --- | --- | --- | --- |
-| Rule | Host data only: files, size, linked issue, mergeability, reviews, CI, text. No inference. | Host API calls. | Anything the host already knows. |
+| Host data | Host data only: files, size, linked issue, mergeability, reviews, CI, text. No inference. | Host API calls. | Anything the host already knows. |
 | Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs. |
 
 ### Rules over host data
@@ -71,7 +72,7 @@ either), No merge conflicts, CI green, No forbidden paths, Conventional commits
 `type(scope)!: `, in any case; merges and reverts skipped). Two always run:
 Not a draft, and No changes requested (a requested change fails and waits on
 the author, then on the reviewer once the author pushes or replies). The
-recommended forbidden paths are `vendor/**`, `node_modules/**` and
+extension's recommended rules forbid `vendor/**`, `node_modules/**` and
 `.github/**`: an author who edits the workflows can change which checks run.
 
 A text rule fails when the title, the description or any commit message (the
@@ -145,8 +146,8 @@ versions and marks the earlier one superseded.
 
 ## Steps
 
-The policy holds one **When** (the events that wake it: `opened`, `updated`,
-`checks`, `ready`; all four by default) and three ordered lists of steps:
+The policy's `actions` hold `on` (the events that wake them: `opened`,
+`updated`, `checks`, `ready`; all four by default) and three ordered lists of steps:
 **On Pass**, **On Fail** and **On Unsure**. The verdict picks the list. Each
 step names an action and, optionally, `when` conditions.
 
@@ -167,7 +168,8 @@ step names an action and, optionally, `when` conditions.
   is skipped, and the verdict records why. An empty `when` is refused rather
   than read as no condition.
 
-By default, Unsure asks the code owners for review.
+Without `actions`, a verdict has no steps; Triage posts only its comment and
+verdict label.
 
 ```yaml
 actions:
@@ -214,12 +216,7 @@ keeps it, so a push that leaves the verdict as it was changes no label; any
 other shows `Triage: Waiting for CI` until the verdict replaces it, or no
 Triage label while the head has no checks. On Bitbucket the head's `Corbits
 Triage` build status is in progress until its verdict.
-A head triaged anyway while the only rules left to confirm are the host's own
-(CI still running, mergeability not computed yet) gets no verdict yet: it
-shows the same marker, nothing is posted or run, and it is triaged again once
-they are done. Past the hour, on Triage again, or on its last retry, it gets
-its verdict anyway. A head triaged while CI still runs for a step's CI condition
-has every action held until its checks finish.
+Past the hour, or on **Triage again**, it gets its verdict anyway.
 
 ### Labels
 
@@ -245,7 +242,7 @@ the verdict there.
 
 A repository's policy is `.corbits-triage.yml` at the root of its default
 branch (`.corbits-triage.yaml` when there is no `.yml`), so policy changes are
-reviewed like code. It lists `rules`, `actions` and `labels`, and may
+reviewed like code. It lists `rules`, `actions`, `labels` and a default `onFail`, and may
 `extends` another repository's policy file or a workspace policy; any other key
 is refused.
 
@@ -257,14 +254,10 @@ are required. A model or text rule names its own `id`. A built-in rule takes
 its setting as `max` (size limits), `tracker` (linked issue), `paths`
 (forbidden paths) or `types` and `fields` (conventional commits);
 `enabled: false` keeps it written down but off.
-`onFail` says what a failing rule does: `fail` (the default) fails the pull
-request for its author, `ask` makes it Unsure and lists the rule for a
-maintainer instead of the author, and `label` makes the rule label the pull
-request instead of deciding its verdict. A top-level `onFail` is the default
-for the file's rules. With `label`, when the rule fails or stays unsure, the
-verdict is unchanged, the comment notes it, and an Add labels action adds its label (`size: large`,
-`docs: check`, `<id>: check`, or the rule's own `label`), which stays until a
-person removes it. A label starting `Triage:` or `rule: `, or a verdict label,
+`onFail` is `fail` (the default), `ask` or `label` (see [Verdict](#verdict));
+a top-level `onFail` is the default. A `label` rule adds `size: large`,
+`docs: check`, `<id>: check` or its own `label`, which stays until a person
+removes it. A label starting `Triage:` or `rule: `, or a verdict label,
 is refused. On Bitbucket Data Center it is only noted.
 
 ```yaml
@@ -365,7 +358,7 @@ answers for anything unchanged.
 ## Not finished
 
 - The repository scan measures a repository's closed pull requests but does
-  not propose a policy yet, and the hub does not run it.
+  not propose a policy yet, and it is not deployed yet.
 - The Railway Sandboxes provisioner uses the operator's Railway token only;
   a workspace cannot bring its own.
 - Code review findings are not sent to Bitbucket Data Center pull requests.
