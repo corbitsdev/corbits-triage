@@ -8,7 +8,7 @@
         "@corbits/system-one": "0.3.1",
       },
       "devDependencies": {
-        "@corbits/evals": "0.1.1",
+        "@corbits/evals": "0.1.2",
         "@intx/agent": "workspace:*",
         "@intx/authz": "workspace:*",
         "@intx/harness": "workspace:*",
@@ -345,7 +345,7 @@
         "re2js": "2.8.6",
       },
       "devDependencies": {
-        "@corbits/evals": "0.1.1",
+        "@corbits/evals": "0.1.2",
         "@intx/authz": "workspace:*",
         "@intx/harness": "workspace:*",
         "@intx/inference": "workspace:*",
@@ -882,7 +882,7 @@
 
     "@corbits/e2e": ["@corbits/e2e@workspace:e2e"],
 
-    "@corbits/evals": ["@corbits/evals@0.1.1", "", { "dependencies": { "@corbits/system-one": "^0.3.0" }, "peerDependencies": { "@intx/workflow": "^0.4.0" }, "optionalPeers": ["@intx/workflow"] }, "sha512-JjBbLVZn/xtrdQiOr/yglsBfiaa8fAksCaZ+kiu+bRK0MQAhUjUKRmp1G06JouHagAUsAlqhcbagI91gsoEASQ=="],
+    "@corbits/evals": ["@corbits/evals@0.1.2", "", { "dependencies": { "@corbits/system-one": "^0.3.0" }, "peerDependencies": { "@intx/workflow": "^0.5.0" }, "optionalPeers": ["@intx/workflow"] }, "sha512-+4/avYgxR2kBEtvKfoqJxZPbfpsCfLju4pTh5SqP5bn3jfDv7tyG2bEQcWRoynr7YvZ8V+TQtHzaCzJtNAEOzA=="],
 
     "@corbits/extension": ["@corbits/extension@workspace:apps/extension"],
 

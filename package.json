@@ -36,7 +36,7 @@
     "vendor:health": "sh tooling/vendor-health-check.sh"
   },
   "devDependencies": {
-    "@corbits/evals": "0.1.1",
+    "@corbits/evals": "0.1.2",
     "@intx/agent": "workspace:*",
     "@intx/authz": "workspace:*",
     "@intx/harness": "workspace:*",
