@@ -7,7 +7,6 @@ import {
   authorTeams,
   codeownersForPr,
   getChecks,
-  getApp,
   getPr,
   getReviews,
   listIssueComments,
@@ -16,8 +15,6 @@ import {
   listOpenPrs,
   listPrCommits,
   listPrFilesPage,
-  listInstallations,
-  listInstallationRepositories,
   readFileAt,
   readRepoDocsPage,
   readStack,
@@ -50,9 +47,6 @@ function obj(properties: Record<string, unknown>, required = Object.keys(propert
 }
 
 const READ_DEFINITIONS: ToolDefinition[] = [
-  { name: "github_get_app", description: "Get the authenticated GitHub App.", inputSchema: obj({}) },
-  { name: "github_list_installations", description: "List every installation of the authenticated GitHub App.", inputSchema: obj({}) },
-  { name: "github_list_installation_repositories", description: "List every selected repository for one App installation.", inputSchema: obj({ installationId: { type: "integer" } }) },
   {
     name: "github_list_open_prs",
     description: "List open pull requests for a repository.",
@@ -231,12 +225,6 @@ async function readWindow(fileAt: FileAt, a: Record<string, any>) {
 async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, fileAt: FileAt): Promise<unknown> {
   const a = call.arguments;
   switch (call.name) {
-    case "github_get_app":
-      return getApp(gh);
-    case "github_list_installations":
-      return { installations: await listInstallations(gh) };
-    case "github_list_installation_repositories":
-      return { repositories: await listInstallationRepositories(gh, a.installationId) };
     case "github_list_open_prs":
       return { prs: await listOpenPrs(gh, a.repo) };
     case "github_list_closed_prs":
