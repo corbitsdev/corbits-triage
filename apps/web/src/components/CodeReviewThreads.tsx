@@ -1,4 +1,5 @@
 import { errorText } from "@corbits/common";
+import { BUDGET_EXHAUSTED_NOTE } from "@corbits/triage-contracts";
 import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-review.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { relativeTime } from "../lib/duration.ts";
@@ -91,6 +92,7 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       {send.error ? <p role="alert" className="error">Could not send to GitHub. {errorText(send.error)}</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
       {completed?.cut ? <p className="note">Reviewed the first {completed.cut.lines} of {completed.cut.of} lines of the diff; the rest was over the size limit.</p> : null}
+      {completed?.budgetExhausted ? <p className="note">{BUDGET_EXHAUSTED_NOTE}</p> : null}
       {completed?.comments?.length ? <ol className="threads">{completed.comments.map((comment, index) => <Thread key={index} comment={comment} review={completed} />)}</ol> : null}
     </section>
   );

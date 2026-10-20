@@ -27,6 +27,7 @@ const CompletedRun = type({
   startedAt: "string",
   summary: "string",
   comments: CodeReviewComment.array(),
+  budgetExhausted: "boolean",
   "cut?": Cut,
 });
 const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string" });
@@ -54,7 +55,7 @@ function runOf(events: readonly WorkflowRunEvent[], status: string, createdAt: D
   const output = Review(inlineOutput(events.findLast((event) => event.type === "StepCompleted" && event.body["stepId"] === "review")));
   if (!(output instanceof type.errors)) {
     const comments = output.comments.map(({ path, start, end, title, body, priority, quoted }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }) }));
-    return { ...run, review: { ...base, status: "completed", summary: output.summary, comments, ...(output.cut && { cut: output.cut }) } };
+    return { ...run, review: { ...base, status: "completed", summary: output.summary, comments, budgetExhausted: output.budgetExhausted, ...(output.cut && { cut: output.cut }) } };
   }
   const ended = !schema.isLiveWorkflowRunStatus(status) || events.some(isTerminal);
   return { ...run, review: { ...base, status: ended ? "failed" : "running" } };

@@ -35,6 +35,7 @@ const FINISHED = {
   headSha: HEAD,
   startedAt: "2026-10-17T00:00:00.000Z",
   summary: "Fixes the widget.",
+  budgetExhausted: true,
   comments: [
     { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1 },
     { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it." },
@@ -237,7 +238,7 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   expect(sentReviews).toEqual([{
     commit_id: HEAD,
     event: "COMMENT",
-    body: "Fixes the widget.\n\n**Stale import** · `src/other.ts:5`\n\nRemove it.\n\n<!-- corbits-code-review -->",
+    body: "Fixes the widget.\n\nStopped early: the reviewer reached its limit for reading the repository.\n\n**Stale import** · `src/other.ts:5`\n\nRemove it.\n\n<!-- corbits-code-review -->",
     comments: [{ path: "src/widget.ts", line: 1, side: "RIGHT", body: "**P1 · Unchecked input**\n\nValidate it first.\n\nAlso lines 2–3." }],
   }]);
 
@@ -252,7 +253,7 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   expect(outdated.status).toBe(409);
   expect(await outdated.json()).toMatchObject({ error: { code: "code_review_outdated" } });
 
-  completed = { ...FINISHED, headSha: "newer", summary: "", comments: [] };
+  completed = { ...FINISHED, headSha: "newer", summary: "", comments: [], budgetExhausted: false };
   expect(await (await prActions({ ...send, headSha: "newer" }, member("usr_approver"))).json()).toMatchObject({ error: { code: "code_review_empty" } });
   completed = null;
   expect(await (await prActions(send, member("usr_approver"))).json()).toMatchObject({ error: { code: "no_code_review" } });

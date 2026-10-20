@@ -20,7 +20,7 @@ function started(number: number, sha: string): WorkflowRunEvent {
 const REVIEW = {
   summary: "Adds total(), which skips the first element.",
   comments: [{ path: "src/total.ts", start: 3, end: 3, title: "total() skips the first element", body: "The loop starts at 1.", priority: 1, quoted: "for (let i = 1; i < xs.length; i++) sum += xs[i];" }],
-  budgetExhausted: false,
+  budgetExhausted: true,
 };
 
 const OUTPUT = { ...REVIEW, comments: REVIEW.comments.map((comment) => ({ ...comment, agreement: { finders: 1, reports: 1 } })) };
@@ -66,7 +66,7 @@ test("PostgreSQL: a pull request's latest code review comes from the newest run 
     async function reviewsOf(number: number) {
       return runs.latest(TENANT, { repo: "acme/widgets", number });
     }
-    const finished = { status: "completed" as const, headSha: "sha1", startedAt: at(1).toISOString(), summary: REVIEW.summary, comments: REVIEW.comments };
+    const finished = { status: "completed" as const, headSha: "sha1", startedAt: at(1).toISOString(), summary: REVIEW.summary, comments: REVIEW.comments, budgetExhausted: true };
 
     expect(await reviewsOf(7)).toEqual({ review: finished, completed: finished });
     expect(await reviewsOf(8)).toEqual({ review: { status: "running", headSha: "sha9", startedAt: at(2).toISOString() }, completed: null });

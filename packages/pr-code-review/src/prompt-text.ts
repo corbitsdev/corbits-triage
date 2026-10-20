@@ -2,7 +2,7 @@
 // rewritten, so code with arrows, generics or markup reaches the model as written.
 const TAGS = [
   "pull_request", "title", "description", "diff", "changed_files", "plan", "findings", "finding", "candidate",
-  "quoted_code", "file", "cited_code", "repository", "budget", "stopped_early",
+  "quoted_code", "file", "cited_code", "repository", "budget",
 ];
 // A model may still read a tag broken up by invisible format characters, or by spaces after its slash.
 const TAG_START = new RegExp(`<(?=\\p{Cf}*(?:/[\\s\\p{Cf}]*)?(?:${TAGS.join("|")})\\b)`, "gu");
