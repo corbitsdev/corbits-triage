@@ -29,6 +29,8 @@ export type QualityCheckId = (typeof QUALITY_CHECK_IDS)[number];
 
 export const ISSUE_TRACKERS = ["github", "linear", "either", "off"] as const;
 export type IssueTracker = (typeof ISSUE_TRACKERS)[number];
+/** The issue links the linked-issue rule counts, by tracker. */
+export const ISSUE_LINKS = { github: /github\.com\/[^\s/]+\/[^\s/]+\/issues\/\d+/, linear: /linear\.app\/\S+\/issue\// } as const;
 
 export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGroup; kind: "machine" | "quality" }> = {
   "max-files-changed": { name: "Max files changed", group: "pull-request", kind: "machine" },

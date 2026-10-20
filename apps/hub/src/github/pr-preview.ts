@@ -178,7 +178,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     // A candidate pack's steps name the teams whose membership is read from GitHub, so only those who may manage the workspace can try them.
     const trusted = candidate === undefined || manager ? pack : emptyPack(repo);
     // The preview never asks the judge, so it reads no docs.
-    const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: { docs: {}, rules: {} } }, trusted);
+    const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: { docs: {}, rules: {} }, source: "github" }, trusted);
     if (item instanceof Response) return item;
 
     const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, signal);

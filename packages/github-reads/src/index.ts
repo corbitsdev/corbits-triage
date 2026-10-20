@@ -201,11 +201,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// The full media type adds `body_html`, GitHub's own rendering of the body, without what its markdown hides.
+function pullRequest(gh: GithubFetch, repo: string, number: number): Promise<any> {
+  return json(gh, `/repos/${repo}/pulls/${number}`, { headers: { accept: "application/vnd.github.full+json" } });
+}
+
 function prFields(p: any) {
   return {
     number: p.number,
     title: p.title,
     body: p.body,
+    bodyHtml: p.body_html,
     state: p.state,
     merged: p.merged,
     draft: p.draft,
@@ -231,7 +237,7 @@ function prFields(p: any) {
 
 /** Without waiting for mergeability. */
 export async function readPr(gh: GithubFetch, repo: string, number: number) {
-  return prFields(await json(gh, `/repos/${repo}/pulls/${number}`));
+  return prFields(await pullRequest(gh, repo, number));
 }
 
 function fileDiff({ path, previousPath, patch }: PrFile): string {
@@ -249,10 +255,10 @@ export async function readPrDiff(gh: GithubFetch, repo: string, number: number):
 
 /** GitHub computes mergeability lazily; `mergeable: null` means poll again. */
 export async function getPr(gh: GithubFetch, repo: string, number: number) {
-  let p = await json(gh, `/repos/${repo}/pulls/${number}`);
+  let p = await pullRequest(gh, repo, number);
   for (let i = 0; i < MERGEABLE_RETRIES && p.mergeable === null && p.state === "open"; i++) {
     await sleep(MERGEABLE_BACKOFF_MS);
-    p = await json(gh, `/repos/${repo}/pulls/${number}`);
+    p = await pullRequest(gh, repo, number);
   }
   return prFields(p);
 }

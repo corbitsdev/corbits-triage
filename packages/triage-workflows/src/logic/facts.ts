@@ -1,5 +1,5 @@
 import { checkFailed, checkPending, latestDecisive, listPrFilesPage, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
-import { authorAssociation, authorKindOf, stepTeams, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
+import { authorAssociation, authorKindOf, renderedText, stepTeams, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
@@ -11,6 +11,8 @@ export type RepoDocs = Pick<PrFacts, "docs" | "rules">;
 export interface PrData {
   title?: string;
   body?: string | null;
+  /** GitHub's rendering of the body; Bitbucket Data Center has none. */
+  bodyHtml?: string | null;
   author?: string;
   authorAssociation?: string | null;
   authorBot?: boolean;
@@ -173,8 +175,8 @@ export function fileFacts(value: unknown): PrFileFacts[] {
 /** Text rules read the first this many commit messages in full. */
 const COMMIT_MESSAGES_MAX = 100;
 
-function firstLine(commit: { message?: string }): string {
-  return (commit.message ?? "").split("\n", 1)[0]!;
+function firstLine(message: string): string {
+  return message.split("\n", 1)[0]!;
 }
 
 export function namedTeams(pack: CheckPack, repo: string): string[] {
@@ -228,16 +230,35 @@ export interface ItemContext {
   pack: CheckPack;
   events: TriageEvent[];
   docs: RepoDocs | string;
+  source: RepoSource;
 }
 
-export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs }: ItemContext): RulesItem {
-  const { pr, files } = data;
+/** Patches are left as the host sent them; hunks.ts makes them safe to read. */
+function shownFile(file: PrFileFacts): PrFileFacts {
+  return { ...file, path: visibleText(file.path), ...(file.previousPath === undefined ? {} : { previousPath: visibleText(file.previousPath) }) };
+}
+
+/** GitHub's own rendering holds only what a reader sees; Bitbucket Data Center shows the body as written. */
+function shownBody(pr: PrData, source: RepoSource): string | undefined {
+  if (source !== "github") return visibleText(pr.body ?? "");
+  if (typeof pr.bodyHtml === "string") return renderedText(pr.bodyHtml);
+  return pr.body ? undefined : "";
+}
+
+/** Every rule, the judge and the comment read pull request text only as a reader sees it. */
+export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs, source }: ItemContext): RulesItem {
+  const { pr } = data;
   if (!pr) return { error: `github_get_pr failed for #${number}` };
-  if (typeof files === "string") return { error: files };
+  if (typeof data.files === "string") return { error: data.files };
   if (typeof docs === "string") return { error: docs };
+  const body = shownBody(pr, source);
+  if (body === undefined) return { error: `github_get_pr returned no rendered body for #${number}` };
+  const files = data.files.map(shownFile);
   const paths = files.map((file) => file.path);
-  const commits = data.commits.map(firstLine);
-  const commitMessages = data.commits.slice(0, COMMIT_MESSAGES_MAX).map((commit) => commit.message ?? "");
-  const facts: PrFacts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack) };
+  const messages = data.commits.map((commit) => visibleText(commit.message ?? ""));
+  const commits = messages.map(firstLine);
+  const commitMessages = messages.slice(0, COMMIT_MESSAGES_MAX);
+  const shown = { ...pr, title: visibleText(pr.title ?? ""), body };
+  const facts: PrFacts = { ...buildFacts(repo, number, shown, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack) };
   return { facts, pack };
 }

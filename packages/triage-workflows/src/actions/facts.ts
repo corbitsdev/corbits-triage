@@ -14,8 +14,6 @@ import type { RulesItem } from "./rules.js";
 
 export type FactsOutput = { items: RulesItem[]; batch: boolean } | History;
 
-type Results = Map<string, ToolResult>;
-
 function ruleSpans(rows: unknown[]): RuleSpan[] {
   return rows.flatMap((span) => {
     if (!isRecord(span) || typeof span.path !== "string") return [];
@@ -190,7 +188,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
       stack: data<NonNullable<PullData["stack"]>>(r1.get(`stack:${n}`)),
       files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
       authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
-    }, { repo, policy, pack, events, docs });
+    }, { repo, policy, pack, events, docs, source: stamp.repoSource });
     const judged = stamp.carried.get(n);
     if ("error" in item) return item;
     const stamped = { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }) };

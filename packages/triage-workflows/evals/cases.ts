@@ -44,6 +44,8 @@ export interface Snapshot {
   number: number;
   title: string;
   body: string;
+  /** GitHub's rendering of `body`, which the facts step reads. */
+  bodyHtml: string;
   author: string;
   commits: string[];
   files: FileRow[];
@@ -69,8 +71,8 @@ export function variant(base: Snapshot, input: CaseInput, other?: Snapshot): Sna
   if (input.mix !== undefined) {
     if (!other) throw new Error(`case ${input.pull}+${input.mix} needs ${input.mix}`);
     const mixed = { ...base, files: [...base.files, ...other.files], commits: [...base.commits, ...other.commits] };
-    return input.described ? { ...mixed, title: `${base.title}; also ${other.title}`, body: `${base.body}\n\nAlso: ${other.body}` } : mixed;
+    return input.described ? { ...mixed, title: `${base.title}; also ${other.title}`, body: `${base.body}\n\nAlso: ${other.body}`, bodyHtml: `${base.bodyHtml}\n<p dir="auto">Also:</p>\n${other.bodyHtml}` } : mixed;
   }
   if (input.drop === undefined) return base;
-  return { ...base, body: "", commits: base.commits.filter((commit) => !MENTIONS_DOCS.test(commit)), files: base.files.filter((file) => !isDocPath(file.filename)) };
+  return { ...base, body: "", bodyHtml: "", commits: base.commits.filter((commit) => !MENTIONS_DOCS.test(commit)), files: base.files.filter((file) => !isDocPath(file.filename)) };
 }

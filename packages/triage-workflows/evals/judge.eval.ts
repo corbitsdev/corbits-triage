@@ -32,7 +32,7 @@ function fixtureGithub(pr: Snapshot) {
   const repo = `/repos/${pr.repo}`;
   const docs = Object.entries(pr.docs);
   const pull = {
-    number: pr.number, title: pr.title, body: pr.body, state: "open", draft: false, merged: false, mergeable: true, mergeable_state: "clean",
+    number: pr.number, title: pr.title, body: pr.body, body_html: pr.bodyHtml, state: "open", draft: false, merged: false, mergeable: true, mergeable_state: "clean",
     user: { login: pr.author, type: "User" }, head: { sha: "eval", ref: "eval" }, base: { ref: "main" },
     additions: pr.files.reduce((sum, file) => sum + file.additions, 0), deletions: pr.files.reduce((sum, file) => sum + file.deletions, 0),
     changed_files: pr.files.length, labels: [], requested_reviewers: [], requested_teams: [], assignees: [],
