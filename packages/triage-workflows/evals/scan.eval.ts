@@ -51,7 +51,8 @@ function liveGithub(responses: Fixture["responses"]) {
   return async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const { key, method } = requestKey(input, init);
     if (method !== "GET") throw new Error(`the scan wrote ${method} ${key}`);
-    const res = await fetch(`${GITHUB}${key}`, { headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}` } });
+    const accept = new Headers(init?.headers).get("accept") ?? "application/vnd.github+json";
+    const res = await fetch(`${GITHUB}${key}`, { headers: { accept, authorization: `Bearer ${token}` } });
     const text = await res.text();
     const body = res.ok ? JSON.stringify(slim(JSON.parse(text))) : text;
     responses[key] = { status: res.status, body };

@@ -72,7 +72,10 @@ export function fixture(key: string): Snapshot {
   if (!label) throw new Error(`${key} is not labelled in labels.json`);
   const { baseSha, headSha } = label;
   const [repo, number] = key.includes("#") ? key.split("#") as [string, string] : [REPO, key];
-  return cached(`pulls/${number}-${headSha}.json`, function fetchPull() {
+  const bodyHtml = cached(`bodies/${number}-${headSha}.json`, function fetchBodyHtml() {
+    return redacted(JSON.parse(gh(["-H", "Accept: application/vnd.github.full+json", `repos/${repo}/pulls/${number}`])).body_html ?? "");
+  });
+  const snapshot = cached(`pulls/${number}-${headSha}.json`, function fetchPull() {
     const pull = ghJson<any>(`repos/${repo}/pulls/${number}`);
     const compare = measured(key, repo, baseSha, headSha);
     return {
@@ -86,4 +89,5 @@ export function fixture(key: string): Snapshot {
       docs: docsAt(repo, baseSha),
     };
   });
+  return { ...snapshot, bodyHtml };
 }

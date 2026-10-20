@@ -6,6 +6,7 @@ import {
   CONVENTIONAL_FIELDS,
   CONVENTIONAL_TYPES,
   customCheckEnabled,
+  ISSUE_LINKS,
   isTextCheck,
   labelRules,
   parseCheckPack,
@@ -181,8 +182,8 @@ export function hasModelChecks(sources: DeterministicResult["sources"]): boolean
   return sources !== undefined && (sources.quality.length > 0 || sources.custom.length > 0);
 }
 
-const GITHUB_ISSUE_REF = /(^|[\s(])#\d+\b|github\.com\/[^\s/]+\/[^\s/]+\/issues\/\d+/;
-const LINEAR_ISSUE_REF = /\b[A-Z][A-Z0-9]+-\d+\b|linear\.app\/\S+\/issue\//;
+const GITHUB_ISSUE_REF = new RegExp(`(^|[\\s(])#\\d+\\b|${ISSUE_LINKS.github.source}`);
+const LINEAR_ISSUE_REF = new RegExp(`\\b[A-Z][A-Z0-9]+-\\d+\\b|${ISSUE_LINKS.linear.source}`);
 // GitHub's "create a branch" names branches `123-title`; Linear's are `cl-123-title`.
 const GITHUB_BRANCH_REF = /^(\d+)-/;
 const LINEAR_BRANCH_REF = /\b([a-z][a-z0-9]+-\d+)\b/i;

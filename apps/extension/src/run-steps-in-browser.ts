@@ -46,7 +46,7 @@ async function readItem(gh: GithubFetch, { repo, number }: PrRef, pack: CheckPac
   ]);
   const checks = pr.sha ? await getChecks(gh, repo, pr.sha) : [];
   // Team membership needs read:org, which the read-only token is not asked for, so a step for a team is skipped as unknown.
-  return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: null }, { repo, policy: repoPolicy({}), pack, events: ["catch-up"], docs });
+  return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: null }, { repo, policy: repoPolicy({}), pack, events: ["catch-up"], docs, source: "github" });
 }
 
 /** The repository's docs are read only when the decision model will be asked. */

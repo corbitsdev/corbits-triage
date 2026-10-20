@@ -23,3 +23,4 @@ export * from "./tarball.js";
 export * from "./code-review-models.js";
 export * from "./code-review.js";
 export * from "./policy-export.js";
+export * from "./visible-text.js";

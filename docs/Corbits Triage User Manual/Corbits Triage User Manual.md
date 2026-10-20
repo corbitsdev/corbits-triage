@@ -252,6 +252,8 @@ Size rules and facts the host already knows cost nothing and always give the sam
 2. If the policy has no Judgement rules, there is nothing left to judge: the verdict is **Pass** when every rule passes. A rule still waiting on the host, such as CI that is still running, makes Triage wait (see Waiting for CI).
 3. Otherwise the decision model reads the whole pull request together with every rule's result and answers one question: does this pull request pass this repository's policy? If it is at least 70% sure the answer is yes, the verdict is **Pass**. If it is at least 70% sure the answer is no, the verdict is **Fail**. Anything in between is **Unsure**, which means a person should look. A pull request with a Judgement rule the model could not confirm is never more than Unsure.
 
+Triage reads a pull request's title, description, commit messages and file names as people see them. Text hidden from view, such as invisible characters and, on GitHub, comments in the description, is left out, so the rules, the decision model and the Triage comment never act on something a reviewer cannot see.
+
 Rules set to `onFail: label` take no part in any of these steps: they only label and note the pull request. A policy whose only Judgement rules only label is decided as one with none.
 
 Draft pull requests are not decided at all, and a closed pull request gets no verdict.

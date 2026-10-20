@@ -35,7 +35,7 @@ async function github(input: string | URL | Request): Promise<Response> {
   const files = FILES[number] ?? [];
   if (path === `/pulls/${number}`) {
     return Response.json({
-      number, title: `Change ${number}`, body: number === 3 ? "Fixes #9" : "", state: "closed", draft: false, user: { login: "ana", type: "User" }, author_association: "CONTRIBUTOR",
+      number, title: `Change ${number}`, body: number === 3 ? "Fixes #9" : "", body_html: number === 3 ? '<p dir="auto">Fixes <a href="https://github.com/acme/widgets/issues/9">#9</a></p>' : "", state: "closed", draft: false, user: { login: "ana", type: "User" }, author_association: "CONTRIBUTOR",
       head: { sha: `sha${number}`, ref: "topic" }, base: { ref: "main" }, changed_files: files.length, additions: files.length * 40, deletions: 0,
     });
   }

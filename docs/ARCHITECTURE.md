@@ -160,7 +160,19 @@ label off that head, so it never stands on a head not yet triaged.
 
 1. **facts**: reads the pull request, its files, reviews, CI, commits (the
    first 100 messages in full), the repository's docs and its contribution
-   rules from the host.
+   rules from the host. On GitHub the body is read from GitHub's own rendering
+   (`body_html`, from the full media type) as plain text (`renderedText` in
+   `@corbits/triage-contracts`): comments and anything else GitHub's markdown
+   hides never reach it, nor attributes, diagram sources GitHub ships hidden,
+   screen-reader-only text or ruby fallbacks. A link reads as its text, and
+   only a link the linked-issue rule counts (a GitHub or Linear issue) keeps
+   its target beside it, up to the issue's id, so the rule still finds it.
+   Math is read as its source. Bitbucket Data Center shows the body as
+   written. The title, body, commit messages and changed paths then lose
+   controls and default-ignorable characters such as zero-width, bidi, tag and
+   stray variation-selector characters (`visibleText`), so every rule, the
+   judge and the comment read them as the host shows them. Patches are not
+   changed.
 2. **rules**: runs the hard rules (built-in rules over host data and text
    rules) and, unless one failed or the pull request is a draft or closed,
    builds the judged rules' questions, or the verdict question when there are

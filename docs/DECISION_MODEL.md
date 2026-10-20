@@ -34,7 +34,7 @@ The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that inf
 
 Questions are built in `packages/triage-workflows/src/logic/quality.ts`. Every request's state holds:
 
-- the pull request's title, body (up to 4,000 chars), up to 50 commit subjects (each cut to 200 chars) and up to 200 changed paths, lockfiles included. When focused is asked, paths are listed instead while they fit 8 KB; when any is left out, `pullRequest.directories` comes too, every changed file counted by directory (files and changed lines) at the deepest level that fits 8 KB;
+- the pull request's title, body (up to 4,000 chars), up to 50 commit subjects (each cut to 200 chars) and up to 200 changed paths, lockfiles included, all without invisible characters. A GitHub body is the text GitHub renders, with a GitHub or Linear issue link followed by its target up to the issue's id. When focused is asked, paths are listed instead while they fit 8 KB; when any is left out, `pullRequest.directories` comes too, every changed file counted by directory (files and changed lines) at the deepest level that fits 8 KB;
 - the judged files that fit the request, each patch split into hunks. Lockfiles (`bun.lock`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum` and similar) keep their path but their patch is never sent;
 - the repository's docs (`repository.docs`, markdown by path), see [budgets](#budgets-and-limits);
 - in requests that ask a custom rule, the repository's contribution rules (`repository.rules`), taken out of `repository.docs` so each file is sent once. Custom questions say to judge by them.
