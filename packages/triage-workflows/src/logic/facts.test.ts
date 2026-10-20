@@ -40,6 +40,9 @@ test("assembleItem maps team membership back to every spelling the steps use and
   expect(assembleItem(8, { ...pull, authorTeams: { teams: ["core"], unknown: [] } }, context)).toMatchObject({ facts: { authorTeams: ["@acme/Core", "core"], authorTeamsUnknown: ["@other/x"] } });
   expect(assembleItem(8, { ...pull, authorTeams: null }, context)).toMatchObject({ facts: { authorTeams: [], authorTeamsUnknown: all } });
   expect(assembleItem(8, { ...pull, authorTeams: { teams: "core" } }, context)).toMatchObject({ facts: { authorTeams: [], authorTeamsUnknown: all } });
+  const grouped = { ...context, pack: { ...emptyPack("acme/widgets"), groups: { interns: { teams: ["acme/interns"] } } } };
+  expect(assembleItem(8, { ...pull, authorTeams: { teams: ["interns"], unknown: [] } }, grouped)).toMatchObject({ facts: { authorTeams: ["acme/interns"], authorTeamsUnknown: [] } });
+  expect(assembleItem(8, { ...pull, authorTeams: null }, grouped)).toMatchObject({ facts: { authorTeams: [], authorTeamsUnknown: ["acme/interns"] } });
 });
 
 describe("an answered review", () => {

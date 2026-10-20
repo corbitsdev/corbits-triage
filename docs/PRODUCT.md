@@ -256,8 +256,12 @@ the verdict there.
 A repository's policy is `.corbits-triage.yml` at the root of its default
 branch (`.corbits-triage.yaml` when there is no `.yml`), so policy changes are
 reviewed like code. It lists `rules`, `actions` and `labels`, and may
-`extends` another repository's policy file or a workspace policy; any other key
-is refused.
+`extends` another repository's policy file or a workspace policy. It may also
+hold the v4 keys `groups`, `code-review`, `security`, `deslop`, `pace`,
+`pauseLabel` and `decide`, which are checked but not acted on yet, except a
+step's `when.author` naming a group; `decide` replaces `actions`, so a file
+holds one or the other, and a file that uses `extends` holds none of them. Any
+other key is refused, naming the key it was likely meant to be.
 
 Each rule is one sentence (`text`), how it is checked (`check`: a built-in
 rule's id, `model` for a yes/no question about the whole pull request, or

@@ -1,6 +1,6 @@
 # .corbits-triage.yml reference
 
-The file holds `rules` (required), and optionally `actions`, `labels` and `extends`. Any other key is refused. YAML only, at most 64 KB; YAML aliases (`*name`) are refused. Triage reads `.corbits-triage.yml` and ignores `.corbits-triage.yaml` when both exist, so keep one.
+The file holds `rules` (required), and optionally `actions` or `decide`, `labels`, `extends`, `groups`, the blocks `code-review`, `security` and `deslop`, `pace` and `pauseLabel`. Any other key is refused, with the key it was likely meant to be. Every refusal names its line and what the value must be. YAML only, at most 64 KB; YAML aliases (`*name`) and the keys `__proto__`, `constructor` and `prototype` are refused. Triage reads `.corbits-triage.yml` and ignores `.corbits-triage.yaml` when both exist, so keep one.
 
 ## Rules
 
@@ -103,6 +103,40 @@ labels:
   fail: "Triage: Not Ready"
   unsure: "Triage: Needs Human Review"
 ```
+
+## Blocks and decide
+
+Triage checks these keys but does not act on them yet; write them only when the user asks. A file holds `decide` or `actions`, never both.
+
+```yaml
+groups:
+  maintainers: { association: [OWNER, MEMBER, COLLABORATOR] }
+code-review: { on: true, for: [maintainers], provider: anthropic }
+security:
+  on: true
+  when: { triage: pass, paths: ["src/**"] }
+  clean: { below: medium }
+deslop: { on: false }
+pace: { debounce: 30s, maxWait: 2m, perHead: 1, cap: { runs: 5, per: 24h }, backoff: { pushes: 5, within: 10m, pause: 30m } }
+pauseLabel: "corbits: pause"
+decide:
+  - { if: { triage: fail }, do: [request-changes, { do: comment, target: { body: "Please fix the failed rules." } }] }
+  - { if: { all: clean }, do: approve }
+  - { if: { code-review: findings }, do: review }
+```
+
+- `groups`: each named in lowercase words joined by hyphens, starting with a letter, at most 64 characters, with any of `association` (the author kinds under Actions), `teams` (`org/team`) and `users` (logins). The first group an author matches, in the order written, is theirs; they are in at most one. The built-in groups `maintainers`, `external`, `first-timers` and `bots` exist without being defined and match by author kind alongside it; defining one with that name replaces it. `everyone` is built in and always matches. A group or `everyone` can be named in `for`, `if.author` and a step's `when.author`. A built-in group is author kinds, so it still matches when teams can't be read, and is not known only when the author kind is. Whether the author is in a group the file defines is not known when the author kind is unknown, or when teams Triage can't read would decide which defined group is theirs. A step for a group that is not known doesn't run; `everyone` always matches. Never let `approve` or `merge` rest on `everyone` alone.
+- A block (`code-review`, `security`, `deslop`) takes only:
+  - `on`: `true` or `false` (required).
+  - `for`: list of groups; default everyone.
+  - `when`: `triage` (`pass`, `fail`, `unsure` or a list of them) and `paths` (globs; any changed file matching is enough).
+  - `clean`: `below` (`low`, `medium`, `high` or `critical`), `minConfidence` (0 to 1), `coverage: full`.
+  - `provider`: `anthropic`, `openai`, `xai`, `google`, `opencode` or `custom`. Every block that is on and names one must name the same.
+- `pace`: `debounce`, `maxWait` (durations of at least 1, such as `30s`, `2m`, `24h`, `7d`), `perHead` (whole number ≥ 1), `cap: { runs, per }`, `backoff: { pushes, within, pause }`.
+- `pauseLabel`: a label of at most 50 characters.
+- `decide`: rules `{ if, do }`, in order. `if` sets at least one of `all: clean`, `triage`, `event` (a list of `opened`, `updated`, `checks`, `ready`), `author` (groups) and the outcome of a block that is on (`clean`, `findings`, `incomplete`, `skipped`, a list of them, or `{ findings: <severity> }`). `do` is `approve`, `merge`, `close`, `request-changes`, `review`, `nothing`, or a list of those and steps written as under Actions (`comment`, `labels`, `request-review` and `assign` need their `target`). `nothing` stands alone. `{ all: clean }` holds when every block that actually ran is clean, and holds with none on; skipped blocks never count. Incomplete is never clean: a rule that approves or merges can't name `incomplete`, and only matches when nothing that ran is incomplete.
+
+A file with `actions` reads as `decide`: each verdict's steps become one rule on `triage: <verdict>` (and `event: <actions.on>` when `on` lists fewer than every event), a Pass or Fail with none becomes `do: nothing`, and an Unsure with none becomes no rule. A file that uses `extends` can't hold `groups`, blocks, `pace`, `pauseLabel` or `decide`.
 
 ## extends
 

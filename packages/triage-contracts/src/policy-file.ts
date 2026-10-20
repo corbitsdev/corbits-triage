@@ -1,9 +1,11 @@
-// A repository's policy kept in the repository itself: schema 3 (`rules`, see policy-rules.ts), or the stored policy's
-// shape less what the repository already says (`kind`, `schemaVersion` and `repo`). Only YAML is read; another format is another path.
-import { JSON_SCHEMA, load, YAMLException } from "js-yaml";
+// A repository's policy kept in the repository itself: schema 3 (`rules`, see policy-rules.ts) with v4's keys
+// (policy-workflow.ts), or the stored policy's shape less what the repository already says (`kind`, `schemaVersion` and
+// `repo`). Only YAML is read; another format is another path.
+import { isAlias, isMap, isNode, isPair, isScalar, isSeq, LineCounter, parseDocument, type Document, type Node } from "yaml";
 import { asRecord } from "@corbits/common";
 import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, readCheckPack, readPolicyOverride } from "./check-pack.js";
-import { isPolicyRulesFile, PolicyFileError, policyRulesSchema, rulesToPolicy } from "./policy-rules.js";
+import { isPolicyRulesFile, PolicyFileError, policyRulesSchema, readRulesFile } from "./policy-rules.js";
+import { decideOf, type PolicyWorkflow } from "./policy-workflow.js";
 
 export const POLICY_FILE_PATH = ".corbits-triage.yml";
 /** Read in this order on the default branch; the first one found is the policy. */
@@ -13,43 +15,74 @@ export const POLICY_FILE_MAX_BYTES = 64 * 1024;
 /** `line` and `column` count from 1; a problem not tied to one place in the file has neither. */
 export type PolicyFileProblem = { message: string; line?: number; column?: number };
 
-export type PolicyFileCheck = { ok: true; policy: Record<string, unknown> } | { ok: false; problems: PolicyFileProblem[] };
+/**
+ * `workflow` is what the file says beyond the stored policy: its v4 keys, and `decide`, from its schema 3 `actions` when
+ * it sets no `decide`. A file that extends another holds no v4 key, so its `workflow` is empty.
+ */
+export type PolicyFileCheck = { ok: true; policy: Record<string, unknown>; workflow: PolicyWorkflow } | { ok: false; problems: PolicyFileProblem[] };
 
 const PACK_KEYS = ["checks", "custom", "actions", "labels"];
 const OVERRIDE_KEYS = ["extends", ...PACK_KEYS];
-const NODES_MAX = 10_000;
-const DEPTH_MAX = 32;
 const TOO_LARGE = "The policy file is too large or uses aliases.";
 
 /** Published as JSON Schema: schema 3, the shape new files are written in. `readPolicyFile` stays the authority and still reads the older shape. */
 export const policyFileSchema = policyRulesSchema;
 
-class YamlProblem extends Error {
+/** A problem at one place in the file, found before it is read as a policy. */
+class PlacedProblem extends Error {
   constructor(message: string, readonly line: number, readonly column: number) {
     super(message);
   }
 }
 
-/** The document and the line each mapping and list in it starts on, which is the line of its key. */
-function parseYaml(text: string): { root: unknown; lines: WeakMap<object, number> } {
-  if (new TextEncoder().encode(text).length > POLICY_FILE_MAX_BYTES) throw new Error(TOO_LARGE);
-  const lines = new WeakMap<object, number>();
-  const opened: number[] = [];
-  function listen(event: "open" | "close", state: { line: number; result: unknown }) {
-    if (event === "open") {
-      opened.push(state.line + 1);
-      return;
+type Parsed = { root: unknown; doc: Document.Parsed; lines: LineCounter };
+
+/** Keys that would reach an object's prototype once read. */
+const RESERVED_KEYS = ["__proto__", "constructor", "prototype"];
+
+/** Policy files are shallow; anything deeper is refused before it is read. */
+const DEPTH_MAX = 32;
+
+function placed(message: string, node: Node, lines: LineCounter): PlacedProblem {
+  const { line, col } = lines.linePos(node.range?.[0] ?? 0);
+  return new PlacedProblem(message, line, col);
+}
+
+/**
+ * One walk over the document's nodes, refusing an alias, since a few can expand into billions of nodes, a key that
+ * would reach a prototype, and nesting deeper than `DEPTH_MAX`.
+ */
+function refuseShape(doc: Document.Parsed, lines: LineCounter): void {
+  const stack: Array<[unknown, number]> = [[doc.contents, 1]];
+  while (stack.length > 0) {
+    const [node, depth] = stack.pop()!;
+    if (isAlias(node)) throw placed(TOO_LARGE, node, lines);
+    if (!isMap(node) && !isSeq(node)) continue;
+    if (depth > DEPTH_MAX) throw placed(`The policy file nests deeper than ${DEPTH_MAX} levels.`, node, lines);
+    for (const item of node.items) {
+      if (!isPair(item)) {
+        stack.push([item, depth + 1]);
+        continue;
+      }
+      if (isScalar(item.key) && RESERVED_KEYS.includes(String(item.key.value))) throw placed(`\`${String(item.key.value)}\` can't be a key; rename it.`, item.key, lines);
+      stack.push([item.key, depth + 1], [item.value, depth + 1]);
     }
-    const line = opened.pop();
-    if (line !== undefined && state.result !== null && typeof state.result === "object") lines.set(state.result, line);
   }
-  try {
-    return { root: load(text, { schema: JSON_SCHEMA, listener: listen }), lines };
-  } catch (error) {
-    if (!(error instanceof YAMLException)) throw error;
-    // The full message quotes the file; the reason and position say enough without carrying its content into logs.
-    throw new YamlProblem(`The policy file is not YAML: ${error.reason}.`, error.mark.line + 1, error.mark.column + 1);
+}
+
+/** The document's value, with its nodes and where each starts, so a problem can name its line. */
+function parseYaml(text: string): Parsed {
+  if (new TextEncoder().encode(text).length > POLICY_FILE_MAX_BYTES) throw new Error(TOO_LARGE);
+  const lines = new LineCounter();
+  // Without pretty errors a message is the reason alone, never quoting the file into logs.
+  const doc = parseDocument(text, { schema: "core", lineCounter: lines, prettyErrors: false });
+  const error = [...doc.errors, ...doc.warnings][0];
+  if (error) {
+    const { line, col } = lines.linePos(error.pos[0]);
+    throw new PlacedProblem(`The policy file is not YAML: ${error.message.replace(/\.$/, "")}.`, line, col);
   }
+  refuseShape(doc, lines);
+  return { root: doc.toJS(), doc, lines };
 }
 
 const LISTED_MAX = 5;
@@ -61,22 +94,6 @@ function listed(names: readonly string[]): string {
   return names.length > LISTED_MAX ? `${shown} and ${names.length - LISTED_MAX} more` : shown;
 }
 
-/**
- * A loaded document shares an object only through an alias, and a few aliases can expand into billions of nodes once
- * serialised, so any shared object, deep nesting or too many nodes is refused before anything walks it in full.
- */
-function refuseExpansion(root: unknown): void {
-  const seen = new Set<object>();
-  const stack: Array<[unknown, number]> = [[root, 0]];
-  while (stack.length > 0) {
-    const [node, depth] = stack.pop()!;
-    if (node === null || typeof node !== "object") continue;
-    if (seen.has(node) || seen.size >= NODES_MAX || depth > DEPTH_MAX) throw new Error(TOO_LARGE);
-    seen.add(node);
-    for (const child of Object.values(node)) stack.push([child, depth + 1]);
-  }
-}
-
 function refuseUnknown(file: Record<string, unknown>, allowed: readonly string[]): void {
   const unknown = Object.keys(file).filter((key) => !allowed.includes(key));
   if (unknown.length > 0) throw new Error(`The policy file has unknown keys: ${listed(unknown)}.`);
@@ -85,31 +102,46 @@ function refuseUnknown(file: Record<string, unknown>, allowed: readonly string[]
   if (checks.length > 0) throw new Error(`The policy file has unknown checks: ${listed(checks)}.`);
 }
 
-function policyOf(file: Record<string, unknown>, repo: string): Record<string, unknown> {
+function readFile(file: Record<string, unknown>): { policy: Record<string, unknown>; workflow: PolicyWorkflow } {
+  if (isPolicyRulesFile(file)) return readRulesFile(file);
+  refuseUnknown(file, file.extends === undefined ? PACK_KEYS : OVERRIDE_KEYS);
+  return { policy: file, workflow: {} };
+}
+
+function policyOf(file: Record<string, unknown>, repo: string): { policy: Record<string, unknown>; workflow: PolicyWorkflow } {
   const header = { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION } as const;
-  const rules = isPolicyRulesFile(file);
-  if (!rules) refuseUnknown(file, file.extends === undefined ? PACK_KEYS : OVERRIDE_KEYS);
-  const body = rules ? rulesToPolicy(file) : file;
-  if (body.extends !== undefined) return { ...header, ...readPolicyOverride({ ...body, ...header, repo }, repo) };
+  const { policy: body, workflow } = readFile(file);
+  if (body.extends !== undefined) return { policy: { ...header, ...readPolicyOverride({ ...body, ...header, repo }, repo) }, workflow };
   const { dropped, ...pack } = readCheckPack({ ...body, ...header, repo }, repo);
   if (dropped) throw new Error(`The policy file holds what no longer runs: ${listed(dropped)}.`);
-  return pack;
+  return { policy: pack, workflow: { ...workflow, decide: workflow.decide ?? decideOf(pack.actions) } };
 }
 
-/** The line of the innermost mapping or list on `path`, as the document holds it. */
-function lineOf(root: Record<string, unknown>, lines: WeakMap<object, number>, path: readonly PropertyKey[]): number | undefined {
-  let node: unknown = root;
-  let line = lines.get(root);
+/**
+ * The line of the deepest key or list item on `path` the document holds: a problem with a value is on its key's line,
+ * and one with a missing key on its mapping's.
+ */
+function lineOf({ doc, lines }: Parsed, path: readonly PropertyKey[]): number | undefined {
+  let node: unknown = doc.contents;
+  let offset = isNode(node) ? node.range?.[0] : undefined;
   for (const key of path) {
-    node = (node as Record<PropertyKey, unknown>)[key];
-    if (node === null || typeof node !== "object") break;
-    line = lines.get(node) ?? line;
+    if (isMap(node)) {
+      const pair = node.items.find((item) => isScalar(item.key) && String(item.key.value) === String(key));
+      if (!pair || !isScalar(pair.key)) break;
+      offset = pair.key.range?.[0] ?? offset;
+      node = pair.value;
+    } else if (isSeq(node) && typeof key === "number" && isNode(node.items[key])) {
+      node = node.items[key];
+      offset = (node as Node).range?.[0] ?? offset;
+    } else {
+      break;
+    }
   }
-  return line;
+  return offset === undefined ? undefined : lines.linePos(offset).line;
 }
 
-function located(root: Record<string, unknown>, lines: WeakMap<object, number>, { message, path }: PolicyFileError["problems"][number]): PolicyFileProblem {
-  const line = lineOf(root, lines, path);
+function located(parsed: Parsed, { message, path }: PolicyFileError["problems"][number]): PolicyFileProblem {
+  const line = lineOf(parsed, path);
   return line === undefined ? { message } : { message, line };
 }
 
@@ -118,19 +150,17 @@ export function checkPolicyFile(text: string, repo: string): PolicyFileCheck {
   let parsed: ReturnType<typeof parseYaml>;
   try {
     parsed = parseYaml(text);
-    refuseExpansion(parsed.root);
   } catch (error) {
-    if (error instanceof YamlProblem) return { ok: false, problems: [{ message: error.message, line: error.line, column: error.column }] };
+    if (error instanceof PlacedProblem) return { ok: false, problems: [{ message: error.message, line: error.line, column: error.column }] };
     if (error instanceof Error) return { ok: false, problems: [{ message: error.message }] };
     throw error;
   }
-  const { root, lines } = parsed;
-  const file = asRecord(root);
+  const file = asRecord(parsed.root);
   if (!file) return { ok: false, problems: [{ message: "The policy file must be a mapping." }] };
   try {
-    return { ok: true, policy: policyOf(file, repo) };
+    return { ok: true, ...policyOf(file, repo) };
   } catch (error) {
-    if (error instanceof PolicyFileError) return { ok: false, problems: error.problems.map((problem) => located(file, lines, problem)) };
+    if (error instanceof PolicyFileError) return { ok: false, problems: error.problems.map((problem) => located(parsed, problem)) };
     if (error instanceof Error) return { ok: false, problems: [{ message: error.message }] };
     throw error;
   }

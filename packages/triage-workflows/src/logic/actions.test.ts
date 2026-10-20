@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AUTHOR_ASSOCIATIONS, authorKindOf, defaultActions, emptyPack, readCheckPack, whenHolds, type AuthorAssociation, type Step, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
+import { AUTHOR_ASSOCIATIONS, authorKindOf, defaultActions, emptyPack, readCheckPack, readPolicyFile, whenHolds, type AuthorAssociation, type Step, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
 import { doEffectId, evaluateActions, heldApprovals, holdDos, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
 import type { PrFacts } from "./checks.js";
 import { NO_FACTS } from "./item.js";
@@ -223,5 +223,34 @@ describe("holdDos", () => {
     }
     const steps = [step("unsure", "close"), step("fail", "close"), step("pass", "merge"), step("fail", "merge"), step("unsure", "merge")];
     expect(holdDos(steps, ["close", "merge"]).map((action) => "held" in action)).toEqual([true, false, false, true, true]);
+  });
+});
+
+describe("a step for a group the policy file defines", () => {
+  const file = `rules:
+  - check: ci-green
+    text: CI passes.
+    reason: Required.
+    evidence: [maintainer-stated]
+groups:
+  interns: { teams: [acme/interns] }
+  staff: { association: [MEMBER] }
+actions:
+  pass: [{ do: approve, when: { author: [staff] } }]
+`;
+  const pack = readCheckPack(readPolicyFile(file, "acme/widgets"), "acme/widgets");
+  const member = { ...facts, authorKind: "MEMBER" as const };
+
+  test("goes by the first group the author matches, its teams read", () => {
+    expect(evaluateActions({ facts: { ...member, authorTeams: ["acme/interns"], authorTeamsUnknown: [] }, checks: [], verdict: "pass", reason: "passes", pack })).toEqual([
+      { list: "pass", index: 0, kind: "approve", skipped: true, reason: "Not run: the author is MEMBER, not staff." },
+    ]);
+    expect(evaluateActions({ facts: { ...member, authorTeams: [], authorTeamsUnknown: [] }, checks: [], verdict: "pass", reason: "passes", pack })).toMatchObject([{ kind: "approve", effectId: expect.any(String) }]);
+  });
+
+  test("does not run while teams that would decide the author's group can't be read", () => {
+    expect(evaluateActions({ facts: { ...member, authorTeams: [], authorTeamsUnknown: ["acme/interns"] }, checks: [], verdict: "pass", reason: "passes", pack })).toEqual([
+      { list: "pass", index: 0, kind: "approve", skipped: true, reason: "Not run: it is not known whether the author is staff." },
+    ]);
   });
 });
