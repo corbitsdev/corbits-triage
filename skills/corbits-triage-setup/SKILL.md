@@ -46,7 +46,7 @@ Then add only the extras that fit, from "When to add" in [reference.md](referenc
 
 ## 4. Write the file
 
-Write `.corbits-triage.yml` at the repository root in the shape of [reference.md](reference.md). Every rule needs `check`, `text`, `reason` and `evidence`. Use `evidence: [maintainer-stated]` unless the user gives pull request numbers or links. Keep `text` and `reason` to one plain sentence each, and update `text` when you change a setting such as `max`. Copy phrase blocks from reference.md exactly. Leave out `actions` when there are none, and leave out a verdict that has no steps.
+Write `.corbits-triage.yml` at the repository root in the shape of [reference.md](reference.md). Every rule needs `check`, `text`, `reason` and `evidence`. Use `evidence: [maintainer-stated]` unless the user gives pull request numbers or links. Keep `text` and `reason` to one plain sentence each, and update `text` when you change a setting such as `max`. Copy rule blocks from reference.md's Starter file and Extras exactly. Leave out `actions` when there are none, and leave out a verdict that has no steps.
 
 ## 5. Validate and fix
 
@@ -75,7 +75,7 @@ bun <checkout>/packages/policy-check-action/src/main.ts <repository root> <name 
 Run it as its own command. With no remote, any `owner/name` such as `local/<folder>` works; the check only needs one. It prints one of:
 
 - `.corbits-triage.yml is valid.`: done.
-- `::error file=…,line=N::message`, one per problem: fix each and run it again.
+- `::error file=…[,line=N[,col=M]]::message`, one per problem: fix each and run it again.
 - `No .corbits-triage.yml or .corbits-triage.yaml to check.`: the file was not written where you think; write it at the repository root and run it again.
 
 Never report the file as done before it prints valid. With `extends`, valid does not prove the repository or workspace policy it names can be read; tell the user to confirm it.

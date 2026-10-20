@@ -83,7 +83,9 @@ decision-model together.
 ### Decision models
 
 Each question has a fixed shape, so the answer is a probability or a choice,
-never free text:
+never free text. A file's `rules` hold only whole-pull-request Is true
+questions; the rest need the stored policy's shape (see
+[Policy file](#policy-file)):
 
 - **Is true**: a yes or no claim about the whole pull request, each changed
   file, or each changed hunk, optionally only for paths matching globs.
@@ -282,7 +284,7 @@ rules:
     evidence: [maintainer-stated]
 ```
 
-Only YAML is read, up to 64 KB and without anchors or aliases. Names, claims,
+Only YAML is read, up to 64 KB and without aliases to lists or maps. Names, claims,
 labels and the like are one line of at most 500 characters (50 for a label);
 a comment keeps its line breaks. A list of labels, people or teams holds at
 most 50, and a verdict at most 20 steps. The JSON Schema is `policyFile` at the hub's
@@ -359,6 +361,6 @@ answers for anything unchanged.
 
 - The repository scan measures a repository's closed pull requests but does
   not propose a policy yet, and it is not deployed yet.
-- The Railway Sandboxes provisioner uses the operator's Railway token only;
-  a workspace cannot bring its own.
+- The E2B and Railway Sandboxes provisioners use the operator's key or token
+  only; a workspace cannot bring its own.
 - Code review findings are not sent to Bitbucket Data Center pull requests.

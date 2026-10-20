@@ -6,7 +6,7 @@ Repository-wide rules. `apps/*` and some `packages/*` have their own AGENTS.md w
 
 - `bun install`
 - `bun run dev`: hub + portal (needs `.env`, see `.env.example` and docs/DEV.md)
-- `bun run check`: typecheck everything and bundle the hub
+- `bun run check`: typecheck the apps, tooling and packages (except `openai-null-delta`) and bundle the hub
 - `bun run test`: all tests (hub tests need Postgres)
 - `bun run lint`: oxlint
 - `e2e/`: live checks against real services, run by hand, never in CI (e2e/README.md)
@@ -21,7 +21,7 @@ Repository-wide rules. `apps/*` and some `packages/*` have their own AGENTS.md w
 
 - **Stock first.** Before writing logic, look for an Interchange route or primitive that already does it (see the reference below). Re-implementing one is a defect; where stock lacks a path, raise it upstream instead of building a copy.
 - **The policy drives everything.** A repository's rules and actions live in its policy: `.corbits-triage.yml` on its default branch, or a stored policy through the stock tenant artifact route. Nothing repository-specific is written into workflow code.
-- **Workflows are deterministic.** Agents exist only where inference happens (packages/triage-workflows/AGENTS.md).
+- **Workflows are deterministic.** Agents exist only where inference happens ([packages/triage-workflows/AGENTS.md](packages/triage-workflows/AGENTS.md)).
 - **Effects are idempotent** under their effect id, host writes included.
 - **Grants decide automation.** Whether an action runs on its own is decided from the workspace's role grants, never a hard-coded limit.
 - **Downstream work is another workflow.** Reviewing, fixing or cleaning up a pull request is a workflow of its own, started by mail or a signal from an action; never a step inside pr-triage.

@@ -108,7 +108,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | --- | --- |
 | `bun run dev` | Hub and portal with prefixed logs (`tooling/dev.ts`). |
 | `bun run hub` | Hub only. |
-| `bun run check` | Typecheck tooling, portal, extension, hub, packages and `e2e/`, and bundle the hub. |
+| `bun run check` | Typecheck tooling, portal, extension, hub, packages (except `openai-null-delta`) and `e2e/`, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run lint` | oxlint. |
 | `bun e2e/provisioners/<name>.ts` | Live checks against real services, by hand only; see [e2e/README.md](../e2e/README.md). |
