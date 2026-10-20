@@ -271,6 +271,10 @@ the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file".
 
+A pull request's reviews are read from the run logs. A failed run's reason is
+a fixed sentence for why its first step that failed for good did
+(`failureReason` in `pr-code-review`); the run log keeps the error itself.
+
 Sending a review to GitHub is a person's write through
 `POST /api/integrations/github-actions/{tenantId}` (`action: "code-review"`,
 the Comment grant): the hub reads the newest finished review from the run logs

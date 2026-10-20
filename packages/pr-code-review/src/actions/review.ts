@@ -102,16 +102,16 @@ interface WriteInput {
 
 function replyOf(output: unknown): string {
   if (typeof output === "object" && output !== null && "reply" in output && typeof output.reply === "string") return output.reply;
-  throw new Error(`step output has no reply: ${JSON.stringify(output)?.slice(0, 200)}`);
+  throw new Error("step output has no reply");
 }
 
-/** A structured step's JSON reply; a step whose model call failed replies with text saying so. */
+/** A structured step's JSON reply; the error leaves the reply out, as the portal shows it. */
 function jsonReply<T>(output: unknown): T {
   const reply = replyOf(output).replace(BUDGET_EXHAUSTED, "");
   try {
     return JSON.parse(reply) as T;
   } catch {
-    throw new Error(`step replied without JSON: ${reply.slice(0, 200)}`);
+    throw new Error("step replied without JSON");
   }
 }
 
@@ -148,9 +148,14 @@ export async function findersInput(steps: Steps) {
   return { diff: message, repo: `${repositoryTag(request.checkout)}${budgetTag(request.budgets?.repoFinder ?? DEFAULT_BUDGET)}${message}` };
 }
 
+/** A finder's findings; one that spent its budget before answering in JSON found none, and the finder steps fail on any other unreadable reply. */
 function findingsOf(output: unknown, finder: Finder): Candidate[] {
-  const parsed = parseFindings(replyOf(output).replace(BUDGET_EXHAUSTED, ""));
-  if ("unparsable" in parsed) return [];
+  const reply = replyOf(output);
+  const parsed = parseFindings(reply.replace(BUDGET_EXHAUSTED, ""));
+  if ("unparsable" in parsed) {
+    if (reply.startsWith(BUDGET_EXHAUSTED)) return [];
+    throw new Error(`${finder} finder: ${parsed.unparsable}`);
+  }
   return parsed.findings.map((finding) => ({ ...finding, finders: [finder], reports: 1 }));
 }
 

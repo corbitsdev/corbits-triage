@@ -36,13 +36,18 @@ function parseJson(json: string): unknown {
   }
 }
 
-/** The first balanced JSON object in `text` that parses. */
-function firstJsonObject(text: string): unknown {
+function findingsListOf(json: unknown): Record<string, unknown>[] | undefined {
+  if (!isRecord(json) || !Array.isArray(json.findings)) return undefined;
+  return json.findings.every(isRecord) ? json.findings : undefined;
+}
+
+/** The `findings` array of the first balanced JSON object in `text` that parses and holds one, trying each `{` in turn. */
+function firstFindingsList(text: string): Record<string, unknown>[] | undefined {
   for (let open = text.indexOf("{"); open !== -1; open = text.indexOf("{", open + 1)) {
     const close = closingBrace(text, open);
-    if (close === -1) return undefined;
-    const json = parseJson(text.slice(open, close + 1));
-    if (json !== undefined) return json;
+    if (close === -1) continue;
+    const list = findingsListOf(parseJson(text.slice(open, close + 1)));
+    if (list) return list;
   }
   return undefined;
 }
@@ -109,12 +114,10 @@ function findingOf(raw: unknown): Finding | undefined {
   return finding;
 }
 
-/** The findings array: the first array of objects in the reply's first JSON object. */
+/** The reply's findings, from the first JSON object in it that holds a `findings` list. */
 export function parseFindings(reply: string): Parsed {
-  const json = firstJsonObject(reply);
-  if (!isRecord(json)) return { unparsable: "no JSON object" };
-  const list = Object.values(json).find((value) => Array.isArray(value) && value.every(isRecord));
-  if (!Array.isArray(list)) return { unparsable: "no findings array" };
+  const list = firstFindingsList(reply);
+  if (!list) return { unparsable: "no findings list" };
   return { findings: list.map(findingOf).filter((finding) => finding !== undefined) };
 }
 

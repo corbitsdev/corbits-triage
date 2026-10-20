@@ -32,7 +32,12 @@ const LOGS: Record<string, WorkflowRunEvent[]> = {
     { seq: 2, type: "RunCompleted", body: {} } as unknown as WorkflowRunEvent,
   ],
   run_other: [started(8, "sha9")],
-  run_new: [started(7, "sha2")],
+  run_new: [
+    started(7, "sha2"),
+    { seq: 1, type: "StepFailed", body: { stepId: "findDiff", attempt: 1, error: { message: "reactor error: Director exception: reader: inference failed: 529 overloaded" }, retriesExhausted: false } } as unknown as WorkflowRunEvent,
+    { seq: 2, type: "StepFailed", body: { stepId: "findDiff", attempt: 3, error: { message: "reactor error: Director exception: reader: no findings list in the answer" }, retriesExhausted: true } } as unknown as WorkflowRunEvent,
+    { seq: 3, type: "StepFailed", body: { stepId: "candidates", attempt: 1, error: { message: "missing field findDiff in project selector source" }, retriesExhausted: true } } as unknown as WorkflowRunEvent,
+  ],
 };
 
 test("PostgreSQL: a pull request's latest code review comes from the newest run that names it", async () => {
@@ -73,7 +78,7 @@ test("PostgreSQL: a pull request's latest code review comes from the newest run 
     expect(await reviewsOf(9)).toEqual({ review: null, completed: null });
 
     await db.insert(schema.workflowRun).values({ id: "run_new", definitionId: "wfd_review", anchorRunId: "wfr_anchor", tenantId: TENANT, status: "failed", createdAt: at(3) });
-    expect(await reviewsOf(7)).toEqual({ review: { status: "failed", headSha: "sha2", startedAt: at(3).toISOString() }, completed: finished });
+    expect(await reviewsOf(7)).toEqual({ review: { status: "failed", headSha: "sha2", startedAt: at(3).toISOString(), reason: "The diff reviewer's answer couldn't be read." }, completed: finished });
     expect(reads.filter((runId) => runId === "run_old")).toHaveLength(1);
   } finally {
     await handle?.close();

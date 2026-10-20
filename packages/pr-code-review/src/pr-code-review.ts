@@ -1,6 +1,7 @@
 import { action, defineWorkflow, map, onTrigger, step, type Selector } from "@intx/workflow";
 import { READ_REPOSITORY } from "./actions/checkout.js";
 import { credentialBindingsFor, type CodeReviewAgents, type Sources } from "./agents.js";
+import { FINDER_ATTEMPTS } from "./failures.js";
 
 export const PR_CODE_REVIEW_ADDRESS = "pr-code-review";
 
@@ -10,6 +11,9 @@ export const PR_CODE_REVIEW_GITHUB_ADDRESS = "pr-code-review-github";
 export const PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS = "pr-code-review-bitbucket-datacenter";
 
 const TIMEOUT = 10 * 60_000;
+
+/** A finder whose model call failed or whose answer held no findings list asks again, waiting out a brief overload. */
+const FINDER_RETRY = { maxAttempts: FINDER_ATTEMPTS, initialBackoffMs: 5_000 };
 
 /** Its own sidecar, never one shared with other work: the review checks out the pull request's code. */
 export const CODE_REVIEW_PLACEMENT = { capabilities: [{ capability: "isolation:workload", effect: "require" as const }] };
@@ -46,8 +50,8 @@ export function codeReviewWorkflow({ checkAgent, consolidateAgent, finderAgent, 
         plan: step({ agent: planAgent, input: { from: "steps.reviewInput.output.plan" }, inference: inferenceOf("plan"), after: ["reviewInput"], timeout: TIMEOUT }),
         checkout: checkoutAction(sources, { from: "steps.reviewInput.output.request.checkout" }, ["reviewInput"]),
         findersInput: action({ handler: "findersInput", input: stepsOf("reviewInput", "plan"), after: ["plan"] }),
-        findDiff: step({ agent: finderAgent(), input: { from: "steps.findersInput.output.diff" }, inference: inferenceOf("diffFinder"), after: ["findersInput"], timeout: TIMEOUT }),
-        findRepo: step({ agent: repoFinderAgent(), input: { from: "steps.findersInput.output.repo" }, inference: inferenceOf("repoFinder"), after: ["findersInput", "checkout"], timeout: TIMEOUT }),
+        findDiff: step({ agent: finderAgent(), input: { from: "steps.findersInput.output.diff" }, inference: inferenceOf("diffFinder"), after: ["findersInput"], timeout: TIMEOUT, retry: FINDER_RETRY }),
+        findRepo: step({ agent: repoFinderAgent(), input: { from: "steps.findersInput.output.repo" }, inference: inferenceOf("repoFinder"), after: ["findersInput", "checkout"], timeout: TIMEOUT, retry: FINDER_RETRY }),
         candidates: action({ handler: "candidates", input: stepsOf("reviewInput", "findDiff", "findRepo"), after: ["findDiff", "findRepo"] }),
         consolidate: step({ agent: consolidateAgent(sources), input: { from: "steps.candidates.output.consolidate" }, inference: { from: "steps.candidates.output.inference" }, after: ["candidates"], timeout: TIMEOUT }),
         checks: action({ handler: "checks", input: stepsOf("reviewInput", "candidates", "consolidate"), after: ["consolidate"] }),

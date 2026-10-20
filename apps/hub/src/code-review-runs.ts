@@ -5,6 +5,7 @@ import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
+import { failureReason } from "@corbits/pr-code-review/failures";
 import { CodeReviewComment, REPO_SOURCES, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
 import { CODE_REVIEW_WORKFLOWS } from "./github/source-workflow.js";
 import { inlineOutput } from "./github/triage-runs.js";
@@ -30,7 +31,8 @@ const CompletedRun = type({
   budgetExhausted: "boolean",
   "cut?": Cut,
 });
-const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string" });
+/** A failed run's `reason` says in fixed words why it failed; the run log keeps the detail. */
+const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string", "reason?": "string" });
 export type CompletedReview = typeof CompletedRun.infer;
 /** The pull request's newest review, and its newest finished one, which is the same unless a newer one is running or failed. */
 export const CodeReviewFound = type({ review: ReviewRun.or("null"), completed: CompletedRun.or("null") });
@@ -58,7 +60,21 @@ function runOf(events: readonly WorkflowRunEvent[], status: string, createdAt: D
     return { ...run, review: { ...base, status: "completed", summary: output.summary, comments, budgetExhausted: output.budgetExhausted, ...(output.cut && { cut: output.cut }) } };
   }
   const ended = !schema.isLiveWorkflowRunStatus(status) || events.some(isTerminal);
-  return { ...run, review: { ...base, status: ended ? "failed" : "running" } };
+  if (!ended) return { ...run, review: { ...base, status: "running" } };
+  const reason = reasonOf(events);
+  return { ...run, review: { ...base, status: "failed", ...(reason && { reason }) } };
+}
+
+const StepFailed = type({ stepId: "string", error: { message: "string" }, retriesExhausted: "true" });
+
+/** Why the first step that failed for good did; the steps after it fail only for want of its output. */
+function reasonOf(events: readonly WorkflowRunEvent[]): string | undefined {
+  for (const event of events) {
+    if (event.type !== "StepFailed") continue;
+    const failed = StepFailed(event.body);
+    if (!(failed instanceof type.errors)) return failureReason(failed.stepId, failed.error.message);
+  }
+  return undefined;
 }
 
 type CodeReviewRunsDeps = { db: DB["db"]; runReader: Pick<WorkflowRunReader, "readRunEvents"> };

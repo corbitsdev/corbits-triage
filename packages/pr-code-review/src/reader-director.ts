@@ -4,6 +4,8 @@ import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboun
 import { type } from "arktype";
 import { refused, REPO_READ_DEFINITIONS, rootedAt } from "@corbits/repo-read-tool";
 import { BUDGET_EXHAUSTED, budgetOf, checkoutOf, checkoutPath, isCheckedOut } from "./actions/checkout.js";
+import { MODEL_FAILED, NO_CHECKOUT, UNREADABLE } from "./failures.js";
+import { parseFindings } from "./findings.js";
 import { TOOL_PROMPTS } from "./prompts.js";
 import { packageName } from "./package-name.js";
 import type { CodeReviewProfile } from "./profile.js";
@@ -26,8 +28,8 @@ function turnText(turn: AssistantTurn): string {
 }
 
 export interface ReaderDirectorConfig {
-  /** The tools section appended to the system prompt while the model reads. */
-  tools: keyof typeof TOOL_PROMPTS;
+  /** The tools section appended to the system prompt while the model reads; absent for a finder that reads no checkout. */
+  tools?: keyof typeof TOOL_PROMPTS;
 }
 
 /**
@@ -36,10 +38,12 @@ export interface ReaderDirectorConfig {
  * call with no tools; a head not checked out on this sidecar fails the step. Every call keeps the system prompt and
  * tools, which earlier thinking blocks are bound to, so once the input's budget of billable tokens is spent each
  * further tool call is answered with BUDGET_SPENT; after REFUSED_ROUNDS such rounds the model's latest text is the
- * reply. A reply whose calls were refused starts with BUDGET_EXHAUSTED.
+ * reply. A reply whose calls were refused, or with no findings list once the budget is spent, starts with
+ * BUDGET_EXHAUSTED. Any other answer with no findings list, or a failed model call, fails the step, so its retry asks
+ * again; stock retries every failure alike, so a missing checkout or a refused tool is tried again too.
  */
 function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }: ReaderDirectorConfig, billableTokens: (usage: TokenUsage) => number, dataDir: () => string): ReactorDirector {
-  const systemPrompt = `${basePrompt.trimEnd()}\n\n${TOOL_PROMPTS[tools]}`;
+  const systemPrompt = tools ? `${basePrompt.trimEnd()}\n\n${TOOL_PROMPTS[tools]}` : basePrompt;
   let budget = 0;
   let spent = 0;
   let root = "";
@@ -51,17 +55,21 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }
   }
 
   function reply(text: string) {
-    return caps.reply(refusedRounds > 0 ? `${BUDGET_EXHAUSTED}${text}` : text);
+    if (refusedRounds > 0) return caps.reply(`${BUDGET_EXHAUSTED}${text}`);
+    if (!("unparsable" in parseFindings(text))) return caps.reply(text);
+    if (root !== "" && spent >= budget) return caps.reply(`${BUDGET_EXHAUSTED}${text}`);
+    throw new Error(UNREADABLE);
   }
 
   async function start(content: string) {
     const checkout = checkoutOf(content);
     if (!checkout) return caps.infer({ systemPrompt: basePrompt, tools: [] });
+    if (!tools) throw new Error("reader: the input names a checkout this finder does not read");
     const tokens = budgetOf(content);
-    if (tokens === undefined) return caps.reply("reader: the input names no token budget");
+    if (tokens === undefined) throw new Error("reader: the input names no token budget");
     const path = checkoutPath(dataDir(), checkout);
     // The checkout action left it on the sidecar that ran it; a run resumed on another sidecar fails here.
-    if (!(await isCheckedOut(path))) throw new Error(`reader: no checkout at ${path} on this sidecar`);
+    if (!(await isCheckedOut(path))) throw new Error(`${NO_CHECKOUT} at ${path} on this sidecar`);
     budget = tokens;
     root = path;
     return read();
@@ -72,7 +80,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }
     const calls = toolCalls(turn);
     if (calls.length === 0) return reply(turnText(turn));
     const unknown = calls.find((c) => !READ_TOOLS.has(c.name));
-    if (unknown) return caps.reply(`reader: refused tool ${unknown.name}`);
+    if (unknown) throw new Error(`reader: refused tool ${unknown.name}`);
     pending = calls.length;
     if (spent < budget) {
       for (const c of calls) log.info("reader tool {name} {arguments}", { name: c.name, arguments: c.arguments });
@@ -100,9 +108,9 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }
         case "inference.done":
           return onTurn(event.turn, event.usage);
         case "inference.error":
-          return caps.reply(`reader: inference failed: ${event.error.message}`);
+          throw new Error(`${MODEL_FAILED}: ${event.error.message}`);
         case "abort":
-          return caps.reply("reader: aborted");
+          throw new Error("reader: aborted");
         default:
           return [];
       }
@@ -123,7 +131,7 @@ function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDir
 export function readerDirectorOf(profile: CodeReviewProfile, dataDir: () => string) {
   return defineDirector<ReaderDirectorConfig>({
     id: `${packageName(profile.packageName)}/reader`,
-    configSchema: type({ tools: type.enumerated(...Object.keys(TOOL_PROMPTS)) }),
+    configSchema: type({ "tools?": type.enumerated(...Object.keys(TOOL_PROMPTS)) }),
     factory: function buildReaderDirector(config, _env, agent) {
       return lazy(function buildDirector(caps) {
         return readerDirector(caps, agent.systemPrompt, config, profile.billableTokens, dataDir);

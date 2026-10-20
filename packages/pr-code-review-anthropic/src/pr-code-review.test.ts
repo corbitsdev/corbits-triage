@@ -33,6 +33,10 @@ let dir: string;
 let tarball: Uint8Array;
 let model: ReturnType<typeof Bun.serve>;
 const fetched: string[] = [];
+/** How many of the diff finder's next answers are prose with no findings list. */
+let diffFinderProse = 0;
+/** Whether the repository finder answers in prose once it has read. */
+let repoFinderProse = false;
 
 const allow: WorkflowAuthorizeFn = async function allow() {
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
@@ -63,6 +67,11 @@ function answer(body: MessagesRequest) {
       { type: "tool_use", id: "escape", name: "read_file", input: { path: join(dir, "head/src/a.ts") } },
     ];
   }
+  if (sent.includes("Review the diff above") && !system.includes("<tools>") && diffFinderProse > 0) {
+    diffFinderProse--;
+    return [{ type: "text", text: "The loop at src/a.ts:2 subtracts { instead of adding." }];
+  }
+  if (system.includes("<tools>") && repoFinderProse) return [{ type: "text", text: "I read src/a.ts and ran out of budget before writing findings." }];
   let text: unknown = { findings: [FINDING] };
   if (system.includes("<cited_code>")) text = { groups: [{ defect: "add subtracts", members: [0], representative: 0 }] };
   if (sent.includes("Plan the review")) text = { areas: [], outside_diff: [] };
@@ -94,7 +103,7 @@ afterAll(function stop() {
 });
 
 /** A review whose checkout action writes under `checkoutDir` and whose repository finder reads under `readerDir`. */
-async function review(checkoutDir: string, readerDir = checkoutDir) {
+async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { repoFinder: number }) {
   const origin = `http://localhost:${model.port}`;
   const results: ToolResult[] = [];
   function readerDataDir() {
@@ -107,7 +116,7 @@ async function review(checkoutDir: string, readerDir = checkoutDir) {
   function onEvent(event: InferenceEvent) {
     if (event.type === "tool.done") results.push(event.data.result);
   }
-  const request = { kind: "code-review", title: "Add", description: "", diff: DIFF, checkout: { source: "github", repo: REPO, sha: SHA } };
+  const request = { kind: "code-review", title: "Add", description: "", diff: DIFF, checkout: { source: "github", repo: REPO, sha: SHA }, ...(budgets && { budgets }) };
   const run = await runLocalWorkflow({
     workflow: codeReviewWorkflow(codeReviewAgents(ANTHROPIC, directors, readerDataDir))({ sources: ["github"] }),
     directors: Object.values(directors).map((d) => d.factory),
@@ -138,8 +147,27 @@ test("the repository finder reads the head the checkout action put on the sideca
   expect(fetched.filter((path) => path.includes("/tarball/"))).toHaveLength(1);
 });
 
+test("a finder answer with no findings list fails its step, which asks again rather than reading as a clean review", async () => {
+  diffFinderProse = 1;
+  const { run } = await review(join(dir, "data"));
+  expect(diffFinderProse).toBe(0);
+  expect(run.terminalStatus).toBe("completed");
+  expect(run.outputs["review"]).toMatchObject({ comments: [{ path: "src/a.ts", start: 2, agreement: { finders: 2 } }] });
+}, 15_000);
+
+test("a repository finder that spends its budget and then answers in prose stopped early with nothing found", async () => {
+  repoFinderProse = true;
+  try {
+    const { run } = await review(join(dir, "data"), join(dir, "data"), { repoFinder: 30 });
+    expect(run.terminalStatus).toBe("completed");
+    expect(run.outputs["review"]).toMatchObject({ budgetExhausted: true, comments: [{ path: "src/a.ts", start: 2, agreement: { finders: 1 } }] });
+  } finally {
+    repoFinderProse = false;
+  }
+});
+
 test("a review whose checkout is not on this sidecar fails at the repository finder", async () => {
   const { run } = await review(join(dir, "here"), join(dir, "elsewhere"));
   expect(run.terminalStatus).not.toBe("completed");
   expect(run.outputs["findRepo"]).toBeUndefined();
-});
+}, 30_000);

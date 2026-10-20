@@ -110,6 +110,7 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       </h3>
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
       {send.error ? <p role="alert" className="error">Could not send to GitHub. {errorText(send.error)}</p> : null}
+      {reviews.review?.status === "failed" && reviews.review.reason ? <p className="note">{reviews.review.reason}</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
       {completed?.cut ? <CutNote cut={completed.cut} /> : null}
       {completed?.budgetExhausted ? <p className="note">{BUDGET_EXHAUSTED_NOTE}</p> : null}

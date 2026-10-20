@@ -3,6 +3,7 @@ import type { ReactorCapabilities, ReactorDirector, ToolCall } from "@intx/types
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { consolidateDirectorOf } from "../consolidate-director.js";
 import type { CodeReviewProfile, Effort, Role } from "../profile.js";
+import { BUDGET_EXHAUSTED } from "./checkout.js";
 import { candidates, checks, findersInput, review, reviewInputFor, writeInput } from "./review.js";
 
 const efforts: Record<Role, Effort> = { plan: "low", diffFinder: "low", repoFinder: "low", consolidate: "low", check: "low", write: "low" };
@@ -66,6 +67,14 @@ test("ordinary code reaches every message as written", async () => {
   for (const step of ["plan", "diff", "repo", "check"] as const) expect(built[step]).toContain(CODE);
   expect(built.check).toContain(`1\t${CODE}`);
   for (const step of ["consolidate", "write"] as const) expect(built[step]).toContain(JSON.stringify(CODE));
+});
+
+test("a repository finder that spent its budget before answering in JSON found nothing, and the diff finder's findings stay", async () => {
+  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout })) };
+  const finding = { path: "src/a.ts", start: 1, end: 1, title: "t" };
+  const folded = await candidates({ reviewInput, findDiff: reply({ findings: [finding] }), findRepo: reply(`${BUDGET_EXHAUSTED}I ran out of budget while reading src/a.ts.`) });
+  expect(folded.found).toEqual([{ ...finding, finders: ["diff"], reports: 1 }]);
+  expect(folded.budgetExhausted).toBe(true);
 });
 
 const PROFILE = { packageName: "@corbits/pr-code-review" } as CodeReviewProfile;
