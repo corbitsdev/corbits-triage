@@ -37,7 +37,7 @@
     "re2js": "2.8.6"
   },
   "devDependencies": {
-    "@corbits/evals": "0.1.1",
+    "@corbits/evals": "0.1.2",
     "@intx/authz": "workspace:*",
     "@intx/harness": "workspace:*",
     "@intx/inference": "workspace:*",
