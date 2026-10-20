@@ -266,7 +266,10 @@ to GitHub lists them. `…/run` reviews the current head again. Code
 review only reads: a checkout action downloads the head through the host
 credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>`, and
 its tools are the host read bundle and repository reads confined to that
-folder.
+folder. The consolidate step reads each finding's lines at the head and reports
+the findings it could show the model no line of; a comment whose group had no
+member read carries `unverified`, which the portal and the review sent to
+GitHub show as "Not checked against the file".
 
 Sending a review to GitHub is a person's write through
 `POST /api/integrations/github-actions/{tenantId}` (`action: "code-review"`,

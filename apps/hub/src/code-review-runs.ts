@@ -54,7 +54,7 @@ function runOf(events: readonly WorkflowRunEvent[], status: string, createdAt: D
   const base = { headSha: request.checkout.sha, startedAt: createdAt.toISOString() };
   const output = Review(inlineOutput(events.findLast((event) => event.type === "StepCompleted" && event.body["stepId"] === "review")));
   if (!(output instanceof type.errors)) {
-    const comments = output.comments.map(({ path, start, end, title, body, priority, quoted }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }) }));
+    const comments = output.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
     return { ...run, review: { ...base, status: "completed", summary: output.summary, comments, budgetExhausted: output.budgetExhausted, ...(output.cut && { cut: output.cut }) } };
   }
   const ended = !schema.isLiveWorkflowRunStatus(status) || events.some(isTerminal);
