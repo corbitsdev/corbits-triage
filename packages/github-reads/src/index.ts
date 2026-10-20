@@ -71,7 +71,7 @@ export type GithubInstallation = {
   suspended: boolean;
 };
 
-export async function getApp(gh: GithubFetch): Promise<{ slug: string }> {
+async function getApp(gh: GithubFetch): Promise<{ slug: string }> {
   const app = await json(gh, "/app") as { slug?: unknown };
   if (typeof app.slug !== "string" || !app.slug) throw new Error("github returned an invalid App slug");
   return { slug: app.slug };
