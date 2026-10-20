@@ -12,10 +12,9 @@ triage on and its policy has a rule.
 
 ## Set up through the portal
 
-1. **Run the hub.** On a server with a public HTTPS domain, follow
-   [docs/SELF_HOST.md](docs/SELF_HOST.md); on Railway, its
-   [Railway steps](docs/SELF_HOST.md#railway); on a plain VPS, its
-   [Plain VPS steps](docs/SELF_HOST.md#plain-vps). To try it on your machine:
+1. **Run the hub.** On a VPS follow [Plain VPS](docs/SELF_HOST.md#plain-vps);
+   on Railway, [Railway](docs/SELF_HOST.md#railway); anywhere else,
+   [docs/SELF_HOST.md](docs/SELF_HOST.md). To try it on your machine:
 
    ```sh
    cp .env.example .env   # paste a different `openssl rand -hex 32` into each of the four secrets at its top
@@ -23,17 +22,13 @@ triage on and its policy has a rule.
    docker compose logs -f hub   # Ctrl-C once it logs Started server
    ```
 
-   Compose sets every other variable, so the rest of `.env` can stay as it is.
-   Once the hub logs `Started server`, the portal is at http://localhost:3000.
-   A `docker_sidecars_off` line is expected: triage needs no Docker, only
-   [code review](docs/SELF_HOST.md#where-sidecars-run) does. To run code
-   review on this machine's Docker, start it with
-   `docker compose -f compose.yml -f compose.docker.yml up --build -d`. That
-   gives the hub control of that Docker, which on Linux is root on the
-   machine: whoever takes over the hub takes over the machine. GitHub cannot deliver webhooks to
-   localhost, so pull requests are picked up every five minutes
-   and a policy file change is read after a restart. To work on the code
-   instead, see [docs/DEV.md](docs/DEV.md).
+   The rest of `.env` can stay as it is. Once the hub logs `Started server`,
+   the portal is at http://localhost:3000. A `docker_sidecars_off` line is
+   expected: triage needs no Docker, only
+   [code review](docs/SELF_HOST.md#where-sidecars-run) does. Locally, pull
+   requests arrive every five minutes
+   ([why](docs/SELF_HOST.md#what-you-need)). To work on the code instead, see
+   [docs/DEV.md](docs/DEV.md).
 2. **Connect GitHub.** Sign up, press **Create GitHub App**, choose
    repositories, and save a decision model key
    ([Set up in the portal](docs/SELF_HOST.md#set-up-in-the-portal)).
@@ -71,8 +66,8 @@ triage on and its policy has a rule.
 - [docs/PRODUCT.md](docs/PRODUCT.md): rules, verdicts, actions, labels, the
   policy file and code review.
 - [docs/SELF_HOST.md](docs/SELF_HOST.md): running the hub and every setting.
-- [docs/BITBUCKET_DATACENTER.md](docs/BITBUCKET_DATACENTER.md): connecting
-  Bitbucket Data Center.
+- [docs/BITBUCKET_DATACENTER.md](docs/BITBUCKET_DATACENTER.md): Bitbucket
+  Data Center's routes, token and webhook.
 - [docs/provisioners/README.md](docs/provisioners/README.md): where sidecars
   run, and setting up Docker, E2B or Railway Sandboxes for code review.
 - [docs/DECISION_MODEL.md](docs/DECISION_MODEL.md): how judged rules are asked,

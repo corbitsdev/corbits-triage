@@ -1,5 +1,5 @@
 # Code review on this machine's Docker: docker compose -f compose.yml -f compose.docker.yml up --build -d
-# The socket gives the hub control of this machine's Docker.
+# Mounts this machine's Docker socket into the hub; read docs/provisioners/docker.md first.
 services:
   sidecar-image:
     build: { context: ., target: sidecar }

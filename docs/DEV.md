@@ -41,10 +41,6 @@ Hub on http://localhost:3000, portal on http://localhost:5173 (it proxies `/api`
 
 Follow [Set up in the portal](SELF_HOST.md#set-up-in-the-portal) against http://localhost:5173, using a sandbox repository. GitHub App credentials and the model key go to the hub vault, not `.env`.
 
-### Webhooks on localhost (unverified)
-
-The App's webhook URL is built from the hub origin that starts the manifest flow, so a localhost hub registers `http://localhost:3000/api/hooks/…`, which GitHub cannot reach. For live PR events, forward GitHub to `http://localhost:3000/api/hooks/<tenant-id>/github-hook` with a tunnel or a smee channel and set that URL in the App's settings on GitHub.
-
 ## GitHub emulator (no GitHub account)
 
 `emulate.config.yaml` seeds org `acme`, repo `acme/widgets`, user `octocat` (token `octocat_token`), and App `12345` installed on `acme/widgets`. The emulator sends signed `pull_request`, review and comment webhooks to the App's `webhook_url`; it does not send `installation` events.
@@ -66,13 +62,13 @@ The App's webhook URL is built from the hub origin that starts the manifest flow
 
 Restarting the emulator regenerates the App key; reconnect the App after each restart or pin `private_key` in the config.
 
-Code review against the emulator: the emulator ignores GitHub's diff media type and answers a pull request's JSON, which the hub refuses as no diff. Point `GITHUB_API_ORIGIN` at a small proxy in front of the emulator that answers `GET /repos/{owner}/{repo}/pulls/{number}` with 406 when it asks for a diff, as GitHub does for a very large pull request; the hub then builds the diff from the files' patches. Save an Anthropic key in Settings and switch code review on for `acme/widgets` in its repository panel. A review calls Anthropic for every step; to try the wiring without spending, point the `anthropic` catalog provider's `baseURL` at a stand-in that answers `/v1/messages`, and deploy before the portal next reconciles the catalog.
+Code review does not run against the emulator: with `GITHUB_API_ORIGIN` set, no isolated place registers.
 
 ## Tests and typecheck
 
 ```sh
 bun run test     # unit + integration; hub tests need Postgres
-bun run check    # typecheck web, tooling, extension, hub; bundle the hub
+bun run check    # typecheck apps, packages and tooling; bundle the hub
 bun run lint
 ```
 
@@ -85,5 +81,5 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
 - **"The workspace has no decision model"**: store a decision model key in the **Triage** section of Settings.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
-- **New PRs never reach triage**: the hub logs `stale_deployment` when the tenant has no live pr-triage deployment for the repository's host (`pr-triage-github` or `pr-triage-bitbucket-datacenter`). Reload the portal, or wait about two minutes for the hub to redeploy it.
+- **New PRs never reach triage**: the hub logs `triage_reconcile_skipped` with reason `no_live_deployment` when the workspace has no live pr-triage deployment. Reload the portal; the next reconcile pass also redeploys it.
 - **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.

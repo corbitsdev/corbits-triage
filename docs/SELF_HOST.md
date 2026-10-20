@@ -14,12 +14,10 @@ To try it on your machine with [Docker Compose](#docker-compose):
 
 GitHub cannot deliver webhooks to localhost, so a local hub picks up pull
 requests every five minutes and reads a policy file change after a restart.
-For live events, forward webhooks with a tunnel
-([Webhooks on localhost](DEV.md#webhooks-on-localhost-unverified)).
 
 A real deployment also needs:
 
-- Postgres 15+.
+- Postgres 15+ (Compose brings its own).
 - One machine or container for the hub, built from the root `Dockerfile`, with
   a persistent volume for `HUB_DATA_DIR` and a public HTTPS domain GitHub can
   reach. The hub serves the portal, the API and the webhooks (`/api/hooks/...`)
@@ -29,15 +27,16 @@ Optional, locally or deployed: a Google OAuth client for sign-in, an SMTP
 account for invite emails, and for [code review](PRODUCT.md#code-review) an
 Anthropic key and an [isolated place to run it](#where-sidecars-run).
 
-Size the hub for its sidecars: each triage and code review runs in a Bun
-process of its own (about 1 GiB at peak).
+Size the hub for its sidecars: each triage run is a Bun process of its own
+(about 1 GiB at peak). Code review on Docker on the same machine adds up to
+2 GiB per container ([Memory](provisioners/docker.md#memory)).
 
 ## Run it
 
 ### Docker Compose
 
 `compose.yml` runs Postgres and the hub at `http://localhost:3000`. In `.env`
-set only the four secrets; compose sets `DATABASE_URL`, `HUB_DATA_DIR` and
+set the four secrets; compose sets `DATABASE_URL`, `HUB_DATA_DIR` and
 `PORT`, takes `BETTER_AUTH_BASE_URL` from `.env` (default
 `http://localhost:3000`), and applies the [database role](#database-role)
 setting.
@@ -52,7 +51,7 @@ The hub is ready when it logs `Started server: http://localhost:3000`.
 
 ### Plain VPS
 
-Compose with `compose.tls.yml`: Caddy gets a Let's Encrypt certificate for
+Run Compose with `compose.tls.yml`: Caddy gets a Let's Encrypt certificate for
 your domain and passes HTTPS and websockets to the hub, whose port 3000 then
 stays closed. The hub's address becomes `https://<domain>`, and sidecars dial
 it through Caddy.
@@ -152,14 +151,8 @@ them from a public repository: this one or your public fork. With the
    by steps 5 and 6 have finished, redeploy the hub
    (`railway redeploy --service hub --yes`).
 
-The hub is ready when its deploy logs show `Started server`.
-
-### Render
-
-A Postgres instance and one Docker web service from this repository, with a
-disk at `/data`. Variables as on Railway, without
-`RAILWAY_DEPLOYMENT_DRAINING_SECONDS`. Render sets no `RAILWAY_GIT_*`, so
-Railway Sandboxes need them set by hand.
+The hub is ready when its deploy logs show `Started server`. Continue with
+[Set up in the portal](#set-up-in-the-portal).
 
 ### Any other host
 
@@ -205,13 +198,16 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
    - Events: Pull request, Pull request review, Issue comment, Check run,
      Check suite, Push, Installation, Installation repositories.
 
-   Bitbucket Data Center connects with an access token instead; see
-   [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md).
+   Bitbucket Data Center: expand **Use Bitbucket Data Center instead** and
+   enter the instance URL and an HTTP access token
+   ([user manual](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#github-and-bitbucket-data-center);
+   routes and token permissions in
+   [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md)).
 3. **Choose repositories on GitHub.** They arrive with triage off; nothing
    runs yet.
 4. **Add the decision model** (during onboarding, or Settings → Triage).
    Pick TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API key, or
-   **Add my own provider** with a System One–compatible base URL (requests go to it + `/systemone`), model and key.
+   **Add my own provider** with a System One–compatible base URL, model and key.
    Saving deploys the triage workflows; triage is live once that finishes.
 5. **Add a policy file.** A repository's rules and actions come only from
    `.corbits-triage.yml` on its default branch ([Policy file](PRODUCT.md#policy-file)).
@@ -225,9 +221,8 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
 
 The hub reads only these variables (`apps/hub/src/env.ts`), validates them at
 startup and exits naming any that is missing or malformed. Blank counts as
-unset. Secrets are runtime variables, never build arguments. `.env.example`
-lists the same set. GitHub App credentials and model keys are not variables:
-they live in the hub's vault.
+unset. Secrets are runtime variables, never build arguments. GitHub App
+credentials and model keys are not variables: they live in the hub's vault.
 
 ### Required
 
@@ -242,10 +237,8 @@ they live in the hub's vault.
 ### Sign-in
 
 By default anyone who reaches the hub can create an account with email and
-password. Every account but the hub's first must verify its address before it
-can use the portal or the API: with email set up, sign-up sends a link to open;
-without it, Google accounts are verified, and the hub's first account can mark
-anyone in its workspace, member or invited, verified under **Settings → People**.
+password. Every account but the hub's first must verify its address
+([Email](#email)).
 
 | Variable | Value |
 | --- | --- |
@@ -256,7 +249,7 @@ anyone in its workspace, member or invited, verified under **Settings → People
 
 Admins invite teammates from the portal. Someone who signs in without an
 invitation gets a workspace of their own; an invitation later adds the
-inviting workspace to theirs. The invitee gets a one-time sign-in
+inviting workspace to theirs. The invitee gets a sign-in
 link that works once, expires after 15 minutes and can be resent. With email
 set up, an account whose address is not verified (an email and password
 sign-up) cannot be invited. With email set up, anyone can also reset their password from the
@@ -292,7 +285,7 @@ All optional; the defaults suit most installs.
 | --- | --- | --- |
 | `TRIAGE_RECONCILE_INTERVAL_MS` | 300000 | How often the hub re-queues open pull requests whose latest commit has no verdict. |
 | `TRIAGE_MAX_IN_FLIGHT` | 5 | Pull request heads a workspace may have queued or running at once. |
-| `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
+| `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head whose runs never started waits after its last attempt before a fresh set, up to three times. |
 | `TRIAGE_ROTATE_AFTER_RUNS` | 15 | Runs a pr-triage deployment's log may hold before the hub deploys a fresh copy. |
 | `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run, at most four times this after the first. A new commit, an opened, reopened or ready pull request, an approval or a change request waits only 3 seconds. Must stay below 150000. |
 
@@ -301,7 +294,7 @@ All optional; the defaults suit most installs.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. |
-| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset for Docker [on another machine](provisioners/docker-remote.md), whose sidecars dial `BETTER_AUTH_BASE_URL` over `wss://`. |
+| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset for Docker [on another machine](provisioners/docker-remote.md), whose sidecars dial `BETTER_AUTH_BASE_URL` over `wss://`. `compose.tls.yml` sets it to `wss://<domain>`, which remote sidecars can also dial. |
 | `DOCKER_HOST` | the docker CLI's context, else its default sockets | The daemon for the [Docker provisioner](provisioners/docker.md). |
 | `DOCKER_CONTEXT` | the docker CLI's current context | The docker CLI context to use when `DOCKER_HOST` is unset. |
 | `DOCKER_TLS_CA` | unset | `ca.pem`, the CA that signed the daemon's certificate, as one line of base64. With `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY`, turns on mutual TLS to the daemon. Required for a daemon on another machine. |
@@ -360,30 +353,16 @@ across sites.
 ## Where sidecars run
 
 Sidecars run as child processes on the hub's machine by default; triage needs
-nothing more. Code review needs a sidecar of its own, so it runs only once an
-isolated place is set up.
-Settings → Code review → **Where it runs** lists every place this server
-offers, with the `.env` lines and guide for each; code review uses the first
-ready one in the order shown and waits there when it is full.
-[provisioners/README.md](provisioners/README.md) covers each option.
+nothing more. Code review runs only once an isolated place is set up:
+Settings → Code review → **Where it runs** lists each with its `.env` lines,
+and [provisioners/README.md](provisioners/README.md) covers each option.
 
-For Docker, build the sidecar image before starting the hub: the hub looks for
-it only at start ([Docker](provisioners/docker.md#set-up)). The stock
-`compose.yml` mounts no Docker socket. For code review on the same machine's
-Docker under Compose, start it with `compose.docker.yml` as well:
+For code review on the same machine's Docker under Compose, add
+`compose.docker.yml` ([Docker](provisioners/docker.md#set-up)):
 
 ```sh
 docker compose -f compose.yml -f compose.docker.yml up --build -d
 ```
-
-That builds the sidecar image and mounts the Docker socket into the hub. The
-hub then controls that machine's Docker, which on Linux is root on the
-machine: whoever takes over the hub takes over the machine. For a socket
-elsewhere, such as rootless Docker's or Podman's, set `DOCKER_SOCKET` in
-`.env` to its path. Pass the same `-f` flags to
-later `docker compose` commands. Settings → Code review → **Where it runs**
-then shows **Docker on this machine** ready. Or set `DOCKER_HOST` in `.env` to
-[another machine](provisioners/docker-remote.md).
 
 ## Backups
 
@@ -398,33 +377,12 @@ then shows **Docker on this machine** ready. Or set `DOCKER_HOST` in `.env` to
 Pull the new version, rebuild the image and redeploy. The hub runs its
 migrations on every start.
 
-- A GitHub App created by an earlier build may lack permissions or events
-  added since. Accept new permissions (Contents: write, Members: read) when
-  GitHub asks an owner, and tick new events (Push, Check suite) under the App's
-  settings → Permissions & events. Until then, a policy file change committed
-  straight to the default branch, rather than merged in a pull request, is
-  read only after a hub restart, and a pull request waiting for CI is triaged after
-  the quiet time instead of seconds after CI finishes.
-- Rules saved in the portal by an earlier build keep running until they move
-  into a policy file: the repository's Policy section offers **Move this
-  repository's rules into a policy file**.
-- Earlier builds left tables the hub no longer uses; drop them if present:
-  `DROP TABLE IF EXISTS corbits_triage_tenant_migration, corbits_triage_verdict_backfill, corbits_github_manifest_state;`
-- The hub drops `corbits_triage.invitation` on start; invites still open then
-  are gone and need sending again.
-- Triage's tables moved from `public.corbits_triage_*` into the
-  `corbits_triage` schema. If an older build runs after that, it recreates
-  empty public tables and the next start stops with "relation already
-  exists": drop them (`DROP TABLE public.corbits_triage_verdict,
-  public.corbits_triage_do_run, public.corbits_triage_invitation;`) and start
-  again.
-
 ## Known limitations
 
 - The hub carries Interchange patches; see `vendor/interchange/VENDORED.md`.
 - Run one hub replica: its triage queue lives in memory.
-- Deleting a principal that still owns a credential is refused (Interchange
-  migration 0101).
+- Removing someone who saved a credential is refused until the credential is
+  removed.
 - A trigger right after a deploy or restart can answer `409
   deployment_not_ready` until the deployment has resolved its credentials;
   retry it.

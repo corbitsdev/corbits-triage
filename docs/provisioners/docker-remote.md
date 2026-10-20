@@ -127,7 +127,7 @@ printf 'DOCKER_TLS_CA=%s\nDOCKER_TLS_CERT=%s\nDOCKER_TLS_KEY=%s\n' \
 
 `DOCKER_TLS_KEY` holds the client key, so treat it as a secret: whoever has it controls the VPS's Docker.
 
-Leave `HUB_SIDECAR_WEBSOCKET_URL` unset. Sidecars on the VPS then dial `BETTER_AUTH_BASE_URL` with `wss://` and `/api/sidecars/ws`, while the hub's own local sidecars keep dialling it on loopback. Setting it would send local sidecars out through the public address too.
+Leave `HUB_SIDECAR_WEBSOCKET_URL` unset. Sidecars on the VPS then dial `BETTER_AUTH_BASE_URL` with `wss://` and `/api/sidecars/ws`, while the hub's own local sidecars keep dialling it on loopback. Setting it would send local sidecars out through the public address too. `compose.tls.yml` sets it to `wss://<domain>`, which remote sidecars can also dial.
 
 Sidecars on another machine never get the loopback rewrite the hub's own Docker uses. The hub does not register Docker, and logs why, when the address they would dial is not `wss://` or names the hub's own machine (`localhost`, `127.x`, `0.0.0.0`, `[::1]`).
 

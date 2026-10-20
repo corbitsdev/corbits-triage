@@ -29,8 +29,10 @@ workflow, the same steps as `pr-triage-github` built over the Bitbucket tools
 `bitbucket-datacenter` credential, so the hub deploys it once the instance is
 connected (`POST /api/integrations/workflow-deploy` answers 409
 `source_not_connected` before that); a workspace with GitHub as well runs both.
-Disconnecting releases the deployment and leaves the Bitbucket repository records disabled and disconnected, so the open pull request listing carries on with the other hosts. The webhook credential names this
-workflow, and every mail carries `repoSource: "bitbucket-datacenter"`.
+Disconnecting releases the deployment and leaves the Bitbucket repository
+records disabled and disconnected, so the open pull request listing carries on
+with the other hosts. The webhook credential names this workflow, and every
+mail carries `repoSource: "bitbucket-datacenter"`.
 
 Triage with every rule switched off starts no run and writes nothing to the
 pull request (`triage_skipped_no_rules` in the hub log), on either host.
@@ -118,8 +120,8 @@ repository enabled with its default branch and creates its webhook, or keeps
 the one it created before. Enabling a repository switches on Comment, which
 also writes the verdict as the `Corbits Triage` build status, since the host
 has no labels; every other action stays off until you switch it on. Turning
-triage off and on again switches Comment back on. At each start the hub
-removes Labels and Assign grants left on Bitbucket repositories.
+triage off and on again switches Comment back on. Labels and Assign do not
+exist on Bitbucket.
 
 | Status | Body |
 | --- | --- |

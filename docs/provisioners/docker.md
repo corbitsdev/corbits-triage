@@ -29,13 +29,9 @@ docker compose -f compose.yml -f compose.docker.yml up --build -d
 
 Each container may use 2 GiB of memory and 1024 processes. The provisioner declines a new sidecar while the daemon's memory (on Docker Desktop, the memory given to its VM), less 2 GiB for each of this hub's containers and each one it is starting, is below 2 GiB. Docker therefore needs more than 2 GiB of memory for one sidecar: a VM given exactly 2 GiB reports about 1986 MiB and fits none. The hub retries a declined sidecar with backoff, up to Interchange's 10 ensure attempts; after the tenth the deployment fails. Give Docker Desktop more memory to run more at once.
 
-Measured on Docker Desktop 29.5.3 (2026-10-17): a deployed, idle code review container held 765 to 787 MiB, the sidecar process 442 MiB and its workflow child 406 MiB. A review worker container peaked at about 867 MiB while reviewing a small pull request.
-
 ## What is isolated
 
 Each sidecar has its own container, processes, filesystem and data volume, with a read-only root, no Linux capabilities, no new privileges and no Docker socket. It holds only its own hub token and a credential key of its own. It shares the host's kernel and has outbound network.
-
-A sandbox for repository commands inside the container needs privileges the container does not have today; they come with the tool that runs those commands.
 
 Containers are labelled with a hub id derived from the hub's Postgres cluster, database and schema, so hubs sharing a daemon never touch each other's containers. At boot the hub removes its containers that no allocation or probe still holds. Pointing the hub at another daemon or database changes the provisioner's binding, and sidecars placed through the old one are not cleaned up through the new one.
 
@@ -47,9 +43,10 @@ The hub logs `docker_sidecars_off` with one of these reasons:
 | --- | --- |
 | `no Docker daemon found` | Start Docker, or set `DOCKER_HOST`. |
 | `Docker at … has no corbits-triage-sidecar image or does not answer` | Build the image (step 2); check the daemon is running and the address is `unix://` or `tcp://`. |
-| `Docker at … is refused (… is another machine; reach it over TLS …)` | Plain `tcp://` is refused for any host but this machine. Set `DOCKER_TLS_CA`, `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY` ([Docker on another machine](docker-remote.md)). |
-| `Docker at … is another machine, and its sidecars would dial the hub at … without TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address and leave `HUB_SIDECAR_WEBSOCKET_URL` unset. |
-| `Docker at … is another machine, and its sidecars would dial the hub at its own address …` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
-| `an adapter module is not in the sidecar image, as with GITHUB_API_ORIGIN set` | Unset `GITHUB_API_ORIGIN`: the module it generates under `HUB_DATA_DIR` is not in the image. |
-| `the docker CLI's context cannot be read` | Fix or remove `~/.docker/config.json`, or the context `DOCKER_CONTEXT` names; or set `DOCKER_HOST`. |
-| `the database does not tell this hub apart from others` | Postgres refused the hub id query (`pg_control_system()` and the database's oid); the error says why. |
+| `Triage cannot connect to Docker at … (… is another machine; reach it over TLS …)` | Plain `tcp://` is refused for any host but this machine. Set `DOCKER_TLS_CA`, `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY` ([Docker on another machine](docker-remote.md)). |
+| `Docker at … is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address, or `HUB_SIDECAR_WEBSOCKET_URL` to a `wss://` one. |
+| `Docker at … is on another machine, which cannot reach Triage at its own address` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
+| `Code review cannot run in Docker while GITHUB_API_ORIGIN is set` | Unset `GITHUB_API_ORIGIN`: the module it generates under `HUB_DATA_DIR` is not in the image. |
+| `The Docker CLI's settings on this server cannot be read` | Fix or remove `~/.docker/config.json`, or the context `DOCKER_CONTEXT` names; or set `DOCKER_HOST`. |
+| `Triage cannot read its database's identity, which keeps its containers apart from other servers'` | Postgres refused the hub id query (`pg_control_system()` and the database's oid); the error says why. |
+| `The Docker address … is not a URL` | Set `DOCKER_HOST` to `unix:///path` or `tcp://host:port`. |
