@@ -930,6 +930,7 @@ export type CodeReviewRun = {
   startedAt: string;
   summary?: string;
   comments?: CodeReviewComment[];
+  budgetExhausted?: boolean;
   /** Set when the diff was cut to its first `lines` of `of` for size. */
   cut?: { lines: number; of: number };
 };

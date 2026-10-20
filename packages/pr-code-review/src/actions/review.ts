@@ -264,8 +264,6 @@ export async function checks(steps: Steps): Promise<Checks> {
   return { findings: ordered.map((o) => o.finding), checks: request.check ? ordered.map(check) : [] };
 }
 
-const STOPPED_EARLY = "<stopped_early>The review spent its budget before it finished reading the repository. Say in the summary that it stopped early and reports what it found.</stopped_early>\n\n";
-
 /** The findings to report, all of them or, when the request asks for the check, those it found real, and the write step's user message. */
 export async function writeInput(steps: Steps): Promise<WriteInput> {
   const { request, inference } = stepOutput(steps, "reviewInput");
@@ -275,7 +273,7 @@ export async function writeInput(steps: Steps): Promise<WriteInput> {
   const findings = request.check ? checked.filter((_, i) => verdicts[i]?.verdict === "real") : checked;
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
-  const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\n${budgetExhausted ? STOPPED_EARLY : ""}Write the review.`;
+  const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nWrite the review.`;
   return { budgetExhausted, verdicts, findings, text, inference: inference.write };
 }
 
