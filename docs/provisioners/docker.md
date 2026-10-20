@@ -33,7 +33,7 @@ Measured on Docker Desktop 29.5.3 (2026-10-17): a deployed, idle code review con
 
 ## What is isolated
 
-Each sidecar has its own container, processes, filesystem and data volume, with a read-only root, no Linux capabilities, no new privileges and no Docker socket. It holds only its own hub token and a credential key of its own. It shares the host's kernel and has outbound network.
+Each sidecar has its own container, processes, filesystem and data volume, with a read-only root, the image's unprivileged `bun` user (never root, and the data volume is created owned by it), no Linux capabilities, no new privileges and no Docker socket. It holds only its own hub token and a credential key of its own. It shares the host's kernel and has outbound network.
 
 A sandbox for repository commands inside the container needs privileges the container does not have today; they come with the tool that runs those commands.
 
