@@ -906,7 +906,7 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     expect(await invite(origin, fay)).toMatchObject({ status: 429 });
 
     // Without email the inviter holds the link, so it signs nobody in and only an invitee an admin has verified can accept.
-    expect(await invite(noEmail, emailOf("nobody"))).toMatchObject({ status: 404, body: { error: { message: expect.stringContaining("sign in with Google first") } } });
+    expect(await invite(noEmail, emailOf("nobody"))).toMatchObject({ status: 404, body: { error: { message: expect.stringContaining("Ask them to sign in, then invite them again.") } } });
     const deeSession = { ...await signedIn(noEmail, dee, false), origin: noEmail };
     const copied = Sent.assert((await invite(noEmail, dee)).body);
     expect(copied).toMatchObject({ emailed: false, link: landing });
