@@ -34,6 +34,15 @@ function docsPage(tool: string, r: ToolResult | undefined): RepoDocsPage | strin
   return { docs, rules: ruleSpans(content.rules), ref: content.ref, ...(next === undefined ? {} : { next }) };
 }
 
+/** Unread templates would leave their comments to be flagged as the author's, so they are an error instead. */
+function templatesRead(tool: string, r: ToolResult | undefined): string[] | string {
+  if (!r) return `${tool} did not answer`;
+  if (r.isError) return `${tool} failed: ${asText(r.content)}`;
+  const templates = data<{ templates?: unknown }>(r)?.templates;
+  if (!Array.isArray(templates) || !templates.every((text) => typeof text === "string")) return `${tool} result is unreadable`;
+  return templates;
+}
+
 /** An unreadable file list would read as a pull request that changes nothing, so it is an error instead. */
 function filesPage(tool: string, r: ToolResult | undefined): FilesPage | string {
   if (!r) return `${tool} did not answer`;
@@ -86,6 +95,7 @@ interface FetchContext {
   pack: CheckPack;
   events: TriageEvent[];
   docs: RepoDocs | string;
+  templates: string[] | string;
   firstFiles: FilesCursor;
   /** A scan counts reviews, commits and checks, so one it could not read leaves the pull request unread instead of empty. */
   wholeReads: boolean;
@@ -105,7 +115,7 @@ function fail(reason: string): FactsOutput {
   return { items: [{ error: reason }], batch: false };
 }
 
-async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number[], { policy, pack, events, docs, firstFiles, wholeReads }: FetchContext): Promise<RulesItem[]> {
+async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number[], { policy, pack, events, docs, templates, firstFiles, wholeReads }: FetchContext): Promise<RulesItem[]> {
   function tool(name: string): string {
     return toolName(stamp.repoSource, name);
   }
@@ -188,7 +198,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
       stack: data<NonNullable<PullData["stack"]>>(r1.get(`stack:${n}`)),
       files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
       authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
-    }, { repo, policy, pack, events, docs, source: stamp.repoSource });
+    }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });
     const judged = stamp.carried.get(n);
     if ("error" in item) return item;
     const stamped = { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }) };
@@ -222,12 +232,16 @@ async function readDocs({ host, stamp }: Host, repo: string, first: ToolResult |
 async function fetchListed(read: Host, repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[]): Promise<FactsOutput> {
   const judged = hasModelChecks(classificationSources(pack));
   const listTool = toolName(read.stamp.repoSource, "list_open_prs");
-  const r = await runAll(read.host, [call(listTool, { repo }), ...(judged ? [docsCall(read.stamp.repoSource, repo, 0)] : [])]);
+  // Only GitHub hides a template's comments, so only there are they told apart from the author's.
+  const templated = read.stamp.repoSource === "github" && catalogCheckEnabled(pack, "hidden-content");
+  const templatesTool = toolName(read.stamp.repoSource, "read_pr_templates");
+  const r = await runAll(read.host, [call(listTool, { repo }), ...(judged ? [docsCall(read.stamp.repoSource, repo, 0)] : []), ...(templated ? [call(templatesTool, { repo }, "templates")] : [])]);
   const list = data<{ prs: Array<{ number: number; draft?: boolean }> }>(r.get(listTool));
   if (!list && targets === undefined) return fail(`${listTool} failed`);
   const triageable = (list?.prs ?? []).filter((p) => p.draft !== true).map((p) => p.number);
   const docs = judged ? await readDocs(read, repo, r.get("docs:0")) : NO_DOCS;
-  const items = await fetchTargets(read, repo, targets ?? triageable, { policy, pack, events, docs, firstFiles: FIRST_FILES_PAGE, wholeReads: false });
+  const templates = templated ? templatesRead(templatesTool, r.get("templates")) : [];
+  const items = await fetchTargets(read, repo, targets ?? triageable, { policy, pack, events, docs, templates, firstFiles: FIRST_FILES_PAGE, wholeReads: false });
   return { items, batch };
 }
 
@@ -236,7 +250,7 @@ async function fetchHistory(read: Host, repo: string, limit: number): Promise<Fa
   const closed: ClosedPr[] = [];
   const items: RulesItem[] = [];
   const listTool = toolName(read.stamp.repoSource, "list_closed_prs");
-  const context: FetchContext = { policy: repoPolicy(undefined), pack: emptyPack(repo), events: [], docs: NO_DOCS, firstFiles: HISTORY_FILES_PAGE, wholeReads: true };
+  const context: FetchContext = { policy: repoPolicy(undefined), pack: emptyPack(repo), events: [], docs: NO_DOCS, templates: [], firstFiles: HISTORY_FILES_PAGE, wholeReads: true };
   for (let page: number | undefined = 1; page !== undefined && closed.length < limit;) {
     const results = await runAll(read.host, [call(listTool, { repo, page })]);
     const listed = data<{ prs: ClosedPr[]; next?: number }>(results.get(listTool));

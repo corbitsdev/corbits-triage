@@ -14,7 +14,7 @@ const OnFailWord = type.enumerated(...ON_FAILS);
 const RULE_BASE = { "+": "reject", text: Text, reason: Text, evidence: Evidence, "enabled?": "boolean", "onFail?": OnFailWord, "label?": Label } as const;
 const OWN_RULE = { ...RULE_BASE, id: CustomId } as const;
 
-const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green"] as const satisfies readonly CatalogId[];
+const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green", "hidden-content"] as const satisfies readonly CatalogId[];
 
 const RuleSchema = type({ ...RULE_BASE, check: "'max-files-changed' | 'max-lines-changed'", max: Limit })
   .or({ ...RULE_BASE, check: "'linked-issue'", "tracker?": type.enumerated(...ISSUE_TRACKERS.filter((tracker) => tracker !== "off")) })

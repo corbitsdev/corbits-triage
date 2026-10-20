@@ -80,6 +80,8 @@ export interface PrFacts {
   events: TriageEvent[];
   /** Set only on a stacked branch: the pull requests merged into it, and the open one it is based on. */
   stack?: Stack;
+  /** What the title, description, commits and paths hid, as `where: what`, never the hidden text. */
+  hidden: string[];
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
@@ -375,6 +377,12 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       const { failed, reason } = conventionalResult(facts, rules.conventional);
       if (failed) add("conventional-commits", "needs-author-update", reason);
       result("conventional-commits", failed, reason, [], { kind: "values", values: { conventional: !failed } });
+    }
+    if (on("hidden-content")) {
+      const hides = facts.hidden.length > 0;
+      const reason = hides ? "pull request text hides content" : "no hidden content";
+      if (hides) add("hidden-content", "needs-author-update", reason);
+      result("hidden-content", hides, reason, facts.hidden, { kind: "values", values: { hidesContent: hides } });
     }
     for (const rule of pack?.custom.filter(isTextCheck).filter(customCheckEnabled) ?? []) {
       const { failed, reason, evidence } = textResult(rule, facts);

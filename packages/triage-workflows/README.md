@@ -13,8 +13,9 @@ import { NEEDS_JUDGE_REASON, type Verdict } from "@corbits/triage-workflows/logi
 ```
 
 ```sh
-bun run eval        # decision-model eval; calls a paid model
-bun run eval:scan   # repository scan eval
+bun run eval                  # decision-model eval; calls a paid model
+bun run eval:scan             # repository scan eval
+bun run eval:hidden-content   # hidden-content rule eval; calls no model
 ```
 
 ## Test

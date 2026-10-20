@@ -1,6 +1,7 @@
-import { checkFailed, checkPending, latestDecisive, listPrFilesPage, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
-import { authorAssociation, authorKindOf, renderedText, stepTeams, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
+import { authorAssociation, authorKindOf, catalogCheckEnabled, renderedText, stepTeams, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
+import { hiddenIn, hiddenMarkup, nothingRemoved } from "./hidden-content.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "@corbits/common";
@@ -222,7 +223,7 @@ function stackOf(read: PullData["stack"]): Pick<PrFacts, "stack"> {
   return { stack: onto === undefined ? { includes } : { includes, onto } };
 }
 
-type ItemFacts = Pick<PrFacts, "paths" | "files" | "commits" | "commitMessages" | "events" | "docs" | "rules" | "authorTeams" | "authorTeamsUnknown" | "stack">;
+type ItemFacts = Pick<PrFacts, "paths" | "files" | "commits" | "commitMessages" | "events" | "docs" | "rules" | "authorTeams" | "authorTeamsUnknown" | "stack" | "hidden">;
 
 export interface ItemContext {
   repo: string;
@@ -230,35 +231,65 @@ export interface ItemContext {
   pack: CheckPack;
   events: TriageEvent[];
   docs: RepoDocs | string;
+  /** The repository's pull request templates, whose comments are the maintainers', not the author's. */
+  templates: string[] | string;
   source: RepoSource;
 }
 
-/** Patches are left as the host sent them; hunks.ts makes them safe to read. */
-function shownFile(file: PrFileFacts): PrFileFacts {
-  return { ...file, path: visibleText(file.path), ...(file.previousPath === undefined ? {} : { previousPath: visibleText(file.previousPath) }) };
+/** A GitHub repository's pull request templates, read only when the hidden-content rule tells their comments apart. */
+export async function templatesFor(gh: GithubFetch, repo: string, pack: CheckPack): Promise<string[]> {
+  return catalogCheckEnabled(pack, "hidden-content") ? readPrTemplates(gh, repo) : [];
 }
 
-/** GitHub's own rendering holds only what a reader sees; Bitbucket Data Center shows the body as written. */
-function shownBody(pr: PrData, source: RepoSource): string | undefined {
-  if (source !== "github") return visibleText(pr.body ?? "");
-  if (typeof pr.bodyHtml === "string") return renderedText(pr.bodyHtml);
-  return pr.body ? undefined : "";
+/** `text` as a reader sees it, noting in `hidden` what it hid; `where` names the place from its shown text. */
+function shownText(text: string, hidden: string[], where: (shown: string) => string): string {
+  const removed = nothingRemoved();
+  const shown = visibleText(text, removed);
+  hidden.push(...hiddenIn(where(shown), removed));
+  return shown;
+}
+
+function pathPlace(path: string): string {
+  return `path ${path}`;
+}
+
+/** Patches are left as the host sent them; hunks.ts makes them safe to read. */
+function shownFile(file: PrFileFacts, hidden: string[]): PrFileFacts {
+  return { ...file, path: shownText(file.path, hidden, pathPlace), ...(file.previousPath === undefined ? {} : { previousPath: shownText(file.previousPath, hidden, pathPlace) }) };
+}
+
+/**
+ * GitHub's own rendering holds only what a reader sees, and its markdown hides comments; Bitbucket Data Center shows the
+ * body as written.
+ */
+function shownBody(pr: PrData, source: RepoSource, templates: string[], hidden: string[]): string | undefined {
+  const removed = nothingRemoved();
+  let body: string;
+  if (source !== "github") body = visibleText(pr.body ?? "", removed);
+  else if (typeof pr.bodyHtml === "string") body = renderedText(pr.bodyHtml, removed);
+  else return pr.body ? undefined : "";
+  const markup = source === "github" ? hiddenMarkup(pr.body ?? "", body, templates) : [];
+  hidden.push(...new Set([...hiddenIn("description", removed), ...markup.map((what) => `description: ${what}`)]));
+  return body;
 }
 
 /** Every rule, the judge and the comment read pull request text only as a reader sees it. */
-export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs, source }: ItemContext): RulesItem {
+export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs, templates, source }: ItemContext): RulesItem {
   const { pr } = data;
   if (!pr) return { error: `github_get_pr failed for #${number}` };
   if (typeof data.files === "string") return { error: data.files };
   if (typeof docs === "string") return { error: docs };
-  const body = shownBody(pr, source);
+  if (typeof templates === "string") return { error: templates };
+  const hidden: string[] = [];
+  const title = shownText(pr.title ?? "", hidden, () => "title");
+  const body = shownBody(pr, source, templates, hidden);
   if (body === undefined) return { error: `github_get_pr returned no rendered body for #${number}` };
-  const files = data.files.map(shownFile);
+  const messages = data.commits.map((commit, at) => shownText(commit.message ?? "", hidden, () => `commit ${at + 1}`));
+  const files = data.files.map((file) => shownFile(file, hidden));
   const paths = files.map((file) => file.path);
-  const messages = data.commits.map((commit) => visibleText(commit.message ?? ""));
   const commits = messages.map(firstLine);
   const commitMessages = messages.slice(0, COMMIT_MESSAGES_MAX);
-  const shown = { ...pr, title: visibleText(pr.title ?? ""), body };
-  const facts: PrFacts = { ...buildFacts(repo, number, shown, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack) };
+  const shown = { ...pr, title, body };
+  const facts: PrFacts = { ...buildFacts(repo, number, shown, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, hidden, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack) };
   return { facts, pack };
 }

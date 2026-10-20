@@ -16,11 +16,15 @@ const EMOJI_TAIL = /\u{FE0F}|[\u{1F3FB}-\u{1F3FF}]/u;
 // Scripts whose letters change shape when a ZWJ or ZWNJ sits between them.
 const JOINING_SCRIPT = /[\p{scx=Arab}\p{scx=Syrc}\p{scx=Nkoo}\p{scx=Mong}\p{scx=Deva}\p{scx=Beng}\p{scx=Guru}\p{scx=Gujr}\p{scx=Orya}\p{scx=Taml}\p{scx=Telu}\p{scx=Knda}\p{scx=Mlym}\p{scx=Sinh}]/u;
 const BLACK_FLAG = "\u{1F3F4}";
+// The escape that starts a terminal colour code, which pasted logs carry and which hides no message.
+const ESCAPE = "\u{1B}";
 // England, Scotland and Wales: the only subdivision flags emoji fonts draw.
 const FLAG_TAGS = new Set(["gbeng", "gbsct", "gbwls"].map(tagged));
 
 const HEADING = /^h([1-6])$/;
 const BLOCKS = new Set(["p", "div", "blockquote", "details", "summary", "table", "dl", "dt", "dd"]);
+// Elements a reader sees drawn without text, which end a run of removed characters.
+const DRAWN = new Set(["img", "svg", "input", "hr"]);
 // The rest of the issue's path segment after what the linked-issue rule matches, such as Linear's `CL-123`.
 const SEGMENT = /[^/?#\s]*/y;
 // GitHub's own emoji images, whose alt is the `:name:` a reader sees drawn.
@@ -59,18 +63,37 @@ function shown(chars: string[], at: number): boolean {
   return selects(char, chars[at - 1] ?? "");
 }
 
+/** What cleaning took out of a text: each run of adjacent characters removed, and each link that showed nothing. */
+export interface Removed {
+  runs: string[];
+  emptyLinks: number;
+  /** Nothing has been drawn since the last run, so characters removed from the next text continue it. */
+  open: boolean;
+}
+
 /** `value` without the characters a reader never sees: controls and default-ignorable characters. */
-export function visibleText(value: string): string {
+export function visibleText(value: string, removed?: Removed): string {
   const chars = [...value];
   let kept = "";
+  let run = removed?.open ? removed.runs.pop()! : "";
+  function close() {
+    if (run) removed?.runs.push(run);
+    run = "";
+  }
   for (let at = 0; at < chars.length; at++) {
     if (chars[at] === BLACK_FLAG && FLAG_TAGS.has(chars.slice(at + 1, at + 7).join(""))) {
       kept += chars.slice(at, at + 7).join("");
       at += 6;
+      close();
     } else if (shown(chars, at)) {
       kept += chars[at];
+      if (!/\s/.test(chars[at]!)) close();
+    } else if (!(chars[at] === ESCAPE && chars[at + 1] === "[")) {
+      run += chars[at];
     }
   }
+  if (removed) removed.open = run !== "";
+  close();
   return kept;
 }
 
@@ -97,7 +120,7 @@ function issueTarget(href: string): string | undefined {
  * GitHub's own rendering of a body as plain text: what a reader sees, in its blocks. Attributes never reach it, and a
  * link keeps its target only when it links an issue or pull request.
  */
-export function renderedText(html: string): string {
+export function renderedText(html: string, removed?: Removed): string {
   const parts: string[] = [];
   // Breaks and spaces wait until the next text, so nothing is trimmed off what is already written.
   let breaks = 0;
@@ -106,7 +129,8 @@ export function renderedText(html: string): string {
   let skipped = 0;
   let pre = 0;
   let cells = 0;
-  const links: Array<{ href: string; start: number }> = [];
+  // An image or icon draws a link even with no text.
+  const links: Array<{ href: string; start: number; drawn: boolean }> = [];
   const lists: Array<{ ordered: boolean; next: number }> = [];
 
   function emit(text: string) {
@@ -134,6 +158,7 @@ export function renderedText(html: string): string {
       skipped++;
       return;
     }
+    if (removed && DRAWN.has(name)) removed.open = false;
     const heading = HEADING.exec(name);
     if (heading) {
       block();
@@ -168,11 +193,13 @@ export function renderedText(html: string): string {
       space = true;
     } else if (name === "input" && attributes.type === "checkbox") {
       emit("checked" in attributes ? "[x]" : "[ ]");
-    } else if (name === "img") {
+    } else if (name === "img" || name === "svg") {
+      const link = links.at(-1);
+      if (link) link.drawn = true;
       const alt = attributes.alt ?? "";
       if (attributes.src?.startsWith(EMOJI_SRC) && EMOJI_NAME.test(alt)) emit(alt);
     } else if (name === "a") {
-      links.push({ href: attributes.href ?? "", start: parts.length });
+      links.push({ href: attributes.href ?? "", start: parts.length, drawn: false });
     } else if (BLOCKS.has(name)) {
       block();
     }
@@ -196,6 +223,7 @@ export function renderedText(html: string): string {
       const text = parts.slice(link.start).join("").trim();
       const target = text ? issueTarget(link.href) : undefined;
       if (target) parts.push(` (${target})`);
+      if (!text && !link.drawn && link.href && removed) removed.emptyLinks++;
     } else if (name === "ul" || name === "ol") {
       lists.pop();
       if (lists.length) line();
@@ -212,7 +240,7 @@ export function renderedText(html: string): string {
 
   function ontext(text: string) {
     if (skipped) return;
-    const clean = visibleText(text);
+    const clean = visibleText(text, removed);
     if (pre) {
       let end = clean.length;
       while (end > 0 && clean[end - 1] === "\n") end--;

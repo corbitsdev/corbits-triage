@@ -7,7 +7,7 @@ import { parts } from "@corbits/triage-workflows/actions/parts";
 import { rules, type RulesItem } from "@corbits/triage-workflows/actions/rules";
 import type { SuggestedAction, SuggestedDo } from "@corbits/triage-workflows/logic/actions";
 import { hasModelChecks, type CheckResult } from "@corbits/triage-workflows/logic/checks";
-import { assembleItem, listFiles, type RepoDocs } from "@corbits/triage-workflows/logic/facts";
+import { assembleItem, listFiles, templatesFor, type RepoDocs } from "@corbits/triage-workflows/logic/facts";
 import { NEEDS_JUDGE_REASON, type Verdict } from "@corbits/triage-workflows/logic/render";
 import { fileNotes } from "./notes.ts";
 import type { PolicyRead } from "./policy-source.ts";
@@ -37,16 +37,17 @@ async function readDocs(gh: GithubFetch, repo: string): Promise<RepoDocs> {
 }
 
 async function readItem(gh: GithubFetch, { repo, number }: PrRef, pack: CheckPack, docs: RepoDocs): Promise<RulesItem> {
-  const [pr, reviews, comments, commits, files] = await Promise.all([
+  const [pr, reviews, comments, commits, files, templates] = await Promise.all([
     readPr(gh, repo, number),
     getReviews(gh, repo, number),
     listIssueComments(gh, repo, number),
     listPrCommits(gh, repo, number),
     listFiles(gh, repo, number),
+    templatesFor(gh, repo, pack),
   ]);
   const checks = pr.sha ? await getChecks(gh, repo, pr.sha) : [];
   // Team membership needs read:org, which the read-only token is not asked for, so a step for a team is skipped as unknown.
-  return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: null }, { repo, policy: repoPolicy({}), pack, events: ["catch-up"], docs, source: "github" });
+  return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: null }, { repo, policy: repoPolicy({}), pack, events: ["catch-up"], docs, templates, source: "github" });
 }
 
 /** The repository's docs are read only when the decision model will be asked. */

@@ -836,6 +836,41 @@ export async function readRepoFileResponse(res: Response, url: string): Promise<
   return { kind: "file", sha: file.sha, text, url: file.html_url };
 }
 
+type DirEntry = { name: string; path: string; type: string };
+
+// GitHub finds a pull request template in the root, `docs/` or `.github/`, in any case, alone or as a folder of them.
+const PR_TEMPLATE_DIRS = ["", "docs", ".github"];
+const PR_TEMPLATE = /^pull_request_template\.md$/i;
+const PR_TEMPLATE_FOLDER = /^pull_request_template$/i;
+
+/** A folder's entries on the default branch; none when nothing is there. */
+async function listFolder(gh: GithubFetch, repo: string, path: string): Promise<DirEntry[]> {
+  const url = path ? `/repos/${repo}/contents/${path}` : `/repos/${repo}/contents`;
+  const res = await gh(url, { headers: { accept: "application/vnd.github+json" } });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error(`github GET ${url} -> ${res.status}`);
+  const body: unknown = await res.json();
+  return Array.isArray(body) ? body.filter((row): row is DirEntry => typeof row?.name === "string" && typeof row?.path === "string" && typeof row?.type === "string") : [];
+}
+
+async function templatesIn(gh: GithubFetch, repo: string): Promise<string[]> {
+  const entries = (await Promise.all(PR_TEMPLATE_DIRS.map((path) => listFolder(gh, repo, path)))).flat();
+  const folders = entries.filter((entry) => entry.type === "dir" && PR_TEMPLATE_FOLDER.test(entry.name));
+  const inFolders = (await Promise.all(folders.map((folder) => listFolder(gh, repo, folder.path)))).flat().filter((entry) => entry.type === "file" && /\.md$/i.test(entry.name));
+  const files = [...entries.filter((entry) => entry.type === "file" && PR_TEMPLATE.test(entry.name)), ...inFolders];
+  const reads = await Promise.all(files.map((file) => readRepoFile(gh, repo, file.path)));
+  return reads.flatMap((read) => (read?.kind === "file" && read.text !== null ? [read.text] : []));
+}
+
+/**
+ * The text of each pull request template GitHub offers for the repository, from its default branch, or, as GitHub
+ * falls back when it has none, from its owner's `.github` repository.
+ */
+export async function readPrTemplates(gh: GithubFetch, repo: string): Promise<string[]> {
+  const own = await templatesIn(gh, repo);
+  return own.length ? own : templatesIn(gh, `${repo.split("/")[0]}/.github`);
+}
+
 const API_ORIGIN = "https://api.github.com";
 
 /**
