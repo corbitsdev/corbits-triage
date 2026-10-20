@@ -74,7 +74,6 @@ async function github(req: Request): Promise<Response> {
   if (pathname === "/app/installations/1/access_tokens") return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
   if (req.method === "GET" && pathname in READS) return Response.json(READS[pathname]);
   if (pathname === `/repos/${REPO}/installation`) return Response.json({ id: 1 });
-  if (pathname === "/app") return Response.json({ slug: "triage" });
   if (req.method === "POST" && pathname === "/graphql") return Response.json({ data: { repository: null } });
   if (req.method === "GET" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
     return Response.json(sentReviews.map((review, index) => ({ id: 100 + index, user: { login: "triage[bot]" }, state: "COMMENTED", commit_id: review.commit_id, body: review.body })));

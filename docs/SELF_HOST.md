@@ -148,12 +148,12 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
 1. **Sign up.** The first sign-in creates your workspace.
 2. **Create the GitHub App** with **Create GitHub App** and confirm the
    prefilled form on GitHub. The private key goes to the hub's vault and never
-   reaches the browser. The App's webhook URL is built from the address that
-   started the flow, so start it from the public URL.
+   reaches the browser or the workflows. The App's webhook URL is built from the
+   address that started the flow, so start it from the public URL.
 
    To reuse an App, expand **Connect an existing GitHub App instead**, enter its
    App ID, slug, private key and webhook secret, and set its webhook URL to the
-   one shown. It needs:
+   one shown. It must be installed on one account only, and it needs:
 
    - Permissions: Pull requests, Issues and Contents: write; Checks, Members
      and Metadata: read.

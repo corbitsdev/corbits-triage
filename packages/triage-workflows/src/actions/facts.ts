@@ -93,6 +93,8 @@ interface Stamp {
   blocksOn: boolean;
   /** The head the mail names for each pull request. */
   heads: Map<number, string>;
+  /** The App's bot account the hub's mail names, whose marked reviews are triage's own. */
+  appLogin?: string;
 }
 
 interface Host {
@@ -149,7 +151,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   function prCalls(n: number): ToolCall[] {
     return [
       call(tool("get_pr"), { repo, number: n }, `pr:${n}`),
-      call(tool("get_reviews"), { repo, number: n }, `reviews:${n}`),
+      call(tool("get_reviews"), { repo, number: n, ...(stamp.appLogin && { appLogin: stamp.appLogin }) }, `reviews:${n}`),
       call(tool("list_issue_comments"), { repo, number: n }, `comments:${n}`),
       call(tool("list_pr_commits"), { repo, number: n }, `commits:${n}`),
       filesCall([n, firstFiles]),
@@ -206,7 +208,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   function degraded(n: number, error: string): RulesItem {
     const headSha = prs.get(n)?.sha ?? stamp.heads.get(n);
     if (headSha === undefined) return { error };
-    return { error, pull: { repo, number: n, headSha }, pack, automatic: stamp.automatic, ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }) };
+    return { error, pull: { repo, number: n, headSha }, pack, automatic: stamp.automatic, ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
   }
 
   function itemFor(n: number): RulesItem {
@@ -224,7 +226,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });
     const judged = stamp.carried.get(n);
     if ("error" in item) return degraded(n, item.error);
-    const stamped = { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }) };
+    const stamped = { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
     return judged === undefined ? stamped : { ...stamped, judged };
   }
 
@@ -292,23 +294,25 @@ async function fetchHistory(read: Host, repo: string, limit: number): Promise<Fa
 export async function readFacts(input: unknown, hostFor: (source: RepoSource) => HostCall): Promise<FactsOutput> {
   const request = triggerRequestOf(input);
   const repo = request?.repo;
+  const trusted = isFromTriageSender(input);
+  // Only the hub's mail names whose reviews are triage's own, so no other mail can pass a person's off as triage's.
+  const appLogin = trusted && typeof request?.appLogin === "string" ? { appLogin: request.appLogin } : {};
   if (request?.kind === "history") {
     const limit = request.limit ?? HISTORY_LIMIT;
     if (typeof repo !== "string") return fail("facts: input has no repo");
     if (!Number.isSafeInteger(limit) || (limit as number) < 1) return fail("facts: history limit must be a positive integer");
-    return fetchHistory({ host: hostFor("github"), stamp: { carried: new Map(), automatic: [], repoSource: "github", noWait: false, blocksOn: false, heads: new Map() } }, repo, limit as number);
+    return fetchHistory({ host: hostFor("github"), stamp: { carried: new Map(), automatic: [], repoSource: "github", noWait: false, blocksOn: false, heads: new Map(), ...appLogin } }, repo, limit as number);
   }
   const policy = repoPolicy(request?.policy);
   if (!request || typeof repo !== "string") return fail("facts: input has no repo");
   if (!policy.enabled) return fail("Triage is disabled for this repository.");
   const pack = packFromInput(request.pack ?? request.checkPack);
   if (!pack) return fail(NEEDS_SETUP_REASON);
-  const trusted = isFromTriageSender(input);
   const repoSource = repoSourceOf(request.repoSource);
   const source = policySource(request);
   const items = request.kind === "pr" && Array.isArray(request.items) ? request.items : undefined;
   const carried = trusted && items ? carriedAnswers(items) : new Map<number, Judged>();
-  const read = { host: hostFor(repoSource), stamp: { carried, automatic: automaticKinds(trusted, request), repoSource, noWait: request.noWait === true, blocksOn: Array.isArray(request.blocks) && request.blocks.length > 0, heads: mailHeads(request), ...(source && { source }) } };
+  const read = { host: hostFor(repoSource), stamp: { carried, automatic: automaticKinds(trusted, request), repoSource, noWait: request.noWait === true, blocksOn: Array.isArray(request.blocks) && request.blocks.length > 0, heads: mailHeads(request), ...(source && { source }), ...appLogin } };
   if (request.kind === "backlog") return fetchListed(read, repo, undefined, true, policy, pack, ["catch-up"]);
   if (request.kind !== "pr") return fail("facts: input is neither pr nor backlog");
   // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.

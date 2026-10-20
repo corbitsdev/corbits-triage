@@ -5,7 +5,7 @@ import { parseDoInput, type DoInput } from "@corbits/github-tool/do";
 import { doEffectId } from "../logic/actions.js";
 import { errorText, isRecord } from "@corbits/common";
 
-export type ApprovalOutput = { approved: false } | ({ approved: true; principalId: string; repoSource?: RepoSource } & DoInput) | { approved: true; effectId: string; refused: string };
+export type ApprovalOutput = { approved: false } | ({ approved: true; principalId: string; repoSource?: RepoSource; appLogin?: string } & DoInput) | { approved: true; effectId: string; refused: string };
 
 const Approval = type({
   runId: "string",
@@ -33,5 +33,6 @@ export async function approval(input: unknown, _ctx: EffectContext, _signal: Abo
   const { list, index, principalId } = named;
   if (doEffectId({ repo, number, headSha, list, index, kind, target }) !== effectId) return { approved: true, effectId, refused: "the approval's effect id does not match its Do" };
   const repoSource = repoSourceOf(request["repoSource"]);
-  return { approved: true, principalId, ...approved, ...(repoSource !== "github" && { repoSource }) };
+  const appLogin = request["appLogin"];
+  return { approved: true, principalId, ...approved, ...(repoSource !== "github" && { repoSource }), ...(typeof appLogin === "string" && { appLogin }) };
 }

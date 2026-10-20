@@ -786,7 +786,7 @@ export function degradedVerdict(reason: string): RenderOutput {
 }
 
 /** The mirror tool's arguments for a marker: the label on GitHub, the build status on Bitbucket Data Center. */
-export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS" | "FAILED"; description: string } };
+export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS" | "FAILED"; description: string }; appLogin?: string };
 
 /** `effectId` names the marker on its head; the write itself is a no-op where the head already shows it, and skipped once the head moved. */
 export type WaitingMark = { effectId: string; repoSource: RepoSource; args: MarkArgs };
@@ -807,6 +807,8 @@ export type Verdict = RenderOutput & {
   headSha: string | null;
   /** Where the pull request lives; absent on GitHub. */
   repoSource?: RepoSource;
+  /** The App's bot account on GitHub, whose comments and reviews are triage's own. */
+  appLogin?: string;
   request: MirrorRequest;
   automatic: ActionKind[];
   actions: SuggestedAction[];

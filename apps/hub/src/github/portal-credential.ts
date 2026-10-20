@@ -5,6 +5,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
 import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
+import { GITHUB_CREDENTIAL, githubAppKey, githubAppLogin } from "./app-key.js";
 import { githubUsage } from "./github-usage.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
@@ -52,16 +53,11 @@ export function credentialSecret(cipher: CredentialCipher, credential: { id: str
   return cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
 }
 
-export async function activeSecret(d: Pick<PortalCredentialDeps, "db" | "cipher">, tenantId: string, name: string): Promise<string | undefined> {
-  const credential = await activeCredential(d.db, tenantId, name);
-  return credential && credentialSecret(d.cipher, credential);
-}
-
 /** Why a member may not act with a host's credential: 409 when neither the workspace nor a parent has one, the same for every member; 403 when this member lacks the grant. */
 export type CredentialRefusal = { status: 403 | 409; code: string; message: string };
 
 const HOST_CREDENTIAL = {
-  github: { name: "github", label: "GitHub App", connect: "Connect GitHub first." },
+  github: { name: GITHUB_CREDENTIAL, label: "GitHub App", connect: "Connect GitHub first." },
   "bitbucket-datacenter": { name: TOKEN_CREDENTIAL, label: "Bitbucket Data Center", connect: "Connect Bitbucket Data Center first." },
 } as const;
 
@@ -97,10 +93,13 @@ export async function sourceCredentialGrant(d: GrantDeps, principalId: string, t
   return refusal && refusalResponse(refusal);
 }
 
-export async function githubAppCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction): Promise<string | Response> {
+export type GithubApp = { appJson: string; login: string };
+
+/** Members are granted the `github` credential; the hub acts for them with the App key behind it. */
+export async function githubAppCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction): Promise<GithubApp | Response> {
   const credential = await githubAppGrant(d, principalId, tenantId, action);
   if (credential instanceof Response) return credential;
-  return credentialSecret(d.cipher, credential);
+  return { appJson: await githubAppKey(d, credential.tenantId), login: githubAppLogin(credential) };
 }
 
 async function holdsTriageRole(db: DB["db"], principalId: string, tenantId: string): Promise<boolean> {

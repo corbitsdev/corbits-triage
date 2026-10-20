@@ -23,9 +23,7 @@ type FakeComment = { id: number; user: { login: string; type: string }; body: st
 
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
-async function login() {
-  return APP.login;
-}
+const login = APP.login;
 
 function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [], labels: string[] = []) {
   let nextId = 100;

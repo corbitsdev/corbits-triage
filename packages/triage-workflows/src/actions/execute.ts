@@ -27,7 +27,7 @@ const EXECUTE_TOOL: Record<RepoSource, string> = { github: "github_execute_do_au
 
 type AutomaticDo = { verdict: Verdict; step: SuggestedDo };
 
-type QueuedDo = DoInput & { repoSource?: RepoSource };
+type QueuedDo = DoInput & { repoSource?: RepoSource; appLogin?: string };
 
 function isDo(action: SuggestedAction): action is SuggestedDo {
   return "effectId" in action;
@@ -44,12 +44,12 @@ function refusal({ verdict, step }: AutomaticDo): string | undefined {
 }
 
 function doInput({ verdict, step }: AutomaticDo): QueuedDo {
-  return { request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha!, kind: step.kind, target: step.target }, ...(verdict.repoSource && { repoSource: verdict.repoSource }) };
+  return { request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha!, kind: step.kind, target: step.target }, ...(verdict.repoSource && { repoSource: verdict.repoSource }), ...(verdict.appLogin && { appLogin: verdict.appLogin }) };
 }
 
 /** The call id is the effect id, so each result names its Do. */
-function doCall({ request, step, repoSource }: QueuedDo): ToolCall {
-  return call(EXECUTE_TOOL[repoSourceOf(repoSource)], { request, step }, step.effectId);
+function doCall({ request, step, repoSource, appLogin }: QueuedDo): ToolCall {
+  return call(EXECUTE_TOOL[repoSourceOf(repoSource)], { request, step, ...(appLogin && { appLogin }) }, step.effectId);
 }
 
 function outcome(tool: string, r: ToolResult): DoResult {

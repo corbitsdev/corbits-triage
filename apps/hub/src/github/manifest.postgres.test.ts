@@ -197,9 +197,10 @@ test("PostgreSQL: a setup state commits credentials once, fresh or replacing", a
       conversions += 1;
       return Response.json({ id: conversions, slug: `app-${conversions}`, pem: `key-${conversions}`, webhook_secret: `hook-${conversions}` });
     }
+    const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
     const integration = createGithubManifestIntegration({
       db,
-      cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
+      cipher,
       getSession: signedInSession,
       authorizeCredential: allow,
       stateSecret: STATE_SECRET,
@@ -232,8 +233,16 @@ test("PostgreSQL: a setup state commits credentials once, fresh or replacing", a
     expect(await callbackStatuses(true)).toEqual([303, 400, 400]);
 
     const rows = await db.select().from(schema.credential).where(eq(schema.credential.tenantId, "tnt_manifest"));
-    expect(rows.map((row) => row.name).sort()).toEqual(["github", "github-hook"]);
+    expect(rows.map((row) => row.name).sort()).toEqual(["github", "github-app", "github-hook"]);
     expect(rows.find((row) => row.name === "github")?.metadata).toEqual({ appSlug: committedSlug });
+    // The key is moved off the credential workflows bind, which holds no token until the App is installed.
+    async function secretOf(name: string): Promise<string> {
+      const row = rows.find((candidate) => candidate.name === name)!;
+      return cipher.decrypt(row.secret, credentialAad(row.id, "secret"));
+    }
+    const committed = committedSlug!.slice("app-".length);
+    expect(JSON.parse(await secretOf("github-app"))).toEqual({ appId: committed, privateKey: `key-${committed}` });
+    expect(await secretOf("github")).toBe("");
   } finally {
     await handle?.close();
     await dropSchema(TEST_DB, { schema: testSchema });

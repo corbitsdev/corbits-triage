@@ -3,22 +3,18 @@ import type { DB } from "@intx/db";
 import type { SidecarProvisioner } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
 import type { DatabaseConfig, E2bSettings } from "../env.js";
-import { activeSidecarIds, hubIdOf, inImage, remoteHubProblem } from "./docker.js";
+import { activeSidecarIds, hubIdOf, remoteHubProblem } from "./docker.js";
 
 export type E2bSidecarProvisioner = E2bSidecars & { readonly provisioner: SidecarProvisioner };
 
 type ConnectOpts = {
   readonly e2b: E2bSettings;
   readonly database: DatabaseConfig;
-  /** The repository root on the hub. */
-  readonly root: string;
   readonly adapterManifest: AdapterManifest;
 };
 
 /** The E2B provisioner, or why it is not registered. */
-export async function connectE2bSidecars({ e2b: settings, database, root, adapterManifest }: ConnectOpts): Promise<E2bSidecarProvisioner | string> {
-  const manifest = inImage(adapterManifest, root);
-  if (manifest === undefined) return "Code review cannot run in E2B while GITHUB_API_ORIGIN is set; unset it";
+export async function connectE2bSidecars({ e2b: settings, database, adapterManifest }: ConnectOpts): Promise<E2bSidecarProvisioner | string> {
   const hubProblem = remoteHubProblem("An E2B sandbox", settings.publicHubWebSocketUrl);
   if (hubProblem !== undefined) return hubProblem;
   let hubId: string;
@@ -36,7 +32,7 @@ export async function connectE2bSidecars({ e2b: settings, database, root, adapte
   return {
     e2b,
     hubId,
-    provisioner: createE2bSidecarProvisioner({ e2b, hubId, adapterManifest: manifest, hubWebSocketUrl: settings.publicHubWebSocketUrl }),
+    provisioner: createE2bSidecarProvisioner({ e2b, hubId, adapterManifest, hubWebSocketUrl: settings.publicHubWebSocketUrl }),
   };
 }
 

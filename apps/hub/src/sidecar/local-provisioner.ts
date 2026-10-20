@@ -36,7 +36,7 @@ export type CreateLocalProcessSidecarProvisionerOpts = {
   readonly spawnSidecar: SpawnLocalSidecar;
   readonly manifests: LocalSidecarManifestStore;
   readonly capacity: HostCapacity;
-  /** Restores records written before manifests carried `adapterManifest`. */
+  /** Operator config, so a restored sidecar loads the hub's adapters, not the ones its record was written with. */
   readonly adapterManifest: AdapterManifest;
   readonly stopTimeoutMs?: number;
   readonly log: (entry: Record<string, unknown>) => void;
@@ -292,7 +292,6 @@ export function createLocalProcessSidecarProvisioner({
         hubWebSocketUrl: request.hubWebSocketUrl,
         dataDir,
         token: request.token,
-        ...(request.adapterManifest !== undefined && { adapterManifest: request.adapterManifest }),
       });
       return { kind: "accepted" as const, externalRef: String(handle.pid) };
     } catch (error) {
@@ -351,7 +350,7 @@ export function createLocalProcessSidecarProvisioner({
       logAllocation("local_sidecar_removed", manifest);
       return;
     }
-    const request = { ...manifest, adapterManifest: manifest.adapterManifest ?? adapterManifest };
+    const request = { ...manifest, adapterManifest };
     const handle = spawnSidecar({ request, dataDir: manifest.dataDir });
     const managed: ManagedProcess = { handle, exited: false };
     void trackExit(managed);

@@ -46,7 +46,7 @@ import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
-import { buildSidecarAdapterManifest } from "./sidecar-config.js";
+import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
@@ -64,7 +64,8 @@ import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
-import { createBridgeHandler, logJson } from "./github/bridge.js";
+import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
+import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
 import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
@@ -155,13 +156,15 @@ const WORKER_POLL_MS = 2_000;
 const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
 /** How often E2B sandboxes are swept and extended; well inside their one-hour timeout. */
 const E2B_TEND_MS = 10 * 60_000;
+/** A GitHub token that could not be renewed is tried again within its remaining quarter hour. */
+const GITHUB_TOKEN_RETRY_MS = 60_000;
+const GITHUB_TOKEN_RETRY_MAX_MS = 5 * 60_000;
 
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
 const database = databaseConfig(env);
 const githubOrigin = githubApiOrigin(env);
-const sidecarAdapterManifest = buildSidecarAdapterManifest(env.HUB_DATA_DIR, githubOrigin);
 
 await Bun.$`bunx drizzle-kit migrate`.cwd(`${V}/packages/db`).env({ ...childProcessEnv(env), ...migrationEnv(database) }).quiet();
 logJson({ level: "info", msg: "migrations_applied" });
@@ -190,17 +193,17 @@ const local = createLocalProcessSidecarProvisioner({
     log: logJson,
   }),
   capacity: createHostCapacity({ cgroupRoot: "/sys/fs/cgroup", meminfo: "/proc/meminfo" }),
-  adapterManifest: sidecarAdapterManifest,
+  adapterManifest: SIDECAR_ADAPTER_MANIFEST,
   log: logJson,
 });
-const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
 const dockerUp = "provisioner" in docker ? docker : undefined;
 if ("reason" in docker) logJson({ level: "info", msg: "docker_sidecars_off", reason: docker.reason });
 const e2bConfig = e2bSettings(env);
-const e2b = e2bConfig === undefined ? undefined : await connectE2bSidecars({ e2b: e2bConfig, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+const e2b = e2bConfig === undefined ? undefined : await connectE2bSidecars({ e2b: e2bConfig, database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
 if (typeof e2b === "string") logJson({ level: "info", msg: "e2b_sidecars_off", reason: e2b });
 const railwaySettings = railwaySandboxSettings(env);
-const railway = railwaySettings === undefined ? undefined : await connectRailwaySidecars({ railway: railwaySettings, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+const railway = railwaySettings === undefined ? undefined : await connectRailwaySidecars({ railway: railwaySettings, database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
 if (typeof railway === "string") logJson({ level: "info", msg: "railway_sidecars_off", reason: railway });
 // First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, then Railway, the rest on the hub host.
 const workloadProvisioners = [dockerUp, e2b, railway].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
@@ -210,6 +213,7 @@ let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
 let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
+let tokenLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
 let coordinator: Coordinator | undefined;
 let e2bTender: ReturnType<typeof setInterval> | undefined;
@@ -224,6 +228,7 @@ async function shutdown(): Promise<void> {
   cronTicker?.stop();
   triageLoop?.stop();
   recordLoop?.stop();
+  tokenLoop?.stop();
   coalescer?.stop();
   coordinator?.stop();
   clearInterval(e2bTender);
@@ -249,7 +254,7 @@ const composition = await createInterchangeHub({
   settings: interchangeSettings(env),
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { email: { resetPassword: smtp.passwordReset, verifyEmail: smtp.verifyEmail } }) },
   credentialCipher,
-  adapterManifest: sidecarAdapterManifest,
+  adapterManifest: SIDECAR_ADAPTER_MANIFEST,
   sidecarProvisioners,
   probeSidecarProvisioners: sidecarProvisioners,
   probeSidecarCapabilityRules: workloadProvisioners.length > 0 ? [{ capability: "isolation:workload", effect: "require" }] : [],
@@ -401,7 +406,21 @@ const hookApp = createStockHookApp(
 const GITHUB_SENDER = TRIAGE_MAIL_SENDER;
 const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
-  await githubDeliverer.to(address, JSON.stringify(payload), tenantId, undefined);
+  await githubDeliverer.to(address, JSON.stringify(await withAppLogin(composition.db, tenantId, payload)), tenantId, undefined);
+}
+const githubToken = createGithubTokenRenewal({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, log: logJson });
+tokenLoop = createReconcileLoop(githubToken.renewAll, { intervalMs: GITHUB_TOKEN_RENEW_MS, retryMs: GITHUB_TOKEN_RETRY_MS, retryMaxMs: GITHUB_TOKEN_RETRY_MAX_MS }, logJson);
+/** A failed renewal is retried by the token loop. */
+async function renewGithubToken(tenantId: string): Promise<void> {
+  try {
+    await githubToken.renew(tenantId);
+  } catch (err) {
+    logJson({ level: "error", msg: "github_token_renew_failed", tenantId, error: String(err) });
+  }
+}
+const GITHUB_JOB_WORKFLOWS = new Set([triageWorkflowFor("github").id, codeReviewWorkflowFor("github").id]);
+async function readyWorkerCredentials(job: TriageJob): Promise<void> {
+  if (GITHUB_JOB_WORKFLOWS.has(job.workflow)) await githubToken.ensure(job.tenantId);
 }
 /** A hook credential written before hosts names `pr-triage`; its mail goes to the GitHub workflow that replaced it. */
 async function sendBridgeMail(tenantId: string, workflow: string, payload: unknown): Promise<void> {
@@ -714,6 +733,7 @@ const syncInstallations = createInstallationSync({
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   onSynced: function installationsSynced(tenantId) {
+    void renewGithubToken(tenantId);
     void onSourcesChanged(tenantId);
   },
 });
@@ -736,6 +756,7 @@ await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleServic
 coordinator = createCoordinator({
   spawner: checkedBitbucketSpawner(createWorkerSpawner({
     db: composition.db,
+    beforeDeploy: readyWorkerCredentials,
     redeploy: github.rotation.redeploy,
     deliver: deliverToDeployment,
     lifecycle: composition.workflowLifecycleService,
@@ -992,6 +1013,7 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
 
 triageLoop.start();
 recordLoop.start();
+tokenLoop.start();
 
 logJson({
   level: "info",

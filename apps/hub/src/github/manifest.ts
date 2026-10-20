@@ -7,6 +7,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { generateId } from "@intx/hub-common";
 import { grantAdminGithub } from "./admin-github-grant.js";
+import { githubAppKey } from "./app-key.js";
 import { ensureTriageRole } from "./automation.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 
@@ -365,6 +366,8 @@ export function createGithubManifestIntegration({
     }
     try {
       await commit(state, conversion);
+      // Moves the key out of the credential workflows bind before any deployment can read it.
+      await githubAppKey({ db, cipher }, state.tenantId);
     } catch {
       return securedHtml(SETUP_FAILED, 400);
     }

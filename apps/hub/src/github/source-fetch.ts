@@ -7,7 +7,7 @@ import { appGithubFetch, githubAppCredential, type PortalCredentialDeps } from "
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
 /** Undefined when the tenant holds no readable credential for the repository's host. */
-type SourceFetch = { bb: BitbucketFetch } | { gh: GithubFetch } | undefined;
+type SourceFetch = { bb: BitbucketFetch } | { gh: GithubFetch; login: string } | undefined;
 
 export type SourceFetchDeps = PortalCredentialDeps & { githubApiOrigin: string; tenantBitbucket: TenantBitbucket };
 
@@ -20,8 +20,8 @@ export function createSourceFetch(deps: SourceFetchDeps) {
       const bb = await deps.tenantBitbucket(tenantId);
       return bb ? { bb } : undefined;
     }
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "read");
-    if (appJson instanceof Response) return undefined;
-    return { gh: forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId) };
+    const app = await githubAppCredential(deps, principalId, tenantId, "read");
+    if (app instanceof Response) return undefined;
+    return { gh: forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, app.appJson), record.installationId), login: app.login };
   };
 }

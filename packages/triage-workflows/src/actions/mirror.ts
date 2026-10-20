@@ -80,7 +80,8 @@ function mirrorCall(v: Verdict): ToolCall {
   const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
   const comment = v.automatic.includes("comment") ? { comment: r.comment, ...(r.header && { header: r.header }) } : {};
   const build = source === "bitbucket-datacenter" && v.automatic.includes("comment") ? { build: verdictBuild(v) } : {};
-  return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...build, ...dismissals(v) }, mirrorCallId(v));
+  const appLogin = v.appLogin ? { appLogin: v.appLogin } : {};
+  return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...build, ...dismissals(v), ...appLogin }, mirrorCallId(v));
 }
 
 /**

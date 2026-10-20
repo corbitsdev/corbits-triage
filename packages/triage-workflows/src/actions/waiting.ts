@@ -15,8 +15,9 @@ function markArgs(source: RepoSource, pull: Pull, labels: Record<VerdictWord, st
   return { ...pull, labels: [WAITING_LABEL], owned: ownedLabels(labels), keep: [labels.fail, labels.unsure] };
 }
 
-function mark(kind: "waiting" | "unready", source: RepoSource, pull: Pull, labels: Record<VerdictWord, string>, ci: boolean): WaitingMark {
-  return { effectId: `${kind}:${pull.repo.replace("/", "--")}:${pull.number}:${pull.onHead}`, repoSource: source, args: markArgs(source, pull, labels, ci) };
+function mark(kind: "waiting" | "unready", source: RepoSource, pull: Pull, labels: Record<VerdictWord, string>, ci: boolean, appLogin: string | undefined): WaitingMark {
+  const args = { ...markArgs(source, pull, labels, ci), ...(appLogin && { appLogin }) };
+  return { effectId: `${kind}:${pull.repo.replace("/", "--")}:${pull.number}:${pull.onHead}`, repoSource: source, args };
 }
 
 function marks(source: RepoSource, automatic: readonly unknown[]): boolean {
@@ -24,9 +25,9 @@ function marks(source: RepoSource, automatic: readonly unknown[]): boolean {
 }
 
 /** The waiting marker on `headSha`, `Triage: Waiting for CI` only where the head has CI; none where triage does not write the verdict on this host. */
-export function waitingMark(source: RepoSource, { repo, number, headSha }: { repo: string; number: number; headSha: string }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, ci: boolean): WaitingMark | undefined {
+export function waitingMark(source: RepoSource, { repo, number, headSha }: { repo: string; number: number; headSha: string }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, ci: boolean, appLogin: string | undefined): WaitingMark | undefined {
   if (!marks(source, automatic)) return undefined;
-  return mark("waiting", source, { repo, number, onHead: headSha }, labels, ci);
+  return mark("waiting", source, { repo, number, onHead: headSha }, labels, ci, appLogin);
 }
 
 /**
@@ -43,6 +44,7 @@ export async function waiting(input: unknown, _ctx: EffectContext, _signal: Abor
   if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !pack) return { waiting: held };
   if (!marks(source, automatic) || (!held && source !== "github")) return { waiting: held };
   const pull = { repo, number: prNumber, onHead: headSha };
-  if (held) return { waiting: true, mark: mark("waiting", source, pull, pack.labels, request["noCi"] !== true) };
-  return { waiting: false, mark: mark("unready", source, pull, pack.labels, false) };
+  const appLogin = typeof request["appLogin"] === "string" ? request["appLogin"] : undefined;
+  if (held) return { waiting: true, mark: mark("waiting", source, pull, pack.labels, request["noCi"] !== true, appLogin) };
+  return { waiting: false, mark: mark("unready", source, pull, pack.labels, false, appLogin) };
 }

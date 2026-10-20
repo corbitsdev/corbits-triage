@@ -7,9 +7,10 @@ import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { tokenUser } from "@corbits/bitbucket-datacenter-tool/bitbucket";
 import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
+import { GITHUB_CREDENTIAL, githubAppKey } from "./app-key.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation, type OpenPrsLister } from "./open-pulls.js";
-import { activeCredential, activeSecret, appGithubFetch } from "./portal-credential.js";
+import { activeCredential, appGithubFetch } from "./portal-credential.js";
 import type { OpenPr } from "./reconcile-plan.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
@@ -65,9 +66,9 @@ function createTenantSources(deps: TenantSourcesDeps) {
 export function createTenantGithub(deps: TenantGithubDeps) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
   return async function tenantGithub(tenantId: string): Promise<GithubFetch | undefined> {
-    const appJson = await activeSecret(deps, tenantId, "github");
-    if (appJson === undefined) return undefined;
-    return appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+    const credential = await activeCredential(deps.db, tenantId, GITHUB_CREDENTIAL);
+    if (!credential) return undefined;
+    return appGithubFetch(appFetch, deps.githubApiOrigin, await githubAppKey(deps, credential.tenantId));
   };
 }
 

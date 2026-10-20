@@ -472,13 +472,22 @@ request's head (repo-read-tool's `read_file`, `grep` and `list`, and the
 host's `*_read_file`), never a shell, network, write or push tool, and
 `tooling/model-step-tools.test.ts` fails `bun run test` otherwise.
 
-GitHub access is a tenant credential bound to the GitHub tool packages: the
-vault holds the App as `{"appId","privateKey"}` under provider `github` and its
-webhook secret under `github-hook`. A trusted sidecar adapter turns the App
-key into short-lived installation tokens at the fetch boundary, so workflow
-and tool code never hold it; hub routes that reach GitHub for the portal use
-the same adapter. Routes that read the host check the caller's `read` (or
-`use`) grant on the credential and never return the secret; routes that write
+GitHub access is the tenant credential `github` (provider `github`, stock
+`http`), bound to the GitHub tools and host actions. It holds an installation
+token, never the App key. The vault holds the App as
+`{"appId","privateKey"}` under `github-app`, which no workflow binds, and its
+webhook secret under `github-hook`. Connecting writes App JSON to `github`; the
+hub moves it to `github-app` when it next reads the key. The hub mints the
+token before it deploys a GitHub worker (when under 15 minutes are left) and
+renews it on boot and every 45 minutes; each renewal updates the row and calls
+stock `pushCredentialReconcile` for every running deployment holding it, since
+a secret update alone reaches a deployment only when its sidecar reconnects.
+One token covers one installation, so the App has one active installation.
+Hub routes that reach GitHub for the portal sign with the App key on the hub.
+Each GitHub mail names the App's bot account (`<slug>[bot]`, from the
+credential's `appSlug`) as `appLogin`, and only that account's comments and
+reviews are triage's own. Routes that read the host check the caller's `read`
+(or `use`) grant on `github` and never return a secret; routes that write
 check `use`. A pull request action of a kind triage can run also checks
 `invoke` on `triage-do:<kind>:<owner>/<name>` (the repository name in
 lowercase); the admin role holds `triage-do:*` from GitHub setup, and owners

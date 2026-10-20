@@ -61,7 +61,7 @@ function parseAppCredential(raw: string): AppCredential {
   };
 }
 
-function isGithubAppJson(raw: string): boolean {
+export function isGithubAppJson(raw: string): boolean {
   try {
     const value = JSON.parse(raw) as unknown;
     return value !== null && typeof value === "object" && ("appId" in value || "privateKey" in value);
@@ -105,11 +105,45 @@ function installationPath(url: URL): string {
   throw new Error("GitHub App credential requires a repository or organization target");
 }
 
+async function requestInstallationToken(
+  { apiOrigin, fetch: fetchImpl = globalThis.fetch, now = Date.now }: GithubAppCredentialFetchOptions,
+  credential: AppCredential,
+  installationId: number,
+): Promise<CachedToken> {
+  const response = await fetchImpl(
+    `${apiOrigin}/app/installations/${encodeURIComponent(String(installationId))}/access_tokens`,
+    {
+      method: "POST",
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${appJwt(credential, now())}`,
+        "x-github-api-version": "2022-11-28",
+      },
+      redirect: "manual",
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`GitHub installation token mint failed with ${String(response.status)}`);
+  }
+  const body = InstallationToken(await response.json());
+  if (body instanceof type.errors) {
+    throw new Error(`GitHub installation token response failed validation: ${body.summary}`);
+  }
+  const expiresAt = Date.parse(body.expires_at);
+  if (!Number.isFinite(expiresAt) || expiresAt <= now()) {
+    throw new Error("GitHub installation token response has an invalid expiry");
+  }
+  return { token: body.token, expiresAt };
+}
+
+/** A new installation token for the App in `appJson`; `expiresAt` is in epoch milliseconds. */
+export function mintInstallationToken(options: GithubAppCredentialFetchOptions, appJson: string, installationId: number): Promise<CachedToken> {
+  return requestInstallationToken(options, parseAppCredential(appJson), installationId);
+}
+
 /**
- * Trusted sidecar transport adapter for the stock origin-pinned HTTP provider.
- * The provider injects the current vault material as a bearer immediately
- * before calling this function. App JSON is consumed here, exchanged for an
- * installation token, and never passed to the network or exposed to the tool.
+ * The hub's GitHub transport: a request carries the App JSON as its bearer,
+ * which is exchanged here for an installation token and never sent to the network.
  */
 export function createGithubAppCredentialFetch({
   apiOrigin,
@@ -141,30 +175,7 @@ export function createGithubAppCredentialFetch({
   }
 
   async function requestToken(credential: AppCredential, installationId: number, key: string): Promise<CachedToken> {
-    const response = await fetchImpl(
-      `${apiOrigin}/app/installations/${encodeURIComponent(String(installationId))}/access_tokens`,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/vnd.github+json",
-          authorization: `Bearer ${appJwt(credential, now())}`,
-          "x-github-api-version": "2022-11-28",
-        },
-        redirect: "manual",
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`GitHub installation token mint failed with ${String(response.status)}`);
-    }
-    const body = InstallationToken(await response.json());
-    if (body instanceof type.errors) {
-      throw new Error(`GitHub installation token response failed validation: ${body.summary}`);
-    }
-    const expiresAt = Date.parse(body.expires_at);
-    if (!Number.isFinite(expiresAt) || expiresAt <= now()) {
-      throw new Error("GitHub installation token response has an invalid expiry");
-    }
-    const token = { token: body.token, expiresAt };
+    const token = await requestInstallationToken({ apiOrigin, fetch: fetchImpl, now }, credential, installationId);
     cache.set(key, token);
     return token;
   }

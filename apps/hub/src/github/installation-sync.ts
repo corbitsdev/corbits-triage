@@ -28,9 +28,9 @@ export function createInstallationSync(deps: PortalCredentialDeps & { githubApiO
 
   return async function syncInstallations({ tenantId, principalId }: Member): Promise<Response> {
     // Rewrites the workspace's repositories, so it needs what connecting GitHub needs.
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "manage");
-    if (appJson instanceof Response) return appJson;
-    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+    const app = await githubAppCredential(deps, principalId, tenantId, "manage");
+    if (app instanceof Response) return app;
+    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, app.appJson);
 
     let listings: InstallationListing[];
     try {

@@ -16,6 +16,8 @@ const GITHUB_PROVIDER = "github";
 const GITHUB_PROVIDER_PLUGIN = "http";
 export const GITHUB_CREDENTIAL_NAME = "github";
 export const GITHUB_HOOK_CREDENTIAL_NAME = "github-hook";
+/** The App's private key: the hub moves it here off the GitHub App credential, which then holds an installation token. */
+export const GITHUB_APP_KEY_CREDENTIAL_NAME = "github-app";
 export const INFERENCE_PROVIDER = "corbits-system-one";
 const INFERENCE_PROVIDER_PLUGIN = "corbits-system-one";
 export const INFERENCE_CREDENTIAL_NAME = "corbits-system-one";

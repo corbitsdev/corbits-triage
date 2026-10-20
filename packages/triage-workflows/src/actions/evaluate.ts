@@ -29,7 +29,7 @@ export const Input = type({ items: "object[]", batch: "boolean", "judge?": { out
 
 /** A facts failure or malformed input reaches this step without facts: the verdict then names no head and is degraded. */
 function stamp(facts: PrFacts | undefined, it?: Item) {
-  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null, ...(it?.repoSource && { repoSource: it.repoSource }) };
+  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null, ...(it?.repoSource && { repoSource: it.repoSource }), ...(it?.appLogin && { appLogin: it.appLogin }) };
 }
 
 /**
@@ -166,9 +166,9 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
  * verdict label on GitHub, a failed build status on Bitbucket Data Center. None without a known head, so a newer head is
  * never touched, nor where triage does not write the verdict.
  */
-function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, automatic: ActionKind[], owned: readonly string[]): WaitingMark | undefined {
+function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, automatic: ActionKind[], owned: readonly string[], appLogin: string | undefined): WaitingMark | undefined {
   if (headSha === "" || !marksWaiting(source, automatic)) return undefined;
-  const pull = { repo, number, onHead: headSha };
+  const pull = { repo, number, onHead: headSha, ...(appLogin && { appLogin }) };
   const args = source === "bitbucket-datacenter"
     ? { ...pull, labels: [], owned: [], build: { state: "FAILED" as const, description: FAILED_BUILD } }
     : { ...pull, labels: [FAILED_LABEL], owned };
@@ -178,7 +178,7 @@ function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, au
 function degradedOf(it: Item, reason: string): Verdict {
   const verdict = { ...stamp(undefined, it), ...degradedVerdict(reason), automatic: it.automatic ?? [], actions: [] };
   const request = toMirrorRequest(verdict, it.pack && ownedLabels(it.pack.labels));
-  const mark = degradedMark(it.facts, repoSourceOf(it.repoSource), verdict.automatic, request.owned);
+  const mark = degradedMark(it.facts, repoSourceOf(it.repoSource), verdict.automatic, request.owned, it.appLogin);
   return { ...verdict, request, ...(mark && { mark }) };
 }
 
@@ -236,7 +236,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
     const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
     const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
-    const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none");
+    const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none", it.appLogin);
     const verdict = {
       ...stamp(it.facts, it), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }),
       ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),

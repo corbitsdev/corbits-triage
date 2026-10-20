@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { pathToFileURL } from "node:url";
 import { type } from "arktype";
 import {
   connectDocker,
@@ -20,10 +19,8 @@ import { sql } from "drizzle-orm";
 import type { PlaceProbe } from "../code-review.js";
 import type { DatabaseConfig, DockerSettings } from "../env.js";
 
-/** Built from the root Dockerfile's `sidecar` stage, which holds IMAGE_PATHS of the repository at IMAGE_ROOT. */
+/** Built from the root Dockerfile's `sidecar` stage. */
 const SIDECAR_IMAGE = "corbits-triage-sidecar";
-const IMAGE_ROOT = "/app";
-const IMAGE_PATHS = ["apps/hub/", "packages/", "vendor/"];
 const PING_TIMEOUT_MS = 2_000;
 
 const DatabaseIdentity = type({ cluster: "string", database: "string" });
@@ -34,8 +31,6 @@ export type DockerSidecarProvisioner = DockerSidecars & { readonly remote: boole
 type ConnectOpts = {
   readonly docker: DockerSettings;
   readonly database: DatabaseConfig;
-  /** The repository root on the hub. */
-  readonly root: string;
   readonly adapterManifest: AdapterManifest;
 };
 
@@ -52,18 +47,6 @@ export async function hubIdOf(database: DatabaseConfig): Promise<string> {
   } finally {
     await close();
   }
-}
-
-/** The manifest at the image's paths, or undefined when a module is not in the image, such as the entry a GITHUB_API_ORIGIN override writes under HUB_DATA_DIR. */
-export function inImage(manifest: AdapterManifest, root: string): AdapterManifest | undefined {
-  const hostPrefix = pathToFileURL(`${root}/`).href;
-  const relocated = manifest.map(function relocate(entry) {
-    if (!entry.specifier.startsWith("file:")) return entry;
-    const relative = entry.specifier.startsWith(hostPrefix) ? entry.specifier.slice(hostPrefix.length) : undefined;
-    if (relative === undefined || !IMAGE_PATHS.some((prefix) => relative.startsWith(prefix))) return undefined;
-    return { ...entry, specifier: `file://${IMAGE_ROOT}/${relative}` };
-  });
-  return relocated.every((entry) => entry !== undefined) ? relocated : undefined;
 }
 
 async function daemonId(engine: DockerEngine): Promise<string> {
@@ -88,7 +71,7 @@ export function remoteHubProblem(where: string, hubUrl: string): string | undefi
 export type DockerOff = { readonly remote?: boolean; readonly reason: string };
 
 /** The Docker provisioner, or why it is not registered. */
-export async function connectDockerSidecars({ docker, database, root, adapterManifest }: ConnectOpts): Promise<DockerSidecarProvisioner | DockerOff> {
+export async function connectDockerSidecars({ docker, database, adapterManifest }: ConnectOpts): Promise<DockerSidecarProvisioner | DockerOff> {
   let host: string | undefined;
   try {
     host = await findDockerHost(docker);
@@ -105,8 +88,6 @@ export async function connectDockerSidecars({ docker, database, root, adapterMan
   function off(reason: string): DockerOff {
     return { remote, reason };
   }
-  const manifest = inImage(adapterManifest, root);
-  if (manifest === undefined) return off("Code review cannot run in Docker while GITHUB_API_ORIGIN is set; unset it");
   const hubProblem = remote ? remoteHubProblem(`Docker at ${host}`, docker.publicHubWebSocketUrl) : undefined;
   if (hubProblem !== undefined) return off(hubProblem);
   let engine: DockerEngine;
@@ -136,7 +117,7 @@ export async function connectDockerSidecars({ docker, database, root, adapterMan
       hubId,
       daemonId: id,
       image: SIDECAR_IMAGE,
-      adapterManifest: manifest,
+      adapterManifest,
       ...(remote && { hubWebSocketUrl: docker.publicHubWebSocketUrl }),
     }),
   };

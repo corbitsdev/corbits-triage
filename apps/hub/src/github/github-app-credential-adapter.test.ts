@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { createHttpCredentialProvider } from "@intx/harness";
 
-import { githubRead, githubWrite } from "@corbits/github-tool";
 import { createGithubAppCredentialFetch, toRequest } from "./github-app-credential-adapter";
 
 const API = "https://api.github.com";
@@ -24,100 +22,6 @@ function appSecret(): string {
 }
 
 describe("GitHub App credential adapter", () => {
-  test("mints an installation token inside mediated fetch for read and write tools", async () => {
-    const secret = appSecret();
-    const apiAuthorizations: string[] = [];
-    const calls: string[] = [];
-    async function baseFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      const request = toRequest(input, init);
-      const url = new URL(request.url);
-      calls.push(`${request.method} ${url.pathname}${url.search}`);
-      const authorization = request.headers.get("authorization") ?? "";
-
-      if (url.pathname === "/repos/octo/repo/installation") {
-        expect(request.method).toBe("GET");
-        expect(authorization).toMatch(/^Bearer eyJ/);
-        expect(authorization).not.toContain("privateKey");
-        return Response.json({ id: 456 });
-      }
-
-      if (url.pathname === "/app/installations/456/access_tokens") {
-        expect(request.method).toBe("POST");
-        expect(authorization).toMatch(/^Bearer eyJ/);
-        expect(authorization).not.toContain("privateKey");
-        return Response.json({
-          token: "installation-token-for-test",
-          expires_at: tokenExpiry(),
-        });
-      }
-
-      apiAuthorizations.push(authorization);
-      if (url.pathname.endsWith("/pulls") && request.method === "GET") {
-        return Response.json([{ number: 7, title: "PR", user: { login: "octo" }, head: { sha: "abc" } }]);
-      }
-      if (url.pathname.endsWith("/pulls/7") && request.method === "GET") {
-        return Response.json({ state: "open", head: { sha: "abc" }, base: { repo: { id: 1 } }, labels: [] });
-      }
-      if (url.pathname.endsWith("/issues/7/comments") && request.method === "GET") {
-        return Response.json([]);
-      }
-      if (url.pathname.endsWith("/issues/7/comments") && request.method === "POST") {
-        return Response.json({ id: 99 });
-      }
-      if (url.pathname.endsWith("/issues/7/labels") && request.method === "POST") {
-        return Response.json([]);
-      }
-      throw new Error(`unexpected GitHub request ${request.method} ${request.url}`);
-    }
-
-    const provider = createHttpCredentialProvider({
-      fetch: createGithubAppCredentialFetch({ apiOrigin: API, fetch: baseFetch }),
-    });
-    const mediated = provider.shape({
-      origin: API,
-      readCurrentMaterial() {
-        return { secret };
-      },
-    });
-    if (mediated.kind !== "http") throw new Error("expected HTTP credential");
-    const credentials = {
-      async resolve(handle: string) {
-        if (handle !== "github") throw new Error(`unexpected credential ${handle}`);
-        return mediated;
-      },
-    };
-    const env = {
-      capabilities: {
-        resolve(name: string) {
-          if (name !== "credentials") throw new Error(`unexpected capability ${name}`);
-          return credentials;
-        },
-      },
-    } as unknown as Parameters<typeof githubRead>[0];
-    const read = await githubRead(env);
-    const write = await githubWrite(env);
-
-    const signal = new AbortController().signal;
-    expect(await read.run({ id: "read", name: "github_list_open_prs", arguments: { repo: "octo/repo" } }, signal))
-      .toMatchObject({ content: { prs: [{ number: 7 }] } });
-    expect(await write.run({
-      id: "write",
-      name: "github_mirror",
-      arguments: {
-        repo: "octo/repo",
-        number: 7,
-        labels: ["triaged"],
-        owned: [],
-        comment: "Done",
-      },
-    }, signal)).toMatchObject({ content: { commentId: 99, closed: false, sha: "abc" } });
-
-    expect(calls.filter((call) => call.includes("/access_tokens"))).toHaveLength(1);
-    expect(calls.filter((call) => call.endsWith("/installation"))).toHaveLength(5);
-    expect(apiAuthorizations).toEqual(Array(5).fill("Bearer installation-token-for-test"));
-    expect(apiAuthorizations.join("\n")).not.toContain(secret);
-  });
-
   test("discovers and caches installation tokens separately for each target repository", async () => {
     const secret = appSecret();
     const calls: string[] = [];
