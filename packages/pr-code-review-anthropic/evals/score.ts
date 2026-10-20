@@ -10,6 +10,11 @@ function hits(finding: Finding, site: Site): boolean {
   return samePath(finding.path, site.path) && finding.start <= site.end + SLACK && finding.end >= site.start - SLACK;
 }
 
+/** The first bug the finding hits, if any. */
+export function bugOf(key: CaseKey, finding: Finding): string | undefined {
+  return key.bugs.find((bug) => bug.sites.some((site) => hits(finding, site)))?.id;
+}
+
 export const REACHES: readonly Reach[] = ["diff", "repo", "intent"];
 
 export interface CaseScore {

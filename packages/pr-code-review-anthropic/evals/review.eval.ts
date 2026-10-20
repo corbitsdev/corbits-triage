@@ -7,11 +7,12 @@
 //   --repo checks each case's head out (with `gh auth token`) and lets the finder read it; every tool call is recorded.
 //   --budget <tokens> sets the repository finder's token budget (default the workflow's).
 //   bun run eval:review -- --rescore <results-dir>   re-scores saved results without model calls
-//   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--check] [--out <file.json>]
+//   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--check] [--out <file.json>] [--baseline]
 //   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write; each role defaults to its deployed model;
 //   runs the whole pr-code-review workflow on each case's head and scores the finders' union, the consolidated findings,
 //   the confirmed ones (all of them unless --check), the final review, and its comments found by both finders and by
-//   one, with each step's tokens, dollars and seconds.
+//   one, with each step's tokens, dollars and seconds. --baseline, over every case, also writes
+//   results/pr-code-review.baseline.json, refusing on a dirty working tree or when any case's repository is not public.
 //
 // Inference is native Anthropic when ANTHROPIC_API_KEY is set, else OpenCode Zen with OPENCODE_API_KEY.
 import { execFileSync } from "node:child_process";
@@ -20,10 +21,11 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { InferenceEvent } from "@intx/types/inference-events";
-import type { TokenUsage } from "@intx/types/runtime";
 import type { AgentDefinition } from "@intx/agent";
 import type { StepInvokeRequest, WorkflowAuthorizeFn } from "@intx/workflow";
 import { stockTriggerMail } from "@corbits/triage-contracts";
+import { startBaseline, writeBaseline, type Stamp } from "../../triage-workflows/evals/baseline.js";
+import { addCost, costOf, priceKey, priceOf, type ProviderId } from "../../triage-workflows/evals/prices.js";
 import { runLocalWorkflow } from "../../triage-workflows/evals/run-local.js";
 import * as actions from "../src/actions/index.js";
 import { BUDGET_EXHAUSTED } from "@corbits/pr-code-review/actions/checkout";
@@ -34,30 +36,7 @@ import { prCodeReview } from "../src/pr-code-review.js";
 import { finderInput } from "./finder-input.js";
 import { prCodeFinder } from "./finder-workflow.js";
 import { headOf, loadCases, loadKeys, pullRequestOf, type Case, type CaseKey, type Reach } from "./cases.js";
-import { parseFindings, REACHES, reanchor, scoreCase, type CaseScore, type Finding } from "./score.js";
-
-interface Price {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-interface ModelPrice {
-  price: Price;
-  long?: { overPrompt: number; price: Price };
-}
-
-// Dollars per million tokens, with 5-minute cache writes. A Haiku 5.5 call whose prompt (input, cache reads and cache
-// writes) is over 100k tokens pays the long-prompt prices for all of its tokens.
-const PRICES: Record<string, ModelPrice> = {
-  "claude-haiku-5-5": {
-    price: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
-    long: { overPrompt: 100_000, price: { input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 } },
-  },
-  "claude-sonnet-5-5": { price: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 } },
-  "claude-opus-5-5": { price: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 } },
-};
+import { bugOf, parseFindings, REACHES, reanchor, scoreCase, type CaseScore, type Finding } from "./score.js";
 
 // The cases are GitHub pull requests.
 const GITHUB: Sources = ["github"];
@@ -74,10 +53,12 @@ interface Usage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  costUsd: number;
+  /** Null once a call used tokens at a rate the price table does not know. */
+  costUsd: number | null;
 }
 
 interface Provider {
+  id: ProviderId;
   origin: string;
   apiKey: string;
 }
@@ -106,9 +87,9 @@ interface CaseResult extends Partial<CaseScore> {
 
 function provider(): Provider {
   const anthropic = process.env.ANTHROPIC_API_KEY;
-  if (anthropic) return { origin: "https://api.anthropic.com", apiKey: anthropic };
+  if (anthropic) return { id: "anthropic", origin: "https://api.anthropic.com", apiKey: anthropic };
   const zen = process.env.OPENCODE_API_KEY;
-  if (zen) return { origin: "https://opencode.ai/zen", apiKey: zen };
+  if (zen) return { id: "opencode-zen", origin: "https://opencode.ai/zen", apiKey: zen };
   throw new Error("set ANTHROPIC_API_KEY or OPENCODE_API_KEY");
 }
 
@@ -138,16 +119,11 @@ function totalTokens(usage: Usage): number {
   return usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 
-function costOf(call: TokenUsage, { price: base, long }: ModelPrice): number {
-  const price = long && call.input + call.cacheRead + call.cacheWrite > long.overPrompt ? long.price : base;
-  return (call.input * price.input + call.output * price.output + call.cacheRead * price.cacheRead + call.cacheWrite * price.cacheWrite) / 1e6;
-}
-
 /** How a case's finder reaches GitHub: not at all, or reading the case's head on an optional token budget. */
 type RepoAccess = { github: typeof fetch; budget?: number } | undefined;
 
 async function runCase(testCase: Case, systemPrompt: string, effort: Effort, model: string, source: Provider, repo: RepoAccess): Promise<CaseResult> {
-  const price = priceOf(model);
+  const price = priceOf(priceKey(source.id, model));
   const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
   const tools: ToolUse[] = [];
   function onEvent(event: InferenceEvent) {
@@ -161,7 +137,7 @@ async function runCase(testCase: Case, systemPrompt: string, effort: Effort, mod
     usage.output += event.data.usage.output;
     usage.cacheRead += event.data.usage.cacheRead;
     usage.cacheWrite += event.data.usage.cacheWrite;
-    usage.costUsd += costOf(event.data.usage, price);
+    usage.costUsd = addCost(usage.costUsd, costOf(event.data.usage, price));
   }
   const head = repo && headOf(testCase.id);
   const base: CaseResult = { id: testCase.id, kind: testCase.kind, usage, wallMs: 0, ...(repo && { tools }) };
@@ -196,14 +172,16 @@ function deployedModel(agent: Pick<AgentDefinition, "inference">): string {
   return source.model;
 }
 
-function priceOf(model: string): ModelPrice {
-  const price = PRICES[model];
-  if (!price) throw new Error(`no price for ${model}; known: ${Object.keys(PRICES).join(", ")}`);
-  return price;
-}
-
 function sum<T>(results: readonly T[], pick: (result: T) => number): number {
   return results.reduce((total, result) => total + pick(result), 0);
+}
+
+function totalCost(costs: readonly (number | null)[]): number | null {
+  return costs.reduce<number | null>((total, cost) => addCost(total, cost), 0);
+}
+
+function dollars(cost: number | null): number | null {
+  return cost === null ? null : Number(cost.toFixed(4));
 }
 
 function ratio(caught: number, total: number): string {
@@ -225,7 +203,7 @@ function summary(results: readonly CaseResult[], keys: readonly CaseKey[]) {
     output: sum(results, (r) => r.usage.output),
     cacheRead: sum(results, (r) => r.usage.cacheRead),
     cacheWrite: sum(results, (r) => r.usage.cacheWrite),
-    costUsd: sum(results, (r) => r.usage.costUsd),
+    costUsd: totalCost(results.map((r) => r.usage.costUsd)),
   };
   return {
     cases: results.length,
@@ -243,7 +221,7 @@ function summary(results: readonly CaseResult[], keys: readonly CaseKey[]) {
     outputTokens: usage.output,
     cacheWriteTokens: usage.cacheWrite,
     cacheReadTokens: usage.cacheRead,
-    costUsd: Number(usage.costUsd.toFixed(4)),
+    costUsd: dollars(usage.costUsd),
     wallSeconds: Math.round(sum(results, (r) => r.wallMs) / 1000),
   };
 }
@@ -351,11 +329,11 @@ function effortFlag(value: unknown, fallback: Effort): Effort {
   return effort;
 }
 
-function e2eConfig(values: Record<string, unknown>): E2EConfig {
+function e2eConfig(values: Record<string, unknown>, provider: ProviderId): E2EConfig {
   function model(role: Role): [Role, string][] {
     const value = values[`${ROLE_FLAGS[role]}-model`];
     if (typeof value !== "string") return [];
-    priceOf(value);
+    priceOf(priceKey(provider, value));
     return [[role, value]];
   }
   function effort(role: Role): [Role, Effort] {
@@ -386,7 +364,7 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     step.usage.output += usage.output;
     step.usage.cacheRead += usage.cacheRead;
     step.usage.cacheWrite += usage.cacheWrite;
-    step.usage.costUsd += costOf(usage, priceOf(event.data.source.model));
+    step.usage.costUsd = addCost(step.usage.costUsd, costOf(usage, priceOf(priceKey(source.id, event.data.source.model))));
   }
   function sourceFor(req: StepInvokeRequest) {
     const role = ROLE_OF_AGENT[req.agent.id];
@@ -465,18 +443,73 @@ function e2eStepRows(results: readonly E2EResult[]) {
       output: sum(all, (s) => s.usage.output),
       cacheRead: sum(all, (s) => s.usage.cacheRead),
       cacheWrite: sum(all, (s) => s.usage.cacheWrite),
-      costUsd: Number(sum(all, (s) => s.usage.costUsd).toFixed(4)),
+      costUsd: dollars(totalCost(all.map((s) => s.usage.costUsd))),
       seconds: Math.round(sum(all, (s) => s.ms) / 1000),
     };
   }
   return ids.map(row);
 }
 
+const BASELINE = new URL("./results/pr-code-review.baseline.json", import.meta.url).pathname;
+
+function stageTotals(stage: Stage, results: readonly E2EResult[], keys: readonly CaseKey[]): [Stage, Record<string, number>] {
+  const scored = keys.filter((key) => results.some((r) => r.id === key.id));
+  return [stage, {
+    caught: sum(results, (r) => r.stages[stage]?.caught.length ?? 0),
+    bugs: sum(scored, (key) => key.bugs.length),
+    findings: sum(results, (r) => r.stages[stage]?.findings.length ?? 0),
+    falseAlarms: sum(results, (r) => r.stages[stage]?.falseAlarms ?? 0),
+    cleanFlagged: results.filter((r) => r.stages[stage]?.flaggedClean).length,
+    clean: scored.filter((key) => key.kind === "clean").length,
+  }];
+}
+
+/** The final review's comments where they sit, each with the bug it hits; their text stays out of the baseline. */
+function baselineCase(result: E2EResult, key: CaseKey) {
+  const caught = result.stages.final?.caught ?? [];
+  const review = result.outputs?.review as { comments: (Finding & { priority?: number })[] } | undefined;
+  function placed(comment: Finding & { priority?: number }) {
+    const bug = bugOf(key, comment);
+    return { path: comment.path, line: comment.start, ...(comment.priority !== undefined && { priority: comment.priority }), ...(bug && { bug }) };
+  }
+  return {
+    id: result.id,
+    failed: result.failed !== undefined,
+    caught,
+    missed: key.bugs.map((bug) => bug.id).filter((id) => !caught.includes(id)),
+    findings: (review?.comments ?? []).map(placed),
+  };
+}
+
+function writeE2EBaseline(results: readonly E2EResult[], keys: readonly CaseKey[], source: Provider, stamp: Stamp) {
+  const all = results.flatMap((r) => Object.entries(r.steps));
+  const usage: Record<string, Usage> = {};
+  for (const [, step] of all) {
+    const total = (usage[priceKey(source.id, step.model)] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 });
+    total.input += step.usage.input;
+    total.output += step.usage.output;
+    total.cacheRead += step.usage.cacheRead;
+    total.cacheWrite += step.usage.cacheWrite;
+    total.costUsd = addCost(total.costUsd, step.usage.costUsd);
+  }
+  writeBaseline(BASELINE, {
+    workflow: "pr-code-review",
+    eval: "review",
+    steps: Object.fromEntries(all.map(([id, step]) => [id, { provider: source.id, model: step.model }])),
+    usage: Object.fromEntries(Object.entries(usage).map(([key, u]) => [key, { ...u, costUsd: dollars(u.costUsd) }])),
+    cases: results.map((result) => baselineCase(result, keyOf(keys, result.id))),
+    totals: Object.fromEntries(STAGES.map((stage) => stageTotals(stage, results, keys))),
+  }, stamp);
+  console.log(`baseline: ${BASELINE}`);
+}
+
 async function e2e(values: Record<string, unknown>) {
-  const config = e2eConfig(values);
+  if (values.baseline && values.cases) throw new Error("--baseline runs every case; drop --cases");
   const source = provider();
+  const config = e2eConfig(values, source.id);
   const github = ghGithub();
   const cases = loadCases(typeof values.cases === "string" ? values.cases.split(",") : undefined);
+  const stamp = values.baseline ? startBaseline(cases.map((c) => headOf(c.id).repo)) : undefined;
   const results: E2EResult[] = [];
   for (const testCase of cases) {
     const result = await runE2ECase(testCase, config, source, github);
@@ -499,7 +532,9 @@ async function e2e(values: Record<string, unknown>) {
   console.table(stageRows);
   console.table(stepRows);
   const exhausted = results.filter((r) => r.budgetExhausted).length;
-  console.log(`total $${sum(stepRows, (r) => r.costUsd).toFixed(4)}, ${Math.round(sum(results, (r) => r.wallMs) / 1000)}s, ${exhausted} budget exhausted; results: ${out}`);
+  const cost = totalCost(stepRows.map((r) => r.costUsd));
+  console.log(`total ${cost === null ? "price unknown" : `$${cost.toFixed(4)}`}, ${Math.round(sum(results, (r) => r.wallMs) / 1000)}s, ${exhausted} budget exhausted; results: ${out}`);
+  if (stamp) writeE2EBaseline(results, cases, source, stamp);
 }
 
 
@@ -516,21 +551,23 @@ async function main() {
       repo: { type: "boolean", default: false },
       budget: { type: "string" },
       e2e: { type: "boolean", default: false },
+      baseline: { type: "boolean", default: false },
       check: { type: "boolean", default: false },
       ...Object.fromEntries(Object.values(ROLE_FLAGS).flatMap((flag) => [[`${flag}-model`, { type: "string" }], [`${flag}-effort`, { type: "string" }]])),
     },
   });
   if (values.rescore) return rescore(values.rescore);
   if (values.e2e) return e2e(values);
+  if (values.baseline) throw new Error("--baseline needs --e2e");
   if (!values.prompt) throw new Error("--prompt <file.txt> is required");
   const effort = EFFORTS.find((e) => e === values.effort);
   if (!effort) throw new Error(`--effort must be one of ${EFFORTS.join(", ")}`);
   const maxTokens = Number(values["max-tokens"]);
   if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw new Error("--max-tokens must be a positive integer");
   const model = values.model ?? deployedModel(values.repo ? repoFinderAgent() : finderAgent());
-  priceOf(model);
-  const systemPrompt = readFileSync(values.prompt, "utf8");
   const source = provider();
+  priceOf(priceKey(source.id, model));
+  const systemPrompt = readFileSync(values.prompt, "utf8");
   const repo = values.repo ? { github: ghGithub(), ...(values.budget && { budget: Number(values.budget) }) } : undefined;
   const cases = loadCases(values.cases?.split(","));
   const results: CaseResult[] = [];

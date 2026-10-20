@@ -66,12 +66,17 @@ function measured(key: string, repo: string, baseSha: string, headSha: string) {
   return compare;
 }
 
+/** The repository and number a label key names. */
+export function pullOf(key: string): [string, string] {
+  return key.includes("#") ? key.split("#") as [string, string] : [REPO, key];
+}
+
 /** A labelled pull request at the head and base it was measured at, with the repository's docs at that base, fetched on first use into the gitignored `.cache/`; delete that directory to refetch. */
 export function fixture(key: string): Snapshot {
   const label = labels.pulls[key];
   if (!label) throw new Error(`${key} is not labelled in labels.json`);
   const { baseSha, headSha } = label;
-  const [repo, number] = key.includes("#") ? key.split("#") as [string, string] : [REPO, key];
+  const [repo, number] = pullOf(key);
   const bodyHtml = cached(`bodies/${number}-${headSha}.json`, function fetchBodyHtml() {
     return redacted(JSON.parse(gh(["-H", "Accept: application/vnd.github.full+json", `repos/${repo}/pulls/${number}`])).body_html ?? "");
   });
