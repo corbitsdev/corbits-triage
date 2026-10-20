@@ -68,7 +68,17 @@ only while the host has not computed what it needs, such as mergeability or CI.
 Built in: Max files changed, Max lines changed, Linked issue (GitHub, Linear or
 either), No merge conflicts, CI green, No forbidden paths, Conventional commits
 (the title and each of the first 100 commits' first line start
-`type(scope)!: `, in any case; merges and reverts skipped). Two always run:
+`type(scope)!: `, in any case; merges and reverts skipped), Hidden content
+(what cleaning the title, description, commits and paths removed carried
+meaning: two or more invisible characters together, tag characters outside
+the three subdivision flags, variation selectors that select nothing (not a
+lone emoji-style one), bidi overrides or isolates, or a link with no visible
+content; on GitHub also hidden markup in the body's markdown, a comment,
+reference definition, processing instruction, CDATA section or declaration
+not exactly as a pull request template has it (the repository's, else its
+organisation's `.github` repository's), that speaks to a model or
+holds those characters; it names what it found and where, never the text, and
+misses paraphrased, look-alike-letter, entity-encoded or split instructions). Two always run:
 Not a draft, and No changes requested (a requested change fails and waits on
 the author, then on the reviewer once the author pushes or replies). The
 recommended forbidden paths are `vendor/**`, `node_modules/**` and

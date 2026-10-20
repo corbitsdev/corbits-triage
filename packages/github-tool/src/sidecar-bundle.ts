@@ -16,6 +16,7 @@ import {
   listPrCommits,
   listPrFilesPage,
   readFileAt,
+  readPrTemplates,
   readRepoDocsPage,
   readStack,
   type AppLogin,
@@ -91,6 +92,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_read_repo_docs",
     description: "Read one page of a repository's docs (its own markdown, README first) and its contribution rules from offset, on ref or the default branch. Call again with next and the returned ref until next is absent.",
     inputSchema: obj({ repo, ref: str, offset: { type: "integer" } }, ["repo"]),
+  },
+  {
+    name: "github_read_pr_templates",
+    description: "Read the text of each of a repository's pull request templates on its default branch.",
+    inputSchema: obj({ repo }),
   },
   {
     name: "github_list_issue_comments",
@@ -243,6 +249,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, f
       return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patchOffset: a.patchOffset, patches: a.patches !== false });
     case "github_read_repo_docs":
       return readRepoDocsPage(gh, a.repo, { ref: a.ref, offset: a.offset });
+    case "github_read_pr_templates":
+      return { templates: await readPrTemplates(gh, a.repo) };
     case "github_list_issue_comments":
       return { comments: await listIssueComments(gh, a.repo, a.number) };
     case "github_list_org_members":

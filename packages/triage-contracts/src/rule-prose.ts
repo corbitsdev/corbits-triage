@@ -24,6 +24,7 @@ const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => st
   "ci-green": () => "CI must pass before merge",
   "no-forbidden-paths": (row) => `Never accept changes to ${(row?.forbiddenGlobs ?? []).join(", ") || "forbidden paths"}`,
   "conventional-commits": conventionalSentence,
+  "hidden-content": () => "Flag pull requests that hide text",
   focused: () => "Check the change is focused on one thing",
   docs: () => "Check docs are updated when behavior changes",
 };

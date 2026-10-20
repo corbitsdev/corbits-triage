@@ -21,6 +21,7 @@ export const CATALOG_IDS = [
   "ci-green",
   "no-forbidden-paths",
   "conventional-commits",
+  "hidden-content",
 ] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
@@ -42,6 +43,7 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   "ci-green": { name: "CI green", group: "code-vs-ci", kind: "machine" },
   "no-forbidden-paths": { name: "No forbidden paths", group: "code-vs-ci", kind: "machine" },
   "conventional-commits": { name: "Conventional commits", group: "pull-request", kind: "machine" },
+  "hidden-content": { name: "Hidden content", group: "pull-request", kind: "machine" },
 };
 
 export const NOT_A_DRAFT = "not-a-draft";

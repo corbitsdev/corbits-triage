@@ -10,7 +10,7 @@ import { CheckOutputSchema, checkName, checkPackSchema, emptyPack, readCheckPack
 import { errorText } from "@corbits/common";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { rules, type RulesItem } from "@corbits/triage-workflows/actions/rules";
-import { assembleItem, listFiles, namedTeams, type ItemContext } from "@corbits/triage-workflows/logic/facts";
+import { assembleItem, listFiles, namedTeams, templatesFor, type ItemContext } from "@corbits/triage-workflows/logic/facts";
 import { previewActions } from "@corbits/triage-workflows/logic/preview";
 import { NEEDS_JUDGE_REASON, type Verdict } from "@corbits/triage-workflows/logic/render";
 import type { CheckPackRead } from "./check-pack-store.js";
@@ -115,7 +115,7 @@ async function readAuthorTeams(gh: GithubFetch, repo: string, author: string, te
  * The rules step's item for an open pull request, read as the facts director reads it, or the error response to return.
  * Only the teams `trusted` names are read from GitHub; any other team its pack names is left unknown.
  */
-async function readItem(gh: GithubFetch, number: number, context: ItemContext, trusted: CheckPack): Promise<RulesItem | Response> {
+async function readItem(gh: GithubFetch, number: number, context: Omit<ItemContext, "templates">, trusted: CheckPack): Promise<RulesItem | Response> {
   const { repo } = context;
   try {
     const open = await listOpenPrs(gh, repo);
@@ -126,7 +126,7 @@ async function readItem(gh: GithubFetch, number: number, context: ItemContext, t
       return failure(409, "pull_request_not_open", `${repo}#${number} is not an open pull request.`);
     }
     // readPr, not getPr: a preview reports mergeability as GitHub has it now rather than polling for it.
-    const [pr, reviews, comments, commits, files] = await Promise.all([
+    const [pr, reviews, comments, commits, files, templates] = await Promise.all([
       readPr(gh, repo, number),
       getReviews(gh, repo, number, function login() {
         return appLogin(gh);
@@ -134,12 +134,13 @@ async function readItem(gh: GithubFetch, number: number, context: ItemContext, t
       listIssueComments(gh, repo, number),
       listPrCommits(gh, repo, number),
       listFiles(gh, repo, number),
+      templatesFor(gh, repo, context.pack),
     ]);
     const checks = pr.sha ? await getChecks(gh, repo, pr.sha) : [];
     const readable = namedTeams(trusted, repo);
     const read = pr.author ? await readAuthorTeams(gh, repo, pr.author, readable) : null;
     const membership = read && { ...read, unknown: [...read.unknown, ...namedTeams(context.pack, repo).filter((team) => !readable.includes(team))] };
-    return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: membership }, context);
+    return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: membership }, { ...context, templates });
   } catch (err) {
     const message = errorText(err);
     return failure(502, "github_failed", `Could not read ${repo}#${number} from GitHub: ${message}.`);

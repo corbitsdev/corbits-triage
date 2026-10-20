@@ -172,7 +172,12 @@ label off that head, so it never stands on a head not yet triaged.
    controls and default-ignorable characters such as zero-width, bidi, tag and
    stray variation-selector characters (`visibleText`), so every rule, the
    judge and the comment read them as the host shows them. Patches are not
-   changed.
+   changed. The same cleaning reports what it removed, and the facts keep
+   only what that was and where (`hidden`), for the hidden-content rule. With
+   that rule on, a GitHub repository's pull request templates are read from
+   its default branch too, or its owner's `.github` repository's when it has
+   none (`github_read_pr_templates`), so hidden markup that matches a template's
+   own whole comment is not counted as the author's.
 2. **rules**: runs the hard rules (built-in rules over host data and text
    rules) and, unless one failed or the pull request is a draft or closed,
    builds the judged rules' questions, or the verdict question when there are
