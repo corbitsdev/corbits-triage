@@ -79,11 +79,7 @@ export default function Connect() {
   const verdicts = useTriageVerdicts();
   const runs = useRuns();
   const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
-  const githubReady = repos.some((repo) => triaged.has(repo.name));
   const modelStored = snapshot?.decisionModel !== undefined;
-  // A verdict the decision model scored proves inference contributed; credentials alone do not.
-  const inferenceReady = verdicts.data?.scored === true;
-  const liveReady = githubReady && inferenceReady;
 
   async function generateAndCopyWebhookSecret() {
     const secret = generateWebhookSecret();
@@ -286,15 +282,13 @@ export default function Connect() {
   }
 
   function renderModelBody() {
-    const waitingNote = githubReady ? "Waiting for the first triage run." : githubConnected && "Waiting for GitHub to deliver a webhook.";
     return <>
       <p>{DECISION_MODEL_INTRO}</p>
       {modelStored
-        ? <div className="success-callout" role="status"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>Decision model connected</strong><p>Triage starts on the next pull request event.</p></div></div>
+        ? <div className="success-callout" role="status"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>Decision model connected</strong><p>Triage is still off for every repository. Turn it on under Repositories.</p></div></div>
         : <DecisionModelForm />}
-      {modelStored && !liveReady && waitingNote && <p role="status" className="muted">{waitingNote}</p>}
       <div className="task-actions">
-        {modelStored && <Button type="button" disabled={!liveReady} onClick={() => navigate("/inbox")}>Open triage</Button>}
+        {modelStored && <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>}
         {githubConnected && <Button type="button" variant="ghost" onClick={() => setStep("select")}>Back to repositories</Button>}
       </div>
     </>;
@@ -310,7 +304,7 @@ export default function Connect() {
     </span>
     <section className="setup" aria-labelledby="setup-title" aria-busy={busy}>
       <h1 id="setup-title">Set up Triage</h1>
-      <p className="setup-lede">Three steps and Triage starts sorting your open pull requests.</p>
+      <p className="setup-lede">Three steps, then turn triage on for each repository.</p>
       <OtherWorkspaces />
       <ol className="setup-steps">
         {renderStep(0, "Connect a source", sourceDoneNote, renderCreateBody)}

@@ -88,7 +88,7 @@ function WhereItRuns({ places }: { places: CodeReviewPlaceOption[] }) {
     <div className="gcard source" aria-labelledby="code-review-places" role="group">
       <header>
         <b id="code-review-places">Where it runs</b>
-        <span>Code review never runs on the Triage server itself. It runs in the first place below that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.</span>
+        <span>Code review never runs inside Triage itself. It runs in the first place below that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.</span>
       </header>
       <div className="sentences">
         {places.map((place) => <Place key={place.id} place={place} />)}
