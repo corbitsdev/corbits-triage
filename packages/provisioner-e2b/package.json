@@ -16,7 +16,7 @@
     "e2b": "2.52.1"
   },
   "devDependencies": {
-    "@corbits/provisioner-conformance": "workspace:*"
+    "@corbits/provisioner-test": "workspace:*"
   },
   "main": "./src/index.ts",
   "description": "An Interchange sidecar provisioner that runs each sidecar in its own E2B sandbox"

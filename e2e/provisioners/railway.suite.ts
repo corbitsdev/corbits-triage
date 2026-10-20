@@ -1,9 +1,9 @@
-// The conformance suite against real Railway sandboxes, started by live.ts, which passes its inputs on standard input.
+// Started by railway.ts, which passes its inputs on standard input.
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { type } from "arktype";
-import { describeProvisionerConformance } from "@corbits/provisioner-conformance";
-import { connectRailwaySandboxes, createRailwaySidecarProvisioner, sidecarTemplate, sweepRailwaySidecars, type RailwaySandboxes } from "../src/index.js";
+import { connectRailwaySandboxes, createRailwaySidecarProvisioner, sidecarTemplate, sweepRailwaySidecars, type RailwaySandboxes } from "@corbits/provisioner-railway";
+import { describeProvisionerConformance } from "@corbits/provisioner-test";
 
 setDefaultTimeout(10 * 60_000);
 

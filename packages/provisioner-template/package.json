@@ -13,7 +13,7 @@
     "@intx/types": "workspace:*"
   },
   "devDependencies": {
-    "@corbits/provisioner-conformance": "workspace:*"
+    "@corbits/provisioner-test": "workspace:*"
   },
   "main": "./src/index.ts",
   "description": "A minimal Interchange sidecar provisioner to copy for a new backend"

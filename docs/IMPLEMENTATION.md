@@ -98,7 +98,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `repo-read-tool` | `read_file`, `grep` and `list`, read-only and confined to a checkout folder under the sidecar data dir's `checkouts` (no `..`, absolute path or symlink out); the host tool packages export `checkout` and their read bundles add `*_read_file`. |
 | `pr-code-review`, `pr-code-review-anthropic` | The provider-neutral code review workflow and the Anthropic provider's package and eval; see [its README](../packages/pr-code-review/README.md). |
 | `policy-check-action` | The GitHub Action that checks `.corbits-triage.yml` as the hub reads it. |
-| `provisioner-docker`, `provisioner-template`, `provisioner-conformance` | The Docker provisioner, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
+| `provisioner-docker`, `provisioner-template`, `provisioner-test` | The Docker provisioner, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
 | `openai-null-delta` | Inference adapter fix for null stream deltas. |
 | `common` | Dependency-free helpers shared across apps and packages. |
 
@@ -108,9 +108,10 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | --- | --- |
 | `bun run dev` | Hub and portal with prefixed logs (`tooling/dev.ts`). |
 | `bun run hub` | Hub only. |
-| `bun run check` | Typecheck tooling, portal, extension, hub and packages, and bundle the hub. |
+| `bun run check` | Typecheck tooling, portal, extension, hub, packages and `e2e/`, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run lint` | oxlint. |
+| `bun e2e/provisioners/<name>.ts` | Live checks against real services, by hand only; see [e2e/README.md](../e2e/README.md). |
 | `bun run eval` in `packages/triage-workflows` | Decision-model eval; see [DECISION_MODEL.md](DECISION_MODEL.md#measured-accuracy). |
 | `bun run eval:scan` in `packages/triage-workflows` | Repository scan eval; see `packages/triage-workflows/evals/SCAN.md`. |
 | `bun run eval:review` | Code review eval; see `packages/pr-code-review-anthropic/evals/README.md`. |

@@ -1,18 +1,18 @@
-// The conformance suite and tending against real E2B sandboxes from the sidecar template. It creates
-// sandboxes, so it is not part of `bun run test`; the key arrives on standard input:
-// printf %s "$E2B_API_KEY" | bun --conditions=intx-src test ./packages/provisioner-e2b/proof/live.ts
+// Started by e2b.ts, which passes its inputs on standard input.
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { type } from "arktype";
 import { Sandbox } from "e2b";
-import { describeProvisionerConformance } from "@corbits/provisioner-conformance";
-import { connectE2b, createE2bSidecarProvisioner, E2B_SIDECAR_TEMPLATE, tendE2bSidecars } from "../src/index.js";
+import { connectE2b, createE2bSidecarProvisioner, E2B_SIDECAR_TEMPLATE, tendE2bSidecars } from "@corbits/provisioner-e2b";
+import { describeProvisionerConformance } from "@corbits/provisioner-test";
 
 setDefaultTimeout(5 * 60_000);
 
 /** E2B's listing is up to a second behind its sandboxes. */
 const LISTING_LAG_MS = 2000;
 
-const apiKey = (await Bun.stdin.text()).trim();
+const Input = type({ apiKey: "string > 0" });
+const { apiKey } = Input.assert(JSON.parse(await Bun.stdin.text()));
 const e2b = connectE2b({ apiKey, template: E2B_SIDECAR_TEMPLATE });
 
 async function noneActive(): Promise<ReadonlySet<string>> {

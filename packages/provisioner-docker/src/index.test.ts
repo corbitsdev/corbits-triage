@@ -3,7 +3,7 @@ import { describe, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import { type } from "arktype";
-import { describeProvisionerConformance } from "@corbits/provisioner-conformance";
+import { describeProvisionerConformance } from "@corbits/provisioner-test";
 import { connectDocker, createDockerSidecarProvisioner, findDockerHost, sweepDockerSidecars, type DockerEngine } from "./index.js";
 
 const IMAGE = "oven/bun:1.4";

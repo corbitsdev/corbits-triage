@@ -1,6 +1,6 @@
 // Runs against an in-memory E2B; a live run needs an E2B key and template (docs/provisioners/e2b.md).
 import { describe, expect, test } from "bun:test";
-import { describeProvisionerConformance } from "@corbits/provisioner-conformance";
+import { describeProvisionerConformance } from "@corbits/provisioner-test";
 import type { AdapterManifest } from "@intx/types";
 import { createE2bSidecarProvisioner, tendE2bSidecars, type E2bApi, type E2bCommand, type E2bSandbox } from "./index.js";
 

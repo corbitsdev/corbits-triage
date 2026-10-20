@@ -15,7 +15,7 @@ import { connectRailwaySandboxes, createRailwaySidecarProvisioner, sweepRailwayS
 bun --conditions=intx-src test packages/provisioner-railway
 ```
 
-Live check: see `e2e/README.md`.
+Live check: see [e2e/README.md](../../e2e/README.md).
 
 ## Docs
 
