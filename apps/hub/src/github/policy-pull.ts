@@ -53,5 +53,15 @@ export async function proposePolicy(gh: GithubFetch, repo: string, change: Polic
     await json(gh, `/repos/${repo}/pulls/${open.number}`, { method: "PATCH", body: JSON.stringify({ title: change.title, body: change.body }) });
     return pullOf(open);
   }
-  return pullOf(await json(gh, `/repos/${repo}/pulls`, { method: "POST", body: JSON.stringify({ title: change.title, head: POLICY_BRANCH, base, body: change.body }) }));
+  return createPull(gh, repo, base, change);
+}
+
+/** A pull request opened by a concurrent call in between is answered instead of refused. */
+async function createPull(gh: GithubFetch, repo: string, base: string, { title, body }: PolicyChange): Promise<PolicyPull> {
+  const path = `/repos/${repo}/pulls`;
+  const res = await gh(path, { method: "POST", headers: { accept: "application/vnd.github+json" }, body: JSON.stringify({ title, head: POLICY_BRANCH, base, body }) });
+  if (res.ok) return pullOf(await res.json() as Pull);
+  const raced = res.status === 422 ? await openPull(gh, repo, base) : undefined;
+  if (raced) return pullOf(raced);
+  throw new Error(`github POST ${path} -> ${res.status}`);
 }

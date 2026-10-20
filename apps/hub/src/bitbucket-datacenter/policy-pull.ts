@@ -66,6 +66,15 @@ export async function proposePolicy(bb: BitbucketFetch, repo: string, base: stri
     await send(bb, `${pulls}/${open.id}`, { method: "PUT", body: JSON.stringify({ version: open.version, title: change.title, description: change.body }) });
     return pullOf(open);
   }
-  const body = { title: change.title, description: change.body, fromRef: { id: BRANCH_REF }, toRef: { id: `refs/heads/${base}` } };
-  return pullOf(Pull.assert(await send(bb, pulls, { method: "POST", body: JSON.stringify(body) })));
+  return createPull(bb, repo, base, change);
+}
+
+/** A pull request opened by a concurrent call in between is answered instead of refused. */
+async function createPull(bb: BitbucketFetch, repo: string, base: string, { title, body }: PolicyChange): Promise<PolicyPull> {
+  const path = `${repoPath(repo)}/pull-requests`;
+  const res = await bb(path, { method: "POST", body: JSON.stringify({ title, description: body, fromRef: { id: BRANCH_REF }, toRef: { id: `refs/heads/${base}` } }) });
+  if (res.ok) return pullOf(Pull.assert(await res.json()));
+  const raced = res.status === 409 ? await openPull(bb, repo) : undefined;
+  if (raced) return pullOf(raced);
+  throw new BitbucketFailed(res.status, path);
 }

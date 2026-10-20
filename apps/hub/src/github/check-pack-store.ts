@@ -111,6 +111,17 @@ async function fileResolved(deps: CheckPackStoreDeps & { policyFile: PolicyFileR
   return resolved(tenantId, repo, content, await sharedOf(deps.artifacts, content));
 }
 
+/** Why triage would refuse a policy file holding `policy`, resolved as a pushed file is; undefined when it would run it. */
+export async function fileRefusal(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, policy: Record<string, unknown>): Promise<string | undefined> {
+  try {
+    await fileResolved(deps, tenantId, repo, policy);
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return error.message;
+  }
+}
+
 async function fileRead(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, file: Exclude<PolicyFileState, { status: "absent" }>): Promise<FileRead> {
   if (file.status === "invalid") return { status: "invalid", reason: file.reason, path: file.path };
   let read: Awaited<ReturnType<typeof fileResolved>>;

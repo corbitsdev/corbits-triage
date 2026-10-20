@@ -43,7 +43,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     `GET …/policy/upgrades` (`start`, `upgrade`, `differs` or `ok` per enabled
     repository) and `POST …/policy/export`, which opens or updates one pull
     request on `corbits-triage/policy` writing the stored policy, or the
-    starter policy for `start`, as a schema 3 file.
+    starter policy for `start`, as a schema 3 file. For a repository with
+    no file, no stored policy and no policy pull request open it can
+    instead write a chosen `text`, refused when triage would refuse it once
+    merged, `extends` resolved.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live pr-triage deployment for the repository's host,
     as the tenant system sender, the same path cron uses, naming the host as

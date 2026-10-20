@@ -2,7 +2,7 @@
 // reads it as the policy unless the repository's saved rules run differently (see check-pack-store.ts), and a file it
 // refuses stops triage until it is fixed rather than falling back. Each read is kept in memory until a push to the
 // default branch touches the file, or for a minute where no push is heard. Saved rules, or a starter policy when there
-// are none, are written to the file through a pull request (policy-pull.ts).
+// are none, or a file chosen for a repository without one, are written to the file through a pull request (policy-pull.ts).
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
@@ -23,6 +23,7 @@ import { bitbucketFailed, githubFailed } from "./github-refusal.js";
 import type { Member } from "../integrations/app.js";
 
 export const PolicyFileBody = type({ repo: /^[\w.-]+\/[\w.-]+$/ });
+export const PolicyExportBody = PolicyFileBody.and({ "text?": "string" });
 
 const HOST_NAMES: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket" };
 
@@ -37,11 +38,14 @@ function pullBody(state: "upgrade" | "differs", path: string, unexpressed: reado
   return [...lead, "", "Once merged, triage reads its rules from this file, and you change them by editing it.", ...left].join("\n");
 }
 
-const STARTER_BODY = [
-  `Adds \`${POLICY_FILE_PATH}\` with a few common rules: a size limit, no merge conflicts and passing CI.`,
-  "",
-  "Edit it here before merging. Once merged, triage reads its rules from this file, and you change them by editing it.",
-].join("\n");
+const ADD_TITLE = `chore: add a Corbits Triage policy in ${POLICY_FILE_PATH}`;
+
+function addBody(lead: string): string {
+  return [lead, "", "Edit it here before merging. Once merged, triage reads its rules from this file, and you change them by editing it."].join("\n");
+}
+
+const STARTER_BODY = addBody(`Adds \`${POLICY_FILE_PATH}\` with a few common rules: a size limit, no merge conflicts and passing CI.`);
+const CHOSEN_BODY = addBody(`Adds \`${POLICY_FILE_PATH}\`.`);
 
 /**
  * A starter's open pull request, found in the shared listing so a workspace of repositories without rules costs no host
@@ -56,6 +60,8 @@ function listedPolicyPull(listing: OpenPullsRead | Response, repo: string): gith
 export type PolicyFileDeps = PortalCredentialDeps & {
   /** The repository's policy and how its saved rules stand against its file. */
   settle: (tenantId: string, repo: string) => Promise<PolicySettled>;
+  /** Why triage would refuse a policy file holding `policy`, its `extends` resolved; undefined when it would run it. */
+  refusal: (tenantId: string, repo: string, policy: Record<string, unknown>) => Promise<string | undefined>;
   /** GitHub as the tenant's App; undefined when the tenant has no active GitHub App credential. */
   tenantGithub: (tenantId: string) => Promise<GithubFetch | undefined>;
   tenantBitbucket: TenantBitbucket;
@@ -216,30 +222,47 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return Response.json({ status: "opened", ...pull });
   }
 
-  /** An open pull request may already hold the maintainer's edits to the starter, so it is answered as it is. */
-  async function startFile(member: Member, record: RepoRecord): Promise<Response> {
-    const pull = await openPull(member.tenantId, record);
-    if (pull) return Response.json({ status: "opened", ...pull });
-    const starter: github.PolicyChange = {
-      path: POLICY_FILE_PATH,
-      text: exportPolicyFile(starterPack(record.name), false).text,
-      title: `chore: add a Corbits Triage policy in ${POLICY_FILE_PATH}`,
-      body: STARTER_BODY,
-    };
-    const response = await opened(member.tenantId, record, starter);
+  async function addFile(member: Member, record: RepoRecord, text: string, body: string): Promise<Response> {
+    const response = await opened(member.tenantId, record, { path: POLICY_FILE_PATH, text, title: ADD_TITLE, body });
     // The listing is where the repository's standing finds the new pull request.
     await deps.openPulls(member, true);
     return response;
   }
 
+  /** An open pull request may already hold the maintainer's edits to the starter, so it is answered as it is. */
+  async function startFile(member: Member, record: RepoRecord): Promise<Response> {
+    const pull = await openPull(member.tenantId, record);
+    if (pull) return Response.json({ status: "opened", ...pull });
+    return addFile(member, record, exportPolicyFile(starterPack(record.name), false).text, STARTER_BODY);
+  }
+
+  /**
+   * A file chosen for a repository with no file, no saved rules and no policy pull request open, refused as triage would
+   * refuse it once merged. An open pull request may hold the maintainer's edits, so it is never written over.
+   */
+  async function chosenFile(member: Member, record: RepoRecord, text: string): Promise<Response> {
+    const checked = checkPolicyFile(text, record.name);
+    if (!checked.ok) return failure(422, "policy_file_invalid", policyFileReason(checked.problems));
+    const refusal = await deps.refusal(member.tenantId, record.name, checked.policy);
+    if (refusal !== undefined) return failure(422, "policy_file_invalid", refusal);
+    // Read again: a file merged where no push is heard is not in the kept read.
+    if ((await cached(member.tenantId, record, 0)).status !== "absent") return failure(409, "policy_file_present", `${record.name} already has a policy file; change it by editing it.`);
+    const { upgrade } = await deps.settle(member.tenantId, record.name);
+    if (upgrade.state !== "start") return failure(409, "saved_rules", `${record.name} has saved rules; write them to its policy file instead.`);
+    const pull = await openPull(member.tenantId, record);
+    if (pull) return failure(409, "policy_pull_open", `${record.name}'s policy pull request is open; merge or close it first.`, pull);
+    return addFile(member, record, text, CHOSEN_BODY);
+  }
+
   /**
    * Opens the pull request writing the saved rules to the policy file, or brings the open one up to date; an enabled
-   * repository with neither gets a starter file instead. Refused when nothing differs.
+   * repository with neither gets a starter file instead, or `text` when sent (see `chosenFile`). Refused when nothing differs.
    */
-  async function exportRoute({ repo }: typeof PolicyFileBody.infer, member: Member): Promise<Response> {
+  async function exportRoute({ repo, text: chosen }: typeof PolicyExportBody.infer, member: Member): Promise<Response> {
     const record = await grantedRecord(member, repo, "use");
     if (record instanceof Response) return record;
     try {
+      if (chosen !== undefined) return await chosenFile(member, record, chosen);
       const { upgrade, saved } = await deps.settle(member.tenantId, repo);
       if (upgrade.state === "start" && record.enabled) return await startFile(member, record);
       if (upgrade.state === "ok" || upgrade.state === "start" || !saved) return failure(409, "policy_settled", `${repo} has no saved rules apart from its policy file.`);
