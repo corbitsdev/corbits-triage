@@ -115,7 +115,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `bun run eval` in `packages/triage-workflows` | Decision-model eval; see [DECISION_MODEL.md](DECISION_MODEL.md#measured-accuracy). |
 | `bun run eval:scan` in `packages/triage-workflows` | Repository scan eval; see `packages/triage-workflows/evals/SCAN.md`. |
 | `bun run eval:review` | Code review eval; see `packages/pr-code-review-anthropic/evals/README.md`. |
-| `bun run holdback`, `injection`, `report` | Holdback replay, prompt-injection run, cost and latency report. |
+| `bun run holdback`, `report` | Holdback replay, cost and latency report. |
 | `bun run vendor:health`, `sh tooling/vendor-diff-check.sh` | Vendored Interchange health and drift gate. |
 
 ## Build
