@@ -12,6 +12,9 @@ COPY --from=base /app/node_modules node_modules
 COPY --from=base /app/vendor vendor
 COPY --from=base /app/packages packages
 COPY --from=base /app/apps/hub apps/hub
+# The image's unprivileged user owns /data, so the volume Docker creates there inherits it.
+RUN mkdir /data && chown bun:bun /data
+USER bun
 WORKDIR /app/vendor/interchange
 CMD ["bun", "--conditions=intx-src", "apps/sidecar/src/index.ts"]
 
