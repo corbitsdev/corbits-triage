@@ -50,10 +50,28 @@ test("nothing is sent while code review is off, the key is missing or the pull r
   expect(await harness(["github"], { ...PULL, draft: true }).feed.again("t", RECORD, 7)).toBe("draft");
 });
 
-test("a diff over the limit is cut at a line boundary and says how much it kept", () => {
-  expect(cutDiff("a\nb\n", 10)).toEqual({ diff: "a\nb\n" });
-  expect(cutDiff("aaa\nbbb\nccc\n", 9)).toEqual({ diff: "aaa\nbbb\n", cut: { lines: 2, of: 3 } });
+test("a diff over the limit is cut at a line boundary and names the files it cut part-way or left out", () => {
+  const file = (path: string) => [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, "@@ -1 +1 @@", "-old", "+new", ""].join("\n");
+  const diff = file("src/a.ts") + file("src/b.ts") + file("src/c.ts");
+  expect(cutDiff(diff, diff.length)).toEqual({ diff });
+  expect(cutDiff(diff, diff.indexOf("diff --git a/src/b.ts"))).toEqual({ diff: file("src/a.ts"), cut: { lines: 6, of: 18, unread: ["src/b.ts", "src/c.ts"] } });
+  expect(cutDiff(diff, diff.indexOf("+new", diff.indexOf("src/b.ts")))).toEqual({ diff: file("src/a.ts") + file("src/b.ts").replace("+new\n", ""), cut: { lines: 11, of: 18, unread: ["src/b.ts", "src/c.ts"] } });
   expect(cutDiff("abcdefgh\n", 4)).toEqual({ diff: "abcd", cut: { lines: 1, of: 1 } });
+});
+
+test("a cut names files as git writes them with or without prefixes and quotes, and as Bitbucket Data Center writes them", () => {
+  const sections = [
+    "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n",
+    "diff --git src://a b.ts dst://a b.ts\n--- src://a b.ts\n+++ dst://a b.ts\n@@ -1 +1 @@\n-a\n+b\n",
+    "diff --git x.ts x.ts\n--- x.ts\n+++ x.ts\n@@ -1 +1 @@\n-a\n+b\n",
+    'diff --git "a/caf\\303\\251 \\"q\\".ts" "b/caf\\303\\251 \\"q\\".ts"\n--- "a/caf\\303\\251 \\"q\\".ts"\n+++ "b/caf\\303\\251 \\"q\\".ts"\n@@ -1 +1 @@\n-a\n+b\n',
+    "diff --git a/gone.ts b/gone.ts\ndeleted file mode 100644\n--- a/gone.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n",
+    "diff --git a/x b/y.png b/x b/y.png\nBinary files a/x b/y.png and b/x b/y.png differ\n",
+    "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n",
+  ];
+  const diff = sections.join("");
+  expect(cutDiff(diff, sections[0]!.length).cut?.unread).toEqual(["a b.ts", "x.ts", 'café "q".ts', "gone.ts", "x b/y.png", "new.ts"]);
+  expect(cutDiff(`${diff}diff --git a/p q b/r s\n`, sections[0]!.length).cut).toEqual({ lines: 6, of: 37 });
 });
 
 test("a host answer that is not a unified diff is refused, not reviewed", async () => {

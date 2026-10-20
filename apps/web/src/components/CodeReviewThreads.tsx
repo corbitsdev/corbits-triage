@@ -70,6 +70,25 @@ function SendToGithub({ item, completed, send }: { item: Reviewed; completed: Co
   return <button type="button" className="linkish" disabled={readOnly || pull.isPending || send.isPending} onClick={() => send.mutate(completed.headSha)}>Send to GitHub</button>;
 }
 
+/** A list of more unread files than this starts collapsed. */
+const SHOWN_UNREAD = 5;
+
+function CutNote({ cut }: { cut: NonNullable<CodeReviewRun["cut"]> }) {
+  const { unread } = cut;
+  const said = `Reviewed the first ${cut.lines} of ${cut.of} lines of the diff; the rest was over the size limit.`;
+  if (!unread?.length) return <p className="note">{said} Some files were not reviewed.</p>;
+  const heading = unread.length === 1 ? "1 file not reviewed in full" : `${unread.length} files not reviewed in full`;
+  return (
+    <div className="note">
+      {said}
+      <details open={unread.length <= SHOWN_UNREAD}>
+        <summary>{heading}</summary>
+        <ul className="cr-unread">{unread.map((path) => <li key={path}><code>{path}</code></li>)}</ul>
+      </details>
+    </div>
+  );
+}
+
 /** The pull request's code review: shown once it has one, or while the repository has code review on. */
 export function CodeReviewThreads({ item }: { item: Reviewed }) {
   const { snapshot, readOnly } = usePortal();
@@ -91,7 +110,7 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
       {send.error ? <p role="alert" className="error">Could not send to GitHub. {errorText(send.error)}</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
-      {completed?.cut ? <p className="note">Reviewed the first {completed.cut.lines} of {completed.cut.of} lines of the diff; the rest was over the size limit.</p> : null}
+      {completed?.cut ? <CutNote cut={completed.cut} /> : null}
       {completed?.budgetExhausted ? <p className="note">{BUDGET_EXHAUSTED_NOTE}</p> : null}
       {completed?.comments?.length ? <ol className="threads">{completed.comments.map((comment, index) => <Thread key={index} comment={comment} review={completed} />)}</ol> : null}
     </section>

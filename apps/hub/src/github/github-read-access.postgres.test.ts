@@ -258,7 +258,16 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   completed = null;
   expect(await (await prActions(send, member("usr_approver"))).json()).toMatchObject({ error: { code: "no_code_review" } });
   expect(sentReviews).toHaveLength(1);
-  expect(sentReviews).toHaveLength(1);
+
+  sentReviews.length = 0;
+  completed = { ...FINISHED, comments: [], budgetExhausted: false, cut: { lines: 6, of: 40, unread: ["src/b.ts", "src/`c`.ts", "@team\n**x**.md"] } };
+  expect(await (await prActions(send, member("usr_approver"))).json()).toEqual({ reviewId: 1, sent: true });
+  expect(sentReviews.map((review) => review.body)).toEqual(["Fixes the widget.\n\nNot reviewed in full: 3 files, over the size limit.\n- `src/b.ts`\n- ``src/`c`.ts``\n- `@team **x**.md`\n\n<!-- corbits-code-review -->"]);
+
+  sentReviews.length = 0;
+  completed = { ...FINISHED, summary: "", comments: [], budgetExhausted: false, cut: { lines: 6, of: 40 } };
+  expect(await (await prActions(send, member("usr_approver"))).json()).toEqual({ reviewId: 1, sent: true });
+  expect(sentReviews.map((review) => review.body)).toEqual(["Some files were not reviewed: the diff was over the size limit.\n\n<!-- corbits-code-review -->"]);
 });
 
 test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {

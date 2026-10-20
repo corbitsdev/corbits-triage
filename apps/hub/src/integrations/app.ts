@@ -674,7 +674,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${CODE_REVIEW_PATH}/:tenantId`,
     describeRoute({
       summary: "A pull request's latest code review",
-      description: "Needs `workflow-run:*` read. Read from the run logs of the host's code review deployments (`source` absent means GitHub), newest first among the workspace's recent reviews: `running`, `failed`, or `completed` with the summary, each finding's comment (path, lines, title, explanation, priority and the code it quotes) and `cut` when the diff was cut for size. `completed` is the newest finished review, the same as `review` unless a newer one is running or failed; both are null when the pull request has none. Nothing is posted to the host.",
+      description: "Needs `workflow-run:*` read. Read from the run logs of the host's code review deployments (`source` absent means GitHub), newest first among the workspace's recent reviews: `running`, `failed`, or `completed` with the summary, each finding's comment (path, lines, title, explanation, priority and the code it quotes) and `cut` when the diff was cut for size, with the files it left `unread`. `completed` is the newest finished review, the same as `review` unless a newer one is running or failed; both are null when the pull request has none. Nothing is posted to the host.",
       tags: TAGS,
       responses: { 200: json("The latest review, or null", CodeReviewFound), ...invalid, 401: failures[401], 403: failures[403] },
     }),

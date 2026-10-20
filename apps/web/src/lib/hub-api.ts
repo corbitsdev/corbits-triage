@@ -931,8 +931,8 @@ export type CodeReviewRun = {
   summary?: string;
   comments?: CodeReviewComment[];
   budgetExhausted?: boolean;
-  /** Set when the diff was cut to its first `lines` of `of` for size. */
-  cut?: { lines: number; of: number };
+  /** Set when the diff was cut to its first `lines` of `of` for size, with the files it cut part-way or left out. */
+  cut?: { lines: number; of: number; unread?: string[] };
 };
 
 /** The newest review, and the newest finished one, whose findings stay shown while a newer review runs. */

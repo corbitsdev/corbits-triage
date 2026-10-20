@@ -4,6 +4,7 @@ import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readPr, readPrDiff, type GithubFetch } from "@corbits/github-reads";
 import type { RepoSource } from "@corbits/triage-contracts";
 import type { TenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
+import { filesFrom } from "./diff-files.js";
 import type { TriageJob } from "./github/coordinator.js";
 import type { PrMail } from "./github/normalize.js";
 import { forInstallation } from "./github/open-pulls.js";
@@ -14,7 +15,7 @@ const REVIEW_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_
 
 /**
  * The most diff text one review reads, about 25k tokens, which keeps a review near its measured cost; past it the diff
- * is cut at a line boundary and the review says so.
+ * is cut at a line boundary and the review names the files it left unread.
  */
 export const DIFF_LIMIT = 100_000;
 
@@ -37,12 +38,16 @@ function lineCount(text: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-/** The diff whole, or its first lines that fit in `limit`, with how many of how many lines it keeps. */
-export function cutDiff(diff: string, limit = DIFF_LIMIT): { diff: string; cut?: { lines: number; of: number } } {
+/**
+ * The diff whole, or its first lines that fit in `limit`, with how many of how many lines it keeps and, when every path
+ * can be read, the files it cuts part-way or leaves out.
+ */
+export function cutDiff(diff: string, limit = DIFF_LIMIT): { diff: string; cut?: { lines: number; of: number; unread?: string[] } } {
   if (diff.length <= limit) return { diff };
   const end = diff.lastIndexOf("\n", limit);
   const kept = end < 0 ? diff.slice(0, limit) : diff.slice(0, end + 1);
-  return { diff: kept, cut: { lines: lineCount(kept), of: lineCount(diff) } };
+  const unread = filesFrom(diff, kept.length);
+  return { diff: kept, cut: { lines: lineCount(kept), of: lineCount(diff), ...(unread && { unread }) } };
 }
 
 type PullRequestReaderDeps = {

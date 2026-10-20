@@ -3,6 +3,14 @@ import { type } from "arktype";
 /** Shown beside a review whose reader reached its limit for reading the repository before it finished. */
 export const BUDGET_EXHAUSTED_NOTE = "Stopped early: the reviewer reached its limit for reading the repository.";
 
+/** Shown beside a review of a diff cut for size whose left-out files cannot be named. */
+export const SOME_NOT_REVIEWED_NOTE = "Some files were not reviewed: the diff was over the size limit.";
+
+/** Heads the list of files a review of a diff cut for size read part-way or left out. */
+export function notReviewedNote(files: number): string {
+  return `Not reviewed in full: ${files === 1 ? "1 file" : `${files} files`}, over the size limit.`;
+}
+
 /** One finding of a code review: its lines in the reviewed head, what is wrong, its priority (0 is the most severe) and the code it quotes. */
 export const CodeReviewComment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", "priority?": "number", "quoted?": "string" });
 export type CodeReviewComment = typeof CodeReviewComment.infer;

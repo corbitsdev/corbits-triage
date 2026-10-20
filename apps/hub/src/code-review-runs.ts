@@ -19,7 +19,7 @@ const Source = type.enumerated(...REPO_SOURCES);
 
 export const CodeReviewQuery = type({ repo: "string > 0", "source?": Source, number: "string.integer.parse" });
 
-const Cut = type({ lines: "number", of: "number" });
+const Cut = type({ lines: "number", of: "number", "unread?": "string[]" });
 const Review = type({ summary: "string", comments: CodeReviewComment.array(), budgetExhausted: "boolean", "cut?": Cut });
 const CompletedRun = type({
   status: "'completed'",
