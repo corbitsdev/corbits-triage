@@ -230,6 +230,9 @@
 .inbox .lbl-h .sp { flex: 1; }
 .inbox .lbl-h .hint { font-weight: 400; font-size: 12px; color: var(--ink-mute); }
 .inbox .cr-summary { margin: 0 0 8px; font-size: 14px; }
+.inbox .note details { margin-top: 4px; }
+.inbox .note summary { cursor: pointer; }
+.inbox .cr-unread { margin: 4px 0 0; padding-left: 18px; }
 .inbox .threads { list-style: none; margin: 0 0 24px; padding: 0; }
 .inbox .thread { padding: 14px 0; border-top: 1px solid var(--rule); display: grid; gap: 14px; }
 .inbox .cmt { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; }

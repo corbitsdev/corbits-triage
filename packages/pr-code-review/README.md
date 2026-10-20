@@ -10,8 +10,9 @@ Every file under `src/` is a subpath export (`@corbits/pr-code-review/pr-code-re
 `/findings`, `/profile`, `/actions/review`, `/actions/checkout`).
 
 The request is `{ kind: "code-review", title, description, diff, checkout }` with optional `number` (the pull
-request's), `efforts` per step, `budgets.repoFinder`, `check`, and `cut` (`{ lines, of }`) when the sender cut the diff
-for size, which the review carries.
+request's), `efforts` per step, `budgets.repoFinder`, `check`, and `cut` (`{ lines, of, unread? }`) when the sender cut
+the diff for size, `unread` naming the files it cut part-way or left out; the review carries it and never puts those
+names in a prompt.
 
 ### Process
 

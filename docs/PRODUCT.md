@@ -352,7 +352,8 @@ A workspace turns it on by saving an Anthropic key under Settings → Code revie
 switching it on per repository; each reviewed commit is billed to that
 Anthropic account. Every new commit of a non-draft pull request is reviewed,
 and **Review again** reviews the current one once more. A diff over 100,000
-characters is cut, and the review says how much it read.
+characters is cut; the review says how much it read and names the files it left
+out, and so does the review sent to GitHub.
 
 Each review checks out the pull request's code, so it runs in an isolated
 place of its own; until the server has one, the repository page links

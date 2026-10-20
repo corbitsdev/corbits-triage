@@ -16,7 +16,8 @@ import {
   upsertTriageComment,
 } from "@corbits/github-tool/github";
 import { appLogin, codeownersForPr, type GithubFetch } from "@corbits/github-reads";
-import { BUDGET_EXHAUSTED_NOTE, ownedLabels, TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, notReviewedNote, ownedLabels, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
+import { inlineCode } from "@corbits/triage-workflows/logic/render";
 import type { CodeReviewRuns, CompletedReview } from "../code-review-runs.js";
 import type { CheckPackRead } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
@@ -52,9 +53,20 @@ export const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.int
 
 type SendBody = Extract<typeof ActionBody.infer, { action: "code-review" }>;
 
+/** Unread files listed in a posted review; the rest are counted. */
+const POSTED_UNREAD = 20;
+
+function cutNotes({ cut }: CompletedReview): string[] {
+  if (!cut) return [];
+  if (!cut.unread) return [SOME_NOT_REVIEWED_NOTE];
+  const listed = cut.unread.slice(0, POSTED_UNREAD).map((path) => `- ${inlineCode(path)}`);
+  const more = cut.unread.length > POSTED_UNREAD ? [`- and ${cut.unread.length - POSTED_UNREAD} more`] : [];
+  return [[notReviewedNote(cut.unread.length), ...listed, ...more].join("\n")];
+}
+
 /** The fixed lines added to a posted review after the model's summary, one per condition. */
 function postedNotes(run: CompletedReview): string[] {
-  return run.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : [];
+  return [...(run.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...cutNotes(run)];
 }
 
 /** Sends the pull request's newest finished code review, only when it is the one the person saw and has something to post. */

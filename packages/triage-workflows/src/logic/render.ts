@@ -497,7 +497,7 @@ function nextStep(checks: CheckResult[], sources: Sources, reviewers: string[], 
  * Pull request text is posted as one-line inline code that cannot mention, link or format: whitespace runs collapse so
  * no line break ends the span, and the fence outruns any backtick run inside (CommonMark).
  */
-function inlineCode(text: string): string {
+export function inlineCode(text: string): string {
   const flat = text.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
   const chars = Array.from(flat);
   const line = chars.length > MAX_CODE_CHARS ? `${chars.slice(0, MAX_CODE_CHARS).join("")}…` : flat;

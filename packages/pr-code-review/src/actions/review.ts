@@ -18,8 +18,8 @@ const ReviewRequest = type({
   "budgets?": { "repoFinder?": "number.integer > 0" },
   /** The pull request's number, so a run can be found by it. */
   "number?": "number.integer > 0",
-  /** Set when the diff was cut to its first `lines` of `of` lines to keep the review within its size limit. */
-  "cut?": { lines: "number.integer >= 0", of: "number.integer > 0" },
+  /** Set when the diff was cut to its first `lines` of `of` lines to keep the review within its size limit, with the files it cut part-way or left out. */
+  "cut?": { lines: "number.integer >= 0", of: "number.integer > 0", "unread?": "string[]" },
 });
 type ReviewRequest = typeof ReviewRequest.infer;
 
