@@ -31,7 +31,6 @@
     "lint": "oxlint",
     "eval:review": "bun --conditions=intx-src packages/pr-code-review-anthropic/evals/review.eval.ts",
     "holdback": "bun --conditions=intx-src tooling/holdback-replay.ts",
-    "injection": "bun --conditions=intx-src tooling/injection-run.ts",
     "report": "bun --conditions=intx-src tooling/cost-latency-report.ts",
     "hub": "bun --conditions=intx-src apps/hub/src/server.ts",
     "vendor:health": "sh tooling/vendor-health-check.sh"
