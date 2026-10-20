@@ -186,7 +186,10 @@ label off that head, so it never stands on a head not yet triaged.
    that rule on, a GitHub repository's pull request templates are read from
    its default branch too, or its owner's `.github` repository's when it has
    none (`github_read_pr_templates`), so hidden markup that matches a template's
-   own whole comment is not counted as the author's.
+   own whole comment is not counted as the author's. The portal's pull request
+   details (`/api/integrations/github-pull`) find referenced GitHub issues in
+   the same cleaned title, body and commit messages; a pasted URL of an issue
+   in the same repository counts too, as GitHub renders it `#<number>`.
 2. **rules**: runs the hard rules (built-in rules over host data and text
    rules) and, unless one failed or the pull request is a draft or closed,
    builds the judged rules' questions, or the verdict question when there are
@@ -271,8 +274,10 @@ whether or not triage is on, with the host's unified diff cut at a line
 boundary past 100,000 characters; on GitHub a diff too large for the diff API
 is built from the files' patches. The files a cut leaves unread, read from the
 diff's headers, ride as `cut.unread` and never reach a prompt; the review sent
-to GitHub lists them. `…/run` reviews the current head again. Code
-review only reads: a checkout action downloads the head through the host
+to GitHub lists them. The title and description are read as the facts step
+reads them (`shownBody` and `visibleText` in `@corbits/triage-contracts`), so
+hidden text never reaches the review. `…/run` reviews the current head again.
+Code review only reads: a checkout action downloads the head through the host
 credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>`, and
 its tools are the host read bundle and repository reads confined to that
 folder. The consolidate step reads each finding's lines at the head and reports

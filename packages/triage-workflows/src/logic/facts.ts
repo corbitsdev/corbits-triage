@@ -1,5 +1,5 @@
 import { checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
-import { authorAssociation, authorKindOf, catalogCheckEnabled, policyTeams, renderedText, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { authorAssociation, authorKindOf, catalogCheckEnabled, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { hiddenIn, hiddenMarkup, nothingRemoved } from "./hidden-content.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
@@ -258,16 +258,11 @@ function shownFile(file: PrFileFacts, hidden: string[]): PrFileFacts {
   return { ...file, path: shownText(file.path, hidden, pathPlace), ...(file.previousPath === undefined ? {} : { previousPath: shownText(file.previousPath, hidden, pathPlace) }) };
 }
 
-/**
- * GitHub's own rendering holds only what a reader sees, and its markdown hides comments; Bitbucket Data Center shows the
- * body as written.
- */
-function shownBody(pr: PrData, source: RepoSource, templates: string[], hidden: string[]): string | undefined {
+/** The description as a reader sees it, noting in `hidden` what it hid; on GitHub its markdown hides comments. */
+function shownDescription(pr: PrData, source: RepoSource, templates: string[], hidden: string[]): string | undefined {
   const removed = nothingRemoved();
-  let body: string;
-  if (source !== "github") body = visibleText(pr.body ?? "", removed);
-  else if (typeof pr.bodyHtml === "string") body = renderedText(pr.bodyHtml, removed);
-  else return pr.body ? undefined : "";
+  const body = shownBody(pr, source, removed);
+  if (body === undefined) return undefined;
   const markup = source === "github" ? hiddenMarkup(pr.body ?? "", body, templates) : [];
   hidden.push(...new Set([...hiddenIn("description", removed), ...markup.map((what) => `description: ${what}`)]));
   return body;
@@ -282,7 +277,7 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   if (typeof templates === "string") return { error: templates };
   const hidden: string[] = [];
   const title = shownText(pr.title ?? "", hidden, () => "title");
-  const body = shownBody(pr, source, templates, hidden);
+  const body = shownDescription(pr, source, templates, hidden);
   if (body === undefined) return { error: `github_get_pr returned no rendered body for #${number}` };
   const messages = data.commits.map((commit, at) => shownText(commit.message ?? "", hidden, () => `commit ${at + 1}`));
   const files = data.files.map((file) => shownFile(file, hidden));

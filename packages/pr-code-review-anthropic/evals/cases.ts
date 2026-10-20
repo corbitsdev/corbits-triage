@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Site } from "@corbits/pr-code-review/findings";
+import { shownBody, visibleText } from "@corbits/triage-contracts";
 
 const LABELS = new URL("./labels/", import.meta.url).pathname;
 const CASES = new URL("./cases.json", import.meta.url).pathname;
@@ -64,9 +65,12 @@ function diffOf(stub: CaseStub, headSha: string): string {
   }
 }
 
+/** The title and description as the hub sends them: without what GitHub hides. */
 function fetchPr(stub: CaseStub): PullRequest {
-  const pr = JSON.parse(gh(`repos/${stub.repo}/pulls/${stub.number}`)) as { title: string; body: string | null; head: { sha: string } };
-  return { title: pr.title, description: pr.body ?? "", diff: diffOf(stub, pr.head.sha) };
+  const pr = JSON.parse(gh("-H", "Accept: application/vnd.github.full+json", `repos/${stub.repo}/pulls/${stub.number}`)) as { title: string; body: string | null; body_html?: string; head: { sha: string } };
+  const description = shownBody({ body: pr.body, bodyHtml: pr.body_html }, "github");
+  if (description === undefined) throw new Error(`${stub.repo}#${stub.number}: GitHub returned no rendered body`);
+  return { title: visibleText(pr.title), description, diff: diffOf(stub, pr.head.sha) };
 }
 
 function stubOf(id: string): CaseStub {
@@ -83,7 +87,7 @@ export function headOf(id: string): { repo: string; sha: string } {
 
 /** The pull request of case `id`, fetched once and cached. */
 export function pullRequestOf(id: string): PullRequest {
-  const cached = join(CACHE, `${id}.json`);
+  const cached = join(CACHE, `${id}.shown.json`);
   if (existsSync(cached)) return readJson(cached);
   const pr = fetchPr(stubOf(id));
   mkdirSync(CACHE, { recursive: true });

@@ -11,10 +11,10 @@ Every file under `src/` is a subpath export (`@corbits/pr-code-review/pr-code-re
 after })` places the same steps in another definition, every id under `prefix`, as
 [pr-workflow-anthropic](../pr-workflow-anthropic/README.md) does.
 
-The request is `{ kind: "code-review", title, description, diff, checkout }` with optional `number` (the pull
-request's), `efforts` per step, `budgets.repoFinder`, `check`, and `cut` (`{ lines, of, unread? }`) when the sender cut
-the diff for size, `unread` naming the files it cut part-way or left out; the review carries it and never puts those
-names in a prompt.
+The request is `{ kind: "code-review", title, description, diff, checkout }`. The title and description are as the host
+shows them, without hidden text. Optional fields are `number` (the pull request's), `efforts` per step,
+`budgets.repoFinder`, `check`, and `cut` (`{ lines, of, unread? }`) when the sender cut the diff for size, `unread`
+naming the files it cut part-way or left out; the review carries it and never puts those names in a prompt.
 
 ### Process
 

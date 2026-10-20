@@ -21,7 +21,9 @@ least one defect, 52 in all; 3 are clean.
   - `repo`: needs code outside the diff (26).
   - `intent`: needs product knowledge beyond the code (2).
 - `.cache/` (not in git): each pull request's title, description and diff,
-  fetched once with `gh api`.
+  fetched once with `gh api`, with the title and description cleaned as the
+  hub sends them (`<id>.shown.json`; an older `<id>.json` holds them raw and is
+  not read).
 
 ## How the answer keys were validated
 
@@ -80,12 +82,13 @@ with the triage judge eval, in `packages/triage-workflows/evals/`. The
 committed file is the baseline for the commit it names; rerun and commit it
 when a change moves the numbers.
 
-### Numbers at e2177f15 (2026-10-20)
+### Numbers (2026-10-21)
 
-Final review: 45/52 bugs caught (diff 24/24, repo 19/26, intent 2/2), 35
-false alarms, 3/3 clean cases flagged, $3.14 for all 25 cases; the Opus diff
-finder is $2.77 of it. Findings both finders reported caught 31/52 with 7
-false alarms. Every stage's totals are in the committed file.
+Final review, on descriptions cleaned as the hub sends them: 43/52 bugs caught
+(diff 22/24, repo 19/26, intent 2/2), 39 false alarms, 3/3 clean cases flagged,
+$3.10 for all 25 cases; the Opus diff finder is $2.78 of it. Findings both
+finders reported caught 33/52 with 11 false alarms. Every stage's totals are in
+the committed file.
 
 ### Held-out numbers (2026-10-16)
 

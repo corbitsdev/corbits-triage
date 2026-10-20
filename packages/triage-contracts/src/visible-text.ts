@@ -1,5 +1,6 @@
 import { Parser } from "htmlparser2";
 import { ISSUE_LINKS } from "./check-pack.js";
+import type { RepoSource } from "./repo-source.js";
 
 // C0 and C1 controls draw nothing; tab and line feed are layout and stay.
 const CONTROL = /[^\P{Cc}\n\t]/u;
@@ -257,4 +258,14 @@ export function renderedText(html: string, removed?: Removed): string {
 
   new Parser({ onopentag, onclosetag, ontext }, { decodeEntities: true }).end(html);
   return parts.join("");
+}
+
+/**
+ * A pull request body as a reader sees it: GitHub's own rendering holds only what a reader sees, Bitbucket Data Center
+ * shows the body as written. Undefined when GitHub sent a body without its rendering.
+ */
+export function shownBody(pr: { body?: string | null; bodyHtml?: string | null }, source: RepoSource, removed?: Removed): string | undefined {
+  if (source !== "github") return visibleText(pr.body ?? "", removed);
+  if (typeof pr.bodyHtml === "string") return renderedText(pr.bodyHtml, removed);
+  return pr.body ? undefined : "";
 }
