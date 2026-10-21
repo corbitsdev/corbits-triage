@@ -41,6 +41,8 @@ export interface RunLocalInput {
   onEvent?: (event: InferenceEvent) => void;
   /** Each agent step's wall time, by agent id. */
   onStepDone?: (agentId: string, ms: number) => void;
+  /** The run's clock, which times its retries' backoff; the wall clock when absent. */
+  clock?: () => Date;
 }
 
 function consumerOf(binding: Bindings[number]): string {
@@ -144,6 +146,7 @@ export async function runLocalWorkflow(input: RunLocalInput) {
       actionResolver: resolveAction,
       actionCredentials: localActionCredentials(input.credentialBindings, input.github, cell),
       triggerPayload: input.triggerPayload,
+      ...(input.clock && { clock: input.clock }),
     }).complete;
   } finally {
     rmSync(root, { recursive: true, force: true });

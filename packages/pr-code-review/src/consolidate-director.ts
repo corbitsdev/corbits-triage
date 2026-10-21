@@ -2,6 +2,7 @@ import { defineDirector } from "@intx/agent";
 import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent, ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
 import { checkoutOf, READ_FILE_TOOL, type Checkout } from "./actions/checkout.js";
+import { MODEL_FAILED } from "./failures.js";
 import { quotedLine, type Finding, type Site } from "./findings.js";
 import { packageName } from "./package-name.js";
 import { promptAttribute, promptText } from "./prompt-text.js";
@@ -102,7 +103,8 @@ function readsOf(findings: readonly Finding[]): Read[] {
  * the model's history, each stretch of a file once, and moves each finding onto the line its quoted code names. Then
  * one model call, with the cited lines appended to the system prompt, decoded against the schema. The reply is the
  * model's JSON with `sites`, each finding's anchored range by index, `excerpts`, the numbered lines read around
- * each, and `unreadFindings`, the index of each finding the model was shown no line of, which keeps its range.
+ * each, and `unreadFindings`, the index of each finding the model was shown no line of, which keeps its range. A failed
+ * model call or an answer that isn't JSON fails the step, so its retry asks again.
  */
 function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { name, schema }: ConsolidateDirectorConfig): ReactorDirector {
   const reads = new Map<string, Read>();
@@ -144,7 +146,7 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
 
   function start(content: string) {
     const named = checkoutOf(content);
-    if (!named) return caps.reply(`${name}: the input names no repository head`);
+    if (!named) throw new Error(`${name}: the input names no repository head`);
     checkout = named;
     findings = findingsIn(content);
     if (findings.length === 0) return caps.reply(JSON.stringify({ groups: [], sites: [], excerpts: [], unreadFindings: [] }));
@@ -181,7 +183,7 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
       const unreadFindings = sites.flatMap((site, i) => (shown(site, linesOf(site.path)) === "" ? [i] : []));
       return caps.reply(JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), sites, excerpts, unreadFindings }));
     } catch {
-      return caps.reply(`${name}: replied without JSON: ${text.slice(0, 200)}`);
+      throw new Error(`${name}: replied without JSON: ${text.slice(0, 200)}`);
     }
   }
 
@@ -195,9 +197,7 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
         case "inference.done":
           return onTurn(event.turn);
         case "inference.error":
-          return caps.reply(`${name}: inference failed: ${event.error.message}`);
-        case "abort":
-          return caps.reply(`${name}: aborted`);
+          throw new Error(`${name}: ${MODEL_FAILED}: ${event.error.message}`);
         default:
           return [];
       }

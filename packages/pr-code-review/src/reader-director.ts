@@ -108,9 +108,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools }
         case "inference.done":
           return onTurn(event.turn, event.usage);
         case "inference.error":
-          throw new Error(`${MODEL_FAILED}: ${event.error.message}`);
-        case "abort":
-          throw new Error("reader: aborted");
+          throw new Error(`reader: ${MODEL_FAILED}: ${event.error.message}`);
         default:
           return [];
       }

@@ -19,10 +19,9 @@ names in a prompt.
 1. **plan** names the risky changed areas and the code outside the diff they depend on; meanwhile **checkout** puts the
    head in a folder on the sidecar. Each review runs in a worker deployment of its own; releasing it when the run ends,
    failed or not, removes the sidecar and the checkout with it.
-2. **findDiff** reads the diff; **findRepo** reads that folder within a token budget. They run in parallel. A failed
-   model call or an answer with no findings list fails the finder's step, which tries again twice, 5 and 10 seconds
-   later; a repository finder that spent its budget before answering found nothing and the review says it stopped
-   early.
+2. **findDiff** reads the diff; **findRepo** reads that folder within a token budget. They run in parallel. An answer
+   with no findings list fails the finder's step; a repository finder that spent its budget before answering found
+   nothing and the review says it stopped early.
 3. **candidates** folds exact duplicates (same file, overlapping lines, same first quoted line) and remembers which
    finders reported each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
@@ -30,6 +29,9 @@ names in a prompt.
 5. **check** confirms each group, only when the request sets `check`.
 6. **write** comments on every group, most severe and most agreed-on first; each comment carries the code it quotes
    and how many finders reported it.
+
+A failed model call fails its step, as does an answer that can't be read; every model step then tries again twice, 5
+and 10 seconds later. A step that fails for good fails the review, which shows as not finished.
 
 Every message wraps pull request text in lowercase tags. Text from the pull request, its files or a model's reply
 about them has each `<` that would open or close one of those tags, spelled as the prompts write it, written as

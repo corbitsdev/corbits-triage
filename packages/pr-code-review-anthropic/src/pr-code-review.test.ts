@@ -37,6 +37,10 @@ const fetched: string[] = [];
 let diffFinderProse = 0;
 /** Whether the repository finder answers in prose once it has read. */
 let repoFinderProse = false;
+/** Whether every plan model call is refused, with an error the client does not retry itself. */
+let planRefused = false;
+/** How many of the write step's next answers are prose with no JSON. */
+let writeProse = 0;
 
 const allow: WorkflowAuthorizeFn = async function allow() {
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
@@ -71,6 +75,10 @@ function answer(body: MessagesRequest) {
     diffFinderProse--;
     return [{ type: "text", text: "The loop at src/a.ts:2 subtracts { instead of adding." }];
   }
+  if (sent.includes("Write the review.") && writeProse > 0) {
+    writeProse--;
+    return [{ type: "text", text: "One defect: add subtracts." }];
+  }
   if (system.includes("<tools>") && repoFinderProse) return [{ type: "text", text: "I read src/a.ts and ran out of budget before writing findings." }];
   let text: unknown = { findings: [FINDING] };
   if (system.includes("<cited_code>")) text = { groups: [{ defect: "add subtracts", members: [0], representative: 0 }] };
@@ -89,6 +97,9 @@ beforeAll(function serve() {
     port: 0,
     async fetch(req) {
       const body = (await req.json()) as MessagesRequest;
+      if (planRefused && JSON.stringify(body.messages).includes("Plan the review")) {
+        return Response.json({ type: "error", error: { type: "invalid_request_error", message: "Refused" } }, { status: 400 });
+      }
       const content = answer(body);
       const stop = content[0]!.type === "tool_use" ? "tool_use" : "end_turn";
       const usage = { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
@@ -102,10 +113,19 @@ afterAll(function stop() {
   rmSync(dir, { recursive: true, force: true });
 });
 
+/** A clock a minute further on at every reading, so each retry's backoff has passed by the time it is timed. */
+function hurried() {
+  let readings = 0;
+  return function clock() {
+    return new Date(Date.now() + ++readings * 60_000);
+  };
+}
+
 /** A review whose checkout action writes under `checkoutDir` and whose repository finder reads under `readerDir`. */
 async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { repoFinder: number }) {
   const origin = `http://localhost:${model.port}`;
   const results: ToolResult[] = [];
+  const attempts: Record<string, number> = {};
   function readerDataDir() {
     return readerDir;
   }
@@ -115,6 +135,9 @@ async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { 
   }
   function onEvent(event: InferenceEvent) {
     if (event.type === "tool.done") results.push(event.data.result);
+  }
+  function onStepDone(agentId: string) {
+    attempts[agentId] = (attempts[agentId] ?? 0) + 1;
   }
   const request = { kind: "code-review", title: "Add", description: "", diff: DIFF, checkout: { source: "github", repo: REPO, sha: SHA }, ...(budgets && { budgets }) };
   const run = await runLocalWorkflow({
@@ -128,8 +151,10 @@ async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { 
     sourceFor,
     triggerPayload: stockTriggerMail(request),
     onEvent,
+    onStepDone,
+    clock: hurried(),
   });
-  return { run, results };
+  return { run, results, attempts };
 }
 
 test("the repository finder reads the head the checkout action put on the sidecar, confined to it, and a second review of the head reuses it", async () => {
@@ -153,7 +178,7 @@ test("a finder answer with no findings list fails its step, which asks again rat
   expect(diffFinderProse).toBe(0);
   expect(run.terminalStatus).toBe("completed");
   expect(run.outputs["review"]).toMatchObject({ comments: [{ path: "src/a.ts", start: 2, agreement: { finders: 2 } }] });
-}, 15_000);
+});
 
 test("a repository finder that spends its budget and then answers in prose stopped early with nothing found", async () => {
   repoFinderProse = true;
@@ -170,4 +195,25 @@ test("a review whose checkout is not on this sidecar fails at the repository fin
   const { run } = await review(join(dir, "here"), join(dir, "elsewhere"));
   expect(run.terminalStatus).not.toBe("completed");
   expect(run.outputs["findRepo"]).toBeUndefined();
-}, 30_000);
+});
+
+test("a plan step whose model call keeps failing fails the review after its tries rather than handing the finders its error", async () => {
+  planRefused = true;
+  try {
+    const { run, attempts } = await review(join(dir, "data"));
+    expect(run.terminalStatus).not.toBe("completed");
+    expect(attempts["code-review-plan"]).toBe(3);
+    expect(run.outputs["findersInput"]).toBeUndefined();
+  } finally {
+    planRefused = false;
+  }
+});
+
+test("a write answer that isn't JSON fails its step, which asks again", async () => {
+  writeProse = 1;
+  const { run, attempts } = await review(join(dir, "data"));
+  expect(writeProse).toBe(0);
+  expect(attempts["code-review-write"]).toBe(2);
+  expect(run.terminalStatus).toBe("completed");
+  expect(run.outputs["review"]).toMatchObject({ summary: "One defect." });
+});
