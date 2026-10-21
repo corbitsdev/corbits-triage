@@ -18,9 +18,6 @@ export function FilterIcon() {
 export function ChevronIcon() {
   return <Icon className="chev"><path d="m6 3.5 4.5 4.5L6 12.5" /></Icon>;
 }
-export function DownIcon() {
-  return <Icon size={12}><path d="m4 6 4 4 4-4" /></Icon>;
-}
 export function ExternalIcon() {
   return <Icon size={13}><path d="M6 3H3v10h10v-3M9 2.5h4.5V7M13.5 2.5 7 9" /></Icon>;
 }
