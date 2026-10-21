@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { asRecord, errorText } from "@corbits/common";
 import { BLOCK_KINDS, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, decideOf, EVERYONE, repoSourceOf, VERDICTS, type BlockKind, type CheckPack, type CodeReviewProvider, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
-import { reviewRequestOf, type PullRequestToReview } from "../code-review-feed.js";
+import { reviewRequestOf, type PullRequestHead, type PullRequestToReview } from "../code-review-feed.js";
 import type { TriageJob } from "./coordinator.js";
 import { GithubRateLimited } from "./github-usage.js";
 import type { RepoRecord } from "./tenant-config.js";
@@ -60,16 +60,23 @@ export type PrWorkflowRouterDeps = {
   /** The names of the workspace's active code review provider credentials. */
   credentials: (tenantId: string) => Promise<string[]>;
   live: (tenantId: string, workflow: string) => Promise<boolean>;
-  /** The pull request as its host shows it now. */
+  /** The pull request as its host shows it now, without its diff. */
+  readHead: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestHead>;
+  /** The same with its diff, read only for code review. */
   readPull: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
   log: (entry: Record<string, unknown>) => void;
 };
 
+function hasDiff(pull: PullRequestHead): pull is PullRequestToReview {
+  return "diff" in pull;
+}
+
 export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
   /** Undefined when it cannot be read: the run goes ahead unpaused, and records a review it needed incomplete. */
-  async function pullOf(job: TriageJob, record: RepoRecord): Promise<PullRequestToReview | undefined> {
+  async function pullOf(job: TriageJob, record: RepoRecord, reviewed: boolean): Promise<PullRequestHead | undefined> {
     try {
-      return await deps.readPull(job.tenantId, record, job.number);
+      if (reviewed) return await deps.readPull(job.tenantId, record, job.number);
+      return await deps.readHead(job.tenantId, record, job.number);
     } catch (err) {
       // While GitHub refuses reads, a paused pull request would read as unpaused: the mail waits instead.
       if (err instanceof GithubRateLimited) throw err;
@@ -106,7 +113,7 @@ export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
     const pauseLabel = request["pauseLabel"];
     const reviewed = Array.isArray(blocks) && asRecord(request["codeReview"])?.["on"] === true;
     if (reviewed && !job.record) deps.log({ level: "warn", msg: "code_review_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, reason: "no_record" });
-    const pull = job.record && (typeof pauseLabel === "string" || reviewed) ? await pullOf(job, job.record) : undefined;
+    const pull = job.record && (typeof pauseLabel === "string" || reviewed) ? await pullOf(job, job.record, reviewed) : undefined;
     if (typeof pauseLabel === "string" && pull?.labels?.includes(pauseLabel)) {
       deps.log({ level: "info", msg: "pr_paused", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, label: pauseLabel });
       return undefined;
@@ -118,7 +125,7 @@ export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
       const automatic = Array.isArray(request["automatic"]) ? request["automatic"].filter((kind) => !HELD_WITHOUT_VARIANT.has(kind)) : [];
       return { ...job, payload: { ...request, automatic } };
     }
-    const codeReviewRequest = reviewed && job.record && pull ? reviewOf(job, job.record, pull) : undefined;
+    const codeReviewRequest = job.record && pull && hasDiff(pull) ? reviewOf(job, job.record, pull) : undefined;
     return { ...job, workflow: variant.id, payload: { ...request, ...(codeReviewRequest && { codeReviewRequest }) } };
   };
 }

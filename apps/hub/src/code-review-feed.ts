@@ -25,7 +25,9 @@ const DIFF_LIMIT = 100_000;
 const REMEMBERED_HEADS = 10_000;
 
 /** `labels` only where the host has them. */
-export type PullRequestToReview = { title: string; description: string; headSha: string; draft: boolean; open: boolean; diff: string; labels?: string[] };
+export type PullRequestHead = { title: string; description: string; headSha: string; draft: boolean; open: boolean; labels?: string[] };
+
+export type PullRequestToReview = PullRequestHead & { diff: string };
 
 export type CodeReviewFeedDeps = {
   /**
@@ -79,21 +81,44 @@ function shown(pr: { title: string; body?: string | null; bodyHtml?: string | nu
   return { title: visibleText(pr.title), description };
 }
 
-/** Reads a pull request and its diff as the tenant's GitHub App or Bitbucket Data Center token. */
+type Host = { bb: bitbucket.BitbucketFetch } | { gh: GithubFetch };
+
+function bitbucketHead(pr: Awaited<ReturnType<typeof bitbucket.getPr>>, record: RepoRecord, number: number): PullRequestHead {
+  return { ...shown(pr, "bitbucket-datacenter", record.name, number), headSha: pr.sha, draft: pr.draft, open: pr.state === "open" };
+}
+
+function githubHead(pr: Awaited<ReturnType<typeof readPr>>, record: RepoRecord, number: number): PullRequestHead {
+  return { ...shown(pr, "github", record.name, number), headSha: pr.sha, draft: pr.draft === true, open: pr.state === "open", labels: pr.labels };
+}
+
+/** Reads a pull request, alone or with its diff, as the tenant's GitHub App or Bitbucket Data Center token. */
 export function createPullRequestReader(deps: PullRequestReaderDeps) {
-  return async function readPullRequest(tenantId: string, record: RepoRecord, number: number): Promise<PullRequestToReview> {
-    const source = sourceOf(record);
-    if (source === "bitbucket-datacenter") {
+  async function hostOf(tenantId: string, record: RepoRecord): Promise<Host> {
+    if (sourceOf(record) === "bitbucket-datacenter") {
       const bb = await deps.tenantBitbucket(tenantId);
       if (!bb) throw new Error(`no Bitbucket Data Center token for ${record.name}`);
-      const [pr, diff] = await Promise.all([bitbucket.getPr(bb, record.name, number), bitbucket.readPrDiff(bb, record.name, number)]);
-      return { ...shown(pr, source, record.name, number), headSha: pr.sha, draft: pr.draft, open: pr.state === "open", diff };
+      return { bb };
     }
     const app = await deps.tenantGithub(tenantId);
     if (!app) throw new Error(`no GitHub App credential for ${record.name}`);
-    const gh = forInstallation(app, record.installationId);
-    const [pr, diff] = await Promise.all([readPr(gh, record.name, number), readPrDiff(gh, record.name, number)]);
-    return { ...shown(pr, source, record.name, number), headSha: pr.sha, draft: pr.draft === true, open: pr.state === "open", diff, labels: pr.labels };
+    return { gh: forInstallation(app, record.installationId) };
+  }
+
+  return {
+    async head(tenantId: string, record: RepoRecord, number: number): Promise<PullRequestHead> {
+      const host = await hostOf(tenantId, record);
+      if ("bb" in host) return bitbucketHead(await bitbucket.getPr(host.bb, record.name, number), record, number);
+      return githubHead(await readPr(host.gh, record.name, number), record, number);
+    },
+    async withDiff(tenantId: string, record: RepoRecord, number: number): Promise<PullRequestToReview> {
+      const host = await hostOf(tenantId, record);
+      if ("bb" in host) {
+        const [pr, diff] = await Promise.all([bitbucket.getPr(host.bb, record.name, number), bitbucket.readPrDiff(host.bb, record.name, number)]);
+        return { ...bitbucketHead(pr, record, number), diff };
+      }
+      const [pr, diff] = await Promise.all([readPr(host.gh, record.name, number), readPrDiff(host.gh, record.name, number)]);
+      return { ...githubHead(pr, record, number), diff };
+    },
   };
 }
 
