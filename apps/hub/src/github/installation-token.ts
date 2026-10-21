@@ -124,9 +124,12 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     }
   }
 
+  /** Renews the token of the workspace whose credential `tenantId` resolves to, its own or a parent's. */
   async function renew(tenantId: string): Promise<void> {
-    await recorded(tenantId, async function renewToken() {
-      await renewWith(tenantId, await githubAppKey(deps, tenantId));
+    const owner = (await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL))?.tenantId;
+    if (owner === undefined) return;
+    await recorded(owner, async function renewToken() {
+      await renewWith(owner, await githubAppKey(deps, owner));
     });
   }
 

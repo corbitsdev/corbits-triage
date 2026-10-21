@@ -233,5 +233,8 @@ test("PostgreSQL: a child workspace inheriting its parent's App gets the parent'
 
     expect(await renewal.renewAll()).toEqual({ retry: false });
     expect(pushed()).toEqual([{ address: "run_child@child.test", secrets: ["ghs_1_7_1"] }]);
+
+    await renewal.renew("tnt_child");
+    expect(pushed().at(-1)).toEqual({ address: "run_child@child.test", secrets: ["ghs_1_7_2"] });
   });
 });
