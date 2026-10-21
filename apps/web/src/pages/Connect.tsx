@@ -279,9 +279,10 @@ export default function Connect() {
       <p>{DECISION_MODEL_INTRO}</p>
       {modelStored
         ? <div className="success-callout" role="status"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>Decision model connected</strong><p>Triage is still off for every repository. Turn it on under Repositories.</p></div></div>
-        : <DecisionModelForm />}
+        : <><p className="muted">You can skip this for now. Triage asks for it when you turn it on for a repository.</p><DecisionModelForm /></>}
       <div className="task-actions">
         {modelStored && <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>}
+        {!modelStored && <Button type="button" variant="outline" onClick={() => navigate("/repositories")}>Skip for now</Button>}
         {githubConnected && <Button type="button" variant="ghost" onClick={() => setStep("select")}>Back to repositories</Button>}
       </div>
     </>;

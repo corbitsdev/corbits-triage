@@ -150,10 +150,11 @@ function Gate() {
   if (snapshot.denied.repos || snapshot.denied.credentials || snapshot.denied.models) {
     return <DeniedGate snapshot={snapshot} />;
   }
-  if (!connected || !snapshot.decisionModel || path === "/connect") return <Connect />;
+  const entry = path === "/" || path === "/login";
+  if (!connected || path === "/connect" || (entry && !snapshot.decisionModel)) return <Connect />;
 
   if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;
-  if (path === "/login" || path === "/") {
+  if (entry) {
     return <Navigate to={snapshot.repos.length > 0 ? "/inbox" : "/repositories"} replace />;
   }
 
