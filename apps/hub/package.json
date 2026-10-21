@@ -46,6 +46,7 @@
     "@corbits/provisioner-test": "workspace:*",
     "@intx/harness": "workspace:*",
     "@intx/mime": "workspace:*",
+    "@intx/workflow-host": "workspace:*",
     "@types/nodemailer": "^8.0.2"
   }
 }
