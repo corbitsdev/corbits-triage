@@ -601,7 +601,8 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
     const label: SeededDo = { list: "pass", kind: "labels", target: { labels: ["api"] }, index: 0 };
     const note: SeededDo = { list: "fail", kind: "comment", target: { body: "Thanks" }, index: 0 };
     const ci = (result: string, check = "ci-green") => ({ check, kind: "machine", result, reason: "", evidence: [] });
-    const started = new Date(Date.now() - 3_600_000);
+    // Noon UTC yesterday keeps the runs on one UTC day at any hour.
+    const started = new Date(new Date().setUTCHours(-12, 0, 0, 0));
     await seedDeployment(db, dataDir, tenantId, [
       timedRun(started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass", "ci")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good" } }), true),
       timedRun(new Date(started.getTime() + 600_000), 180_000, statsVerdict(8, HEAD, {
