@@ -4,6 +4,7 @@ import { PR_TRIAGE_ADDRESS } from "../src/pr-triage.js";
 import type { Snapshot } from "./cases.js";
 
 const DOMAIN = "triage.test";
+const HEAD = "e0a1e0a1e0a1e0a1e0a1e0a1e0a1e0a1e0a1e0a1";
 
 /**
  * Serves a fixture as GitHub would: the open pull request, its paged file rows, its docs as the default branch's tree
@@ -19,7 +20,7 @@ export function fixtureGithub(pr: Snapshot, templates: Readonly<Record<string, r
   const docs = Object.entries(pr.docs);
   const pull = {
     number: pr.number, title: pr.title, body: pr.body, body_html: pr.bodyHtml, state: "open", draft: false, merged: false, mergeable: true, mergeable_state: "clean",
-    user: { login: pr.author, type: "User" }, head: { sha: "eval", ref: "eval" }, base: { ref: "main" },
+    user: { login: pr.author, type: "User" }, head: { sha: HEAD, ref: "eval" }, base: { ref: "main" },
     additions: pr.files.reduce((sum, file) => sum + file.additions, 0), deletions: pr.files.reduce((sum, file) => sum + file.deletions, 0),
     changed_files: pr.files.length, labels: [], requested_reviewers: [], requested_teams: [], assignees: [],
   };
@@ -53,7 +54,7 @@ export function fixtureGithub(pr: Snapshot, templates: Readonly<Record<string, r
 
 /** The mail the hub's bridge sends when a pull request opens, as stock hands it to the run, with `extra` beside its request's own fields and `automatic` the kinds triage may run unattended. */
 export function triggerMail(pr: Pick<Snapshot, "repo" | "number">, pack: CheckPack, extra: Record<string, unknown> = {}, automatic: ActionKind[] = []) {
-  const request = mailPayload({ name: pr.repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic, source: { repo: { id: "eval", version: 1 } } }, { ...extra, prNumber: pr.number, headSha: "eval", events: ["opened"] });
+  const request = mailPayload({ name: pr.repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic, source: { repo: { id: "eval", version: 1 } } }, { ...extra, prNumber: pr.number, headSha: HEAD, events: ["opened"] });
   return {
     headers: { from: `${TRIAGE_MAIL_SENDER}@${DOMAIN}`, to: [`${PR_TRIAGE_ADDRESS}@${DOMAIN}`] },
     rawHeaders: {},

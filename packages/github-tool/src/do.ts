@@ -1,5 +1,6 @@
 import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
+import { checkRepo } from "@corbits/repo-read-tool";
 import {
   ciRefusal,
   codeownersForPr,
@@ -62,6 +63,7 @@ export const DoArgs = type({
 export function parseDoInput(args: unknown): DoInput {
   const parsed = DoArgs(args);
   if (parsed instanceof type.errors) throw new Error(`invalid Do: ${parsed.summary}`);
+  checkRepo(parsed.request.repo);
   return { request: parsed.request, step: { ...parsed.step, target: parsed.step.target as ResolvedTarget } };
 }
 
@@ -100,7 +102,7 @@ function closedOutcome(kind: ActionKind, merged: boolean): DoOutcome {
   throw new DoNotRunnableError(NOT_OPEN);
 }
 
-/** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's own reviews. */
+/** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's own reviews and comments. */
 export async function executeDo(gh: GithubFetch, { request, step }: DoInput, login: AppLogin): Promise<DoOutcome> {
   const { repo, number } = request;
   const { target } = step;
@@ -153,7 +155,8 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (!("body" in target)) throw new Error("this comment Do has no body");
       onHead(pr.sha, request, step);
       const marker = doMarker(step.effectId);
-      const posted = (await listIssueComments(gh, repo, number)).find((c) => c.bot && c.body.includes(marker));
+      const app = await login();
+      const posted = (await listIssueComments(gh, repo, number)).find((c) => c.author === app && c.body.includes(marker));
       if (posted) return { status: "satisfied", result: { commentId: posted.id } };
       return { status: "done", result: await createIssueComment(gh, { repo, number, body: `${marker}\n${target.body}` }) };
     }

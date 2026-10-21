@@ -324,7 +324,7 @@ test("workflow deploy refuses a package registry that is not the workspace's own
 }, 40_000);
 
 const REPO = "acme/widgets";
-const HEAD = "abc";
+const HEAD = "abc0000000000000000000000000000000000000";
 const APP_BOT = { login: "corbits[bot]", type: "Bot" };
 
 function fakeGithub() {

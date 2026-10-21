@@ -58,7 +58,7 @@ function fakeGithub({ missing = false, unreadFiles = false, files = [FLAG], labe
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
-  const pr: { head: string; state: "open" | "closed"; draft: boolean; ci: Ci; dismissible: boolean; unreadFiles: boolean } = { head: "abc", state: "open", draft: false, ci: "none", dismissible: true, unreadFiles };
+  const pr: { head: string; state: "open" | "closed"; draft: boolean; ci: Ci; dismissible: boolean; unreadFiles: boolean } = { head: "abc0000000000000000000000000000000000000", state: "open", draft: false, ci: "none", dismissible: true, unreadFiles };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
@@ -329,7 +329,7 @@ describe("pr-triage body", () => {
     }
     review("CHANGES_REQUESTED");
     expect((await triage(pack, { github })).verdict).toMatchObject({ verdict: "fail", state: "needs-author-update", actor: "author" });
-    github.pr.head = "def";
+    github.pr.head = "def0000000000000000000000000000000000000";
     const { path, verdict } = await triage(pack, { github });
     expect(path).toEqual(RULES_PATH);
     expect(verdict).toMatchObject({ verdict: "fail", state: "awaiting-review", actor: "maintainer", nextAction: "Re-review: the author responded to changes requested by @maya", actions: [{ list: "fail", kind: "comment" }] });
@@ -435,7 +435,7 @@ describe("pr-triage body", () => {
     expect((hunks.verdict as Verdict).checks.find((c) => c.check === "custom-1")?.output).toMatchObject({
       items: [{ path: "migrations/001_users.sql", added: { start: 1, end: 1 } }, { path: "migrations/001_users.sql", removed: { path: "migrations/001_users.sql", start: 12, end: 13 } }],
     });
-    expect((hunks.verdict as Verdict).feedback).toContain(`does not meet "Reversible": [\`migrations/001_users.sql:1\`](https://github.com/${REPO}/blob/abc/migrations/001_users.sql?plain=1#L1), \`migrations/001_users.sql (removed lines 12–13)\``);
+    expect((hunks.verdict as Verdict).feedback).toContain(`does not meet "Reversible": [\`migrations/001_users.sql:1\`](https://github.com/${REPO}/blob/abc0000000000000000000000000000000000000/migrations/001_users.sql?plain=1#L1), \`migrations/001_users.sql (removed lines 12–13)\``);
     const unmigrated = await triage(pack);
     expect(unmigrated.path).toEqual(VERDICT_PATH);
     expect((unmigrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({ result: "pass", reason: "does not apply", output: { kind: "not-applicable" } });
@@ -515,13 +515,13 @@ describe("pr-triage body", () => {
     expect((await approve(github, forged)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: "the approval's effect id does not match its Do" }]);
     const unreadable = approvalMail(verdict as Verdict, { ...held, kind: "bogus" as never });
     expect((await approve(github, unreadable)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: expect.stringContaining("invalid Do") }]);
-    github.pr.head = "def";
+    github.pr.head = "def0000000000000000000000000000000000000";
     expect((await approve(github, mail)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: expect.stringContaining("has new commits") }]);
   });
 
   test("a waiting mail labels an unlabelled head Waiting for CI without triaging it; the verdict takes it back", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-    const waiting = { kind: "waiting", repo: REPO, prNumber: 8, headSha: "abc", pack, automatic: ["labels"] };
+    const waiting = { kind: "waiting", repo: REPO, prNumber: 8, headSha: "abc0000000000000000000000000000000000000", pack, automatic: ["labels"] };
     const held = fakeGithub();
     expect(await approve(held, hubMail(waiting, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", hostSteps: ["markWaiting"] });
     expect(held.requests.filter((r) => r.method !== "GET")).toEqual([{ method: "POST", path: `/repos/${REPO}/issues/8/labels` }]);
@@ -539,9 +539,9 @@ describe("pr-triage body", () => {
   test("a new head swaps Ready for Waiting for CI until it passes", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
     const github = fakeGithub({ labels: ["bug", "Triage: Ready"] });
-    github.pr.head = "def";
+    github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.ci = "pending";
-    await approve(github, hubMail({ kind: "waiting", repo: REPO, prNumber: 8, headSha: "def", pack, automatic: ["labels"] }, "github@acme.test"));
+    await approve(github, hubMail({ kind: "waiting", repo: REPO, prNumber: 8, headSha: "def0000000000000000000000000000000000000", pack, automatic: ["labels"] }, "github@acme.test"));
     expect(github.labels).toEqual(["bug", WAITING_LABEL]);
     github.pr.ci = "success";
     await triage(pack, { github });
@@ -551,13 +551,13 @@ describe("pr-triage body", () => {
   test("a new head with no CI takes Ready off as soon as it is seen and puts no Triage label on until it passes", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
     const held = fakeGithub({ labels: ["bug", "Triage: Ready"] });
-    held.pr.head = "def";
-    await approve(held, hubMail({ kind: "waiting", repo: REPO, prNumber: 8, headSha: "def", noCi: true, pack, automatic: ["labels"] }, "github@acme.test"));
+    held.pr.head = "def0000000000000000000000000000000000000";
+    await approve(held, hubMail({ kind: "waiting", repo: REPO, prNumber: 8, headSha: "def0000000000000000000000000000000000000", noCi: true, pack, automatic: ["labels"] }, "github@acme.test"));
     expect(held.labels).toEqual(["bug"]);
     await triage(pack, { github: held });
     expect(held.labels).toEqual(["bug", "Triage: Ready"]);
     const triaged = fakeGithub({ labels: ["bug", "Triage: Ready"] });
-    triaged.pr.head = "def";
+    triaged.pr.head = "def0000000000000000000000000000000000000";
     await triage(pack, { github: triaged });
     expect(triaged.requests.filter((r) => r.method !== "GET" && r.path.includes("/labels"))).toEqual([
       { method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Triage%3A%20Ready` },
@@ -572,7 +572,7 @@ describe("pr-triage body", () => {
     function labelWrites() {
       return github.requests.filter((r) => r.method !== "GET" && r.path.includes("/labels"));
     }
-    for (const head of ["def", "ghi", "jkl"]) {
+    for (const head of ["def0000000000000000000000000000000000000", "ccc0000000000000000000000000000000000000", "ddd0000000000000000000000000000000000000"]) {
       github.pr.head = head;
       github.pr.ci = "pending";
       await approve(github, hubMail({ kind: "waiting", repo: REPO, prNumber: 8, headSha: head, pack, automatic: ["labels"] }, "github@acme.test"));
@@ -581,7 +581,7 @@ describe("pr-triage body", () => {
       await triage(pack, { github });
     }
     expect(labelWrites()).toEqual([]);
-    github.pr.head = "mno";
+    github.pr.head = "eee0000000000000000000000000000000000000";
     github.pr.ci = "success";
     await triage(pack, { github });
     expect(labelWrites()).toEqual([
@@ -650,7 +650,7 @@ describe("pr-triage body", () => {
     expect(first.dos).toEqual([{ effectId, status: "done" }]);
     expect(appReads(github)).toBe(2);
     expect((await triage(pack, { github })).dos).toEqual([{ effectId, status: "satisfied" }]);
-    expect(github.reviews).toEqual([expect.objectContaining({ state: "APPROVED", commit_id: "abc" })]);
+    expect(github.reviews).toEqual([expect.objectContaining({ state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" })]);
   });
 
   test.each<[string, (github: ReturnType<typeof fakeGithub>) => void, string]>([
@@ -678,11 +678,11 @@ describe("pr-triage body", () => {
   test("new commits that may not be approved take back the approve Do's approval of the earlier head, once", async () => {
     const { github, pack } = approving();
     await triage(pack, { github });
-    github.pr.head = "def";
+    github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.draft = true;
     await triage(pack, { github });
     await triage(pack, { github });
-    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
+    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc0000000000000000000000000000000000000", state: "DISMISSED" })]);
     expect(github.requests.filter((r) => r.method === "PUT")).toEqual([{ method: "PUT", path: `/repos/${REPO}/pulls/8/reviews/100/dismissals` }]);
   });
 
@@ -691,7 +691,7 @@ describe("pr-triage body", () => {
     await triage(pack, { github });
     github.pr.ci = "failure";
     await triage(pack, { github });
-    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
+    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc0000000000000000000000000000000000000", state: "DISMISSED" })]);
     github.pr.ci = "success";
     const green = await triage(pack, { github });
     expect(green.dos).toEqual([expect.objectContaining({ status: "satisfied" })]);
@@ -708,11 +708,11 @@ describe("pr-triage body", () => {
     const { github, pack } = requesting();
     await triage(pack, { github });
     await triage(pack, { github });
-    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "CHANGES_REQUESTED", body: expect.stringContaining("Triage requests changes:\n- ") })]);
-    github.pr.head = "def";
+    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc0000000000000000000000000000000000000", state: "CHANGES_REQUESTED", body: expect.stringContaining("Triage requests changes:\n- ") })]);
+    github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.ci = "success";
     await triage(pack, { github });
-    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
+    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc0000000000000000000000000000000000000", state: "DISMISSED" })]);
   });
 
   test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun", async () => {
@@ -720,19 +720,19 @@ describe("pr-triage body", () => {
     const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
     github.pr.ci = "success";
     await triage(pack, { github });
-    github.pr.head = "d36740c";
+    github.pr.head = "d36740c000000000000000000000000000000000";
     github.pr.ci = "failure";
     await triage(pack, { github });
     await triage(pack, { github });
     expect(github.comments).toHaveLength(1);
-    expect(github.comments[0]!.body).toEndWith("\n\nChanged since the last verdict (Pass at `abc`): 2 new commits, merging #1521 into this branch.");
+    expect(github.comments[0]!.body).toEndWith("\n\nChanged since the last verdict (Pass at `abc0000`): 2 new commits, merging #1521 into this branch.");
   });
 
   test("a head that fails requests changes; a later head that passes merges, and the mirror takes the earlier request back", async () => {
     const { github, pack } = requesting();
     const merging = { ...pack, actions: { ...pack.actions, pass: [{ do: "merge" as const }] } };
     await triage(merging, { github });
-    github.pr.head = "def";
+    github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.ci = "success";
     await triage(merging, { github });
     const writes = github.requests.filter((request) => request.method === "PUT").map((request) => request.path);
@@ -743,7 +743,7 @@ describe("pr-triage body", () => {
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {
     const { github, pack } = requesting();
     await triage(pack, { github });
-    github.pr.head = "def";
+    github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.ci = "success";
     github.pr.dismissible = false;
     const { mirrored } = await triage(pack, { github });
@@ -756,9 +756,9 @@ describe("pr-triage body", () => {
     ["a pack without actions", emptyPack(REPO)],
   ])("an inbox approval of an earlier head stays under %s", async (_, pack) => {
     const github = fakeGithub();
-    github.pr.head = "def";
+    github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.draft = true;
-    github.reviews.push({ id: 7, user: APP, state: "APPROVED", commit_id: "abc", body: "" });
+    github.reviews.push({ id: 7, user: APP, state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000", body: "" });
     await triage({ ...pack, checks: { "no-merge-conflicts": { enabled: true } } }, { github });
     expect(github.reviews).toEqual([expect.objectContaining({ id: 7, state: "APPROVED" })]);
     expect(github.requests.filter((r) => r.method === "PUT")).toEqual([]);
@@ -824,7 +824,7 @@ describe("a run that could not read the pull request", () => {
 
   test("a catch-up mail swaps Ready for Failed to Run on GitHub, once, and writes nothing else", async () => {
     const github = fakeGithub({ labels: ["bug", "Triage: Ready"], unreadFiles: true });
-    const retry = hubMail({ kind: "pr", repo: REPO, items: [{ prNumber: 8, headSha: "abc" }], policy: { enabled: true }, checkPack: { ...emptyPack(REPO), checks }, automatic: ACTION_KINDS }, "github@acme.test");
+    const retry = hubMail({ kind: "pr", repo: REPO, items: [{ prNumber: 8, headSha: "abc0000000000000000000000000000000000000" }], policy: { enabled: true }, checkPack: { ...emptyPack(REPO), checks }, automatic: ACTION_KINDS }, "github@acme.test");
     for (const run of [1, 2]) {
       const { terminalStatus, outputs } = await runTriage(github.gh, [], false, retry);
       expect({ run, terminalStatus }).toEqual({ run, terminalStatus: "completed" });
