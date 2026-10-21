@@ -864,7 +864,8 @@ input, textarea { caret-color: var(--heat); }
 }
 .pr-composer textarea { min-height: 72px; background: var(--sheet); }
 .pr-composer .suggest-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.pr-composer .suggest-text { margin: 0 0 8px; }
+.pr-composer .suggest-text { margin: 0 0 8px; font-size: 13px; color: var(--ink-mute); }
+.pr-composer :is(h2, h3) { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0; }
 
 .check-group {
   border-top: 1px solid var(--rule);

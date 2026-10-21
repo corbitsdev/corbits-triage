@@ -213,6 +213,8 @@
 .inbox .byline { display: flex; align-items: center; font-size: 13px; white-space: nowrap; min-width: 0; }
 .inbox .byline > * { flex: none; }
 .inbox .byline > * + *::before { content: "·"; margin: 0 8px; }
+.inbox .byline > .tag { margin-left: 8px; }
+.inbox .byline > .tag::before { content: none; }
 .inbox .byline .who { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
 .inbox .byline .who .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .inbox .r3 .ph { margin-bottom: 28px; }
@@ -303,7 +305,17 @@
 .inbox .error { font-size: 13px; margin: 12px 0 0; }
 .inbox .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); }
 .inbox .bar .det { font-weight: 400; }
-.inbox .bar .det::before { content: "· "; }
+.inbox .bar .det::before, .inbox .bar .held-hint::before { content: "· "; }
+.inbox .bar .held-hint { font-weight: 400; }
+.inbox .bar .bar-more { display: none; }
+@media (max-width: 767px) {
+  .inbox .bar .bar-write { display: none; }
+  .inbox .bar .bar-more { display: inline-flex; }
+  .inbox .bar .bar-primary { flex: 1 0 100%; }
+}
+.held-menu { max-width: min(360px, calc(100vw - 32px)); }
+.held-menu .held-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+.held-menu .held-why { font-size: 12px; color: var(--ink-mute); }
 .inbox .pane-back { display: none; }
 .inbox .pane:focus { outline: none; }
 

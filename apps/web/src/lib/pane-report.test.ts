@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CheckResult, GithubPullDetail, PrItem, SuggestedAction } from "./hub-api.ts";
 import { mergeBlockOf, paneFacts } from "./inbox-pane.ts";
-import { approvedByTriage, paneBar, paneProblems, paneStatus, passedChecks, rowStatus, type StatusInput } from "./pane-report.ts";
+import { approvedByTriage, heldChoices, paneBar, paneProblems, paneStatus, passedChecks, rowStatus, type StatusInput } from "./pane-report.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
@@ -196,6 +196,16 @@ describe("paneBar", () => {
     const bar = barOf(item({ state: "ready", actions: [held("e1", "merge", {})] }));
     expect(bar.primary).toMatchObject({ kind: "merge", held: null });
     expect(bar.dos.map((pending) => pending.label)).toEqual(["Merge (the verdict was unsure, not pass)"]);
+  });
+
+  test("a held action the primary carries out is still listed, so it can be read and hidden", () => {
+    const merge = barOf(item({ state: "ready", verdict: "pass", actions: [{ ...held("e1", "merge", {}), list: "pass" }] }));
+    expect(merge.primary).toMatchObject({ kind: "merge", held: { key: "e1" } });
+    expect(heldChoices(merge)).toMatchObject([{ pending: { key: "e1" }, entry: { kind: "merge" } }]);
+
+    const approve = barOf(item({ state: "awaiting-review", actions: [held("e2", "approve", {})] }));
+    expect(approve.primary).toMatchObject({ kind: "approve", held: { key: "e2" } });
+    expect(heldChoices(approve)).toMatchObject([{ pending: { key: "e2" }, entry: { kind: "approve" } }]);
   });
 });
 
