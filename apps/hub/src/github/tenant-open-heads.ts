@@ -1,7 +1,6 @@
 // Pull request heads for a tenant's repositories, read as the tenant's GitHub
 // App or Bitbucket Data Center token by each record's source, for hub-side work.
-import { and, eq } from "drizzle-orm";
-import { schema, type DB } from "@intx/db";
+import type { DB } from "@intx/db";
 import type { CredentialCipher } from "@intx/types";
 import { asRecord } from "@corbits/common";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
@@ -9,7 +8,7 @@ import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/githu
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation, type OpenPrsLister } from "./open-pulls.js";
-import { activeSecret, appGithubFetch } from "./portal-credential.js";
+import { activeCredential, activeSecret, appGithubFetch } from "./portal-credential.js";
 import type { OpenPr } from "./reconcile-plan.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
@@ -71,13 +70,10 @@ export function createTenantGithub(deps: TenantGithubDeps) {
   };
 }
 
-/** The login the tenant's GitHub App writes as, read from its credential without asking GitHub. */
-export async function appBotLogin(db: DB["db"], tenantId: string): Promise<string> {
-  const { credential } = schema;
-  const row = await db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, "github")) });
-  const slug = asRecord(row?.metadata)?.["appSlug"];
-  if (typeof slug !== "string" || slug === "") throw new Error("github app credential has no appSlug");
-  return `${slug}[bot]`;
+/** The login the workspace's GitHub App writes as, read from its credential without asking GitHub; undefined when it has no slug. */
+async function appBotLogin(db: DB["db"], tenantId: string): Promise<string | undefined> {
+  const slug = asRecord((await activeCredential(db, tenantId, "github"))?.metadata)?.["appSlug"];
+  return typeof slug === "string" && slug !== "" ? `${slug}[bot]` : undefined;
 }
 
 /** The portal's listing of a repository's open pull requests, on its host; GitHub's mark the ones the App opened. */
@@ -87,7 +83,7 @@ export function createTenantOpenPrs(deps: TenantSourcesDeps): OpenPrsLister {
     const fetches = tenantSources(tenantId);
     if (sourceOf(record) === "bitbucket-datacenter") return bitbucket.listOpenPrs(await bitbucketOf(fetches, record), record.name);
     const [prs, login] = await Promise.all([listOpenPrs(await githubOf(fetches, record), record.name), appBotLogin(deps.db, tenantId)]);
-    return prs.map((pr) => (pr.author === login ? { ...pr, byTriage: true as const } : pr));
+    return prs.map((pr) => (login !== undefined && pr.author === login ? { ...pr, byTriage: true as const } : pr));
   };
 }
 

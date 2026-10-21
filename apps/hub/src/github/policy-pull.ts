@@ -35,12 +35,14 @@ async function branchFromBase(gh: GithubFetch, repo: string, base: string): Prom
   await json(gh, `/repos/${repo}/git/refs/heads/${POLICY_BRANCH}`, { method: "PATCH", body: JSON.stringify({ sha: head.object.sha, force: true }) });
 }
 
-async function commitFile(gh: GithubFetch, repo: string, { path, text, title }: PolicyChange): Promise<void> {
+/** The commit made, undefined when the branch already held the text. */
+async function commitFile(gh: GithubFetch, repo: string, { path, text, title }: PolicyChange): Promise<string | undefined> {
   const url = `/repos/${repo}/contents/${path}`;
   const current = await readRepoFileResponse(await gh(`${url}?ref=${encodeURIComponent(POLICY_BRANCH)}`, { headers: { accept: "application/vnd.github+json" } }), url);
-  if (current?.kind === "file" && current.text === text) return;
+  if (current?.kind === "file" && current.text === text) return undefined;
   const sha = current?.kind === "file" ? { sha: current.sha } : {};
-  await json(gh, url, { method: "PUT", body: JSON.stringify({ message: title, content: Buffer.from(text, "utf8").toString("base64"), branch: POLICY_BRANCH, ...sha }) });
+  const written = await json(gh, url, { method: "PUT", body: JSON.stringify({ message: title, content: Buffer.from(text, "utf8").toString("base64"), branch: POLICY_BRANCH, ...sha }) });
+  return written.commit.sha;
 }
 
 /** Opens the pull request, or brings the open one up to `change`. */
@@ -48,10 +50,11 @@ export async function proposePolicy(gh: GithubFetch, repo: string, change: Polic
   const { default_branch: base } = await json(gh, `/repos/${repo}`);
   const open = await openPull(gh, repo, base);
   if (!open) await branchFromBase(gh, repo, base);
-  await commitFile(gh, repo, change);
+  const committed = await commitFile(gh, repo, change);
   if (open) {
-    // The commit moved the head, so the pull request is answered as GitHub now has it.
-    return pullOf(await json(gh, `/repos/${repo}/pulls/${open.number}`, { method: "PATCH", body: JSON.stringify({ title: change.title, body: change.body }) }));
+    const updated = pullOf(await json(gh, `/repos/${repo}/pulls/${open.number}`, { method: "PATCH", body: JSON.stringify({ title: change.title, body: change.body }) }));
+    // GitHub may answer the update before it has moved the pull request's head to the new commit.
+    return committed === undefined ? updated : { ...updated, headSha: committed };
   }
   return createPull(gh, repo, base, change);
 }

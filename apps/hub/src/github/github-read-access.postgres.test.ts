@@ -161,6 +161,14 @@ beforeAll(async () => {
     id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
     secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "triage" },
   });
+  await db.insert(schema.tenant).values([
+    { id: "tnt_read_child", name: "Child", slug: "read-child", domain: "read-child.test", parentId: TENANT },
+    { id: "tnt_read_unslugged", name: "Unslugged", slug: "read-unslugged", domain: "read-unslugged.test" },
+  ]);
+  await db.insert(schema.credential).values({
+    id: "crd_unslugged", tenantId: "tnt_read_unslugged", principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
+    secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_unslugged", "secret")), status: "active",
+  });
 }, 120_000);
 
 afterAll(async () => {
@@ -185,6 +193,13 @@ test("PostgreSQL: holding read or use on the GitHub credential reads pull reques
   expect(await act.json()).toEqual({ error: { code: "forbidden", message: "You do not have access to the GitHub App credential." } });
   expect(requested.some((line) => line.startsWith("PUT"))).toBe(false);
 }, 60_000);
+
+test("PostgreSQL: the listing marks the App's own pull request through an inherited credential, and lists unmarked when the App has no slug", async () => {
+  const record = { name: REPO, connected: true, enabled: true, installationId: 1 };
+  const own = (prs: Array<{ number: number; byTriage?: true }>) => prs.map((pr) => [pr.number, pr.byTriage === true]);
+  expect(own(await list("tnt_read_child", record))).toEqual([[8, false], [12, true]]);
+  expect(own(await list("tnt_read_unslugged", record))).toEqual([[8, false], [12, false]]);
+});
 
 test("PostgreSQL: pull request details ask GitHub for the review decision only when the merge is blocked", async () => {
   requested.length = 0;
