@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { CheckRun } from "@corbits/github-reads";
 import { emptyPack, repoPolicy, triageEventOf, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
 import { createCoalescer, type CoalescedEvent, type CoalescerDeps } from "./coalescer.js";
+import { GithubRateLimited } from "./github-usage.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
 import type { PrMail } from "./normalize.js";
 import type { TriageStateStore } from "./triage-state-store.js";
@@ -201,18 +202,20 @@ for (const [why, pull] of [["a draft", { headSha: "sha1", draft: true }], ["a mo
   });
 }
 
-test("a check window whose pull request cannot be read leaves its head failed for the reconciler", async () => {
-  const triaged: PrTriageRow = { number: 8, headSha: "sha1", status: "triaged", attempts: 0, firstSeenAt: new Date(START).toISOString(), updatedAt: new Date(START).toISOString() };
-  const { clock, state, mails, coalescer } = harness([triaged], {
-    async openHeadFor() {
-      throw new Error("rate limited");
-    },
+for (const [why, error, status] of [["fails", new Error("socket hang up"), "failed"], ["hits the GitHub limit", new GithubRateLimited("1", START), "triaged"]] as const) {
+  test(`a check window whose pull request read ${why} leaves its head ${status}`, async () => {
+    const triaged: PrTriageRow = { number: 8, headSha: "sha1", status: "triaged", attempts: 0, firstSeenAt: new Date(START).toISOString(), updatedAt: new Date(START).toISOString() };
+    const { clock, state, mails, coalescer } = harness([triaged], {
+      async openHeadFor() {
+        throw error;
+      },
+    });
+    await coalescer.accept({ ...delivery("checks", "sha1"), draftUnread: true });
+    await clock.advance(WINDOW.quietMs);
+    expect(mails).toHaveLength(0);
+    expect(state.rows()).toEqual([expect.objectContaining({ headSha: "sha1", status })]);
   });
-  await coalescer.accept({ ...delivery("checks", "sha1"), draftUnread: true });
-  await clock.advance(WINDOW.quietMs);
-  expect(mails).toHaveLength(0);
-  expect(state.rows()).toEqual([expect.objectContaining({ headSha: "sha1", status: "failed" })]);
-});
+}
 
 for (const start of ["opened", "updated"] as const) {
   test(`a ${start} pull request is triaged after the burst, and a review after its run becomes one follow-up`, async () => {
