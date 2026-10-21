@@ -37,3 +37,10 @@ export function isTriageRole(role: NamedRole): boolean {
 export function roleName(role: NamedRole): string {
   return role.name.charAt(0).toUpperCase() + role.name.slice(1);
 }
+
+export function triageRunsAlone(roles: readonly HubRole[], grants: readonly HubGrant[], kind: ActionKind, repo: string): boolean {
+  const triage = findTriageRole(roles);
+  if (!triage) return false;
+  const resources = [ANY_DO_RESOURCE, doResource(kind, "*"), doResource(kind, repo)];
+  return grants.some((grant) => grant.roleId === triage.id && grant.action === DO_GRANT_ACTION && grant.effect === "allow" && resources.includes(grant.resource));
+}
