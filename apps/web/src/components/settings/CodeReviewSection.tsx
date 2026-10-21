@@ -45,7 +45,13 @@ function Place({ place }: { place: CodeReviewPlaceOption }) {
         <Badge tone={state.tone}>{state.label}</Badge>
       </div>
       {place.reason && <p className="field-error">{place.reason}</p>}
-      {(place.state === "not_set_up" || place.state === "failing") && <PlaceSetup place={place} />}
+      {place.state === "failing" && <PlaceSetup place={place} />}
+      {place.state === "not_set_up" && (
+        <details className="place-steps">
+          <summary>How to set it up</summary>
+          <PlaceSetup place={place} />
+        </details>
+      )}
     </div>
   );
 }

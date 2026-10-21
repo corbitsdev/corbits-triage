@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Button, Input } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Plus } from "lucide-react";
 import { initialsOf, listCounts } from "../lib/inbox-view.ts";
 import { useOpenWorkspaceAfterSending, useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { useOpenItems, useOpenPullsUnanswered } from "../lib/open-pulls.ts";
@@ -58,15 +59,6 @@ function WorkspaceSwitcher() {
         </button>
       </MenuTrigger>
       <MenuContent side="top" align="start" className="ws-menu">
-        {naming ? (
-          <form className="ws-new" onSubmit={(event) => void submit(event)} onKeyDown={(event) => event.stopPropagation()}>
-            <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Workspace name" aria-label="Workspace name" autoFocus required />
-            <Button type="submit" size="sm" disabled={create.isPending || !name.trim()}>Create</Button>
-          </form>
-        ) : (
-          <MenuItem onSelect={startNaming}>+ New workspace</MenuItem>
-        )}
-        <MenuSeparator />
         {snapshot.workspaces.map((workspace) => (
           <MenuItem key={workspace.tenantId} aria-current={workspace.tenantId === current ? "true" : undefined} onSelect={() => void choose(workspace.tenantId)}>
             <span className="ws-option"><b>{workspace.name}</b>{sharesName(workspace, options) ? <small>{workspace.slug}</small> : null}</span>
@@ -75,9 +67,18 @@ function WorkspaceSwitcher() {
         ))}
         {snapshot.invitations.map((invitation) => (
           <MenuItem key={invitation.tenantId} disabled>
-            <span className="ws-option"><b>{invitation.name}</b><small>Invited. Open the link in your invitation email to join.</small></span>
+            <span className="ws-option"><b>{invitation.name}</b><small>Invited. Open your invite link to join.</small></span>
           </MenuItem>
         ))}
+        <MenuSeparator />
+        {naming ? (
+          <form className="ws-new" onSubmit={(event) => void submit(event)} onKeyDown={(event) => event.stopPropagation()}>
+            <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Workspace name" aria-label="Workspace name" autoFocus required />
+            <Button type="submit" disabled={create.isPending || !name.trim()}>Create</Button>
+          </form>
+        ) : (
+          <MenuItem onSelect={startNaming}><Plus size={16} strokeWidth={1.7} aria-hidden="true" />New workspace</MenuItem>
+        )}
       </MenuContent>
     </Menu>
   );

@@ -46,7 +46,7 @@ function signInLimitText(limit: SignInLimit): string {
 
 function deliveryText(sendsEmail: boolean): string {
   if (sendsEmail) return "The hub emails each invitee a one-time sign-in link that works for 15 minutes.";
-  return "This hub sends no email, so copy the invite link shown after inviting and send it yourself; they sign in with Google, or with a password once whoever runs this Triage marks them verified.";
+  return "No invite email is sent: copy the link shown after inviting and send it yourself. They sign in with Google, or with a password once their address is marked verified.";
 }
 
 function inviteBlocker(email: string, roleId: string, limit: SignInLimit): string | null {
