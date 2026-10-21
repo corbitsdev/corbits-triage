@@ -37,8 +37,8 @@ function inviteRefused(email: string, limit: SignInLimit): boolean {
   return !limit.domains.includes(address.slice(at));
 }
 
-function signInLimitText(limit: SignInLimit): string {
-  if (limit === null) return "Any email address may be invited.";
+function signInLimitText(limit: SignInLimit, sendsEmail: boolean): string {
+  if (limit === null) return sendsEmail ? "Any email address may be invited." : "Anyone may sign in.";
   if (limit.domains.length === 0) return "Only people on this hub's allowlist may sign in.";
   if (limit.addresses) return `Only ${domainList(limit.domains)} addresses and people on this hub's allowlist may sign in.`;
   return `Only ${domainList(limit.domains)} addresses may sign in.`;
@@ -46,7 +46,7 @@ function signInLimitText(limit: SignInLimit): string {
 
 function deliveryText(sendsEmail: boolean): string {
   if (sendsEmail) return "The hub emails each invitee a one-time sign-in link that works for 15 minutes.";
-  return "No invite email is sent: copy the link shown after inviting and send it yourself. They sign in with Google, or with a password once their address is marked verified.";
+  return "No invite email is sent, so only people who have already signed in here can be invited. Copy the link shown after inviting and send it yourself. They sign in with Google, or with a password once their address is marked verified.";
 }
 
 function inviteBlocker(email: string, roleId: string, limit: SignInLimit): string | null {
@@ -192,7 +192,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   }
 
   const blocker = inviteBlocker(email, chosenRole, signInLimit);
-  const intro = <p>{signInLimitText(signInLimit)} {deliveryText(sendsEmail)}</p>;
+  const intro = <p>{signInLimitText(signInLimit, sendsEmail)} {deliveryText(sendsEmail)}</p>;
   const notice = <>
     {error && <p role="alert" className="error">{error}</p>}
     {link && <CopyField label={`Invite link for ${link.email}`} value={link.url} help="Send this link to them yourself." />}
