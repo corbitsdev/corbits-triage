@@ -430,13 +430,13 @@ async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
   }
   return [...sources];
 }
-const readPullRequest = createPullRequestReader({ tenantGithub, tenantBitbucket });
+const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
 function readPullToReview(tenantId: string, record: RepoRecord, number: number) {
-  return readPullRequest(tenantId, record, number);
+  return pullRequests.withDiff(tenantId, record, number);
 }
 const codeReviewFeed = createCodeReviewFeed({
   reviewed: reviewedSources,
-  read: readPullRequest,
+  read: pullRequests.withDiff,
   carries: codeReviewRuns.carries,
   send: sendToWorker,
   log: logJson,
@@ -448,7 +448,8 @@ const routePrWorkflow = createPrWorkflowRouter({
   live: async function variantLive(tenantId, workflow) {
     return (await resolveLiveDeployment(composition.db, tenantId, workflow)) !== null;
   },
-  readPull: readPullRequest,
+  readHead: pullRequests.head,
+  readPull: pullRequests.withDiff,
   log: logJson,
 });
 const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
