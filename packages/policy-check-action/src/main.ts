@@ -53,7 +53,7 @@ function githubReads(api: string, token: string): Read {
   };
 }
 
-/** The policy on the pull request's base: Triage reads the default branch's, never the change's own. */
+/** The policy on the pull request's base branch, never the change's own, which could loosen its rules. */
 async function basePolicy(read: Read, repo: string, base: string): Promise<{ path: string; text: string } | undefined> {
   for (const path of POLICY_FILE_PATHS) {
     const url = new URL(`https://api.github.com/repos/${repo}/contents/${path}`);
@@ -78,7 +78,7 @@ async function checkPullRequest(repo: string): Promise<void> {
   }
   const checked = checkPolicyFile(file.text, repo);
   if (!checked.ok) {
-    console.log(`${file.path} on the base branch cannot be read, so no rules ran:\n${policyFileReason(checked.problems)}`);
+    console.log(`::warning::${escapeData(`${file.path} on the base branch cannot be read, so no rules ran:\n${policyFileReason(checked.problems)}`)}`);
     return;
   }
   if (checked.policy.extends !== undefined) {
@@ -86,11 +86,8 @@ async function checkPullRequest(repo: string): Promise<void> {
     return;
   }
   const report = await runChecks(checked.policy, { repo, number: pull.number, headSha: pull.head.sha }, read);
-  const summary = report.summary.join("\n");
   for (const line of report.annotations) console.log(line);
-  console.log(summary);
-  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
-  if (summaryFile) appendFileSync(summaryFile, `${summary}\n`);
+  appendFileSync(env("GITHUB_STEP_SUMMARY"), `${report.summary.join("\n")}\n`);
   if (report.failed) process.exitCode = 1;
 }
 

@@ -10,7 +10,7 @@ function check(file: string | null): { exitCode: number; stdout: string } {
   const root = mkdtempSync(join(tmpdir(), "policy-check-"));
   if (file === null) mkdirSync(join(root, ".corbits-triage.yml"));
   else writeFileSync(join(root, ".corbits-triage.yml"), file);
-  const run = Bun.spawnSync([process.execPath, "--conditions=intx-src", MAIN, root, "acme/widgets"]);
+  const run = Bun.spawnSync([process.execPath, "--conditions=intx-src", MAIN, root, "acme/widgets"], { env: {} });
   return { exitCode: run.exitCode, stdout: run.stdout.toString() };
 }
 
@@ -42,31 +42,46 @@ const BASE_POLICY = `rules:
   - { check: focused, text: One change., reason: Reviewable., evidence: [maintainer-stated] }
 `;
 
-test("on a pull request the base policy's rules run without a model, each failure is marked, and a failed rule fails the job", async () => {
-  const served = fixtureGithub(PR, {});
+/** Runs the Action on `pr`'s pull request event against GitHub served from it, with `policy` on the base branch. */
+async function onPullRequest(pr: typeof PR, policy: string) {
+  const served = fixtureGithub(pr, {});
   const github = Bun.serve({
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      if (url.pathname !== `/repos/${PR.repo}/contents/.corbits-triage.yml`) return served(url);
-      return url.searchParams.get("ref") === "base" ? new Response(BASE_POLICY) : new Response(null, { status: 404 });
+      if (url.pathname !== `/repos/${pr.repo}/contents/.corbits-triage.yml`) return served(url);
+      return url.searchParams.get("ref") === "base" ? new Response(policy) : new Response(null, { status: 404 });
     },
   });
   const root = mkdtempSync(join(tmpdir(), "policy-check-"));
-  writeFileSync(join(root, "event.json"), JSON.stringify({ pull_request: { number: PR.number, head: { sha: HEAD }, base: { sha: "base" } } }));
+  writeFileSync(join(root, "event.json"), JSON.stringify({ pull_request: { number: pr.number, head: { sha: HEAD }, base: { sha: "base" } } }));
   writeFileSync(join(root, "summary.md"), "");
   const env = { GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: join(root, "event.json"), GITHUB_API_URL: `http://localhost:${github.port}`, GITHUB_TOKEN: "token", GITHUB_STEP_SUMMARY: join(root, "summary.md") };
   try {
-    const run = Bun.spawn([process.execPath, "--conditions=intx-src", MAIN, root, PR.repo], { env, stdout: "pipe" });
+    const run = Bun.spawn([process.execPath, "--conditions=intx-src", MAIN, root, pr.repo], { env, stdout: "pipe" });
     const stdout = await new Response(run.stdout).text();
-    expect(await run.exited).toBe(1);
-    expect(stdout).toContain("::error title=no-forbidden-paths::");
-    expect(stdout).toContain("::warning title=max-lines-changed::");
-    expect(stdout).not.toContain("title=linked-issue");
-    const summary = readFileSync(join(root, "summary.md"), "utf8");
-    expect(summary).toContain("| linked-issue | pass |");
-    expect(summary).toContain("| focused | skipped | answered by a model |");
+    return { exitCode: await run.exited, stdout, summary: readFileSync(join(root, "summary.md"), "utf8") };
   } finally {
     github.stop(true);
   }
+}
+
+test("on a pull request the base policy's rules run without a model, each failure is marked, and a failed rule fails the job", async () => {
+  const { exitCode, stdout, summary } = await onPullRequest(PR, BASE_POLICY);
+  expect(exitCode).toBe(1);
+  expect(stdout).toContain("::error title=no-forbidden-paths::");
+  expect(stdout).toContain("::warning title=max-lines-changed::");
+  expect(stdout).not.toContain("title=linked-issue");
+  expect(stdout).not.toContain("| Rule |");
+  expect(summary).toContain("| linked-issue | pass |");
+  expect(summary).toContain("| focused | skipped | answered by a model |");
+}, 30_000);
+
+test("text from the pull request never starts a workflow command of its own", async () => {
+  const forged = "\n::error::forged";
+  const policy = "rules:\n  - { id: forged, check: text, text: No forgery., fields: [title, description], failWhen: contains, phrases: [forged], reason: Safe., evidence: [maintainer-stated] }\n";
+  const { stdout } = await onPullRequest({ ...PR, title: `Bump${forged}`, body: `Fixes #3${forged}` }, policy);
+  const commands = stdout.split("\n").filter((line) => line.startsWith("::"));
+  expect(commands.length).toBeGreaterThan(0);
+  expect(commands.every((line) => /^::(error|warning) title=[\w-]+::/.test(line))).toBe(true);
 }, 30_000);

@@ -10,7 +10,7 @@ import * as actions from "../src/actions/index.js";
 import { credentialBindings } from "../src/agents.js";
 import type { Bucket, Measured } from "../src/logic/history.js";
 import { REPO_SCAN_ADDRESS, workflow } from "../src/repo-scan.js";
-import { runLocalWorkflow } from "./run-local.js";
+import { runLocalWorkflow } from "../src/run-local.js";
 
 const REPOS = ["corbitsdev/corbits-triage", "honojs/hono"];
 const LIMIT = 100;

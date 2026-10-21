@@ -1,8 +1,7 @@
-import { classificationSources, DEFAULT_REPO_POLICY, isModelCheck, parseCheckPack, stockTriggerMail, type CheckPack } from "@corbits/triage-contracts";
-import { PR_TRIAGE, recordingGithub } from "@corbits/triage-workflows/evals/run-definition";
-import { runLocalWorkflow } from "@corbits/triage-workflows/evals/run-local";
+import { catalogCheckEnabled, classificationSources, DEFAULT_REPO_POLICY, isModelCheck, parseCheckPack, stockTriggerMail, type CheckPack } from "@corbits/triage-contracts";
 import { hardFailures, type CheckResult } from "@corbits/triage-workflows/logic/checks";
 import type { Verdict } from "@corbits/triage-workflows/logic/render";
+import { PR_TRIAGE, recordingGithub, runLocalWorkflow } from "@corbits/triage-workflows/run-local";
 import type { WorkflowAuthorizeFn } from "@intx/workflow";
 
 interface PullRequest {
@@ -17,6 +16,8 @@ interface Report {
   summary: string[];
   failed: boolean;
 }
+
+type Skipped = { id: string; why: string };
 
 // Workflow command escaping as in https://github.com/actions/toolkit/blob/main/packages/core/src/command.ts
 export function escapeData(value: string): string {
@@ -35,27 +36,34 @@ function noModel(): never {
   throw new Error("model checks are skipped, so no step may call a model");
 }
 
-/** The pack less every rule a model answers, and those rules' ids. */
-function withoutModelChecks(pack: CheckPack): { pack: CheckPack; skipped: string[] } {
+/**
+ * The pack less every rule a model answers, and less ci-green, which the job running it keeps pending; and those
+ * rules with why each was left out.
+ */
+function runnable(pack: CheckPack): { pack: CheckPack; skipped: Skipped[] } {
   const { quality, custom } = classificationSources(pack);
-  const off = Object.fromEntries(quality.map(({ id }) => [id, { ...pack.checks[id], enabled: false }]));
+  const ci = catalogCheckEnabled(pack, "ci-green") ? ["ci-green" as const] : [];
+  const off = Object.fromEntries([...quality.map(({ id }) => id), ...ci].map((id) => [id, { ...pack.checks[id], enabled: false }]));
   return {
     pack: { ...pack, checks: { ...pack.checks, ...off }, custom: pack.custom.filter((row) => !isModelCheck(row)) },
-    skipped: [...quality.map(({ id }) => id), ...custom.map(({ id }) => id)],
+    skipped: [
+      ...[...quality.map(({ id }) => id), ...custom.map(({ id }) => id)].map((id) => ({ id, why: "answered by a model" })),
+      ...ci.map((id) => ({ id, why: "cannot be confirmed from inside CI" })),
+    ],
   };
 }
 
-function level(check: CheckResult, hard: readonly CheckResult[]): string {
-  if (hard.includes(check)) return "error";
-  return check.onFail === "ask" ? "warning" : "notice";
-}
-
 function annotation(check: CheckResult, hard: readonly CheckResult[]): string {
-  return `::${level(check, hard)} title=${escapeProperty(check.check)}::${escapeData([check.reason, ...check.evidence].join("\n"))}`;
+  return `::${hard.includes(check) ? "error" : "warning"} title=${escapeProperty(check.check)}::${escapeData([check.reason, ...check.evidence].join("\n"))}`;
 }
 
-function row(check: CheckResult): string {
-  return `| ${check.check} | ${check.result} | ${check.reason.replaceAll("|", "\\|")} |`;
+/** One table cell: on one line, with no `|` ending it early. */
+function cell(value: string): string {
+  return value.replaceAll(/\s+/g, " ").replaceAll("|", "\\|");
+}
+
+function row(...cells: string[]): string {
+  return `| ${cells.map(cell).join(" | ")} |`;
 }
 
 /**
@@ -65,7 +73,7 @@ function row(check: CheckResult): string {
 export async function runChecks(policy: Record<string, unknown>, pr: PullRequest, read: (url: URL, init?: RequestInit) => Promise<Response>): Promise<Report> {
   const parsed = parseCheckPack(policy, pr.repo);
   if (!parsed) throw new Error("the policy is not a check pack");
-  const { pack, skipped } = withoutModelChecks(parsed);
+  const { pack, skipped } = runnable(parsed);
   const run = await runLocalWorkflow({
     ...PR_TRIAGE,
     authorize: allow,
@@ -76,7 +84,7 @@ export async function runChecks(policy: Record<string, unknown>, pr: PullRequest
   });
   const verdict = run.outputs["evaluateRules"] as Verdict | undefined;
   if (!verdict) throw new Error(`pr-triage ended ${run.terminalStatus} before evaluating its rules`);
-  if (verdict.degraded) return { annotations: [`::error::${escapeData(verdict.reason)}`], summary: [`Triage could not read the pull request: ${verdict.reason}`], failed: true };
+  if (verdict.degraded) return { annotations: [`::error::${escapeData(verdict.reason)}`], summary: [`Triage could not read the pull request: ${cell(verdict.reason)}`], failed: true };
   const checks = [...verdict.checks, ...(verdict.labelled ?? [])];
   const hard = hardFailures(verdict.checks);
   const passed = checks.filter((check) => check.result === "pass").length;
@@ -89,8 +97,8 @@ export async function runChecks(policy: Record<string, unknown>, pr: PullRequest
       "",
       "| Rule | Result | Why |",
       "| --- | --- | --- |",
-      ...checks.map(row),
-      ...skipped.map((id) => `| ${id} | skipped | answered by a model |`),
+      ...checks.map((check) => row(check.check, check.result, check.reason)),
+      ...skipped.map(({ id, why }) => row(id, "skipped", why)),
     ],
     failed: hard.length > 0,
   };
