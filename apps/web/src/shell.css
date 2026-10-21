@@ -195,11 +195,10 @@
 .inbox .row .st { font-size: 12px; white-space: nowrap; }
 .inbox .tag { display: inline-flex; align-items: center; gap: 3px; font: 600 11px var(--font); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
 .inbox .tag.quiet { font-weight: 500; border-color: var(--rule); color: var(--ink-mute); }
-.inbox .zero { margin: auto; text-align: center; display: grid; gap: 10px; justify-items: center; padding: 40px; max-width: 420px; }
-.inbox .zero h2 { margin: 0; font-size: 26px; letter-spacing: -0.015em; }
-.inbox .zero p { margin: 0; font-size: 15px; }
-.inbox .zero .glyph { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--green-light); margin-bottom: 6px; }
-.inbox .zero .glyph .ic { width: 26px; height: 26px; stroke-width: 2; }
+.inbox .list-empty { display: grid; justify-items: start; gap: 4px; padding: 20px 16px; }
+.inbox .list-empty h2 { margin: 0; font-size: 16px; font-weight: 620; line-height: 1.3; letter-spacing: -0.02em; }
+.inbox .list-empty p { margin: 0; font-size: 14px; color: var(--ink-mute); }
+.inbox .list-empty [data-slot="button"] { margin-top: 8px; }
 .inbox .pane-empty { margin: auto; text-align: center; font-size: 14px; display: grid; gap: 6px; }
 
 /* Reading pane */
@@ -338,8 +337,16 @@
   .shell > :is(.inbox, .repos) { padding-left: 12px; }
   .repos .lh-top { flex-wrap: wrap; }
   .shell > .stage { margin-left: 12px; }
+  .inbox :is(.search, .tbtn) { height: 44px; }
   .inbox .seg button { min-height: 36px; padding: 0 12px; }
-  .inbox .row { height: 44px; }
+  /* A phone row stacks the title over its number, status and age, so the title is never cut to a few characters. */
+  .inbox .groups { display: block; padding: 4px 4px 24px; }
+  .inbox .row { grid-template-columns: 8px auto minmax(0, 1fr) auto; grid-template-areas: "dot tw tw tw" ". num st age"; column-gap: 10px; row-gap: 2px; height: auto; min-height: 56px; padding: 9px 8px; }
+  .inbox .row .dot { grid-area: dot; align-self: start; margin-top: 6px; }
+  .inbox .row .tw { grid-area: tw; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.35; }
+  .inbox .row .num { grid-area: num; }
+  .inbox .row .st { grid-area: st; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-mute); }
+  .inbox .row .age { grid-area: age; }
   .inbox .row .who { display: none; }
   :is(.pulse, .settings) { padding: 24px 16px 100px; }
   :is(.pulse, .settings) h1 { font-size: 28px; }

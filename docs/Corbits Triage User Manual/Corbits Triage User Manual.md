@@ -359,7 +359,9 @@ The dark strip on the left is the same on every page:
 
 When a newer version of Corbits Triage is released while the portal is open, a notice at the top says **A new version of Corbits Triage is available.** Press **Reload** to switch to it; the page never reloads on its own.
 
-Each view has a search box and a **Filter** button. **Needs you** and **All open** add quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
+Each view with pull requests in it has a search box and a **Filter** button. **Needs you** and **All open** add quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
+
+On a phone the strip becomes a bar at the bottom of the screen with **Needs you**, **Ready**, **All open**, **Repos** and **Settings**; tap the counters for Pulse. Each row shows the title on its own line, with the number, status and age beneath it.
 
 ### Needs you
 
@@ -369,7 +371,7 @@ Pull requests are grouped by what you need to do: **Unblock** for ones that are 
 
 A pull request whose first triage run failed is under **Failed** and says **Couldn't triage**. Its pane says why, such as **Couldn't triage: the run failed**, and **Triage again** tries once more.
 
-Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval or a held action waiting always stays, drafts and ones waiting on the author included, until you approve the action or click **Hide for me** in its pane or on its page, which hides it in this browser only. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back.
+Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval or a held action waiting always stays, drafts and ones waiting on the author included, until you approve the action or click **Hide for me** in its pane or on its page, which hides it in this browser only. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back. When nothing needs you, the list says **Inbox zero**, with **Show 7 waiting** (or however many there are) to open Waiting.
 
 ![The Waiting view grouped by Waits on: two drafts under Waits on author, one of them checked by Triage before it became a draft, and a pull request under Waits on CI. The pane shows the draft, Draft · waiting on @ivan-p](images/37.png)
 
