@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, hostKinds, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { ciRefusal } from "@corbits/github-reads";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
@@ -8,7 +8,7 @@ import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
-import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
+import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
 
@@ -130,6 +130,8 @@ const DO_NAMES: Record<ActionKind, string> = {
   merge: "merge",
 };
 
+const FAILED_BUILD = "Triage couldn't run";
+
 const PENDING_CI = `${ciRefusal("pending")}.`;
 
 function doNames(actions: SuggestedAction[]): string {
@@ -150,12 +152,30 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
 }
 
+/**
+ * A run that could not read the pull request says so where its verdict would stand: the failed label in place of any
+ * verdict label on GitHub, a failed build status on Bitbucket Data Center. None without a known head, so a newer head is
+ * never touched, nor where triage does not write the verdict.
+ */
+function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, automatic: ActionKind[], owned: readonly string[]): WaitingMark | undefined {
+  if (headSha === "" || !marksWaiting(source, automatic)) return undefined;
+  const pull = { repo, number, onHead: headSha };
+  const args = source === "bitbucket-datacenter"
+    ? { ...pull, labels: [], owned: [], build: { state: "FAILED" as const, description: FAILED_BUILD } }
+    : { ...pull, labels: [FAILED_LABEL], owned };
+  return { effectId: `degraded:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
+}
+
+function degradedOf(it: Item, reason: string): Verdict {
+  const verdict = { ...stamp(undefined, it), ...degradedVerdict(reason), automatic: it.automatic ?? [], actions: [] };
+  const request = toMirrorRequest(verdict, it.pack && ownedLabels(it.pack.labels));
+  const mark = degradedMark(it.facts, repoSourceOf(it.repoSource), verdict.automatic, request.owned);
+  return { ...verdict, request, ...(mark && { mark }) };
+}
+
 /** Takes the item's own chunk replies off the front of `replies` and `partReplies`; requests an earlier run answered took none. */
 function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdict {
-  if (it.error !== undefined) {
-    const verdict = { ...stamp(undefined, it), ...degradedVerdict(it.error), automatic: it.automatic ?? [], actions: [] };
-    return { ...verdict, request: toMirrorRequest(verdict) };
-  }
+  if (it.error !== undefined) return degradedOf(it, it.error);
   try {
     // Rules recorded this same pure split as the judge's chunks, less the requests an earlier run answered.
     const evaluation = prepareQualityEvaluation(it.facts, it.det.sources);
@@ -202,8 +222,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     };
     return { ...verdict, request: toMirrorRequest(verdict, owned, it.source) };
   } catch (e) {
-    const verdict = { ...stamp(undefined, it), ...degradedVerdict(`render failed: ${errorText(e)}`), automatic: it.automatic ?? [], actions: [] };
-    return { ...verdict, request: toMirrorRequest(verdict) };
+    return degradedOf(it, `render failed: ${errorText(e)}`);
   }
 }
 

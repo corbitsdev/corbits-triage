@@ -1,12 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { ACTION_KINDS, isFromTriageSender, marksWaiting, ownedLabels, repoSourceOf, triggerRequestOf, WAITING_KIND, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import { packFromInput } from "../logic/checks.js";
-
-/** The mirror tool's arguments for the waiting marker: the label on GitHub, the build status on Bitbucket Data Center. */
-type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS"; description: string } };
-
-/** `effectId` names the marker on its head; the write itself is a no-op where the head already shows it, and skipped once the head moved. */
-export type WaitingMark = { effectId: string; repoSource: RepoSource; args: MarkArgs };
+import type { MarkArgs, WaitingMark } from "../logic/render.js";
 
 /** `mark` is absent when triage does not write the verdict on this host, so nothing is written either. */
 export type WaitingOutput = { waiting: boolean; mark?: WaitingMark };

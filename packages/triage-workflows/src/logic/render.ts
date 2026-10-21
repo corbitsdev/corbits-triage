@@ -3,7 +3,6 @@ import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
-import type { WaitingMark } from "../actions/waiting.js";
 import type { SuggestedAction } from "./actions.js";
 import { forMaintainer, hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
@@ -772,6 +771,12 @@ export function degradedVerdict(reason: string): RenderOutput {
   };
 }
 
+/** The mirror tool's arguments for a marker: the label on GitHub, the build status on Bitbucket Data Center. */
+export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS" | "FAILED"; description: string } };
+
+/** `effectId` names the marker on its head; the write itself is a no-op where the head already shows it, and skipped once the head moved. */
+export type WaitingMark = { effectId: string; repoSource: RepoSource; args: MarkArgs };
+
 export interface MirrorRequest {
   repo: string;
   number: number;
@@ -796,7 +801,7 @@ export type Verdict = RenderOutput & {
   approvable?: boolean;
   /** Set when the pack has a request-changes Do: whether anything failed is the author's to fix on this head. */
   changesWanted?: boolean;
-  /** On a waiting verdict where triage writes the verdict: the marker the mirror writes in its place. */
+  /** On a waiting or degraded verdict where triage writes the verdict: the marker the mirror writes in its place. */
   mark?: WaitingMark;
   /** Made on a closed pull request: not a verdict, so the hub records none. */
   closed?: true;

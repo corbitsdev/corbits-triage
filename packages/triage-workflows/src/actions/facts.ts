@@ -76,6 +76,12 @@ function automaticKinds(trusted: boolean, request: Record<string, unknown>): Act
   return ACTION_KINDS.filter((kind) => kinds.includes(kind));
 }
 
+/** The head the mail names for each pull request: one as `prNumber`/`headSha`, or several as `items` of the same. */
+function mailHeads(request: Record<string, unknown>): Map<number, string> {
+  const named = Array.isArray(request.items) ? request.items : [request];
+  return new Map(named.flatMap((item): Array<[number, string]> => (isRecord(item) && typeof item.prNumber === "number" && typeof item.headSha === "string" ? [[item.prNumber, item.headSha]] : [])));
+}
+
 /** What each item read for a pull request carries besides its facts. */
 interface Stamp {
   carried: Map<number, Judged>;
@@ -83,6 +89,8 @@ interface Stamp {
   source?: PolicySource;
   repoSource: RepoSource;
   noWait: boolean;
+  /** The head the mail names for each pull request. */
+  heads: Map<number, string>;
 }
 
 interface Host {
@@ -192,9 +200,16 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     });
   }
 
+  /** Names the head the host or else the mail gave, so a write for it never lands on a newer one. */
+  function degraded(n: number, error: string): RulesItem {
+    const headSha = prs.get(n)?.sha ?? stamp.heads.get(n);
+    if (headSha === undefined) return { error };
+    return { error, pull: { repo, number: n, headSha }, pack, automatic: stamp.automatic, ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }) };
+  }
+
   function itemFor(n: number): RulesItem {
     const unread = prs.get(n) ? unreadParts(n) : [];
-    if (unread.length > 0) return { error: `could not read the ${unread.join(", ")} of #${n}` };
+    if (unread.length > 0) return degraded(n, `could not read the ${unread.join(", ")} of #${n}`);
     const item = assembleItem(n, {
       pr: prs.get(n) ?? null,
       checks: data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [],
@@ -206,7 +221,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
       authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
     }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });
     const judged = stamp.carried.get(n);
-    if ("error" in item) return item;
+    if ("error" in item) return degraded(n, item.error);
     const stamped = { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }) };
     return judged === undefined ? stamped : { ...stamped, judged };
   }
@@ -279,7 +294,7 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
     const limit = request.limit ?? HISTORY_LIMIT;
     if (typeof repo !== "string") return fail("facts: input has no repo");
     if (!Number.isSafeInteger(limit) || (limit as number) < 1) return fail("facts: history limit must be a positive integer");
-    return fetchHistory({ host: hostFor("github"), stamp: { carried: new Map(), automatic: [], repoSource: "github", noWait: false } }, repo, limit as number);
+    return fetchHistory({ host: hostFor("github"), stamp: { carried: new Map(), automatic: [], repoSource: "github", noWait: false, heads: new Map() } }, repo, limit as number);
   }
   const policy = repoPolicy(request?.policy);
   if (!request || typeof repo !== "string") return fail("facts: input has no repo");
@@ -291,7 +306,7 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
   const source = policySource(request);
   const items = request.kind === "pr" && Array.isArray(request.items) ? request.items : undefined;
   const carried = trusted && items ? carriedAnswers(items) : new Map<number, Judged>();
-  const read = { host: hostFor(repoSource), stamp: { carried, automatic: automaticKinds(trusted, request), repoSource, noWait: request.noWait === true, ...(source && { source }) } };
+  const read = { host: hostFor(repoSource), stamp: { carried, automatic: automaticKinds(trusted, request), repoSource, noWait: request.noWait === true, heads: mailHeads(request), ...(source && { source }) } };
   if (request.kind === "backlog") return fetchListed(read, repo, undefined, true, policy, pack, ["catch-up"]);
   if (request.kind !== "pr") return fail("facts: input is neither pr nor backlog");
   // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.

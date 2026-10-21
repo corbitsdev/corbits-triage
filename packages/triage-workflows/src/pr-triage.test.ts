@@ -7,7 +7,7 @@ import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, WAITING_LABEL
 import { localActionCredentials } from "../evals/run-local.js";
 import * as actions from "./actions/index.js";
 import type { ExecuteOutput } from "./actions/execute.js";
-import { credentialBindings } from "./agents.js";
+import { credentialBindings, credentialBindingsFor } from "./agents.js";
 import { triageJudgeDirector } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
@@ -15,6 +15,7 @@ import { RULES_PASS_REASON, type Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import { workflow } from "./pr-triage.js";
 import { workflow as historical } from "./pr-triage-historical.js";
+import { workflow as bitbucket } from "./pr-triage-bitbucket-datacenter.js";
 
 const REPO = "acme/widgets";
 const HI: Step[] = [{ do: "comment", target: { body: "hi" } }];
@@ -51,13 +52,13 @@ const RUNS: Record<Ci, unknown[]> = {
   failure: [{ name: "build", status: "completed", conclusion: "failure" }],
 };
 /** `stacked` is corbitsdev/corbits-code#1520's shape, with #9 to #13 merged into its branch and #14 closed unmerged; the branch is based on open #7's. */
-type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[] };
+type GithubSeed = { missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[] };
 
-function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [] }: GithubSeed = {}) {
+function fakeGithub({ missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [] }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
-  const pr: { head: string; state: "open" | "closed"; draft: boolean; ci: Ci; dismissible: boolean } = { head: "abc", state: "open", draft: false, ci: "none", dismissible: true };
+  const pr: { head: string; state: "open" | "closed"; draft: boolean; ci: Ci; dismissible: boolean; unreadFiles: boolean } = { head: "abc", state: "open", draft: false, ci: "none", dismissible: true, unreadFiles };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
@@ -76,6 +77,7 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
     if (path.startsWith(`/repos/${REPO}/git/trees/`)) return Response.json({ sha: "tree", tree: DOCS.map(([doc, text], index) => ({ path: doc, type: "blob", sha: `blob${index}`, size: bytes(text) })) });
     if (path.startsWith(`/repos/${REPO}/git/blobs/blob`)) return new Response(DOCS[Number(path.slice(path.lastIndexOf("blob") + 4))]![1]);
+    if (pr.unreadFiles && path.startsWith(`/repos/${REPO}/pulls/8/files`)) return Response.json({ message: "Server Error" }, { status: 500 });
     if (path.startsWith(`/repos/${REPO}/pulls/8/files`)) {
       const page = Number(new URL(path, "https://api.github.invalid").searchParams.get("page"));
       return Response.json(files.slice((page - 1) * 100, page * 100));
@@ -160,15 +162,15 @@ function servedBy(gh: GithubFetch) {
   };
 }
 
-function runTriage(gh: GithubFetch, judged: SystemOne[], judgeFails: boolean, triggerPayload: unknown, backlog = false) {
-  const body = ((backlog ? historical : workflow).steps.events as OnTriggerPrimitive).body;
+function runTriage(gh: GithubFetch, judged: SystemOne[], judgeFails: boolean, triggerPayload: unknown, backlog = false, definition = backlog ? historical : workflow, bindings = credentialBindings) {
+  const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("triage body is not inline");
   return runLocal(body.inline, {
     authorize: allow,
     hasUpstreamSignalResolver: true,
     invokeStep: judgeInvoker(judged, judgeFails),
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
-    actionCredentials: localActionCredentials(credentialBindings, servedBy(gh)),
+    actionCredentials: localActionCredentials(bindings, servedBy(gh)),
     triggerPayload,
   }).complete;
 }
@@ -786,5 +788,80 @@ describe("pr-triage body", () => {
     const { path, verdict } = await triage(recommendedPack(REPO), { backlog: true });
     expect(path).toEqual(JUDGE_PATH);
     expect(verdict).toMatchObject({ items: [{ number: 8, degraded: null }], summary: { total: 1 } });
+  });
+});
+
+const BB_REPO = "ACME/widgets";
+const BB_PULL = "/rest/api/1.0/projects/ACME/repos/widgets/pull-requests/8";
+const BB_BUILDS = "/rest/build-status/1.0/commits/abc";
+
+/** A Data Center pull request whose head shows Triage's Pass, and whose every read but the pull request itself fails. */
+function fakeBitbucket() {
+  const requests: Recorded[] = [];
+  const url = "https://bitbucket.acme.test/pr/8";
+  const builds: Array<Record<string, unknown>> = [{ key: "corbits-triage", name: "Corbits Triage", state: "SUCCESSFUL", description: "Pass", url }];
+  const ref = { id: "refs/heads/fix", displayId: "fix", latestCommit: "abc", repository: { id: 1 } };
+  const pr = { id: 8, version: 0, state: "OPEN", fromRef: ref, toRef: { ...ref, id: "refs/heads/main" }, links: { self: [{ href: url }] }, author: { user: { id: 2, slug: "octocat" } }, reviewers: [], participants: [] };
+  async function bb(path: string, init?: RequestInit): Promise<Response> {
+    const method = init?.method ?? "GET";
+    requests.push({ method, path });
+    if (path === BB_PULL) return Response.json(pr);
+    if (method === "POST" && path === BB_BUILDS) builds.splice(0, 1, JSON.parse(String(init?.body)));
+    if (path.startsWith(BB_BUILDS)) return Response.json({ values: builds, isLastPage: true });
+    return Response.json({ message: "Server Error" }, { status: 500 });
+  }
+  return { bb, requests, builds };
+}
+
+describe("a run that could not read the pull request", () => {
+  const checks = { "ci-green": { enabled: true } };
+  const FAILED = { method: "POST", path: `/repos/${REPO}/issues/8/labels` };
+  const READY_OFF = { method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Triage%3A%20Ready` };
+
+  function writes(requests: Recorded[]) {
+    return requests.filter((r) => r.method !== "GET");
+  }
+
+  test("a catch-up mail swaps Ready for Failed to Run on GitHub, once, and writes nothing else", async () => {
+    const github = fakeGithub({ labels: ["bug", "Triage: Ready"], unreadFiles: true });
+    const retry = hubMail({ kind: "pr", repo: REPO, items: [{ prNumber: 8, headSha: "abc" }], policy: { enabled: true }, checkPack: { ...emptyPack(REPO), checks }, automatic: ACTION_KINDS }, "github@acme.test");
+    for (const run of [1, 2]) {
+      const { terminalStatus, outputs } = await runTriage(github.gh, [], false, retry);
+      expect({ run, terminalStatus }).toEqual({ run, terminalStatus: "completed" });
+      expect(outputs["evaluateRules"]).toMatchObject({ items: [{ degraded: "error", actions: [] }] });
+    }
+    expect(github.labels).toEqual(["bug", "Triage: Failed to Run"]);
+    expect(writes(github.requests)).toEqual([FAILED, READY_OFF]);
+  });
+
+  test("a pull request mail leaves only Failed to Run on GitHub, and the next good run puts the verdict back", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks };
+    const github = fakeGithub({ labels: ["bug", "Triage: Ready"], unreadFiles: true });
+    const { verdict } = await triage(pack, { github });
+    expect(verdict).toMatchObject({ degraded: "error", actions: [] });
+    expect(github.labels).toEqual(["bug", "Triage: Failed to Run"]);
+    expect(writes(github.requests)).toEqual([READY_OFF, FAILED]);
+    github.pr.unreadFiles = false;
+    await triage(pack, { github });
+    expect(github.labels).toEqual(["bug", "Triage: Ready"]);
+  });
+
+  test("Bitbucket Data Center shows Triage's build status failed, once, and writes nothing else; without a known head it writes nothing", async () => {
+    const request = { kind: "pr", repo: BB_REPO, repoSource: "bitbucket-datacenter", prNumber: 8, headSha: "abc", policy: { enabled: true }, checkPack: { ...emptyPack(BB_REPO), checks }, automatic: ACTION_KINDS, events: ["opened"] };
+    async function run(host: ReturnType<typeof fakeBitbucket>, mail: Record<string, unknown>) {
+      const { terminalStatus, outputs } = await runTriage(host.bb, [], false, hubMail(mail, "github@acme.test"), false, bitbucket, credentialBindingsFor(["bitbucket-datacenter"]));
+      expect(terminalStatus).toBe("completed");
+      expect(outputs["evaluateRules"]).toMatchObject({ degraded: "error", actions: [] });
+    }
+    const host = fakeBitbucket();
+    await run(host, request);
+    await run(host, request);
+    expect(host.builds).toEqual([expect.objectContaining({ key: "corbits-triage", state: "FAILED", description: "Triage couldn't run" })]);
+    expect(writes(host.requests)).toEqual([{ method: "POST", path: BB_BUILDS }]);
+    const unknown = fakeBitbucket();
+    const { headSha: _headSha, ...headless } = request;
+    await run(unknown, headless);
+    expect(unknown.builds).toEqual([expect.objectContaining({ state: "SUCCESSFUL", description: "Pass" })]);
+    expect(writes(unknown.requests)).toEqual([]);
   });
 });
