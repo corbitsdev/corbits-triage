@@ -29,7 +29,7 @@ import {
 } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
-import { globMatch } from "./glob.js";
+import { globMatch } from "@corbits/triage-contracts/glob";
 
 export interface PrFileFacts {
   path: string;

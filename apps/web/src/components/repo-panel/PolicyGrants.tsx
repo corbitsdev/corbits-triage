@@ -5,6 +5,7 @@ import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, VERDICTS, type Acti
 import { findTriageRole } from "../../lib/automation-grid.ts";
 import { checkPackQuery } from "../../lib/check-packs.ts";
 import { DO_NAMES } from "../../lib/pack-prose.ts";
+import { mergeRisks, type MergeRisk } from "../../lib/merge-risks.ts";
 import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
 import { useAllowed, useRoles } from "../../lib/tenant-entities.ts";
 
@@ -21,6 +22,8 @@ function policyKinds(pack: CheckPack, decide: readonly ActionKind[], source: Rep
   const used = new Set<string>([...POSTING, ...decide, ...steps]);
   return hostKinds(source).filter((kind) => used.has(kind));
 }
+
+const RISK_NAMES: Record<MergeRisk, string> = { "first-timers": "pull requests from first-time contributors", "ci-config": "changes to CI configuration" };
 
 type PolicyGrantsProps = { repo: string; source: RepoSource; disabled: boolean };
 
@@ -61,12 +64,22 @@ export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsPro
     );
   }
 
+  function caution() {
+    const found = policy.data;
+    if ((found?.kind !== "file" && found?.kind !== "pack") || !found.automatic) return null;
+    const risks = mergeRisks(found.pack, found.automatic, found.decide ?? []);
+    if (!risks) return null;
+    const named = risks.length ? `, such as ${risks.map((risk) => RISK_NAMES[risk]).join(" or ")}` : "";
+    return <div className="sentence"><span className="txt">Approving or merging on its own can let unintended code merge{named}.</span></div>;
+  }
+
   return (
     <section className="rs" aria-labelledby="rs-alone" id="rp-alone">
       <h3 id="rs-alone">Actions Triage takes on its own</h3>
       <div className="gcard">
         <div className="sentences">
           <div className="sentence">{body()}</div>
+          {caution()}
         </div>
       </div>
       {allow.error ? <p role="alert" className="error">Could not allow these actions. {errorText(allow.error)} Try again.</p> : null}

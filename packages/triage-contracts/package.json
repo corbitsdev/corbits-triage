@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./code-review": "./src/code-review.ts",
+    "./glob": "./src/glob.ts",
     "./paths": "./src/paths.ts",
     "./team": "./src/team.ts"
   },
@@ -16,6 +17,7 @@
     "@corbits/common": "workspace:*",
     "arktype": "catalog:",
     "htmlparser2": "10.1.0",
+    "re2js": "2.8.6",
     "yaml": "2.9.1"
   },
   "devDependencies": {
