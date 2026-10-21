@@ -1396,7 +1396,7 @@ export type PrItem = {
   author: string | null;
   /** Who the author is to the repository, known once the open pull requests have loaded; null when GitHub does not say. */
   authorKind: AuthorKind | null;
-  /** Opened by the workspace's GitHub App, known once the open pull requests have loaded; GitHub refuses its review. */
+  /** Opened by Triage, known once the open pull requests have loaded; the host refuses its review. */
   byTriage: boolean;
   draft: boolean | null;
   mergeable: boolean | null;

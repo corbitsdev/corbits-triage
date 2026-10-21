@@ -4,6 +4,7 @@ import type { DB } from "@intx/db";
 import type { CredentialCipher } from "@intx/types";
 import { asRecord } from "@corbits/common";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
+import { tokenUser } from "@corbits/bitbucket-datacenter-tool/bitbucket";
 import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
@@ -76,14 +77,31 @@ async function appBotLogin(db: DB["db"], tenantId: string): Promise<string | und
   return typeof slug === "string" && slug !== "" ? `${slug}[bot]` : undefined;
 }
 
-/** The portal's listing of a repository's open pull requests, on its host; GitHub's mark the ones the App opened. */
+/** The user Triage's Bitbucket token acts as; undefined when Bitbucket can't say, since the listing must not fail over it. */
+async function bitbucketLogin(bb: bitbucket.BitbucketFetch): Promise<string | undefined> {
+  try {
+    return (await tokenUser(bb)).slug;
+  } catch {
+    return undefined;
+  }
+}
+
+function markTriage<P extends { author: string | null }>(prs: P[], login: string | undefined): Array<P & { byTriage?: true }> {
+  return prs.map((pr) => (login !== undefined && pr.author === login ? { ...pr, byTriage: true as const } : pr));
+}
+
+/** The portal's listing of a repository's open pull requests, on its host, marking the ones Triage opened. */
 export function createTenantOpenPrs(deps: TenantSourcesDeps): OpenPrsLister {
   const tenantSources = createTenantSources(deps);
   return async function openPrs(tenantId, record) {
     const fetches = tenantSources(tenantId);
-    if (sourceOf(record) === "bitbucket-datacenter") return bitbucket.listOpenPrs(await bitbucketOf(fetches, record), record.name);
+    if (sourceOf(record) === "bitbucket-datacenter") {
+      const bb = await bitbucketOf(fetches, record);
+      const [prs, login] = await Promise.all([bitbucket.listOpenPrs(bb, record.name), bitbucketLogin(bb)]);
+      return markTriage(prs, login);
+    }
     const [prs, login] = await Promise.all([listOpenPrs(await githubOf(fetches, record), record.name), appBotLogin(deps.db, tenantId)]);
-    return prs.map((pr) => (login !== undefined && pr.author === login ? { ...pr, byTriage: true as const } : pr));
+    return markTriage(prs, login);
   };
 }
 

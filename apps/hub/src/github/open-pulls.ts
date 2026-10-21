@@ -12,7 +12,7 @@ import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-confi
 
 export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
 
-/** `byTriage`: the workspace's GitHub App opened it, and GitHub refuses a review from a pull request's author. */
+/** `byTriage`: Triage opened it, as the GitHub App or the Bitbucket token's user, and the host refuses a review from its author. */
 type GithubOpenPr = Awaited<ReturnType<typeof listOpenPrs>>[number] & { byTriage?: true };
 type OpenPr = Omit<GithubOpenPr, "authorAssociation" | "authorBot"> & { authorKind?: AuthorKind };
 /** `source` names the host the pull requests and their `url` are on. */

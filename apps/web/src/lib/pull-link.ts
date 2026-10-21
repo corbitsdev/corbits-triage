@@ -12,7 +12,7 @@ export function pullUrl(pull: { source: RepoSource; url: string | null; repo: st
   return pull.source === "github" && pull.number !== null ? `https://github.com/${pull.repo}/pull/${pull.number}` : null;
 }
 
-/** Triage writes as the App, and GitHub refuses a review from a pull request's author, so its own are reviewed on GitHub. */
+/** The host refuses a review from a pull request's author, so one Triage opened is reviewed there. */
 export function viewOnHost(pull: { source: RepoSource; byTriage: boolean }): string {
   return `${pull.byTriage ? "Review" : "View"} on ${hostName(pull.source)}`;
 }

@@ -82,7 +82,7 @@ const MORE_ORDER: PrimaryAction[] = ["reply", "approve", "changes", "comment", "
 
 const REVIEWS: ReadonlySet<PrimaryAction> = new Set(["approve", "changes"]);
 
-/** A pull request Triage opened is merged rather than approved, and its changes are asked for on GitHub. */
+/** A pull request Triage opened is merged rather than approved, and its changes are asked for on its host. */
 function ownPullAction(kind: PrimaryAction | null): PrimaryAction | null {
   if (kind === "approve") return "merge";
   return kind === "changes" ? null : kind;

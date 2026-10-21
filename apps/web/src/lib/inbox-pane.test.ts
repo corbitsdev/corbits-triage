@@ -107,7 +107,7 @@ describe("paneActions", () => {
     expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
   });
 
-  test("a pull request Triage opened is merged, never reviewed, since GitHub refuses a review from its author", () => {
+  test("a pull request Triage opened is merged, never reviewed, since the host refuses a review from its author", () => {
     const own = paneActions(gate({ state: "awaiting-review", mergeable: true, byTriage: true }));
     expect(own.primary).toEqual({ kind: "merge", blocker: null });
     expect(own.more.map((row) => row.label)).toEqual(["Comment", "Close", "Triage again"]);

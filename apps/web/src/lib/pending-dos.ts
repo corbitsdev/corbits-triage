@@ -53,7 +53,7 @@ function awaitsApproval({ held, status }: SuggestedAction): boolean {
 
 const REVIEWS: ReadonlySet<ActionKind> = new Set(["approve", "request-changes"]);
 
-/** GitHub refuses a review from a pull request's author, so one the App opened offers none. */
+/** The host refuses a review from a pull request's author, so one Triage opened offers none. */
 function offered(item: PrItem, action: SuggestedAction): boolean {
   return awaitsApproval(action) && !(item.byTriage && REVIEWS.has(action.kind));
 }
