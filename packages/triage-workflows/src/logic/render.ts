@@ -272,11 +272,13 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
   const unavailable = unavailableReason();
-  const invalid = isInvalid(parsed, askedQuestionIds(sources, plan, focused));
+  const asked = askedQuestionIds(sources, plan, focused);
+  const invalid = isInvalid(parsed, asked);
   const instructedAnswer = invalid ? undefined : parsed.decisions[INSTRUCTED_QUESTION.id];
   const instructed = instructedAnswer?.type === "noul" && instructedAnswer.noul >= YES;
   const checks: CheckResult[] = [];
-  let anyUnanswered = false;
+  // Every request asks the instructed question, and without its answer no other answer can be trusted, labelling rules' included.
+  let anyUnanswered = det.needsJudgment && !judgeSkipped && !judgeLimitExceeded && asked.size > 1 && instructedAnswer?.type !== "noul";
 
   /** A labelling rule left unanswered never holds the verdict back. */
   function unansweredBy(check: string) {

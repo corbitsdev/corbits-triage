@@ -229,7 +229,7 @@ describe("verdicts the decision model was never asked about", () => {
     const ambiguousDecision = JSON.stringify({
       id: "focused", type: "choice", choice: "cant_tell", confidence: 0.9,
       probabilities: { one_thing: 0.05, more_than_one_thing: 0.05, cant_tell: 0.9 },
-    });
+    }) + JSON.stringify({ id: "instructed", type: "noul", noul: 0.1 });
     const ambiguousResult = await triage(compact, { type: "inference.done", turn: { content: [{ type: "text", text: ambiguousDecision }] } } as ReactorInboundEvent);
     expect(local.judged).toBeUndefined();
     expect(local.ruled.items[0]).toMatchObject({ judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ requests\)$/), judgeLimitExceeded: true });

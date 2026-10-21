@@ -38,17 +38,21 @@ function stamp(facts: PrFacts | undefined, it?: Item) {
  */
 function answersOf(requests: JudgeRequest[], answered: Array<[string, unknown]>): ParsedAnswers {
   const decisions: ParsedAnswers["decisions"] = {};
+  const instructed: Array<number | undefined> = [];
   for (const [index, [, reply]] of answered.entries()) {
     const { judge } = (stepJson(reply) ?? {}) as Judgment;
     const parsed = typeof judge === "string" ? parseAnswers(judge) : undefined;
     const asked = new Set(requests[index]!.questions.map((question) => question.id));
-    if (!parsed || parsed.malformed || !Object.keys(parsed.decisions).every((id) => asked.has(id))) continue;
-    const earlier = decisions[INSTRUCTED_QUESTION.id];
-    Object.assign(decisions, parsed.decisions);
-    // Every request asks the instructed question, and a yes from any of them stands.
-    const later = decisions[INSTRUCTED_QUESTION.id];
-    if (earlier?.type === "noul" && (later?.type !== "noul" || later.noul < earlier.noul)) decisions[INSTRUCTED_QUESTION.id] = earlier;
+    const accepted = parsed && !parsed.malformed && Object.keys(parsed.decisions).every((id) => asked.has(id)) ? parsed.decisions : undefined;
+    if (asked.has(INSTRUCTED_QUESTION.id)) {
+      const answer = accepted?.[INSTRUCTED_QUESTION.id];
+      instructed.push(answer?.type === "noul" ? answer.noul : undefined);
+    }
+    if (accepted) Object.assign(decisions, accepted);
   }
+  // The most confident yes stands; a request that left it unanswered leaves it unanswered for the pull request.
+  delete decisions[INSTRUCTED_QUESTION.id];
+  if (instructed.length > 0 && instructed.every((noul) => noul !== undefined)) decisions[INSTRUCTED_QUESTION.id] = { id: INSTRUCTED_QUESTION.id, type: "noul", noul: Math.max(...instructed) };
   return { decisions, malformed: false };
 }
 

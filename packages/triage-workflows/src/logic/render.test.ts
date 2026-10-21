@@ -60,6 +60,8 @@ function focusedPlan(separate: Record<string, number>, slices: Record<string, st
   return { focused: { purpose: "fix(session): release a settled approval overlay before delivering", slices, unread, parts }, nouls };
 }
 
+const NOT_INSTRUCTED = JSON.stringify({ id: "instructed", type: "noul", noul: 0.1 });
+
 const CHOICE = {
   pass: { pass: 0.8, fail: 0.1, cant_tell: 0.1 },
   fail: { pass: 0.1, fail: 0.85, cant_tell: 0.05 },
@@ -72,7 +74,7 @@ function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).fo
     repo: "acme/widgets",
     headSha: "abc123",
     det: FOCUSED_DET,
-    answers: parseAnswers(reply),
+    answers: parseAnswers(`${reply}${NOT_INSTRUCTED}`),
     focused,
     choice,
   });
@@ -148,7 +150,7 @@ describe("focused rendering", () => {
   test("an unsure comment names every rule it could not confirm, running checks included, and the verdict keeps the decision model's probability", () => {
     const running = { check: "ci-green", kind: "machine" as const, result: "unconfirmed" as const, reason: "checks are still running", evidence: ["build"], output: { kind: "could-not-check" as const, reason: "checks are still running" } };
     const det = { ...FOCUSED_DET, checks: [running] };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(focusedAnswer(0.5, 0.4)), focused: focusedPlan({}).focused, choice: CHOICE.pass });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(`${focusedAnswer(0.5, 0.4)}${NOT_INSTRUCTED}`), focused: focusedPlan({}).focused, choice: CHOICE.pass });
     expect(verdict).toMatchObject({ verdict: "unsure", score: 0.8 });
     expect(verdict.waiting).toBeUndefined();
     expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}\n\nWaiting on:\n- checks are still running: \`build\``);
@@ -294,7 +296,7 @@ const MODEL_DET: DeterministicResult = {
 const PLAN: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] } };
 
 function noul(answers: Record<string, number>) {
-  return parseAnswers(Object.entries(answers).map(([id, value]) => JSON.stringify({ id, type: "noul", noul: value })).join(""));
+  return parseAnswers(Object.entries({ instructed: 0.1, ...answers }).map(([id, value]) => JSON.stringify({ id, type: "noul", noul: value })).join(""));
 }
 
 describe("verdict", () => {

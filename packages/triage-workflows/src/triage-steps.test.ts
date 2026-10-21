@@ -335,8 +335,9 @@ describe("focused judge input", () => {
   }
 
   const pack = { ...emptyPack("acme/widgets"), checks: { focused: { enabled: true } } };
-  /** A focused answer with `serves` the probability its slice serves the pull request's purpose; undefined for any other question. */
+  /** A focused answer with `serves` the probability its slice serves the pull request's purpose, no to the instructed question, and undefined for any other question. */
   function focusedAnswer(id: string, serves: number, separate: number) {
+    if (id === "instructed") return { id, type: "noul", noul: 0.1 };
     if (id === "focused") return { id, type: "choice", choice: "one_thing", probabilities: { one_thing: serves, more_than_one_thing: separate, cant_tell: 1 - serves - separate }, confidence: 0.9 };
     if (!/^focused-slice-\d+$/.test(id)) return undefined;
     const choice = serves >= separate ? "serves_purpose" : "separate_change";
@@ -354,7 +355,7 @@ describe("focused judge input", () => {
   test("asks one choice about the whole pull request, and a question per file only once it fails", async () => {
     const patch = "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };";
     const ruled = await ruledFor([{ path: "src/a.ts", previousPath: "src/old-a.ts", status: "renamed", patch }]);
-    const first = await judgeChunks(ruled, () => JSON.stringify({ id: "focused", type: "choice", choice: "more_than_one_thing", probabilities: { one_thing: 0.1, more_than_one_thing: 0.85, cant_tell: 0.05 }, confidence: 0.9 }));
+    const first = await judgeChunks(ruled, () => `${JSON.stringify({ id: "focused", type: "choice", choice: "more_than_one_thing", probabilities: { one_thing: 0.1, more_than_one_thing: 0.85, cant_tell: 0.05 }, confidence: 0.9 })}${JSON.stringify(focusedAnswer("instructed", 0, 0))}`);
     expect(first.requests).toHaveLength(1);
     const systemOne = first.requests[0]!.providerOptions.systemOne;
     expect(systemOne.questions.map((question: Record<string, unknown>) => [question.id, Object.keys(question.criteria ?? {})])).toEqual([
@@ -446,6 +447,15 @@ describe("focused judge input", () => {
     const verdict = await evaluate(judged, ctx, signal) as Verdict;
     expect(verdict).toMatchObject({ verdict: "unsure", reason: INSTRUCTED_REASON, degraded: null, actions: [] });
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([expect.objectContaining({ check: "focused", result: "unconfirmed", reason: INSTRUCTED_REASON })]);
+  });
+
+  test("a reply that answers every rule but not the instructed question leaves the pull request Unsure", async () => {
+    const ruled = await ruledFor(largeFiles("large", 24));
+    function silent(questions: Array<{ id: string }>, call: number) {
+      return questions.filter(({ id }) => call !== 1 || id !== "instructed").map(({ id }) => JSON.stringify(id === "verdict" ? verdictAnswer("pass") : focusedAnswer(id, 0.9, 0.05))).join("");
+    }
+    const { judged } = await judgeRounds(ruled, silent);
+    expect(await evaluate(judged, ctx, signal)).toMatchObject({ verdict: "unsure", degraded: "inference-outage", actions: [] });
   });
 
   test("a batch asks per pull request, and a failed chunk degrades only its own pull request", async () => {
