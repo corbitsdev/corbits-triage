@@ -360,6 +360,7 @@ const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: comp
 const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
 const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: pullRequests.withDiff, log: logJson });
+const repoReads = createRepoReads(now);
 const githubPrActions = createGithubPrActions({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -367,15 +368,9 @@ const githubPrActions = createGithubPrActions({
   authorize: authorizePortal,
   readCheckPack,
   codeReviews: codeReviewRuns,
+  changed: repoReads.changed,
   log: logJson,
 });
-const repoReads = createRepoReads(now);
-/** The portal reads the pull request again right after its own write, before GitHub's webhook for it may arrive. */
-async function prActionsThenChanged(...[body, member]: Parameters<typeof githubPrActions>): Promise<Response> {
-  const response = await githubPrActions(body, member);
-  if (response.ok) repoReads.changed(member.tenantId, body.repo);
-  return response;
-}
 const githubPrDetails = createGithubPrDetails({
   reads: repoReads,
   db: composition.db,
@@ -837,7 +832,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   authMethods: authMethods(signIn, smtp !== undefined),
   manifest: githubManifest,
   syncInstallations,
-  prActions: prActionsThenChanged,
+  prActions: githubPrActions,
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),

@@ -102,9 +102,11 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
 const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigin };
 const list = createTenantOpenPrs({ ...deps, tenantBitbucket: async () => undefined });
 const openPulls = createGithubOpenPulls({ ...deps, list, cache: createOpenPullsCache(() => new Date()) });
-const prDetails = createGithubPrDetails({ ...deps, tenantBitbucket: async () => undefined, reads: createRepoReads(() => new Date()), log() {} });
+const reads = createRepoReads(() => new Date());
+const prDetails = createGithubPrDetails({ ...deps, tenantBitbucket: async () => undefined, reads, log() {} });
 const prActions = createGithubPrActions({
   ...deps,
+  changed: reads.changed,
   log() {},
   async readCheckPack() { return { status: "missing" } as const; },
   codeReviews: { async latest() { return { review: completed, completed, carriedTo }; } },
