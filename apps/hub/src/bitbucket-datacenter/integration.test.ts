@@ -13,7 +13,12 @@ function unreachable(name: string): never {
 
 function integration(address: string, options: { allowlist?: readonly string[]; tenant?: unknown; fetched?: string[] } = {}) {
   return createBitbucketIntegration({
-    db: { query: { tenant: { async findFirst() { return options.tenant; } } } } as unknown as DB["db"],
+    db: {
+      query: {
+        tenant: { async findFirst() { return options.tenant; } },
+        credential: { async findFirst() { return { id: "crd_bb", tenantId: MEMBER.tenantId, status: "active", principalId: null }; } },
+      },
+    } as unknown as DB["db"],
     cipher: {} as CredentialCipher,
     async authorize() { return true; },
     stockFetch: () => unreachable("stock"),

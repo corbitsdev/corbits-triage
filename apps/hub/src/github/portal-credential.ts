@@ -1,6 +1,6 @@
 // Shared gates for portal requests that reach GitHub as the workspace's App.
 import { and, eq } from "drizzle-orm";
-import { schema, type DB } from "@intx/db";
+import { resolveCredentialByName, schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
 import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
@@ -38,13 +38,25 @@ export async function holds(d: Pick<PortalCredentialDeps, "authorize">, principa
 
 type CredentialAction = "read" | "use" | "manage";
 
-export function activeCredential(db: DB["db"], tenantId: string, name: string) {
-  return db.query.credential.findFirst({
-    where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.name, name), eq(schema.credential.status, "active")),
-  });
+/**
+ * The credential `name` resolves to for the tenant, its own or an ancestor's, when it is active and workspace-owned. An
+ * inactive or personal one is never passed over for an ancestor's. Its `tenantId` is the workspace whose host settings go with it.
+ */
+export async function activeCredential(db: DB["db"], tenantId: string, name: string) {
+  const credential = await resolveCredentialByName(db, tenantId, name);
+  return credential?.status === "active" && credential.principalId === null ? credential : undefined;
 }
 
-/** Why a member may not act with a host's credential: 409 when the workspace has none, the same for every member; 403 when this member lacks the grant. */
+export function credentialSecret(cipher: CredentialCipher, credential: { id: string; secret: string }): Promise<string> {
+  return cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
+}
+
+export async function activeSecret(d: Pick<PortalCredentialDeps, "db" | "cipher">, tenantId: string, name: string): Promise<string | undefined> {
+  const credential = await activeCredential(d.db, tenantId, name);
+  return credential && credentialSecret(d.cipher, credential);
+}
+
+/** Why a member may not act with a host's credential: 409 when neither the workspace nor a parent has one, the same for every member; 403 when this member lacks the grant. */
 export type CredentialRefusal = { status: 403 | 409; code: string; message: string };
 
 const HOST_CREDENTIAL = {
@@ -87,7 +99,7 @@ export async function sourceCredentialGrant(d: GrantDeps, principalId: string, t
 export async function githubAppCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction): Promise<string | Response> {
   const credential = await githubAppGrant(d, principalId, tenantId, action);
   if (credential instanceof Response) return credential;
-  return d.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
+  return credentialSecret(d.cipher, credential);
 }
 
 async function holdsTriageRole(db: DB["db"], principalId: string, tenantId: string): Promise<boolean> {

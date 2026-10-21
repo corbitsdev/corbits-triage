@@ -13,7 +13,12 @@ function job(source: "github" | "bitbucket-datacenter"): TriageJob {
 
 test("a Bitbucket worker is not spawned once the stored host resolves to an address the token may not reach", async () => {
   const tenantBitbucket = createTenantBitbucket({
-    db: { query: { tenant: { async findFirst() { return TENANT; } } } } as unknown as DB["db"],
+    db: {
+      query: {
+        tenant: { async findFirst() { return TENANT; } },
+        credential: { async findFirst() { return { id: "crd_bb", tenantId: "tnt_spawn", status: "active", principalId: null }; } },
+      },
+    } as unknown as DB["db"],
     cipher: {} as CredentialCipher,
     fetchImpl: fetch,
     async lookup() { return [{ address: "169.254.169.254", family: 4 }]; },

@@ -1,9 +1,10 @@
-// A tenant's Bitbucket Data Center instance, read as its stored token, for hub-side work.
+// A tenant's Bitbucket Data Center instance, read with the token it resolves (its own or a parent's) at the instance
+// that token's workspace connected, for hub-side work.
 import type { DB } from "@intx/db";
-import { credentialAad, type CredentialCipher } from "@intx/types";
+import type { CredentialCipher } from "@intx/types";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { tenantConfigOf } from "../github/bridge.js";
-import { activeCredential } from "../github/portal-credential.js";
+import { activeCredential, credentialSecret } from "../github/portal-credential.js";
 import { triageNs } from "../github/tenant-config.js";
 import type { TriageJob, WorkerSpawner } from "../github/coordinator.js";
 import { codeReviewWorkflowFor, triageWorkflowFor } from "../github/source-workflow.js";
@@ -20,19 +21,18 @@ type TenantBitbucketDeps = {
 
 export type TenantBitbucket = (tenantId: string) => Promise<BitbucketFetch | undefined>;
 
-/** Undefined when the tenant has no connected instance, its host is refused, or it has no active token. */
+/** Undefined when the tenant resolves no active token, the token's workspace has no connected instance, or its host is refused. */
 export function createTenantBitbucket(deps: TenantBitbucketDeps): TenantBitbucket {
   const lookup = deps.lookup ?? lookupAddresses;
 
   return async function tenantBitbucket(tenantId) {
-    const connection = bitbucketConnection(triageNs(await tenantConfigOf(deps, tenantId)));
+    const credential = await activeCredential(deps.db, tenantId, TOKEN_CREDENTIAL);
+    if (!credential) return undefined;
+    const connection = bitbucketConnection(triageNs(await tenantConfigOf(deps, credential.tenantId)));
     if (!connection) return undefined;
     const checked = await resolveInstance(connection.baseUrl, lookup, deps.egressAllowlist);
     if (checked === undefined) return undefined;
-    const credential = await activeCredential(deps.db, tenantId, TOKEN_CREDENTIAL);
-    if (!credential) return undefined;
-    const token = await deps.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
-    return bitbucketFetch(deps.fetchImpl, checked, token);
+    return bitbucketFetch(deps.fetchImpl, checked, await credentialSecret(deps.cipher, credential));
   };
 }
 

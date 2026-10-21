@@ -2,12 +2,11 @@
 // caller, so stock authz decides who may store them; the namespace holds only the instance URL.
 import { randomBytes } from "node:crypto";
 import { type } from "arktype";
-import { credentialAad } from "@intx/types";
 import { BITBUCKET_DATACENTER_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { ensureTriageRole, grantEnabledKinds } from "../github/automation.js";
 import { tenantConfigOf } from "../github/bridge.js";
-import { activeCredential, failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
+import { activeCredential, credentialSecret, failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
 import { patchCorbitsTriage, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
 import type { Member } from "../integrations/app.js";
 import { triageWorkflowFor } from "../github/source-workflow.js";
@@ -89,23 +88,28 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     return triageNs(await tenantConfigOf(deps, tenantId));
   }
 
-  async function secretOf(member: Member, name: string): Promise<string | Response> {
+  async function usableCredential(member: Member, name: string) {
     const credential = await activeCredential(db, member.tenantId, name);
     if (!credential) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
     if (!(await holds(deps, member.principalId, member.tenantId, `credential:${credential.id}`, "use"))) {
       return failure(403, "forbidden", "You do not have access to the Bitbucket credential.");
     }
-    return deps.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
+    return credential;
+  }
+
+  async function secretOf(member: Member, name: string): Promise<string | Response> {
+    const credential = await usableCredential(member, name);
+    return credential instanceof Response ? credential : credentialSecret(deps.cipher, credential);
   }
 
   async function instance(member: Member): Promise<BitbucketFetch | Response> {
-    const connection = bitbucketConnection(await tenantNs(member.tenantId));
+    const credential = await usableCredential(member, TOKEN_CREDENTIAL);
+    if (credential instanceof Response) return credential;
+    const connection = bitbucketConnection(await tenantNs(credential.tenantId));
     if (!connection) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
     const checked = await reachable(connection.baseUrl);
     if (checked === undefined) return failure(409, "bitbucket_datacenter_host_refused", HOST_REFUSED);
-    const token = await secretOf(member, TOKEN_CREDENTIAL);
-    if (token instanceof Response) return token;
-    return bitbucketFetch(deps.fetchImpl, checked, token);
+    return bitbucketFetch(deps.fetchImpl, checked, await credentialSecret(deps.cipher, credential));
   }
 
   function stock(req: Request, method: string, path: string, body?: unknown): Promise<Response> {

@@ -1,14 +1,13 @@
 // Pull request heads for a tenant's repositories, read as the tenant's GitHub
 // App or Bitbucket Data Center token by each record's source, for hub-side work.
-import { and, eq } from "drizzle-orm";
-import { schema, type DB } from "@intx/db";
-import { credentialAad, type CredentialCipher } from "@intx/types";
+import type { DB } from "@intx/db";
+import type { CredentialCipher } from "@intx/types";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation, type OpenPrsLister } from "./open-pulls.js";
-import { appGithubFetch } from "./portal-credential.js";
+import { activeSecret, appGithubFetch } from "./portal-credential.js";
 import type { OpenPr } from "./reconcile-plan.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
@@ -64,11 +63,8 @@ function createTenantSources(deps: TenantSourcesDeps) {
 export function createTenantGithub(deps: TenantGithubDeps) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
   return async function tenantGithub(tenantId: string): Promise<GithubFetch | undefined> {
-    const credential = await deps.db.query.credential.findFirst({
-      where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.name, "github"), eq(schema.credential.status, "active")),
-    });
-    if (!credential) return undefined;
-    const appJson = await deps.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
+    const appJson = await activeSecret(deps, tenantId, "github");
+    if (appJson === undefined) return undefined;
     return appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
   };
 }
