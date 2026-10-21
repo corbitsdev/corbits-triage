@@ -350,6 +350,8 @@ The dark strip on the left is the same on every page:
 - **Inbox**, with three views. **Needs you** shows only pull requests waiting on a person, in repositories with triage on. A pull request with an approval or a held action waiting stays there even after triage is turned off. **Ready** shows the pull requests you can merge now. **All open** shows every open pull request in every repository with triage on, and any with an approval waiting.
 - **Your name** at the bottom. Click it for Repositories, Settings and Sign out.
 
+When a newer version of Corbits Triage is released while the portal is open, a notice at the top says **A new version of Corbits Triage is available.** Press **Reload** to switch to it; the page never reloads on its own.
+
 Each view has a search box and a **Filter** button. **Needs you** and **All open** add quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
 
 ### Needs you
