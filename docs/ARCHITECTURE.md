@@ -133,7 +133,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
 - **Portal** (`apps/web`): owns setup. After sign-in it converges the tenant,
   credentials, inference offerings, workflow sources and deployments over
   stock hub routes. The hub seeds nothing for it. It is a wrapper over the
-  routes; nothing is possible only through it.
+  routes; nothing is possible only through it. Each minute and on focus it
+  reads the served `index.html`; once its hashed entry script differs from the
+  one the tab loaded, it offers a reload, since a stale tab would deploy the
+  workflows of the build it runs.
 
 ## Workflows
 

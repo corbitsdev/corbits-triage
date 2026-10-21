@@ -11,6 +11,7 @@ import { DeniedNotice } from "./lib/denied.tsx";
 import type { PortalSnapshot, WorkspaceOption } from "./lib/hub-api.ts";
 import Layout from "./components/Layout.tsx";
 import LoadingIndicator from "./components/LoadingIndicator.tsx";
+import NewerPortalNotice from "./components/NewerPortalNotice.tsx";
 import Connect from "./pages/Connect.tsx";
 import { OtherWorkspaces } from "./components/OtherWorkspaces.tsx";
 import { useGithubSync } from "./lib/github-sync.ts";
@@ -194,6 +195,7 @@ function AppShell() {
             <Gate />
           </HeldInboxProvider>
           <LoadingIndicator />
+          <NewerPortalNotice />
           <Toaster position="bottom-right" />
         </PortalProvider>
       </UserQueryCache>
