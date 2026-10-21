@@ -1,7 +1,7 @@
 import { action, defineWorkflow, map, onTrigger, step, type Selector } from "@intx/workflow";
 import { READ_REPOSITORY } from "./actions/checkout.js";
 import { credentialBindingsFor, type CodeReviewAgents, type Sources } from "./agents.js";
-import { FINDER_ATTEMPTS } from "./failures.js";
+import { MODEL_ATTEMPTS } from "./failures.js";
 
 export const PR_CODE_REVIEW_ADDRESS = "pr-code-review";
 
@@ -12,8 +12,8 @@ export const PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS = "pr-code-review-bitbu
 
 const TIMEOUT = 10 * 60_000;
 
-/** A finder whose model call failed or whose answer held no findings list asks again, waiting out a brief overload. */
-const FINDER_RETRY = { maxAttempts: FINDER_ATTEMPTS, initialBackoffMs: 5_000 };
+/** A model step whose call failed or whose answer couldn't be read asks again, waiting out a brief overload. */
+const MODEL_RETRY = { maxAttempts: MODEL_ATTEMPTS, initialBackoffMs: 5_000 };
 
 /** Its own sidecar, never one shared with other work: the review checks out the pull request's code. */
 export const CODE_REVIEW_PLACEMENT = { capabilities: [{ capability: "isolation:workload", effect: "require" as const }] };
@@ -47,21 +47,21 @@ export function codeReviewWorkflow({ checkAgent, consolidateAgent, finderAgent, 
       trigger: { type: "manual" },
       steps: {
         reviewInput: action({ handler: "reviewInput", input: { from: "trigger.payload" } }),
-        plan: step({ agent: planAgent, input: { from: "steps.reviewInput.output.plan" }, inference: inferenceOf("plan"), after: ["reviewInput"], timeout: TIMEOUT }),
+        plan: step({ agent: planAgent, input: { from: "steps.reviewInput.output.plan" }, inference: inferenceOf("plan"), after: ["reviewInput"], timeout: TIMEOUT, retry: MODEL_RETRY }),
         checkout: checkoutAction(sources, { from: "steps.reviewInput.output.request.checkout" }, ["reviewInput"]),
         findersInput: action({ handler: "findersInput", input: stepsOf("reviewInput", "plan"), after: ["plan"] }),
-        findDiff: step({ agent: finderAgent(), input: { from: "steps.findersInput.output.diff" }, inference: inferenceOf("diffFinder"), after: ["findersInput"], timeout: TIMEOUT, retry: FINDER_RETRY }),
-        findRepo: step({ agent: repoFinderAgent(), input: { from: "steps.findersInput.output.repo" }, inference: inferenceOf("repoFinder"), after: ["findersInput", "checkout"], timeout: TIMEOUT, retry: FINDER_RETRY }),
+        findDiff: step({ agent: finderAgent(), input: { from: "steps.findersInput.output.diff" }, inference: inferenceOf("diffFinder"), after: ["findersInput"], timeout: TIMEOUT, retry: MODEL_RETRY }),
+        findRepo: step({ agent: repoFinderAgent(), input: { from: "steps.findersInput.output.repo" }, inference: inferenceOf("repoFinder"), after: ["findersInput", "checkout"], timeout: TIMEOUT, retry: MODEL_RETRY }),
         candidates: action({ handler: "candidates", input: stepsOf("reviewInput", "findDiff", "findRepo"), after: ["findDiff", "findRepo"] }),
-        consolidate: step({ agent: consolidateAgent(sources), input: { from: "steps.candidates.output.consolidate" }, inference: { from: "steps.candidates.output.inference" }, after: ["candidates"], timeout: TIMEOUT }),
+        consolidate: step({ agent: consolidateAgent(sources), input: { from: "steps.candidates.output.consolidate" }, inference: { from: "steps.candidates.output.inference" }, after: ["candidates"], timeout: TIMEOUT, retry: MODEL_RETRY }),
         checks: action({ handler: "checks", input: stepsOf("reviewInput", "candidates", "consolidate"), after: ["consolidate"] }),
         check: map({
           over: { from: "steps.checks.output.checks" },
-          step: step({ agent: checkAgent, input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: TIMEOUT }),
+          step: step({ agent: checkAgent, input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: TIMEOUT, retry: MODEL_RETRY }),
           after: ["checks"],
         }),
         writeInput: action({ handler: "writeInput", input: stepsOf("reviewInput", "candidates", "checks", "check"), after: ["check"] }),
-        write: step({ agent: writeAgent, input: { from: "steps.writeInput.output.text" }, inference: { from: "steps.writeInput.output.inference" }, after: ["writeInput"], timeout: TIMEOUT }),
+        write: step({ agent: writeAgent, input: { from: "steps.writeInput.output.text" }, inference: { from: "steps.writeInput.output.inference" }, after: ["writeInput"], timeout: TIMEOUT, retry: MODEL_RETRY }),
         review: action({ handler: "review", input: stepsOf("reviewInput", "writeInput", "write"), after: ["write"] }),
       },
     });
