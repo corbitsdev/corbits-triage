@@ -15,7 +15,10 @@ const BUILD_WORDS = { pass: "Pass", fail: "Fail", unsure: "Needs review" } as co
 const BUILD_DESCRIPTION_MAX = 255;
 
 export type MirrorOutcome = { call: string; ok: boolean; error?: string; changeRequestsKept?: string; unchanged?: string; skipped?: string };
-export type MirrorOutput = { results: MirrorOutcome[] } | MirrorOutcome | { skipped: true; reason?: string };
+/** Why a verdict was not posted: it could not be decided, it waits on the host's checks, it carries nothing to post, or the pr-triage role is granted no write. */
+export type NotPostedReason = "stale" | "waiting" | "no_request" | "no_grants";
+export type MirrorSkip = { call: string; skipped: true; reason: NotPostedReason };
+export type MirrorOutput = { results: Array<MirrorOutcome | MirrorSkip> } | MirrorOutcome | MirrorSkip | { skipped: true; reason?: string };
 
 /** An evaluate output: a batch's verdicts as `items`, or the one verdict itself. */
 export function verdictsOf(input: Record<string, unknown>): { verdicts: Verdict[]; batch: boolean } {
@@ -40,11 +43,19 @@ function dismissals(v: Verdict) {
   return { ...(settled && v.approvable === false && { notReadyHead: v.headSha }), ...(settled && v.changesWanted === false && { fixedHead: v.headSha }) };
 }
 
-/** Whether the mirror writes anything for the verdict: its marker, what the pr-triage role is granted, or what an earlier Do left to take back. */
-function mirrors(v: Verdict): boolean {
-  if (v.mark !== undefined) return true;
-  if (v.mirror !== true || v.waiting || !v.request || !Array.isArray(v.automatic)) return false;
-  return MIRRORED_KINDS.some((kind) => v.automatic.includes(kind)) || Object.keys(dismissals(v)).length > 0;
+/** Why the mirror writes nothing for the verdict; none when it writes its marker, what the pr-triage role is granted, or what an earlier Do left to take back. */
+function notPosted(v: Verdict): NotPostedReason | undefined {
+  if (v.mark !== undefined) return undefined;
+  if (v.mirror !== true) return "stale";
+  if (v.waiting) return "waiting";
+  if (!v.request) return "no_request";
+  if (!Array.isArray(v.automatic)) return "no_grants";
+  if (MIRRORED_KINDS.some((kind) => v.automatic.includes(kind)) || Object.keys(dismissals(v)).length > 0) return undefined;
+  return "no_grants";
+}
+
+function mirrorCallId(v: Verdict): string {
+  return `mirror:${v.repo.replace("/", "--")}:${v.number}`;
 }
 
 function outcome(r: ToolResult): MirrorOutcome {
@@ -69,7 +80,7 @@ function mirrorCall(v: Verdict): ToolCall {
   const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
   const comment = v.automatic.includes("comment") ? { comment: r.comment, ...(r.header && { header: r.header }) } : {};
   const build = source === "bitbucket-datacenter" && v.automatic.includes("comment") ? { build: verdictBuild(v) } : {};
-  return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...build, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
+  return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...build, ...dismissals(v) }, mirrorCallId(v));
 }
 
 /**
@@ -85,13 +96,13 @@ export async function mirrorVerdicts(input: unknown, write: HostWrite): Promise<
     return outcome(await write(mark.repoSource, markCall(mark)));
   }
   const { verdicts, batch } = verdictsOf(input);
-  const mirrored = verdicts.filter(mirrors);
-  if (!mirrored.length) return { skipped: true };
-  function written(v: Verdict) {
-    if (v.mark) return write(v.mark.repoSource, markCall(v.mark));
-    return write(repoSourceOf(v.repoSource), mirrorCall(v));
+  async function written(v: Verdict): Promise<MirrorOutcome | MirrorSkip> {
+    const reason = notPosted(v);
+    if (reason) return { call: mirrorCallId(v), skipped: true, reason };
+    if (v.mark) return outcome(await write(v.mark.repoSource, markCall(v.mark)));
+    return outcome(await write(repoSourceOf(v.repoSource), mirrorCall(v)));
   }
-  const outcomes = (await Promise.all(mirrored.map(written))).map(outcome);
+  const outcomes = await Promise.all(verdicts.map(written));
   return batch ? { results: outcomes } : outcomes[0]!;
 }
 

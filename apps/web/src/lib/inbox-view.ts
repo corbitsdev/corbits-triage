@@ -1,6 +1,7 @@
 import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
 import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
 import { holdsActionForYou } from "./pending-dos.ts";
+import { hostName } from "./pull-link.ts";
 import { priorityRank } from "./triage-view.ts";
 
 export type InboxAction = "decide" | "review" | "unblock" | "merge" | "failed";
@@ -184,6 +185,19 @@ const POSTED_LABEL: Record<HandledKind, string> = {
 export function postedLabel(item: Pick<PrItem, "posted">, entry: HandledMark | null): string | null {
   if (entry?.kind) return POSTED_LABEL[entry.kind];
   return item.posted ? "Posted" : null;
+}
+
+const NOT_POSTED: Record<string, string> = {
+  stale: "Triage could not reach a verdict and will check again.",
+  waiting: "Triage is waiting for the checks to finish.",
+  no_request: "There was nothing to post.",
+  no_grants: "Triage may not post here. Turn on Comment under Actions Triage takes on its own.",
+};
+
+/** Why the verdict is not on the pull request's host, when the run said. */
+export function notPostedText(item: Pick<PrItem, "notPosted" | "source">): string | null {
+  const why = item.notPosted === undefined ? undefined : NOT_POSTED[item.notPosted];
+  return why === undefined ? null : `Not posted on ${hostName(item.source)}: ${why}`;
 }
 
 export function primaryLabel(action: PrimaryAction): string {

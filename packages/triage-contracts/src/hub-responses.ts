@@ -50,6 +50,8 @@ export const VerdictDetail = type({
   "feedback?": "string",
   "actions?": DetailAction.array(),
   "automatic?": "string[]",
+  /** Why the run's mirror posted nothing on the host: `stale`, `waiting`, `no_request` or `no_grants`. */
+  "notPosted?": "string",
   "facts?": { "+": "delete", "title?": "string", "author?": "string", "draft?": "boolean", "mergeable?": "boolean | null", "checks?": "string", "reviewAnswered?": "boolean" },
 });
 export type VerdictDetail = typeof VerdictDetail.infer;

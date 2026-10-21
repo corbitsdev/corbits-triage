@@ -1426,6 +1426,8 @@ export type PrItem = {
   reviewAnswered: boolean;
   /** The verdict's reply is on GitHub: the run's mirror step wrote non-empty feedback, or this portal sent it (see `useQueueItems`). */
   posted: boolean;
+  /** Why the run posted nothing on the host, when it said: `stale`, `waiting`, `no_request` or `no_grants`. */
+  notPosted?: string;
   running: boolean;
   /** Its policy reads CI, so triage holds this head until its CI finishes. */
   waitingForCi: boolean;
@@ -1580,6 +1582,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     activityAt: pull.activityAt,
     reviewAnswered: facts.reviewAnswered === true,
     posted: verdict.commented,
+    ...(detail.notPosted !== undefined && { notPosted: detail.notPosted }),
     running: isRunning(pull.run),
     ...waitingFields(pull.run),
     failure: failureOf(pull.run),

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
-import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, postedLabel, primaryAction, readyToMerge, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, notPostedText, postedLabel, primaryAction, readyToMerge, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -179,6 +179,11 @@ describe("postedLabel", () => {
     expect(postedLabel(item({ posted: true }), { kind: "changes" })).toBe("Requested changes");
     expect(postedLabel(item({ posted: true }), { kind: null })).toBe("Posted");
     expect(postedLabel(item({}), null)).toBeNull();
+  });
+
+  test("says why the verdict is not on the host and where to turn posting on", () => {
+    expect(notPostedText(item({ notPosted: "no_grants", source: "github" }))).toBe("Not posted on GitHub: Triage may not post here. Turn on Comment under Actions Triage takes on its own.");
+    expect(notPostedText(item({}))).toBeNull();
   });
 });
 
