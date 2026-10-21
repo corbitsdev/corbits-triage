@@ -1,4 +1,4 @@
-import { CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, hostKinds, onFailText, people, VERDICT_NAMES, VERDICTS, type CatalogId, type CheckPack, type CustomCheck, type RepoSource, type Step, type VerdictWord } from "@corbits/triage-contracts";
+import { CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, hostKinds, onFailText, people, VERDICT_NAMES, VERDICTS, type CatalogId, type ActionKind, type CheckPack, type CustomCheck, type RepoSource, type Step, type VerdictWord } from "@corbits/triage-contracts";
 import { FOR_NAMES, forChoice, stepFor } from "../../lib/policy-view.ts";
 
 function doText(step: Step): string {
@@ -13,8 +13,6 @@ function doText(step: Step): string {
       return `Comment “${step.target.body}”`;
     case "request-changes":
       return "Request changes";
-    case "nothing":
-      return "Do nothing";
     default:
       return step.do.charAt(0).toUpperCase() + step.do.slice(1);
   }
@@ -42,13 +40,17 @@ function customText(row: CustomCheck): string {
   return row.kind === "model" && row.shape === "is-true" ? row.claim : customSentence(row);
 }
 
-/** The verdict Triage posts before any step: its comment, with the verdict's label, or on a host without labels its build status. */
-function postText(pack: CheckPack, source: RepoSource, verdict: VerdictWord): string {
-  return hostKinds(source).includes("labels") ? `Comment, and label “${pack.labels[verdict]}”` : "Comment, and set the build status";
+/** The verdict Triage posts before any step: its comment, and the verdict's label, or on a host without labels its build status. */
+function posting(pack: CheckPack, source: RepoSource, verdict: VerdictWord): Array<{ kind: ActionKind; text: string }> {
+  if (!hostKinds(source).includes("labels")) return [{ kind: "comment", text: "Comment with the verdict and build status" }];
+  return [{ kind: "comment", text: "Comment with the verdict" }, { kind: "labels", text: `Label “${pack.labels[verdict]}”` }];
 }
 
-/** The policy triage runs on, read only: each rule that is on, then what happens on each verdict. */
-export default function PolicyRules({ pack, source }: { pack: CheckPack; source: RepoSource }) {
+/**
+ * The policy triage runs on, read only: each rule that is on, then what happens on each verdict. With `automatic`, what
+ * Triage may do on its own, whatever else waits for a person says so; a preview of a file not yet merged leaves it out.
+ */
+export default function PolicyRules({ pack, source, automatic }: { pack: CheckPack; source: RepoSource; automatic?: readonly ActionKind[] }) {
   const rules = [
     ...CATALOG_IDS.flatMap(function shown(id) {
       const text = catalogText(pack, id);
@@ -71,8 +73,8 @@ export default function PolicyRules({ pack, source }: { pack: CheckPack; source:
           <div key={verdict} className="then">
             <b>{VERDICT_NAMES[verdict]}</b>
             <div className="steps">
-              <span>{postText(pack, source, verdict)}</span>
-              {pack.actions[verdict].map((step, at) => <span key={`${verdict}-${at}`}>{doText(step)}{forText(step)}</span>)}
+              {posting(pack, source, verdict).map((post) => <span key={post.kind}>{post.text}{automatic && !automatic.includes(post.kind) ? " (waits for you in the Inbox)" : ""}</span>)}
+              {pack.actions[verdict].filter((step) => step.do !== "nothing").map((step, at) => <span key={`${verdict}-${at}`}>{doText(step)}{forText(step)}</span>)}
             </div>
           </div>
         ))}
