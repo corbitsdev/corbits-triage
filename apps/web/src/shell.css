@@ -357,3 +357,4 @@
 /* With nothing selected the list takes the whole width; the pane only appears for a selection. */
 .inbox:not(.has-selection) { grid-template-columns: minmax(0, 1fr); }
 .inbox:not(.has-selection) .panel.pane { display: none; }
+.ws-new { display: flex; gap: 6px; padding: 4px; }

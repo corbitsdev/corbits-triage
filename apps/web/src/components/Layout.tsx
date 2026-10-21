@@ -1,4 +1,6 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { Button, Input } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { initialsOf, listCounts } from "../lib/inbox-view.ts";
@@ -15,6 +17,9 @@ import { CheckIcon, GearIcon, InboxIcon, ListIcon, PulseIcon, RepoIcon, SignOutI
 function WorkspaceSwitcher() {
   const { snapshot, warn } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  const create = useMutation({ mutationFn: (workspaceName: string) => createExtraWorkspace(createHubTransport(), workspaceName) });
   if (!snapshot) return null;
   const current = snapshot.workspace.tenantId;
   const options = [...snapshot.workspaces, ...snapshot.invitations];
@@ -23,11 +28,24 @@ function WorkspaceSwitcher() {
     if (tenantId !== current) await openWorkspace(tenantId);
   }
 
-  async function create() {
+  function startNaming(event: Event) {
+    event.preventDefault();
+    setNaming(true);
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    let tenantId: string;
     try {
-      await openWorkspace(await createExtraWorkspace(createHubTransport()), "/");
+      tenantId = await create.mutateAsync(name.trim());
     } catch (cause) {
       warn(`Could not create the workspace. ${cause instanceof Error ? cause.message : String(cause)}`);
+      return;
+    }
+    try {
+      await openWorkspace(tenantId);
+    } catch (cause) {
+      warn(`The workspace was created but could not be opened. ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }
 
@@ -40,7 +58,14 @@ function WorkspaceSwitcher() {
         </button>
       </MenuTrigger>
       <MenuContent side="top" align="start" className="ws-menu">
-        <MenuItem onSelect={() => void create()}>+ New workspace</MenuItem>
+        {naming ? (
+          <form className="ws-new" onSubmit={(event) => void submit(event)} onKeyDown={(event) => event.stopPropagation()}>
+            <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Workspace name" aria-label="Workspace name" autoFocus required />
+            <Button type="submit" size="sm" disabled={create.isPending || !name.trim()}>Create</Button>
+          </form>
+        ) : (
+          <MenuItem onSelect={startNaming}>+ New workspace</MenuItem>
+        )}
         <MenuSeparator />
         {snapshot.workspaces.map((workspace) => (
           <MenuItem key={workspace.tenantId} aria-current={workspace.tenantId === current ? "true" : undefined} onSelect={() => void choose(workspace.tenantId)}>

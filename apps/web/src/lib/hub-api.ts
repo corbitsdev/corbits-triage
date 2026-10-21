@@ -478,7 +478,9 @@ function chooseWorkspace(memberships: Membership[], user: HubMe, chosen: string 
   const triage = memberships.filter((entry) => entry.kind === "user" && isTriageSlug(entry.tenantSlug));
   const active = triage.filter((entry) => entry.status === "active");
   const invitations = triage.filter((entry) => entry.status === "invited").map(optionOf);
-  const open = active.find((entry) => entry.tenantId === chosen) ?? active.find((entry) => entry.tenantSlug !== own) ?? active[0];
+  const isOwn = (entry: Membership) => entry.tenantSlug === own;
+  const isExtra = (entry: Membership) => Boolean(entry.tenantSlug?.startsWith(`${own}-`));
+  const open = active.find((entry) => entry.tenantId === chosen) ?? active.find((entry) => !isOwn(entry) && !isExtra(entry)) ?? active.find(isOwn) ?? active[0];
   if (open) {
     const workspace = { tenantId: open.tenantId, principalId: open.principalId, userId: user.id };
     return { kind: "member", workspace, workspaces: active.map(optionOf), invitations };
@@ -564,11 +566,11 @@ async function createWorkspace(transport: Transport): Promise<MemberAccess | Inv
   return resolved;
 }
 
-/** A top-level tenant, no parent: the caller becomes its owner and it starts empty. The slug is unique so one user can make many. */
-export async function createExtraWorkspace(transport: Transport): Promise<string> {
+/** The random slug suffix lets one user make many workspaces. */
+export async function createExtraWorkspace(transport: Transport, name: string): Promise<string> {
   const user = await transport.fetch<HubMe>("GET", "/api/me");
   const slug = `${workspaceSlugFor(user)}-${crypto.randomUUID().slice(0, 6)}`;
-  const created = await transport.fetch<TenantBody>("POST", "/api/tenants", { name: workspaceNameFor(user), slug });
+  const created = await transport.fetch<TenantBody>("POST", "/api/tenants", { name, slug });
   return created.id;
 }
 
