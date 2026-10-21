@@ -284,6 +284,15 @@ describe("mergePr", () => {
     await expect(mergePr(gh, { repo: "acme/widgets", number: 8 })).rejects.toThrow("pull request is not mergeable");
     expect(requests).toEqual([{ path: "/repos/acme/widgets/pulls/8", method: "GET", body: null }]);
   });
+
+  test("a merge the branch's rules refuse fails with GitHub's own reason", async () => {
+    const reason = "At least 1 approving review is required by reviewers with write access.";
+    const { gh } = recorder(function respond(_path, init) {
+      if (init?.method === "PUT") return Response.json({ message: reason }, { status: 405 });
+      return { mergeable: true, mergeable_state: "blocked", head: { sha: "abc123" }, state: "open" };
+    });
+    await expect(mergePr(gh, { repo: "acme/widgets", number: 8 })).rejects.toThrow(`github PUT /repos/acme/widgets/pulls/8/merge -> 405 ${reason}`);
+  });
 });
 
 describe("sendCodeReview", () => {

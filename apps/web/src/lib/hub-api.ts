@@ -1073,6 +1073,14 @@ export type GithubPullDetail = {
     sha: string;
     base: string;
     mergeable: boolean | null;
+    /** GitHub's `mergeable_state`, such as `blocked` when the branch's rules refuse the merge; absent on Bitbucket. */
+    mergeableState?: string;
+    /** Read only when GitHub blocks the merge; null when no review is required or the read failed. */
+    reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+    /** Whether Bitbucket's merge checks allow the merge; absent on GitHub. */
+    canMerge?: boolean;
+    /** Why Bitbucket's merge checks refuse the merge, one summary per check; absent on GitHub. */
+    mergeVetoes?: string[];
     requestedReviewers: number;
     additions: number;
     deletions: number;

@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
-import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, type GithubFetch } from "@corbits/github-reads";
+import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readReviewDecision, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
@@ -17,7 +17,19 @@ export const GITHUB_PR_DETAILS_PATH = "/api/integrations/github-pull";
 
 const Query = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "string.integer.parse" }).pipe((q, ctx) => (q.number > 0 ? q : ctx.error("number must be positive")));
 
-async function githubDetails(gh: GithubFetch, repo: string, number: number) {
+type Log = (entry: Record<string, unknown>) => void;
+
+/** Only a blocked merge asks whether a review is what blocks it; a decision GitHub will not give leaves the block unexplained, not the details unread. */
+async function reviewDecisionOf(gh: GithubFetch, repo: string, number: number, log: Log): Promise<ReviewDecision | null> {
+  try {
+    return await readReviewDecision(gh, repo, number);
+  } catch (err) {
+    log({ level: "warn", msg: "review_decision_failed", repo, number, error: errorText(err) });
+    return null;
+  }
+}
+
+async function githubDetails(gh: GithubFetch, repo: string, number: number, log: Log) {
   const [pr, files, commits, comments] = await Promise.all([
     getPr(gh, repo, number),
     listPrFiles(gh, repo, number),
@@ -25,14 +37,15 @@ async function githubDetails(gh: GithubFetch, repo: string, number: number) {
     listIssueComments(gh, repo, number),
   ]);
   const text = [pr.title ?? "", pr.body ?? "", ...commits.map((c) => c.message)].join("\n");
-  const [issues, checks, reviews] = await Promise.all([
+  const [issues, checks, reviews, reviewDecision] = await Promise.all([
     listReferencedIssues(gh, repo, number, text),
     getChecks(gh, repo, pr.sha),
     getReviews(gh, repo, number, function login() {
       return appLogin(gh);
     }),
+    pr.mergeableState === "blocked" ? reviewDecisionOf(gh, repo, number, log) : null,
   ]);
-  return { pr, files, commits, comments, issues, checks, reviews };
+  return { pr: { ...pr, reviewDecision }, files, commits, comments, issues, checks, reviews };
 }
 
 /** Data Center lists changes without patches or line counts and has no issue tracker of its own. */
@@ -48,13 +61,13 @@ async function bitbucketDetails(bb: bitbucket.BitbucketFetch, repo: string, numb
   return { pr, files: files.map((file) => ({ ...file, additions: 0, deletions: 0 })), commits, comments, issues: [], checks, reviews };
 }
 
-export function createGithubPrDetails(deps: SourceFetchDeps & { log: (entry: Record<string, unknown>) => void }) {
+export function createGithubPrDetails(deps: SourceFetchDeps & { log: Log }) {
   const sourceFetch = createSourceFetch(deps);
 
   async function detailsOf(tenantId: string, principalId: string, record: RepoRecord, number: number) {
     const source = await sourceFetch(tenantId, principalId, record);
     if (!source) throw new Error(`no readable ${sourceOf(record)} credential`);
-    return "bb" in source ? bitbucketDetails(source.bb, record.name, number) : githubDetails(source.gh, record.name, number);
+    return "bb" in source ? bitbucketDetails(source.bb, record.name, number) : githubDetails(source.gh, record.name, number, deps.log);
   }
 
   return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {

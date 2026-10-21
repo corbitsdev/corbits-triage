@@ -16,11 +16,13 @@ export const GITHUB_VERB = {
   close: "close",
 } as const;
 
-/** A host's failure as a sentence; the transport line (method, path, status) is for logs only. */
+/** A host's failure as a sentence with the host's own reason; the method and path are for logs only. */
 function refusal(host: string, what: string, err: unknown): string {
   const message = errorText(err);
-  const status = /(?:-> |answered )(\d{3})\b/.exec(message)?.[1];
-  return `${host} refused to ${what}${status ? ` (HTTP ${status})` : `: ${message}`}.`;
+  const transport = /-> (\d{3})\b\s*(.*)$/s.exec(message);
+  if (!transport) return `${host} refused to ${what}: ${message.replace(/\.$/, "")}.`;
+  const [, status, reason] = transport;
+  return `${host} refused to ${what} (HTTP ${status})${reason ? `: ${reason.replace(/\.$/, "")}` : ""}.`;
 }
 
 export function githubFailed(what: string, err: unknown): Response {

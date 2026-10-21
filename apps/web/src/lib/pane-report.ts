@@ -1,6 +1,6 @@
 import { citationOf } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem, QueueState, RunFailure } from "./hub-api.ts";
-import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
+import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type HeldBlock, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, postedLabel, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
 import { upperFirst } from "./triage-view.ts";
 
@@ -52,6 +52,24 @@ const NOT_YET: Partial<Record<ActionBlocker, string>> = {
   "not-mergeable": "Ready, but has conflicts",
   "mergeability-unknown": "Ready, once GitHub has checked for conflicts",
 };
+
+const HELD_REASON: Record<HeldBlock, string> = {
+  behind: "behind its base branch",
+  "review-required": "waiting for a required review",
+  "changes-requested": "changes are requested",
+  blocked: "the branch's rules block the merge",
+};
+
+export function isHeldBlock(blocker: ActionBlocker | null): blocker is HeldBlock {
+  return blocker !== null && blocker in HELD_REASON;
+}
+
+/** Why the host holds the merge; Bitbucket's merge checks name their own reasons. */
+export function heldReason(block: HeldBlock, detail: GithubPullDetail | undefined): string {
+  const vetoes = detail?.pr.mergeVetoes ?? [];
+  if (block === "blocked" && vetoes.length) return `the merge checks say: ${vetoes.join("; ")}`;
+  return HELD_REASON[block];
+}
 
 function things(count: number): string {
   return `${count} ${count === 1 ? "thing" : "things"}`;
@@ -136,7 +154,9 @@ export function paneStatus({ item, detail, handled, approved, primary }: StatusI
   if (unsure > 0) return status("you", `Not sure about ${things(check)} — your call`);
   if (check > 0) return status("you", `Couldn't check ${things(check)}: ${problems.filter((problem) => problem.severity === "cant").map((problem) => problem.text ?? problem.check.check).join("; ")}`);
   if (item.state !== "ready") return status("you", inboxStatus(item));
-  const blocked = primary?.kind === "merge" && primary.blocker !== null ? NOT_YET[primary.blocker] : undefined;
+  const blocker = primary?.kind === "merge" ? primary.blocker : null;
+  if (isHeldBlock(blocker)) return status("you", `Ready, but ${heldReason(blocker, detail)}`);
+  const blocked = blocker === null ? undefined : NOT_YET[blocker];
   if (blocked !== undefined) return status("you", blocked);
   return status("ready", approved ? "Approved by Triage · ready for you to merge" : "Ready to merge");
 }
