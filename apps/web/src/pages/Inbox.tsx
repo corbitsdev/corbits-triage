@@ -429,7 +429,7 @@ function NoneOpen({ title }: { title: string }) {
   return <EmptyState title={title} description={`${repositoriesText(repos.length)} checked.`} />;
 }
 
-type EmptyListProps = { view: ListView; waiting: boolean; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
+type EmptyListProps = { view: ListView; waiting: boolean; waitingCount: number; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void; onShowWaiting: () => void };
 
 /** A repository whose policy file triage refuses runs nothing, so its pull requests wait here without a verdict. */
 function RefusedPolicies({ repos }: { repos: string[] }) {
@@ -460,19 +460,20 @@ function PolicyUpgradeNotice() {
   );
 }
 
-function EmptyList({ view, waiting, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
+function EmptyList({ view, waiting, waitingCount, loading, denied, noRepos, filtered, onClear, onShowWaiting }: EmptyListProps) {
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
   if (noRepos) {
-    return <div className="zero"><h2>No repositories yet</h2><p>Choose the repositories Triage should read.</p><Button asChild variant="outline" size="sm"><Link to="/repositories">Choose repositories on GitHub</Link></Button></div>;
+    return <EmptyState title="No repositories yet" description="Choose the repositories Triage should read." action={<Button asChild variant="outline" size="sm"><Link to="/repositories">Choose repositories on GitHub</Link></Button>} />;
   }
   if (filtered) {
-    return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><Button type="button" variant="outline" size="sm" onClick={onClear}>Clear filters</Button></div>;
+    return <EmptyState title="Nothing here" description="No pull requests match these filters." action={<Button type="button" variant="outline" size="sm" onClick={onClear}>Clear filters</Button>} />;
   }
   if (view === "all-open") return <NoneOpen title="No open pull requests" />;
-  if (view === "ready") return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing ready</h2><p>No pull requests can be merged now.</p></div>;
-  if (waiting) return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing waiting</h2><p>No pull requests are waiting on others.</p></div>;
-  return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
+  if (view === "ready") return <EmptyState title="Nothing ready" description="No pull requests can be merged now." />;
+  if (waiting) return <EmptyState title="Nothing waiting" description="No pull requests are waiting on others." />;
+  const showWaiting = waitingCount > 0 ? <Button type="button" variant="outline" size="sm" onClick={onShowWaiting}>Show {waitingCount} waiting</Button> : undefined;
+  return <EmptyState icon={<CheckIcon />} title="Inbox zero" description="Nothing needs you." action={showWaiting} />;
 }
 
 function Outcome({ outcome }: { outcome: Notices["outcome"] }) {
@@ -579,6 +580,8 @@ export default function Inbox({ view }: { view: ListView }) {
   const byRepo = view !== "ready" && grouping === "repo";
   const listTitle = waiting ? WAITING : LIST_TITLE[view];
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
+  // Search, filters and grouping have nothing to work on in an empty list.
+  const searchable = loading || entries.some((entry) => listsRest || inNeedsYou(entry.item));
 
   function setFilters(next: InboxFilters) {
     setSearchParams(filtersToParams(next, searchParams), { replace: true });
@@ -692,29 +695,35 @@ export default function Inbox({ view }: { view: ListView }) {
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
           <div className="lh-top"><h1>{listTitle}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && !waiting && !packsPending(packs) && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}<PulseLine /></div>
-          <div className="tools">
-            <label className="search">
-              <SearchIcon />
-              <input ref={searchRef} placeholder="Search" aria-keyshortcuts="/" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
-            </label>
-            <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
-            {view === "needs-you" ? <WaitingToggle on={waiting} count={waitingEntries.length} onToggle={toggleWaiting} /> : null}
-            {groupings.length === 0 ? null : (
-              <div className="seg" role="group" aria-label="Group by">
-                {groupings.map((mode, index) => (
-                  <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
-                ))}
-              </div>
-            )}
-          </div>
-          <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} />
+          {searchable || view === "needs-you" ? (
+            <div className="tools">
+              {searchable ? (
+                <>
+                  <label className="search">
+                    <SearchIcon />
+                    <input ref={searchRef} placeholder="Search" aria-keyshortcuts="/" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
+                  </label>
+                  <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
+                </>
+              ) : null}
+              {view === "needs-you" ? <WaitingToggle on={waiting} count={waitingEntries.length} onToggle={toggleWaiting} /> : null}
+              {searchable && groupings.length > 0 ? (
+                <div className="seg" role="group" aria-label="Group by">
+                  {groupings.map((mode, index) => (
+                    <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {searchable ? <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} /> : null}
         </div>
         <div className="scroll" id="main">
           <RefusedPolicies repos={enabledNames} />
           <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
           {flat.length === 0 ? (
-            <EmptyList view={view} waiting={waiting} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
+            <EmptyList view={view} waiting={waiting} waitingCount={waitingEntries.length} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} onShowWaiting={toggleWaiting} />
           ) : (
             <div className={byRepo ? "groups by-repo" : "groups"}>
               {piles.map((pile) => <Pile key={pile.key} view={view} byRepo={byRepo} pile={pile} selectedKey={selected?.key} search={search} />)}

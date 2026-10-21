@@ -12,7 +12,7 @@ import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useSession } from "../lib/session.tsx";
-import { CheckIcon, GearIcon, InboxIcon, ListIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, GearIcon, InboxIcon, ListIcon, MergeIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
   const { snapshot, warn } = usePortal();
@@ -165,10 +165,12 @@ export default function Layout({ children }: { children: ReactNode }) {
             {openPullsUnanswered ? null : <span className="n">{counts["needs-you"]}</span>}
           </Link>
           <Link className="nav-a" to="/ready" aria-current={readyActive ? "true" : undefined}>
+            <MergeIcon />
             Ready
             {openPullsUnanswered ? null : <span className="n">{counts.ready}</span>}
           </Link>
           <Link className="nav-a" to="/open" aria-current={allOpenActive ? "true" : undefined}>
+            <ListIcon />
             All open
             {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
           </Link>
@@ -185,6 +187,10 @@ export default function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/inbox" className={needsYouActive ? "active" : undefined}>
             <InboxIcon />
             Needs you
+          </NavLink>
+          <NavLink to="/ready" className={readyActive ? "active" : undefined}>
+            <MergeIcon />
+            Ready
           </NavLink>
           <NavLink to="/open" className={allOpenActive ? "active" : undefined}>
             <ListIcon />
