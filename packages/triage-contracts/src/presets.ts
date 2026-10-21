@@ -1,4 +1,4 @@
-import { VERDICT_LABELS, WAITING_LABEL, type VerdictWord } from "./check-pack.js";
+import { FAILED_LABEL, VERDICT_LABELS, WAITING_LABEL, type VerdictWord } from "./check-pack.js";
 import type { Priority, WorkflowState } from "./types.js";
 
 const OWNERS: Record<WorkflowState, string> = {
@@ -24,7 +24,7 @@ const RETIRED_LABELS = [
 ];
 
 /** Includes every label triage once set. */
-export const TRIAGE_LABELS: readonly string[] = [...Object.values(VERDICT_LABELS), WAITING_LABEL, ...RETIRED_LABELS];
+export const TRIAGE_LABELS: readonly string[] = [...Object.values(VERDICT_LABELS), WAITING_LABEL, FAILED_LABEL, ...RETIRED_LABELS];
 
 /** The mirror takes back these when they no longer apply. */
 export function ownedLabels(labels: Record<VerdictWord, string>): string[] {

@@ -4,9 +4,9 @@ import { repoSourceOf, ruleLabel, type ActionKind } from "@corbits/triage-contra
 import { isRecord } from "@corbits/common";
 import { asText } from "../logic/extract.js";
 import { call, data, hostWrite, toolName, type HostWrite } from "../logic/host.js";
-import type { Verdict } from "../logic/render.js";
+import type { Verdict, WaitingMark } from "../logic/render.js";
 import { decidesDos } from "../logic/settled.js";
-import type { WaitingMark, WaitingOutput } from "./waiting.js";
+import type { WaitingOutput } from "./waiting.js";
 
 const MIRRORED_KINDS: readonly ActionKind[] = ["comment", "labels", "approve", "request-changes"];
 
@@ -40,10 +40,10 @@ function dismissals(v: Verdict) {
   return { ...(settled && v.approvable === false && { notReadyHead: v.headSha }), ...(settled && v.changesWanted === false && { fixedHead: v.headSha }) };
 }
 
-/** Whether the mirror writes anything for the verdict: what the pr-triage role is granted, or what an earlier Do left to take back. */
+/** Whether the mirror writes anything for the verdict: its marker, what the pr-triage role is granted, or what an earlier Do left to take back. */
 function mirrors(v: Verdict): boolean {
-  if (v.mirror !== true || !v.request || !Array.isArray(v.automatic)) return false;
-  if (v.waiting) return v.mark !== undefined;
+  if (v.mark !== undefined) return true;
+  if (v.mirror !== true || v.waiting || !v.request || !Array.isArray(v.automatic)) return false;
   return MIRRORED_KINDS.some((kind) => v.automatic.includes(kind)) || Object.keys(dismissals(v)).length > 0;
 }
 

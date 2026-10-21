@@ -2,12 +2,12 @@ import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { ACTION_KINDS, PolicySourceShape, REPO_SOURCES, type ActionKind, type CheckPack, type PolicySource, type RepoSource } from "@corbits/triage-contracts";
 import { deriveState, type PrFacts } from "../logic/checks.js";
-import { degradedItem, type Item, type Judged } from "../logic/item.js";
+import { degradedItem, type Item, type Judged, type UnreadPull } from "../logic/item.js";
 import { judgeKey, prepareQualityEvaluation, type JudgeRequest } from "../logic/quality.js";
 import { choiceFirst, choiceOf, repliesTo } from "./evaluate.js";
 import { stepJson } from "../logic/step-json.js";
 
-export type RulesItem = { error: string } | { facts: PrFacts; pack: CheckPack; automatic?: ActionKind[]; judged?: Judged; source?: PolicySource; repoSource?: RepoSource; noWait?: true };
+export type RulesItem = { error: string; pull?: UnreadPull; pack?: CheckPack; automatic?: ActionKind[]; repoSource?: RepoSource } | { facts: PrFacts; pack: CheckPack; automatic?: ActionKind[]; judged?: Judged; source?: PolicySource; repoSource?: RepoSource; noWait?: true };
 
 interface RulesInput {
   items: RulesItem[];
@@ -25,14 +25,14 @@ export interface RulesOutput {
 }
 
 const Input = type({
-  items: type({ error: "string" })
+  items: type({ error: "string", "pull?": { repo: "string", number: "number", headSha: "string" }, "pack?": "object", "automatic?": type.enumerated(...ACTION_KINDS).array(), "repoSource?": type.enumerated(...REPO_SOURCES) })
     .or({ facts: "object", pack: "object", "automatic?": type.enumerated(...ACTION_KINDS).array(), "judged?": "Record<string, string>", "source?": PolicySourceShape, "repoSource?": type.enumerated(...REPO_SOURCES), "noWait?": "true" })
     .array(),
   batch: "boolean",
 });
 
 function ruled(it: RulesItem): { item: Item; requests: JudgeRequest[] } {
-  if ("error" in it) return { item: degradedItem(it.error), requests: [] };
+  if ("error" in it) return { item: degradedItem(it), requests: [] };
   const item = { facts: it.facts, det: deriveState(it.facts, undefined, it.pack), automatic: it.automatic, pack: it.pack, judged: it.judged, source: it.source, ...(it.repoSource && { repoSource: it.repoSource }), ...(it.noWait && { noWait: it.noWait }) };
   if (!item.det.needsJudgment) return { item, requests: [] };
   const evaluation = prepareQualityEvaluation(item.facts, item.det.sources);

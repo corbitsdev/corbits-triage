@@ -30,10 +30,16 @@ export const NO_FACTS: PrFacts = {
   body: "", commits: [], commitMessages: [], docs: {}, rules: {}, branch: "", authorTeams: [], authorTeamsUnknown: [], events: [], hidden: [],
 };
 
-export function degradedItem(reason: string): Item {
+/** The head of a pull request that could not be read, when the host or the mail named one. */
+export type UnreadPull = Pick<PrFacts, "repo" | "number" | "headSha">;
+
+export function degradedItem({ error, pull, pack, automatic, repoSource }: { error: string; pull?: UnreadPull; pack?: CheckPack; automatic?: ActionKind[]; repoSource?: RepoSource }): Item {
   return {
-    facts: NO_FACTS,
-    det: { state: "stale-unknown", reason, findings: [], checks: [], needsJudgment: false },
-    error: reason,
+    facts: { ...NO_FACTS, ...pull },
+    det: { state: "stale-unknown", reason: error, findings: [], checks: [], needsJudgment: false },
+    error,
+    ...(pack && { pack }),
+    ...(automatic && { automatic }),
+    ...(repoSource && { repoSource }),
   };
 }

@@ -291,6 +291,9 @@ export const VERDICT_LABELS: Record<VerdictWord, string> = { pass: "Triage: Read
 /** On a head held for its CI until the verdict replaces it. */
 export const WAITING_LABEL = "Triage: Waiting for CI";
 
+/** On a pull request Triage could not read, until its next verdict replaces it. */
+export const FAILED_LABEL = "Triage: Failed to Run";
+
 /** `rules` labels each failed rule (`ruleLabel`); the verdict's label is the policy's `labels`, which the mirror writes. */
 export type LabelsTarget = { from: "list"; labels: string[] } | { from: "rules" };
 export type PeopleTarget =
