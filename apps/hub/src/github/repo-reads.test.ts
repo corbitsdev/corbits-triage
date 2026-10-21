@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { GithubRateLimited } from "./github-usage.js";
 import { keptOpenPrs } from "./open-pulls.js";
 import { createRepoReads, KEPT_MS } from "./repo-reads.js";
 
@@ -32,7 +33,7 @@ test("a GitHub repository is listed again only after a webhook about its pull re
   expect(listed.filter((name) => name === REPO)).toHaveLength(3);
 });
 
-test("an unusable or failed read is read again, and a change during a read leaves its answer unkept", async () => {
+test("an unusable or rate-limited read is read again, and a change during a read leaves its answer unkept", async () => {
   const reads = createRepoReads(() => new Date(0));
   let calls = 0;
   let release = function none() {};
@@ -41,7 +42,7 @@ test("an unusable or failed read is read again, and a change during a read leave
       return "computing";
     },
     async function failed(): Promise<string> {
-      throw new Error("github GET -> 502");
+      throw new GithubRateLimited("42", 60_000);
     },
     function slow() {
       return new Promise<string>(function wait(resolve) {
@@ -64,7 +65,7 @@ test("an unusable or failed read is read again, and a change during a read leave
   }
 
   expect(await read()).toBe("computing");
-  await expect(read()).rejects.toThrow("502");
+  await expect(read()).rejects.toBeInstanceOf(GithubRateLimited);
   const during = read();
   reads.changed(TENANT, REPO, "status");
   release();

@@ -11,6 +11,7 @@ import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommit
 import { errorText } from "@corbits/common";
 import { shownBody, visibleText } from "@corbits/triage-contracts";
 import { githubLimited } from "./github-refusal.js";
+import { GithubRateLimited } from "./github-usage.js";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import type { RepoReads } from "./repo-reads.js";
@@ -24,15 +25,15 @@ const Query = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "string.integer.parse" 
 type Log = (entry: Record<string, unknown>) => void;
 
 /**
- * Only a blocked merge asks whether a review is what blocks it; a decision GitHub will not give (404) leaves the block
- * unexplained, not the details unread. Any other failure, a rate limit among them, fails the read.
+ * Only a blocked merge asks whether a review is what blocks it; a decision GitHub will not give leaves the block
+ * unexplained, not the details unread. GitHub's rate limit fails the read like any other part of it.
  */
 async function reviewDecisionOf(gh: GithubFetch, repo: string, number: number, log: Log): Promise<ReviewDecision | null> {
   try {
     const [state] = await readMergeStates(gh, repo, [number]);
     return state?.reviewDecision ?? null;
   } catch (err) {
-    if (!/ -> 404\b/.test(errorText(err))) throw err;
+    if (err instanceof GithubRateLimited) throw err;
     log({ level: "warn", msg: "review_decision_failed", repo, number, error: errorText(err) });
     return null;
   }
