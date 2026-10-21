@@ -18,7 +18,7 @@ export type CheckItem = typeof ItemsSchema.infer[number];
  * rule was rated, of its levels worst first. Met, not applicable and could not check are states, never numbers; a check
  * skipped for a reason, such as focused on a stacked branch, is not applicable with that reason.
  */
-export const CheckOutputSchema = type({ kind: "'values'", values: "Record<string, number | boolean | string>" })
+const CheckOutputSchema = type({ kind: "'values'", values: "Record<string, number | boolean | string>" })
   .or({ kind: "'score'", score: "0 <= number <= 100", passAt: "0 <= number <= 100", items: ItemsSchema, "unread?": "string[]" })
   .or({ kind: "'level'", level: "string", levels: "string[]", "failBelow?": "string" })
   .or({ kind: "'met'", items: ItemsSchema })
