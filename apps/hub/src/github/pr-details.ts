@@ -50,7 +50,7 @@ async function githubDetails(gh: GithubFetch, repo: string, number: number, log:
     }),
     pr.mergeableState === "blocked" ? reviewDecisionOf(gh, repo, number, log) : null,
   ]);
-  return { pr: { ...pr, reviewDecision }, files, commits, comments, issues, checks, reviews };
+  return { pr: { ...pr, shownBody: body, reviewDecision }, files, commits, comments, issues, checks, reviews };
 }
 
 /** Data Center lists changes without patches or line counts and has no issue tracker of its own. */
@@ -63,7 +63,7 @@ async function bitbucketDetails(bb: bitbucket.BitbucketFetch, repo: string, numb
     bitbucket.getReviews(bb, repo, number),
   ]);
   const checks = await bitbucket.getChecks(bb, pr.sha);
-  return { pr, files: files.map((file) => ({ ...file, additions: 0, deletions: 0 })), commits, comments, issues: [], checks, reviews };
+  return { pr: { ...pr, shownBody: visibleText(pr.body ?? "") }, files: files.map((file) => ({ ...file, additions: 0, deletions: 0 })), commits, comments, issues: [], checks, reviews };
 }
 
 export function createGithubPrDetails(deps: SourceFetchDeps & { log: Log }) {

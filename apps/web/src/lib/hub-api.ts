@@ -1066,6 +1066,8 @@ export type GithubPullDetail = {
     number: number;
     title: string;
     body: string | null;
+    /** The description as a reader sees it, without hidden text such as HTML comments. */
+    shownBody: string;
     state: string;
     merged: boolean;
     draft: boolean;
