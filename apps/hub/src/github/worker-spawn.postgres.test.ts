@@ -118,7 +118,6 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
 
     coordinator.enqueue(JOB);
     const noListener = await timer.promise;
-    expect(coordinator.snapshot(TENANT).queued).toHaveLength(1);
 
     timer = Promise.withResolvers();
     await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed" });

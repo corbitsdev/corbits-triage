@@ -26,10 +26,6 @@ export type TriageJob = {
   record?: RepoRecord;
 };
 
-type JobView = Pick<TriageJob, "repo" | "number" | "headSha" | "source" | "workflow">;
-export type QueuedJob = JobView & { queuedAt: string };
-export type RunningJob = QueuedJob & { startedAt: string; runId?: string };
-
 /** A spawn that cannot happen yet: the host has no room, or no listener to copy is live. The job is retried, not failed. */
 export class WorkerDeferredError extends Error {}
 
@@ -53,13 +49,8 @@ export type CoordinatorDeps = {
   log: (entry: Record<string, unknown>) => void;
 };
 
-/** A started job; `runId` is set once the worker is spawned. */
-type Running = { job: TriageJob; queuedAt: string; startedAt: string; runId?: string };
-
 export type Coordinator = {
   enqueue: (job: TriageJob) => void;
-  /** The tenant's jobs waiting and running, oldest first. */
-  snapshot: (tenantId: string) => { queued: QueuedJob[]; running: RunningJob[] };
   /** Cancels the spawn timer; queued heads stay queued for the reconciler. */
   stop: () => void;
 };
@@ -70,14 +61,9 @@ function keyOf({ tenantId, workflow, repo, number }: TriageJob): string {
   return `${tenantId}\n${lane}\n${repo}\n${number}`;
 }
 
-function view(job: TriageJob): JobView {
-  const { repo, number, headSha, source, workflow } = job;
-  return { repo, number, headSha, source, workflow };
-}
-
 export function createCoordinator(deps: CoordinatorDeps): Coordinator {
-  const queue = new Map<string, { job: TriageJob; queuedAt: string }>();
-  const running = new Map<number, Running>();
+  const queue = new Map<string, { job: TriageJob }>();
+  const running = new Map<number, { job: TriageJob }>();
   let slots = 0;
   /** Deferred jobs: how often, and when they may spawn again. */
   const refused = new Map<string, { attempts: number; notBefore: number }>();
@@ -111,7 +97,7 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
   function requeue(job: TriageJob): void {
     const key = keyOf(job);
     if (queue.has(key)) return;
-    queue.set(key, { job, queuedAt: deps.now().toISOString() });
+    queue.set(key, { job });
   }
 
   function defer(job: TriageJob): number {
@@ -151,7 +137,6 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
       return;
     }
     refused.delete(keyOf(job));
-    running.set(slot, { ...running.get(slot)!, runId });
     deps.log({ level: "info", msg: "worker_spawned", ...entry, runId });
     try {
       await deps.spawner.ended(job.tenantId, runId);
@@ -186,11 +171,10 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
           if (waitMs !== undefined) waitThenPump(waitMs);
           return;
         }
-        const { queuedAt } = queue.get(keyOf(job))!;
         queue.delete(keyOf(job));
         // Marks the pull request running through the spawn so a concurrent pump cannot start it twice.
         const slot = ++slots;
-        running.set(slot, { job, queuedAt, startedAt: deps.now().toISOString() });
+        running.set(slot, { job });
         void spawn(slot, job);
       }
     } finally {
@@ -202,13 +186,8 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
     enqueue(job) {
       // A newer job for a waiting pull request takes its place in line, not a new one.
       const key = keyOf(job);
-      queue.set(key, { job, queuedAt: queue.get(key)?.queuedAt ?? deps.now().toISOString() });
+      queue.set(key, { job });
       void pump();
-    },
-    snapshot(tenantId) {
-      const queued = [...queue.values()].filter(({ job }) => job.tenantId === tenantId).map(({ job, queuedAt }) => ({ ...view(job), queuedAt }));
-      const workers = [...running.values()].filter(({ job }) => job.tenantId === tenantId).map(({ job, queuedAt, startedAt, runId }) => ({ ...view(job), queuedAt, startedAt, ...(runId && { runId }) }));
-      return { queued, running: workers };
     },
     stop() {
       stopped = true;
