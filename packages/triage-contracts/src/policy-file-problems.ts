@@ -53,7 +53,7 @@ const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact
   [[BLOCK, "for"], GROUPS_TEXT],
   [[BLOCK, "when"], MAPPING],
   [[BLOCK, "when", "triage"], VERDICTS_TEXT],
-  [[BLOCK, "when", "paths"], "a list of globs"],
+  [[BLOCK, "when", "paths"], "a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches"],
   [[BLOCK, "clean"], MAPPING],
   [[BLOCK, "clean", "below"], SEVERITY_TEXT],
   [[BLOCK, "clean", "minConfidence"], "a number from 0 to 1"],

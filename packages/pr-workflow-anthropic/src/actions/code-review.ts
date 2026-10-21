@@ -53,9 +53,18 @@ function factsOf(steps: Steps): Record<string, unknown> | undefined {
   return isRecord(item) && isRecord(item.facts) ? item.facts : undefined;
 }
 
+/** Every changed path, a renamed file's old one too; undefined when facts could not read every changed file. */
 function changedPaths(steps: Steps): string[] | undefined {
-  const paths = factsOf(steps)?.paths;
-  return Array.isArray(paths) ? paths.filter((path) => typeof path === "string") : undefined;
+  const read = factsOf(steps);
+  if (!read || !Array.isArray(read.files) || typeof read.changedFiles !== "number" || read.files.length < read.changedFiles) return undefined;
+  return read.files.flatMap((file) => (isRecord(file) ? [file.path, file.previousPath].filter((path) => typeof path === "string") : []));
+}
+
+/** A path matches a glob without `!`, or any path does when every glob has one, and no glob with `!`. */
+function inPaths(path: string, globs: readonly string[]): boolean {
+  const included = globs.filter((glob) => !glob.startsWith("!"));
+  const excluded = globs.filter((glob) => glob.startsWith("!")).map((glob) => glob.slice(1));
+  return (included.length === 0 || included.some((glob) => globMatch(path, glob))) && !excluded.some((glob) => globMatch(path, glob));
 }
 
 /** Undefined when the facts do not say who the author is, or not enough to tell their group. */
@@ -95,7 +104,7 @@ export function scopeOf(trigger: unknown, steps: Steps): Scope {
   if (codeReview.paths) {
     const changed = changedPaths(steps);
     if (changed === undefined) return incomplete("triage could not read the changed files");
-    if (!changed.some((path) => codeReview.paths!.some((glob) => globMatch(path, glob)))) return skipped(`no changed file matches ${codeReview.paths.join(", ")}`);
+    if (!changed.some((path) => inPaths(path, codeReview.paths!))) return skipped(`no changed file matches ${codeReview.paths.join(", ")}`);
   }
   return { open: true, request: codeReviewRequest };
 }

@@ -116,7 +116,11 @@ Triage checks these keys but does not act on them yet; write them only when the 
 ```yaml
 groups:
   maintainers: { association: [OWNER, MEMBER, COLLABORATOR] }
-code-review: { on: true, for: [maintainers], provider: anthropic }
+code-review:
+  on: true
+  for: [maintainers]
+  when: { paths: ["!**/*.md", "!**/*.lock", "!**/package-lock.json", "!**/pnpm-lock.yaml"] }
+  provider: anthropic
 security:
   on: true
   when: { triage: pass, paths: ["src/**"] }
@@ -134,7 +138,7 @@ decide:
 - A block (`code-review`, `security`, `deslop`) takes only:
   - `on`: `true` or `false` (required).
   - `for`: list of groups; default everyone.
-  - `when`: `triage` (`pass`, `fail`, `unsure` or a list of them) and `paths` (globs; any changed file matching is enough).
+  - `when`: `triage` (`pass`, `fail`, `unsure` or a list of them) and `paths` (globs; any changed file matching is enough). A glob starting with `!` leaves out the files it matches; with only `!` globs, every other file matches. A renamed file counts under its old and new path. When Triage can't read every changed file, the block is recorded as unfinished (`incomplete`), never skipped. When the user asks to turn on `code-review`, suggest skipping pull requests that change only Markdown docs or lockfiles (`*.lock`, which covers `bun.lock`, plus `package-lock.json` and `pnpm-lock.yaml`), as in the example.
   - `clean`: `below` (`low`, `medium`, `high` or `critical`), `minConfidence` (0 to 1), `coverage: full`.
   - `provider`: `anthropic`, `openai`, `xai`, `google`, `opencode` or `custom`. Every block that is on and names one must name the same.
 - `pace`: `debounce`, `maxWait` (durations of at least 1, such as `30s`, `2m`, `24h`, `7d`), `perHead` (whole number ≥ 1), `cap: { runs, per }`, `backoff: { pushes, within, pause }`.
