@@ -38,7 +38,7 @@ export default function PolicySection({ repo, source, pack, disabled, onSettled 
     return (
       <>
         {settled ? <p className="moved"><span className="mk ok"><CheckIcon /></span><span>Done. Your rules now come from <code>{file.path}</code>.</span></p> : null}
-        <PolicyRules pack={pack} />
+        <PolicyRules pack={pack} source={source} />
       </>
     );
   }

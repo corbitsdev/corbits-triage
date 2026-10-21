@@ -1,4 +1,4 @@
-import { CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, onFailText, people, VERDICT_NAMES, VERDICTS, type CatalogId, type CheckPack, type CustomCheck, type Step } from "@corbits/triage-contracts";
+import { CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, hostKinds, onFailText, people, VERDICT_NAMES, VERDICTS, type CatalogId, type CheckPack, type CustomCheck, type RepoSource, type Step, type VerdictWord } from "@corbits/triage-contracts";
 import { FOR_NAMES, forChoice, stepFor } from "../../lib/policy-view.ts";
 
 function doText(step: Step): string {
@@ -42,8 +42,13 @@ function customText(row: CustomCheck): string {
   return row.kind === "model" && row.shape === "is-true" ? row.claim : customSentence(row);
 }
 
+/** The verdict Triage posts before any step: its comment, with the verdict's label, or on a host without labels its build status. */
+function postText(pack: CheckPack, source: RepoSource, verdict: VerdictWord): string {
+  return hostKinds(source).includes("labels") ? `Comment, and label “${pack.labels[verdict]}”` : "Comment, and set the build status";
+}
+
 /** The policy triage runs on, read only: each rule that is on, then what happens on each verdict. */
-export default function PolicyRules({ pack }: { pack: CheckPack }) {
+export default function PolicyRules({ pack, source }: { pack: CheckPack; source: RepoSource }) {
   const rules = [
     ...CATALOG_IDS.flatMap(function shown(id) {
       const text = catalogText(pack, id);
@@ -66,7 +71,7 @@ export default function PolicyRules({ pack }: { pack: CheckPack }) {
           <div key={verdict} className="then">
             <b>{VERDICT_NAMES[verdict]}</b>
             <div className="steps">
-              {pack.actions[verdict].length === 0 ? <span className="none">Nothing</span> : null}
+              <span>{postText(pack, source, verdict)}</span>
               {pack.actions[verdict].map((step, at) => <span key={`${verdict}-${at}`}>{doText(step)}{forText(step)}</span>)}
             </div>
           </div>

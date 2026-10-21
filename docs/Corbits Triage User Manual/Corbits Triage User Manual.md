@@ -98,7 +98,7 @@ Once the steps are done or skipped, the portal takes you to Repositories, where 
 
 Every repository has its own page under **Repositories** in the menu under your name. A repository's rules, and what Triage does with each verdict, live in a file in the repository called `.corbits-triage.yml`. The page reads that file back to you. From top to bottom it holds the triage switch, **Actions Triage takes on its own**, the **Policy**, **Code review**, **Outcomes** and **Remove repository**. Switches are saved as you change them; the word beside the repository's name says **Saving…** while a change is on its way, **Saved** once it is stored, and **Not saved** if the save failed.
 
-![The repository page for acme/gadgets beside the Repositories list: the triage switch on, then Policy with Change on GitHub and its rules read back as sentences, from Flag pull requests over 25 files changed to Never accept changes to vendor/**, node_modules/**, then Pass: Approve, for maintainers; Fail: Nothing; Unsure: Request review from code owners, and Code review below](images/06.png)
+![The repository page for acme/gadgets beside the Repositories list: the triage switch on, then Policy with Change on GitHub and its rules read back as sentences, from Flag pull requests over 25 files changed to Never accept changes to vendor/**, node_modules/**, then Pass: Comment, and label “Triage: Ready”, Approve, for maintainers; Fail: Comment, and label “Triage: Not Ready”; Unsure: Comment, and label “Triage: Needs Human Review”, Request review from code owners, and Code review below](images/06.png)
 
 ### Turning triage on
 
@@ -133,7 +133,7 @@ A repository's policy is the file `.corbits-triage.yml` (`.corbits-triage.yaml` 
 
 - With no file and no rules saved in Triage, the section shows a **Start a policy file** card with the steps **Review**, **Open pull request**, **Merge** (**Merge on Bitbucket** for a Bitbucket repository) and **Done**. It lists the rules the file starts with: at most 30 files and 3,000 lines changed, no merge conflicts and passing CI, with no actions. **Open the pull request** opens one adding `.corbits-triage.yml`, or shows the one already open; change the rules there before you merge. Triage runs nothing on the repository until it is merged.
 
-  ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge and Done, the four starter rules with Nothing on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
+  ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge and Done, the four starter rules with Comment and the verdict's label on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
 
 - When a change to the file reaches the default branch, the next triage uses it.
 - If the file has a mistake, Triage runs nothing on the repository until it is fixed. The section says so and lists each problem, and the Inbox names the repository. A repository that still has rules saved in Triage keeps running on them instead, and its card below says **Triage can't read** the file and why.
@@ -292,7 +292,7 @@ Draft pull requests are not decided at all, and a closed pull request gets no ve
 
 ### Actions
 
-The file lists steps for each verdict, and the Policy section shows them under **Pass**, **Fail** and **Unsure**, or **Nothing** when a verdict has none. Each step names an action and who it is for.
+The file lists steps for each verdict, and the Policy section shows them under **Pass**, **Fail** and **Unsure**, after the verdict Triage always posts: a comment and the verdict's label, or on Bitbucket a comment and the build status. Each step names an action and who it is for.
 
 | Action | What it does |
 | --- | --- |
