@@ -19,8 +19,7 @@ import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serv
 import * as actions from "./actions/index.js";
 import { workflow as bitbucket } from "./pr-workflow-bitbucket-datacenter.js";
 import { workflow as github } from "./pr-workflow-github.js";
-import { scopeOf } from "./actions/code-review.js";
-import { severityOf } from "./actions/decide.js";
+import { codeReviewOutcome, scopeOf } from "./actions/code-review.js";
 import { credentialBindingsFor, prWorkflowOf } from "./pr-workflow.js";
 
 // joho/godotenv#262 as GitHub served it; its head is checked out from the new side of its patches.
@@ -249,8 +248,31 @@ test("schema 3 actions beside code review on never approve or merge after a P0 f
   expect((composed.outputs["evaluate"] as Verdict).feedback).not.toContain("Triage will");
 });
 
-test("a finding's priority 0 to 3 reads as critical to low, and any other, or none, as critical", () => {
-  expect([0, 3, 4, undefined].map((priority) => severityOf({ priority }))).toEqual(["critical", "low", "critical", "critical"]);
+async function outcome(clean: unknown, review: unknown): Promise<unknown> {
+  return codeReviewOutcome({ codeReview_scope: { output: { open: true, request: REVIEW_REQUEST, clean } }, codeReview_review: { output: review } });
+}
+
+function reviewOf(comments: object[]) {
+  return { comments, budgetExhausted: false };
+}
+
+test.each([
+  ["no finding is clean", {}, reviewOf([]), { outcome: "clean" }],
+  ["priority 0 to 3 reads as critical to low", {}, reviewOf([{ priority: 3 }, { priority: 1 }]), { outcome: "findings", worst: "high" }],
+  ["any other priority, or none, reads as critical", {}, reviewOf([{ priority: 3 }, { priority: 4 }]), { outcome: "findings", worst: "critical" }],
+  ["findings below `below` don't count", { below: "high" }, reviewOf([{ priority: 2 }, { priority: 3 }]), { outcome: "clean" }],
+  ["the worst is of the findings that count", { below: "medium" }, reviewOf([{ priority: 2 }, { priority: 3 }]), { outcome: "findings", worst: "medium" }],
+  ["a finding with no priority is at `below` or worse", { below: "critical" }, reviewOf([{}]), { outcome: "findings", worst: "critical" }],
+  ["a cut review is incomplete, whatever counts", { below: "critical" }, { ...reviewOf([]), cut: { lines: 10, of: 20 } }, { outcome: "incomplete" }],
+  ["a review that stopped early is incomplete, whatever counts", { below: "critical" }, { ...reviewOf([]), budgetExhausted: true }, { outcome: "incomplete" }],
+  ["a review that cannot be read is incomplete", {}, { comments: "none" }, { outcome: "incomplete" }],
+])("%s", async (_, clean, review, expected) => {
+  expect(await outcome(clean, review)).toEqual({ ...expected, review });
+});
+
+test("the scope carries the block's `clean`, and a `clean` it cannot read leaves the review incomplete", () => {
+  expect(scope({ ...ON, clean: { below: "high" } }, JUDGED)).toEqual({ open: true, request: REVIEW_REQUEST, clean: { below: "high" } });
+  expect(scope({ ...ON, clean: { below: "severe" } }, JUDGED)).toMatchObject({ open: false, outcome: "incomplete" });
 });
 
 test("a review step that fails for good records the review incomplete, which holds a rule's approve and merge", async () => {
@@ -289,15 +311,15 @@ const MEMBER = { author: "octocat", authorKind: "MEMBER" };
 const JUDGED = judged(MEMBER);
 
 test("the scope runs for any group the author is in, on the verdicts and paths the policy names", () => {
-  expect(scope({ ...ON, for: ["core"] }, JUDGED)).toEqual({ open: true, request: REVIEW_REQUEST });
-  expect(scope({ ...ON, for: ["external"] }, judged({ author: "SAY-5", authorKind: "FIRST_TIME_CONTRIBUTOR" }))).toEqual({ open: true, request: REVIEW_REQUEST });
+  expect(scope({ ...ON, for: ["core"] }, JUDGED)).toEqual({ open: true, request: REVIEW_REQUEST, clean: {} });
+  expect(scope({ ...ON, for: ["external"] }, judged({ author: "SAY-5", authorKind: "FIRST_TIME_CONTRIBUTOR" }))).toEqual({ open: true, request: REVIEW_REQUEST, clean: {} });
   expect(scope({ ...ON, for: ["external"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "the author is in core, maintainers, everyone, not external" });
   expect(scope({ ...ON, triage: ["fail", "unsure"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "triage is pass, not fail or unsure" });
   expect(scope({ ...ON, paths: ["docs/**"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "no changed file matches docs/**" });
   const docsOnly = ["!*.md", "!docs/**", "!*.lock"];
   expect(scope({ ...ON, paths: docsOnly }, judged(MEMBER, [{ path: "README.md" }, { path: "docs/a.md" }, { path: "bun.lock" }]))).toEqual({ open: false, outcome: "skipped", reason: "no changed file matches !*.md, !docs/**, !*.lock" });
-  expect(scope({ ...ON, paths: docsOnly }, judged(MEMBER, [{ path: "README.md" }, { path: "src/a.ts" }]))).toEqual({ open: true, request: REVIEW_REQUEST });
-  expect(scope({ ...ON, paths: docsOnly }, judged(MEMBER, [{ path: "docs/a.ts", previousPath: "src/a.ts" }]))).toEqual({ open: true, request: REVIEW_REQUEST });
+  expect(scope({ ...ON, paths: docsOnly }, judged(MEMBER, [{ path: "README.md" }, { path: "src/a.ts" }]))).toEqual({ open: true, request: REVIEW_REQUEST, clean: {} });
+  expect(scope({ ...ON, paths: docsOnly }, judged(MEMBER, [{ path: "docs/a.ts", previousPath: "src/a.ts" }]))).toEqual({ open: true, request: REVIEW_REQUEST, clean: {} });
   expect(scope({ ...ON, paths: ["*.go", "!parser.go"] }, JUDGED)).toMatchObject({ open: false, outcome: "skipped" });
 });
 
