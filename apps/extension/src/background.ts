@@ -129,9 +129,9 @@ function onMessage(request: Request, sender: Browser.runtime.MessageSender, send
   return true;
 }
 
-/** Checks saved by an older version may not read in this one, and a new version may check differently. */
+/** Checks saved by an older version may not read in this one, and a new version may check differently; rules and the model key it no longer uses are removed. */
 function onInstalled({ reason }: Browser.runtime.InstalledDetails): void {
-  if (reason === "update") settle(Promise.all([views.setValue({}), runStates.setValue({}), policyFiles.setValue({})]));
+  if (reason === "update") settle(Promise.all([views.setValue({}), runStates.setValue({}), policyFiles.setValue({}), browser.storage.local.remove(["system-one", "packs"])]));
 }
 
 export function startBackground(): void {
