@@ -9,12 +9,21 @@ import { eq } from "drizzle-orm";
 import { findArtifactByTitle, getArtifact, setArtifactArchived, type ArtifactDb, type ArtifactRow } from "@corbits/artifacts";
 import { schema, type DB } from "@intx/db";
 import { asRepo } from "@corbits/common";
-import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type SharedFileRef } from "@corbits/triage-contracts";
+import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type PolicyWorkflow, type SharedFileRef } from "@corbits/triage-contracts";
 import type { PolicyFileState } from "./policy-file.js";
+import { prWorkflowKeys } from "./pr-workflow.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 
-/** `automatic` is the Do kinds the pr-triage role is granted on the repository; `source` is what `pack` was resolved from. */
-export type StoredPack = { pack: CheckPack; automatic: ActionKind[]; source: PolicySource };
+/**
+ * `automatic` is the Do kinds the pr-triage role is granted on the repository; `source` is what `pack` was resolved from;
+ * `policyWorkflow` the policy file's v4 keys while only the PR workflow can run them.
+ */
+export type StoredPack = { pack: CheckPack; automatic: ActionKind[]; source: PolicySource; policyWorkflow?: PolicyWorkflow };
+
+function withPrWorkflowKeys(workflow: PolicyWorkflow, pack: CheckPack): Pick<StoredPack, "policyWorkflow"> {
+  const policyWorkflow = prWorkflowKeys(workflow, pack);
+  return policyWorkflow ? { policyWorkflow } : {};
+}
 
 /** A corrupt policy names its artifact, which a save replaces in place; an invalid one is a policy file triage refuses. */
 export type CheckPackRead =
@@ -133,7 +142,7 @@ async function fileRead(deps: CheckPackStoreDeps & { policyFile: PolicyFileReade
   }
   const { pack, ...from } = read;
   const source: PolicySource = { file: { path: file.file.path, sha: file.file.sha }, ...from };
-  return { status: "ok", pack, source, automatic: await deps.automaticKinds(tenantId, repo) };
+  return { status: "ok", pack, source, automatic: await deps.automaticKinds(tenantId, repo), ...withPrWorkflowKeys(file.workflow, pack) };
 }
 
 /** Archiving hides and keeps restorable; every saved policy titled for the repository goes, since an older one would otherwise become the saved rules. */

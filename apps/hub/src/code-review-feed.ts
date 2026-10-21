@@ -25,8 +25,11 @@ const REMEMBERED_HEADS = 10_000;
 export type PullRequestToReview = { title: string; description: string; headSha: string; draft: boolean; open: boolean; diff: string };
 
 export type CodeReviewFeedDeps = {
-  /** The hosts whose code review runs: a repository of the host has it on and a code review provider's key is stored. */
-  reviewed: (tenantId: string) => Promise<RepoSource[]>;
+  /**
+   * The hosts whose code review runs for `record`: a repository of the host has it on and a code review provider's key
+   * is stored; none when the PR workflow reviews the repository, so a head is never reviewed twice.
+   */
+  reviewed: (tenantId: string, record: RepoRecord) => Promise<RepoSource[]>;
   read: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
   send: (job: TriageJob) => Promise<void>;
   log: (entry: Record<string, unknown>) => void;
@@ -80,6 +83,32 @@ export function createPullRequestReader(deps: PullRequestReaderDeps) {
   };
 }
 
+type ReviewRequest = {
+  kind: "code-review";
+  number: number;
+  title: string;
+  description: string;
+  diff: string;
+  checkout: { source: RepoSource; repo: string; sha: string };
+  cut?: ReturnType<typeof cutDiff>["cut"];
+};
+
+/** The review of the pull request as read, its diff cut to the limit. */
+export function reviewRequestOf(record: Pick<RepoRecord, "name" | "source">, number: number, pull: PullRequestToReview): ReviewRequest {
+  // A host that ignores the diff media type answers JSON, which would be reviewed as if it were the change.
+  if (pull.diff !== "" && !pull.diff.startsWith("diff ")) throw new Error(`${record.name}#${number}: the host returned no unified diff`);
+  const { diff, cut } = cutDiff(pull.diff);
+  return {
+    kind: "code-review",
+    number,
+    title: pull.title,
+    description: pull.description,
+    diff,
+    checkout: { source: sourceOf(record), repo: record.name, sha: pull.headSha },
+    ...(cut && { cut }),
+  };
+}
+
 export function isReviewEvent(mail: PrMail): boolean {
   return mail.event === "pull_request" && mail.action !== null && REVIEW_ACTIONS.has(mail.action) && mail.draft !== true;
 }
@@ -102,31 +131,20 @@ export function createCodeReviewFeed(deps: CodeReviewFeedDeps) {
 
   async function review(tenantId: string, record: RepoRecord, number: number, again: boolean): Promise<Offered> {
     const source = sourceOf(record);
-    if (record.codeReview !== true || !(await deps.reviewed(tenantId)).includes(source)) return "not_reviewed";
+    if (record.codeReview !== true || !(await deps.reviewed(tenantId, record)).includes(source)) return "not_reviewed";
     const pull = await deps.read(tenantId, record, number);
     if (!pull.open) return "not_open";
     if (pull.draft) return "draft";
-    // A host that ignores the diff media type answers JSON, which would be reviewed as if it were the change.
-    if (pull.diff !== "" && !pull.diff.startsWith("diff ")) throw new Error(`${record.name}#${number}: the host returned no unified diff`);
+    const request = reviewRequestOf(record, number, pull);
     const key = keyOf(tenantId, record, number, pull.headSha);
     if (!reserve(key) && !again) return "sent";
-    const { diff, cut } = cutDiff(pull.diff);
-    const request = {
-      kind: "code-review",
-      number,
-      title: pull.title,
-      description: pull.description,
-      diff,
-      checkout: { source, repo: record.name, sha: pull.headSha },
-      ...(cut && { cut }),
-    };
     try {
       await deps.send({ tenantId, workflow: codeReviewWorkflowFor(source).id, repo: record.name, number, headSha: pull.headSha, source: again ? "retry" : "event", payload: request });
     } catch (err) {
       sent.delete(key);
       throw err;
     }
-    deps.log({ level: "info", msg: "code_review_sent", tenantId, repo: record.name, pr: number, headSha: pull.headSha, again, ...(cut && { cut }) });
+    deps.log({ level: "info", msg: "code_review_sent", tenantId, repo: record.name, pr: number, headSha: pull.headSha, again, ...(request.cut && { cut: request.cut }) });
     return "sent";
   }
 

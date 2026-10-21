@@ -134,6 +134,8 @@ export type PortalSnapshot = {
   /** Absent when the hub refused to say where code review runs. */
   codeReviewPlace?: CodeReviewPlace["provisioner"];
   codeReviewPlaces?: CodeReviewPlace["places"];
+  /** The hosts whose PR workflow deploys; absent with `codeReviewPlace`. */
+  prWorkflowSources?: CodeReviewPlace["prWorkflow"];
   /** Set when the hub failed to list the keys for a reason other than access, so an empty `credentials` does not mean no key is stored. */
   credentialsError?: string;
   denied: SectionDenied;
@@ -1316,7 +1318,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
     ...(decisionModel && { decisionModel }),
-    ...(places && { codeReviewPlace: places.provisioner, codeReviewPlaces: places.places }),
+    ...(places && { codeReviewPlace: places.provisioner, codeReviewPlaces: places.places, prWorkflowSources: places.prWorkflow }),
     ...(credentials.failure && { credentialsError: credentials.failure.message }),
     denied: {
       repos: tenant.denied,

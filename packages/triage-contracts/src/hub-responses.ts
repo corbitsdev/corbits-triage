@@ -2,6 +2,7 @@
 import { type } from "arktype";
 import { VERDICTS } from "./check-pack.js";
 import { policyWorkflowSchema } from "./policy-workflow.js";
+import { REPO_SOURCES } from "./repo-source.js";
 
 const VerdictWord = type.enumerated(...VERDICTS);
 
@@ -195,8 +196,11 @@ export type PlaceGuide = typeof PlaceGuide.infer;
 export const CodeReviewPlaceOption = PlaceGuide.and({ state: "'active' | 'ready' | 'not_set_up' | 'failing'", "reason?": "string" });
 export type CodeReviewPlaceOption = typeof CodeReviewPlaceOption.infer;
 
-/** The provisioner the workspace's code review deploys to, null when none can run it, and every place this hub knows. */
-export const CodeReviewPlace = type({ provisioner: "string | null", places: CodeReviewPlaceOption.array() });
+/**
+ * The provisioner the workspace's code review deploys to, null when none can run it, every place this hub knows, and
+ * the hosts whose PR workflow deploys: a connected repository's policy file needs it and code review has a place.
+ */
+export const CodeReviewPlace = type({ provisioner: "string | null", places: CodeReviewPlaceOption.array(), prWorkflow: type.enumerated(...REPO_SOURCES).array() });
 export type CodeReviewPlace = typeof CodeReviewPlace.infer;
 
 /** One thing the workspace recorded; `actor` is a person's email or principal id, `Triage` for the workflow, `hub` for the hub itself, or `unknown`. */

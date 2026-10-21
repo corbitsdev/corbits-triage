@@ -2,7 +2,7 @@ import { type } from "arktype";
 import { resolveTenantSidecarCapabilityPolicies, type DB } from "@intx/db";
 import type { SidecarPluginRegistry } from "@intx/hub-sessions";
 import { CODE_REVIEW_PLACEMENT } from "@corbits/pr-code-review/pr-code-review";
-import { REPO_SOURCES, type CodeReviewPlace, type CodeReviewPlaceOption, type PlaceGuide } from "@corbits/triage-contracts";
+import { REPO_SOURCES, type CodeReviewPlace, type CodeReviewPlaceOption, type PlaceGuide, type RepoSource } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { connectedSources, hasCodeReviewKey } from "./github/source-workflow.js";
 import { tenantConfigOf } from "./github/bridge.js";
@@ -45,13 +45,13 @@ function placeOption({ guide, found }: PlaceProbe, active: string | null, showRe
   return { ...option, state: found.provisioner.id === active ? "active" : "ready" };
 }
 
-type CodeReviewPlaceDeps = Pick<CodeReviewDeps, "authorize" | "place"> & { probes: readonly PlaceProbe[] };
+type CodeReviewPlaceDeps = Pick<CodeReviewDeps, "authorize" | "place"> & { probes: readonly PlaceProbe[]; prWorkflowSources: (tenantId: string) => Promise<RepoSource[]> };
 
 /** A failing place's reason names the server's own setup, so only those who may manage the workspace see it. */
 export function createCodeReviewPlace(deps: CodeReviewPlaceDeps) {
   return async function codeReviewPlace({ tenantId, principalId }: Member): Promise<Response> {
-    const [provisioner, manages] = await Promise.all([deps.place(tenantId), deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage")]);
-    return Response.json({ provisioner, places: deps.probes.map((probe) => placeOption(probe, provisioner, manages)) } satisfies CodeReviewPlace);
+    const [provisioner, manages, prWorkflow] = await Promise.all([deps.place(tenantId), deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage"), deps.prWorkflowSources(tenantId)]);
+    return Response.json({ provisioner, places: deps.probes.map((probe) => placeOption(probe, provisioner, manages)), prWorkflow } satisfies CodeReviewPlace);
   };
 }
 
@@ -67,12 +67,18 @@ type CodeReviewDeps = {
   /** After a change: a host's code review deployment is released once none of its repositories has it on. */
   onChanged: (tenantId: string) => Promise<void>;
   place: PlaceCodeReview;
+  /** Whether the repository's policy file needs the PR workflow, whose code review follows the file. */
+  inPrWorkflow: (tenantId: string, repo: string) => Promise<boolean>;
 };
 
 const HOST_NAMES = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" } as const;
 
 function noPlace(): Response {
   return failure(409, "no_isolated_place", "Code review needs an isolated place to run, and this server has none set up yet.");
+}
+
+function fileDecides(then: string): Response {
+  return failure(409, "policy_file_decides", `This repository's policy file decides code review, which runs with triage. ${then}`);
 }
 
 /** Turns code review on or off for one repository; on needs its host connected and a code review provider's key. */
@@ -82,6 +88,7 @@ export function createCodeReviewSwitch(deps: CodeReviewDeps) {
       return failure(403, "forbidden", "You do not have permission to manage this workspace.");
     }
     const source = body.source ?? "github";
+    if (await deps.inPrWorkflow(tenantId, body.repo)) return fileDecides("Change `code-review` in the file instead.");
     if (body.enabled && (await deps.place(tenantId)) === null) return noPlace();
     if (body.enabled && !(await connectedSources(deps.db, tenantId)).includes(source)) {
       return failure(409, "source_not_connected", `Connect ${HOST_NAMES[source]} before turning on code review.`);
@@ -108,7 +115,7 @@ export function createCodeReviewSwitch(deps: CodeReviewDeps) {
   };
 }
 
-type CodeReviewRunDeps = Pick<CodeReviewDeps, "db" | "authorize" | "place"> & { feed: Pick<CodeReviewFeed, "again"> };
+type CodeReviewRunDeps = Pick<CodeReviewDeps, "db" | "authorize" | "place" | "inPrWorkflow"> & { feed: Pick<CodeReviewFeed, "again"> };
 
 /** "Review again": reviews the pull request's current head once more. */
 export function createCodeReviewRun(deps: CodeReviewRunDeps) {
@@ -120,6 +127,7 @@ export function createCodeReviewRun(deps: CodeReviewRunDeps) {
     const source = body.source ?? "github";
     const record = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).find((row) => row.name === body.repo && sourceOf(row) === source && row.connected);
     if (!record) return failure(404, "repo_not_found", "The workspace has no such connected repository.");
+    if (await deps.inPrWorkflow(tenantId, record.name)) return fileDecides("Press Triage again to review the latest commit.");
     let offered: Offered;
     try {
       offered = await deps.feed.again(tenantId, record, body.number);

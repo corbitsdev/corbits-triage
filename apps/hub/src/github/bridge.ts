@@ -22,6 +22,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
 import { baseMoveOf, normalize, policyPushOf, type BaseMove, type PolicyPush } from "./normalize.js";
 import type { PolicyFileState } from "./policy-file.js";
+import { workflowPart } from "./pr-workflow.js";
 import { readCappedBody } from "../read-json.js";
 import {
   dropReposByInstallation,
@@ -154,7 +155,7 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
  * live deployment reads `pack`. `policy.source` names the policy artifact versions `pack` was resolved from, so the
  * run records what it used.
  */
-export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { pack, automatic, source }: StoredPack, extra: Record<string, unknown>) {
+export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { pack, automatic, source, policyWorkflow }: StoredPack, extra: Record<string, unknown>) {
   const repo = record.name;
   const repoSource = sourceOf(record);
   return {
@@ -167,6 +168,7 @@ export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy:
     checkPack: legacyCheckPack(pack),
     pack,
     automatic,
+    ...workflowPart(policyWorkflow),
   };
 }
 
@@ -543,7 +545,7 @@ export function createBridgeHandler(d: BridgeDeps) {
     }
     let accepted: Accepted;
     try {
-      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, mail, number: mail.prNumber, headSha, event: triageEvent });
+      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, ...(stored.policyWorkflow && { policyWorkflow: stored.policyWorkflow }), mail, number: mail.prNumber, headSha, event: triageEvent });
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });

@@ -200,7 +200,9 @@ decide:
   - { if: { code-review: findings }, do: [{ do: request-review, target: { to: codeowners } }] }
 ```
 
-Triage checks these keys when it reads the file but doesn't act on them yet: what runs and what happens still come from `rules`, `actions` and your Code review settings. The one exception is groups: an action's `when: { author: [...] }` can name one. An author is in the first of your groups they match, in the order you wrote them, and in each built-in group (`maintainers`, `external`, `first-timers`, `bots`) their role puts them in. Everyone is in `everyone`. The built-in groups go by the author's role alone, so they still work when Triage can't read teams; only when it can't tell the author's role are they unknown too. For a group you define, Triage can't tell whether the author is in it when it can't tell their role, or when teams it can't read would decide which of your groups is theirs. An action for a group Triage can't tell about doesn't run. `everyone` always matches. Never let Approve or Merge rest on `everyone` alone. In `decide`, `{ all: clean }` means every check that actually ran came back clean; checks that were skipped don't count. A file that uses `extends` can't hold these keys. Every key is listed in the setup skill's [reference](../../skills/corbits-triage-setup/reference.md#blocks-and-decide).
+Triage checks these keys when it reads the file. A file that turns a check on, or writes its own `decide`, runs triage, then its checks, then `decide` once to choose what happens, and the file alone then decides code review for that repository, whatever its Code review switch says. Only `code-review` runs as a check today: it reviews each pull request's code after triage, for the groups in `for` and on the verdicts and paths in `when`. Such a file needs the workspace's Anthropic key ([Settings → Code review](#code-review-2)) and a [place to run](#where-code-review-runs), even one that only writes `decide`. Until both are set up, or while the file turns on a check that can't run yet, such as `security`, triage runs alone and approve and merge wait for you in the Inbox. Once no repository's file needs it, it stops running. `pace` and `pauseLabel` don't act yet.
+
+An action's `when: { author: [...] }`, a check's `for` and a `decide` rule's `author` can name a group. An author is in the first of your groups they match, in the order you wrote them, and in each built-in group (`maintainers`, `external`, `first-timers`, `bots`) their role puts them in. Everyone is in `everyone`. The built-in groups go by the author's role alone, so they still work when Triage can't read teams; only when it can't tell the author's role are they unknown too. For a group you define, Triage can't tell whether the author is in it when it can't tell their role, or when teams it can't read would decide which of your groups is theirs. An action for a group Triage can't tell about doesn't run. `everyone` always matches. Never let Approve or Merge rest on `everyone` alone. In `decide`, `{ all: clean }` means every check that actually ran came back clean; checks that were skipped don't count. A file that uses `extends` can't hold these keys. Every key is listed in the setup skill's [reference](../../skills/corbits-triage-setup/reference.md#blocks-and-decide).
 
 If the file has a mistake, each problem names its line and what the value must be, such as "Line 12: `security.when.triage` must be pass, fail or unsure, or a list of them." A misspelt key says which one you likely meant, such as "`code-reveiw` is not a key; did you mean `code-review`?"
 
@@ -313,7 +315,7 @@ On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repos
 
 ### Code review
 
-Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop.
+Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. In a repository whose [policy file](#writing-the-file) turns a check on or writes its own `decide`, the file decides instead: changing the switch, or pressing **Review again**, says **This repository's policy file decides code review, which runs with triage.**
 
 ![The popup Code review needs an Anthropic key, with the Anthropic key field, You won't see it again, Cancel and Save and turn on](images/27.png)
 
@@ -412,6 +414,8 @@ The bar at the bottom of the pane always offers the next step first. For a passi
 - **Triage again** re-runs the checks on the current commit.
 
 Anything you do here is also written to the audit log.
+
+An action that code review held can be approved only while code review runs. If it has stopped, because the policy file no longer turns a check on, the Anthropic key was removed or code review has no place to run, approving it says **Code review held this action, and it is not running now, so the action can't be approved.** Set code review up again, or press **Triage again**.
 
 ### What the author sees
 

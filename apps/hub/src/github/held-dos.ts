@@ -1,6 +1,6 @@
 // Approves a Do a triage run held, or one it failed or could not run
 // unattended. The hub checks the clicker holds the Do kind's grant and mails the
-// pr-triage deployment the Do as the run's verdict recorded it, with who
+// deployment of the workflow that held it, pr-triage or a PR workflow variant, the Do as the run's verdict recorded it, with who
 // approved it; the run writes it at most once under its effect id.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
@@ -16,6 +16,7 @@ import { doRefused, failure, type PortalCredentialDeps } from "./portal-credenti
 import type { Member } from "../integrations/app.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
+import { prWorkflowVariantOf } from "./pr-workflow.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
@@ -85,7 +86,19 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     });
     if (!run?.anchorRunId) return undefined;
     const repoId = workflowRunRepoIdForAddress(formatRunAddress(run.anchorRunId, domain));
-    return deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId);
+    return { anchorRunId: run.anchorRunId, events: await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId) };
+  }
+
+  /** The workflow whose deployment held the Do: a worker is its listener's copy, so it goes by the listener's name. */
+  async function heldBy(tenantId: string, anchorRunId: string): Promise<string | undefined> {
+    const { workflowRun, workflowDefinition } = schema;
+    const [row] = await deps.db
+      .select({ name: workflowDefinition.name })
+      .from(workflowRun)
+      .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
+      .where(and(eq(workflowRun.id, anchorRunId), eq(workflowRun.tenantId, tenantId)))
+      .limit(1);
+    return row?.name;
   }
 
   /** An approval stands only on the newest verdict that judged something; a run not recorded yet has none newer that is known. */
@@ -107,17 +120,23 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected);
     if (!record || !repoPolicy(record).enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
 
-    const events = await runEvents(tenantId, tenant.domain, runId);
-    if (!events?.length) return failure(404, "run_not_found", "No such run in this workspace.");
+    const run = await runEvents(tenantId, tenant.domain, runId);
+    const events = run?.events;
+    if (!run || !events?.length) return failure(404, "run_not_found", "No such run in this workspace.");
     const verdict = verdictFor(events, repo, number);
     if (!verdict) return failure(404, "verdict_not_found", `The run has no verdict for ${repo}#${number}.`);
     const approval = heldDo(verdict, body, principalId);
     if (approval instanceof Response) return approval;
     if (await superseded(tenantId, repo, number, runId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
 
-    const triage = triageWorkflowFor(sourceOf(record));
-    const deployment = newestLive(await deps.liveDeployments(tenantId, triage.id));
-    if (!deployment) return failure(503, "service_not_running", `The ${triage.id} service is not running.`);
+    const variant = prWorkflowVariantOf((await heldBy(tenantId, run.anchorRunId)) ?? "");
+    const heldByVariant = variant?.source === sourceOf(record);
+    const workflow = heldByVariant ? variant.id : triageWorkflowFor(sourceOf(record)).id;
+    const deployment = newestLive(await deps.liveDeployments(tenantId, workflow));
+    if (!deployment && heldByVariant) {
+      return failure(503, "service_not_running", "Code review held this action, and it is not running now, so the action can't be approved. It runs again once the repository's policy turns a check on, the Anthropic key is saved and code review has a place to run.");
+    }
+    if (!deployment) return failure(503, "service_not_running", `The ${workflow} service is not running.`);
     const logged = { tenantId, principalId, runId, repo, number, effectId: body.effectId, kind: approval.step.kind, list: approval.list };
     // A held merge on a Fail or Unsure list may still be approved, and the person approving it is told so.
     const warning = approval.step.kind === "merge" && approval.list !== "pass" ? `The verdict on this head was ${approval.list}, not pass.` : undefined;
