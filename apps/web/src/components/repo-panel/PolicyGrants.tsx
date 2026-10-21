@@ -50,7 +50,7 @@ export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsPro
   }
 
   function caution(risks: readonly MergeRisk[] | undefined) {
-    if (!risks?.length) return null;
+    if (source !== "github" || !risks?.length) return null;
     return sentence(<span className="txt">Triage approves or merges on its own, which can let unintended code in: {risks.map((risk) => RISK_NAMES[risk]).join(", ")}.</span>);
   }
 

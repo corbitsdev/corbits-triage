@@ -1,6 +1,6 @@
 // A repository's policy as triage reads it, so the portal shows and edits the same artifact the hub mails.
 import { type } from "arktype";
-import { ACTION_KINDS, alwaysHeld, AUTHOR_GROUPS, authorGroupsOf, catalogCheckEnabled, kindsOf, VERDICTS, whenHolds, type ActionKind, type AuthorKind, type CheckPack, type DecideRule, type MergeRisk, type RepoSource, type StepWhen, type VerdictWord } from "@corbits/triage-contracts";
+import { ACTION_KINDS, alwaysHeld, AUTHOR_GROUPS, authorGroupsOf, catalogCheckEnabled, kindsOf, VERDICTS, whenHolds, type ActionKind, type AuthorKind, type CheckPack, type DecideRule, type MergeRisk, type StepWhen, type VerdictWord } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import type { PolicyReader } from "./check-pack-store.js";
 import type { Member } from "../integrations/app.js";
@@ -46,32 +46,30 @@ function admitsFirstTimers(pack: CheckPack, whens: readonly StepWhen[]): boolean
   });
 }
 
-/** Only the forbidden paths rule reads a workflow file's path; a rule that labels leaves the verdict as it was. */
-function verdictOn(pack: CheckPack, path: string): VerdictWord {
+/** The verdicts a change to the file can reach: other rules can still fail it or leave it unsure, and a rule that labels leaves the verdict as it was. */
+function verdictsOn(pack: CheckPack, path: string): readonly VerdictWord[] {
   const rule = pack.checks["no-forbidden-paths"];
-  if (!rule || !catalogCheckEnabled(pack, "no-forbidden-paths") || !(rule.forbiddenGlobs ?? []).some((glob) => globMatch(path, glob))) return "pass";
-  if (rule.onFail === "ask") return "unsure";
-  return rule.onFail === "label" ? "pass" : "fail";
+  if (!rule || !catalogCheckEnabled(pack, "no-forbidden-paths") || rule.onFail === "label" || !(rule.forbiddenGlobs ?? []).some((glob) => globMatch(path, glob))) return VERDICTS;
+  return rule.onFail === "ask" ? ["unsure", "fail"] : ["fail"];
 }
 
-/** What Triage's automatic approve or merge can let in, reckoned for GitHub repositories only. */
-function mergeRisks(pack: CheckPack, decide: readonly DecideRule[], automatic: readonly ActionKind[], source: RepoSource): MergeRisk[] {
-  if (source !== "github") return [];
+/** What Triage's automatic approve or merge can let in. */
+function mergeRisks(pack: CheckPack, decide: readonly DecideRule[], automatic: readonly ActionKind[]): MergeRisk[] {
   const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].flatMap((step) => landing(step.do, [verdict], step.when ? [step.when] : [], automatic)));
   const landings = [...steps, ...decide.flatMap((rule) => decideLandings(rule, automatic))];
   const risks: MergeRisk[] = [];
   if (landings.some((each) => admitsFirstTimers(pack, each.whens))) risks.push("first-timers");
-  if (WORKFLOW_FILES.some((path) => landings.some((each) => each.verdicts.includes(verdictOn(pack, path))))) risks.push("ci-config");
+  if (WORKFLOW_FILES.some((path) => landings.some((each) => verdictsOn(pack, path).some((verdict) => each.verdicts.includes(verdict))))) risks.push("ci-config");
   return risks;
 }
 
-export function createGithubPolicyRead(deps: { readCheckPack: PolicyReader; repoSource: (tenantId: string, repo: string) => Promise<RepoSource> }) {
+export function createGithubPolicyRead(deps: { readCheckPack: PolicyReader }) {
   return async function handle({ repo }: typeof PolicyQuery.infer, { tenantId }: Member): Promise<Response> {
     const read = await deps.readCheckPack(tenantId, repo, "github");
     if (read.status !== "ok") return Response.json(read);
     const rules = read.policyWorkflow?.decide ?? [];
     const decide = rules.flatMap((rule) => kindsOf(rule.do)).filter(isActionKind);
-    const risks = mergeRisks(read.pack, rules, read.automatic, await deps.repoSource(tenantId, repo));
+    const risks = mergeRisks(read.pack, rules, read.automatic);
     return Response.json({ status: "ok", pack: read.pack, source: read.source, automatic: read.automatic, decide: [...new Set(decide)], mergeRisks: risks });
   };
 }
