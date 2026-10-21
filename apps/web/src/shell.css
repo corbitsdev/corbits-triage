@@ -34,7 +34,7 @@
 .shell .rail { display: flex; flex-direction: column; gap: 4px; padding: 18px 12px 14px; min-height: 0; overflow: auto; }
 .shell .brand { display: flex; align-items: center; padding: 0 8px 12px; }
 .shell .brand img { width: 26px; height: 26px; }
-.shell .ws { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; margin-bottom: 10px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--white); font: inherit; font-size: 14px; font-weight: 600; color: inherit; }
+.shell .ws { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; margin-bottom: 4px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--white); font: inherit; font-size: 14px; font-weight: 600; color: inherit; }
 .shell button.ws { cursor: pointer; }
 .shell .ws-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shell .rail h3 { font-size: 12px; font-weight: 700; margin: 14px 10px 4px; }

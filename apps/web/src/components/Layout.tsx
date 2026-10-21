@@ -4,19 +4,18 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { initialsOf, listCounts } from "../lib/inbox-view.ts";
 import { useOpenWorkspaceAfterSending, useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { useOpenItems, useOpenPullsUnanswered } from "../lib/open-pulls.ts";
-import { sharesName } from "../lib/hub-api.ts";
+import { createExtraWorkspace, sharesName } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
+import { createHubTransport } from "../lib/hub-transport.ts";
 import { useSession } from "../lib/session.tsx";
-import { CheckIcon, DownIcon, GearIcon, InboxIcon, ListIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, GearIcon, InboxIcon, ListIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
-  const { snapshot } = usePortal();
+  const { snapshot, warn } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();
   if (!snapshot) return null;
-  const name = <span className="ws-name">{snapshot.tenantName}</span>;
-  if (snapshot.workspaces.length < 2 && snapshot.invitations.length === 0) return <div className="ws">{name}</div>;
   const current = snapshot.workspace.tenantId;
   const options = [...snapshot.workspaces, ...snapshot.invitations];
 
@@ -24,12 +23,25 @@ function WorkspaceSwitcher() {
     if (tenantId !== current) await openWorkspace(tenantId);
   }
 
+  async function create() {
+    try {
+      await openWorkspace(await createExtraWorkspace(createHubTransport()), "/");
+    } catch (cause) {
+      warn(`Could not create the workspace. ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  }
+
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button type="button" className="ws" aria-label={`Workspace: ${snapshot.tenantName}`}>{name}<DownIcon /></button>
+        <button type="button" className="ws" aria-label={`Workspace: ${snapshot.tenantName}`}>
+          <span className="ws-name">{snapshot.tenantName}</span>
+          <UpDownIcon />
+        </button>
       </MenuTrigger>
-      <MenuContent align="start" className="ws-menu">
+      <MenuContent side="top" align="start" className="ws-menu">
+        <MenuItem onSelect={() => void create()}>+ New workspace</MenuItem>
+        <MenuSeparator />
         {snapshot.workspaces.map((workspace) => (
           <MenuItem key={workspace.tenantId} aria-current={workspace.tenantId === current ? "true" : undefined} onSelect={() => void choose(workspace.tenantId)}>
             <span className="ws-option"><b>{workspace.name}</b>{sharesName(workspace, options) ? <small>{workspace.slug}</small> : null}</span>
@@ -116,7 +128,6 @@ export default function Layout({ children }: { children: ReactNode }) {
           <Link className="brand" to="/inbox">
             <img src="/triage-logo.svg" alt="Corbits Triage" />
           </Link>
-          <WorkspaceSwitcher />
           <Link className="nav-a" to="/pulse" aria-current={room === "pulse" ? "true" : undefined}>
             <PulseIcon />
             Pulse
@@ -136,6 +147,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
           </Link>
           <span className="grow" />
+          <WorkspaceSwitcher />
           <UserBlock />
         </nav>
         {ownPanels ? children : (

@@ -564,6 +564,14 @@ async function createWorkspace(transport: Transport): Promise<MemberAccess | Inv
   return resolved;
 }
 
+/** A top-level tenant, no parent: the caller becomes its owner and it starts empty. The slug is unique so one user can make many. */
+export async function createExtraWorkspace(transport: Transport): Promise<string> {
+  const user = await transport.fetch<HubMe>("GET", "/api/me");
+  const slug = `${workspaceSlugFor(user)}-${crypto.randomUUID().slice(0, 6)}`;
+  const created = await transport.fetch<TenantBody>("POST", "/api/tenants", { name: workspaceNameFor(user), slug });
+  return created.id;
+}
+
 /** Opens a workspace the user is active in, else reports their invitations; only a user with neither gets a workspace of their own. */
 export async function ensureWorkspace(transport: Transport, chosen: string | null): Promise<MemberAccess | InvitedAccess> {
   const existing = await resolveWorkspace(transport, chosen);
