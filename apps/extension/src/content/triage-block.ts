@@ -8,8 +8,8 @@ import { summaryOf } from "./chip.ts";
 
 const POLICY_GUIDE_URL = "https://github.com/corbitsdev/corbits-triage/blob/main/docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#writing-the-file";
 
-const STATE_NAMES: Record<RuleState, string> = { pass: "Pass", fail: "Fail", waiting: "Waiting", "not-evaluated": "Not run here" };
-const ORDER: Record<RuleState, number> = { fail: 0, waiting: 1, "not-evaluated": 2, pass: 3 };
+const STATE_NAMES: Record<RuleState, string> = { pass: "Pass", fail: "Fail", waiting: "Waiting", "not-run": "Not run here" };
+const ORDER: Record<RuleState, number> = { fail: 0, waiting: 1, "not-run": 2, pass: 3 };
 
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
   const made = document.createElement(tag);
@@ -45,14 +45,13 @@ function policyLine(policy: TriageView["policy"]): HTMLElement {
 }
 
 function ruleReason(rule: ViewRule): string {
-  if (rule.state === "not-evaluated") return "Needs the decision model, which is not run here.";
   const reason = rule.reason.startsWith(`${rule.name}: `) ? rule.reason.slice(rule.name.length + 2) : rule.reason;
   return rule.evidence.length ? `${reason}: ${rule.evidence.join(", ")}` : reason;
 }
 
 function rulesList(view: TriageView): HTMLElement {
   const list = node("ul", "tb-rules");
-  list.setAttribute("aria-label", "Rules");
+  list.setAttribute("aria-label", "Checks");
   for (const rule of [...view.rules].sort((a, b) => ORDER[a.state] - ORDER[b.state])) {
     const item = node("li", "tb-rule");
     item.dataset.state = rule.state;
@@ -90,7 +89,8 @@ function codeReviewPart(read: TriageView["codeReview"]): HTMLElement[] {
 export type TriageBlock = { element: HTMLElement; render(view: TriageView | undefined, run: RunState | undefined): void };
 
 /**
- * Triage's section atop GitHub's pull request sidebar: the policy file and each rule's result with its evidence.
+ * Triage's section atop GitHub's pull request sidebar: the policy file, the score of the checks run here and each
+ * check's result with its evidence.
  */
 export function triageBlock(handlers: { rerun(): void; openPanel(): void }): TriageBlock {
   const element = node("section", "tb");
@@ -123,10 +123,8 @@ export function triageBlock(handlers: { rerun(): void; openPanel(): void }): Tri
     if (run?.error) parts.push(node("p", "tb-warn", view ? `${run.error} Showing the check from ${clock(view.ranAt)}.` : run.error));
     if (view) {
       parts.push(policyLine(view.policy));
-      if (view.policy) {
-        parts.push(rulesList(view));
-        if (!view.decided) parts.push(node("p", "tb-meta", "The verdict needs the decision model, so it is not named here."));
-      }
+      if (view.paused !== undefined) parts.push(node("p", "tb-meta", `Paused: this pull request has the ${view.paused} label, so Triage leaves it alone.`));
+      else if (view.policy) parts.push(rulesList(view));
       parts.push(...codeReviewPart(view.codeReview));
     }
     parts.push(foot(view, run));

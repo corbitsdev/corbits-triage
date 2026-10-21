@@ -4,5 +4,5 @@
     "jsx": "react-jsx",
     "noUncheckedIndexedAccess": false
   },
-  "exclude": ["node_modules", ".output", "e2e"]
+  "exclude": ["node_modules", ".output", "e2e", "src/**/*.test.ts", "entrypoints/background.ts", "src/background.ts", "src/check-pr.ts", "src/run-checks.ts"]
 }

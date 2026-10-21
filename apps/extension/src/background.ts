@@ -1,9 +1,9 @@
 import { errorText } from "@corbits/common";
-import { GITHUB_API, githubApi, type GithubApi } from "./github-api.ts";
+import { checkPr, pullOf } from "./check-pr.ts";
+import { GITHUB_API, githubApi } from "./github-api.ts";
 import type { Reply, Request } from "./messages.ts";
 import { policyFor } from "./policy-source.ts";
-import { prKey, type PrRef } from "./pr.ts";
-import { runStepsInBrowser } from "./run-steps-in-browser.ts";
+import { prKey } from "./pr.ts";
 import { openPanelOnActionClick, openSidePanel } from "./side-panel.ts";
 import { clearRunning, githubToken, policyFiles, runStates, saveView, setRunState, tokenSaved, views } from "./storage.ts";
 import { FRESH_MS, type TriageView } from "./view.ts";
@@ -29,16 +29,6 @@ function isFresh(view: TriageView | undefined): view is TriageView {
   return view !== undefined && Date.now() - Date.parse(view.ranAt) < FRESH_MS;
 }
 
-async function headOf(api: GithubApi, pr: PrRef): Promise<string> {
-  const res = await api.gh(`/repos/${pr.repo}/pulls/${pr.number}`);
-  if (!res.ok) throw new Error(`GitHub did not return ${prKey(pr)} (${res.status}).`);
-  return ((await res.json()) as { head: { sha: string } }).head.sha;
-}
-
-async function noPolicy(api: GithubApi, pr: PrRef): Promise<TriageView> {
-  return { pr, headSha: await headOf(api, pr), ranAt: new Date().toISOString(), policy: null, rules: [], decided: null, notes: [], codeReview: { review: null } };
-}
-
 /** A recent check is reused only while the pull request's head is the one it checked, so a new push is checked again. */
 async function triage({ pr, mode }: Triage): Promise<null> {
   const saved = (await views.getValue())[prKey(pr)];
@@ -47,9 +37,9 @@ async function triage({ pr, mode }: Triage): Promise<null> {
     const token = await githubToken.getValue();
     if (!token) throw new Error("Add a GitHub token in the side panel to check pull requests.");
     const api = githubApi(token, mode === "refetch" ? "no-cache" : "default");
-    if (!(mode === "if-stale" && isFresh(saved) && (await headOf(api, pr)) === saved.headSha)) {
-      const policy = await policyFor(api, pr.repo, mode === "refetch");
-      await saveView(policy ? await runStepsInBrowser(pr, api.gh, policy) : await noPolicy(api, pr));
+    const pull = await pullOf(api, pr);
+    if (!(mode === "if-stale" && isFresh(saved) && pull.headSha === saved.headSha)) {
+      await saveView(await checkPr(api, pr, pull, await policyFor(api, pr.repo, mode === "refetch")));
     }
     await setRunState(pr, { running: false });
   } catch (cause) {

@@ -2,26 +2,17 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkflowDirectorRegistry } from "@intx/agent";
-import { actionConsumer, toolConsumer } from "@intx/authz";
-import { buildCredentialCapabilities, createActionCredentialsFactory, createCredentialProviderRegistry, createHttpCredentialProvider, createInferenceCredentialResolver } from "@intx/harness";
+import { buildCredentialCapabilities, createCredentialProviderRegistry, createHttpCredentialProvider, createInferenceCredentialResolver } from "@intx/harness";
 import { createDependencies } from "@intx/inference";
 import { loadAdapterRegistry } from "@intx/inference/providers";
 import { createIsogitStore } from "@intx/storage-isogit/node";
-import type { GrantRule } from "@intx/types/authz";
-import type { CredentialDelivery } from "@intx/types/credential-delivery";
 import { createRuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import type { InferenceEvent } from "@intx/types/inference-events";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvokeRequest, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
 import { createWorkflowStepInvoker } from "@intx/workflow-host";
-
-const GITHUB_ORIGIN = "https://api.github.com";
+import { delivered, grantsFor, localActionCredentials, type Bindings, type Fetch } from "../src/local-credentials.js";
 
 type Source = { id: string; provider: string; baseURL: string; credentialId: string; model: string; quirks?: Record<string, unknown> };
-
-/** The GitHub bindings, of tool packages and of action handlers. */
-type Bindings = readonly ({ handle: string; package: string } | { handle: string; action: string })[];
-
-type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface RunLocalInput {
   workflow: WorkflowDefinition;
@@ -43,41 +34,6 @@ export interface RunLocalInput {
   onStepDone?: (agentId: string, ms: number) => void;
   /** The run's clock, which times its retries' backoff; the wall clock when absent. */
   clock?: () => Date;
-}
-
-function consumerOf(binding: Bindings[number]): string {
-  return "package" in binding ? toolConsumer(binding.package) : actionConsumer(binding.action);
-}
-
-/** The credential-use grants the hub stamps on a run from a definition's bindings. */
-function grantsFor(bindings: Bindings): GrantRule[] {
-  return bindings.map((binding, index) => ({
-    id: `grant-${index}`,
-    resource: "credential:github",
-    action: "use",
-    effect: "allow",
-    origin: "system",
-    conditions: { tool: consumerOf(binding) },
-    expiresAt: null,
-    roleId: null,
-    principalId: null,
-  }));
-}
-
-/** What the hub delivers a run from a definition's GitHub bindings, with any other `materials` its steps use. */
-function delivered(bindings: Bindings, materials: CredentialDelivery["materials"] = []): { current: CredentialDelivery } {
-  return {
-    current: {
-      bindings: bindings.map((binding) => ({ handle: binding.handle, credentialId: "github", consumer: consumerOf(binding) })),
-      materials: [{ credentialId: "github", providerKey: "http", origin: GITHUB_ORIGIN, secret: "local" }, ...materials],
-    },
-  };
-}
-
-/** The credentials a deployed run's action handlers resolve, as the sidecar builds them, with GitHub served by `github`. */
-export function localActionCredentials(bindings: Bindings, github: Fetch, cell = delivered(bindings)) {
-  const providers = createCredentialProviderRegistry([createHttpCredentialProvider({ fetch: github })]);
-  return createActionCredentialsFactory({ materialCell: cell, resolveStepGrants: () => grantsFor(bindings), providers });
 }
 
 /**

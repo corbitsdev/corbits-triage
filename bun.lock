@@ -347,6 +347,8 @@
         "@corbits/system-one": "0.3.1",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/agent": "workspace:*",
+        "@intx/authz": "workspace:*",
+        "@intx/harness": "workspace:*",
         "@intx/types": "workspace:*",
         "@intx/workflow": "workspace:*",
         "@noble/hashes": "^2.4.0",
@@ -355,8 +357,6 @@
       },
       "devDependencies": {
         "@corbits/evals": "0.1.2",
-        "@intx/authz": "workspace:*",
-        "@intx/harness": "workspace:*",
         "@intx/inference": "workspace:*",
         "@intx/storage-isogit": "workspace:*",
         "@intx/workflow-host": "workspace:*",

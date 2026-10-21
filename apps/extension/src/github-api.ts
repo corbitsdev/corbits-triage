@@ -26,7 +26,7 @@ function exhaustedUntil(headers: Headers): string | undefined {
  * per slice, so each GET is sent once and replayed. The browser's cache revalidates GitHub's answers by ETag; `no-cache`
  * revalidates even those under a minute old, when a person asks for a fresh read.
  */
-export function githubApi(token: string, cache: RequestCache): GithubApi {
+export function githubApi(token: string, cache: RequestInit["cache"]): GithubApi {
   const sent = new Map<string, Promise<Recorded>>();
 
   async function send(path: string, init?: RequestInit): Promise<Recorded> {

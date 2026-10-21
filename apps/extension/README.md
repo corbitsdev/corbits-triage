@@ -2,7 +2,8 @@
 
 A browser extension (WXT, Manifest V3, Chrome and Firefox) that checks the GitHub pull request you are viewing against
 its repository's `.corbits-triage.yml` and shows the result on the pull request page. It reads GitHub with your own
-token, runs pr-triage's rules in the browser with the same shared code the hub runs, and writes nothing.
+token and runs pr-triage's own definition in the browser with Interchange's local runner, granted no action, so it
+writes nothing. Model checks are not run: the run stops at the first agent step.
 
 ## Install
 
@@ -31,12 +32,13 @@ The policy is `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the reposit
 request's own head is never read for it, so a pull request cannot change the rules it is checked by. The file is kept
 for 10 minutes, then revalidated by ETag; files over 64 KB are refused.
 
-The block at the top of GitHub's sidebar links the policy file, then lists each rule as Pass, Fail or Waiting with its
-evidence. Rules that need the decision model are not run here and say so. The verdict is named only when the rules
-decide it without the decision model. A chip beside the title repeats it, and the Files tab marks the files and lines
-a failing rule cites.
+The block at the top of GitHub's sidebar links the policy file, shows a score (how many of the checks run here
+passed), then lists each check as Pass, Fail or Waiting with its evidence. Checks that need the decision model are
+listed as Not run here and do not count toward the score. A chip beside the title repeats the score, and the Files tab
+marks the files and lines a failing check cites.
 
-When the repository has no policy file, the block says so and links to how to write one.
+When the repository has no policy file, the block says so and links to how to write one. When the pull request carries
+the policy's `pauseLabel`, the block says it is paused and checks nothing, as the hub would not triage it.
 
 When the Corbits Triage App has sent a code review to the pull request, the block links to the newest one and lists
 its inline comments by title, file and line. A review counts only when it carries code review's marker and was written
@@ -53,7 +55,9 @@ by a GitHub App's bot account, which the account name shows.
 
 ## Test
 
-`bun run check` at the repository root typechecks the extension and `e2e/`. The end-to-end check drives the Chrome
+`bun run check` at the repository root typechecks the extension and `e2e/`; the background is checked on its own
+(`tsconfig.background.json`), without the DOM lib, as Interchange's sources type-check only against Bun's fetch types.
+`src/run-checks.test.ts` runs the definition on a fixture pull request offline. The end-to-end check drives the Chrome
 build in Playwright's Chromium on a real pull request; build first, then, here, pipe the token in so it never sits on
 the command line:
 
