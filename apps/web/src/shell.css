@@ -305,7 +305,8 @@
 .inbox .error { font-size: 13px; margin: 12px 0 0; }
 .inbox .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); }
 .inbox .bar .det { font-weight: 400; }
-.inbox .bar .det::before { content: "· "; }
+.inbox .bar .det::before, .inbox .bar .held-hint::before { content: "· "; }
+.inbox .bar .held-hint { font-weight: 400; }
 .inbox .bar .bar-more { display: none; }
 @media (max-width: 767px) {
   .inbox .bar .bar-write { display: none; }

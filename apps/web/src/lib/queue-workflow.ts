@@ -13,6 +13,7 @@ const INTERACTIVE_SELECTOR = [
   "[role=checkbox]",
   "[role=radio]",
   "[role=switch]",
+  "[role=menu]",
   "[role=menuitem]",
   "[contenteditable]:not([contenteditable='false'])",
   "[tabindex]:not([tabindex='-1'])",

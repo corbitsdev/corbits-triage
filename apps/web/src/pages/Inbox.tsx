@@ -14,7 +14,7 @@ import { pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDoKeys } from "../lib/held-dos.ts";
 import { CodeReviewThreads } from "../components/CodeReviewThreads.tsx";
 import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
-import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, rowStatus, type BarEntry, type PaneBar } from "../lib/pane-report.ts";
+import { approvedByTriage, endedText, heldChoices, paneBar, paneProblems, paneStatus, rowStatus, type BarEntry, type HeldChoice, type PaneBar } from "../lib/pane-report.ts";
 import {
   COMPOSER_COPY,
   canRun,
@@ -237,16 +237,16 @@ type PaneProps = {
 
 type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; doBlocked: boolean; onChoose: (entry: BarEntry) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void; onHide: (() => void) | null };
 
-type HeldEntry = { key: string; label: string; reason: string; disabled: boolean; choose: () => void };
-
 /** Held actions sit behind one menu; the other writes are buttons, or behind More on a phone where they cannot fit. */
 function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: BottomBarProps) {
-  const { primary, rest, dos } = bar;
+  const { primary, rest } = bar;
   const writes = rest.filter((entry) => entry.held === null);
-  const held: HeldEntry[] = [
-    ...rest.flatMap((entry) => entry.held === null ? [] : [{ key: entry.kind, label: entry.label, reason: entry.held.reason, disabled: entry.blocker !== null, choose: () => onChoose(entry) }]),
-    ...dos.map((pending) => ({ key: pending.key, label: pending.label, reason: pending.reason, disabled: doBlocked, choose: () => onDo(pending) })),
-  ];
+  const held = heldChoices(bar);
+
+  function chooseHeld({ pending, entry }: HeldChoice) {
+    if (entry === null) onDo(pending);
+    else onChoose(entry);
+  }
 
   return (
     <div className="bar">
@@ -254,6 +254,7 @@ function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: Bo
         <Button type="button" className="bar-primary" disabled={primary.blocker !== null} onClick={() => onChoose(primary)}>
           {primary.kind === "reply" && draft?.edited ? "Send edited feedback" : primary.label}
           {primary.detail === null ? null : <span className="det">{primary.detail}</span>}
+          {primary.held === null ? null : <span className="held-hint">held for you</span>}
         </Button>
       )}
       {onEdit === null ? null : <Button type="button" variant="ghost" onClick={onEdit}>Edit feedback</Button>}
@@ -262,10 +263,10 @@ function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: Bo
           <MenuTrigger asChild><Button type="button" variant="outline">{held.length === 1 ? "1 held action" : `${held.length} held actions`}</Button></MenuTrigger>
           <MenuContent side="top" align="start" className="held-menu">
             <MenuLabel>Approve to run</MenuLabel>
-            {held.map((entry) => (
-              <MenuItem key={entry.key} className="held-item" disabled={entry.disabled} onSelect={entry.choose}>
-                <span>{entry.label}</span>
-                <span className="held-why">{entry.reason}</span>
+            {held.map((choice) => (
+              <MenuItem key={choice.pending.key} className="held-item" disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onSelect={() => chooseHeld(choice)}>
+                <span>{choice.pending.label}</span>
+                <span className="held-why">{choice.pending.reason}</span>
               </MenuItem>
             ))}
             {onHide === null ? null : <><MenuSeparator /><MenuItem onSelect={onHide}>Hide for me</MenuItem></>}
