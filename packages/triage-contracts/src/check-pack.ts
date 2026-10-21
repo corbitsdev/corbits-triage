@@ -367,6 +367,8 @@ export function defaultActions(): PolicyActions {
 }
 
 export const Text = type(/\S/).atMostLength(LINE_MAX);
+/** A glob, or `!` and a glob, with no space at either end or after the `!`. */
+export const Glob = type(/^!?[^\s!](?:.*\S)?$/).atMostLength(LINE_MAX);
 export const Label = type(/\S/).atMostLength(LABEL_MAX);
 const Texts = Text.array().atLeastLength(1).atMostLength(LIST_MAX);
 const RepoName = type(/^\s*(?!.*\.\.)(?!\.\/)[^\s\\/]+\/(?!\.\s*$)[^\s\\/]+\s*$/);

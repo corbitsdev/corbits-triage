@@ -1,7 +1,7 @@
 // The policy file's v4 keys beside `rules`: author groups, one key per block that runs after triage, `pace`, `pauseLabel`
 // and `decide`. They are read and validated here; nothing acts on them yet, except steps naming a group.
 import { type } from "arktype";
-import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, GROUP_NAME_MAX, GroupName, Label, POLICY_EVENTS, Text, VERDICTS, type AuthorKind, type AuthorMatch, type FileAuthorMatch, type PolicyActions, type Step, type VerdictWord } from "./check-pack.js";
+import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, Glob, GROUP_NAME_MAX, GroupName, Label, POLICY_EVENTS, VERDICTS, type AuthorKind, type AuthorMatch, type FileAuthorMatch, type PolicyActions, type Step, type VerdictWord } from "./check-pack.js";
 import { EVERYONE } from "./step-when.js";
 
 export const BLOCK_KINDS = ["code-review", "security", "deslop"] as const;
@@ -18,7 +18,7 @@ const LIST_MAX = 50;
 
 const Verdicts = type.enumerated(...VERDICTS).or(type.enumerated(...VERDICTS).array().atLeastLength(1));
 const GroupNames = GroupName.array().atLeastLength(1).atMostLength(LIST_MAX);
-const Texts = Text.array().atLeastLength(1).atMostLength(LIST_MAX);
+const Globs = Glob.array().atLeastLength(1).atMostLength(LIST_MAX);
 const Severity = type.enumerated(...SEVERITIES);
 const Duration = type(/^[1-9]\d*[smhd]$/);
 const Count = type("number.integer").atLeast(1);
@@ -27,7 +27,7 @@ const BlockSchema = type({
   "+": "reject",
   on: "boolean",
   "for?": GroupNames,
-  "when?": { "+": "reject", "triage?": Verdicts, "paths?": Texts },
+  "when?": { "+": "reject", "triage?": Verdicts, "paths?": Globs },
   "clean?": { "+": "reject", "below?": Severity, "minConfidence?": "0 <= number <= 1", "coverage?": "'full'" },
   "provider?": type.enumerated(...PROVIDERS),
 });

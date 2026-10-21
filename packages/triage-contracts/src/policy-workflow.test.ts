@@ -16,7 +16,7 @@ const DURATION = "a duration of at least 1, such as 30s, 2m, 24h or 7d";
 const V4 = `${RULES}groups:
   maintainers: { association: [OWNER, MEMBER, COLLABORATOR] }
   core: { teams: [acme/core], users: [octocat] }
-code-review: { on: true, for: [maintainers], provider: anthropic, when: { triage: pass } }
+code-review: { on: true, for: [maintainers], provider: anthropic, when: { triage: pass, paths: ["!**/*.md", "!**/*.lock"] } }
 security:
   on: true
   when: { triage: [pass, unsure], paths: ["src/**"] }
@@ -43,7 +43,7 @@ describe("policy file v4", () => {
     expect(checked.policy).toEqual({ ...readPolicyFile(RULES, REPO), groups: checked.workflow.groups });
     expect(checked.workflow).toEqual({
       groups: { maintainers: { association: ["OWNER", "MEMBER", "COLLABORATOR"] }, core: { teams: ["acme/core"], users: ["octocat"] } },
-      "code-review": { on: true, for: ["maintainers"], provider: "anthropic", when: { triage: "pass" } },
+      "code-review": { on: true, for: ["maintainers"], provider: "anthropic", when: { triage: "pass", paths: ["!**/*.md", "!**/*.lock"] } },
       security: { on: true, when: { triage: ["pass", "unsure"], paths: ["src/**"] }, clean: { below: "medium", minConfidence: 0.7, coverage: "full" } },
       deslop: { on: false, provider: "openai" },
       pace: { debounce: "30s", maxWait: "2m", perHead: 1, cap: { runs: 5, per: "24h" }, backoff: { pushes: 5, within: "10m", pause: "30m" } },
@@ -147,7 +147,11 @@ describe("policy file v4", () => {
   test.each([
     [`${RULES}security: { on: true, when: { triage: maybe } }\n`, "`security.when.triage` must be pass, fail or unsure, or a list of them.", 6],
     [`${RULES}security:\n  on: true\n  when:\n    paths: [src/**]\n    triage: [pass, maybe]\n`, "`security.when.triage` must be pass, fail or unsure, or a list of them.", 10],
-    [`${RULES}security: { on: true, when: { paths: [] } }\n`, "`security.when.paths` must be a list of globs.", 6],
+    [`${RULES}security: { on: true, when: { paths: [] } }\n`, "`security.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
+    [`${RULES}code-review: { on: true, when: { paths: ["src/**", "  !*.md"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
+    [`${RULES}code-review: { on: true, when: { paths: ["src/**", "! *.md"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
+    [`${RULES}code-review: { on: true, when: { paths: ["src/**", "*.md "] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
+    [`${RULES}code-review: { on: true, when: { paths: ["src/**", "!"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}security: { when: { triage: pass } }\n`, "`security.on` must be true or false.", 6],
     [`${RULES}security: { onn: true }\n`, "`security.onn` is not a key; did you mean `security.on`?", 6],
     [`${RULES}security: on\n`, "`security` must be a mapping of on, for, when, clean and provider.", 6],

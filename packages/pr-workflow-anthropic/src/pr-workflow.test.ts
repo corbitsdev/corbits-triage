@@ -279,11 +279,14 @@ function scope(codeReview: unknown, steps: Record<string, { output: unknown }>) 
   return scopeOf(stockTriggerMail({ kind: "pr", codeReview, codeReviewRequest: REVIEW_REQUEST, pack: { ...PACK, groups: GROUPS } }), steps);
 }
 
-function judged(author: Record<string, unknown>) {
-  return { evaluate: { output: { verdict: "pass" } }, facts: { output: { items: [{ facts: { paths: ["parser.go"], authorTeams: [], authorTeamsUnknown: [], ...author } }] } } };
+type ChangedFile = { path: string; previousPath?: string };
+
+function judged(author: Record<string, unknown>, files: ChangedFile[] = [{ path: "parser.go" }]) {
+  return { evaluate: { output: { verdict: "pass" } }, facts: { output: { items: [{ facts: { changedFiles: files.length, files, authorTeams: [], authorTeamsUnknown: [], ...author } }] } } };
 }
 
-const JUDGED = judged({ author: "octocat", authorKind: "MEMBER" });
+const MEMBER = { author: "octocat", authorKind: "MEMBER" };
+const JUDGED = judged(MEMBER);
 
 test("the scope runs for any group the author is in, on the verdicts and paths the policy names", () => {
   expect(scope({ ...ON, for: ["core"] }, JUDGED)).toEqual({ open: true, request: REVIEW_REQUEST });
@@ -291,11 +294,19 @@ test("the scope runs for any group the author is in, on the verdicts and paths t
   expect(scope({ ...ON, for: ["external"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "the author is in core, maintainers, everyone, not external" });
   expect(scope({ ...ON, triage: ["fail", "unsure"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "triage is pass, not fail or unsure" });
   expect(scope({ ...ON, paths: ["docs/**"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "no changed file matches docs/**" });
+  const docsOnly = ["!*.md", "!docs/**", "!*.lock"];
+  expect(scope({ ...ON, paths: docsOnly }, judged(MEMBER, [{ path: "README.md" }, { path: "docs/a.md" }, { path: "bun.lock" }]))).toEqual({ open: false, outcome: "skipped", reason: "no changed file matches !*.md, !docs/**, !*.lock" });
+  expect(scope({ ...ON, paths: docsOnly }, judged(MEMBER, [{ path: "README.md" }, { path: "src/a.ts" }]))).toEqual({ open: true, request: REVIEW_REQUEST });
+  expect(scope({ ...ON, paths: docsOnly }, judged(MEMBER, [{ path: "docs/a.ts", previousPath: "src/a.ts" }]))).toEqual({ open: true, request: REVIEW_REQUEST });
+  expect(scope({ ...ON, paths: ["*.go", "!parser.go"] }, JUDGED)).toMatchObject({ open: false, outcome: "skipped" });
 });
 
 test("in doubt the scope never opens: what it cannot read leaves the review incomplete", () => {
   expect(scope({ ...ON, triage: "pass" }, JUDGED)).toMatchObject({ open: false, outcome: "incomplete" });
   expect(scope({ ...ON, for: ["core"] }, judged({ author: "octocat" }))).toEqual({ open: false, outcome: "incomplete", reason: "triage could not tell the author's groups" });
   const degraded = { evaluate: { output: { verdict: "unsure" } }, facts: { output: { items: [{ error: "not found" }] } } };
+  const truncated = judged({ ...MEMBER, changedFiles: 3001 }, [{ path: "README.md" }]);
+  expect(scope({ ...ON, paths: ["!*.md"] }, truncated)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
+  expect(scope({ ...ON, paths: ["!*.md"] }, degraded)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
   expect(scope({ ...ON, paths: ["*.go"] }, degraded)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
 });
