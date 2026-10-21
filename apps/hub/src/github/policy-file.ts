@@ -18,6 +18,7 @@ import type { PolicySettled } from "./check-pack-store.js";
 import { forInstallation, type MemberOpenPulls, type OpenPullsRead } from "./open-pulls.js";
 import * as github from "./policy-pull.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
+import type { RepoReads } from "./repo-reads.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 import { bitbucketFailed, githubFailed } from "./github-refusal.js";
 import type { Member } from "../integrations/app.js";
@@ -67,6 +68,7 @@ export type PolicyFileDeps = PortalCredentialDeps & {
   tenantBitbucket: TenantBitbucket;
   /** The workspace's shared open pull request listing; `fresh` lists again. */
   openPulls: MemberOpenPulls;
+  changed: RepoReads["changed"];
   log: (entry: Record<string, unknown>) => void;
 };
 
@@ -232,6 +234,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function addFile(member: Member, record: RepoRecord, text: string, body: string): Promise<Response> {
     const response = await opened(member.tenantId, record, { path: POLICY_FILE_PATH, text, title: ADD_TITLE, body });
     // The listing is where the repository's standing finds the new pull request.
+    deps.changed(member.tenantId, record.name);
     await deps.openPulls(member, true);
     return response;
   }

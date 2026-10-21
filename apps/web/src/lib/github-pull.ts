@@ -16,5 +16,6 @@ export function useGithubPull(repo: string, number: number | null) {
     queryFn: fetchPull,
     enabled: tenantId !== undefined && number !== null,
     refetchOnWindowFocus: false,
+    staleTime: 30_000,
   });
 }

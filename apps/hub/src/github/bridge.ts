@@ -41,6 +41,7 @@ import {
 import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
+import type { RepoReads } from "./repo-reads.js";
 import type { CodeReviewFeed } from "../code-review-feed.js";
 
 const HOOK_VERIFY = ["bearer", "standard-webhooks", "slack", "x-hub-signature"] as const;
@@ -76,6 +77,8 @@ export interface BridgeDeps {
   startBacklog: BacklogStart;
   /** Told of each verified delivery naming a repository, so the reconciler lists that repository's pull requests again. */
   heard: (tenantId: string, source: RepoSource, repo: string) => void;
+  /** Every verified delivery about a repository, so the GitHub reads kept for it are read again. */
+  repoChanged: RepoReads["changed"];
 }
 
 /** Mirrors @corbits/webhooks parseWebhookMeta (not exported upstream). */
@@ -484,7 +487,10 @@ export function createBridgeHandler(d: BridgeDeps) {
       return json(400, { error: "invalid_json" });
     }
     const named = asRecord(asRecord(payload)?.["repository"])?.["full_name"];
-    if (typeof named === "string") d.heard(loaded.tenantId, "github", named);
+    if (typeof named === "string") {
+      d.heard(loaded.tenantId, "github", named);
+      d.repoChanged(loaded.tenantId, named, event);
+    }
     if (INSTALL_EVENTS.has(event) && isRecord(payload)) {
       return handleInstallEvent(d, log, loaded, delivery, event, payload);
     }

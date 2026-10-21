@@ -7,6 +7,7 @@ import { INSTALLATION_SELECTOR_HEADER, listOpenPrs, type GithubFetch } from "@co
 import { errorText } from "@corbits/common";
 import { failure, refusalResponse, sourceCredentialRefusal, type CredentialRefusal, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
+import type { RepoReads } from "./repo-reads.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 
 export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
@@ -32,6 +33,19 @@ export function forInstallation(gh: GithubFetch, installationId: number | undefi
 
 /** Lists one repository's open pull requests on its host; GitHub's through the tenant's App, another host's through its reader. */
 export type OpenPrsLister = (tenantId: string, record: RepoRecord) => Promise<GithubOpenPr[]>;
+
+/**
+ * Lists a GitHub repository again only once a webhook says its pull requests changed, or its listing is `SAFETY_MS` old.
+ * Another host's webhooks are the tenant's to set up, so its repositories are listed on every read.
+ */
+export function keptOpenPrs(list: OpenPrsLister, reads: RepoReads): OpenPrsLister {
+  return function keptListing(tenantId, record) {
+    if (sourceOf(record) !== "github") return list(tenantId, record);
+    return reads.read({ scope: "pulls", tenantId, repo: record.name, key: "open-prs" }, function listNow() {
+      return list(tenantId, record);
+    });
+  };
+}
 
 async function pullsFor(list: OpenPrsLister, tenantId: string, record: RepoRecord): Promise<RepoPulls> {
   const source = sourceOf(record);
