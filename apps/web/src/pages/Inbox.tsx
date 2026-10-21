@@ -239,7 +239,7 @@ type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; doBlocked: boole
 
 type HeldEntry = { key: string; label: string; reason: string; disabled: boolean; choose: () => void };
 
-/** Held actions and the other writes each sit behind one menu, so the bar keeps to one row, two on a phone. */
+/** Held actions sit behind one menu; the other writes are buttons, or behind More on a phone where they cannot fit. */
 function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: BottomBarProps) {
   const { primary, rest, dos } = bar;
   const writes = rest.filter((entry) => entry.held === null);
@@ -272,9 +272,10 @@ function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: Bo
           </MenuContent>
         </Menu>
       )}
+      {writes.map((entry) => <Button key={entry.kind} type="button" variant="ghost" className="bar-write" disabled={entry.blocker !== null} onClick={() => onChoose(entry)}>{entry.label}</Button>)}
       {writes.length === 0 ? null : (
         <Menu>
-          <MenuTrigger asChild><Button type="button" variant="ghost">More</Button></MenuTrigger>
+          <MenuTrigger asChild><Button type="button" variant="ghost" className="bar-more">More</Button></MenuTrigger>
           <MenuContent side="top" align="end">
             {writes.map((entry) => <MenuItem key={entry.kind} disabled={entry.blocker !== null} onSelect={() => onChoose(entry)}>{entry.label}</MenuItem>)}
           </MenuContent>
