@@ -1,5 +1,7 @@
 // Feeds code review: each new non-draft head of a pull request in a repository with code review on is mailed to its
-// host's pr-code-review once, through the same send path as triage, in a worker of its own.
+// host's pr-code-review once, through the same send path as triage, in a worker of its own; a head whose diff is the one
+// the newest review read takes that review over instead (code-review-runs.ts).
+import { createHash } from "node:crypto";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readPr, readPrDiff, type GithubFetch } from "@corbits/github-reads";
 import { shownBody, visibleText, type RepoSource } from "@corbits/triage-contracts";
@@ -31,11 +33,22 @@ export type CodeReviewFeedDeps = {
    */
   reviewed: (tenantId: string, record: RepoRecord) => Promise<RepoSource[]>;
   read: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
+  /** Whether the head takes the pull request's newest review over, its diff being the one that review read. */
+  carries: (tenantId: string, record: RepoRecord, number: number, pull: PullRequestToReview) => Promise<boolean>;
   send: (job: TriageJob) => Promise<void>;
   log: (entry: Record<string, unknown>) => void;
 };
 
 export type Offered = "sent" | "not_reviewed" | "draft" | "not_open";
+
+/**
+ * The diff's hash, its `index` lines' blob ids included, so a base change to a file the diff touches changes it; undefined
+ * for a diff with no `index` line, such as one rebuilt from the file list, which can't show such a change.
+ */
+export function diffHash(diff: string): string | undefined {
+  if (!diff.split("\n").some((line) => line.startsWith("index "))) return undefined;
+  return createHash("sha256").update(diff).digest("hex");
+}
 
 function lineCount(text: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
@@ -89,21 +102,24 @@ type ReviewRequest = {
   title: string;
   description: string;
   diff: string;
+  diffHash?: string;
   checkout: { source: RepoSource; repo: string; sha: string };
   cut?: ReturnType<typeof cutDiff>["cut"];
 };
 
-/** The review of the pull request as read, its diff cut to the limit. */
+/** The review of the pull request as read, its diff cut to the limit and hashed whole. */
 export function reviewRequestOf(record: Pick<RepoRecord, "name" | "source">, number: number, pull: PullRequestToReview): ReviewRequest {
   // A host that ignores the diff media type answers JSON, which would be reviewed as if it were the change.
   if (pull.diff !== "" && !pull.diff.startsWith("diff ")) throw new Error(`${record.name}#${number}: the host returned no unified diff`);
   const { diff, cut } = cutDiff(pull.diff);
+  const hash = diffHash(pull.diff);
   return {
     kind: "code-review",
     number,
     title: pull.title,
     description: pull.description,
     diff,
+    ...(hash && { diffHash: hash }),
     checkout: { source: sourceOf(record), repo: record.name, sha: pull.headSha },
     ...(cut && { cut }),
   };
@@ -129,23 +145,38 @@ export function createCodeReviewFeed(deps: CodeReviewFeedDeps) {
     return true;
   }
 
-  async function review(tenantId: string, record: RepoRecord, number: number, again: boolean): Promise<Offered> {
-    const source = sourceOf(record);
-    if (record.codeReview !== true || !(await deps.reviewed(tenantId, record)).includes(source)) return "not_reviewed";
+  /** The pull request to review and its request, or why it is not reviewed. */
+  async function toReview(tenantId: string, record: RepoRecord, number: number): Promise<{ pull: PullRequestToReview; request: ReviewRequest } | Exclude<Offered, "sent">> {
+    if (record.codeReview !== true || !(await deps.reviewed(tenantId, record)).includes(sourceOf(record))) return "not_reviewed";
     const pull = await deps.read(tenantId, record, number);
     if (!pull.open) return "not_open";
     if (pull.draft) return "draft";
-    const request = reviewRequestOf(record, number, pull);
-    const key = keyOf(tenantId, record, number, pull.headSha);
-    if (!reserve(key) && !again) return "sent";
+    return { pull, request: reviewRequestOf(record, number, pull) };
+  }
+
+  /** Sends the reserved head, which is let go when the send fails. */
+  async function send(tenantId: string, record: RepoRecord, number: number, request: ReviewRequest, again: boolean): Promise<void> {
+    const headSha = request.checkout.sha;
     try {
-      await deps.send({ tenantId, workflow: codeReviewWorkflowFor(source).id, repo: record.name, number, headSha: pull.headSha, source: again ? "retry" : "event", payload: request });
+      await deps.send({ tenantId, workflow: codeReviewWorkflowFor(sourceOf(record)).id, repo: record.name, number, headSha, source: again ? "retry" : "event", payload: request });
     } catch (err) {
-      sent.delete(key);
+      sent.delete(keyOf(tenantId, record, number, headSha));
       throw err;
     }
-    deps.log({ level: "info", msg: "code_review_sent", tenantId, repo: record.name, pr: number, headSha: pull.headSha, again, ...(request.cut && { cut: request.cut }) });
-    return "sent";
+    deps.log({ level: "info", msg: "code_review_sent", tenantId, repo: record.name, pr: number, headSha, again, ...(request.cut && { cut: request.cut }) });
+  }
+
+  /** A new head is sent once, unless it takes the newest review over. */
+  async function review(tenantId: string, record: RepoRecord, number: number): Promise<void> {
+    const found = await toReview(tenantId, record, number);
+    if (typeof found === "string") return;
+    const { pull, request } = found;
+    if (!reserve(keyOf(tenantId, record, number, pull.headSha))) return;
+    if (await deps.carries(tenantId, record, number, pull)) {
+      deps.log({ level: "info", msg: "code_review_carried", tenantId, repo: record.name, pr: number, headSha: pull.headSha });
+      return;
+    }
+    await send(tenantId, record, number, request, false);
   }
 
   return {
@@ -155,14 +186,18 @@ export function createCodeReviewFeed(deps: CodeReviewFeedDeps) {
       // Checked before reading the host, so a webhook delivered twice costs no second read.
       if (mail.headSha !== null && sent.has(keyOf(tenantId, record, mail.prNumber, mail.headSha))) return;
       try {
-        await review(tenantId, record, mail.prNumber, false);
+        await review(tenantId, record, mail.prNumber);
       } catch (err) {
         deps.log({ level: "error", msg: "code_review_send_failed", tenantId, repo: record.name, pr: mail.prNumber, error: String(err) });
       }
     },
-    /** "Review again": the pull request's current head, even when it was reviewed already. */
-    again(tenantId: string, record: RepoRecord, number: number): Promise<Offered> {
-      return review(tenantId, record, number, true);
+    /** "Review again": the pull request's current head, even when it was reviewed already or took a review over. */
+    async again(tenantId: string, record: RepoRecord, number: number): Promise<Offered> {
+      const found = await toReview(tenantId, record, number);
+      if (typeof found === "string") return found;
+      reserve(keyOf(tenantId, record, number, found.pull.headSha));
+      await send(tenantId, record, number, found.request, true);
+      return "sent";
     },
     /** A queued review whose worker could not run, so a later event for its head sends it again. */
     forget(job: TriageJob): void {

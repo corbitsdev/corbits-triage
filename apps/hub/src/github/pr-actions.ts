@@ -69,14 +69,17 @@ function postedNotes(run: CompletedReview): string[] {
   return [...(run.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...cutNotes(run)];
 }
 
-/** Sends the pull request's newest finished code review, only when it is the one the person saw and has something to post. */
-async function sendReview(gh: GithubFetch, body: SendBody, completed: CompletedReview | null) {
+/**
+ * Sends the pull request's newest finished code review at the head the person saw, only when the review is of that head,
+ * or was carried over to it, and has something to post; once sent on either head it is not sent again.
+ */
+async function sendReview(gh: GithubFetch, body: SendBody, completed: CompletedReview | null, carriedTo: string | null) {
   const { repo, number, headSha } = body;
   if (!completed) return failure(409, "no_code_review", "This pull request has no finished code review to send.");
-  if (completed.headSha !== headSha) return failure(409, "code_review_outdated", "A newer code review replaced this one. Reload, then send it.");
+  if (completed.headSha !== headSha && carriedTo !== headSha) return failure(409, "code_review_outdated", "A newer code review replaced this one. Reload, then send it.");
   const notes = postedNotes(completed);
   if (!completed.summary && completed.comments.length === 0 && notes.length === 0) return failure(409, "code_review_empty", "This code review has nothing to post.");
-  const sent = await sendCodeReview(gh, { repo, number, sha: headSha, summary: [completed.summary, ...notes].filter(Boolean).join("\n\n"), comments: completed.comments }, function login() {
+  const sent = await sendCodeReview(gh, { repo, number, sha: headSha, reviewed: completed.headSha, summary: [completed.summary, ...notes].filter(Boolean).join("\n\n"), comments: completed.comments }, function login() {
     return appLogin(gh);
   });
   if ("skipped" in sent) return failure(409, "head_moved", "The pull request has new commits since this review. Review again, then send it.");
@@ -146,8 +149,8 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
 
   async function act(gh: GithubFetch, tenantId: string, body: typeof ActionBody.infer) {
     if (body.action === "code-review") {
-      const { completed } = await deps.codeReviews.latest(tenantId, { repo: body.repo, number: body.number });
-      return sendReview(gh, body, completed);
+      const { completed, carriedTo } = await deps.codeReviews.latest(tenantId, { repo: body.repo, number: body.number, head: body.headSha });
+      return sendReview(gh, body, completed, carriedTo);
     }
     return runAction(gh, body, await ownedBy(tenantId, body));
   }

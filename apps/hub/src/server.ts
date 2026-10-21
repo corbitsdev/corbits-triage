@@ -344,7 +344,7 @@ const githubManifest = createGithubManifestIntegration({
   authorizeCredential: authorizePortal,
   stateSecret: env.BETTER_AUTH_SECRET,
 });
-const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader });
+const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: readPullToReview, log: logJson });
 const githubPrActions = createGithubPrActions({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -431,9 +431,13 @@ async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
   return [...sources];
 }
 const readPullRequest = createPullRequestReader({ tenantGithub, tenantBitbucket });
+function readPullToReview(tenantId: string, record: RepoRecord, number: number) {
+  return readPullRequest(tenantId, record, number);
+}
 const codeReviewFeed = createCodeReviewFeed({
   reviewed: reviewedSources,
   read: readPullRequest,
+  carries: codeReviewRuns.carries,
   send: sendToWorker,
   log: logJson,
 });

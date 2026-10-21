@@ -1,22 +1,23 @@
 import { expect, test } from "bun:test";
 import type { RepoSource } from "@corbits/triage-contracts";
-import { createCodeReviewFeed, createPullRequestReader, cutDiff, type PullRequestToReview } from "./code-review-feed.js";
+import { createCodeReviewFeed, createPullRequestReader, cutDiff, diffHash, type PullRequestToReview } from "./code-review-feed.js";
 import type { TriageJob } from "./github/coordinator.js";
 import type { PrMail } from "./github/normalize.js";
 import type { RepoRecord } from "./github/tenant-config.js";
 
 const RECORD: RepoRecord = { name: "acme/widgets", connected: true, codeReview: true };
-const PULL: PullRequestToReview = { title: "Fix", description: "Body", headSha: "sha1", draft: false, open: true, diff: "diff --git a/x b/x\n+1\n" };
+const PULL: PullRequestToReview = { title: "Fix", description: "Body", headSha: "sha1", draft: false, open: true, diff: "diff --git a/x b/x\nindex 1111111..2222222 100644\n+1\n" };
 
 function mail(action: string, fields: Partial<PrMail> = {}): PrMail {
   return { kind: "pr", repo: RECORD.name, prNumber: 7, deliveryId: "d", event: "pull_request", action, headSha: "sha1", author: "a", title: "Fix", body: "Body", draft: false, review: null, ...fields };
 }
 
-function harness(reviewed: RepoSource[] = ["github"], pull = PULL) {
+function harness(reviewed: RepoSource[] = ["github"], pull = PULL, carries = false) {
   const sent: TriageJob[] = [];
   const feed = createCodeReviewFeed({
     reviewed: async () => reviewed,
     read: async () => pull,
+    carries: async () => carries,
     async send(job) {
       sent.push(job);
     },
@@ -38,10 +39,28 @@ test("each new non-draft head is sent to its host's code review once; Review aga
     number: 7,
     headSha: "sha1",
     source: "event",
-    payload: { kind: "code-review", number: 7, title: "Fix", description: "Body", diff: PULL.diff, checkout: { source: "github", repo: "acme/widgets", sha: "sha1" } },
+    payload: { kind: "code-review", number: 7, title: "Fix", description: "Body", diff: PULL.diff, diffHash: diffHash(PULL.diff), checkout: { source: "github", repo: "acme/widgets", sha: "sha1" } },
   }]);
   expect(await feed.again("t", RECORD, 7)).toBe("sent");
   expect(sent.map((job) => job.source)).toEqual(["event", "retry"]);
+});
+
+test("a head that takes the newest review over is not sent, and Review again sends it anyway", async () => {
+  const { feed, sent } = harness(["github"], PULL, true);
+  await feed.offer("t", RECORD, mail("synchronize"));
+  expect(sent).toEqual([]);
+  expect(await feed.again("t", RECORD, 7)).toBe("sent");
+  expect(sent.map((job) => job.source)).toEqual(["retry"]);
+});
+
+test("a diff's hash changes with any blob id, and a diff with none, as GitHub rebuilds from the file list, has none and is sent unhashed", async () => {
+  const binary = (blob: string) => `diff --git a/logo.png b/logo.png\nindex 5555555..${blob} 100644\nBinary files a/logo.png and b/logo.png differ\n`;
+  expect(diffHash(binary("6666666"))).not.toBe(diffHash(binary("7777777")));
+  const rebuilt = { ...PULL, diff: "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n" };
+  expect(diffHash(rebuilt.diff)).toBeUndefined();
+  const { feed, sent } = harness(["github"], rebuilt);
+  await feed.offer("t", RECORD, mail("synchronize"));
+  expect(sent[0]?.payload).not.toHaveProperty("diffHash");
 });
 
 test("nothing is sent while code review is off, the key is missing or the pull request turned draft", async () => {
@@ -87,6 +106,7 @@ test("two deliveries of one push in flight together send it once, and a head who
   const feed = createCodeReviewFeed({
     reviewed: async () => ["github"],
     read: async () => PULL,
+    carries: async () => false,
     async send(job) {
       sent.push(job);
       await held;

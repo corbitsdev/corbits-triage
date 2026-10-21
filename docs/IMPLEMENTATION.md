@@ -26,7 +26,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/audit-log.ts` | The audit list, read from what the workspace already recorded. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
-| `src/code-review.ts`, `src/code-review-feed.ts`, `src/code-review-runs.ts` | The code review switch; `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; the feed that mails each new head; the latest review, read from run logs. |
+| `src/code-review.ts`, `src/code-review-feed.ts`, `src/code-review-runs.ts` | The code review switch; `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; the feed that mails each new head; the latest review, read from run logs, and whether a head takes it over. |
 | `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and Docker registration (`docker.ts`). |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/bitbucket-datacenter/` | Bitbucket Data Center connection, repository and webhook routes, payload normalizing. |
