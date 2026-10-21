@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkFailed, checkPending, latestDecisive, reviewedOnHead } from "@corbits/github-reads";
-import { authorTeams, getChecks, getPr, getReviews, isTriageComment, listIssueComments, listPrTimeline, readRepoFile, readStack, type BitbucketFetch } from "./index.js";
+import { authorTeams, getChecks, getPr, getReviews, isTriageComment, jsonAll, listIssueComments, listPrTimeline, readRepoFile, readStack, type BitbucketFetch } from "./index.js";
 import activities from "./fixtures/activities.json";
 import buildStatus from "./fixtures/build-status.json";
 import pullRequest from "./fixtures/pull-request.json";
@@ -147,4 +147,9 @@ describe("authorTeams", () => {
   test("a malformed row makes the group unknown, even after a match", async () => {
     expect(await authorTeams(instance([[members, page([{ slug: "alice" }, { name: "alicia" }])]]), input)).toEqual(unknown);
   });
+});
+
+test("jsonAll: a page that does not move past its start throws, rather than looping", async () => {
+  const stuck = instance([[REPO, { values: [1], isLastPage: false, nextPageStart: 1 }]]);
+  await expect(jsonAll(stuck, `${REPO}/commits`)).rejects.toThrow("did not move past start 1");
 });
