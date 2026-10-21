@@ -15,6 +15,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     authorKind: null,
     draft: false,
     mergeable: null,
+    mergeBlock: null,
     state: "needs-decision",
     priority: "P2",
     owner: null,
@@ -276,5 +277,15 @@ describe("Ready", () => {
     ];
     expect(readyToMerge(open, READY).map((entry) => entry.item.number)).toEqual([2, 1]);
     expect(listCounts(open, READY).ready).toBe(2);
+  });
+
+  test("a pass the host would not merge leaves Ready and Merge for where it gets unblocked", () => {
+    const open = [passed(1, {}), passed(2, { mergeBlock: "review-required" }), passed(3, { mergeBlock: "behind" }), passed(4, { mergeBlock: "checking" })];
+    expect(readyToMerge(open, READY).map((entry) => entry.item.number)).toEqual([1]);
+    expect(groupInbox(open.map((entry) => entry.item), READY).groups.map((group) => [group.action, group.items.map((row) => row.number)])).toEqual([
+      ["review", [2, 4]],
+      ["unblock", [3]],
+      ["merge", [1]],
+    ]);
   });
 });

@@ -13,6 +13,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     authorKind: null,
     draft: false,
     mergeable: null,
+    mergeBlock: null,
     state: "needs-decision",
     priority: "P2",
     owner: null,

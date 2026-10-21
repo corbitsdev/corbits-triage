@@ -16,6 +16,7 @@ import { CodeReviewFound, CodeReviewQuery } from "../code-review-runs.js";
 import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody, validManifestMutationRequest } from "../github/manifest.js";
+import { MERGE_STATES_PATH } from "../github/merge-states.js";
 import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
 import { failure } from "../github/portal-credential.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
@@ -74,6 +75,7 @@ export type IntegrationHandlers = {
   backlog: BodyHandler<typeof BacklogBody.infer>;
   openPulls: (member: Member) => Promise<Response>;
   prDetails: MemberHandler;
+  mergeStates: MemberHandler;
   prPreview: (body: typeof PreviewBody.infer, member: Member, signal: AbortSignal) => Promise<Response>;
   triageStats: MemberHandler;
   triageTimeline: MemberHandler;
@@ -131,6 +133,16 @@ const PrDetails = type({
   issues: "Record<string, unknown>[]",
   checks: "unknown",
   reviews: "Record<string, unknown>[]",
+});
+const MergeStates = type({
+  prs: type({
+    number: "number",
+    mergeable: "boolean | null",
+    "mergeableState?": "string",
+    "reviewDecision?": "'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null",
+    "canMerge?": "boolean",
+    "mergeVetoes?": "string[]",
+  }).array(),
 });
 
 function json(description: string, schema: Parameters<typeof resolver>[0]) {
@@ -483,6 +495,23 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     member,
     function prDetails(c) {
       return handlers.prDetails(c.req.raw, memberOf(c));
+    },
+  );
+
+  app.get(
+    `${MERGE_STATES_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Whether the host would merge these pull requests now",
+      tags: TAGS,
+      parameters: [
+        { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
+        { in: "query", name: "numbers", required: true, description: "Comma-separated pull request numbers, at most 100, each at most 2147483647", schema: { type: "string", pattern: "^[1-9]\\d*(,[1-9]\\d*)*$" } },
+      ],
+      responses: { 200: json("GitHub's merge state and review decision, or Bitbucket's merge checks, per pull request", MergeStates), ...invalid, ...failures, ...githubFailed },
+    }),
+    member,
+    function mergeStates(c) {
+      return handlers.mergeStates(c.req.raw, memberOf(c));
     },
   );
 

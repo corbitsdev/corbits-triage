@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
-import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readReviewDecision, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
+import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readMergeStates, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
@@ -22,7 +22,8 @@ type Log = (entry: Record<string, unknown>) => void;
 /** Only a blocked merge asks whether a review is what blocks it; a decision GitHub will not give leaves the block unexplained, not the details unread. */
 async function reviewDecisionOf(gh: GithubFetch, repo: string, number: number, log: Log): Promise<ReviewDecision | null> {
   try {
-    return await readReviewDecision(gh, repo, number);
+    const [state] = await readMergeStates(gh, repo, [number]);
+    return state?.reviewDecision ?? null;
   } catch (err) {
     log({ level: "warn", msg: "review_decision_failed", repo, number, error: errorText(err) });
     return null;

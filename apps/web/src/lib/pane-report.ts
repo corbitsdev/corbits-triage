@@ -1,6 +1,6 @@
 import { citationOf } from "@corbits/triage-contracts";
-import type { CheckResult, GithubPullDetail, PrItem, QueueState, RunFailure } from "./hub-api.ts";
-import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type HeldBlock, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
+import type { CheckResult, GithubPullDetail, HeldBlock, MergeBlock, PrItem, QueueState, RunFailure } from "./hub-api.ts";
+import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, postedLabel, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
 import { upperFirst } from "./triage-view.ts";
 
@@ -105,6 +105,14 @@ function problemsText(item: PrItem, primary: MenuEntry | null, fix: number, chec
   return `${inboxStatus(item)} · ${things(fix)} to fix${rest}`;
 }
 
+const BLOCK_ROW_STATUS: Record<MergeBlock, string> = {
+  checking: "Checking merge state",
+  behind: "Behind base",
+  "review-required": "Waiting for review",
+  "changes-requested": "Changes requested",
+  blocked: "Merge blocked",
+};
+
 const ROW_STATUS: Record<QueueState, string> = {
   "needs-decision": "Your call",
   "awaiting-review": "Needs review",
@@ -124,6 +132,8 @@ export function rowStatus(item: PrItem, handled: HandledMark | null): string {
   if (inboxAction(item) === "failed") return "Couldn't triage";
   const fix = paneProblems(item.checks).filter((problem) => problem.severity === "fail").length;
   if (fix > 0) return `${fix} to fix`;
+  if (item.state === "ready" && item.mergeable === false) return "Has conflicts";
+  if (item.state === "ready" && item.mergeBlock !== null) return BLOCK_ROW_STATUS[item.mergeBlock];
   return ROW_STATUS[isReReview(item) ? "awaiting-review" : item.state];
 }
 

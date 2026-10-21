@@ -1,6 +1,6 @@
 import { errorText } from "@corbits/common";
 import type { Outcome } from "./held-actions.ts";
-import type { GithubPullDetail, HeldDoRef, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
+import type { GithubPullDetail, HeldBlock, HeldDoRef, MergeBlock, MergeState, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import { offersClose, type PendingDo } from "./pending-dos.ts";
 import { inboxAction, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
 
@@ -11,28 +11,35 @@ export function titleText(title: string | null): string {
   return title === null ? UNTITLED : title;
 }
 
-/** Why the host holds a merge free of conflicts. */
-export type HeldBlock = "behind" | "review-required" | "changes-requested" | "blocked";
-
 type HostBlock = "mergeability-unknown" | HeldBlock;
 
-/** `hostBlock` is known only once the host's detail has loaded. */
+/** `hostBlock` is known once the host's detail, or the list's read of the host, has loaded. */
 type PaneFacts = { title: string | null; author: string | null; draft: boolean | null; mergeable: boolean | null; hostBlock: HostBlock | null };
 
 const GITHUB_BLOCK: Partial<Record<string, HostBlock>> = { unknown: "mergeability-unknown", behind: "behind", blocked: "blocked" };
 
 const REVIEW_BLOCK: Partial<Record<string, HostBlock>> = { REVIEW_REQUIRED: "review-required", CHANGES_REQUESTED: "changes-requested" };
 
-function hostBlock(pr: GithubPullDetail["pr"]): HostBlock | null {
+function hostBlock(pr: Omit<MergeState, "number">): HostBlock | null {
   if (pr.canMerge === false) return "blocked";
   const block = pr.mergeableState === undefined ? undefined : GITHUB_BLOCK[pr.mergeableState];
   if (block === "blocked" && pr.reviewDecision) return REVIEW_BLOCK[pr.reviewDecision] ?? block;
   return block ?? null;
 }
 
+const CLEAR_STATES: ReadonlySet<string> = new Set(["clean", "unstable", "has_hooks"]);
+
+/** Only the host's explicit yes clears the merge. */
+export function mergeBlockOf(state: MergeState): MergeBlock | null {
+  const block = hostBlock(state);
+  if (block !== null) return block === "mergeability-unknown" ? "checking" : block;
+  if (state.mergeable !== true) return "checking";
+  return state.canMerge === true || (state.mergeableState !== undefined && CLEAR_STATES.has(state.mergeableState)) ? null : "checking";
+}
+
 /** Once GitHub's detail has loaded it replaces the verdict's facts outright, so its null mergeable means GitHub is still computing it. */
 export function paneFacts(item: PrItem, detail: GithubPullDetail | undefined): PaneFacts {
-  if (detail === undefined) return { title: item.title, author: item.author, draft: item.draft, mergeable: item.mergeable, hostBlock: null };
+  if (detail === undefined) return { title: item.title, author: item.author, draft: item.draft, mergeable: item.mergeable, hostBlock: item.mergeBlock === "checking" ? "mergeability-unknown" : item.mergeBlock };
   return { title: detail.pr.title, author: detail.pr.author, draft: detail.pr.draft, mergeable: detail.pr.mergeable, hostBlock: hostBlock(detail.pr) };
 }
 

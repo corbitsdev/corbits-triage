@@ -89,6 +89,7 @@ import { createRunRecorder } from "./github/run-recorder.js";
 import { createRecordPass, createTenantObserver, createTenantVersions } from "./github/tenant-observer.js";
 import { createTriageVerdicts } from "./github/triage-verdicts.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
+import { createMergeStates } from "./github/merge-states.js";
 import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
@@ -349,6 +350,15 @@ const githubPrActions = createGithubPrActions({
 });
 const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
 const githubPrDetails = createGithubPrDetails({
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  githubApiOrigin: githubOrigin,
+  tenantBitbucket,
+  authorize: authorizePortal,
+  log: logJson,
+});
+
+const mergeStates = createMergeStates({
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
@@ -767,6 +777,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   }),
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,
+  mergeStates,
   prPreview: createGithubPrPreview({
     db: composition.db,
     cipher: composition.credentialCipher,

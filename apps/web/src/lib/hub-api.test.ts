@@ -588,6 +588,11 @@ describe("pending maintainer write approvals", () => {
   });
 });
 
+test("a pass the host has not answered for yet is not known", () => {
+  const [item] = projectQueue([pull(8, { verdict: verdict("run-8", "ready-monitoring", { facts: { mergeable: true } }, { verdict: "pass" }) })], [], undefined);
+  expect(item?.mergeBlock).toBe("checking");
+});
+
 describe("stored repositories", () => {
   test("a record without a source is a GitHub repository", () => {
     const config = { corbitsTriage: { repos: [{ name: "acme/api", connected: true }, { name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" }] } };

@@ -44,10 +44,10 @@ import {
   awaitingText,
   groupInbox,
   groupOpen,
-  inboxAction,
   inNeedsYou,
   initialsOf,
   isLoudAuthorKind,
+  listedAction,
   listHref,
   listRoot,
   matchesQuery,
@@ -133,7 +133,7 @@ function Row({ view, entry, byRepo, selected, search }: RowProps) {
   const { item, handled } = entry;
   return (
     <Link className="row" aria-current={selected} to={{ pathname: listHref(view, item), search }} data-inbox-row={item.key}>
-      <span className={dotClass(item, inboxAction(item))} />
+      <span className={dotClass(item, listedAction(item))} />
       <span className="num">{byRepo ? null : repoName(item.repo)}{item.number === null ? null : `#${item.number}`}</span>
       <b className="tw">{titleText(item.title)}</b>
       {byRepo ? <span className="who" title={item.author ?? undefined}>{item.author}</span> : null}

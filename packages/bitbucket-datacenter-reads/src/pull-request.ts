@@ -13,7 +13,7 @@ type Mergeability = { mergeable: boolean | null; canMerge?: boolean; mergeVetoes
  * `mergeable` means free of conflicts, as on GitHub; whether Data Center's merge checks allow the merge is `canMerge`,
  * and `mergeVetoes` says why not. Data Center answers synchronously, so there is nothing to poll; an UNKNOWN outcome is null.
  */
-async function mergeability(bb: BitbucketFetch, repo: string, number: number): Promise<Mergeability> {
+export async function readMergeability(bb: BitbucketFetch, repo: string, number: number): Promise<Mergeability> {
   const merge = Merge.assert(await json(bb, `${repoPath(repo)}/pull-requests/${number}/merge`));
   const mergeable = merge.outcome === "UNKNOWN" ? null : !merge.conflicted;
   return { mergeable, canMerge: merge.canMerge, mergeVetoes: merge.vetoes.map((veto) => veto.summaryMessage) };
@@ -63,7 +63,7 @@ export async function readPrDiff(bb: BitbucketFetch, repo: string, number: numbe
 export async function getPr(bb: BitbucketFetch, repo: string, number: number) {
   const pr = PullRequest.assert(await json(bb, `${repoPath(repo)}/pull-requests/${number}`));
   const association = await authorAssociation(bb, repo, pr.author.user.slug);
-  const merge: Mergeability = pr.state === "OPEN" ? await mergeability(bb, repo, number) : { mergeable: null };
+  const merge: Mergeability = pr.state === "OPEN" ? await readMergeability(bb, repo, number) : { mergeable: null };
   return { ...prFields(pr, association), ...merge, ...(await diffStats(bb, repo, number)) };
 }
 

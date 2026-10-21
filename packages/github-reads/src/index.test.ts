@@ -11,6 +11,7 @@ import {
   listPrFilesPage,
   listPrTimeline,
   parseCodeowners,
+  readMergeStates,
   readPrDiff,
   readRepoDocsPage,
   REPO_DOCS_MAX_BYTES,
@@ -62,6 +63,31 @@ describe("listOpenPrs", () => {
     const [pr] = await listOpenPrs(gh, "acme/widgets");
     expect(pr?.author).toBeNull();
   });
+});
+
+test("readMergeStates: one query for every pull request, states named as REST names them, unknown numbers left out", async () => {
+  const { gh, requests } = recorder(() => ({
+    data: {
+      repository: {
+        pr1133: { number: 1133, mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: "REVIEW_REQUIRED" },
+        pr1125: { number: 1125, mergeable: "CONFLICTING", mergeStateStatus: "DIRTY", reviewDecision: null },
+        pr9: null,
+      },
+    },
+  }));
+  expect(await readMergeStates(gh, "acme/widgets", [1133, 1125, 9])).toEqual([
+    { number: 1133, mergeable: true, mergeableState: "blocked", reviewDecision: "REVIEW_REQUIRED" },
+    { number: 1125, mergeable: false, mergeableState: "dirty", reviewDecision: null },
+  ]);
+  expect(requests.map((request) => `${request.method} ${request.path}`)).toEqual(["POST /graphql"]);
+});
+
+test("readMergeStates: a pull request GitHub answers with an error is left out, and an error naming none leaves them all out", async () => {
+  const node = { number: 1, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: null };
+  const named = recorder(() => ({ data: { repository: { pr1: node, pr2: { ...node, number: 2 } } }, errors: [{ path: ["repository", "pr2", "reviewDecision"] }] }));
+  expect((await readMergeStates(named.gh, "acme/widgets", [1, 2])).map((state) => state.number)).toEqual([1]);
+  const unnamed = recorder(() => ({ data: { repository: { pr1: node } }, errors: [{ message: "Something went wrong" }] }));
+  expect(await readMergeStates(unnamed.gh, "acme/widgets", [1])).toEqual([]);
 });
 
 describe("listInstallations", () => {
