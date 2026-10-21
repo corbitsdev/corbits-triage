@@ -78,8 +78,9 @@ export function createUserCache(queryClient: QueryClient, storage: AsyncStorage<
 
   async function signOut() {
     stop();
+    // Before any sign-in the cache holds only what the signed-out screens load, such as the sign-in options in flight.
+    if (holder !== null) queryClient.clear();
     holder = null;
-    queryClient.clear();
     await userPersister(storage, never).removeClient();
   }
 

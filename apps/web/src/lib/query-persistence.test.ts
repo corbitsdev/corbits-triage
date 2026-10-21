@@ -72,3 +72,14 @@ test("the same user's stored cache is restored", async () => {
 
   expect(again.getQueryData(OPEN_KEY)).toEqual(OPEN);
 });
+
+test("a first visit's signed-out session keeps what the sign-in page loads", async () => {
+  const queryClient = new QueryClient();
+  const cache = createUserCache(queryClient, memoryStorage());
+  const methods = queryClient.fetchQuery({ queryKey: ["auth-methods"], queryFn: async () => ({ google: true }) });
+
+  await cache.update(sessionState(true, null, ""));
+
+  expect(await methods).toEqual({ google: true });
+  expect(queryClient.getQueryData(["auth-methods"])).toEqual({ google: true });
+});
