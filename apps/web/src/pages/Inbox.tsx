@@ -88,7 +88,7 @@ const WAITING = "Waiting";
 const WAITING_PARAM = "waiting";
 
 // Narrower screens show the list or the pane, so only side by side does the first row open by itself.
-const SIDE_BY_SIDE = "(min-width: 961px)";
+const SIDE_BY_SIDE = "not (max-width: 960px)";
 
 function actionDot(action: InboxAction | null): string {
   if (action === "merge") return "dot ready";

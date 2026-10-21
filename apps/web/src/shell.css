@@ -341,7 +341,6 @@
   .inbox .seg button { min-height: 36px; padding: 0 12px; }
   .inbox .row { height: 44px; }
   .inbox .row .who { display: none; }
-  .inbox .gh { top: env(safe-area-inset-top); }
   :is(.pulse, .settings) { padding: 24px 16px 100px; }
   :is(.pulse, .settings) h1 { font-size: 28px; }
   .settings nav.byline a { display: inline-block; padding: 12px 0; }
