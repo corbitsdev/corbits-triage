@@ -1,11 +1,11 @@
+import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, VERDICTS, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, VERDICTS, type ActionKind, type CheckPack, type MergeRisk, type RepoSource } from "@corbits/triage-contracts";
 import { findTriageRole } from "../../lib/automation-grid.ts";
 import { checkPackQuery } from "../../lib/check-packs.ts";
 import { DO_NAMES } from "../../lib/pack-prose.ts";
-import { mergeRisks, type MergeRisk } from "../../lib/merge-risks.ts";
 import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
 import { useAllowed, useRoles } from "../../lib/tenant-entities.ts";
 
@@ -23,7 +23,7 @@ function policyKinds(pack: CheckPack, decide: readonly ActionKind[], source: Rep
   return hostKinds(source).filter((kind) => used.has(kind));
 }
 
-const RISK_NAMES: Record<MergeRisk, string> = { "first-timers": "pull requests from first-time contributors", "ci-config": "changes to CI configuration" };
+const RISK_NAMES: Record<MergeRisk, string> = { "first-timers": "pull requests from first-time contributors", "ci-config": "changes to CI workflows" };
 
 type PolicyGrantsProps = { repo: string; source: RepoSource; disabled: boolean };
 
@@ -45,32 +45,37 @@ export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsPro
     return kinds.map((kind) => doName(source, kind)).join(", ");
   }
 
-  function body() {
-    if (policy.isPending || roles.loading) return <span className="txt">Checking what Triage may do here…</span>;
-    if (policy.isError) return <span className="txt">Could not read what Triage may do here, so it asks before every action.</span>;
-    const found = policy.data;
-    if (found?.kind !== "file" && found?.kind !== "pack") return <span className="txt">This repository has no policy to allow, so Triage asks before every action.</span>;
-    if (!found.automatic || roles.unavailable || roles.denied) return <span className="txt">Could not read what Triage may do here, so it asks before every action.</span>;
-    const triage = findTriageRole(roles.rows);
-    if (!triage) return <span className="txt">This workspace has no Triage role, so Triage asks before every action.</span>;
-    const kinds = policyKinds(found.pack, found.decide ?? [], source);
-    const missing = kinds.filter((kind) => !found.automatic?.includes(kind));
-    if (missing.length === 0) return <span className="txt">Triage does these on its own: {names(kinds)}.</span>;
-    return (
-      <>
-        <span className="txt">This policy wants Triage to: {names(missing)}. Until you allow it, these wait for you in the inbox.</span>
-        <Button type="button" size="sm" disabled={disabled || !canCreate || allow.isPending} onClick={() => allow.mutate({ roleId: triage.id, kinds: missing })}>{allow.isPending ? "Allowing…" : "Allow"}</Button>
-      </>
-    );
+  function sentence(text: ReactNode) {
+    return <div className="sentence">{text}</div>;
   }
 
-  function caution() {
+  function caution(risks: readonly MergeRisk[] | undefined) {
+    if (!risks?.length) return null;
+    return sentence(<span className="txt">Triage approves or merges on its own, which can let unintended code in: {risks.map((risk) => RISK_NAMES[risk]).join(", ")}.</span>);
+  }
+
+  function body() {
+    if (policy.isPending || roles.loading) return sentence(<span className="txt">Checking what Triage may do here…</span>);
+    if (policy.isError) return sentence(<span className="txt">Could not read what Triage may do here, so it asks before every action.</span>);
     const found = policy.data;
-    if ((found?.kind !== "file" && found?.kind !== "pack") || !found.automatic) return null;
-    const risks = mergeRisks(found.pack, found.automatic, found.decide ?? []);
-    if (!risks) return null;
-    const named = risks.length ? `, such as ${risks.map((risk) => RISK_NAMES[risk]).join(" or ")}` : "";
-    return <div className="sentence"><span className="txt">Approving or merging on its own can let unintended code merge{named}.</span></div>;
+    if (found?.kind !== "file" && found?.kind !== "pack") return sentence(<span className="txt">This repository has no policy to allow, so Triage asks before every action.</span>);
+    if (!found.automatic || roles.unavailable || roles.denied) return sentence(<span className="txt">Could not read what Triage may do here, so it asks before every action.</span>);
+    const triage = findTriageRole(roles.rows);
+    if (!triage) return sentence(<span className="txt">This workspace has no Triage role, so Triage asks before every action.</span>);
+    const kinds = policyKinds(found.pack, found.decide ?? [], source);
+    const missing = kinds.filter((kind) => !found.automatic?.includes(kind));
+    if (missing.length === 0) return <>{sentence(<span className="txt">Triage does these on its own: {names(kinds)}.</span>)}{caution(found.mergeRisks)}</>;
+    return (
+      <>
+        {sentence(
+          <>
+            <span className="txt">This policy wants Triage to: {names(missing)}. Until you allow it, these wait for you in the inbox.</span>
+            <Button type="button" size="sm" disabled={disabled || !canCreate || allow.isPending} onClick={() => allow.mutate({ roleId: triage.id, kinds: missing })}>{allow.isPending ? "Allowing…" : "Allow"}</Button>
+          </>,
+        )}
+        {caution(found.mergeRisks)}
+      </>
+    );
   }
 
   return (
@@ -78,8 +83,7 @@ export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsPro
       <h3 id="rs-alone">Actions Triage takes on its own</h3>
       <div className="gcard">
         <div className="sentences">
-          <div className="sentence">{body()}</div>
-          {caution()}
+          {body()}
         </div>
       </div>
       {allow.error ? <p role="alert" className="error">Could not allow these actions. {errorText(allow.error)} Try again.</p> : null}

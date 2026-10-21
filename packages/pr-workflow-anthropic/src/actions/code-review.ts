@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { isRecord } from "@corbits/common";
 import { AUTHOR_KINDS, authorGroupsOf, blockCleanSchema, EVERYONE, fileGroupSchema, SEVERITIES, triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
-import { globMatch } from "@corbits/triage-contracts/glob";
+import { globMatch } from "@corbits/triage-workflows/logic/glob";
 
 /** The code review block's outcome step; every other step of the block has its id under `CODE_REVIEW_PREFIX`. */
 export const CODE_REVIEW = "codeReview";

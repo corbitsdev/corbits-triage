@@ -103,7 +103,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     schemas and routes above, invitations, workflow deploy and versions,
     Bitbucket Data Center, and code review.
     `GET …/github-triage/{tenantId}/policy?repo=` answers a repository's
-    policy as triage reads it and `POST …/github-triage/{tenantId}/backlog`
+    policy as triage reads it, with the merge risks of its automatic approve
+    or merge computed there for GitHub repositories, and `POST …/github-triage/{tenantId}/backlog`
     starts backlog triage, so only the hub resolves policies and builds
     trigger mail. `GET …/merge-states/{tenantId}?repo=&numbers=` (at most
     100) says whether the host would merge those pull requests now: one

@@ -3,7 +3,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts, PrFileFacts } from "./checks.js";
 import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
-import { globMatch } from "@corbits/triage-contracts/glob";
+import { globMatch } from "./glob.js";
 import type { BooleanQuestion, ChoiceQuestion, ScoreQuestion } from "@corbits/system-one";
 
 export type QualityQuestion = BooleanQuestion | ChoiceQuestion | ScoreQuestion;

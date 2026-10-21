@@ -439,6 +439,11 @@ async function reviewedSources(tenantId: string, record: RepoRecord) {
   if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name, sourceOf(record)))) return [];
   return codeReviewSources(composition.db, tenantId);
 }
+/** A repository without a record is read as GitHub's, as the policy read route reads it. */
+async function repoSource(tenantId: string, repo: string): Promise<RepoSource> {
+  const tenant = await composition.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
+  return sourceOf(repoRecords(triageNs(tenant?.config)).find((row) => row.name === repo) ?? {});
+}
 /** The hosts whose PR workflow deploys: a connected repository's policy file needs it, and code review has a place to run. */
 async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
   if (!(await codeReviewPlaced(tenantId))) return [];
@@ -835,7 +840,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   prActions: githubPrActions,
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
-  policyRead: createGithubPolicyRead({ readCheckPack }),
+  policyRead: createGithubPolicyRead({ readCheckPack, repoSource }),
   policyFileRead: policyFile.fileRoute,
   policyFileExport: policyFile.exportRoute,
   policyUpgrades: policyFile.upgradesRoute,

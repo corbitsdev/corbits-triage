@@ -223,11 +223,16 @@ export const PolicySourceShape = type({ "repo?": ArtifactRefShape, "shared?": Ar
 
 const ActionKinds = type.enumerated(...ACTION_KINDS).array();
 
+/** What an automatic approve or merge can let in: pull requests from first-time contributors, or changes to CI workflows. */
+export const MERGE_RISKS = ["first-timers", "ci-config"] as const;
+export type MergeRisk = (typeof MERGE_RISKS)[number];
+
 /**
  * `automatic` is what Triage may do on its own in the repository; `decide` the action kinds the policy file's own
- * `decide` names. `invalid` is a policy file triage refuses, so nothing runs until it is fixed.
+ * `decide` names; `mergeRisks` what Triage's automatic approve or merge can let in. `invalid` is a policy file triage
+ * refuses, so nothing runs until it is fixed.
  */
-export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, decide: ActionKinds })
+export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, decide: ActionKinds, mergeRisks: type.enumerated(...MERGE_RISKS).array() })
   .or({ status: "'missing'" })
   .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape })
   .or({ status: "'invalid'", reason: "string", path: "string" });

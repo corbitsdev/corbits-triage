@@ -333,7 +333,6 @@
         "@corbits/common": "workspace:*",
         "arktype": "catalog:",
         "htmlparser2": "10.1.0",
-        "re2js": "2.8.6",
         "yaml": "2.9.1",
       },
       "devDependencies": {
@@ -360,6 +359,7 @@
         "@intx/workflow-host": "workspace:*",
         "@noble/hashes": "^2.4.0",
         "arktype": "catalog:",
+        "re2js": "2.8.6",
       },
       "devDependencies": {
         "@corbits/evals": "0.1.2",
