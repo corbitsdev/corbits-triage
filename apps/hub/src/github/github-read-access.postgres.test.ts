@@ -197,8 +197,8 @@ test("PostgreSQL: holding read or use on the GitHub credential reads pull reques
 test("PostgreSQL: the listing marks the App's own pull request through an inherited credential, and lists unmarked when the App has no slug", async () => {
   const record = { name: REPO, connected: true, enabled: true, installationId: 1 };
   const own = (prs: Array<{ number: number; byTriage?: true }>) => prs.map((pr) => [pr.number, pr.byTriage === true]);
-  expect(own(await list("tnt_read_child", record))).toEqual([[8, false], [12, true]]);
-  expect(own(await list("tnt_read_unslugged", record))).toEqual([[8, false], [12, false]]);
+  expect(own(await list("tnt_read_child")(record))).toEqual([[8, false], [12, true]]);
+  expect(own(await list("tnt_read_unslugged")(record))).toEqual([[8, false], [12, false]]);
 });
 
 test("PostgreSQL: pull request details ask GitHub for the review decision only when the merge is blocked", async () => {

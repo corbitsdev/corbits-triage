@@ -90,18 +90,24 @@ function markTriage<P extends { author: string | null }>(prs: P[], login: string
   return prs.map((pr) => (login !== undefined && pr.author === login ? { ...pr, byTriage: true as const } : pr));
 }
 
-/** The portal's listing of a repository's open pull requests, on its host, marking the ones Triage opened. */
+/** The portal's listing of a workspace's open pull requests, on each repository's host, marking the ones Triage opened; each host's login is read once a listing. */
 export function createTenantOpenPrs(deps: TenantSourcesDeps): OpenPrsLister {
   const tenantSources = createTenantSources(deps);
-  return async function openPrs(tenantId, record) {
+  return function tenantListing(tenantId) {
     const fetches = tenantSources(tenantId);
-    if (sourceOf(record) === "bitbucket-datacenter") {
-      const bb = await bitbucketOf(fetches, record);
-      const [prs, login] = await Promise.all([bitbucket.listOpenPrs(bb, record.name), bitbucketLogin(bb)]);
+    const githubLogin = once(() => appBotLogin(deps.db, tenantId));
+    const tokenLogin = once(async function readTokenLogin() {
+      const bb = await fetches.bitbucket();
+      return bb && bitbucketLogin(bb);
+    });
+    return async function openPrs(record) {
+      if (sourceOf(record) === "bitbucket-datacenter") {
+        const [prs, login] = await Promise.all([bitbucket.listOpenPrs(await bitbucketOf(fetches, record), record.name), tokenLogin()]);
+        return markTriage(prs, login);
+      }
+      const [prs, login] = await Promise.all([listOpenPrs(await githubOf(fetches, record), record.name), githubLogin()]);
       return markTriage(prs, login);
-    }
-    const [prs, login] = await Promise.all([listOpenPrs(await githubOf(fetches, record), record.name), appBotLogin(deps.db, tenantId)]);
-    return markTriage(prs, login);
+    };
   };
 }
 
