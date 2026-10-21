@@ -20,7 +20,7 @@ type Stub = { delivered: Delivered[]; saved: PrTriageRow[][]; authorized: unknow
 function stubDb(repo: Record<string, unknown>) {
   return {
     query: {
-      credential: { async findFirst() { return { id: CREDENTIAL_ID, secret: "sealed" }; } },
+      credential: { async findFirst() { return { id: CREDENTIAL_ID, secret: "sealed", status: "active", principalId: null }; } },
       tenant: { async findFirst() { return { domain: "tenant.example", config: { corbitsTriage: { repos: [repo] } } }; } },
     },
   } as never;

@@ -110,6 +110,7 @@ export async function loadBridgeHook(
   tenantHint: string | undefined,
 ): Promise<BridgeHook | undefined> {
   const { credential } = schema;
+  // Not the stock resolvers: a hook URL names one exact credential, by id with no tenant, never an ancestor's.
   let row: Awaited<ReturnType<typeof db.query.credential.findFirst>>;
   if (id.startsWith("crd_")) {
     row = await db.query.credential.findFirst({ where: eq(credential.id, id) });

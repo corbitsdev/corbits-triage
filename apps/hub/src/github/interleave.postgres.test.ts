@@ -29,7 +29,7 @@ type Deliver = (payload: unknown) => Promise<void>;
 function stubDb() {
   return {
     query: {
-      credential: { async findFirst() { return { id: "crd", secret: "sealed" }; } },
+      credential: { async findFirst() { return { id: "crd", secret: "sealed", status: "active", principalId: null }; } },
       tenant: { async findFirst() { return { domain: "tenant.example", config: CONFIG }; } },
     },
   } as never;

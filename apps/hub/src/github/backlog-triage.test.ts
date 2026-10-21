@@ -16,7 +16,7 @@ function backlog(repo: Record<string, unknown>, sent: unknown[], sendMail = asyn
   return createGithubBacklog({
     db: {
       query: {
-        credential: { async findFirst() { return { id: "crd_github", secret: "sealed" }; } },
+        credential: { async findFirst() { return { id: "crd_github", secret: "sealed", status: "active", principalId: null }; } },
         tenant: { async findFirst() { return { domain: "tenant.example", config: { corbitsTriage: { repos: [repo] } } }; } },
       },
     } as never,
