@@ -342,7 +342,10 @@ const githubManifest = createGithubManifestIntegration({
   authorizeCredential: authorizePortal,
   stateSecret: env.BETTER_AUTH_SECRET,
 });
-const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: readPullToReview, log: logJson });
+const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
+const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
+const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
+const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: pullRequests.withDiff, log: logJson });
 const githubPrActions = createGithubPrActions({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -352,7 +355,6 @@ const githubPrActions = createGithubPrActions({
   codeReviews: codeReviewRuns,
   log: logJson,
 });
-const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -405,7 +407,6 @@ async function sendTriageMail(job: TriageJob): Promise<void> {
   const routed = await routePrWorkflow({ ...job, workflow: workflowIdFor(job.workflow) });
   if (routed) await sendToWorker(routed);
 }
-const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
 async function codeReviewPlaced(tenantId: string): Promise<boolean> {
   return (await placeCodeReview(tenantId)) !== null;
@@ -429,10 +430,6 @@ async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
     if (await inPrWorkflow(tenantId, record.name, sourceOf(record))) sources.add(sourceOf(record));
   }
   return [...sources];
-}
-const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
-function readPullToReview(tenantId: string, record: RepoRecord, number: number) {
-  return pullRequests.withDiff(tenantId, record, number);
 }
 const codeReviewFeed = createCodeReviewFeed({
   reviewed: reviewedSources,

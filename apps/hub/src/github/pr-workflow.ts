@@ -59,7 +59,7 @@ export type PrWorkflowRouterDeps = {
   /** The names of the workspace's active code review provider credentials. */
   credentials: (tenantId: string) => Promise<string[]>;
   live: (tenantId: string, workflow: string) => Promise<boolean>;
-  /** The pull request as its host shows it now. */
+  /** The pull request as its host shows it now, without its diff. */
   readHead: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestHead>;
   /** The same with its diff, read only for code review. */
   readPull: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
