@@ -22,6 +22,7 @@ const TOOLS = [
   { name: bitbucketPkg.name, build: bitbucketTool },
 ];
 const TOOL_NAMES = TOOLS.map((tool) => tool.name);
+const TOOL_IMPORT = new RegExp(`^(${TOOL_NAMES.join("|")})(/.*)?$`);
 
 function interchangeEntries(workflow: WorkflowPackage) {
   return { workflow: workflow.entry, directors: `./${DIRECTORS}`, actions: `./${ACTIONS}` };
@@ -41,8 +42,13 @@ async function bundle(workflow: WorkflowPackage, outdir: string): Promise<string
     format: "esm",
     conditions: ["intx-src"],
     define: { "WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
-    // The packed tools export only their roots, so a subpath import would not resolve at run time.
-    external: TOOL_NAMES,
+    // The packed tools export only their roots, which re-export every subpath the workflows import.
+    plugins: [{
+      name: "tool-roots",
+      setup(build) {
+        build.onResolve({ filter: TOOL_IMPORT }, ({ path }) => ({ path: path.replace(TOOL_IMPORT, "$1"), external: true }));
+      },
+    }],
     // Strips the per-module path comments: the version hash must not depend on the lockfile layout.
     minify: { whitespace: true },
     sourcemap: "none",
