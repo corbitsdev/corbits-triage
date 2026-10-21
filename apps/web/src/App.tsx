@@ -131,7 +131,8 @@ function Gate() {
 
   if (!configured) return <NotConfigured />;
   if (!ready) return <LoadingGate />;
-  if (path.startsWith(INVITE_PATH)) return <AcceptInvite tenantId={path.slice(INVITE_PATH.length)} />;
+  // A refusal or a join in flight belongs to whoever was signed in; the next person starts over.
+  if (path.startsWith(INVITE_PATH)) return <AcceptInvite key={session?.id} tenantId={path.slice(INVITE_PATH.length)} />;
   if (path === RESET_PASSWORD_PATH) return <ResetPassword />;
   if (!session) return <Welcome />;
   if (unverified) return <VerifyEmail email={session.email} />;
