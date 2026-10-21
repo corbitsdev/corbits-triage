@@ -43,6 +43,7 @@ export async function jsonAll(bb: BitbucketFetch, path: string, limit = PAGE_LIM
     rows.push(...page.values);
     if (page.isLastPage || pages >= maxPages) return rows;
     if (typeof page.nextPageStart !== "number") throw new Error(`bitbucket returned a page without nextPageStart for ${path}`);
+    if (page.nextPageStart <= start) throw new Error(`bitbucket pagination for ${path} did not move past start ${start}`);
     start = page.nextPageStart;
   }
 }
