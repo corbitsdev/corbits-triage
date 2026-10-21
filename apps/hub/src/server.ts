@@ -742,6 +742,7 @@ coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendTriageMail,
   headChecks: tenantHeadChecks,
+  openHeadFor: tenantOpenHead,
   window: triageCoalesceWindow(env, reconcilePolicy),
   ciWait: reconcilePolicy,
   setTimer,

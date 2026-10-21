@@ -468,7 +468,7 @@ describe("bridge handler", () => {
     expect(offered).toEqual([`octocat/hello:${JSON.parse(prPayload).action}`]);
   });
 
-  test("a draft is 202 ignored, read from the event or else from GitHub, and triaged once marked ready", async () => {
+  test("a draft is 202 ignored as its event says, and triaged once marked ready; a check run is left to its window to read", async () => {
     const stored = { corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: true, triageDrafts: true }] } };
     const pr = JSON.parse(prPayload);
     const draftOpened = JSON.stringify({ ...pr, pull_request: { ...pr.pull_request, draft: true } });
@@ -480,14 +480,15 @@ describe("bridge handler", () => {
     });
     const sent: Sent[] = [];
     const db = stubDb([hookRow()], stored);
-    const drafts = bridge({ db, sent, openHeadFor: openHeadOf([7]) });
-    expect(await (await drafts(githubRequest(draftOpened, { delivery: "d1" }), TARGET)).json()).toEqual({ status: "ignored" });
-    expect(await (await drafts(githubRequest(checkRun, { delivery: "d2", event: "check_run" }), TARGET)).json()).toEqual({ status: "ignored" });
+    async function unread(): Promise<undefined> {
+      throw new Error("read GitHub");
+    }
+    const handle = bridge({ db, sent, openHeadFor: unread });
+    expect(await (await handle(githubRequest(draftOpened, { delivery: "d1" }), TARGET)).json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
-    const ready = bridge({ db, sent, openHeadFor: openHeadOf([]) });
-    expect(await (await ready(githubRequest(markedReady, { delivery: "d3" }), TARGET)).json()).toEqual({ status: "queued" });
-    expect(await (await ready(githubRequest(checkRun, { delivery: "d4", event: "check_run" }), TARGET)).json()).toEqual({ status: "queued" });
-    expect(sent.map(({ event, headSha }) => [event, headSha])).toEqual([["ready", "abc"], ["checks", "sha7"]]);
+    expect(await (await handle(githubRequest(markedReady, { delivery: "d3" }), TARGET)).json()).toEqual({ status: "queued" });
+    expect(await (await handle(githubRequest(checkRun, { delivery: "d4", event: "check_run" }), TARGET)).json()).toEqual({ status: "queued" });
+    expect(sent.map(({ event, headSha, draftUnread }) => [event, headSha, draftUnread])).toEqual([["ready", "abc", undefined], ["checks", "sha7", true]]);
   });
 
   test("a conversion to draft is triaged once, so the verdict stops offering the pull request as ready", async () => {

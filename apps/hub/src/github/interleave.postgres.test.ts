@@ -151,6 +151,7 @@ test("PostgreSQL: a head waiting for CI that a check run and the reconciler rele
       store,
       sendMail: async ({ payload }) => { mails.push(payload); },
       headChecks: async () => checks,
+      openHeadFor: async () => async () => ({ headSha: "abc123", draft: false }),
       window: { quietMs: 30_000, maxWaitMs: 120_000, burstMs: 3_000 },
       ciWait: DEFAULT_RECONCILE_POLICY,
       setTimer(fire) {

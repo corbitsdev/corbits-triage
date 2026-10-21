@@ -99,6 +99,11 @@ function harness(rows: PrTriageRow[] = [], overrides: Partial<CoalescerDeps> = {
     async headChecks() {
       return [{ name: "build", status: "completed", conclusion: "success" }];
     },
+    async openHeadFor() {
+      return async function openHead() {
+        return { headSha: "sha1", draft: false };
+      };
+    },
     window: WINDOW,
     ciWait: DEFAULT_RECONCILE_POLICY,
     setTimer: clock.setTimer,
@@ -151,11 +156,29 @@ test("commented-only reviews 10 s apart fold into one run after the quiet period
   expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["reviewed"] })]);
 });
 
-test("a burst of check events gives one mail once none arrived for the quiet period", async () => {
-  const { clock, mails, coalescer } = harness();
+function countedReads(draft: boolean) {
+  const reads = { pulls: 0, checks: 0 };
+  const overrides: Partial<CoalescerDeps> = {
+    async headChecks() {
+      reads.checks += 1;
+      return [{ name: "build", status: "completed", conclusion: "success" }];
+    },
+    async openHeadFor() {
+      return async function openHead() {
+        reads.pulls += 1;
+        return { headSha: "sha1", draft };
+      };
+    },
+  };
+  return { reads, overrides };
+}
+
+test("a burst of check events gives one mail once none arrived for the quiet period, reading the pull request and its checks once", async () => {
+  const { reads, overrides } = countedReads(false);
+  const { clock, mails, coalescer } = harness([], overrides);
   const accepted = [];
   for (let i = 0; i < 5; i++) {
-    accepted.push(await coalescer.accept(delivery("checks", "sha1")));
+    accepted.push(await coalescer.accept({ ...delivery("checks", "sha1"), draftUnread: true }));
     await clock.advance(5_000);
   }
   expect(accepted).toEqual(["queued", "coalesced", "coalesced", "coalesced", "coalesced"]);
@@ -163,6 +186,17 @@ test("a burst of check events gives one mail once none arrived for the quiet per
   expect(mails).toHaveLength(0);
   await clock.advance(1);
   expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", event: "check_run", events: ["checks"] })]);
+  expect(reads).toEqual({ pulls: 1, checks: 1 });
+});
+
+test("a burst of check events on a draft is dropped at its flush, reading the pull request once and its checks never", async () => {
+  const { reads, overrides } = countedReads(true);
+  const { clock, state, mails, coalescer } = harness([], overrides);
+  for (let i = 0; i < 5; i++) await coalescer.accept({ ...delivery("checks", "sha1"), draftUnread: true });
+  await clock.advance(WINDOW.quietMs);
+  expect(mails).toHaveLength(0);
+  expect(state.rows()).toEqual([]);
+  expect(reads).toEqual({ pulls: 1, checks: 0 });
 });
 
 for (const start of ["opened", "updated"] as const) {

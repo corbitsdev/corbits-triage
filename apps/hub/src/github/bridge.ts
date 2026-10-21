@@ -520,8 +520,10 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
       return json(202, { status: "ignored" });
     }
+    // A check event names its head but not whether the pull request is a draft or open; its window reads that once at its flush.
+    const draftUnread = mail.headSha !== null && mail.draft === null;
     let head: Awaited<ReturnType<OpenHeadReader>>;
-    if (mail.headSha === null || mail.draft === null) {
+    if (mail.headSha === null) {
       try {
         head = await openHead(d, loaded.tenantId, record, mail.prNumber);
       } catch (err) {
@@ -563,7 +565,7 @@ export function createBridgeHandler(d: BridgeDeps) {
     }
     let accepted: Accepted;
     try {
-      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, ...(stored.policyWorkflow && { policyWorkflow: stored.policyWorkflow }), ...(stored.pauseLabel && { pauseLabel: stored.pauseLabel }), mail, number: mail.prNumber, headSha, event: triageEvent });
+      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, ...(stored.policyWorkflow && { policyWorkflow: stored.policyWorkflow }), ...(stored.pauseLabel && { pauseLabel: stored.pauseLabel }), mail, number: mail.prNumber, headSha, event: triageEvent, ...(draftUnread && { draftUnread: true }) });
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });
