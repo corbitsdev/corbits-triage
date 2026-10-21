@@ -16,6 +16,7 @@ import { startBaseline, writeBaseline, type Stamp } from "./baseline.js";
 import { MODEL_CHECKS, SCORED, variant, type CaseInput, type Expected, type JudgeCase, type ModelCheck, type Scored } from "./cases.js";
 import { fixture, pullOf } from "./fixtures.js";
 import { addCost, costOf, priceKey, priceOf } from "./prices.js";
+import { INSTRUCTED_REASON } from "../src/logic/render.js";
 import { PR_TRIAGE, type Definition } from "../src/run-local.js";
 import { runDefinition, type Endpoint } from "./run-definition.js";
 import { fixtureGithub, triggerMail } from "./serve.js";
@@ -33,7 +34,7 @@ function requiredApiKey(): string {
 const here = new URL(".", import.meta.url).pathname;
 const CASES = `${here}cases.jsonl`;
 
-type Outcomes = Record<Scored, "pass" | "fail" | "unsure">;
+type Outcomes = Record<ModelCheck | "verdict", "pass" | "fail" | "unsure"> & { instructed: "yes" | "no" };
 
 interface ModelUsage {
   input: number;
@@ -75,12 +76,12 @@ function judgeWith(definition: Definition, apiKey: string, extra: Record<string,
   return async function judge(input: CaseInput): Promise<Outcomes> {
     const pr = variant(fixture(input.pull), input, input.mix === undefined ? undefined : fixture(input.mix));
     const { verdict } = await runDefinition({ definition, fetch: fixtureGithub(pr, {}), apiKey, endpoint: ENDPOINT, triggerPayload: triggerMail(pr, pack(pr.repo), extra), onEvent, onStepDone });
-    function answer(check: ModelCheck): [ModelCheck, Outcomes[Scored]] {
+    function answer(check: ModelCheck): [ModelCheck, Outcomes[ModelCheck]] {
       const result = verdict.checks.find((row) => row.check === check)?.result;
       return [check, result === "pass" || result === "fail" ? result : "unsure"];
     }
     const checks = Object.fromEntries(MODEL_CHECKS.map(answer));
-    return { ...checks, verdict: verdict.verdict } as Outcomes;
+    return { ...checks, verdict: verdict.verdict, instructed: verdict.reason === INSTRUCTED_REASON ? "yes" : "no" } as Outcomes;
   };
 }
 

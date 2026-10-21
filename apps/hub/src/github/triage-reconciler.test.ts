@@ -126,7 +126,7 @@ function focusedAnswers(questions: Array<{ id: string }>, related: number): stri
     focused: { one_thing: related, more_than_one_thing: rest, cant_tell: rest },
     verdict: { pass: related, fail: rest, cant_tell: rest },
   };
-  return questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: Object.keys(probabilities[id]!)[0], probabilities: probabilities[id], confidence: 0.9 })).join("");
+  return questions.map(({ id }) => JSON.stringify(id === "instructed" ? { id, type: "noul", noul: 0.1 } : { id, type: "choice", choice: Object.keys(probabilities[id]!)[0], probabilities: probabilities[id], confidence: 0.9 })).join("");
 }
 
 async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 0.8) {

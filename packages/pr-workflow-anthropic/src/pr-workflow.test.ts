@@ -47,10 +47,10 @@ const allow: WorkflowAuthorizeFn = async function allow() {
 
 type Question = { type: string; criteria?: Record<string, unknown> };
 
-/** System One's answers, by question id: the passing choice where one is offered, else the first; true for a claim. */
+/** System One's answers, by question id: the passing choice where one is offered, else the first; true for a claim, and no to whether the pull request directs the judge. */
 function systemOne(questions: Record<string, Question>) {
   function answer([id, { type, criteria }]: [string, Question]) {
-    if (type !== "choice") return [id, { type: "noul", noul: 0.9 }];
+    if (type !== "choice") return [id, { type: "noul", noul: id === "instructed" ? 0.1 : 0.9 }];
     const options = Object.keys(criteria ?? {});
     const choice = options.find((option) => ["pass", "one_thing", "serves_purpose"].includes(option)) ?? options[0]!;
     const probabilities = Object.fromEntries(options.map((option) => [option, option === choice ? 0.9 : 0.1 / (options.length - 1)]));
