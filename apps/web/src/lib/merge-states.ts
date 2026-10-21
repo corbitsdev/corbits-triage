@@ -21,7 +21,7 @@ function numbersByRepo(items: PrItem[]): Array<{ repo: string; numbers: number[]
 }
 
 /** Keyed by repository alone, so a pull request passing keeps what is known of the others until the next read asks about it too. */
-export function mergeStatesQuery(tenantId: string | undefined, repo: string, numbers: number[]) {
+function mergeStatesQuery(tenantId: string | undefined, repo: string, numbers: number[]) {
   return queryOptions({
     queryKey: [MERGE_STATES_QUERY_KEY, tenantId, repo],
     queryFn: function fetchMergeStates() {
