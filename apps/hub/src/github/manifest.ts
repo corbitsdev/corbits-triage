@@ -114,7 +114,6 @@ const ManifestState = type({
   appCredentialId: "string > 0",
   hookCredentialId: "string > 0",
   providerId: "string > 0",
-  returnOrigin: "string > 0",
   /** The replaced credentials' last updates; a replacement commits only while both are unchanged. Null for a fresh setup. */
   replaces: type({ appUpdatedAt: "number.integer", hookUpdatedAt: "number.integer" }).or("null"),
   nonce: "string > 0",
@@ -328,7 +327,6 @@ export function createGithubManifestIntegration({
       appCredentialId: app?.id ?? generateId("credential"),
       hookCredentialId: hook?.id ?? generateId("credential"),
       providerId: githubProvider.id,
-      returnOrigin: portalOrigin,
       replaces: app && hook ? { appUpdatedAt: app.updatedAt.getTime(), hookUpdatedAt: hook.updatedAt.getTime() } : null,
       nonce: randomBytes(16).toString("base64url"),
       expiresAt: now().getTime() + GITHUB_MANIFEST_MAX_AGE_MS,
@@ -372,10 +370,9 @@ export function createGithubManifestIntegration({
     } catch {
       return securedHtml(SETUP_FAILED, 400);
     }
-    const target = new URL("/connect", state.returnOrigin);
-    target.searchParams.set("github", "connected");
-    target.searchParams.set("app", conversion.slug);
-    return new Response(null, { status: 303, headers: { ...manifestSecurityHeaders(), Location: target.toString(), "Cache-Control": "no-store" } });
+    // Straight on to choosing repositories; once they are chosen, GitHub sends the browser to the App's setup_url.
+    const install = `https://github.com/apps/${encodeURIComponent(conversion.slug)}/installations/new`;
+    return new Response(null, { status: 303, headers: { ...manifestSecurityHeaders(), Location: install, "Cache-Control": "no-store" } });
   }
 
   return { start, callback };

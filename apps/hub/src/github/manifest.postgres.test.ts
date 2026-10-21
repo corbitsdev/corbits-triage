@@ -223,7 +223,7 @@ test("PostgreSQL: a setup state commits credentials once, fresh or replacing", a
       const replay = await integration.callback(new Request(callbackUrl));
       const responses = [...concurrent, replay];
       const location = responses.find((response) => response.status === 303)?.headers.get("location");
-      committedSlug = location ? new URL(location).searchParams.get("app") : null;
+      committedSlug = location ? new URL(location).pathname.split("/")[2] ?? null : null;
       return responses.map((response) => response.status).sort();
     }
     let committedSlug: string | null = null;

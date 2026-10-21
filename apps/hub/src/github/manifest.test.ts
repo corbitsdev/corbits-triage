@@ -25,7 +25,6 @@ const setup: ManifestState = {
   appCredentialId: "crd_app",
   hookCredentialId: "crd_hook",
   providerId: "prv_github",
-  returnOrigin: "https://portal.example",
   replaces: { appUpdatedAt: NOW.getTime() - 60_000, hookUpdatedAt: NOW.getTime() - 60_000 },
   nonce: "nonce",
   expiresAt: NOW.getTime() + 60_000,

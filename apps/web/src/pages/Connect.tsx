@@ -44,26 +44,19 @@ function returnedFromInstall(): boolean {
   return new URLSearchParams(window.location.search).has("installation_id");
 }
 
-function startingStep(snapshot: PortalSnapshot | null, returnedFromGithub: boolean): GuidedStep {
-  if (returnedFromGithub) return "install";
+function startingStep(snapshot: PortalSnapshot | null): GuidedStep {
   if (!snapshot || !portalConnected(snapshot)) return "create";
   if (!hasActiveGithubCredential(snapshot.credentials)) return "model";
   if (returnedFromInstall()) return "select";
   return snapshot.repos.length > 0 ? "model" : "install";
 }
 
-function githubDoneNote(created: boolean): string {
-  return created ? "GitHub App created. Its private key stays on the hub." : "GitHub App connected.";
-}
-
 export default function Connect() {
   const { snapshot, refreshNow } = usePortal();
   const navigate = useNavigate();
-  const params = new URLSearchParams(window.location.search);
-  const connected = params.get("github") === "connected";
-  const initialStep = startingStep(snapshot, connected);
+  const initialStep = startingStep(snapshot);
   const [step, setStep] = useState<GuidedStep>(initialStep);
-  const [appSlug, setAppSlug] = useState(params.get("app") ?? "");
+  const [appSlug, setAppSlug] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [fromGithub] = useState(returnedFromInstall);
@@ -234,8 +227,8 @@ export default function Connect() {
   function renderCreateBody() {
     return <>
       {busy
-        ? <div className="setup-waiting" role="status"><StatusDot label="Working" live tone="emphasis" /><div><strong>Opening GitHub…</strong><p>GitHub will confirm a prefilled App. The private key stays on the hub and is never shown here.</p></div></div>
-        : <p>GitHub will confirm a prefilled App. The private key stays on the hub and is never shown here.</p>}
+        ? <div className="setup-waiting" role="status"><StatusDot label="Working" live tone="emphasis" /><div><strong>Opening GitHub…</strong><p>GitHub will confirm a prefilled App, then ask which repositories it may see. The private key stays on the hub and is never shown here.</p></div></div>
+        : <p>GitHub will confirm a prefilled App, then ask which repositories it may see. The private key stays on the hub and is never shown here.</p>}
       {error && <p role="alert" className="error">{error}</p>}
       <div className="task-actions"><Button type="button" disabled={busy} onClick={() => void startManifest()}>{busy ? "Opening GitHub…" : "Create GitHub App"}</Button></div>
       <details className="setup-help">
@@ -294,7 +287,7 @@ export default function Connect() {
     </>;
   }
 
-  const sourceDoneNote = githubConnected ? githubDoneNote(connected) : "Bitbucket Data Center connected.";
+  const sourceDoneNote = githubConnected ? "GitHub App connected." : "Bitbucket Data Center connected.";
   const reposDoneNote = githubConnected ? `${counted(repos.length, "repository", "repositories")} selected on GitHub.` : "Turn triage on for each repository in Repositories.";
 
   return <div className="app is-auth"><main className="setup-flow">
