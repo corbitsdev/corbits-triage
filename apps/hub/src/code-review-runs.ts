@@ -5,7 +5,7 @@ import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
-import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
+import { classifyTerminalEvent, WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { failureReason } from "@corbits/pr-code-review/failures";
 import { CodeReviewComment, REPO_SOURCES, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
 import { diffHash, type PullRequestToReview } from "./code-review-feed.js";
@@ -54,10 +54,8 @@ type Run = { source: RepoSource; repo: string; number: number; review: typeof Re
 
 const REQUEST = type({ kind: "'code-review'", number: "number", checkout: { source: Source, repo: "string", sha: "string" }, "cut?": Cut, "diffHash?": "string" });
 
-const TERMINAL_EVENTS = new Set(["RunCompleted", "RunFailed", "RunCancelled"]);
-
 function isTerminal(event: WorkflowRunEvent): boolean {
-  return TERMINAL_EVENTS.has(event.type);
+  return classifyTerminalEvent(event.type).terminal;
 }
 
 /** The run's request and outcome; undefined for a run that names no pull request, such as one an eval started. */

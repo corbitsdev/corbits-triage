@@ -6,7 +6,7 @@ import { APPROVE_DO_KIND, isFromTriageSender, triggerRequestOf } from "@corbits/
 import { asRecord } from "@corbits/common";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
-import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
+import { classifyTerminalEvent, WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { NOT_ASKED_REASON } from "@corbits/triage-workflows/logic/render";
 import { heldForCi, unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import type { Judged } from "@corbits/triage-workflows/logic/item";
@@ -15,11 +15,6 @@ import { runKey, type ObservedRun } from "./reconcile-plan.js";
 import { VerdictDetail } from "@corbits/triage-contracts";
 import { type ApprovedDo, type RecordedDo, type RecordedVerdict } from "./verdict-record-store.js";
 
-const TERMINAL_EVENTS: Record<string, Terminal["status"]> = {
-  RunCompleted: "completed",
-  RunFailed: "failed",
-  RunCancelled: "cancelled",
-};
 const INLINE_PREFIX = "inline:";
 const NO_VERDICT = "run completed without a verdict";
 
@@ -114,7 +109,8 @@ function approvalOf(started: Record<string, unknown>): Approval | undefined {
 
 function terminalStatus(events: readonly WorkflowRunEvent[]): Terminal["status"] | undefined {
   const last = events.at(-1);
-  return last && TERMINAL_EVENTS[last.type];
+  const terminal = last && classifyTerminalEvent(last.type);
+  return terminal?.terminal ? terminal.status : undefined;
 }
 
 function approvedOf(approval: Approval, events: readonly WorkflowRunEvent[]): Approval {
@@ -436,7 +432,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
     );
     const open: string[] = [];
     for (const [runId, event] of latest) {
-      const ended = event !== null && TERMINAL_EVENTS[event.type] !== undefined;
+      const ended = event !== null && classifyTerminalEvent(event.type).terminal;
       if (!ended && known.get(runId)?.seq === (event?.seq ?? -1)) {
         open.push(runId);
         continue;
