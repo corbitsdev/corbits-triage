@@ -1,6 +1,6 @@
 // A stored policy written as a schema 3 policy file, and what two policies do differently. Both read the pack triage
 // runs on, so a rule's wording, reason and evidence never count as a difference; what it checks and every step do.
-import { dump, JSON_SCHEMA } from "js-yaml";
+import { stringify } from "yaml";
 import {
   askRules,
   AUTHOR_GROUPS,
@@ -16,6 +16,7 @@ import {
   type CatalogId,
   type CheckPack,
   type CustomCheck,
+  type FileGroup,
   type ModelCustomCheck,
   type OnFail,
   type PeopleTarget,
@@ -81,12 +82,14 @@ function customRule(row: CustomCheck, unexpressed: string[]): Record<string, unk
   return [];
 }
 
-/** Author kinds a group stands for, written as the group, so the file reads as people wrote it. */
+/** Author kinds a built-in group stands for, and a file group, written as the group, so the file reads as people wrote it. */
 function authorGroups(author: readonly AuthorMatch[]): unknown[] {
   const out: unknown[] = [];
   for (let at = 0; at < author.length; ) {
+    const match = author[at]!;
     const group = Object.entries(AUTHOR_GROUPS).find(([, kinds]) => kinds.every((kind, i) => author[at + i] === kind));
-    out.push(group ? group[0] : author[at]);
+    if (typeof match === "object" && "group" in match) out.push(match.group);
+    else out.push(group ? group[0] : match);
     at += group ? group[1].length : 1;
   }
   return out;
@@ -119,8 +122,8 @@ export function exportPolicyFile(pack: CheckPack, extended: boolean): PolicyFile
   const rules = [...CATALOG_IDS.flatMap((id) => catalogRule(pack, id, unexpressed)), ...pack.custom.flatMap((row) => customRule(row, unexpressed))];
   const actions = fileActions(pack);
   const labels = fileLabels(pack);
-  const body = { rules, ...(actions && { actions }), ...(labels && { labels }) };
-  return { text: `# Corbits Triage policy.\n${dump(body, { schema: JSON_SCHEMA, lineWidth: -1, noRefs: true })}`, unexpressed };
+  const body = { ...(pack.groups && { groups: pack.groups }), rules, ...(actions && { actions }), ...(labels && { labels }) };
+  return { text: `# Corbits Triage policy.\n${stringify(body, { lineWidth: 0, aliasDuplicateObjects: false })}`, unexpressed };
 }
 
 /** JSON with object keys sorted, so equal values compare equal whatever order their keys were written in. */
@@ -349,7 +352,30 @@ function actionDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[
   return out;
 }
 
+/** Who a group is, as words. */
+function groupWords(group: FileGroup | undefined): string[] {
+  if (!group) return [];
+  return [...(group.association ?? []), ...(group.teams ?? []).map((team) => `@${team}`), ...(group.users ?? []).map((user) => `@${user}`)];
+}
+
+/** Groups match first match wins, so their order is a difference as well as who each one is. */
+function groupDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[] {
+  const [inSaved, inFile] = [saved.groups ?? {}, file.groups ?? {}];
+  const names = [...new Set([...Object.keys(inSaved), ...Object.keys(inFile)])];
+  const out = names.flatMap((name): PolicyDifference[] => {
+    if (canonical(inSaved[name]) === canonical(inFile[name])) return [];
+    const rule = `The group ${name}`;
+    const [was, is] = [groupWords(inSaved[name]), groupWords(inFile[name])];
+    return [{ rule, saved: was, file: is, instead: instead(rule, was, is) }];
+  });
+  const [savedOrder, fileOrder] = [Object.keys(inSaved).filter((name) => Object.hasOwn(inFile, name)), Object.keys(inFile).filter((name) => Object.hasOwn(inSaved, name))];
+  if (canonical(savedOrder) !== canonical(fileOrder)) {
+    out.push({ rule: "The order groups are matched in", saved: savedOrder, file: fileOrder, instead: `Triage will match groups in the order ${listed(fileOrder)}.` });
+  }
+  return out;
+}
+
 /** Each way the file's policy runs differently from the saved one; none when they run the same. */
 export function policyDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[] {
-  return [...catalogDifferences(saved, file), ...customDifferences(saved, file), ...actionDifferences(saved, file)];
+  return [...catalogDifferences(saved, file), ...customDifferences(saved, file), ...groupDifferences(saved, file), ...actionDifferences(saved, file)];
 }

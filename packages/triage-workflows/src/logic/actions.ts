@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, labelRules, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, authorGroupsOf, CATALOG_IDS, checkName, classificationSources, labelRules, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
 import { authorFailures, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
@@ -167,9 +167,10 @@ function sentence(text: string): string {
 const CI: Record<PrFacts["checks"], CiState> = { success: "passing", failure: "failing", pending: "pending", none: "none" };
 
 /** A linked issue is one from either tracker, whatever the linked issue rule asks for. */
-function stepSubject(facts: PrFacts): StepSubject {
+function stepSubject(facts: PrFacts, pack: CheckPack): StepSubject {
+  const author = { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown };
   return {
-    author: { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown },
+    author: { ...author, groups: authorGroupsOf(pack.groups ?? {}, author) },
     linkedIssue: issueReference(facts, "either") !== null,
     ci: CI[facts.checks],
     files: facts.changedFiles,
@@ -198,7 +199,7 @@ function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: 
 export function evaluateActions(input: ActionInput): SuggestedAction[] {
   if (!wakes(input.pack, input.facts)) return [];
   const { verdict: list, reason, facts } = input;
-  const subject = stepSubject(facts);
+  const subject = stepSubject(facts, input.pack);
   const out: SuggestedAction[] = [];
   for (const [index, step] of input.pack.actions[list].entries()) {
     if (step.do === "nothing") continue;

@@ -25,6 +25,7 @@ function forText(step: Step): string {
   const choice = forChoice(step);
   const match = stepFor(step);
   if (choice === "anyone") return "";
+  if (typeof match === "object" && "group" in match) return `, for ${match.group}`;
   if (typeof match === "object" && "team" in match) return `, for @${match.team}`;
   if (typeof match === "object") return `, for ${match.users.map((user) => `@${user}`).join(", ")}`;
   return `, for ${FOR_NAMES[choice]}`;

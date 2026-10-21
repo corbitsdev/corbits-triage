@@ -220,7 +220,7 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
 
   const manyKeys = Array.from({ length: 7 }, (_, i) => `k${i}: 1`).join("\n");
   const refused: Array<[string | null, string]> = [
-    ["rules: [", "Line 2: The policy file is not YAML: unexpected end of the stream within a flow collection."],
+    ["rules: [", "Line 1: The policy file is not YAML: Flow sequence in block collection must be sufficiently indented and end with a ]."],
     [`rules:\n  - check: ci-green\n    text: CI passes.\n    evidence: [maintainer-stated]\n`, "Line 2: rules[0].reason must be"],
     [`checks: {}\n${manyKeys}\n`, "unknown keys: k0, k1, k2, k3, k4 and 2 more."],
     ["checks:\n  ci-gren:\n    enabled: true\n", "unknown checks: ci-gren."],
@@ -271,7 +271,7 @@ test("PostgreSQL: saved rules apply while the file runs differently or is refuse
   onMain(SAVED, YAML, "rules: [");
   await policyFile.onPush(TENANT, SAVED);
   expect(await readPack(SAVED)).toEqual(stored);
-  expect(await upgradeOf(SAVED)).toMatchObject({ upgrade: { state: "differs", differences: [], problem: "Line 2: The policy file is not YAML: unexpected end of the stream within a flow collection." } });
+  expect(await upgradeOf(SAVED)).toMatchObject({ upgrade: { state: "differs", differences: [], problem: "Line 1: The policy file is not YAML: Flow sequence in block collection must be sufficiently indented and end with a ]." } });
 
   onMain(SAVED, YAML, "checks:\n  no-forbidden-paths: { enabled: true, forbiddenGlobs: [node_modules/**, vendor/**] }\n");
   await policyFile.onPush(TENANT, SAVED);
@@ -359,7 +359,7 @@ test("PostgreSQL: an enabled repository with no rules and no file is offered a s
 }, 60_000);
 
 test("PostgreSQL: a file chosen for a repository with no file, saved rules or open pull request is opened as triage would run it, and the open pull request is left as it is", async () => {
-  expect(await exportOf(CHOSEN, "rules: [")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: expect.stringContaining("Line 2: The policy file is not YAML") } });
+  expect(await exportOf(CHOSEN, "rules: [")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: expect.stringContaining("Line 1: The policy file is not YAML") } });
   expect(await exportOf(CHOSEN, "extends: acme/nowhere\nchecks: {}\n")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: "acme/nowhere is not connected to this workspace or has no policy file." } });
   await writePolicy(CHOSEN_SAVED, JSON.stringify(starterPack(CHOSEN_SAVED)));
   expect(await exportOf(CHOSEN_SAVED, FILE)).toMatchObject({ http: 409, error: { code: "saved_rules" } });
@@ -410,5 +410,5 @@ test("PostgreSQL: a policy file extending another repository runs over that repo
 
   onMain(SHARED, YML, "rules: [", "shared3");
   await policyFile.onPush(TENANT, SHARED);
-  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 2: The policy file is not YAML`) });
+  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 1: The policy file is not YAML`) });
 });

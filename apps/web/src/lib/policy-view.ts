@@ -16,7 +16,8 @@ export const FOR_NAMES = {
   MANNEQUIN: "imported authors",
   team: "a GitHub team…",
   users: "specific people…",
-} as const satisfies Record<"anyone" | AuthorGroup | Exclude<AuthorKind, "BOT"> | "team" | "users", string>;
+  group: "a group from the policy file…",
+} as const satisfies Record<"anyone" | AuthorGroup | Exclude<AuthorKind, "BOT"> | "team" | "users" | "group", string>;
 
 type ForChoice = keyof typeof FOR_NAMES;
 
@@ -42,5 +43,6 @@ export function forChoice(step: Step): ForChoice {
   if (group) return group;
   const match = author[0]!;
   if (typeof match === "string") return match === "BOT" ? "bots" : match;
+  if ("group" in match) return "group";
   return "team" in match ? "team" : "users";
 }

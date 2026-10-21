@@ -93,7 +93,7 @@ actions:
     ["rules:\n  - check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [some PR]\n", "evidence"],
     ["rules:\n  - id: ci\n    check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [maintainer-stated]\n", "id must be removed"],
     ["rules:\n  - check: model\n    text: It is tidy.\n    reason: Required.\n    evidence: [maintainer-stated]\n", "id must be"],
-    ["rules: []\nchecks: {}\n", "checks must be removed"],
+    ["rules: []\nchecks: {}\n", "`checks` is not a key"],
     ["rules: []\nactions:\n  pass: [{ do: approve, for: maintainers }]\n", "pass step 1 must say who it is for in when.author"],
     ["rules: []\nactions:\n  pass: [{ do: approve, when: { lines: { over: 10, atMost: 5 } } }]\n", "atMost must be more than over"],
     ["rules: []\nactions:\n  pass: [{ do: approve, when: {} }]\n", "must set a condition"],

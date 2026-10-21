@@ -1,6 +1,7 @@
 // What the hub's own integration routes answer; the hub describes its routes with these and the portal parses them.
 import { type } from "arktype";
 import { VERDICTS } from "./check-pack.js";
+import { policyWorkflowSchema } from "./policy-workflow.js";
 
 const VerdictWord = type.enumerated(...VERDICTS);
 
@@ -226,7 +227,7 @@ export type PolicyFileRead = typeof PolicyFileRead.infer;
 
 const PolicyProblem = type({ message: "string", "line?": "number", "column?": "number" });
 
-export const PolicyValidated = type({ ok: "true", policy: "Record<string, unknown>" }).or({ ok: "false", problems: PolicyProblem.array() });
+export const PolicyValidated = type({ ok: "true", policy: "Record<string, unknown>", workflow: policyWorkflowSchema }).or({ ok: "false", problems: PolicyProblem.array() });
 export type PolicyValidated = typeof PolicyValidated.infer;
 
 export const PolicyExported = type({ status: "'opened'", url: "string", number: "number" });

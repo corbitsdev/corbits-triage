@@ -1,9 +1,11 @@
 // The policy file's schema 3: a list of rules, each one sentence with how it is checked and why it exists, and steps per
-// verdict that run only when their `when` conditions hold. It is read by mapping it onto the stored policy's shape, so
-// the stored policy's reader stays the one authority on what a policy may hold.
+// verdict that run only when their `when` conditions hold, with v4's keys beside them (policy-workflow.ts). It is read by
+// mapping it onto the stored policy's shape, so the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, withAuthorKinds, type CatalogId } from "./check-pack.js";
+import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId } from "./check-pack.js";
+import { fileProblems } from "./policy-file-problems.js";
+import { withAuthors, WORKFLOW_KEYS, WORKFLOW_PROPS, workflowProblems, type PathProblem, type PolicyWorkflow } from "./policy-workflow.js";
 
 const Lines = Text.array().atLeastLength(1).atMostLength(50);
 const Limit = type("number.integer").atLeast(1);
@@ -34,24 +36,29 @@ export const policyRulesSchema = type({
   rules: RuleSchema.array(),
   "actions?": { "+": "reject", "on?": type.enumerated(...POLICY_EVENTS).array().atLeastLength(1), "pass?": stepListSchema, "fail?": stepListSchema, "unsure?": stepListSchema },
   "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
+  ...WORKFLOW_PROPS,
 });
 
 type PolicyRulesFile = typeof policyRulesSchema.infer;
 
 /** Where in the file each problem is, as keys from its root, so a reader can point at the line. */
 export class PolicyFileError extends Error {
-  constructor(message: string, readonly problems: ReadonlyArray<{ message: string; path: readonly PropertyKey[] }>) {
-    super(message);
+  constructor(readonly problems: readonly PathProblem[]) {
+    super(problems.map((problem) => problem.message).join("\n"));
   }
 }
 
 function refuse(message: string, path: readonly PropertyKey[]): never {
-  throw new PolicyFileError(message, [{ message, path }]);
+  throw new PolicyFileError([{ message, path }]);
 }
 
-/** A file holds schema 3 when it lists `rules`. */
+function refuseAll(problems: readonly PathProblem[]): void {
+  if (problems.length > 0) throw new PolicyFileError(problems);
+}
+
+/** A file holds schema 3 when it lists `rules` or sets a v4 key. */
 export function isPolicyRulesFile(file: Record<string, unknown>): boolean {
-  return file.rules !== undefined;
+  return file.rules !== undefined || WORKFLOW_KEYS.some((key) => file[key] !== undefined);
 }
 
 /** The name a model or text rule shows under, from its id. */
@@ -126,24 +133,49 @@ function refuseFor(actions: Record<string, unknown> | undefined): void {
   }
 }
 
-/** Without `extends`, a verdict the file leaves out has no steps and every event wakes the actions; with it, what the file leaves out is the shared policy's. */
+/**
+ * Without `extends`, a verdict the file leaves out has no steps and every event wakes the actions; with it, what the file
+ * leaves out is the shared policy's. Each step's authors are read as `withAuthors` says.
+ */
 function actionsOf(file: PolicyRulesFile): Record<string, unknown> | undefined {
-  const { on, ...lists } = file.actions ?? {};
+  const { on, ...written } = file.actions ?? {};
+  const groups = file.groups ?? {};
+  const lists = Object.fromEntries(VERDICTS.flatMap((verdict) => (written[verdict] ? [[verdict, written[verdict].map((step) => withAuthors(step, groups))]] : [])));
   if (file.extends === undefined) return { when: on ?? [...POLICY_EVENTS], ...Object.fromEntries(VERDICTS.map((verdict) => [verdict, lists[verdict] ?? []])) };
   if (file.actions === undefined) return undefined;
   return { ...(on && { when: on }), ...lists };
 }
 
-/** The stored policy's shape for a schema 3 file: rules become built-in rows and custom rules, and `actions.on` the events the actions wake on. */
-export function rulesToPolicy(raw: Record<string, unknown>): Record<string, unknown> {
+/** `extends` stays schema 3's: a file that extends another holds no v4 key. */
+function refuseExtendedWorkflow(raw: Record<string, unknown>): void {
+  const set = WORKFLOW_KEYS.filter((key) => raw[key] !== undefined);
+  if (raw.extends !== undefined && set.length > 0) refuse(`\`extends\` can't be used beside ${set.map((key) => `\`${key}\``).join(", ")}; remove \`extends\` or those keys.`, ["extends"]);
+}
+
+function withDecideAuthors(workflow: PolicyWorkflow): PolicyWorkflow {
+  if (!workflow.decide) return workflow;
+  const groups = workflow.groups ?? {};
+  return { ...workflow, decide: workflow.decide.map((rule) => (Array.isArray(rule.do) ? { ...rule, do: rule.do.map((step) => (typeof step === "string" ? step : withAuthors(step, groups))) } : rule)) };
+}
+
+/**
+ * The stored policy's shape for a schema 3 file, and its v4 keys as written: rules become built-in rows and custom
+ * rules, and `actions.on` the events the actions wake on.
+ */
+export function readRulesFile(raw: Record<string, unknown>): { policy: Record<string, unknown>; workflow: PolicyWorkflow } {
   refuseFor(asRecord(raw.actions));
-  const file = policyRulesSchema(withAuthorKinds(raw));
-  if (file instanceof type.errors) throw new PolicyFileError(file.summary, file.map((error) => ({ message: error.message, path: error.path })));
+  refuseExtendedWorkflow(raw);
+  const file = policyRulesSchema(raw);
+  if (file instanceof type.errors) throw new PolicyFileError(fileProblems(file, raw));
+  const { extends: extended, onFail, rules, actions: written, labels, ...workflow } = file;
+  refuseAll(workflowProblems(workflow, written));
   const actions = actionsOf(file);
-  return {
-    ...(file.extends !== undefined && { extends: file.extends }),
-    ...mapRules(file.rules, file.onFail ?? "fail"),
+  const policy = {
+    ...(extended !== undefined && { extends: extended }),
+    ...mapRules(rules, onFail ?? "fail"),
     ...(actions && { actions }),
-    ...(file.labels && { labels: file.labels }),
+    ...(labels && { labels }),
+    ...(workflow.groups && { groups: workflow.groups }),
   };
+  return { policy, workflow: withDecideAuthors(workflow) };
 }

@@ -187,6 +187,23 @@ A coding agent can write the file for you with the skill in [`skills/corbits-tri
 
 A file can also start from another repository's policy with `extends: owner/name` (on Bitbucket, `PROJECT/slug`), and then set only what differs for this repository. This is useful when many repositories should follow the same rules: keep them in one repository's `.corbits-triage.yml` and extend it everywhere else. That repository must be connected to the same workspace, and its own file must not use `extends`. A change merged into it applies to every repository extending it from their next verdict. A file can instead extend a workspace-wide policy by its id.
 
+A file may also name author `groups`, turn on the checks that run after triage (`code-review`, `security`, `deslop`), set `pace` and a `pauseLabel`, and list what to do in `decide` instead of `actions`:
+
+```yaml
+groups:
+  maintainers: { association: [OWNER, MEMBER, COLLABORATOR] }
+code-review: { on: true, for: [maintainers], provider: anthropic }
+security: { on: true, when: { triage: pass, paths: ["src/**"] }, clean: { below: medium } }
+decide:
+  - { if: { triage: fail }, do: request-changes }
+  - { if: { all: clean }, do: approve }
+  - { if: { code-review: findings }, do: review }
+```
+
+Triage checks these keys when it reads the file but doesn't act on them yet: what runs and what happens still come from `rules`, `actions` and your Code review settings. The one exception is groups: an action's `when: { author: [...] }` can name one. An author is in the first of your groups they match, in the order you wrote them, and in each built-in group (`maintainers`, `external`, `first-timers`, `bots`) their role puts them in. Everyone is in `everyone`. The built-in groups go by the author's role alone, so they still work when Triage can't read teams; only when it can't tell the author's role are they unknown too. For a group you define, Triage can't tell whether the author is in it when it can't tell their role, or when teams it can't read would decide which of your groups is theirs. An action for a group Triage can't tell about doesn't run. `everyone` always matches. Never let Approve or Merge rest on `everyone` alone. In `decide`, `{ all: clean }` means every check that actually ran came back clean; checks that were skipped don't count. A file that uses `extends` can't hold these keys. Every key is listed in the setup skill's [reference](../../skills/corbits-triage-setup/reference.md#blocks-and-decide).
+
+If the file has a mistake, each problem names its line and what the value must be, such as "Line 12: `security.when.triage` must be pass, fail or unsure, or a list of them." A misspelt key says which one you likely meant, such as "`code-reveiw` is not a key; did you mean `code-review`?"
+
 #### Checking the file in pull requests
 
 On GitHub, a mistake in the file can be caught before it reaches the default branch. Add this workflow to the repository as `.github/workflows/corbits-triage-policy.yml`:

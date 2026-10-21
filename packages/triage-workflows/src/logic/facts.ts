@@ -1,5 +1,5 @@
 import { checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
-import { authorAssociation, authorKindOf, catalogCheckEnabled, renderedText, stepTeams, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { authorAssociation, authorKindOf, catalogCheckEnabled, policyTeams, renderedText, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { hiddenIn, hiddenMarkup, nothingRemoved } from "./hidden-content.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
@@ -181,7 +181,7 @@ function firstLine(message: string): string {
 }
 
 export function namedTeams(pack: CheckPack, repo: string): string[] {
-  return [...new Set(stepTeams(pack).flatMap((team) => teamSlug(team, repo) ?? []))].sort();
+  return [...new Set(policyTeams(pack).flatMap((team) => teamSlug(team, repo) ?? []))].sort();
 }
 
 function strings(value: unknown): string[] | undefined {
@@ -207,7 +207,7 @@ function membership(read: PullData["authorTeams"], pack: CheckPack, repo: string
   const unknown = strings(read?.unknown);
   const authorTeams: string[] = [];
   const authorTeamsUnknown: string[] = [];
-  for (const team of stepTeams(pack)) {
+  for (const team of policyTeams(pack)) {
     const slug = teamSlug(team, repo);
     if (slug === null || !member || !unknown || unknown.includes(slug)) authorTeamsUnknown.push(team);
     else if (member.includes(slug)) authorTeams.push(team);

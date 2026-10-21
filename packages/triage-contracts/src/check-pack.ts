@@ -239,7 +239,8 @@ export type StepKind = (typeof STEP_KINDS)[number];
 export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "merge"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
-export type AuthorMatch = AuthorKind | { team: string } | { users: string[] };
+/** `group` names a group the policy file defines, or `everyone`. */
+export type AuthorMatch = AuthorKind | { team: string } | { users: string[] } | { group: string };
 
 export const CI_STATES = ["passing", "failing", "pending", "none"] as const;
 export type CiState = (typeof CI_STATES)[number];
@@ -323,6 +324,8 @@ export type CheckPack = {
   actions: PolicyActions;
   /** So tools watching GitHub can react to it. */
   labels: Record<VerdictWord, string>;
+  /** The groups the policy file defines, in its order, which steps name as `{ group }`. */
+  groups?: Record<string, FileGroup>;
   /** What reading the stored policy left out because it no longer runs; each verdict says so. Never read back. */
   dropped?: string[];
 };
@@ -341,7 +344,26 @@ const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
   .or({ "+": "reject", to: "'teams'", teams: Texts })
   .or({ "+": "reject", to: "'codeowners'" });
 
-const AuthorMatchSchema = type.enumerated(...AUTHOR_KINDS).or({ "+": "reject", team: Text }).or({ "+": "reject", users: Texts });
+export const GROUP_NAME_MAX = 64;
+
+/** Starting with a letter keeps a mapping of groups in the order the file wrote them. */
+export const GroupName = type(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/).atMostLength(GROUP_NAME_MAX);
+
+/** A policy file names a group as itself; the policy holds it as `{ group }` once read. */
+const AuthorMatchSchema = type.enumerated(...AUTHOR_KINDS).or(GroupName).or({ "+": "reject", team: Text }).or({ "+": "reject", users: Texts }).or({ "+": "reject", group: GroupName });
+
+/** An entry of a step's `when.author` as a policy file, or the policy once read, writes it. */
+export type FileAuthorMatch = typeof AuthorMatchSchema.infer;
+
+/** Who a group the policy file defines is: authors of any of `association`, members of any of `teams`, any of `users`. */
+export const fileGroupSchema = type({
+  "+": "reject",
+  "association?": type.enumerated(...AUTHOR_KINDS).array().atLeastLength(1),
+  "teams?": type(/^[\w.-]+\/[\w.-]+$/).array().atLeastLength(1).atMostLength(LIST_MAX),
+  "users?": Texts,
+});
+export type FileGroup = typeof fileGroupSchema.infer;
+const FileGroupsSchema = type({ "[string]": fileGroupSchema });
 const Count = type("number.integer").atLeast(0);
 const SizeBoundSchema = type({ "+": "reject", "over?": Count, "atMost?": Count });
 const stepWhenSchema = type({
@@ -365,6 +387,14 @@ const StepSchema = type({
   .or({ ...STEP_BASE, do: "'approve' | 'merge' | 'close' | 'request-changes' | 'nothing'" });
 
 export const stepListSchema = StepSchema.array().atMostLength(STEPS_MAX);
+
+/** The kinds a policy file's `decide` takes: those written alone first, then those that need a target. */
+export const DECIDE_KINDS = ["approve", "merge", "close", "request-changes", "review", "nothing", "comment", "request-review", "assign", "labels"] as const;
+const DecideBare = type.enumerated("approve", "merge", "close", "request-changes", "review", "nothing");
+const DecideStep = DecideBare.or(StepSchema.or({ "+": "reject", do: "'review'" }));
+
+/** A `decide` rule's `do`: a kind written alone, or a list of those and steps. */
+export const decideDoSchema = DecideBare.or(DecideStep.array().atLeastLength(1).atMostLength(STEPS_MAX));
 
 /** Packs written before verdicts stored an empty list of actions, which reads as no steps. */
 const PolicyActionsObject = type({
@@ -419,6 +449,7 @@ export const checkPackSchema = type({
   "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
   "actions?": PolicyActionsSchema,
   "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
+  "groups?": FileGroupsSchema,
 });
 
 /** `readSharedPolicy` stays the authority. */
@@ -775,6 +806,11 @@ function parsePeopleTarget(target: Record<string, unknown>, allowAuthor: boolean
 function parseAuthorMatch(raw: unknown, where: string): AuthorMatch {
   if (typeof raw === "string") return oneOf(raw, AUTHOR_KINDS, where);
   const row = record(raw, where);
+  if ("group" in row) {
+    exactKeys(row, ["group"], where);
+    if (!GroupName.allows(row.group)) throw new Error(`${where} group must be a group name.`);
+    return { group: row.group };
+  }
   if ("team" in row) {
     exactKeys(row, ["team"], where);
     return { team: text(row.team, `${where} team`) };
@@ -886,6 +922,14 @@ function distinctSteps(steps: Step[]): Step[] {
     seen.add(key);
     return true;
   });
+}
+
+function parseGroups(raw: unknown): Record<string, FileGroup> | undefined {
+  if (raw === undefined) return undefined;
+  const groups = FileGroupsSchema(raw);
+  if (groups instanceof type.errors) throw new Error(`Groups ${groups.summary}`);
+  if (Object.keys(groups).some((name) => !GroupName.allows(name))) throw new Error("Group names must be lowercase words joined by hyphens.");
+  return groups;
 }
 
 function parseLabels(raw: unknown): Record<VerdictWord, string> {
@@ -1015,7 +1059,8 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const custom = parseCustom(body.custom);
   const actions = parseActions(body.actions, dropped);
   const labels = parseLabels(body.labels);
-  return withDropped(refuseTriageLabels({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels }), dropped);
+  const groups = parseGroups(body.groups);
+  return withDropped(refuseTriageLabels({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels, ...(groups && { groups }) }), dropped);
 }
 
 /** Workspace policy titles start with this, so the stock artifact list finds them with `?query=`. */
@@ -1099,8 +1144,11 @@ export function ruleLabel(id: string): string {
   return `${RULE_LABEL_PREFIX}${id}`;
 }
 
-export function stepTeams(pack: CheckPack): string[] {
-  return [...new Set(VERDICTS.flatMap((list) => pack.actions[list].flatMap((step) => (step.when?.author ?? []).flatMap((match) => (typeof match === "object" && "team" in match ? [match.team] : [])))))];
+/** Every team the policy names, in a step or in a group, whose membership can decide who a step is for. */
+export function policyTeams(pack: CheckPack): string[] {
+  const steps = VERDICTS.flatMap((list) => pack.actions[list].flatMap((step) => (step.when?.author ?? []).flatMap((match) => (typeof match === "object" && "team" in match ? [match.team] : []))));
+  const groups = Object.values(pack.groups ?? {}).flatMap((group) => group.teams ?? []);
+  return [...new Set([...steps, ...groups])];
 }
 
 export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack | null {

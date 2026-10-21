@@ -19,6 +19,7 @@ export * from "./repo-source.js";
 export * from "./rule-prose.js";
 export * from "./step-when.js";
 export * from "./policy-rules.js";
+export { policyWorkflowSchema, type DecideRule, type PolicyWorkflow } from "./policy-workflow.js";
 export * from "./tarball.js";
 export * from "./code-review-models.js";
 export * from "./code-review.js";
