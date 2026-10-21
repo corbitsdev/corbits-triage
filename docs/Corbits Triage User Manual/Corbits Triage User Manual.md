@@ -68,7 +68,7 @@ Unless you are the first person to use this Corbits Triage, you then see **Verif
 
 ![Verify your email on a server that cannot send email: Ask whoever runs this Triage to verify your address, with a Sign out button](images/46.png)
 
-Creating an account also creates a **workspace**, the shared space your whole team will use. Invite teammates from Settings to join yours. If someone has already invited you, open the invite link they sent instead of creating an account from scratch. Someone who signs in without an invitation gets a workspace of their own; inviting them later adds yours, and they switch between the two from the workspace switcher at the bottom left of the sidebar, just above your name. Its last entry, **New workspace**, creates another empty workspace of your own.
+Creating an account also creates a **workspace**, the shared space your whole team will use. Invite teammates from Settings to join yours. If someone has already invited you, open the invite link they sent instead of creating an account from scratch; on a server that does not send email, sign in first so they can invite you. Someone who signs in without an invitation gets a workspace of their own; inviting them later adds yours, and they switch between the two from the workspace switcher at the bottom left of the sidebar, just above your name. Its last entry, **New workspace**, creates another empty workspace of your own.
 
 ### First-time setup
 
@@ -502,7 +502,7 @@ Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins als
 
 ### People
 
-**People** lists everyone in the workspace with their role. To add a teammate, type their email, choose a role and press **Invite**. They receive a sign-in link that works once and expires after 15 minutes. If your server is not set up to send email, the portal shows you the link to copy and send yourself.
+**People** lists everyone in the workspace with their role. To add a teammate, type their email, choose a role and press **Invite**. They receive a sign-in link that works once and expires after 15 minutes. If your server is not set up to send email, you can invite only people who have already signed in, and the portal shows you the link to copy and send yourself.
 
 If your server is not set up to send email, someone who signed up with an email and password shows **Email not verified**, or **Invite pending** while invited, and if you are the first person who used this Corbits Triage, a **Mark verified** button. Press it only if you know the address is theirs: it lets them into the portal, and they can then accept your invite.
 
