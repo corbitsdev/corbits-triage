@@ -39,25 +39,33 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   log: (entry: Record<string, unknown>) => void;
 };
 
-export async function readyToTriage(
-  deps: PortalCredentialDeps & { readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead> },
-  { tenantId, principalId }: Member,
-  repo: string,
-) {
+/** The member's connected record of `repo`, or why they may not triage it. */
+export async function grantedTriageRecord(deps: PortalCredentialDeps, { tenantId, principalId }: Member, repo: string) {
   const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true, config: true } });
   if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
   const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected);
   if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
-  const refused = await sourceCredentialGrant(deps, principalId, tenantId, record, "use");
-  if (refused) return refused;
+  return (await sourceCredentialGrant(deps, principalId, tenantId, record, "use")) ?? { tenant, record };
+}
+
+/** The policy and rules `record` is triaged with, or why it is not triaged. */
+export async function triageInputs(deps: { readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead> }, tenantId: string, record: RepoRecord) {
   const policy = repoPolicy(record);
   if (!policy.enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
-  const pack = await deps.readCheckPack(tenantId, repo);
+  const pack = await deps.readCheckPack(tenantId, record.name);
   if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: pack.reason });
   if (pack.status === "invalid") return failure(409, "policy_file_invalid", `Triage does not run until ${pack.path} is fixed.`, { reason: pack.reason });
   if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
   if (!hasEnabledRules(pack.pack)) return failure(409, "no_rules", "Switch on a rule first; with every rule off there is nothing to triage.");
-  return { tenant, record, policy, pack };
+  return { policy, pack };
+}
+
+async function readyToTriage(deps: GithubPrTriageDeps, member: Member, repo: string) {
+  const granted = await grantedTriageRecord(deps, member, repo);
+  if (granted instanceof Response) return granted;
+  const inputs = await triageInputs(deps, member.tenantId, granted.record);
+  if (inputs instanceof Response) return inputs;
+  return { ...granted, ...inputs };
 }
 
 export function createGithubPrTriage(deps: GithubPrTriageDeps) {

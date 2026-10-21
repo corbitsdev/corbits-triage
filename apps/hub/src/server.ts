@@ -95,7 +95,7 @@ import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
 import { createGithubPolicyRead } from "./github/policy-read.js";
-import { createGithubBacklog } from "./github/backlog-triage.js";
+import { createBacklogStart, createGithubBacklog } from "./github/backlog-triage.js";
 import { fileRefusal, loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
@@ -743,6 +743,9 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number):
   if (due > 0) kickTriage();
   return due;
 }
+function sendBacklogMail(tenantId: string, payload: unknown) {
+  return sendBridgeMail(tenantId, prTriageHistoricalWorkflow.id, payload);
+}
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
   db: hookDeps.db,
@@ -754,6 +757,7 @@ const bridge = createBridgeHandler({
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
   refreshPolicyFile,
+  startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
   db: hookDeps.db,
@@ -815,9 +819,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     cipher: composition.credentialCipher,
     authorize: authorizePortal,
     readCheckPack,
-    sendMail: function sendBacklogMail(tenantId, payload) {
-      return sendBridgeMail(tenantId, prTriageHistoricalWorkflow.id, payload);
-    },
+    sendMail: sendBacklogMail,
     log: logJson,
   }),
   openPulls: githubOpenPulls,

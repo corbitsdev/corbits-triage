@@ -34,6 +34,8 @@ export function baseMoveOf(event: string, p: Json): BaseMove | null {
 }
 
 export type PolicyPush = { repo: string };
+/** `changed` when the push's commits list one of the paths, rather than it only being forced. */
+export type GithubPolicyPush = PolicyPush & { changed: boolean };
 
 function listsAny(paths: unknown, wanted: readonly string[]): boolean {
   return Array.isArray(paths) && wanted.some((path) => paths.includes(path));
@@ -43,12 +45,12 @@ function listsAny(paths: unknown, wanted: readonly string[]): boolean {
  * A push to the default branch that may have changed one of `paths`; null for anything else. A forced push's commits need not
  * list what it replaced, so it always counts.
  */
-export function policyPushOf(event: string, p: Json, paths: readonly string[]): PolicyPush | null {
+export function policyPushOf(event: string, p: Json, paths: readonly string[]): GithubPolicyPush | null {
   const repo = p?.repository?.full_name;
   if (event !== "push" || typeof repo !== "string" || p.ref !== `refs/heads/${p.repository.default_branch}`) return null;
   const commits: Json[] = Array.isArray(p.commits) ? p.commits : [];
-  const touched = commits.some((commit) => [commit?.added, commit?.modified, commit?.removed].some((listed) => listsAny(listed, paths)));
-  return touched || p.forced === true ? { repo } : null;
+  const changed = commits.some((commit) => [commit?.added, commit?.modified, commit?.removed].some((listed) => listsAny(listed, paths)));
+  return changed || p.forced === true ? { repo, changed } : null;
 }
 
 export function normalize(event: string, deliveryId: string, p: Json): PrMail | null {

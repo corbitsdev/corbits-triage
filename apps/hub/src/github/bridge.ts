@@ -20,7 +20,8 @@ import { GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
-import { baseMoveOf, normalize, policyPushOf, type BaseMove, type PolicyPush } from "./normalize.js";
+import { baseMoveOf, normalize, policyPushOf, type BaseMove, type GithubPolicyPush } from "./normalize.js";
+import type { BacklogStart } from "./backlog-triage.js";
 import type { PolicyFileState } from "./policy-file.js";
 import { workflowPart } from "./pr-workflow.js";
 import { readCappedBody } from "../read-json.js";
@@ -72,6 +73,7 @@ export interface BridgeDeps {
   recheckOpenPulls: (tenantId: string, key: string, except: number) => Promise<number>;
   /** Reads the repository's policy file again; undefined when the repository is not connected. */
   refreshPolicyFile: (tenantId: string, repo: string) => Promise<PolicyFileState | undefined>;
+  startBacklog: BacklogStart;
 }
 
 /** Mirrors @corbits/webhooks parseWebhookMeta (not exported upstream). */
@@ -402,14 +404,17 @@ async function handleBaseMove(
   return json(202, { status: "accepted" });
 }
 
-/** A failed read is 500 so GitHub redelivers; until a read succeeds, the next trigger reads the file itself. */
+/**
+ * A failed read is 500 so GitHub redelivers; until a read succeeds, the next trigger reads the file itself. A push that
+ * changed the file has the open pull requests triaged, as turning triage on does, wherever triage would run.
+ */
 async function handlePolicyPush(
   d: BridgeDeps,
   log: (entry: Record<string, unknown>) => void,
   loaded: BridgeHook,
   delivery: string,
   event: string,
-  { repo }: PolicyPush,
+  { repo, changed }: GithubPolicyPush,
 ): Promise<Response> {
   const record = await connectedRecord(d, log, loaded, delivery, event, repo);
   if (record instanceof Response) return record;
@@ -426,6 +431,10 @@ async function handlePolicyPush(
     return json(202, { status: "ignored" });
   }
   log({ level: "info", msg: "policy_file_pushed", delivery, event, repo, status: read.status, hook: loaded.credentialId });
+  if (changed) {
+    const started = await d.startBacklog(loaded.tenantId, record);
+    log({ level: "info", msg: "policy_push_backlog", delivery, event, repo, status: started.status, hook: loaded.credentialId });
+  }
   return json(202, { status: "accepted" });
 }
 
