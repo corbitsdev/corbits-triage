@@ -35,14 +35,14 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/policy-file.ts`, `check-pack-store.ts`, `policy-read.ts`, `policy-pull.ts` | The policy file (read again when a push touches it or a pull request merges into the default branch), the stored policy and which applies, the policy route, and the one `corbits-triage/policy` pull request. |
 | `src/github/automation.ts` | Which action kinds triage writes unattended, from the `pr-triage` role's grants. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
-| `src/github/coordinator.ts`, `worker-spawn.ts`, `triage-queue-view.ts` | The job queue, one worker deployment per job, and the queue route. |
+| `src/github/coordinator.ts`, `worker-spawn.ts` | The job queue and one worker deployment per job. |
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates deployments and redeploys failed ones. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
 | `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads run logs and records verdicts. |
 | `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts`, `pr-outcomes.ts` | Verdict records and the routes that serve them, including outcomes before and after Triage. Outcomes read at most the 50 newest-created pull requests on GitHub, or the newest page holding any (at most 8 pages of 50) on Bitbucket Data Center, with at most 8 reads at once, cached per pull request and per UTC day. |
 | `src/github/backlog-triage.ts` | Mails `pr-triage-historical` to triage a repository's open pull requests. |
 | `src/github/manifest.ts` | GitHub App Manifest flow; setup state is an HMAC token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes. |
-| `src/github/pr-*.ts`, `held-dos.ts` | Pull request actions, details, previews and single-PR triage; approving a held action. |
+| `src/github/pr-*.ts`, `held-dos.ts` | Pull request actions, details and single-PR triage; approving a held action. |
 | `src/github/github-app-*` | Credential adapter: App JWT to installation token, cached per installation. |
 | `src/github/source-fetch.ts` | A repository's host fetch, as the GitHub App or the Bitbucket token. |
 

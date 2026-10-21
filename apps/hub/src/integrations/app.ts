@@ -21,14 +21,12 @@ import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
 import { failure } from "../github/portal-credential.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
-import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 import { PolicyExportBody, PolicyFileBody } from "../github/policy-file.js";
 import { PolicyQuery } from "../github/policy-read.js";
 import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
-import { TRIAGE_QUEUE_PATH, TriageQueue } from "../github/triage-queue-view.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
 import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, RepoWebhook, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
@@ -76,10 +74,8 @@ export type IntegrationHandlers = {
   openPulls: (member: Member) => Promise<Response>;
   prDetails: MemberHandler;
   mergeStates: MemberHandler;
-  prPreview: (body: typeof PreviewBody.infer, member: Member, signal: AbortSignal) => Promise<Response>;
   triageStats: MemberHandler;
   triageTimeline: MemberHandler;
-  triageQueue: (member: Member) => Promise<Response>;
   triageVerdicts: MemberHandler;
   audit: MemberHandler;
   workflowDeploy: BodyHandler<typeof DeployBody.infer>;
@@ -515,28 +511,6 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     },
   );
 
-  app.post(
-    `${GITHUB_PR_PREVIEW_PATH}/:tenantId`,
-    describeRoute({
-      summary: "Preview a policy on an open pull request",
-      description: "Evaluates the saved policy, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the rules it answers need it and each verdict's steps are listed. Team membership for a candidate policy's steps is read only when the caller may manage the workspace; otherwise those teams stay unknown.",
-      tags: TAGS,
-      responses: {
-        200: json("Rules, verdict and each action's branch and Dos", PreviewResponse),
-        400: json("Invalid request or candidate policy", Failure),
-        ...failures,
-        404: json("Pull request not found", Failure),
-        409: json("GitHub, the workspace or the repository is not ready, the policy is unreadable or the pull request is not open", Failure),
-        ...githubFailed,
-      },
-    }),
-    member,
-    body(PreviewBody),
-    function prPreview(c) {
-      return handlers.prPreview(c.req.valid("json"), memberOf(c), c.req.raw.signal);
-    },
-  );
-
   app.get(
     `${TRIAGE_STATS_PATH}/:tenantId`,
     describeRoute({
@@ -572,21 +546,6 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     requireGrant("workflow-run:*", "read"),
     function triageTimeline(c) {
       return handlers.triageTimeline(c.req.raw, memberOf(c));
-    },
-  );
-
-  app.get(
-    `${TRIAGE_QUEUE_PATH}/:tenantId`,
-    describeRoute({
-      summary: "Triage jobs waiting and running in the workspace",
-      description: "Needs `workflow-run:*` read. The triage coordinator's queue for the workspace: jobs waiting for a worker and workers running, each with its repository, pull request head, where it came from (`event`, `retry`, `reconcile`) and `ageMs` since it was queued. Read from the hub's memory.",
-      tags: TAGS,
-      responses: { 200: json("Queued and running jobs", TriageQueue), 401: failures[401], 403: failures[403] },
-    }),
-    member,
-    requireGrant("workflow-run:*", "read"),
-    function triageQueue(c) {
-      return handlers.triageQueue(memberOf(c));
     },
   );
 

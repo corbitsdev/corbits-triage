@@ -5,7 +5,7 @@ import { authorize } from "@intx/authz";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { emptyPack, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { guardedApp } from "../integrations/test-app.js";
 import { createAuditLog } from "../audit-log.js";
@@ -14,7 +14,6 @@ import { createGithubOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createTenantOpenPrs } from "./tenant-open-heads.js";
 import { createGithubPrActions } from "./pr-actions.js";
 import { createGithubPrDetails } from "./pr-details.js";
-import { createGithubPrPreview, PreviewBody } from "./pr-preview.js";
 import { createTriageStats } from "./triage-stats.js";
 import { createTriageTimeline } from "./triage-timeline.js";
 import { createTriageVerdicts } from "./triage-verdicts.js";
@@ -63,7 +62,6 @@ const READS: Record<string, unknown> = {
   [`/repos/${REPO}/issues/9/comments`]: [],
   [`/repos/${REPO}/commits/${HEAD}/check-runs`]: { check_runs: [] },
   [`/repos/${REPO}/commits/${HEAD}/status`]: { statuses: [] },
-  "/orgs/acme/teams/secret/memberships/octocat": { state: "active" },
 };
 
 async function github(req: Request): Promise<Response> {
@@ -110,22 +108,9 @@ const prActions = createGithubPrActions({
   async readCheckPack() { return { status: "missing" } as const; },
   codeReviews: { async latest() { return { review: completed, completed, carriedTo }; } },
 });
-const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO), automatic: [], source: { repo: { id: "art_pack", version: 1 } } } as const; } });
 
 function member(user: string) {
   return { tenantId: TENANT, principalId: user.replace("usr_", "prn_") };
-}
-
-function probe() {
-  const pack = emptyPack(REPO);
-  pack.actions.pass = [{ do: "comment", target: { body: "Thanks" }, when: { author: [{ team: "secret" }] } }];
-  return PreviewBody.assert({ repo: REPO, number: 8, pack });
-}
-
-async function probeResult(res: Response): Promise<string | undefined> {
-  const body = await res.json() as { actions: { dos?: Array<{ reason: string; skipped?: true }> } };
-  const step = body.actions.dos?.[0];
-  return step && (step.skipped ? step.reason : "runs");
 }
 
 beforeAll(async () => {
@@ -187,10 +172,6 @@ test("PostgreSQL: holding read or use on the GitHub credential reads pull reques
     const details = await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=8`), member(user));
     expect(details.status).toBe(200);
     expect(await details.json()).toMatchObject({ pr: { number: 8 }, files: [{ path: "src/widget.ts" }] });
-
-    const preview = await prPreview({ repo: REPO, number: 8 }, member(user), AbortSignal.timeout(30_000));
-    expect(preview.status).toBe(200);
-    expect(await preview.json()).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, pack: "saved" });
   }
 
   const act = await prActions({ action: "merge", repo: REPO, number: 8 }, member("usr_member"));
@@ -222,20 +203,6 @@ test("PostgreSQL: pull request details serve only repositories connected to the 
   const res = await prDetails(new Request("http://hub.test/pull?repo=acme/other&number=8"), member("usr_member"));
   expect(res.status).toBe(409);
   expect(await res.json()).toMatchObject({ error: { code: "repo_not_connected" } });
-});
-
-test("PostgreSQL: only a member who may manage the workspace reads the teams a candidate pack's steps are for, so a reader cannot probe team membership", async () => {
-  const membership = "GET /orgs/acme/teams/secret/memberships/octocat";
-  requested.length = 0;
-  const reader = await prPreview(probe(), member("usr_member"), AbortSignal.timeout(30_000));
-  expect(reader.status).toBe(200);
-  expect(requested).not.toContain(membership);
-  expect(await probeResult(reader)).toBe("Not run: it is not known whether the author is secret.");
-
-  const admin = await prPreview(probe(), member("usr_admin"), AbortSignal.timeout(30_000));
-  expect(admin.status).toBe(200);
-  expect(requested).toContain(membership);
-  expect(await probeResult(admin)).toBe("runs");
 });
 
 test("PostgreSQL: approving needs the approve Do grant on top of use, and pins the review to the head shown; merging needs the merge grant", async () => {

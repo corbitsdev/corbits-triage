@@ -28,7 +28,7 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     `@corbits/common/x-hub-signature`, the scheme `@corbits/webhooks` 0.4 adds
     as `verify: "x-hub-signature"`; once the hub runs that release, the
     bridges move onto the stock hook routes.
-  - **Policy file**: every trigger mail, preview and portal read takes a
+  - **Policy file**: every trigger mail and portal read takes a
     repository's policy from `.corbits-triage.yml` (or `.yaml`) on its default
     branch, naming the file and its blob sha as the source. The hub keeps each
     read in memory, nothing stored; a push to the default branch that touches
@@ -91,10 +91,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     user who started setup, so no setup state is stored.
   - **Integration routes** under `/api/integrations/`, each described in
     `/openapi.json`: sign-in methods, GitHub App setup and installation sync,
-    open pull requests, details, merge states, actions, held actions, previews (API only)
+    open pull requests, details, merge states, actions, held actions
     and single pull request triage, verdicts, stats and timeline, the policy
-    schemas and routes above, invitations, workflow deploy and versions, the
-    triage queue, Bitbucket Data Center, and code review.
+    schemas and routes above, invitations, workflow deploy and versions,
+    Bitbucket Data Center, and code review.
     `GET …/github-triage/{tenantId}/policy?repo=` answers a repository's
     policy as triage reads it and `POST …/github-triage/{tenantId}/backlog`
     starts backlog triage, so only the hub resolves policies and builds

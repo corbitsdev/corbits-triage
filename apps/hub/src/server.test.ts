@@ -7,7 +7,6 @@ import { count, eq, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
-import { PreviewResponse } from "./github/pr-preview.js";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
 import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
@@ -266,8 +265,6 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-open-pulls/{tenantId}": ["get"],
     "/api/integrations/github-pull/{tenantId}": ["get"],
     "/api/integrations/merge-states/{tenantId}": ["get"],
-    "/api/integrations/github-preview/{tenantId}": ["post"],
-    "/api/integrations/triage-queue/{tenantId}": ["get"],
     "/api/integrations/triage-stats/{tenantId}": ["get"],
     "/api/integrations/triage-timeline/{tenantId}": ["get"],
     "/api/integrations/triage-verdicts/{tenantId}": ["get"],
@@ -486,86 +483,11 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
   }
 }, 60_000);
 
-function say(body: string) {
-  return [{ do: "comment", target: { body } }];
-}
-
 const SAVED_PACK = {
   ...emptyPack(REPO),
   checks: { "ci-green": { enabled: true } },
   actions: { when: ["opened", "updated", "checks", "ready"], pass: [{ do: "labels", target: { from: "list", labels: ["checked"] } }], fail: [], unsure: [] },
 };
-
-const JUDGED_PACK = {
-  ...emptyPack(REPO),
-  checks: { "max-files-changed": { enabled: true, maxFiles: 0 } },
-  custom: [{ id: "custom-1", name: "Explains why", group: "pull-request", kind: "model", shape: "is-true", claim: "The description says why." }],
-  actions: { when: ["opened", "updated", "checks", "ready"], pass: say("pass"), fail: say("fail"), unsure: say("unsure") },
-};
-
-test("a pack preview evaluates an open pull request without writing anything", async () => {
-  const github = fakeGithub();
-  const { db, close } = createDB(DATABASE);
-  try {
-    const origin = await startHub({ GITHUB_API_ORIGIN: github.origin });
-    const headers = await signedIn(origin);
-    const tenantId = await createTenant(origin, headers);
-    await connectGithub(db, origin, headers, tenantId, github.origin);
-    const title = checkPackName(REPO);
-    const saved = await fetch(`${origin}/api/tenants/${tenantId}/artifacts`, {
-      method: "POST", headers, body: JSON.stringify({ mode: "text", title, content: JSON.stringify(SAVED_PACK), metadata: { checkPack: title } }),
-    });
-    expect(saved.status).toBe(201);
-
-    async function preview(body: Record<string, unknown>, as: Record<string, string> = headers) {
-      const res = await fetch(`${origin}/api/integrations/github-preview/${tenantId}`, { method: "POST", headers: as, body: JSON.stringify(body) });
-      return { status: res.status, body: await res.json() };
-    }
-
-    async function previewed(body: Record<string, unknown>) {
-      const res = await preview(body);
-      expect(res.status).toBe(200);
-      return PreviewResponse.assert(res.body);
-    }
-
-    const stored = await previewed({ repo: REPO, number: 8 });
-    const reason = "every rule passed, and the policy has no decision-model rule";
-    expect(stored).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-needed", verdict: { verdict: "pass", reason, degraded: null } });
-    expect(stored.checks).toContainEqual({ check: "ci-green", name: "CI green", kind: "machine", result: "pass", reason: "required checks are passing", evidence: [], output: { kind: "values", values: { status: "passing" } } });
-    expect(stored.verdict).not.toHaveProperty("request");
-    const target = { labels: ["checked"] };
-    const effectId = doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "labels", target });
-    expect(stored.actions).toEqual({ status: "decided", verdict: "pass", dos: [{ list: "pass", index: 0, kind: "labels", reason, target, effectId, held: true }] });
-
-    const sized = await previewed({ repo: REPO, number: 8, pack: JUDGED_PACK });
-    expect(sized).toMatchObject({ pack: "candidate", judge: "not-needed", verdict: { verdict: "fail", state: "needs-author-update", degraded: null, score: null } });
-    expect(sized.checks).toContainEqual({ check: "custom-1", name: "Explains why", kind: "model", result: "unconfirmed", reason: "not asked", evidence: [], output: { kind: "could-not-check", reason: "not asked" } });
-    expect(sized.actions).toMatchObject({ status: "decided", verdict: "fail", dos: [{ list: "fail", target: { body: "fail" }, held: true }] });
-    const judged = await previewed({ repo: REPO, number: 8, pack: { ...JUDGED_PACK, checks: {} } });
-    expect(judged).toMatchObject({ judge: "not-run", verdict: { verdict: "unsure", state: "awaiting-review", reason: "needs the judge", humanGated: false, degraded: null } });
-    expect(judged.checks).toContainEqual({ check: "custom-1", name: "Explains why", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [], output: { kind: "could-not-check", reason: "needs the judge" } });
-    if (judged.actions.status !== "waits-on-judge") throw new Error("a judged pack must wait on the judge");
-    expect(judged.actions.lists.map((list) => [list.verdict, list.dos.map((d) => d.target)])).toEqual([
-      ["pass", [{ body: "pass" }]],
-      ["fail", [{ body: "fail" }]],
-      ["unsure", [{ body: "unsure" }]],
-    ]);
-
-    expect(github.repoRequests.filter((request) => !request.startsWith("GET "))).toEqual([]);
-    expect(await findArtifactByTitle(db, tenantId, triageStateName(REPO))).toBeNull();
-
-    expect(await preview({ repo: REPO, number: 9 })).toMatchObject({ status: 409, body: { error: { code: "pull_request_not_open" } } });
-    expect(await preview({ repo: REPO, number: 7 })).toMatchObject({ status: 404, body: { error: { code: "pull_request_not_found" } } });
-    expect(await preview({ repo: REPO, number: 8, pack: emptyPack("acme/gadgets") })).toMatchObject({ status: 400, body: { error: { code: "invalid_pack" } } });
-    expect(await preview({ repo: REPO, number: 8 }, { ...headers, origin: "https://elsewhere.example" })).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
-    const { cookie: _cookie, ...signedOut } = headers;
-    expect(await preview({ repo: REPO, number: 8 }, signedOut)).toMatchObject({ status: 401, body: { error: { code: "unauthorized" } } });
-    expect(await preview({ repo: REPO, number: 8 }, await signedIn(origin))).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
-  } finally {
-    github.stop();
-    await close();
-  }
-}, 60_000);
 
 function timedRun(started: Date, tookMs: number, verdict: Record<string, unknown>, mirrored = false): SeededEvent[] {
   const at = (offsetMs: number) => new Date(started.getTime() + offsetMs).toISOString();
