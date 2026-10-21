@@ -70,7 +70,6 @@ import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
-import { createTriageQueueView } from "./github/triage-queue-view.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
@@ -91,7 +90,6 @@ import { createRecordPass, createTenantObserver, createTenantVersions } from "./
 import { createTriageVerdicts } from "./github/triage-verdicts.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createMergeStates } from "./github/merge-states.js";
-import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
 import { createGithubPolicyRead } from "./github/policy-read.js";
@@ -829,13 +827,6 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,
   mergeStates,
-  prPreview: createGithubPrPreview({
-    db: composition.db,
-    cipher: composition.credentialCipher,
-    githubApiOrigin: githubOrigin,
-    authorize: authorizePortal,
-    readCheckPack,
-  }),
   triageStats: createTriageStats({
     verdicts: verdictRecordStore,
     outcomes: createOutcomeReader({
@@ -854,7 +845,6 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     log: logJson,
   }),
   triageTimeline: createTriageTimeline({ verdicts: verdictRecordStore }),
-  triageQueue: createTriageQueueView({ coordinator, now }),
   triageVerdicts: createTriageVerdicts({
     db: composition.db,
     cipher: composition.credentialCipher,
