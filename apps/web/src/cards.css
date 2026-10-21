@@ -49,8 +49,8 @@
 :is(.repos, .settings) .linkish:disabled { opacity: 0.45; cursor: not-allowed; }
 :is(.repos, .settings) .linkish:focus-visible { outline: 0; box-shadow: var(--focus); border-radius: 2px; }
 
-/* On a phone a long settings sentence takes its own line and its buttons wrap under it. */
-@media (max-width: 720px) {
+/* On narrow screens a long settings sentence takes its own line and its buttons wrap under it. */
+@media (max-width: 960px) {
   .settings .sentence { flex-wrap: wrap; }
   .settings .sentence .txt { flex-basis: auto; }
 }

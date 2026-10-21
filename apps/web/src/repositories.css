@@ -108,7 +108,7 @@
 @media (max-width: 960px) {
   .repos.split { grid-template-columns: minmax(0, 1fr); }
   .repos.split .panel.rl { display: none; }
-  .repos .rp { position: fixed; inset: 0; z-index: 30; border: 0; border-radius: 0; }
+  .repos .rp { position: fixed; inset: 0; z-index: 30; border: 0; border-radius: 0; padding-top: env(safe-area-inset-top); }
   .repos .rp .pane-in { padding: 16px 16px 48px; }
 }
 
