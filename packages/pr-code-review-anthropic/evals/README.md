@@ -76,26 +76,18 @@ and `pricesAsOf` date, the cost (null where a used price is unknown), every
 case's bugs caught and missed and where each finding sat with the bug it hit,
 and each stage's totals. It refuses on a dirty working tree or when any case's
 repository is not public. The writer and the price table it reads are shared
-with the triage judge eval, in `packages/triage-workflows/evals/`.
+with the triage judge eval, in `packages/triage-workflows/evals/`. The
+committed file is the baseline for the commit it names; rerun and commit it
+when a change moves the numbers.
 
-### Numbers at 0b689d27 (2026-10-16)
+### Numbers at e2177f15 (2026-10-20)
 
-Final review: 44/52 bugs caught, 34 false alarms, $3.25 for all 25 cases.
+Final review: 45/52 bugs caught (diff 24/24, repo 19/26, intent 2/2), 35
+false alarms, 3/3 clean cases flagged, $3.14 for all 25 cases; the Opus diff
+finder is $2.77 of it. Findings both finders reported caught 31/52 with 7
+false alarms. Every stage's totals are in the committed file.
 
-All 25 cases, the models above, no check, every other step at medium effort:
-
-| Stage | Bugs caught | diff | repo | intent | Findings | False alarms | Clean flagged |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Finders' union | 45/52 | 23/24 | 20/26 | 2/2 | 142 | 47 | 2/3 |
-| Consolidated | 44/52 | 23/24 | 19/26 | 2/2 | 92 | 34 | 2/3 |
-| Final review | 44/52 | 23/24 | 19/26 | 2/2 | 92 | 34 | 2/3 |
-| Found by both finders | 28/52 | 16/24 | 11/26 | 1/2 | 42 | 11 | 1/3 |
-| Found by one finder | 25/52 | 11/24 | 12/26 | 2/2 | 50 | 23 | 1/3 |
-
-$3.25 in all, $0.13 a pull request on average, 60 seconds each; the Opus diff
-finder is $2.86 of it. The earlier pipeline, which dropped findings it could
-not ground in the file and ran an Opus check on the rest, caught 32/52 with 15
-false alarms and flagged 0/3 clean cases.
+### Held-out numbers (2026-10-16)
 
 On 42 held-out public pull requests with known bugs (none of them among the
 25 cases), scored on their core bugs:
