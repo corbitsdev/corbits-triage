@@ -26,7 +26,7 @@ function decisive(questions: Array<{ id: string }>): ReactorInboundEvent {
     verdict: { pass: 0.9, fail: 0.05, cant_tell: 0.05 },
     focused: { one_thing: 0.9, more_than_one_thing: 0.05, cant_tell: 0.05 },
   };
-  const text = questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: Object.keys(probabilities[id]!)[0], probabilities: probabilities[id], confidence: 0.9 })).join("");
+  const text = questions.map(({ id }) => JSON.stringify(id === "instructed" ? { id, type: "noul", noul: 0.1 } : { id, type: "choice", choice: Object.keys(probabilities[id]!)[0], probabilities: probabilities[id], confidence: 0.9 })).join("");
   return { type: "inference.done", turn: { content: [{ type: "text", text }] } } as ReactorInboundEvent;
 }
 

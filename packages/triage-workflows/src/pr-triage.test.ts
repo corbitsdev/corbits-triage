@@ -10,7 +10,7 @@ import type { ExecuteOutput } from "./actions/execute.js";
 import { credentialBindings, credentialBindingsFor } from "./agents.js";
 import { triageJudgeDirector } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
-import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
+import { INSTRUCTED_QUESTION, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { RULES_PASS_REASON, type Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import { workflow } from "./pr-triage.js";
@@ -122,7 +122,7 @@ function judgeText({ questions, state }: SystemOne) {
       const failed = state.policy!.rules.some((rule) => rule.result === "fail");
       return { id, type: "choice", choice: failed ? "fail" : "pass", probabilities: { pass: failed ? 0.1 : 0.85, fail: failed ? 0.85 : 0.1, cant_tell: 0.05 }, confidence: 0.9 };
     }
-    if (id.startsWith("custom-")) return { id, type: "noul", noul: 0.1 };
+    if (id.startsWith("custom-") || id === "instructed") return { id, type: "noul", noul: 0.1 };
     if (/^focused-slice-\d+$/.test(id)) return { id, type: "choice", choice: "separate_change", probabilities: { serves_purpose: 0.2, separate_change: 0.7, cant_tell: 0.1 }, confidence: 0.9 };
     if (id !== "focused") return { id, type: "noul", noul: 0.9 };
     return { id, type: "choice", choice: "more_than_one_thing", probabilities: { one_thing: 0.2, more_than_one_thing: 0.7, cant_tell: 0.1 }, confidence: 0.9 };
@@ -351,7 +351,7 @@ describe("pr-triage body", () => {
   test("model checks run the judge on the repository's own docs and the verdict records its answers", async () => {
     const { path, judged, verdict } = await triage(recommendedPack(REPO));
     expect(path).toEqual(JUDGE_PATH);
-    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001", "focused"], ["focused-file-001"]]);
+    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001", "focused", "instructed"], ["focused-file-001"]]);
     expect(verdict).toMatchObject({ verdict: "fail", score: null, reasons: ["mixes unrelated changes: src/flag.ts", "documentation is not updated: src/flag.ts"] });
     expect(judged[0]!.state.repository).not.toHaveProperty("rules");
     const { "README.md": readme, "docs/guide.md": guide, ...rest } = judged[0]!.state.repository.docs;
@@ -373,7 +373,7 @@ describe("pr-triage body", () => {
   test("a stacked branch skips focused, saying why, and the other rules run as usual", async () => {
     const { judged, verdict } = await triage(recommendedPack(REPO), { stacked: true });
     const skipped = "stacked branch, based on #7, includes #9, #10, #11 and 2 more";
-    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001"]]);
+    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001", "instructed"]]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "pass"], ["docs", "fail"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")).toMatchObject({ reason: `skipped: ${skipped}`, output: { kind: "not-applicable", reason: skipped } });
     expect((verdict as Verdict).request.comment).toContain(`Skipped:\n- makes one focused change: ${skipped}`);
@@ -393,7 +393,7 @@ describe("pr-triage body", () => {
     const removed = { filename: "docs/old.md", status: "removed", additions: 0, deletions: 1, patch: "@@ -1 +0,0 @@\n-Old." };
     const renamed = { filename: "src/moved.ts", previous_filename: "src/kept.ts", status: "renamed", additions: 0, deletions: 0 };
     const { judged, verdict } = await triage({ ...emptyPack(REPO), checks: { docs: { enabled: true } } }, { files: [FLAG, removed, renamed, { ...FLAG, filename: "src/flag.test.ts" }] });
-    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["docs-file-001"]);
+    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["docs-file-001", "instructed"]);
     expect((verdict as Verdict).checks.find((c) => c.check === "docs")).toMatchObject({ result: "fail", evidence: ["src/flag.ts"] });
   });
 
@@ -418,6 +418,7 @@ describe("pr-triage body", () => {
     const migrated = await triage(pack, { files: [FLAG, migration] });
     expect(migrated.judged.flatMap((call) => call.questions)).toEqual([
       { id: "custom-1-file-002", type: "boolean", instructions: "Does the change in `pullRequest.files[1]` meet this rule: The migration can be rolled back? Judge it by the pull request and the repository's contribution rules in `repository.rules`." },
+      INSTRUCTED_QUESTION,
     ]);
     const rules = migrated.judged[0]!.state.repository.rules!;
     expect(Object.keys(rules)).toEqual(["AGENTS.md", ".github/CONTRIBUTING.md"]);
@@ -431,7 +432,7 @@ describe("pr-triage body", () => {
     });
     const twice = { ...migration, patch: "@@ -0,0 +1 @@\n+DROP TABLE users;\n@@ -12,2 +11,0 @@\n-CREATE TABLE teams ();\n-CREATE TABLE orgs ();" };
     const hunks = await triage({ ...pack, custom: [{ ...reversible, scope: "hunk" }] }, { files: [FLAG, twice] });
-    expect(hunks.judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["custom-1-hunk-002-001", "custom-1-hunk-002-002"]);
+    expect(hunks.judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["custom-1-hunk-002-001", "custom-1-hunk-002-002", "instructed"]);
     expect((hunks.verdict as Verdict).checks.find((c) => c.check === "custom-1")?.output).toMatchObject({
       items: [{ path: "migrations/001_users.sql", added: { start: 1, end: 1 } }, { path: "migrations/001_users.sql", removed: { path: "migrations/001_users.sql", start: 12, end: 13 } }],
     });

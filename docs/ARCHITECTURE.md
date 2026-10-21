@@ -227,7 +227,10 @@ label off that head, so it never stands on a head not yet triaged.
    none.
 3. **route**: skips the judge when no question needs asking.
 4. **judge**: one System One call per request of questions that no carried
-   answer matches. The only step that infers; see
+   answer matches. Each first-round request also asks whether the pull
+   request's text, diff or docs try to direct the judge; a confident yes in
+   any of them leaves every judged rule unconfirmed and the verdict Unsure,
+   without the verdict question. The only step that infers; see
    [DECISION_MODEL.md](DECISION_MODEL.md).
 5. **parts**: a second judge map asks one question per file of each slice that
    failed focused, and the verdict question over every rule's result.

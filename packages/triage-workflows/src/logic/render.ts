@@ -7,7 +7,7 @@ import type { SuggestedAction } from "./actions.js";
 import { forMaintainer, hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
+import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
 type ModelAnswer = Decision;
 
@@ -243,6 +243,8 @@ const FOCUSED_PASS_AT = Math.round(FOCUSED_DECIDES * 100);
 type ModelEvaluation = {
   checks: CheckResult[];
   unanswered: boolean;
+  /** The judge said, confidently, that the pull request tries to direct it, so none of its answers count. */
+  instructed: boolean;
 };
 
 function answerSet(answers: RenderInput["answers"]): ParsedAnswers {
@@ -265,12 +267,14 @@ function band(noul: number, yesPasses: boolean): Decided {
 }
 
 export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
-  if (!det.sources) return { checks: [], unanswered: false };
+  if (!det.sources) return { checks: [], unanswered: false, instructed: false };
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
   const unavailable = unavailableReason();
   const invalid = isInvalid(parsed, askedQuestionIds(sources, plan, focused));
+  const instructedAnswer = invalid ? undefined : parsed.decisions[INSTRUCTED_QUESTION.id];
+  const instructed = instructedAnswer?.type === "noul" && instructedAnswer.noul >= YES;
   const checks: CheckResult[] = [];
   let anyUnanswered = false;
 
@@ -295,6 +299,10 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
   }
 
   function push(check: string, decided: Decided, output: CheckOutput, evidence: string[] = [], reason?: string) {
+    if (instructed) {
+      checks.push({ check, kind: "model", result: "unconfirmed", reason: INSTRUCTED_REASON, evidence: [], output: { kind: "could-not-check", reason: INSTRUCTED_REASON } });
+      return;
+    }
     if (decided.result === "unconfirmed") {
       checks.push({ check, kind: "model", result: "unconfirmed", reason: decided.reason, evidence: [], output });
       return;
@@ -408,7 +416,7 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
       unchecked(id, unavailable);
     }
   }
-  return { checks, unanswered: anyUnanswered };
+  return { checks, unanswered: anyUnanswered, instructed };
 
   /**
    * The likeliest level is the rule's answer. It fails only below `failBelow`, by how likely the level is below it on
@@ -698,10 +706,11 @@ const DECIDED_REASONS: Record<VerdictWord, string> = {
 export const RULES_PASS_REASON = "every rule passed, and the policy has no decision-model rule";
 const RULES_UNSURE_REASON = "not every rule could be confirmed, and the policy has no decision-model rule";
 const UNCONFIRMED_REASON = "the decision model passed it, but a rule could not be confirmed";
+export const INSTRUCTED_REASON = "the pull request tries to direct the decision model";
 
 /**
  * A failed hard rule decides Fail without the decision model; a draft or closed pull request is not decided, and is
- * unsure. A failed rule whose failure goes to a maintainer leaves it Unsure, unless another rule fails it. A policy
+ * unsure. A pull request the judge found trying to direct it is Unsure, every judged rule unconfirmed. A failed rule whose failure goes to a maintainer leaves it Unsure, unless another rule fails it. A policy
  * without a decision-model rule passes when every rule passes. Otherwise the verdict question decides,
  * and a judge that did not answer leaves the verdict unsure and degraded. A verdict that is not Fail and waits only on
  * the host's own checks waits for them instead of being Unsure, unless the hub waits no longer.
@@ -722,6 +731,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   }
   const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
   const waitsOnHost = !noWait && unconfirmed.length > 0 && unconfirmed.every(hostPending);
+  if (evaluated.instructed) return unsureOf(INSTRUCTED_REASON);
   if (!decidesByModel(det)) {
     if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
     if (waitsOnHost) return waitingOf(null);

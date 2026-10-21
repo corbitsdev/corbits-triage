@@ -59,7 +59,7 @@ test("quality preflight sends the pull request, its hunks and the docs, and asks
     },
     repository: { docs: { "README.md": "Run it." } },
   });
-  expect(requests[0]!.questions.map(({ id, type }) => [id, type])).toEqual([["focused", "choice"]]);
+  expect(requests[0]!.questions.map(({ id, type }) => [id, type])).toEqual([["focused", "choice"], ["instructed", "boolean"]]);
   expect(requests[0]!.questions[0]!.instructions).toContain("one thing, or more than one thing");
 });
 
@@ -158,7 +158,7 @@ test("quality preflight asks docs about every part of a file too large for one r
   expect(requests.length).toBeGreaterThan(1);
   expect(requests.every(withinBudget)).toBe(true);
   expect(requests.flatMap((request) => request.state.pullRequest.files.flatMap((file) => file.hunks))).toEqual(patchHunks(widePatch()));
-  expect(requests.map((request) => request.questions.map((question) => question.id))).toEqual(requests.map((_, index) => [index === 0 ? "docs-file-001" : `docs-file-001-part-${String(index).padStart(3, "0")}`]));
+  expect(requests.map((request) => request.questions.map((question) => question.id))).toEqual(requests.map((_, index) => [index === 0 ? "docs-file-001" : `docs-file-001-part-${String(index).padStart(3, "0")}`, "instructed"]));
   expect(Object.values(plan.docs!.asked)).toEqual(requests.map(() => "src/wide.ts"));
   expect(plan.docs!.unread).toEqual([]);
 });
@@ -184,7 +184,7 @@ test("focused's follow-up asks about a file split across failing slices once", (
 });
 
 test("quality preflight asks whole pull request questions in the first request and file questions with their file, splitting at the question cap", () => {
-  const custom = Array.from({ length: 254 }, (_, index) => ({ id: `custom-${index + 1}`, name: `Check ${index + 1}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
+  const custom = Array.from({ length: 253 }, (_, index) => ({ id: `custom-${index + 1}`, name: `Check ${index + 1}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
   const sources = {
     quality: [
       { id: "focused" as const, group: "pull-request" as const },
@@ -195,8 +195,8 @@ test("quality preflight asks whole pull request questions in the first request a
   const evaluation = prepareQualityEvaluation(facts([{ path: "src/a.ts", patch: compactHunks(2) }, { path: "src/b.ts", patch: compactHunks(2, 2) }]), sources);
   expect(evaluation.judgeError).toBeUndefined();
   const [first, second, ...rest] = evaluation.requests.map((request) => request.questions.map((question) => question.id));
-  expect(first).toEqual([...custom.map((row) => row.id), "docs-file-001", "focused-slice-001"]);
-  expect(second).toEqual(["docs-file-002", "focused-slice-002"]);
+  expect(first).toEqual([...custom.map((row) => row.id), "docs-file-001", "focused-slice-001", "instructed"]);
+  expect(second).toEqual(["docs-file-002", "focused-slice-002", "instructed"]);
   expect(rest).toEqual([]);
   expect(evaluation.requests.every(withinBudget)).toBe(true);
   expect(evaluation.requests[1]!.state.pullRequest.files.map((file) => file.path)).toEqual(["src/b.ts"]);

@@ -7,7 +7,7 @@ import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
-import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
+import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
 import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
@@ -42,7 +42,12 @@ function answersOf(requests: JudgeRequest[], answered: Array<[string, unknown]>)
     const { judge } = (stepJson(reply) ?? {}) as Judgment;
     const parsed = typeof judge === "string" ? parseAnswers(judge) : undefined;
     const asked = new Set(requests[index]!.questions.map((question) => question.id));
-    if (parsed && !parsed.malformed && Object.keys(parsed.decisions).every((id) => asked.has(id))) Object.assign(decisions, parsed.decisions);
+    if (!parsed || parsed.malformed || !Object.keys(parsed.decisions).every((id) => asked.has(id))) continue;
+    const earlier = decisions[INSTRUCTED_QUESTION.id];
+    Object.assign(decisions, parsed.decisions);
+    // Every request asks the instructed question, and a yes from any of them stands.
+    const later = decisions[INSTRUCTED_QUESTION.id];
+    if (earlier?.type === "noul" && (later?.type !== "noul" || later.noul < earlier.noul)) decisions[INSTRUCTED_QUESTION.id] = earlier;
   }
   return { decisions, malformed: false };
 }
@@ -106,7 +111,7 @@ export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[
   const model = evaluateModel({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, answers: answersOf(requests, first), plan, focused, stack: facts.stack });
   const { deciding } = splitLabelled(det, model.checks);
   // A failed rule decides the verdict on its own, Fail or Unsure for a maintainer, so the verdict question is not asked.
-  if (model.unanswered || [...det.checks, ...deciding].some((check) => check.result === "fail")) return undefined;
+  if (model.unanswered || model.instructed || [...det.checks, ...deciding].some((check) => check.result === "fail")) return undefined;
   return verdictRequest(facts, [...det.checks, ...deciding].map((c) => policyRule(it.pack!, c)));
 }
 
