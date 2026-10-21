@@ -21,7 +21,7 @@ import type { PlaceProbe } from "../code-review.js";
 import type { DatabaseConfig, DockerSettings } from "../env.js";
 
 /** Built from the root Dockerfile's `sidecar` stage, which holds IMAGE_PATHS of the repository at IMAGE_ROOT. */
-export const SIDECAR_IMAGE = "corbits-triage-sidecar";
+const SIDECAR_IMAGE = "corbits-triage-sidecar";
 const IMAGE_ROOT = "/app";
 const IMAGE_PATHS = ["apps/hub/", "packages/", "vendor/"];
 const PING_TIMEOUT_MS = 2_000;

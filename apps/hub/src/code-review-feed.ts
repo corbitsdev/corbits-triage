@@ -19,7 +19,7 @@ const REVIEW_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_
  * The most diff text one review reads, about 25k tokens, which keeps a review near its measured cost; past it the diff
  * is cut at a line boundary and the review names the files it left unread.
  */
-export const DIFF_LIMIT = 100_000;
+const DIFF_LIMIT = 100_000;
 
 /** Heads remembered as sent, so a webhook delivered twice is reviewed once. */
 const REMEMBERED_HEADS = 10_000;
@@ -125,7 +125,7 @@ export function reviewRequestOf(record: Pick<RepoRecord, "name" | "source">, num
   };
 }
 
-export function isReviewEvent(mail: PrMail): boolean {
+function isReviewEvent(mail: PrMail): boolean {
   return mail.event === "pull_request" && mail.action !== null && REVIEW_ACTIONS.has(mail.action) && mail.draft !== true;
 }
 

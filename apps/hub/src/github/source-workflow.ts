@@ -39,7 +39,7 @@ export const CODE_REVIEW_WORKFLOWS: readonly CodeReviewWorkflow[] = [
 const LEGACY_TRIAGE_WORKFLOW = PR_TRIAGE_ADDRESS;
 
 /** pr-triage-historical binds the GitHub App only, so it deploys for workspaces with GitHub connected. */
-export const HISTORICAL_ENTRY = "./pr-triage-historical.mjs";
+const HISTORICAL_ENTRY = "./pr-triage-historical.mjs";
 
 export function triageWorkflowFor(source: RepoSource): TriageWorkflow {
   return TRIAGE_WORKFLOWS.find((workflow) => workflow.source === source)!;
