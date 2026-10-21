@@ -42,6 +42,7 @@ const FINISHED = {
   ],
 };
 let completed: CompletedReview | null = FINISHED;
+let carriedTo: string | null = null;
 
 const READS: Record<string, unknown> = {
   [`/repos/${REPO}/pulls`]: [{ number: 8, title: "Fix the widget", draft: false, user: { login: "octocat" }, head: { sha: HEAD } }],
@@ -107,7 +108,7 @@ const prActions = createGithubPrActions({
   ...deps,
   log() {},
   async readCheckPack() { return { status: "missing" } as const; },
-  codeReviews: { async latest() { return { review: completed, completed }; } },
+  codeReviews: { async latest() { return { review: completed, completed, carriedTo }; } },
 });
 const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO), automatic: [], source: { repo: { id: "art_pack", version: 1 } } } as const; } });
 
@@ -258,7 +259,7 @@ test("PostgreSQL: approving needs the approve Do grant on top of use, and pins t
   expect(reviewed).toHaveLength(1);
 });
 
-test("PostgreSQL: a code review is sent once per head as one COMMENT review, inline where the diff shows the lines and in the body elsewhere", async () => {
+test("PostgreSQL: a code review is sent once per head as one COMMENT review, inline where the diff shows the lines and in the body elsewhere, and at the head it was carried over to unless already sent on its own", async () => {
   const send = { action: "code-review", repo: REPO, number: 8, headSha: HEAD } as const;
   expect((await prActions(send, member("usr_user"))).status).toBe(403);
   expect(sentReviews).toEqual([]);
@@ -299,6 +300,18 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   completed = { ...FINISHED, summary: "", comments: [], budgetExhausted: false, cut: { lines: 6, of: 40 } };
   expect(await (await prActions(send, member("usr_approver"))).json()).toEqual({ reviewId: 1, sent: true });
   expect(sentReviews.map((review) => review.body)).toEqual(["Some files were not reviewed: the diff was over the size limit.\n\n<!-- corbits-code-review -->"]);
+
+  sentReviews.length = 0;
+  completed = { ...FINISHED, headSha: "older" };
+  carriedTo = HEAD;
+  expect(await (await prActions(send, member("usr_approver"))).json()).toEqual({ reviewId: 1, sent: true });
+  expect(sentReviews.map((review) => review.commit_id)).toEqual([HEAD]);
+
+  // Sent on the head it was made for, it stays on the same lines, so the head it was carried over to gets no second copy.
+  sentReviews.length = 0;
+  sentReviews.push({ event: "COMMENT", commit_id: "older", body: "Fixes the widget.\n\n<!-- corbits-code-review -->", comments: [] });
+  expect(await (await prActions(send, member("usr_approver"))).json()).toEqual({ reviewId: 100, sent: false });
+  expect(sentReviews).toHaveLength(1);
 });
 
 test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {

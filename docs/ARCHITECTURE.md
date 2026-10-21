@@ -289,6 +289,18 @@ the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file".
 
+Each request carries `diffHash`, a SHA-256 of the full diff, `index` lines
+included, so a base change to a file the diff touches, or a binary change,
+changes it. A diff with no `index` line, as GitHub's rebuilt from the file
+list, is sent unhashed. The hash lives in the run log, so carrying over works
+after a restart: a new head whose diff hashes the same as the newest review's,
+when that review finished, is not mailed but takes the review over (`carries`
+in `code-review-runs.ts`). `GET …/code-review` with `head` answers `carriedTo`,
+reading that head's diff once; a failed read is not retried for five minutes.
+The review is then sent to GitHub at that head, unless it was sent on its own,
+whose comments stay on the same lines. A diff that can't be read and `…/run`
+review the head instead.
+
 A pull request's reviews are read from the run logs. A failed run's reason is
 a fixed sentence for why its first step that failed for good did
 (`failureReason` in `pr-code-review`); the run log keeps the error itself.

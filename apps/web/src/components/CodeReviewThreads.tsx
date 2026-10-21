@@ -7,7 +7,7 @@ import type { CodeReviewComment, CodeReviewRun, CodeReviews, PrItem } from "../l
 import { usePortal } from "../lib/portal.tsx";
 import { Markdown } from "./Markdown.tsx";
 
-type Reviewed = Pick<PrItem, "repo" | "source"> & { number: number };
+type Reviewed = Pick<PrItem, "repo" | "source" | "headSha"> & { number: number };
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
@@ -62,13 +62,17 @@ function Thread({ comment, review }: { comment: CodeReviewComment; review: CodeR
   );
 }
 
-/** "Send to GitHub" for the finished review, or that it was sent; GitHub pull requests only. */
-function SendToGithub({ item, completed, send }: { item: Reviewed; completed: CodeReviewRun; send: ReturnType<typeof useSendCodeReview> }) {
+/**
+ * "Send to GitHub" for the finished review, at the head it was carried over to if any, or that it was sent: a review sent
+ * before it was carried over stays on the unchanged lines, so it is not sent again. GitHub pull requests only.
+ */
+function SendToGithub({ item, completed, carriedTo, send }: { item: Reviewed; completed: CodeReviewRun; carriedTo: string | null; send: ReturnType<typeof useSendCodeReview> }) {
   const { readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
-  const sent = pull.data?.reviews.some((review) => review.codeReview === true && review.commitId === completed.headSha) === true;
+  const heads = [completed.headSha, carriedTo];
+  const sent = pull.data?.reviews.some((review) => review.codeReview === true && heads.includes(review.commitId)) === true;
   if (sent) return <span className="hint">Sent to GitHub</span>;
-  return <button type="button" className="linkish" disabled={readOnly || pull.isPending || send.isPending} onClick={() => send.mutate(completed.headSha)}>Send to GitHub</button>;
+  return <button type="button" className="linkish" disabled={readOnly || pull.isPending || send.isPending} onClick={() => send.mutate(carriedTo ?? completed.headSha)}>Send to GitHub</button>;
 }
 
 /** A list of more unread files than this starts collapsed. */
@@ -98,19 +102,20 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
   const send = useSendCodeReview(item);
   const on = snapshot?.repos.some((repo) => repo.name === item.repo && repo.source === item.source && repo.codeReview === true) === true;
   if (!reviews || (!on && !reviews.review)) return null;
-  const { completed } = reviews;
+  const { completed, carriedTo } = reviews;
 
   return (
     <section className="code-review" aria-label="Code review">
       <h3 className="lbl-h">
         Code review<span className="hint">{hint(reviews)}</span>
         <span className="sp" />
-        {completed && item.source === "github" ? <SendToGithub item={item} completed={completed} send={send} /> : null}
+        {completed && item.source === "github" ? <SendToGithub item={item} completed={completed} carriedTo={carriedTo} send={send} /> : null}
         {on && snapshot?.codeReviewPlace ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}
       </h3>
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
       {send.error ? <p role="alert" className="error">Could not send to GitHub. {errorText(send.error)}</p> : null}
       {reviews.review?.status === "failed" && reviews.review.reason ? <p className="note">{reviews.review.reason}</p> : null}
+      {completed && carriedTo ? <p className="note">Carried over from {shortSha(completed.headSha)}: the new commits leave the diff as it was reviewed.</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
       {completed?.cut ? <CutNote cut={completed.cut} /> : null}
       {completed?.budgetExhausted ? <p className="note">{BUDGET_EXHAUSTED_NOTE}</p> : null}

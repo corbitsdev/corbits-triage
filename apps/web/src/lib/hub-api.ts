@@ -939,11 +939,14 @@ export type CodeReviewRun = {
   reason?: string;
 };
 
-/** The newest review, and the newest finished one, whose findings stay shown while a newer review runs. */
-export type CodeReviews = { review: CodeReviewRun | null; completed: CodeReviewRun | null };
+/**
+ * The newest review, and the newest finished one, whose findings stay shown while a newer review runs; `carriedTo` is the
+ * asked head when its diff is the one the finished review read, so that review stands for it.
+ */
+export type CodeReviews = { review: CodeReviewRun | null; completed: CodeReviewRun | null; carriedTo: string | null };
 
-export async function latestCodeReview(transport: Transport, tenantId: string, repo: Pick<RepoRecord, "name" | "source">, number: number): Promise<CodeReviews> {
-  const query = new URLSearchParams({ repo: validateRepo(repo.name), source: repo.source, number: String(number) });
+export async function latestCodeReview(transport: Transport, tenantId: string, repo: Pick<RepoRecord, "name" | "source">, number: number, head: string | null): Promise<CodeReviews> {
+  const query = new URLSearchParams({ repo: validateRepo(repo.name), source: repo.source, number: String(number), ...(head !== null && { head }) });
   return transport.fetch<CodeReviews>("GET", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}?${query}`);
 }
 

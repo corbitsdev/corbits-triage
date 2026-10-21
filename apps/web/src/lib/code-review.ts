@@ -12,15 +12,15 @@ const REFRESH_MS = 30_000;
 
 type Pull = { repo: string; source: RepoSource; number: number };
 
-/** The pull request's latest code review, read again more often while one runs. */
-export function useCodeReview({ repo, source, number }: Pull) {
+/** The pull request's latest code review, and whether it stands for `headSha` too, read again more often while one runs. */
+export function useCodeReview({ repo, source, number, headSha }: Pull & { headSha: string | null }) {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   async function fetchReview() {
-    return latestCodeReview(createHubTransport(), tenantId as string, { name: repo, source }, number);
+    return latestCodeReview(createHubTransport(), tenantId as string, { name: repo, source }, number, headSha);
   }
   return useQuery({
-    queryKey: [CODE_REVIEW_QUERY_KEY, tenantId, source, repo, number],
+    queryKey: [CODE_REVIEW_QUERY_KEY, tenantId, source, repo, number, headSha],
     queryFn: fetchReview,
     enabled: tenantId !== undefined,
     refetchInterval: (query) => (query.state.data?.review?.status === "running" ? RUNNING_REFRESH_MS : REFRESH_MS),

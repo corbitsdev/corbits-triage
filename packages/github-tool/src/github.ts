@@ -234,7 +234,8 @@ export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: st
 }
 
 /** `sha` is the head the review read; it is sent once, and not at all once the pull request has moved past it. */
-export type SendCodeReviewInput = { repo: string; number: number; sha: string; summary: string; comments: CodeReviewComment[] };
+/** `reviewed` is the head the review was made for when it was carried over to `sha`. */
+export type SendCodeReviewInput = { repo: string; number: number; sha: string; reviewed?: string; summary: string; comments: CodeReviewComment[] };
 
 type Lines = { start: number; end: number };
 type ReviewComment = { path: string; line: number; side: "RIGHT"; start_line?: number; start_side?: "RIGHT"; body: string };
@@ -297,11 +298,13 @@ function reviewBody(summary: string, sections: readonly string[]): string {
 
 /**
  * Sends a code review as one COMMENT review on `sha`: each finding the diff shows is an inline comment, the rest are in
- * the review's body. The App's review of `sha` carries a marker, so sending it again writes nothing.
+ * the review's body. The App's review carries a marker, so sending it again, on `sha` or on the head it was carried over
+ * from, whose unchanged lines still hold it, writes nothing.
  */
 export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput, login: AppLogin) {
-  const { repo, number, sha } = input;
-  const sent = (await reviewsBy(gh, repo, number, await login())).find((review) => review.commit_id === sha && review.body?.includes(CODE_REVIEW_MARKER));
+  const { repo, number, sha, reviewed } = input;
+  const heads = [sha, ...(reviewed === undefined ? [] : [reviewed])];
+  const sent = (await reviewsBy(gh, repo, number, await login())).find((review) => heads.some((head) => head === review.commit_id) && review.body?.includes(CODE_REVIEW_MARKER));
   if (sent) return { reviewId: sent.id, sent: false };
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   if (pr.head.sha !== sha) return { reviewId: null, sent: false, skipped: HEAD_MOVED };
