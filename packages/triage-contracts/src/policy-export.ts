@@ -7,8 +7,11 @@ import {
   CATALOG_IDS,
   CONVENTIONAL_FIELDS,
   CONVENTIONAL_TYPES,
+  defaultOnFail,
+  isSizeRule,
   labelRules,
   POLICY_EVENTS,
+  SIZE_RULES,
   VERDICT_LABELS,
   VERDICTS,
   type AuthorMatch,
@@ -34,18 +37,16 @@ export const VERDICT_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: 
 export type PolicyFileExport = { text: string; unexpressed: string[] };
 
 /** A rule as the file writes it: its sentence, what it checks, then why it exists. */
-function written(row: OnFail & { reason?: string; evidence?: string[]; enabled?: boolean }, head: Record<string, unknown>, text: string, checks: Record<string, unknown>) {
-  const onFail = { ...(row.onFail && { onFail: row.onFail }), ...(row.label !== undefined && { label: row.label }) };
+function written(row: OnFail & { reason?: string; evidence?: string[]; enabled?: boolean }, id: string, head: Record<string, unknown>, text: string, checks: Record<string, unknown>) {
+  const failure = row.onFail ?? "fail";
+  const onFail = { ...(failure !== defaultOnFail(id) && { onFail: failure }), ...(row.label !== undefined && { label: row.label }) };
   return { ...head, text, ...checks, ...onFail, reason: row.reason ?? REASON, evidence: row.evidence ?? EVIDENCE, ...(row.enabled === false && { enabled: false }) };
 }
 
 /** A built-in rule's parameters as schema 3 writes them; undefined when it has none it requires. */
 function catalogParams(id: CatalogId, row: CatalogCheck): Record<string, unknown> | undefined {
+  if (isSizeRule(id)) return row[SIZE_RULES[id]] === undefined ? undefined : { max: row[SIZE_RULES[id]] };
   switch (id) {
-    case "max-files-changed":
-      return row.maxFiles === undefined ? undefined : { max: row.maxFiles };
-    case "max-lines-changed":
-      return row.maxLines === undefined ? undefined : { max: row.maxLines };
     case "linked-issue":
       if (row.tracker === "off") return undefined;
       return row.tracker === undefined ? {} : { tracker: row.tracker };
@@ -67,16 +68,16 @@ function catalogRule(pack: CheckPack, id: CatalogId, unexpressed: string[]): Rec
     if (row.enabled) unexpressed.push(`${catalogSentence(id, pack)} stops after the merge; a policy file can't hold it without a value.`);
     return [];
   }
-  return [written(row, { check: id }, row.text ?? `${catalogSentence(id, pack)}.`, params)];
+  return [written(row, id, { check: id }, row.text ?? `${catalogSentence(id, pack)}.`, params)];
 }
 
 function customRule(row: CustomCheck, unexpressed: string[]): Record<string, unknown>[] {
   if (row.name !== ruleNameOf(row.id)) unexpressed.push(`${row.name} is called ${ruleNameOf(row.id)} in the file.`);
   if (row.kind === "text") {
-    return [written(row, { id: row.id, check: "text" }, row.text ?? row.name, { fields: row.fields, failWhen: row.failWhen, phrases: row.phrases })];
+    return [written(row, row.id, { id: row.id, check: "text" }, row.text ?? row.name, { fields: row.fields, failWhen: row.failWhen, phrases: row.phrases })];
   }
   if (row.shape === "is-true" && row.when === undefined && (row.scope ?? "pull-request") === "pull-request") {
-    return [written(row, { id: row.id, check: "model" }, row.claim, {})];
+    return [written(row, row.id, { id: row.id, check: "model" }, row.claim, {})];
   }
   unexpressed.push(`${row.name} stops after the merge; a policy file can't hold it.`);
   return [];
@@ -149,7 +150,7 @@ function catalogChecks(pack: CheckPack, id: CatalogId): string | undefined {
   if (id === "ci-green" && row?.enabled === false) return CI_SKIPPED;
   if (!row?.enabled) return undefined;
   const conventional = id === "conventional-commits" && { types: sorted(row.types ?? CONVENTIONAL_TYPES), fields: row.fields ?? CONVENTIONAL_FIELDS };
-  return canonical({ maxFiles: row.maxFiles, maxLines: row.maxLines, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), onFail: onFailText(pack, id), ...conventional });
+  return canonical({ max: isSizeRule(id) ? row[SIZE_RULES[id]] : undefined, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), onFail: onFailText(pack, id), ...conventional });
 }
 
 function modelAsks(row: ModelCustomCheck): Record<string, unknown> {
@@ -191,6 +192,9 @@ const STEP_WORDS: Record<Step["do"], string> = {
 const CATALOG_RULES: Partial<Record<CatalogId, string>> = {
   "max-files-changed": "Most files changed",
   "max-lines-changed": "Most lines changed",
+  "max-lines-changed-per-file": "Most lines changed in one file",
+  "max-additions": "Most lines added",
+  "max-deletions": "Most lines deleted",
   "linked-issue": "Require a linked issue from",
   "no-forbidden-paths": "Never accept changes to",
   "conventional-commits": "Conventional commits",
@@ -221,11 +225,8 @@ function catalogLimits(pack: CheckPack, id: CatalogId): string[] {
   if (id === "ci-green" && row?.enabled === false) return [CI_STATES[CI_SKIPPED]];
   if (id === "ci-green" && !row?.enabled) return [CI_STATES.absent];
   if (!row?.enabled) return [];
+  if (isSizeRule(id)) return [count(row[SIZE_RULES[id]])];
   switch (id) {
-    case "max-files-changed":
-      return [count(row.maxFiles)];
-    case "max-lines-changed":
-      return [count(row.maxLines)];
     case "linked-issue":
       return [ISSUE_TRACKER_NAMES[row.tracker && row.tracker !== "off" ? row.tracker : "either"]];
     case "no-forbidden-paths":

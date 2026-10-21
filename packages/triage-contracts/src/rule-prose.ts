@@ -19,6 +19,9 @@ function conventionalSentence(row: CatalogCheck | undefined): string {
 const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => string> = {
   "max-files-changed": (row) => `Flag pull requests over ${count(row?.maxFiles)} files changed`,
   "max-lines-changed": (row) => `Flag pull requests over ${count(row?.maxLines)} lines changed`,
+  "max-lines-changed-per-file": (row) => `Flag pull requests over ${count(row?.maxFileLines)} lines changed in one file`,
+  "max-additions": (row) => `Flag pull requests over ${count(row?.maxAdditions)} lines added`,
+  "max-deletions": (row) => `Flag pull requests over ${count(row?.maxDeletions)} lines deleted`,
   "linked-issue": (row) => `Require a linked issue from ${ISSUE_TRACKER_NAMES[row?.tracker && row.tracker !== "off" ? row.tracker : RECOMMENDED_ISSUE.tracker]}`,
   "no-merge-conflicts": () => "Flag merge conflicts with the base branch",
   "ci-green": () => "CI must pass before merge",

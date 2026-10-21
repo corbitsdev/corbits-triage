@@ -13,6 +13,12 @@ rules:
     max: 400
     reason: Large changes were split before review.
     evidence: ["#44", "acme/api#57"]
+  - check: max-lines-changed-per-file
+    text: A pull request changes at most 300 lines in one file.
+    max: 300
+    onFail: ask
+    reason: Large files hide changes from review.
+    evidence: [maintainer-stated]
   - check: focused
     text: A pull request makes one focused change.
     reason: Mixed changes were closed and split.
@@ -45,7 +51,8 @@ describe("policy file schema 3", () => {
   test("rules read as built-in rows and custom rules with their reason and evidence, and steps keep their conditions", () => {
     const policy = readPolicyFile(FILE, REPO);
     expect(policy.checks).toEqual({
-      "max-lines-changed": { enabled: true, maxLines: 400, text: "A pull request changes at most 400 lines.", reason: "Large changes were split before review.", evidence: ["#44", "acme/api#57"] },
+      "max-lines-changed": { enabled: true, maxLines: 400, onFail: "label", text: "A pull request changes at most 400 lines.", reason: "Large changes were split before review.", evidence: ["#44", "acme/api#57"] },
+      "max-lines-changed-per-file": { enabled: true, maxFileLines: 300, onFail: "ask", text: "A pull request changes at most 300 lines in one file.", reason: "Large files hide changes from review.", evidence: ["maintainer-stated"] },
       focused: { enabled: true, text: "A pull request makes one focused change.", reason: "Mixed changes were closed and split.", evidence: ["maintainer-stated"] },
     });
     expect(policy.custom).toEqual([
@@ -107,7 +114,7 @@ actions:
     expect(checkPolicyFile("# policy\nrules: [\n", REPO)).toEqual({ ok: false, problems: [{ message: expect.stringContaining("is not YAML"), line: 3, column: 1 }] });
   });
 
-  test("onFail labels by its check unless a label is named, takes the file's default, survives export, is the extending file's for a rule it lists, a label needs onFail: label, and advisory is refused", () => {
+  test("onFail labels by its check unless a label is named, takes the file's default or else labels a size rule, survives export, is the extending file's for a rule it lists, a label needs onFail: label, and advisory is refused", () => {
     const rule = "  - check: docs\n    text: Docs follow the change.\n    reason: Docs ship with code.\n    evidence: [maintainer-stated]\n";
     const files = "  - check: max-files-changed\n    text: At most 30 files.\n    max: 30\n    reason: Size is hygiene.\n    evidence: [maintainer-stated]\n";
     const labelled = readPolicyFile(`rules:\n${rule}    onFail: label\n${files}    onFail: label\n    label: big\n`, REPO) as CheckPack;
@@ -118,7 +125,7 @@ actions:
     expect(readPolicyFile(exportPolicyFile(ask, false).text, REPO)).toEqual(ask);
     const shared = { repo: "acme/shared", policy: readPolicyFile(`rules:\n${rule}    onFail: ask\n${files}    onFail: label\n`, "acme/shared") };
     const extending = extendedFilePack(REPO, readPolicyFile(`extends: acme/shared\nrules:\n${rule}    onFail: fail\n${files}`, REPO), shared);
-    expect([askRules(extending), [...labelRules(extending)]]).toEqual([[], []]);
+    expect([askRules(extending), [...labelRules(extending)]]).toEqual([[], [["max-files-changed", "size: large"]]]);
     expect(askRules(extendedFilePack(REPO, readPolicyFile(`extends: acme/shared\nonFail: ask\nrules:\n${files}`, REPO), shared))).toEqual(["max-files-changed", "docs"]);
     expect(() => readCheckPack({ ...ask, checks: { docs: { enabled: true, advisory: true } } }, REPO)).toThrow("write onFail: label instead");
     expect(checkPolicyFile(`rules:\n${rule}    advisory: true\n`, REPO)).toMatchObject({ ok: false });
