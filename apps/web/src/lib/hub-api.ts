@@ -7,7 +7,7 @@ import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
 import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
-import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
+import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
@@ -1220,17 +1220,6 @@ export async function createGrant(
   const tid = enc(requireTenantId(tenantId));
   const body = createGrantBody(input);
   return transport.fetch<HubGrant>("POST", `/api/tenants/${tid}/grants`, body);
-}
-
-export async function deleteGrant(
-  transport: Transport,
-  tenantId: string,
-  grant: Pick<HubGrant, "id" | "origin">,
-): Promise<void> {
-  assertCanRemoveGrant(grant);
-  const tid = enc(requireTenantId(tenantId));
-  const gid = enc(requireId(grant.id, "Grant id"));
-  await transport.fetch("DELETE", `/api/tenants/${tid}/grants/${gid}`);
 }
 
 /** Once and standing map to the hub approval scopes. Deny is the reject route. */

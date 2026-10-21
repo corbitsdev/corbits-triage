@@ -191,23 +191,13 @@ const NOT_POSTED: Record<string, string> = {
   stale: "Triage could not reach a verdict and will check again.",
   waiting: "Triage is waiting for the checks to finish.",
   no_request: "There was nothing to post.",
-  no_grants: "Triage may not post here. Turn on Comment under Actions Triage takes on its own.",
+  no_grants: "Triage may not post here. Allow it under Actions Triage takes on its own on the repository's page.",
 };
 
 /** Why the verdict is not on the pull request's host, when the run said. */
 export function notPostedText(item: Pick<PrItem, "notPosted" | "source">): string | null {
   const why = item.notPosted === undefined ? undefined : NOT_POSTED[item.notPosted];
   return why === undefined ? null : `Not posted on ${hostName(item.source)}: ${why}`;
-}
-
-/** Repositories with triage on whose latest verdict was not posted because Triage may not post there. */
-export function reposWithoutPostingGrants(items: readonly PrItem[], enabled: ReadonlySet<string>): string[] {
-  const latest = new Map<string, PrItem>();
-  for (const item of items) {
-    const seen = latest.get(item.repo);
-    if (item.verdict !== null && enabled.has(item.repo) && (!seen || waitingSince(item) > waitingSince(seen))) latest.set(item.repo, item);
-  }
-  return [...latest.values()].filter((item) => item.notPosted === "no_grants").map((item) => item.repo);
 }
 
 export function primaryLabel(action: PrimaryAction): string {

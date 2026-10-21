@@ -9,7 +9,6 @@ import { usePortal } from "../lib/portal.tsx";
 import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { useSession } from "../lib/session.tsx";
-import PostingOffer from "./PostingOffer.tsx";
 import { CheckIcon, DownIcon, GearIcon, InboxIcon, ListIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
@@ -89,7 +88,6 @@ export default function Layout({ children }: { children: ReactNode }) {
   const open = useOpenItems();
   const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
   const counts = useMemo(() => listCounts(open, enabled), [open, enabled]);
-  const items = useMemo(() => open.map((entry) => entry.item), [open]);
   const openPullsUnanswered = useOpenPullsUnanswered();
   const path = location.pathname;
   const pullPage = path.startsWith("/triage/pr/") || path.startsWith("/prs/");
@@ -163,7 +161,6 @@ export default function Layout({ children }: { children: ReactNode }) {
             Settings
           </NavLink>
         </nav>
-        <PostingOffer items={items} enabled={enabled} />
       </div>
     </PulseProvider>
   );
