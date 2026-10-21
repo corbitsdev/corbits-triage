@@ -118,6 +118,7 @@ const OpenPull = type({
   title: "string",
   author: "string | null",
   "authorKind?": type.enumerated(...AUTHOR_KINDS),
+  "byTriage?": "true",
   draft: "boolean",
   "sha?": "string",
   branch: "string | null",

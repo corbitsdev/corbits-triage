@@ -133,7 +133,7 @@ A repository's policy is the file `.corbits-triage.yml` (`.corbits-triage.yaml` 
 
 - With no file and no rules saved in Triage, the section shows a **Start a policy file** card with the steps **Review**, **Open pull request**, **Merge** (**Merge on Bitbucket** for a Bitbucket repository) and **Done**. It lists the rules the file starts with: at most 30 files and 3,000 lines changed, no merge conflicts and passing CI, with no actions. **Open the pull request** opens one adding `.corbits-triage.yml`, or shows the one already open; change the rules there before you merge. Triage runs nothing on the repository until it is merged.
 
-  ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge on GitHub and Done, the four starter rules with Nothing on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
+  ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge and Done, the four starter rules with Nothing on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
 
 - When a change to the file reaches the default branch, the next triage uses it.
 - If the file has a mistake, Triage runs nothing on the repository until it is fixed. The section says so and lists each problem, and the Inbox names the repository. A repository that still has rules saved in Triage keeps running on them instead, and its card below says **Triage can't read** the file and why.
@@ -154,7 +154,7 @@ A repository set up before policy files has its rules saved in Triage. They move
 
 - **While the pull request is open,** the card shows it as **Open, waiting for merge**, with **Review on GitHub** to read it there and **Merge** to merge it from the card. On Bitbucket, **Merge on Bitbucket** opens it there. **Update the pull request with your saved rules** brings it up to date; a second one is never opened. The card notices the merge on its own. If your file differs, **Use the file instead** is still offered.
 
-  ![The card at Merge on GitHub: Pull request #2, Open, waiting for merge, a Merge on GitHub button and the link Update the pull request with your saved rules; the Repositories list marks acme/widgets Waiting for merge](images/32.png)
+  ![The card at Merge: Pull request #2, Open, waiting for merge, a Review on GitHub link, a Merge button and the link Update the pull request with your saved rules; the Repositories list marks acme/widgets Waiting for merge](images/32.png)
 
 - **Finish moving to the policy file.** The file holds everything from your saved rules that a file can hold. What is left is shown as a difference; press **Use the file**, then confirm, to switch.
 

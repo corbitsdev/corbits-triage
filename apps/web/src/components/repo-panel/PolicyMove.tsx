@@ -69,8 +69,6 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
   const pull = propose.data ?? row.pull;
   const error = propose.error ?? keepFile.error ?? merge.error;
   const host = HOST_NAME[source];
-  // The portal writes to GitHub only; a Bitbucket pull request is merged there.
-  const mergesHere = source === "github";
   const differs = upgrade.state === "differs";
   const start = upgrade.state === "start";
   const unexpressed = start ? [] : upgrade.unexpressed;
@@ -124,16 +122,17 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
       );
     }
     if (pull) {
+      const { headSha } = pull;
       return (
         <>
           <div className="sentences">
             <div className="sentence pr-row">
               <span className="txt">Pull request #{pull.number}</span>
               <span className="state"><span className="dot" />Open, waiting for merge</span>
-              {mergesHere ? (
+              {headSha ? (
                 <>
                   <Button asChild variant="ghost" size="sm"><a href={pull.url} target="_blank" rel="noreferrer">Review on {host} <ExternalIcon /></a></Button>
-                  <Button type="button" size="sm" disabled={busy} onClick={() => merge.mutate(pull.number)}>Merge</Button>
+                  <Button type="button" size="sm" disabled={busy} onClick={() => merge.mutate({ number: pull.number, headSha })}>Merge</Button>
                 </>
               ) : (
                 <Button asChild variant="outline" size="sm"><a href={pull.url} target="_blank" rel="noreferrer">Merge on {host} <ExternalIcon /></a></Button>
@@ -162,7 +161,7 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
         <b id="move-title">{title()}</b>
         <span>{subtitle()}</span>
       </header>
-      <Track at={STAGE_STEP[stage]} merge={mergesHere ? "Merge" : `Merge on ${host}`} />
+      <Track at={STAGE_STEP[stage]} merge={source === "github" ? "Merge" : `Merge on ${host}`} />
       {pull ? null : review()}
       {stage === "review" && unexpressed.length ? <div className="sentences">{unexpressed.map((line) => <div key={line} className="sentence out"><span className="txt">{line}</span></div>)}</div> : null}
       {actions()}

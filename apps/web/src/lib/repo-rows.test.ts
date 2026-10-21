@@ -7,7 +7,8 @@ import { mergeRepositories, packsPending, repoHealth, repoRows, triageReadyRepos
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   return {
-    key: `${repo}#${number}`, repo, number, title: null, author: null, authorKind: null, draft: null, mergeable: null, mergeBlock: null, state: "new",
+    key: `${repo}#${number}`, repo, number, title: null, author: null, authorKind: null, byTriage: false,
+    draft: null, mergeable: null, mergeBlock: null, state: "new",
     priority: null, owner: null, nextAction: null, verdict: null, score: null, reasons: [], evidence: [], checks: [], labels: [], comment: null,
     sha: null, verdictSha: null, degraded: null, needsHuman: false, closed: false, pendingApprovalId: null, runId: null, waitingSince: null, updatedAt: null,
     ci: null, headSha: null, activityAt: null, reviewAnswered: false, posted: false, running: false, failure: null, actions: [], href: "", ...extra,

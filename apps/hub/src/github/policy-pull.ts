@@ -5,12 +5,12 @@ import { json, readRepoFileResponse, type GithubFetch } from "@corbits/github-re
 export const POLICY_BRANCH = "corbits-triage/policy";
 
 export type PolicyChange = { path: string; text: string; title: string; body: string };
-export type PolicyPull = { url: string; number: number };
+export type PolicyPull = { url: string; number: number; headSha?: string };
 
-type Pull = { number: number; html_url: string };
+type Pull = { number: number; html_url: string; head: { sha: string } };
 
 function pullOf(pull: Pull): PolicyPull {
-  return { url: pull.html_url, number: pull.number };
+  return { url: pull.html_url, number: pull.number, headSha: pull.head.sha };
 }
 
 async function openPull(gh: GithubFetch, repo: string, base: string): Promise<Pull | undefined> {
@@ -50,8 +50,8 @@ export async function proposePolicy(gh: GithubFetch, repo: string, change: Polic
   if (!open) await branchFromBase(gh, repo, base);
   await commitFile(gh, repo, change);
   if (open) {
-    await json(gh, `/repos/${repo}/pulls/${open.number}`, { method: "PATCH", body: JSON.stringify({ title: change.title, body: change.body }) });
-    return pullOf(open);
+    // The commit moved the head, so the pull request is answered as GitHub now has it.
+    return pullOf(await json(gh, `/repos/${repo}/pulls/${open.number}`, { method: "PATCH", body: JSON.stringify({ title: change.title, body: change.body }) }));
   }
   return createPull(gh, repo, base, change);
 }

@@ -55,7 +55,7 @@ const CHOSEN_BODY = addBody(`Adds \`${POLICY_FILE_PATH}\`.`);
 function listedPolicyPull(listing: OpenPullsRead | Response, repo: string): github.PolicyPull | undefined {
   if (listing instanceof Response) return undefined;
   const pr = listing.repos.find((row) => row.repo === repo)?.prs.find((row) => row.branch === github.POLICY_BRANCH);
-  return pr?.url ? { url: pr.url, number: pr.number } : undefined;
+  return pr?.url ? { url: pr.url, number: pr.number, ...(pr.sha && { headSha: pr.sha }) } : undefined;
 }
 
 export type PolicyFileDeps = PortalCredentialDeps & {

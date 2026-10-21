@@ -45,7 +45,10 @@ let completed: CompletedReview | null = FINISHED;
 let carriedTo: string | null = null;
 
 const READS: Record<string, unknown> = {
-  [`/repos/${REPO}/pulls`]: [{ number: 8, title: "Fix the widget", draft: false, user: { login: "octocat" }, head: { sha: HEAD } }],
+  [`/repos/${REPO}/pulls`]: [
+    { number: 8, title: "Fix the widget", draft: false, user: { login: "octocat" }, head: { sha: HEAD } },
+    { number: 12, title: "Add the policy file", draft: false, user: { login: "triage[bot]", type: "Bot" }, head: { sha: HEAD } },
+  ],
   [`/repos/${REPO}/pulls/8`]: {
     number: 8, title: "Fix the widget", state: "open",
     body: "Fixes #10, see https://github.com/acme/widgets/issues/11\n<!-- Closes #9 -->",
@@ -156,7 +159,7 @@ beforeAll(async () => {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
   await db.insert(schema.credential).values({
     id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
-    secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_github", "secret")), status: "active",
+    secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "triage" },
   });
 }, 120_000);
 
@@ -170,7 +173,7 @@ test("PostgreSQL: holding read or use on the GitHub credential reads pull reques
   for (const user of ["usr_member", "usr_user"]) {
     const pulls = await openPulls(member(user));
     expect(pulls.status).toBe(200);
-    expect(await pulls.json()).toMatchObject({ repos: [{ repo: REPO, prs: [{ number: 8 }] }] });
+    expect(await pulls.json()).toMatchObject({ repos: [{ repo: REPO, prs: [{ number: 8 }, { number: 12, byTriage: true }] }] });
 
     const details = await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=8`), member(user));
     expect(details.status).toBe(200);

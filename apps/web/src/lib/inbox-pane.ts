@@ -50,8 +50,7 @@ export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha" 
   return item.verdictSha !== null && head !== null && item.verdictSha !== head;
 }
 
-/** `ownPull`: Triage's own App opened the pull request, and GitHub refuses a review from its author. */
-export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean; ownPull: boolean };
+export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean };
 
 export type PaneKind = PrimaryAction;
 
@@ -109,10 +108,10 @@ function triageEntry(gate: PaneGate, primaryKind: PrimaryAction | null): MenuEnt
 export function paneActions(gate: PaneGate): PaneActions {
   const action = inboxAction(gate.item);
   const offered = primaryAction(gate.item, action);
-  const primaryKind = gate.ownPull ? ownPullAction(offered) : offered;
+  const primaryKind = gate.item.byTriage ? ownPullAction(offered) : offered;
   const primary = primaryKind === null ? null : paneAction(primaryKind, gate);
   const more: MenuEntry[] = MORE_ORDER
-    .filter((kind) => kind !== primaryKind && (kind !== "reply" || hasDraftComment(gate.item.comment)) && !(gate.ownPull && REVIEWS.has(kind)))
+    .filter((kind) => kind !== primaryKind && (kind !== "reply" || hasDraftComment(gate.item.comment)) && !(gate.item.byTriage && REVIEWS.has(kind)))
     .map((kind) => ({ ...paneAction(kind, gate), label: primaryLabel(kind) }));
   const close = closeEntry(gate);
   if (close !== null) more.push(close);

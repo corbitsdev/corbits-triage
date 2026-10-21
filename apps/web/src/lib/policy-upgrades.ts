@@ -105,8 +105,8 @@ export function usePolicyUpgradeActions(repo: string, onSettled: () => void) {
     onSuccess: reread,
   });
   const merge = useMutation({
-    mutationFn: function mergePull(number: number) {
-      return writeGithub({ action: "merge", repo, number }, "now");
+    mutationFn: function mergePull({ number, headSha }: { number: number; headSha: string }) {
+      return writeGithub({ action: "merge", repo, number, headSha }, "now");
     },
     onSuccess: reread,
   });

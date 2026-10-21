@@ -40,7 +40,7 @@ import {
 } from "./tenant-config.js";
 import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
-import type { OpenHeadReader } from "./tenant-open-heads.js";
+import { appBotLogin, type OpenHeadReader } from "./tenant-open-heads.js";
 import type { RepoReads } from "./repo-reads.js";
 import type { CodeReviewFeed } from "../code-review-feed.js";
 
@@ -130,14 +130,6 @@ export async function loadBridgeHook(
   if (!workflow) return undefined;
   const secret = await cipher.decrypt(row.secret, credentialAad(row.id, "secret"));
   return { credentialId: row.id, credentialName: row.name, tenantId: row.tenantId, secret, workflow };
-}
-
-async function appBotLogin(db: DB["db"], tenantId: string): Promise<string> {
-  const { credential } = schema;
-  const row = await db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, "github")) });
-  const slug = asRecord(row?.metadata)?.["appSlug"];
-  if (typeof slug !== "string" || slug === "") throw new Error("github app credential has no appSlug");
-  return `${slug}[bot]`;
 }
 
 function isSentBy(payload: unknown, login: string): boolean {

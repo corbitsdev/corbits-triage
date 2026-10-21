@@ -1,4 +1,4 @@
-import { citationOf, type ActionKind } from "@corbits/triage-contracts";
+import { citationOf } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, HeldBlock, MergeBlock, PrItem, QueueState, RunFailure } from "./hub-api.ts";
 import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, postedLabel, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
@@ -190,15 +190,13 @@ function primaryText(kind: PaneKind, author: string | null, base: string | null)
   }
 }
 
-const REVIEW_DOS: ReadonlySet<ActionKind> = new Set(["approve", "request-changes"]);
-
 /**
  * The bottom bar: the pane's primary action, worded for the state, then every other action. Once the feedback is on
  * GitHub the author has the turn, so replying to them comes first.
  */
 export function paneBar(gate: PaneGate, base: string | null, author: string | null): PaneBar {
   const actions = paneActions(gate);
-  const dos = pendingDos(gate.item).filter((pending) => !(gate.ownPull && REVIEW_DOS.has(pending.kind)));
+  const dos = pendingDos(gate.item);
   function withHeld<E extends MenuEntry>(entry: E): E & { held: PendingDo | null } {
     return { ...entry, held: dos.find((pending) => pending.kind === entry.kind && pending.label === primaryLabel(entry.kind)) ?? null };
   }

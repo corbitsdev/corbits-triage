@@ -11,6 +11,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     title: "Fix",
     author: "ada",
     authorKind: null,
+    byTriage: false,
     draft: false,
     mergeable: true,
     mergeBlock: null,
@@ -58,7 +59,7 @@ const UNSURE = check({ check: "focused", kind: "model", result: "unconfirmed", r
 const CANT = check({ check: "no-merge-conflicts", result: "unconfirmed", reason: "mergeability not yet computed", output: { kind: "could-not-check", reason: "mergeability not yet computed" } });
 
 function barOf(pr: PrItem, detail?: GithubPullDetail, readOnly = false) {
-  return paneBar({ item: pr, facts: paneFacts(pr, detail), readOnly, busy: false, ownPull: false }, "main", pr.author);
+  return paneBar({ item: pr, facts: paneFacts(pr, detail), readOnly, busy: false }, "main", pr.author);
 }
 
 function statusOf(overrides: Partial<PrItem>, input: Partial<Omit<StatusInput, "item" | "primary">> = {}) {
