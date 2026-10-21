@@ -43,7 +43,7 @@ async function pullsFor(list: OpenPrsLister, tenantId: string, record: RepoRecor
   }
 }
 
-export function listRepoPulls(list: OpenPrsLister, tenantId: string, records: readonly RepoRecord[]): Promise<RepoPulls[]> {
+function listRepoPulls(list: OpenPrsLister, tenantId: string, records: readonly RepoRecord[]): Promise<RepoPulls[]> {
   return Promise.all(records.map((record) => pullsFor(list, tenantId, record)));
 }
 

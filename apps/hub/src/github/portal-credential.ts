@@ -67,7 +67,7 @@ export function refusalResponse(refusal: CredentialRefusal): Response {
 }
 
 /** The App credential's row when the member holds `action` on it, or the error response to return. Holding `use` also allows `read`. */
-export async function githubAppGrant(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction) {
+async function githubAppGrant(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction) {
   const credential = await hostCredential(d, principalId, tenantId, "github", action);
   return "code" in credential ? refusalResponse(credential) : credential;
 }

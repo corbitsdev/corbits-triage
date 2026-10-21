@@ -13,7 +13,7 @@ import { patchCorbitsTriage, repoRecords, sourceOf, triageNs, type CorbitsTriage
 export type AutomationDeps = { db: DB["db"]; now: () => Date };
 
 /** What triage writes unattended on a repository from the moment it is enabled. */
-export const ENABLED_KINDS: readonly ActionKind[] = ["comment", "labels"];
+const ENABLED_KINDS: readonly ActionKind[] = ["comment", "labels"];
 
 async function findRole(db: DB["db"] | Tx, tenantId: string): Promise<string | undefined> {
   const { role } = schema;
