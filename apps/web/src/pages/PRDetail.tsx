@@ -12,6 +12,7 @@ import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
 import { approvedHead, canRun, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { notPostedText } from "../lib/inbox-view.ts";
 import { heldReason, isHeldBlock } from "../lib/pane-report.ts";
 import { offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys } from "../lib/held-dos.ts";
@@ -462,6 +463,7 @@ export default function PRDetail() {
 
   const link = pullUrl(item);
   const host = hostName(item.source);
+  const notPosted = notPostedText(item);
 
   function loadNotice(): ReactNode {
     if (pullPending) return <p className="muted">Loading from {host}…</p>;
@@ -607,6 +609,7 @@ export default function PRDetail() {
             onDismiss={() => setHandled({ ...handled, [handledKey]: "dismissed" })}
           />
         ) : null}
+        {closed || notPosted === null ? null : <p role="status" className="pr-composer muted">{notPosted}</p>}
         {closed || dos.length === 0 ? null : (
           <div className="pr-composer">
             <SuggestedActions dos={dos} disabled={!item.number || item.running || busy || readOnly} onApprove={(pending) => void approveDo(pending)} onSkip={(pending) => heldDoKeys.hide(pending.key)} />

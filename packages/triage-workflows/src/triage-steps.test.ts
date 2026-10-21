@@ -501,6 +501,12 @@ describe("mirror grants", () => {
     });
   });
 
+  test("a verdict the pr-triage role may not post says why", async () => {
+    const write = () => Promise.reject(new Error("no write expected"));
+    expect(await mirrorVerdicts({ ...verdict, automatic: [] }, write)).toEqual({ call: "mirror:acme--widgets:8", skipped: true, reason: "no_grants" });
+    expect(await mirrorVerdicts({ items: [{ ...verdict, automatic: ["comment"], mirror: false }] }, write)).toEqual({ results: [{ call: "mirror:acme--widgets:8", skipped: true, reason: "stale" }] });
+  });
+
   test("a Bitbucket Data Center head held for CI shows the waiting build status where its verdict would, under its effect id", async () => {
     const mail = { headers: { from: "github@acme.test", to: ["run_1@acme.test"] }, kind: "waiting", repo: "acme/widgets", prNumber: 8, headSha: "abc", repoSource: "bitbucket-datacenter", pack: emptyPack("acme/widgets") };
     expect(await mirrorCalls(await waiting({ ...mail, automatic: ["comment"] }, ctx, signal))).toEqual([{

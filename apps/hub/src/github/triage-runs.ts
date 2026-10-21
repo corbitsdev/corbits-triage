@@ -232,11 +232,16 @@ function recorded(c: { kind?: string; reason?: string; gate?: boolean }): boolea
   return c.gate !== true && !(c.kind === "model" && c.reason === NOT_ASKED_REASON);
 }
 
-/** Mirror calls that succeeded: a batch run outputs `{ results }`, a single run the one outcome. */
-function mirroredCalls(events: readonly WorkflowRunEvent[]): Set<string> {
+/** Mirror outcomes by call: a batch run outputs `{ results }`, a single run the one outcome. */
+function mirrorOutcomes(events: readonly WorkflowRunEvent[]): Map<string, Record<string, unknown>> {
   const output = inlineOutput(lastCompleted(events, MIRROR_STEPS));
   const outcomes = Array.isArray(output?.["results"]) ? output["results"] : [output];
-  return new Set(outcomes.map(asRecord).flatMap((outcome) => outcome?.["ok"] === true && typeof outcome["call"] === "string" ? [outcome["call"]] : []));
+  return new Map(outcomes.map(asRecord).flatMap((outcome) => outcome && typeof outcome["call"] === "string" ? [[outcome["call"], outcome] as const] : []));
+}
+
+/** Why the mirror posted nothing for the verdict, when it said. */
+function notPostedOf(outcome: Record<string, unknown> | undefined): string | undefined {
+  return outcome?.["skipped"] === true && typeof outcome["reason"] === "string" ? outcome["reason"] : undefined;
 }
 
 function mirrorCallId(repo: string, number: number): string {
@@ -261,10 +266,10 @@ function suggestedDos(actions: readonly unknown[]): RecordedDo[] {
   });
 }
 
-function detailOf(verdict: Record<string, unknown>, ruled: Ruled | undefined): VerdictDetail | undefined {
+function detailOf(verdict: Record<string, unknown>, ruled: Ruled | undefined, notPosted: string | undefined): VerdictDetail | undefined {
   const reason = verdict["reason"];
   const evidence = typeof reason === "string" && reason !== "" ? [reason] : (ruled?.evidence ?? []);
-  const detail = VerdictDetail({ ...verdict, evidence, ...(ruled && { facts: ruled.facts }) });
+  const detail = VerdictDetail({ ...verdict, evidence, ...(ruled && { facts: ruled.facts }), ...(notPosted !== undefined && { notPosted }) });
   return detail instanceof type.errors ? undefined : detail;
 }
 
@@ -272,11 +277,12 @@ function detailOf(verdict: Record<string, unknown>, ruled: Ruled | undefined): V
  * What the stats and the portal read of a verdict; none for one written before it carried these fields, made for
  * another head, still waiting on the host's checks, or made on a closed pull request.
  */
-function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigger, mirrored: ReadonlySet<string>, ruled: Ruled | undefined): Summary | undefined {
+function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigger, mirrored: ReadonlyMap<string, Record<string, unknown>>, ruled: Ruled | undefined): Summary | undefined {
   if (verdict["waiting"] === true || verdict["closed"] === true) return undefined;
   const fields = SummaryFields(verdict);
   if (fields instanceof type.errors || typeof at !== "string" || verdict["repo"] !== trigger.repo || verdict["number"] !== trigger.number) return undefined;
-  const detail = detailOf(verdict, ruled);
+  const outcome = mirrored.get(mirrorCallId(trigger.repo, trigger.number));
+  const detail = detailOf(verdict, ruled, notPostedOf(outcome));
   return {
     verdictAt: new Date(at),
     settled: unsettledBy(verdict, trigger.headSha).unsettled === undefined,
@@ -286,7 +292,7 @@ function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigg
     degraded: fields.degraded ?? null,
     checks: (fields.checks ?? []).filter(recorded).map(({ check, result }) => ({ check, result })),
     dos: suggestedDos(fields.actions ?? []),
-    commented: (fields.request?.comment ?? "") !== "" && mirrored.has(mirrorCallId(trigger.repo, trigger.number)),
+    commented: (fields.request?.comment ?? "") !== "" && outcome?.["ok"] === true,
     ...(detail && { detail }),
     ...(trigger.event !== undefined && { trigger: trigger.event }),
   };
@@ -335,7 +341,7 @@ function headsOf(events: readonly WorkflowRunEvent[], started: Record<string, un
   const status = terminalStatus(events);
   const verdicts = verdictsOf(events);
   const verdictAt = lastCompleted(events, VERDICT_STEPS)?.body["at"];
-  const mirrored = mirroredCalls(events);
+  const mirrored = mirrorOutcomes(events);
   const ruled = ruledOf(events);
   const pairs = isBacklog(started) ? backlogPairs(started, verdicts) : mailPairs(started, verdicts);
   // The verdict is kept from when its step completed, so a run that fails after it still shows it.
