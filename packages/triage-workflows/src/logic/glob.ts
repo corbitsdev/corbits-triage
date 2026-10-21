@@ -9,15 +9,20 @@ function compile(glob: string): RE2JS {
   if (compiled.size >= COMPILED_MAX) compiled.clear();
   const re = RE2JS.compile(
     glob
-      .split("**")
-      .map((part) => part.split("*").map(RE2JS.quote).join("[^/]*"))
-      .join(".*"),
+      .split(/(?<![^/])\*\*\//)
+      .map((part) =>
+        part
+          .split("**")
+          .map((piece) => piece.split("*").map(RE2JS.quote).join("[^/]*"))
+          .join(".*"),
+      )
+      .join("(?:.*/)?"),
   );
   compiled.set(glob, re);
   return re;
 }
 
-/** `*` matches within a path segment, `**` across segments; everything else is literal. RE2 keeps matching linear. */
+/** `*` matches within a path segment, `**` across segments, and a whole-segment `**` also matches no folder; everything else is literal. RE2 keeps matching linear. */
 export function globMatch(path: string, glob: string): boolean {
   return compile(glob).matches(path);
 }
