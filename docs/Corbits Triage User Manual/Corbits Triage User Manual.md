@@ -231,7 +231,7 @@ Each pull request that changes the file then gets a **Corbits Triage policy / ch
 
 A rule asks one question about a pull request and answers pass, fail or unconfirmed. The Policy section shows each rule that is on as one sentence. A file can turn on:
 
-- **Size**: **Flag pull requests over N files changed** and **over N lines changed**. Big changes are hard to review. You choose the limits.
+- **Size**: **Flag pull requests over N files changed**, **over N lines changed**, **over N lines changed in one file**, **over N lines added** and **over N lines deleted**. Big changes are hard to review. You choose the limits. Lockfiles, such as `bun.lock` or `package-lock.json`, are left out of every count. Size rules only label and note the pull request unless the file gives them another `onFail`, since features and refactors cross them. On Bitbucket Data Center, which does not report lines per file, the per-file rule always passes and lockfile lines stay in the line counts.
 - **Facts the host already knows**:
   - **Require a linked issue** from GitHub, Linear or either. The pull request's title, description, commits or branch must mention an issue.
   - **Flag merge conflicts with the base branch.**
@@ -249,17 +249,19 @@ Two rules always run: a draft pull request waits until it is ready for review, a
 
 Each rule's `onFail` says what happens when it fails:
 
-- `fail`, the default: the verdict is **Fail** and the comment asks the author to fix it.
+- `fail`, the default for every rule but the size rules: the verdict is **Fail** and the comment asks the author to fix it.
 - `ask`: the verdict is **Unsure** and the comment lists the rule under **Asking a maintainer about:**, so the pull request waits for you in **Needs you** instead of on its author.
-- `label`: the verdict does not change. When the rule fails, or the decision model can't tell, Triage adds its label to the pull request and a line under **Notes:** in its comment. Triage never takes the label off, since a person may have added it; remove it once it no longer applies. The label is `size: large` for the size rules, `docs: check` for the docs rule and the rule's id followed by `: check` for any other; `label:` names a different one, but not one starting `Triage:` or `rule: ` or a verdict label, which Triage takes back itself. `onFail: label` suits rules that are hygiene rather than a gate, such as size limits an atomic change has to cross. A top-level `onFail` sets it for every rule in the file that does not set its own. The Policy section shows a rule that does not fail the pull request with what it does instead, such as "(on fail, labels size: large)".
+- `label`, the default for the size rules: the verdict does not change. When the rule fails, or the decision model can't tell, Triage adds its label to the pull request and a line under **Notes:** in its comment. Triage never takes the label off, since a person may have added it; remove it once it no longer applies. The label is `size: large` for the size rules, `docs: check` for the docs rule and the rule's id followed by `: check` for any other; `label:` names a different one, but not one starting `Triage:` or `rule: ` or a verdict label, which Triage takes back itself. `onFail: label` suits rules that are hygiene rather than a gate, such as size limits an atomic change has to cross. A top-level `onFail` sets it for every rule in the file that does not set its own. The Policy section shows a rule that does not fail the pull request with what it does instead, such as "(on fail, labels size: large)".
+
+To make a size limit block, give it `onFail: fail` or `onFail: ask`:
 
 ```yaml
-  - check: max-files-changed
-    text: Flag pull requests over 30 files changed.
-    max: 30
-    onFail: label
-    reason: Atomic changes stay one pull request, so size is a label, not a failure.
-    evidence: ["#306"]
+  - check: max-lines-changed-per-file
+    text: Flag pull requests over 500 lines changed in one file.
+    max: 500
+    onFail: ask
+    reason: A very large file change is hard to review line by line.
+    evidence: [maintainer-stated]
 ```
 
 Size rules and facts the host already knows cost nothing and always give the same answer for the same pull request. Judgement rules call the decision model, a few requests per pull request, each billed by your model provider.

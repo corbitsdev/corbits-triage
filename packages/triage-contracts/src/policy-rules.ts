@@ -3,7 +3,7 @@
 // mapping it onto the stored policy's shape, so the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId } from "./check-pack.js";
+import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, POLICY_EVENTS, SIZE_RULES, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
 import { fileProblems } from "./policy-file-problems.js";
 import { withAuthors, WORKFLOW_KEYS, WORKFLOW_PROPS, workflowProblems, type PathProblem, type PolicyWorkflow } from "./policy-workflow.js";
 
@@ -16,9 +16,11 @@ const OnFailWord = type.enumerated(...ON_FAILS);
 const RULE_BASE = { "+": "reject", text: Text, reason: Text, evidence: Evidence, "enabled?": "boolean", "onFail?": OnFailWord, "label?": Label } as const;
 const OWN_RULE = { ...RULE_BASE, id: CustomId } as const;
 
+const SIZE_RULE_IDS = Object.keys(SIZE_RULES) as SizeRuleId[];
+
 const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green", "hidden-content"] as const satisfies readonly CatalogId[];
 
-const RuleSchema = type({ ...RULE_BASE, check: "'max-files-changed' | 'max-lines-changed'", max: Limit })
+const RuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS), max: Limit })
   .or({ ...RULE_BASE, check: "'linked-issue'", "tracker?": type.enumerated(...ISSUE_TRACKERS.filter((tracker) => tracker !== "off")) })
   .or({ ...RULE_BASE, check: "'no-forbidden-paths'", paths: Lines })
   .or({ ...RULE_BASE, check: "'conventional-commits'", "types?": type(CONVENTIONAL_TYPE).describe("a single word").array().atLeastLength(1).atMostLength(50), "fields?": type.enumerated(...CONVENTIONAL_FIELDS).array().atLeastLength(1) })
@@ -75,11 +77,8 @@ function onFailOf(rule: PolicyRule, onFail: OnFailWord): Record<string, unknown>
 
 function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>, onFail: Record<string, unknown>): Record<string, unknown> {
   const row = { text: rule.text, reason: rule.reason, evidence: rule.evidence, enabled: rule.enabled !== false, ...onFail };
+  if ("max" in rule) return { ...row, [SIZE_RULES[rule.check]]: rule.max };
   switch (rule.check) {
-    case "max-files-changed":
-      return { ...row, maxFiles: rule.max };
-    case "max-lines-changed":
-      return { ...row, maxLines: rule.max };
     case "linked-issue":
       return rule.tracker === undefined ? row : { ...row, tracker: rule.tracker };
     case "no-forbidden-paths":
@@ -106,8 +105,8 @@ function ruleId(rule: PolicyRule): string {
   return isCatalogRule(rule) ? rule.check : rule.id;
 }
 
-/** A rule without its own `onFail` takes the file's. */
-function mapRules(rules: PolicyRule[], byDefault: OnFailWord): { checks: Record<string, unknown>; custom: Array<Record<string, unknown>> } {
+/** A rule without its own `onFail` takes the file's, or else its own default. */
+function mapRules(rules: PolicyRule[], byDefault: OnFailWord | undefined): { checks: Record<string, unknown>; custom: Array<Record<string, unknown>> } {
   const checks: Record<string, unknown> = {};
   const custom: Array<Record<string, unknown>> = [];
   const seen = new Set<string>();
@@ -115,7 +114,7 @@ function mapRules(rules: PolicyRule[], byDefault: OnFailWord): { checks: Record<
     const id = ruleId(rule);
     if (seen.has(id)) refuse(`Rule ${id} is listed twice.`, ["rules", at]);
     seen.add(id);
-    const onFail = rule.onFail ?? byDefault;
+    const onFail = rule.onFail ?? byDefault ?? defaultOnFail(id);
     if (rule.label !== undefined && onFail !== "label") refuse(`Rule ${id} label needs onFail: label.`, ["rules", at]);
     if (isCatalogRule(rule)) checks[id] = catalogRow(rule, onFailOf(rule, onFail));
     else custom.push(customRow(rule, onFailOf(rule, onFail)));
@@ -172,7 +171,7 @@ export function readRulesFile(raw: Record<string, unknown>): { policy: Record<st
   const actions = actionsOf(file);
   const policy = {
     ...(extended !== undefined && { extends: extended }),
-    ...mapRules(rules, onFail ?? "fail"),
+    ...mapRules(rules, onFail),
     ...(actions && { actions }),
     ...(labels && { labels }),
     ...(workflow.groups && { groups: workflow.groups }),

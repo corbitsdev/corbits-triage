@@ -271,7 +271,8 @@ are required. A model or text rule names its own `id`. A built-in rule takes
 its setting as `max` (size limits), `tracker` (linked issue), `paths`
 (forbidden paths) or `types` and `fields` (conventional commits);
 `enabled: false` keeps it written down but off.
-`onFail` says what a failing rule does: `fail` (the default) fails the pull
+`onFail` says what a failing rule does: `fail` (the default, except `label`
+for the size rules, which features and refactors cross) fails the pull
 request for its author, `ask` makes it Unsure and lists the rule for a
 maintainer instead of the author, and `label` makes the rule label the pull
 request instead of deciding its verdict. A top-level `onFail` is the default

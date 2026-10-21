@@ -1,4 +1,4 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
@@ -437,14 +437,13 @@ function withoutLimit(evidence: string[]): string {
 
 function failedStep(c: CheckResult, sources: Sources): Step {
   if (c.onFail === "ask") return { actor: "maintainer", action: `Decide: ${c.reason}` };
+  if (isSizeRule(c.check)) return { actor: "author", action: `Consider splitting it (${withoutLimit(c.evidence)})` };
   switch (c.check) {
     // Informational: marking a draft ready is the author's call, never asked of them.
     case NOT_A_DRAFT: return { actor: "maintainer", action: "Review once marked ready" };
     case "ci-green": return { actor: "author", action: c.evidence.length ? `Fix failing CI: ${c.evidence.join(", ")}` : "Fix failing CI" };
     case "no-merge-conflicts": return { actor: "author", action: "Resolve merge conflicts" };
     case "no-forbidden-paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
-    case "max-files-changed":
-    case "max-lines-changed": return { actor: "author", action: `Consider splitting it (${withoutLimit(c.evidence)})` };
     case "linked-issue": return { actor: "author", action: "Link an issue" };
     case NO_CHANGES_REQUESTED: {
       const reviewers = c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ");
@@ -466,11 +465,9 @@ function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
   return [];
 }
 
-const SIZE_RULES: readonly string[] = ["max-files-changed", "max-lines-changed"];
-
-/** Both size limits failing ask for one split, so they read as one step. */
+/** Size limits failing together ask for one split, so they read as one step. */
 function oneSplit(failed: CheckResult[]): CheckResult[] {
-  const sized = failed.filter((c) => SIZE_RULES.includes(c.check));
+  const sized = failed.filter((c) => isSizeRule(c.check));
   if (sized.length < 2) return failed;
   return failed.flatMap(function splitStep(c) {
     if (c === sized[0]) return [{ ...c, evidence: sized.flatMap((s) => s.evidence) }];

@@ -199,7 +199,7 @@ test("a built-in rule merges key by key, and a rule both sides changed keeps our
   autosave.edit((draft) => maxFiles(draft, 7));
   autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [rule("r", "ours")] } }));
   await autosave.flush();
-  expect(stored(hub).checks["max-files-changed"]).toEqual({ enabled: false, maxFiles: 7 });
+  expect(stored(hub).checks["max-files-changed"]).toEqual({ enabled: false, maxFiles: 7, onFail: "label" });
   expect(stored(hub).custom.map((row) => row.claim)).toEqual(["ours"]);
   expect(autosave.state().conflicts).toEqual(["ours"]);
 });

@@ -91,14 +91,13 @@ describe("deriveState check pack", () => {
       "ci-green",
       "no-merge-conflicts",
       "no-changes-requested",
-      "max-files-changed",
       "linked-issue",
     ]);
     expect(result.checks.find((check) => check.check === "no-changes-requested")).toMatchObject({
       result: "fail",
       evidence: ["changes requested by @maintainer"],
     });
-    expect(result.checks.find((check) => check.check === "max-files-changed")).toEqual({
+    expect(result.labelled?.checks.find((check) => check.check === "max-files-changed")).toEqual({
       check: "max-files-changed",
       kind: "machine",
       result: "fail",
@@ -106,10 +105,31 @@ describe("deriveState check pack", () => {
       evidence: ["80 files (max 30)"],
       output: { kind: "values", values: { files: 80 } },
     });
-    expect(result.checks.find((check) => check.check === "max-lines-changed")).toMatchObject({ result: "pass", evidence: ["20 lines changed (max 3000)"] });
+    expect(result.labelled?.checks.find((check) => check.check === "max-lines-changed")).toMatchObject({ result: "pass", evidence: ["20 lines changed (max 3000)"] });
     expect(result.checks.find((check) => check.check === "no-forbidden-paths")?.result).toBe("pass");
     expect(result.sources?.custom).toEqual(pack.custom);
     expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused"]);
+  });
+
+  test("size rules leave generated files out of every count, and the per-file rule names the files over it", () => {
+    const pack = emptyPack("acme/widgets");
+    pack.checks = {
+      "max-files-changed": { enabled: true, maxFiles: 1 },
+      "max-lines-changed": { enabled: true, maxLines: 30 },
+      "max-lines-changed-per-file": { enabled: true, maxFileLines: 10 },
+      "max-additions": { enabled: true, maxAdditions: 20 },
+      "max-deletions": { enabled: true, maxDeletions: 5 },
+    };
+    const files = [{ path: "bun.lock", additions: 900, deletions: 900 }, { path: "src/a.ts", additions: 20, deletions: 0 }, { path: "src/b.ts", additions: 4, deletions: 6 }];
+    const facts: PrFacts = { ...noisy, changedFiles: 3, additions: 924, deletions: 906, files, paths: files.map((file) => file.path) };
+    const checks = Object.fromEntries(deriveState(facts, undefined, pack).checks.map((check) => [check.check, [check.result, check.evidence]]));
+    expect(checks).toMatchObject({
+      "max-files-changed": ["fail", ["2 files (max 1)"]],
+      "max-lines-changed": ["pass", ["30 lines changed (max 30)"]],
+      "max-additions": ["fail", ["24 lines added (max 20)"]],
+      "max-deletions": ["fail", ["6 lines deleted (max 5)"]],
+      "max-lines-changed-per-file": ["fail", ["src/a.ts: 20 lines changed (max 10)"]],
+    });
   });
 });
 
@@ -118,7 +138,8 @@ describe("deriveState check output", () => {
     const pack = recommendedPack("acme/widgets");
     pack.checks["no-forbidden-paths"] = { enabled: true, forbiddenGlobs: ["vendor/**"] };
     const facts: PrFacts = { ...noisy, checks: "pending", mergeable: true, paths: ["vendor/x.ts"], changedFiles: 1, additions: 1, deletions: 0 };
-    const outputs = Object.fromEntries(deriveState(facts, undefined, pack).checks.map((check) => [check.check, check.output]));
+    const result = deriveState(facts, undefined, pack);
+    const outputs = Object.fromEntries([...result.checks, ...result.labelled!.checks].map((check) => [check.check, check.output]));
     expect(outputs).toMatchObject({
       "not-a-draft": { kind: "values", values: { isDraft: true } },
       "ci-green": { kind: "could-not-check", reason: "checks are still running" },

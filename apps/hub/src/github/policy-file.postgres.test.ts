@@ -353,7 +353,7 @@ test("PostgreSQL: an enabled repository with no rules and no file is offered a s
   await policyFile.onPush(TENANT, STARTER);
   const read = await readPack(STARTER);
   expect(read).toMatchObject({ status: "ok", source: { file: { path: YML } } });
-  expect(read.status === "ok" && policyDifferences(starterPack(STARTER), read.pack)).toMatchObject([{ rule: "Most files changed", saved: ["30"], file: ["40"] }]);
+  expect(read.status === "ok" && policyDifferences(starterPack(STARTER), read.pack)).toMatchObject([{ rule: "Most files changed", saved: ["30", "on fail, labels size: large"], file: ["40", "on fail, labels size: large"] }]);
   expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "ok" } });
   expect(await exportOf(STARTER)).toMatchObject({ http: 409, error: { code: "policy_settled" } });
 }, 60_000);

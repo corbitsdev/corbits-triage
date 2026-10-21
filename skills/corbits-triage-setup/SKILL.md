@@ -38,7 +38,7 @@ If the user says to go ahead with defaults, use the suggested answers.
 
 Start from the four starter rules, which hold for any repository and need no model:
 
-- `max-files-changed` (max 30) and `max-lines-changed` (max 3000): large pull requests are hard to review. Keep these limits unless the user names others. If the user would rather label large pull requests than fail them, give both `onFail: label`.
+- `max-files-changed` (max 30) and `max-lines-changed` (max 3000): large pull requests are hard to review. Keep these limits unless the user names others. They label large pull requests rather than fail them; if the user wants them to block, give both `onFail: fail`.
 - `no-merge-conflicts`: a pull request with conflicts can't be merged as it is.
 - `ci-green`: a change is not ready until CI passes. With no CI it passes on every pull request until CI is added, so keep it and say so.
 

@@ -11,7 +11,9 @@ Every rule has:
 - `reason`: one line on why the rule exists.
 - `evidence`: a list of `maintainer-stated`, pull request references (`"#44"`, `"owner/name#44"`) or `https://` links. Quote `#` references.
 - `enabled: false` (optional) keeps a rule written down but off.
-- `onFail` (optional) is what a failing rule does: `fail` (the default) fails the pull request for its author, `ask` makes it Unsure and leaves it to a maintainer, and `label` makes the rule label the pull request instead of deciding its verdict. A top-level `onFail` sets the default for every rule in the file. With `label`, when it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and never takes the label off. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `onFail: label` is refused, and so is one starting `Triage:` or `rule: ` or naming a verdict label.
+- `onFail` (optional) is what a failing rule does: `fail` (the default, except `label` for the size rules) fails the pull request for its author, `ask` makes it Unsure and leaves it to a maintainer, and `label` makes the rule label the pull request instead of deciding its verdict. A top-level `onFail` sets the default for every rule in the file. With `label`, when it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and never takes the label off. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `onFail: label` is refused, and so is one starting `Triage:` or `rule: ` or naming a verdict label.
+
+The five `max-` rules are the size rules. Lockfiles are left out of their counts (on Bitbucket Data Center, out of the file count only).
 
 A built-in rule is named only by `check`, never `id`, and each built-in may appear once. A `model` or `text` rule also needs its own `id`.
 
@@ -21,6 +23,9 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | --- | --- | --- | --- |
 | `max-files-changed` | `max:` whole number ≥ 1 (required) | no | Fails over `max` files changed. |
 | `max-lines-changed` | `max:` whole number ≥ 1 (required) | no | Fails over `max` lines changed. |
+| `max-lines-changed-per-file` | `max:` whole number ≥ 1 (required) | no | Fails when any one file has over `max` lines changed. Always passes on Bitbucket Data Center, which reports no lines per file. |
+| `max-additions` | `max:` whole number ≥ 1 (required) | no | Fails over `max` lines added. |
+| `max-deletions` | `max:` whole number ≥ 1 (required) | no | Fails over `max` lines deleted. |
 | `no-merge-conflicts` | none | no | Fails when the pull request conflicts with its base. |
 | `ci-green` | none | no | Fails when checks fail; unconfirmed while they run; passes when there are no checks. |
 | `linked-issue` | `tracker:` `github`, `linear` or `either` (optional, default `either`) | no | Fails unless the title, description, a commit or the branch name references an issue. `github` reads `#123`, GitHub issue links and branches like `123-title`; `linear` reads any key like `ABC-123` (so Jira keys match too), Linear links and branches like `abc-123-title` in any case. |
@@ -58,7 +63,7 @@ Start from the four starter rules (SKILL.md step 3). Add an extra only when the 
 
 `no-forbidden-paths` fails maintainers too, so never list `.github/**` or another path the team edits on purpose unless the user asks.
 
-When the user wants a rule to flag pull requests without failing them, such as size limits that atomic changes cross or a docs reminder, add `onFail: label` to it. When they want a person to decide instead of the author fixing it, use `onFail: ask`.
+When the user wants a rule to flag pull requests without failing them, such as a docs reminder, add `onFail: label` to it; size rules do this already. When they want a person to decide instead of the author fixing it, use `onFail: ask`. When they want a size limit to block, give it `onFail: fail` or `onFail: ask`.
 
 ## Actions
 

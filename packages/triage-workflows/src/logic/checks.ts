@@ -7,18 +7,21 @@ import {
   CONVENTIONAL_TYPES,
   customCheckEnabled,
   ISSUE_LINKS,
+  isGeneratedPath,
   isTextCheck,
   labelRules,
   parseCheckPack,
   NO_CHANGES_REQUESTED,
   NOT_A_DRAFT,
   repoPolicy,
+  SIZE_RULES,
   type AuthorKind,
   type CatalogId,
   type CheckOutput,
   type CheckPack,
   type ConventionalField,
   type IssueTracker,
+  type SizeRuleId,
   type TextCustomCheck,
   type TriageEvent,
   type TrustTier,
@@ -277,10 +280,75 @@ function conventionalResult(facts: PrFacts, { types, fields }: ConventionalRule)
   return { failed: true, reason: [...shown, ...(more > 0 ? [`and ${more} more`] : [])].join("; ") };
 }
 
+type SizeLimits = Partial<Record<SizeRuleId, number>>;
+type SizeTotal = Exclude<SizeRuleId, "max-lines-changed-per-file">;
+type SizeResult = { id: SizeRuleId; finding?: string; reason: string; evidence: string[]; values: Record<string, number> };
+
+const SIZE_WORDS: Record<SizeTotal, { key: string; verb: string; noun: string; counted: string }> = {
+  "max-files-changed": { key: "files", verb: "touches", noun: "files", counted: "files" },
+  "max-lines-changed": { key: "lines", verb: "changes", noun: "lines", counted: "lines changed" },
+  "max-additions": { key: "additions", verb: "adds", noun: "lines", counted: "lines added" },
+  "max-deletions": { key: "deletions", verb: "deletes", noun: "lines", counted: "lines deleted" },
+};
+
+function lineCount(files: readonly PrFileFacts[], key: "additions" | "deletions"): number {
+  return files.reduce((total, file) => total + (file[key] ?? 0), 0);
+}
+
+function fileLines(file: PrFileFacts): number {
+  return (file.additions ?? 0) + (file.deletions ?? 0);
+}
+
+function perFileResult(files: readonly PrFileFacts[], max: number | undefined): SizeResult {
+  const id = "max-lines-changed-per-file";
+  const over = max === undefined ? [] : files.filter((file) => fileLines(file) > max).sort((a, b) => fileLines(b) - fileLines(a));
+  const values = { lines: Math.max(0, ...files.map(fileLines)) };
+  if (over.length === 0) return { id, reason: "every file is within the per-file lines limit", evidence: [], values };
+  const shown = over.slice(0, OFFENDERS_SHOWN).map((file) => `${file.path}: ${fileLines(file)} lines changed (max ${max})`);
+  const more = over.length - shown.length;
+  return {
+    id,
+    finding: `pull request changes ${values.lines} lines in ${over[0]!.path} (max ${max})`,
+    reason: "a file is over the per-file lines limit",
+    evidence: [...shown, ...(more > 0 ? [`and ${more} more`] : [])],
+    values,
+  };
+}
+
+/** Each size rule's result; generated files, such as lockfiles, are left out of every count. */
+function sizeResults(facts: PrFacts, limits: SizeLimits): SizeResult[] {
+  const generated = facts.files.filter((file) => isGeneratedPath(file.path));
+  const authored = facts.files.filter((file) => !isGeneratedPath(file.path));
+  const additions = facts.additions - lineCount(generated, "additions");
+  const deletions = facts.deletions - lineCount(generated, "deletions");
+  const counts: Record<SizeTotal, number> = {
+    "max-files-changed": facts.changedFiles - generated.length,
+    "max-lines-changed": additions + deletions,
+    "max-additions": additions,
+    "max-deletions": deletions,
+  };
+  const totals = (Object.keys(SIZE_WORDS) as SizeTotal[]).map(function totalResult(id): SizeResult {
+    const { key, verb, noun, counted } = SIZE_WORDS[id];
+    const [count, max] = [counts[id], limits[id]];
+    const over = max !== undefined && count > max;
+    return {
+      id,
+      ...(over && { finding: `pull request ${verb} ${count} ${noun} (max ${max})` }),
+      reason: `pull request is ${over ? "over" : "within"} the ${key} limit`,
+      evidence: max === undefined ? [] : [`${count} ${counted} (max ${max})`],
+      values: { [key]: count },
+    };
+  });
+  return [...totals, perFileResult(authored, limits["max-lines-changed-per-file"])];
+}
+
+function sizeLimits(pack: CheckPack): SizeLimits {
+  return Object.fromEntries((Object.entries(SIZE_RULES) as Array<[SizeRuleId, (typeof SIZE_RULES)[SizeRuleId]]>).map(([id, field]) => [id, pack.checks[id]?.[field]]));
+}
+
 interface CheckRules {
   enabled(id: CatalogId): boolean;
-  maxFiles?: number;
-  maxLines?: number;
+  sizes: SizeLimits;
   forbiddenGlobs: string[];
   tracker: IssueTracker;
   conventional?: ConventionalRule;
@@ -339,23 +407,9 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
         values: { hasConflicts: conflicted === true },
       });
     }
-    if (on("max-files-changed")) {
-      const changedFiles = facts.changedFiles;
-      const over = rules.maxFiles !== undefined && changedFiles > rules.maxFiles;
-      if (over) add("max-files-changed", "needs-author-update", `pull request touches ${changedFiles} files (max ${rules.maxFiles})`);
-      result("max-files-changed", over, over ? "pull request is over the files limit" : "pull request is within the files limit", rules.maxFiles === undefined ? [] : [`${changedFiles} files (max ${rules.maxFiles})`], {
-        kind: "values",
-        values: { files: changedFiles },
-      });
-    }
-    if (on("max-lines-changed")) {
-      const lines = facts.additions + facts.deletions;
-      const over = rules.maxLines !== undefined && lines > rules.maxLines;
-      if (over) add("max-lines-changed", "needs-author-update", `pull request changes ${lines} lines (max ${rules.maxLines})`);
-      result("max-lines-changed", over, over ? "pull request is over the lines limit" : "pull request is within the lines limit", rules.maxLines === undefined ? [] : [`${lines} lines changed (max ${rules.maxLines})`], {
-        kind: "values",
-        values: { lines },
-      });
+    for (const size of sizeResults(facts, rules.sizes).filter((size) => on(size.id))) {
+      if (size.finding) add(size.id, "needs-author-update", size.finding);
+      result(size.id, size.finding !== undefined, size.reason, size.evidence, { kind: "values", values: size.values });
     }
     if (on("no-forbidden-paths") && rules.forbiddenGlobs.length > 0) {
       const matched = facts.paths.filter((path) => rules.forbiddenGlobs.some((glob) => globMatch(path, glob)));
@@ -397,8 +451,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
 function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
   return evaluate(facts, {
     enabled: (id) => catalogCheckEnabled(pack, id),
-    maxFiles: pack.checks["max-files-changed"]?.maxFiles,
-    maxLines: pack.checks["max-lines-changed"]?.maxLines,
+    sizes: sizeLimits(pack),
     forbiddenGlobs: pack.checks["no-forbidden-paths"]?.forbiddenGlobs ?? [],
     tracker: pack.checks["linked-issue"]?.tracker ?? "either",
     conventional: { types: pack.checks["conventional-commits"]?.types ?? CONVENTIONAL_TYPES, fields: pack.checks["conventional-commits"]?.fields ?? CONVENTIONAL_FIELDS },
@@ -418,6 +471,7 @@ export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack |
   const enabled: Partial<Record<CatalogId, boolean>> = { "ci-green": legacy.ci, "no-merge-conflicts": legacy.conflicts };
   return evaluate(facts, {
     enabled: (id) => enabled[id] === true,
+    sizes: {},
     forbiddenGlobs: [],
     tracker: "off",
   });

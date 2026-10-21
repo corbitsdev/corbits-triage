@@ -14,6 +14,9 @@ export type CheckPackGroup = (typeof CHECK_PACK_GROUPS)[number];
 export const CATALOG_IDS = [
   "max-files-changed",
   "max-lines-changed",
+  "max-lines-changed-per-file",
+  "max-additions",
+  "max-deletions",
   "focused",
   "docs",
   "linked-issue",
@@ -36,6 +39,9 @@ export const ISSUE_LINKS = { github: /github\.com\/[^\s/]+\/[^\s/]+\/issues\/\d+
 export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGroup; kind: "machine" | "quality" }> = {
   "max-files-changed": { name: "Max files changed", group: "pull-request", kind: "machine" },
   "max-lines-changed": { name: "Max lines changed", group: "pull-request", kind: "machine" },
+  "max-lines-changed-per-file": { name: "Max lines changed per file", group: "pull-request", kind: "machine" },
+  "max-additions": { name: "Max additions", group: "pull-request", kind: "machine" },
+  "max-deletions": { name: "Max deletions", group: "pull-request", kind: "machine" },
   focused: { name: "Focused", group: "pull-request", kind: "quality" },
   docs: { name: "Docs", group: "pull-request", kind: "quality" },
   "linked-issue": { name: "Linked issue", group: "issue", kind: "machine" },
@@ -138,12 +144,34 @@ export type CatalogCheck = RuleNote & OnFail & {
   enabled: boolean;
   maxFiles?: number;
   maxLines?: number;
+  maxFileLines?: number;
+  maxAdditions?: number;
+  maxDeletions?: number;
   tracker?: IssueTracker;
   forbiddenGlobs?: string[];
   /** Conventional commits: the types allowed, and whether the title, the commits or both are read; absent is every default type, and both. */
   types?: string[];
   fields?: ConventionalField[];
 };
+
+/** Each size rule and the field its limit is stored in. */
+export const SIZE_RULES = {
+  "max-files-changed": "maxFiles",
+  "max-lines-changed": "maxLines",
+  "max-lines-changed-per-file": "maxFileLines",
+  "max-additions": "maxAdditions",
+  "max-deletions": "maxDeletions",
+} as const satisfies Partial<Record<CatalogId, keyof CatalogCheck>>;
+export type SizeRuleId = keyof typeof SIZE_RULES;
+
+export function isSizeRule(id: string): id is SizeRuleId {
+  return Object.hasOwn(SIZE_RULES, id);
+}
+
+/** What a policy file's rule does on failure when the file does not say: features and refactors cross size limits, so those only label. */
+export function defaultOnFail(id: string): (typeof ON_FAILS)[number] {
+  return isSizeRule(id) ? "label" : "fail";
+}
 
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
 export type ModelShape = (typeof MODEL_SHAPES)[number];
@@ -421,6 +449,9 @@ const CatalogCheckSchema = type({
   enabled: "boolean",
   "maxFiles?": "number",
   "maxLines?": "number",
+  "maxFileLines?": "number",
+  "maxAdditions?": "number",
+  "maxDeletions?": "number",
   "tracker?": type.enumerated(...ISSUE_TRACKERS),
   "forbiddenGlobs?": "string[]",
   "types?": "string[]",
@@ -525,8 +556,8 @@ export function recommendedPack(repo: string): CheckPack {
   return {
     ...base,
     checks: {
-      "max-files-changed": { enabled: true, maxFiles: RECOMMENDED_SIZE.maxFiles },
-      "max-lines-changed": { enabled: true, maxLines: RECOMMENDED_SIZE.maxLines },
+      "max-files-changed": { enabled: true, maxFiles: RECOMMENDED_SIZE.maxFiles, onFail: "label" },
+      "max-lines-changed": { enabled: true, maxLines: RECOMMENDED_SIZE.maxLines, onFail: "label" },
       focused: { enabled: true },
       docs: { enabled: true },
       "linked-issue": { enabled: true, tracker: RECOMMENDED_ISSUE.tracker },
@@ -593,13 +624,9 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
   if (!row) return undefined;
   const where = CHECK_CATALOG[id].name;
   const check: CatalogCheck = { enabled: row.enabled === false ? false : true, ...parseNote(row, where), ...parseOnFail(row, id, where) };
-  if (id === "max-files-changed") {
-    const maxFiles = finiteNumber(row.maxFiles);
-    if (maxFiles !== undefined) check.maxFiles = maxFiles;
-  }
-  if (id === "max-lines-changed") {
-    const maxLines = finiteNumber(row.maxLines);
-    if (maxLines !== undefined) check.maxLines = maxLines;
+  if (isSizeRule(id)) {
+    const max = finiteNumber(row[SIZE_RULES[id]]);
+    if (max !== undefined) check[SIZE_RULES[id]] = max;
   }
   if (id === "linked-issue") {
     if (typeof row.tracker === "string" && TRACKER_SET.has(row.tracker)) check.tracker = row.tracker as IssueTracker;
@@ -703,10 +730,10 @@ function parseNote(row: Record<string, unknown>, where: string): RuleNote {
   };
 }
 
-const RULE_LABELS: Partial<Record<CatalogId, string>> = { "max-files-changed": "size: large", "max-lines-changed": "size: large", docs: "docs: check" };
-
 function labelOf(id: string, row: OnFail): string {
-  return row.label ?? RULE_LABELS[id as CatalogId] ?? `${id}: check`;
+  if (row.label !== undefined) return row.label;
+  if (isSizeRule(id)) return "size: large";
+  return id === "docs" ? "docs: check" : `${id}: check`;
 }
 
 function parseOnFail(row: Record<string, unknown>, id: string, where: string): OnFail {
