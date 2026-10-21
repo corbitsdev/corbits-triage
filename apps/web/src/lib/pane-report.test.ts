@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CheckResult, GithubPullDetail, PrItem, SuggestedAction } from "./hub-api.ts";
-import { paneFacts } from "./inbox-pane.ts";
+import { mergeBlockOf, paneFacts } from "./inbox-pane.ts";
 import { approvedByTriage, paneBar, paneProblems, paneStatus, passedChecks, rowStatus, type StatusInput } from "./pane-report.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
@@ -13,6 +13,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     authorKind: null,
     draft: false,
     mergeable: true,
+    mergeBlock: null,
     state: "needs-decision",
     priority: "P2",
     owner: null,
@@ -211,5 +212,22 @@ describe("a merge the host blocks", () => {
     expect(statusOf(ready, { detail: detail({ mergeableState: "unknown" }) }).text).toBe("Ready, once GitHub has checked for conflicts");
     expect(statusOf(ready, { detail: detail({ canMerge: false, mergeVetoes: ["Needs 2 approvals"] }) }).text).toBe("Ready, but the merge checks say: Needs 2 approvals");
     expect(statusOf(ready, { detail: detail({ mergeableState: "clean" }) }).text).toBe("Ready to merge");
+  });
+
+  test("the list's read of the host holds the row and the pane before the pane's own read", () => {
+    const mergeBlock = mergeBlockOf({ number: 1, mergeable: true, mergeableState: "blocked", reviewDecision: "REVIEW_REQUIRED" });
+    expect(rowStatus(item({ ...ready, mergeBlock }), null)).toBe("Waiting for review");
+    expect(statusOf({ ...ready, mergeBlock }).text).toBe("Ready, but waiting for a required review");
+    expect(rowStatus(item({ ...ready, mergeBlock: "checking" }), null)).toBe("Checking merge state");
+    expect(barOf(item({ ...ready, mergeBlock: "checking" })).primary?.blocker).toBe("mergeability-unknown");
+  });
+
+  test("only the host's explicit yes clears the merge", () => {
+    expect(mergeBlockOf({ number: 1, mergeable: null, mergeableState: "unknown", reviewDecision: null })).toBe("checking");
+    expect(mergeBlockOf({ number: 1, mergeable: true, mergeableState: "draft", reviewDecision: null })).toBe("checking");
+    expect(mergeBlockOf({ number: 1, mergeable: null, canMerge: true, mergeVetoes: [] })).toBe("checking");
+    expect(mergeBlockOf({ number: 1, mergeable: true, mergeableState: "clean", reviewDecision: null })).toBeNull();
+    expect(mergeBlockOf({ number: 1, mergeable: true, mergeableState: "unstable", reviewDecision: null })).toBeNull();
+    expect(mergeBlockOf({ number: 1, mergeable: true, canMerge: true, mergeVetoes: [] })).toBeNull();
   });
 });

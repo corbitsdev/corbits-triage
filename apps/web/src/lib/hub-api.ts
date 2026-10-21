@@ -1111,6 +1111,17 @@ export async function loadGithubPull(
   );
 }
 
+/** Whether the host would merge a pull request now: GitHub's `mergeableState` and `reviewDecision`, or Bitbucket's `canMerge` and `mergeVetoes`. */
+export type MergeState = Pick<GithubPullDetail["pr"], "mergeable" | "mergeableState" | "reviewDecision" | "canMerge" | "mergeVetoes"> & { number: number };
+
+export async function loadMergeStates(transport: Transport, tenantId: string, repo: string, numbers: number[]): Promise<MergeState[]> {
+  const { prs } = await transport.fetch<{ prs: MergeState[] }>(
+    "GET",
+    `/api/integrations/merge-states/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&numbers=${numbers.join(",")}`,
+  );
+  return prs;
+}
+
 const connectChains = new Map<string, Promise<unknown>>();
 
 function serializePerTenant<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
@@ -1359,6 +1370,12 @@ function isCiState(value: unknown): value is CiState {
 }
 
 
+/** Why the host holds a merge free of conflicts. */
+export type HeldBlock = "behind" | "review-required" | "changes-requested" | "blocked";
+
+/** `checking` until the host has said it would merge or why not, which is never taken for ready. */
+export type MergeBlock = HeldBlock | "checking";
+
 export type PrItem = {
   key: string;
   repo: string;
@@ -1369,6 +1386,8 @@ export type PrItem = {
   authorKind: AuthorKind | null;
   draft: boolean | null;
   mergeable: boolean | null;
+  /** Why the host would refuse to merge it though free of conflicts, null once it said it would; read only for pull requests Triage passed. */
+  mergeBlock: MergeBlock | null;
   state: QueueState;
   priority: string | null;
   owner: string | null;
@@ -1528,6 +1547,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     authorKind: null,
     draft: facts.draft ?? null,
     mergeable: facts.mergeable ?? null,
+    mergeBlock: "checking",
     state: TRIAGE_TO_QUEUE[verdict.state] ?? "stale",
     priority: detail.priority || null,
     owner: detail.owner || null,
@@ -1616,6 +1636,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         authorKind: pr.authorKind ?? null,
         draft: pr.draft,
         mergeable: null,
+        mergeBlock: "checking",
         state: "new",
         priority: null,
         owner: null,

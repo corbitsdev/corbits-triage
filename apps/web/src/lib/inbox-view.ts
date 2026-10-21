@@ -1,5 +1,5 @@
 import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
-import type { PrItem, QueueState } from "./hub-api.ts";
+import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
 import { holdsActionForYou } from "./pending-dos.ts";
 import { priorityRank } from "./triage-view.ts";
 
@@ -65,6 +65,22 @@ export function inboxAction(item: PrItem): InboxAction | null {
     case "new":
       return item.failure === null ? null : "failed";
   }
+}
+
+const BLOCK_ACTION: Record<MergeBlock, InboxAction> = {
+  checking: "review",
+  "review-required": "review",
+  behind: "unblock",
+  "changes-requested": "unblock",
+  blocked: "unblock",
+};
+
+/** A pass is under Merge only once the host said it would merge it; otherwise it is listed where it gets looked at or unblocked. */
+export function listedAction(item: PrItem): InboxAction | null {
+  const action = inboxAction(item);
+  if (action !== "merge") return action;
+  if (item.mergeable === false) return "unblock";
+  return item.mergeBlock === null ? "merge" : BLOCK_ACTION[item.mergeBlock];
 }
 
 export function isPostedToAuthor(item: PrItem): boolean {
@@ -192,7 +208,7 @@ export type InboxView = { groups: InboxGroup[]; awaiting: number };
 export function groupInbox(items: PrItem[], ready: ReadonlySet<string>): InboxView {
   const sorted = [...items].sort(compareInboxItems);
   const groups = INBOX_ACTION_ORDER
-    .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inNeedsYou(item) && inboxAction(item) === action) }))
+    .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inNeedsYou(item) && listedAction(item) === action) }))
     .filter((group) => group.items.length > 0);
   return { groups, awaiting: items.filter((item) => ready.has(item.repo) && inboxAction(item) === null).length };
 }
@@ -244,9 +260,9 @@ export function waitingOnOthers(open: OpenItem[], enabled: ReadonlySet<string>):
   return allOpen(open, enabled).filter((entry) => !needsYouEntry(entry) || !inNeedsYou(entry.item));
 }
 
-/** A pass on the head GitHub has now, with CI green and no conflicts. */
+/** A pass on the head the host has now, with CI green, no conflicts, and the host's word that it would merge it. */
 function isReadyToMerge(item: PrItem): boolean {
-  return item.verdict === "pass" && item.verdictSha !== null && item.verdictSha === item.headSha && item.draft === false && item.ci === "success" && item.mergeable === true;
+  return item.verdict === "pass" && item.verdictSha !== null && item.verdictSha === item.headSha && item.draft === false && item.ci === "success" && item.mergeable === true && item.mergeBlock === null;
 }
 
 /** Oldest pass first. */
