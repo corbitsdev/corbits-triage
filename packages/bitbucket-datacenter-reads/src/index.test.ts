@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkFailed, checkPending, latestDecisive, reviewedOnHead } from "@corbits/github-reads";
-import { getChecks, getPr, getReviews, isTriageComment, listIssueComments, listPrTimeline, readRepoFile, readStack, type BitbucketFetch } from "./index.js";
+import { authorTeams, getChecks, getPr, getReviews, isTriageComment, listIssueComments, listPrTimeline, readRepoFile, readStack, type BitbucketFetch } from "./index.js";
 import activities from "./fixtures/activities.json";
 import buildStatus from "./fixtures/build-status.json";
 import pullRequest from "./fixtures/pull-request.json";
@@ -129,5 +129,22 @@ describe("readStack", () => {
   test("a fork's branch is not stacked on this repository's", async () => {
     const fork = { ...stacked, fromRef: { ...fix, repository: { id: 3 } } };
     expect(await readStack(instance([[`${REPO}/pull-requests/1`, fork]]), "TRI/widgets", 1)).toEqual({ includes: [] });
+  });
+});
+
+describe("authorTeams", () => {
+  const members = "/rest/api/1.0/admin/groups/more-members?context=core&filter=alice";
+  const more = { values: [{ slug: "alicia" }], isLastPage: false, nextPageStart: 1000 };
+  const later = `${members}&limit=1000&start=1000`;
+  const input = { repo: "TRI/widgets", author: "alice", teams: ["core"] };
+  const unknown = { teams: [], unknown: ["core"] };
+
+  test("a member on a later page is a member; a page that fails makes the group unknown", async () => {
+    expect(await authorTeams(instance([[later, page([{ slug: "alice" }])], [members, more]]), input)).toEqual({ teams: ["core"], unknown: [] });
+    expect(await authorTeams(instance([[later, Response.json({ errors: [] }, { status: 500 })], [members, more]]), input)).toEqual(unknown);
+  });
+
+  test("a malformed row makes the group unknown, even after a match", async () => {
+    expect(await authorTeams(instance([[members, page([{ slug: "alice" }, { name: "alicia" }])]]), input)).toEqual(unknown);
   });
 });

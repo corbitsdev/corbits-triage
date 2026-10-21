@@ -1,4 +1,3 @@
-import { type } from "arktype";
 import { MAX_AUTHOR_TEAMS, type AuthorTeams, type Codeowners } from "@corbits/github-reads";
 import { teamSlug } from "@corbits/triage-contracts/team";
 import { json, jsonAll, repoParts, repoPath, type BitbucketFetch } from "./client.js";
@@ -28,14 +27,16 @@ export async function authorAssociation(bb: BitbucketFetch, repo: string, author
   return "NONE";
 }
 
-const GroupMembers = type({ values: User.array() });
-
 type Membership = "member" | "not" | "unknown";
 
+/** The filter matches any part of a name or email, so a group can take many pages. A failed page or a malformed row is unknown. */
 async function membership(bb: BitbucketFetch, group: string, author: string): Promise<Membership> {
-  const res = await bb(`/rest/api/1.0/admin/groups/more-members?context=${encodeURIComponent(group)}&filter=${encodeURIComponent(author)}&limit=1000`, { headers: { accept: "application/json" } });
-  if (!res.ok) return "unknown";
-  return GroupMembers.assert(await res.json()).values.some((user) => user.slug === author) ? "member" : "not";
+  try {
+    const members = await jsonAll(bb, `/rest/api/1.0/admin/groups/more-members?context=${encodeURIComponent(group)}&filter=${encodeURIComponent(author)}`, 1000);
+    return members.map((user) => User.assert(user).slug).includes(author) ? "member" : "not";
+  } catch {
+    return "unknown";
+  }
 }
 
 /** Data Center groups are global, so `@PROJECT/group` and `group` both name the group. Listing members needs admin permission; without it a group is unknown. */
