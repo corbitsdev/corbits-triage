@@ -28,7 +28,7 @@ decide:
   - { if: { triage: fail, event: [opened] }, do: [request-changes, { do: comment, target: { body: Fix the rules. }, when: { author: [core] } }] }
   - { if: { all: clean }, do: approve }
   - { if: { author: [core], code-review: clean, security: [clean, skipped] }, do: merge }
-  - { if: { security: { findings: high } }, do: [review, { do: request-review, target: { to: codeowners } }] }
+  - { if: { security: { findings: high } }, do: [{ do: request-review, target: { to: codeowners } }] }
 `;
 
 function problems(text: string) {
@@ -52,7 +52,7 @@ describe("policy file v4", () => {
         { if: { triage: "fail", event: ["opened"] }, do: ["request-changes", { do: "comment", target: { body: "Fix the rules." }, when: { author: [{ group: "core" }] } }] },
         { if: { all: "clean" }, do: "approve" },
         { if: { author: ["core"], "code-review": "clean", security: ["clean", "skipped"] }, do: "merge" },
-        { if: { security: { findings: "high" } }, do: ["review", { do: "request-review", target: { to: "codeowners" } }] },
+        { if: { security: { findings: "high" } }, do: [{ do: "request-review", target: { to: "codeowners" } }] },
       ],
     });
   });
@@ -76,6 +76,21 @@ describe("policy file v4", () => {
     expect(checkPolicyFile("checks:\n  ci-green: { enabled: true }\nactions:\n  when: [opened, updated, checks, ready]\n  pass: []\n  fail: []\n  unsure: [{ do: close }]\n", REPO)).toMatchObject({
       ok: true,
       workflow: { decide: [{ if: { triage: "pass" }, do: "nothing" }, { if: { triage: "fail" }, do: "nothing" }, { if: { triage: "unsure" }, do: [{ do: "close" }] }] },
+    });
+  });
+
+  test("schema 3 actions beside a block that is on approve and merge only when every block that ran is clean, and otherwise run the rest in their places", () => {
+    const file = `${RULES}code-review: { on: true }\nactions:\n  pass: [{ do: request-review, target: { to: codeowners } }, { do: approve }, { do: merge }]\n`;
+    const pass = [{ do: "request-review", target: { to: "codeowners" } }, { do: "approve" }, { do: "merge" }];
+    expect(checkPolicyFile(file, REPO)).toMatchObject({
+      ok: true,
+      workflow: {
+        decide: [
+          { if: { triage: "pass", all: "clean" }, do: pass },
+          { if: { triage: "pass" }, do: [pass[0], { do: "nothing" }, { do: "nothing" }] },
+          { if: { triage: "fail" }, do: "nothing" },
+        ],
+      },
     });
   });
 
@@ -173,6 +188,7 @@ describe("policy file v4", () => {
     [`${RULES}decide:\n  - { if: { triage: pass }, do: [{ do: approve, when: { ci: [green] } }] }\n`, "`decide[0].do[0].when.ci` must be a list of `passing`, `failing`, `pending` or `none`.", 7],
     [`${RULES}decide:\n  - { if: { triage: pass }, do: [nothing, approve] }\n`, "`decide[0].do` can't mix `nothing` with other actions; keep one or the other.", 7],
     [`${RULES}decide:\n  - { if: { all: findings }, do: review }\n`, "`decide[0].if.all` must be clean.", 7],
+    [`${RULES}decide:\n  - { if: { triage: pass }, do: [close, review] }\n`, "`decide[0].do` can't use `review` yet; use `request-review` or remove it.", 7],
     [`${RULES}decide:\n  - { if: { triage: [pass, maybe] }, do: approve }\n`, "`decide[0].if.triage` must be pass, fail or unsure, or a list of them.", 7],
     [`${RULES}decide:\n  - { if: { event: [pushed] }, do: approve }\n`, "`decide[0].if.event` must be a list of opened, updated, checks or ready.", 7],
     [`${RULES}${ON}decide:\n  - { if: { code-review: done }, do: approve }\n`, "`decide[0].if.code-review` must be clean, findings, incomplete or skipped, a list of them, or { findings: <severity> } with a severity of low, medium, high or critical.", 9],

@@ -2,7 +2,7 @@
 
 The PR workflow with code review on Anthropic's models: one mail names one pull request, triage runs as
 [pr-triage](../triage-workflows/README.md) does, then [code review](../pr-code-review-anthropic/README.md) runs behind a
-gate, and approve and merge wait for the review. The hub does not deploy or mail it yet.
+gate, and `decide` applies the policy's rules once to choose what execute runs. The hub does not deploy or mail it yet.
 
 ## Use
 
@@ -12,8 +12,8 @@ gate, and approve and merge wait for the review. The hub does not deploy or mail
 import { workflow } from "@corbits/pr-workflow-anthropic/pr-workflow-github";
 ```
 
-The mail is pr-triage's plus `codeReview` and `codeReviewRequest`; the steps, the outcomes and how approve and merge
-wait are in [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#pr-workflow).
+The mail is pr-triage's plus `codeReview`, `codeReviewRequest`, `decide`, the policy's rules, and `blocks`, the blocks it turns on; the steps, the
+outcomes and how `decide` chooses are in [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#pr-workflow).
 
 ## Eval
 

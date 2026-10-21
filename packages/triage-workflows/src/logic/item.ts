@@ -20,6 +20,8 @@ export interface Item {
   repoSource?: RepoSource;
   /** The hub waits no longer for the host's checks. */
   noWait?: true;
+  /** The policy turns a block on, so `decide` chooses the Dos once the blocks have run and the comment names none. */
+  blocksOn?: true;
   error?: string;
 }
 

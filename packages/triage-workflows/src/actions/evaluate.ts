@@ -1,14 +1,14 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { ciRefusal } from "@corbits/github-reads";
-import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
+import { approvalHeldBy, changesWanted, heldApprovals, holdDos, packApproves, stepActions, type ActionInput, type SuggestedAction } from "../logic/actions.js";
 import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
-import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict, type WaitingMark } from "../logic/render.js";
+import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
 
@@ -173,6 +173,24 @@ function degradedOf(it: Item, reason: string): Verdict {
   return { ...verdict, request, ...(mark && { mark }) };
 }
 
+type Rendered = Pick<RenderOutput, "checks" | "verdict" | "reason" | "degraded" | "waiting" | "labelled">;
+
+function actionInputOf(it: Item, rendered: Rendered): ActionInput | undefined {
+  if (!it.pack) return undefined;
+  // Bitbucket Data Center has no labels, so there a labelling rule is only noted.
+  const labelled = hostKinds(it.repoSource ?? "github").includes("labels") ? rendered.labelled : undefined;
+  return { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, labelled };
+}
+
+/** The Dos of `steps` on a rendered item, each held as the run may or may not write it. */
+export function suggestedDos(it: Item, rendered: Rendered, steps: readonly Step[]): SuggestedAction[] {
+  const actionInput = actionInputOf(it, rendered);
+  // A degraded verdict is incomplete, a waiting one is not made yet, and a draft or closed pull request is not decided, so nothing is suggested from any.
+  const decided = rendered.degraded === null && rendered.waiting === undefined && (it.det.needsJudgment || rendered.verdict === "fail");
+  const suggested = actionInput && decided ? stepActions(actionInput, steps) : [];
+  return holdDos(heldApprovals(suggested, approvalHeldBy(rendered.verdict, it.facts.checks), it.facts.checks), it.automatic ?? []);
+}
+
 /** Takes the item's own chunk replies off the front of `replies` and `partReplies`; requests an earlier run answered took none. */
 function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdict {
   if (it.error !== undefined) return degradedOf(it, it.error);
@@ -198,18 +216,13 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(it.noWait && { noWait: it.noWait }),
     });
-    // Bitbucket Data Center has no labels, so there a labelling rule is only noted.
-    const labelled = hostKinds(it.repoSource ?? "github").includes("labels") ? rendered.labelled : undefined;
-    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, labelled } : undefined;
-    // A degraded verdict is incomplete, a waiting one is not made yet, and a draft or closed pull request is not decided, so nothing is suggested from any.
-    const decided = rendered.degraded === null && rendered.waiting === undefined && (it.det.needsJudgment || rendered.verdict === "fail");
-    const suggested = actionInput && decided ? evaluateActions(actionInput) : [];
+    const actionInput = actionInputOf(it, rendered);
     const wanted = actionInput && changesWanted(actionInput);
     const held = approvalHeldBy(rendered.verdict, it.facts.checks);
     const automatic = it.automatic ?? [];
-    const actions = holdDos(heldApprovals(suggested, held, it.facts.checks), automatic);
+    const actions = suggestedDos(it, rendered, it.pack?.actions[rendered.verdict] ?? []);
     const judged = reusable([...first, ...early, ...later, ...late]);
-    const feedback = withDos(rendered.feedback, actions);
+    const feedback = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
     // What reading the policy left out is said on every verdict, so the policy can be fixed.
     const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
     const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;

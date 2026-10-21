@@ -193,15 +193,15 @@ function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: 
 }
 
 /**
- * The Dos of the verdict's list on this head; none when the event does not wake the policy. A step whose conditions do
- * not hold, or cannot be told, is skipped, and one that does nothing is not listed. Suggest only: nothing here writes to GitHub.
+ * The Dos of `steps` on this head; none when the event does not wake the policy. A step whose conditions do not hold,
+ * or cannot be told, is skipped, and one that does nothing is not listed. Suggest only: nothing here writes to GitHub.
  */
-export function evaluateActions(input: ActionInput): SuggestedAction[] {
+export function stepActions(input: ActionInput, steps: readonly Step[]): SuggestedAction[] {
   if (!wakes(input.pack, input.facts)) return [];
   const { verdict: list, reason, facts } = input;
   const subject = stepSubject(facts, input.pack);
   const out: SuggestedAction[] = [];
-  for (const [index, step] of input.pack.actions[list].entries()) {
+  for (const [index, step] of steps.entries()) {
     if (step.do === "nothing") continue;
     const base = { list, index, kind: step.do };
     const holds = whenHolds(step.when, subject);
@@ -218,6 +218,11 @@ export function evaluateActions(input: ActionInput): SuggestedAction[] {
     }
   }
   return [...out, ...labelDo(input, reason)];
+}
+
+/** The Dos of the verdict's list on this head. */
+export function evaluateActions(input: ActionInput): SuggestedAction[] {
+  return stepActions(input, input.pack.actions[input.verdict]);
 }
 
 /**
