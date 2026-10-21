@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { AsyncStorage } from "@tanstack/react-query-persist-client";
 import { createUserCache, sessionState } from "./query-persistence.ts";
 
@@ -40,7 +40,7 @@ test("signing out, or the hub having no session, removes the in-memory and the s
 
   await cache.update(sessionState(true, null, ""));
 
-  expect(queryClient.getQueryCache().getAll()).toEqual([]);
+  expect(queryClient.getQueryCache().getAll().map((query) => query.state.data)).toEqual([undefined]);
   expect(storage.items.size).toBe(0);
 });
 
@@ -73,13 +73,20 @@ test("the same user's stored cache is restored", async () => {
   expect(again.getQueryData(OPEN_KEY)).toEqual(OPEN);
 });
 
-test("a first visit's signed-out session keeps what the sign-in page loads", async () => {
-  const queryClient = new QueryClient();
-  const cache = createUserCache(queryClient, memoryStorage());
-  const methods = queryClient.fetchQuery({ queryKey: ["auth-methods"], queryFn: async () => ({ google: true }) });
-
+async function signInOptionsAfterSignOut(queryClient: QueryClient, cache: ReturnType<typeof createUserCache>) {
+  const observer = new QueryObserver(queryClient, { queryKey: ["auth-methods"], queryFn: async () => ({ google: true }) });
+  const settled = new Promise((resolve) => {
+    observer.subscribe((result) => result.isSuccess && resolve(result.data));
+  });
   await cache.update(sessionState(true, null, ""));
+  return settled;
+}
 
-  expect(await methods).toEqual({ google: true });
-  expect(queryClient.getQueryData(["auth-methods"])).toEqual({ google: true });
+test("the sign-in options a signed-out screen loads survive the sign-out, on a first visit and after a user", async () => {
+  const fresh = new QueryClient();
+  expect(await signInOptionsAfterSignOut(fresh, createUserCache(fresh, memoryStorage()))).toEqual({ google: true });
+
+  const { queryClient, cache } = await storedFor("a");
+  expect(await signInOptionsAfterSignOut(queryClient, cache)).toEqual({ google: true });
+  expect(queryClient.getQueryData(OPEN_KEY)).toBeUndefined();
 });
