@@ -43,21 +43,20 @@ export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsPro
   }
 
   function body() {
-    if (policy.isPending || roles.loading) return <p className="help">Checking what Triage may do here…</p>;
-    if (policy.isError) return <p className="help">Could not read what Triage may do here, so it asks before every action.</p>;
+    if (policy.isPending || roles.loading) return <span className="txt">Checking what Triage may do here…</span>;
+    if (policy.isError) return <span className="txt">Could not read what Triage may do here, so it asks before every action.</span>;
     const found = policy.data;
-    if (found?.kind !== "file" && found?.kind !== "pack") return <p className="help">This repository has no policy to allow, so Triage asks before every action.</p>;
-    if (!found.automatic || roles.unavailable || roles.denied) return <p className="help">Could not read what Triage may do here, so it asks before every action.</p>;
+    if (found?.kind !== "file" && found?.kind !== "pack") return <span className="txt">This repository has no policy to allow, so Triage asks before every action.</span>;
+    if (!found.automatic || roles.unavailable || roles.denied) return <span className="txt">Could not read what Triage may do here, so it asks before every action.</span>;
     const triage = findTriageRole(roles.rows);
-    if (!triage) return <p className="help">This workspace has no Triage role, so Triage asks before every action.</p>;
+    if (!triage) return <span className="txt">This workspace has no Triage role, so Triage asks before every action.</span>;
     const kinds = policyKinds(found.pack, found.decide ?? [], source);
     const missing = kinds.filter((kind) => !found.automatic?.includes(kind));
-    if (missing.length === 0) return <p className="help">Triage does these on its own: {names(kinds)}.</p>;
+    if (missing.length === 0) return <span className="txt">Triage does these on its own: {names(kinds)}.</span>;
     return (
       <>
-        <p className="help">This policy wants Triage to: {names(missing)}. Until you allow it, these wait for you in the inbox.</p>
+        <span className="txt">This policy wants Triage to: {names(missing)}. Until you allow it, these wait for you in the inbox.</span>
         <Button type="button" size="sm" disabled={disabled || !canCreate || allow.isPending} onClick={() => allow.mutate({ roleId: triage.id, kinds: missing })}>{allow.isPending ? "Allowing…" : "Allow"}</Button>
-        {allow.error ? <p role="alert" className="error">Could not allow {names(missing)}. {errorText(allow.error)} Try again.</p> : null}
       </>
     );
   }
@@ -65,7 +64,12 @@ export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsPro
   return (
     <section className="rs" aria-labelledby="rs-alone" id="rp-alone">
       <h3 id="rs-alone">Actions Triage takes on its own</h3>
-      {body()}
+      <div className="gcard">
+        <div className="sentences">
+          <div className="sentence">{body()}</div>
+        </div>
+      </div>
+      {allow.error ? <p role="alert" className="error">Could not allow these actions. {errorText(allow.error)} Try again.</p> : null}
     </section>
   );
 }
