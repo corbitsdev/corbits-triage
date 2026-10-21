@@ -21,6 +21,7 @@ import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import { GITHUB_CREDENTIAL, githubAppLogin } from "./app-key.js";
 import type { DeliveryCache } from "./dedupe.js";
+import { heldCredential } from "./portal-credential.js";
 import { baseMoveOf, normalize, policyPushOf, type BaseMove, type GithubPolicyPush } from "./normalize.js";
 import type { BacklogStart } from "./backlog-triage.js";
 import type { PolicyFileState } from "./policy-file.js";
@@ -133,19 +134,17 @@ export async function loadBridgeHook(
   return { credentialId: row.id, credentialName: row.name, tenantId: row.tenantId, secret, workflow };
 }
 
+/** The App's bot account, named by the `github` credential the workspace resolves to: its own or a parent's. */
 async function appBotLogin(db: DB["db"], tenantId: string): Promise<string> {
-  const { credential } = schema;
-  const row = await db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, GITHUB_CREDENTIAL)) });
-  if (!row) throw new Error("github app credential is missing");
-  return githubAppLogin(row);
+  const github = await heldCredential(db, tenantId, GITHUB_CREDENTIAL);
+  if (!github) throw new Error("github app credential is missing");
+  return githubAppLogin(github);
 }
 
 /** A mail in a workspace with GitHub names the App's bot account, whose comments and reviews the workflow takes as triage's own. */
 export async function withAppLogin(db: DB["db"], tenantId: string, payload: unknown): Promise<unknown> {
   if (!isRecord(payload) || payload["repoSource"] !== undefined) return payload;
-  const { credential } = schema;
-  const github = await db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, GITHUB_CREDENTIAL)) });
-  return github ? { ...payload, appLogin: githubAppLogin(github) } : payload;
+  return { ...payload, appLogin: await appBotLogin(db, tenantId) };
 }
 
 function isSentBy(payload: unknown, login: string): boolean {

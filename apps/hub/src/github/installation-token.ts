@@ -2,7 +2,7 @@
 // minted on the hub from the App key, and pushes each new one to the running
 // deployments that hold the credential: a stock secret update alone reaches them
 // only when their sidecar reconnects.
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { pushCredentialReconcile } from "@intx/hub-sessions";
 import { credentialAad, type CredentialCipher } from "@intx/types";
@@ -59,19 +59,24 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     return { slug: app.slug, token: await mintInstallationToken(transport, appJson, primary.id) };
   }
 
-  async function holders(tenantId: string, credentialId: string): Promise<string[]> {
+  /** Not only the workspace's own runs: a child workspace's runs hold the parent's credential they inherit. */
+  async function holders(credentialId: string): Promise<string[]> {
     const runs = await deps.db.query.workflowRun.findMany({
-      where: and(eq(workflowRun.tenantId, tenantId), inArray(workflowRun.status, [...schema.liveWorkflowRunStatuses]), isNotNull(workflowRun.address), isNotNull(workflowRun.credentialRefs)),
-      columns: { address: true, credentialRefs: true },
+      where: and(
+        inArray(workflowRun.status, [...schema.liveWorkflowRunStatuses]),
+        isNotNull(workflowRun.address),
+        sql`${workflowRun.credentialRefs} -> 'credentialIds' @> ${JSON.stringify([credentialId])}::jsonb`,
+      ),
+      columns: { address: true },
     });
-    return runs.flatMap((run) => (run.address !== null && run.credentialRefs?.credentialIds.includes(credentialId) ? [run.address] : []));
+    return runs.flatMap((run) => (run.address === null ? [] : [run.address]));
   }
 
-  /** Sends the `github` credential's current token to each running deployment holding it. */
+  /** Sends the current token of the `github` credential `tenantId` resolves to, its own or a parent's, to each running deployment holding it. */
   async function push(tenantId: string): Promise<void> {
     const github = await activeCredential(deps.db, tenantId, GITHUB_CREDENTIAL);
     if (!github) return;
-    for (const address of await holders(tenantId, github.id)) await pushCredentialReconcile(deps.db, deps.router, address, deps.cipher);
+    for (const address of await holders(github.id)) await pushCredentialReconcile(deps.db, deps.router, address, deps.cipher);
   }
 
   /** Stores what was issued for `appJson`, unless the App was replaced while it was minted: the replacement wrote its own. */

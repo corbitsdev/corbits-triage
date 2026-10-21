@@ -8,6 +8,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { CredentialDelivery } from "@intx/types/credential-delivery";
 import { credentialBindingsFor } from "@corbits/triage-workflows/agents";
 import { createGithubAppConnection } from "./app-connection.js";
+import { withAppLogin } from "./bridge.js";
 import { createGithubTokenRenewal } from "./installation-token.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -207,3 +208,30 @@ test("PostgreSQL: connecting an App writes its key and token together, a renewal
     expect(pushed()).toEqual([]);
   });
 }, 120_000);
+
+test("PostgreSQL: a child workspace inheriting its parent's App gets the parent's login on its mail and the parent's renewed token on its deployment", async () => {
+  const parentApp = app("1", [7]);
+  await withWorkspace([parentApp], async function inherit({ db, cipher, origin }) {
+    await db.insert(schema.credential).values({
+      id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
+      secret: await cipher.encrypt(parentApp.json, credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "app-1" },
+    });
+    await db.insert(schema.tenant).values([
+      { id: "tnt_child", name: "Child", slug: "child", domain: "child.test", parentId: TENANT },
+      { id: "tnt_none", name: "None", slug: "none", domain: "none.test" },
+    ]);
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_child", tenantId: "tnt_child", name: "pr-triage-github" });
+    await db.insert(schema.workflowRun).values({
+      id: "run_child", anchorRunId: "run_child", definitionId: "wfd_child", tenantId: "tnt_child", status: "deployed", address: "run_child@child.test",
+      credentialRefs: { credentialIds: ["crd_github"], bindings: [{ handle: "github", credentialId: "crd_github", consumer: "action:facts" }] },
+    });
+    const { router, pushed } = deliveries();
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+
+    expect(await withAppLogin(db, "tnt_child", { kind: "pr" })).toEqual({ kind: "pr", appLogin: "app-1[bot]" });
+    await expect(withAppLogin(db, "tnt_none", { kind: "pr" })).rejects.toThrow("github app credential is missing");
+
+    expect(await renewal.renewAll()).toEqual({ retry: false });
+    expect(pushed()).toEqual([{ address: "run_child@child.test", secrets: ["ghs_1_7_1"] }]);
+  });
+});
