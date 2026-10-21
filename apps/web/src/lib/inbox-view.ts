@@ -200,6 +200,16 @@ export function notPostedText(item: Pick<PrItem, "notPosted" | "source">): strin
   return why === undefined ? null : `Not posted on ${hostName(item.source)}: ${why}`;
 }
 
+/** Repositories with triage on whose latest verdict was not posted because Triage may not post there. */
+export function reposWithoutPostingGrants(items: readonly PrItem[], enabled: ReadonlySet<string>): string[] {
+  const latest = new Map<string, PrItem>();
+  for (const item of items) {
+    const seen = latest.get(item.repo);
+    if (item.verdict !== null && enabled.has(item.repo) && (!seen || waitingSince(item) > waitingSince(seen))) latest.set(item.repo, item);
+  }
+  return [...latest.values()].filter((item) => item.notPosted === "no_grants").map((item) => item.repo);
+}
+
 export function primaryLabel(action: PrimaryAction): string {
   return PRIMARY_LABEL[action];
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
-import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, notPostedText, postedLabel, primaryAction, readyToMerge, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, notPostedText, postedLabel, primaryAction, readyToMerge, reposWithoutPostingGrants, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -184,6 +184,16 @@ describe("postedLabel", () => {
   test("says why the verdict is not on the host and where to turn posting on", () => {
     expect(notPostedText(item({ notPosted: "no_grants", source: "github" }))).toBe("Not posted on GitHub: Triage may not post here. Turn on Comment under Actions Triage takes on its own.");
     expect(notPostedText(item({}))).toBeNull();
+  });
+
+  test("offers posting only where the latest verdict lacked grants and triage is on", () => {
+    const items = [
+      item({ repo: "acme/web", verdict: "pass", waitingSince: "2026-10-01T00:00:00Z", notPosted: "no_grants" }),
+      item({ repo: "acme/web", verdict: "pass", waitingSince: "2026-10-02T00:00:00Z" }),
+      item({ repo: "acme/api", verdict: "pass", waitingSince: "2026-10-01T00:00:00Z", notPosted: "no_grants" }),
+      item({ repo: "acme/off", verdict: "pass", notPosted: "no_grants" }),
+    ];
+    expect(reposWithoutPostingGrants(items, new Set(["acme/web", "acme/api"]))).toEqual(["acme/api"]);
   });
 });
 
