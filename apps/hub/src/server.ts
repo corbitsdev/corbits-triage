@@ -99,6 +99,7 @@ import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { githubUsage } from "./github/github-usage.js";
 import { createTriageReconciler, type ReconcileOutcome } from "./github/triage-reconciler.js";
+import { createRepoActivity } from "./github/repo-activity.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
@@ -140,6 +141,10 @@ const EXPECTED_DEPLOYMENT_SET = {
 const TRIAGE_KNOWN_RUNS = 10_000;
 const TRIAGE_RETRY_MS = 15_000;
 const TRIAGE_RETRY_MAX_MS = 120_000;
+/** A repository is listed again once its listing is this old, and every pass once its webhook (the App's, on GitHub) heard nothing this long. */
+const TRIAGE_RELIST_QUIET_MS = 30 * 60_000;
+/** A listing that started this soon after a repository's webhook is read again, since GitHub's listing can trail it. */
+const TRIAGE_RELIST_GRACE_MS = 60_000;
 /** How often the live logs of tenants with a pr-triage run in flight are read and recorded, and how stale a shared read may be. */
 const TRIAGE_RECORD_MS = 2_000;
 const WORKER_FIRE_TIMEOUT_MS = 120_000;
@@ -532,6 +537,7 @@ const observeTriageRuns = createTriageRuns({
 });
 const tenantVersions = createTenantVersions();
 const reconcilePolicy = triageReconcilePolicy(env);
+const repoActivity = createRepoActivity(now, { quietMs: TRIAGE_RELIST_QUIET_MS, graceMs: TRIAGE_RELIST_GRACE_MS });
 const runRecorder = createRunRecorder({ verdicts: verdictRecordStore, log: logJson });
 
 /**
@@ -599,6 +605,7 @@ function triageStack(triage: TriageWorkflow) {
     },
     rotation: { afterRuns: triageRotateAfterRuns(env), ...rotation },
     openHeadsFor: tenantOpenHeads,
+    activity: repoActivity,
     observeTenant: observer.observe,
     store: triageStateStore,
     readCheckPack,
@@ -765,6 +772,7 @@ const bridge = createBridgeHandler({
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
   refreshPolicyFile,
+  heard: repoActivity.heard,
   startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
@@ -776,6 +784,7 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   readCheckPack,
   recheckOpenPulls,
   refreshPolicyFile,
+  heard: repoActivity.heard,
 }));
 
 function decodeSegments(rest: string): string[] | null {

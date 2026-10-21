@@ -74,6 +74,8 @@ export interface BridgeDeps {
   /** Reads the repository's policy file again; undefined when the repository is not connected. */
   refreshPolicyFile: (tenantId: string, repo: string, source: RepoSource) => Promise<PolicyFileState | undefined>;
   startBacklog: BacklogStart;
+  /** Told of each verified delivery naming a repository, so the reconciler lists that repository's pull requests again. */
+  heard: (tenantId: string, source: RepoSource, repo: string) => void;
 }
 
 /** Mirrors @corbits/webhooks parseWebhookMeta (not exported upstream). */
@@ -481,6 +483,8 @@ export function createBridgeHandler(d: BridgeDeps) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       return json(400, { error: "invalid_json" });
     }
+    const named = asRecord(asRecord(payload)?.["repository"])?.["full_name"];
+    if (typeof named === "string") d.heard(loaded.tenantId, "github", named);
     if (INSTALL_EVENTS.has(event) && isRecord(payload)) {
       return handleInstallEvent(d, log, loaded, delivery, event, payload);
     }

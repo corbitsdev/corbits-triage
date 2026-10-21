@@ -86,6 +86,7 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
       synced.push(repo);
       return { status: "absent" };
     },
+    heard() {},
     ...overrides,
   };
   const app = createProviderHookApp(createProviderHookHandler(deps));

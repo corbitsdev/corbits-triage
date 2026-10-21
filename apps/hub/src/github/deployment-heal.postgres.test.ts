@@ -151,6 +151,7 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
       ...createDeploymentRotation({ db, launchSpecs, allocation, lifecycle: {} as WorkflowLifecycleService, mayDeploy: async () => true }),
     },
     openHeadsFor: async () => async () => [{ ...HEAD, updatedAt: ago(60 * MINUTE).toISOString(), draft: false }],
+    activity: { stale: () => true },
     observeTenant: observer.observe,
     headChecks: async () => [],
     verdicts: { latest: async () => [] },
