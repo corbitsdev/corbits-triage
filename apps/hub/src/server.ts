@@ -59,7 +59,7 @@ import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
-import { createCodeReviewFeed, createPullRequestReader, reviewRequestOf } from "./code-review-feed.js";
+import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
@@ -400,8 +400,10 @@ function workflowIdFor(name: string): string {
 async function sendToWorker(job: TriageJob): Promise<void> {
   coordinator!.enqueue(job);
 }
+/** A paused pull request's job is dropped; the reconciler leaves it alone until its label comes off. */
 async function sendTriageMail(job: TriageJob): Promise<void> {
-  await sendToWorker(await routePrWorkflow({ ...job, workflow: workflowIdFor(job.workflow) }));
+  const routed = await routePrWorkflow({ ...job, workflow: workflowIdFor(job.workflow) });
+  if (routed) await sendToWorker(routed);
 }
 const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
@@ -439,10 +441,6 @@ const codeReviewFeed = createCodeReviewFeed({
   send: sendToWorker,
   log: logJson,
 });
-async function openReviewRequest(tenantId: string, record: RepoRecord, number: number, headSha: string) {
-  const pull = await readPullRequest(tenantId, record, number);
-  return pull.headSha === headSha ? reviewRequestOf(record, number, pull) : undefined;
-}
 const routePrWorkflow = createPrWorkflowRouter({
   credentials: function workspaceCodeReviewKeys(tenantId) {
     return codeReviewKeys(composition.db, tenantId);
@@ -450,7 +448,7 @@ const routePrWorkflow = createPrWorkflowRouter({
   live: async function variantLive(tenantId, workflow) {
     return (await resolveLiveDeployment(composition.db, tenantId, workflow)) !== null;
   },
-  reviewRequest: openReviewRequest,
+  readPull: readPullRequest,
   log: logJson,
 });
 const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };

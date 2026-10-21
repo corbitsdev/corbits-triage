@@ -259,7 +259,8 @@ reviewed like code. It lists `rules`, `actions` and `labels`, and may
 `extends` another repository's policy file or a workspace policy. It may also
 hold the v4 keys `groups`, `code-review`, `security`, `deslop`, `pace`,
 `pauseLabel` and `decide`, which are checked but not acted on yet, except a
-step's `when.author` naming a group; `decide` replaces `actions`, so a file
+step's `when.author` naming a group and, on GitHub, `pauseLabel`, whose label
+on a pull request stops new runs; `decide` replaces `actions`, so a file
 holds one or the other, and a file that uses `extends` holds none of them. Any
 other key is refused, naming the key it was likely meant to be.
 

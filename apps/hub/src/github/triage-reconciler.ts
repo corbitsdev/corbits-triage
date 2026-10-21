@@ -175,14 +175,16 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
 
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name, sourceOf(repo.record));
-    const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
+    const pauseLabel = read.status === "ok" ? read.pauseLabel : undefined;
+    // A paused pull request is left out like a draft, so its rows go and nothing retries it until its label comes off.
+    const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft && !(pauseLabel !== undefined && pr.labels?.includes(pauseLabel)));
     // Without a policy, or with every rule off, triage has nothing to decide: no run starts and nothing is written to the pull request.
     const key = `${pass.tenantId}\n${repo.record.name}`;
     if (read.status === "ok" && hasEnabledRules(read.pack)) {
       skippedRepos.delete(key);
       const stored = await deps.store.load(pass.tenantId, triageStateKey(repo.record));
       const ci = dependsOnCi(read.pack) ? await headsCi(pass.tenantId, repo.record, prs, stored.rows) : new Map<string, CiState>();
-      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, ...(read.policyWorkflow && { policyWorkflow: read.policyWorkflow }), prs, stored, ci };
+      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, ...(read.policyWorkflow && { policyWorkflow: read.policyWorkflow }), ...(read.pauseLabel && { pauseLabel: read.pauseLabel }), prs, stored, ci };
     }
     const skipped = read.status === "ok" ? "triage_skipped_no_rules" : "triage_skipped_no_policy";
     // Once per repository, and again only once a policy or rule came and went, so a repository left unset stays quiet.

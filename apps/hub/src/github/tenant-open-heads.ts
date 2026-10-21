@@ -46,8 +46,8 @@ function once<T>(read: () => Promise<T>): () => Promise<T> {
   };
 }
 
-function openHeadsOf(prs: Array<{ number: number; sha?: string; updatedAt: string; draft: boolean }>): OpenPr[] {
-  return prs.flatMap((pr) => (typeof pr.sha === "string" && pr.sha !== "" ? [{ number: pr.number, headSha: pr.sha, updatedAt: pr.updatedAt, draft: pr.draft }] : []));
+function openHeadsOf(prs: Array<{ number: number; sha?: string; updatedAt: string; draft: boolean; labels?: string[] }>): OpenPr[] {
+  return prs.flatMap((pr) => (typeof pr.sha === "string" && pr.sha !== "" ? [{ number: pr.number, headSha: pr.sha, updatedAt: pr.updatedAt, draft: pr.draft, ...(pr.labels && { labels: pr.labels }) }] : []));
 }
 
 function openHeadOf(pr: { state: string; sha?: string; draft?: boolean }) {

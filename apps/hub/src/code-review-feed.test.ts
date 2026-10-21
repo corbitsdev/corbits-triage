@@ -135,5 +135,5 @@ test("code review reads a GitHub description as GitHub shows it, without hidden 
     });
   }
   const read = createPullRequestReader({ tenantGithub: async () => github, tenantBitbucket: async () => undefined });
-  expect(await read("t", RECORD, 7)).toEqual({ title: "Fix", description: "Fixes it.", headSha: "sha1", draft: false, open: true, diff });
+  expect(await read("t", RECORD, 7)).toEqual({ title: "Fix", description: "Fixes it.", headSha: "sha1", draft: false, open: true, diff, labels: [] });
 });

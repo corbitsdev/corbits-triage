@@ -5,7 +5,8 @@ import type { CiState } from "@corbits/github-reads";
 import { MODEL_NOT_ASKED } from "@corbits/triage-workflows/logic/settled";
 import type { Judged } from "@corbits/triage-workflows/logic/item";
 
-export type OpenPr = { number: number; headSha: string; updatedAt: string; draft: boolean };
+/** `labels` only where the host lists them. */
+export type OpenPr = { number: number; headSha: string; updatedAt: string; draft: boolean; labels?: string[] };
 
 export type ObservedRun = {
   runId: string;

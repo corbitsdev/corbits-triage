@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { asRecord, errorText } from "@corbits/common";
 import { BLOCK_KINDS, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, decideOf, EVERYONE, repoSourceOf, VERDICTS, type BlockKind, type CheckPack, type CodeReviewProvider, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
+import { reviewRequestOf, type PullRequestToReview } from "../code-review-feed.js";
 import type { TriageJob } from "./coordinator.js";
 import type { RepoRecord } from "./tenant-config.js";
 
@@ -58,23 +59,29 @@ export type PrWorkflowRouterDeps = {
   /** The names of the workspace's active code review provider credentials. */
   credentials: (tenantId: string) => Promise<string[]>;
   live: (tenantId: string, workflow: string) => Promise<boolean>;
-  /** The review request for the pull request's open head, or undefined when its head is no longer `headSha`. */
-  reviewRequest: (tenantId: string, record: RepoRecord, number: number, headSha: string) => Promise<object | undefined>;
+  /** The pull request as its host shows it now. */
+  readPull: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
   log: (entry: Record<string, unknown>) => void;
 };
 
 export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
-  /** A review that cannot be read is sent without its request, so the run records it incomplete. */
-  async function reviewOf(job: TriageJob): Promise<object | undefined> {
-    const entry = { tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha };
-    if (!job.record) {
-      deps.log({ level: "warn", msg: "code_review_unread", ...entry, reason: "no_record" });
+  /** Undefined when it cannot be read: the run goes ahead unpaused, and records a review it needed incomplete. */
+  async function pullOf(job: TriageJob, record: RepoRecord): Promise<PullRequestToReview | undefined> {
+    try {
+      return await deps.readPull(job.tenantId, record, job.number);
+    } catch (err) {
+      deps.log({ level: "warn", msg: "pull_request_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error: errorText(err) });
       return undefined;
     }
+  }
+
+  /** The review of the job's head, or undefined when the pull request has moved on or its diff is unusable. */
+  function reviewOf(job: TriageJob, record: RepoRecord, pull: PullRequestToReview): object | undefined {
+    if (pull.headSha !== job.headSha) return undefined;
     try {
-      return await deps.reviewRequest(job.tenantId, job.record, job.number, job.headSha);
+      return reviewRequestOf(record, job.number, pull);
     } catch (err) {
-      deps.log({ level: "warn", msg: "code_review_unread", ...entry, error: errorText(err) });
+      deps.log({ level: "warn", msg: "code_review_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error: errorText(err) });
       return undefined;
     }
   }
@@ -88,17 +95,27 @@ export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
     return variant;
   }
 
-  return async function route(job: TriageJob): Promise<TriageJob> {
+  /** Undefined when the pull request carries the policy's pause label: no run starts. */
+  return async function route(job: TriageJob): Promise<TriageJob | undefined> {
     const request = asRecord(job.payload);
-    const blocks = request?.["blocks"];
-    if (!request || request["kind"] !== "pr" || !Array.isArray(blocks)) return job;
+    if (!request || request["kind"] !== "pr") return job;
+    const blocks = request["blocks"];
+    const pauseLabel = request["pauseLabel"];
+    const reviewed = Array.isArray(blocks) && asRecord(request["codeReview"])?.["on"] === true;
+    if (reviewed && !job.record) deps.log({ level: "warn", msg: "code_review_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, reason: "no_record" });
+    const pull = job.record && (typeof pauseLabel === "string" || reviewed) ? await pullOf(job, job.record) : undefined;
+    if (typeof pauseLabel === "string" && pull?.labels?.includes(pauseLabel)) {
+      deps.log({ level: "info", msg: "pr_paused", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, label: pauseLabel });
+      return undefined;
+    }
+    if (!Array.isArray(blocks)) return job;
     const variant = await variantOf(job, request, blocks);
     if (typeof variant === "string") {
       deps.log({ level: "warn", msg: "pr_workflow_unavailable", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, reason: variant });
       const automatic = Array.isArray(request["automatic"]) ? request["automatic"].filter((kind) => !HELD_WITHOUT_VARIANT.has(kind)) : [];
       return { ...job, payload: { ...request, automatic } };
     }
-    const codeReviewRequest = asRecord(request["codeReview"])?.["on"] === true ? await reviewOf(job) : undefined;
+    const codeReviewRequest = reviewed && job.record && pull ? reviewOf(job, job.record, pull) : undefined;
     return { ...job, workflow: variant.id, payload: { ...request, ...(codeReviewRequest && { codeReviewRequest }) } };
   };
 }
