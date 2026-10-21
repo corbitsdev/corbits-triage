@@ -6,7 +6,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -393,8 +393,11 @@ export async function findArtifactByTitle(transport: Transport, tenantId: string
  * A check pack with the artifact it was read from; `version` is what a save must match. `shared` is the workspace
  * policy the stored policy extends, which `pack` is resolved over.
  */
-/** `automatic` is what Triage may do on its own in the repository; `decide` the kinds the policy file's `decide` names. */
-type PolicyKinds = { automatic?: ActionKind[]; decide?: ActionKind[] };
+/**
+ * `automatic` is what Triage may do on its own in the repository; `decide` the kinds the policy file's `decide` names;
+ * `mergeRisks` what its automatic approve or merge can let in.
+ */
+type PolicyKinds = { automatic?: ActionKind[]; decide?: ActionKind[]; mergeRisks?: MergeRisk[] };
 export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack; shared?: ArtifactRef } & PolicyKinds;
 /** The repository's artifact holds something that is not a check pack; a save replaces it in place. */
 type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
@@ -412,7 +415,7 @@ export async function loadRepoCheckPack(transport: Transport, tenantId: string, 
   if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
   const { repo: stored, shared, file } = read.source;
   const pack = readCheckPack(read.pack, clean);
-  const kinds = { automatic: read.automatic, decide: read.decide };
+  const kinds = { automatic: read.automatic, decide: read.decide, mergeRisks: read.mergeRisks };
   if (file) return { kind: "file", path: file.path, pack, ...kinds, ...(shared && { shared }) };
   if (!stored) throw new Error(`The hub named no policy ${clean} was read from.`);
   return { kind: "pack", ...stored, pack, ...kinds, ...(shared && { shared }) };
