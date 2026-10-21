@@ -6,6 +6,7 @@ import { asRecord, errorText } from "@corbits/common";
 import { BLOCK_KINDS, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, decideOf, EVERYONE, repoSourceOf, VERDICTS, type BlockKind, type CheckPack, type CodeReviewProvider, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
 import { reviewRequestOf, type PullRequestToReview } from "../code-review-feed.js";
 import type { TriageJob } from "./coordinator.js";
+import { GithubRateLimited } from "./github-usage.js";
 import type { RepoRecord } from "./tenant-config.js";
 
 /** `blocks` are those the variant runs; a policy turning any other on runs nowhere yet. */
@@ -70,6 +71,8 @@ export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
     try {
       return await deps.readPull(job.tenantId, record, job.number);
     } catch (err) {
+      // While GitHub refuses reads, a paused pull request would read as unpaused: the mail waits instead.
+      if (err instanceof GithubRateLimited) throw err;
       deps.log({ level: "warn", msg: "pull_request_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error: errorText(err) });
       return undefined;
     }

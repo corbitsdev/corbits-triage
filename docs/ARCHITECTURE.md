@@ -109,9 +109,13 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   - **GitHub calls**: every hub request to GitHub passes one gate. It logs a
     `github_calls` line each minute with the calls by route and installation
     and the last rate limit GitHub reported. Once GitHub rate limits an
-    installation, the gate refuses its requests without calling GitHub until
-    the reset: routes answer 503 `github_rate_limited` with `Retry-After`, and
-    the reconciler's next pass waits for the reset.
+    installation, the gate refuses that installation's requests without
+    calling GitHub until the reset; a request that names no installation is
+    counted but never refused. Routes answer 503 `github_rate_limited` with
+    `Retry-After`. The reconciler logs the limit once and schedules a pass for
+    the reset; earlier passes make no calls to that installation. A webhook
+    whose pull request or CI cannot be read for the limit is not mailed; its
+    head is left for the reconciler.
 - **Sidecars**: one per live deployment, started by the hub's
   `SidecarProvisioner`s. The local-process provisioner runs child processes
   on the hub's machine, restores them on boot and declines a placement while

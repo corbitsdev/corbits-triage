@@ -122,10 +122,17 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   const skippedRepos = new Map<string, string>();
   /** The latest reset among the GitHub rate limits this pass ran into. */
   let limitedUntil: number | undefined;
+  /** The limit last logged, so one limit is logged once rather than per repository per pass. */
+  let loggedLimit: number | undefined;
 
-  function reconcileFailed(entry: Record<string, unknown>, err: unknown): void {
-    if (err instanceof GithubRateLimited) limitedUntil = Math.max(limitedUntil ?? 0, err.resetAt);
+  /** False for a GitHub rate limit, which is noted for the pass's outcome rather than logged and retried. */
+  function reconcileFailed(entry: Record<string, unknown>, err: unknown): boolean {
+    if (err instanceof GithubRateLimited) {
+      limitedUntil = Math.max(limitedUntil ?? 0, err.resetAt);
+      return false;
+    }
     deps.log({ level: "error", msg: "triage_reconcile_failed", ...entry, error: String(err) });
+    return true;
   }
 
   /** The newest verdict on the head, from the live logs or as recorded, since the run that gave it may be on a released deployment. */
@@ -462,8 +469,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         await pollBuilds(pass, repo, plans.get(repo.record.name)!);
         await deliverRepo(pass, repo, plans.get(repo.record.name)!);
       } catch (err) {
-        failed = true;
-        reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err);
+        if (reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err)) failed = true;
       }
     }
     return failed;
@@ -479,6 +485,9 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         reconcileFailed({ tenantId: tenant.id }, err);
       }
     }
-    return limitedUntil === undefined ? { retry } : { retry: true, retryAt: limitedUntil };
+    if (limitedUntil === undefined) return { retry };
+    if (limitedUntil !== loggedLimit) deps.log({ level: "warn", msg: "triage_github_rate_limited", resetAt: new Date(limitedUntil).toISOString() });
+    loggedLimit = limitedUntil;
+    return { retry, retryAt: limitedUntil };
   };
 }

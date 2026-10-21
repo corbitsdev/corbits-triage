@@ -640,9 +640,9 @@ async function recordAll() {
 async function reconcileAll(): Promise<ReconcileOutcome> {
   const outcomes: ReconcileOutcome[] = [];
   for (const stack of stacks) outcomes.push(await stack.reconcile());
-  const soon = outcomes.some((outcome) => outcome.retry && outcome.retryAt === undefined);
+  const retry = outcomes.some((outcome) => outcome.retry);
   const limits = outcomes.flatMap((outcome) => outcome.retryAt ?? []);
-  return soon || limits.length === 0 ? { retry: soon } : { retry: true, retryAt: Math.max(...limits) };
+  return limits.length === 0 ? { retry } : { retry, retryAt: Math.min(...limits) };
 }
 recordLoop = createReconcileLoop(recordAll, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
