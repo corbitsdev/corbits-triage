@@ -127,6 +127,7 @@ describe("facts policy", () => {
       "docs:0": { docs: [], rules: [], ref: "tree" },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
+      "comments:8": { comments: [] },
       "commits:8": { commits: [] },
       "checks:8": { checks: [] },
     };
@@ -135,6 +136,24 @@ describe("facts policy", () => {
     }
     return rules(await readFacts(start, () => answering(content)), ctx, signal);
   }
+
+  test.each(["github", "bitbucket-datacenter"])("a failed %s read degrades the item instead of reading as nothing", async (repoSource) => {
+    const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, repoSource, policy: { enabled: true }, checkPack: emptyPack("acme/widgets") };
+    const results: Record<string, unknown> = {
+      "pr:8": { title: "Fix", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, body: "" },
+      "reviews:8": { reviews: [] },
+      "comments:8": { comments: [] },
+      "commits:8": { commits: [] },
+      "checks:8": { checks: [] },
+      "files:8:0": { files: [] },
+    };
+    for (const failed of ["reviews:8", "checks:8", "comments:8", "commits:8"]) {
+      const read = await readFacts(request, () => async function host(asked) {
+        return { callId: asked.id, content: results[asked.id], isError: asked.id === failed };
+      });
+      expect("items" in read && read.items[0]).toMatchObject({ error: expect.stringContaining(failed.split(":")[0]!) });
+    }
+  });
 
   test("an unreadable file list degrades the item instead of reading as no files", async () => {
     const ruled = await factsThrough({ files: "not a list" });
@@ -191,6 +210,7 @@ describe("judge on a blocked pull request", () => {
       "docs:0": { docs: [], rules: [], ref: "tree" },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
+      "comments:8": { comments: [] },
       "commits:8": { commits: [] },
       "checks:8": { checks: [] },
     };

@@ -90,6 +90,8 @@ interface Host {
   stamp: Stamp;
 }
 
+type ListPart = "reviews" | "comments" | "commits" | "checks";
+
 interface FetchContext {
   policy: ReturnType<typeof repoPolicy>;
   pack: CheckPack;
@@ -97,8 +99,8 @@ interface FetchContext {
   docs: RepoDocs | string;
   templates: string[] | string;
   firstFiles: FilesCursor;
-  /** A scan counts reviews, commits and checks, so one it could not read leaves the pull request unread instead of empty. */
-  wholeReads: boolean;
+  /** A list that could not be read would read as none, hiding a review asking for changes or a failing check, so one the caller uses leaves the pull request unread. */
+  lists: ListPart[];
 }
 
 /** A scan reads paths and sizes, not patches. */
@@ -115,7 +117,7 @@ function fail(reason: string): FactsOutput {
   return { items: [{ error: reason }], batch: false };
 }
 
-async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number[], { policy, pack, events, docs, templates, firstFiles, wholeReads }: FetchContext): Promise<RulesItem[]> {
+async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number[], { policy, pack, events, docs, templates, firstFiles, lists }: FetchContext): Promise<RulesItem[]> {
   function tool(name: string): string {
     return toolName(stamp.repoSource, name);
   }
@@ -181,13 +183,17 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
 
   const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...teamsCalls()]);
 
-  function unreadParts(n: number): string[] {
-    const reads = [r1.get(`reviews:${n}`), r1.get(`commits:${n}`), ...(prs.get(n)?.sha ? [r2.get(`checks:${n}`)] : [])];
-    return reads.flatMap((r, i) => (data(r) === null ? [["reviews", "commits", "checks"][i]!] : []));
+  function unreadParts(n: number): ListPart[] {
+    const sha = prs.get(n)?.sha;
+    return lists.filter(function unread(part) {
+      if (part === "checks" && !sha) return false;
+      const result = (part === "checks" ? r2 : r1).get(`${part}:${n}`);
+      return !Array.isArray(data<Record<string, unknown>>(result)?.[part]);
+    });
   }
 
   function itemFor(n: number): RulesItem {
-    const unread = wholeReads ? unreadParts(n) : [];
+    const unread = prs.get(n) ? unreadParts(n) : [];
     if (unread.length > 0) return { error: `could not read the ${unread.join(", ")} of #${n}` };
     const item = assembleItem(n, {
       pr: prs.get(n) ?? null,
@@ -241,7 +247,7 @@ async function fetchListed(read: Host, repo: string, targets: number[] | undefin
   const triageable = (list?.prs ?? []).filter((p) => p.draft !== true).map((p) => p.number);
   const docs = judged ? await readDocs(read, repo, r.get("docs:0")) : NO_DOCS;
   const templates = templated ? templatesRead(templatesTool, r.get("templates")) : [];
-  const items = await fetchTargets(read, repo, targets ?? triageable, { policy, pack, events, docs, templates, firstFiles: FIRST_FILES_PAGE, wholeReads: false });
+  const items = await fetchTargets(read, repo, targets ?? triageable, { policy, pack, events, docs, templates, firstFiles: FIRST_FILES_PAGE, lists: ["reviews", "comments", "commits", "checks"] });
   return { items, batch };
 }
 
@@ -250,7 +256,7 @@ async function fetchHistory(read: Host, repo: string, limit: number): Promise<Fa
   const closed: ClosedPr[] = [];
   const items: RulesItem[] = [];
   const listTool = toolName(read.stamp.repoSource, "list_closed_prs");
-  const context: FetchContext = { policy: repoPolicy(undefined), pack: emptyPack(repo), events: [], docs: NO_DOCS, templates: [], firstFiles: HISTORY_FILES_PAGE, wholeReads: true };
+  const context: FetchContext = { policy: repoPolicy(undefined), pack: emptyPack(repo), events: [], docs: NO_DOCS, templates: [], firstFiles: HISTORY_FILES_PAGE, lists: ["reviews", "commits", "checks"] };
   for (let page: number | undefined = 1; page !== undefined && closed.length < limit;) {
     const results = await runAll(read.host, [call(listTool, { repo, page })]);
     const listed = data<{ prs: ClosedPr[]; next?: number }>(results.get(listTool));
