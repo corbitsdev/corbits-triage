@@ -773,7 +773,7 @@ describe("pr-triage body", () => {
     const { dos, verdict } = await triage({ ...emptyPack(REPO), actions: HELLO }, { failComments: true });
     const effectId = ((verdict as Verdict).actions[0] as SuggestedDo).effectId;
     expect((verdict as Verdict).actions).toEqual([expect.objectContaining({ list: "pass", effectId })]);
-    expect(dos).toEqual([{ effectId, status: "failed", error: `github POST /repos/${REPO}/issues/8/comments -> 500` }]);
+    expect(dos).toEqual([{ effectId, status: "failed", error: `github POST /repos/${REPO}/issues/8/comments -> 500 Server Error` }]);
   });
 
   test("facts that fail degrade the verdict and suggest no actions", async () => {

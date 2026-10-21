@@ -49,6 +49,11 @@ const READS: Record<string, unknown> = {
   [`/repos/${REPO}/pulls/8/commits`]: [{ sha: HEAD, commit: { message: "fix: the widget" } }],
   [`/repos/${REPO}/pulls/8/files`]: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+fixed" }],
   [`/repos/${REPO}/issues/8/comments`]: [],
+  [`/repos/${REPO}/pulls/9`]: { number: 9, title: "Held by a ruleset", state: "open", user: { login: "octocat" }, head: { sha: HEAD, ref: "held" }, mergeable: true, mergeable_state: "blocked", labels: [], assignees: [] },
+  [`/repos/${REPO}/pulls/9/commits`]: [],
+  [`/repos/${REPO}/pulls/9/files`]: [],
+  [`/repos/${REPO}/pulls/9/reviews`]: [],
+  [`/repos/${REPO}/issues/9/comments`]: [],
   [`/repos/${REPO}/commits/${HEAD}/check-runs`]: { check_runs: [] },
   [`/repos/${REPO}/commits/${HEAD}/status`]: { statuses: [] },
   "/orgs/acme/teams/secret/memberships/octocat": { state: "active" },
@@ -61,6 +66,7 @@ async function github(req: Request): Promise<Response> {
   if (req.method === "GET" && pathname in READS) return Response.json(READS[pathname]);
   if (pathname === `/repos/${REPO}/installation`) return Response.json({ id: 1 });
   if (pathname === "/app") return Response.json({ slug: "triage" });
+  if (req.method === "POST" && pathname === "/graphql") return Response.json({ data: { repository: null } });
   if (req.method === "GET" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
     return Response.json(sentReviews.map((review, index) => ({ id: 100 + index, user: { login: "triage[bot]" }, state: "COMMENTED", commit_id: review.commit_id, body: review.body })));
   }
@@ -185,6 +191,20 @@ test("PostgreSQL: holding read or use on the GitHub credential reads pull reques
   expect(await act.json()).toEqual({ error: { code: "forbidden", message: "You do not have access to the GitHub App credential." } });
   expect(requested.some((line) => line.startsWith("PUT"))).toBe(false);
 }, 60_000);
+
+test("PostgreSQL: pull request details ask GitHub for the review decision only when the merge is blocked", async () => {
+  requested.length = 0;
+  await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=8`), member("usr_member"));
+  expect(requested).not.toContain("POST /graphql");
+  await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=9`), member("usr_member"));
+  expect(requested).toContain("POST /graphql");
+});
+
+test("PostgreSQL: a review decision GitHub does not give leaves it unknown and still serves the details", async () => {
+  const blocked = await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=9`), member("usr_member"));
+  expect(blocked.status).toBe(200);
+  expect(await blocked.json()).toMatchObject({ pr: { number: 9, mergeableState: "blocked", reviewDecision: null } });
+});
 
 test("PostgreSQL: pull request details serve only repositories connected to the workspace", async () => {
   const res = await prDetails(new Request("http://hub.test/pull?repo=acme/other&number=8"), member("usr_member"));

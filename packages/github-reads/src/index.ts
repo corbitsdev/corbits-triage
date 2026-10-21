@@ -18,12 +18,22 @@ export function isTriageComment(body: string): boolean {
   return body.startsWith(TRIAGE_COMMENT_PREFIX);
 }
 
+/** GitHub's reason for a refusal, such as the review a ruleset requires; empty when the body gives none. */
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const body = await res.json() as { message?: unknown };
+    return typeof body.message === "string" ? body.message : "";
+  } catch {
+    return "";
+  }
+}
+
 async function request(gh: GithubFetch, path: string, init?: RequestInit): Promise<Response> {
   const res = await gh(path, {
     ...init,
     headers: { accept: "application/vnd.github+json", ...init?.headers },
   });
-  if (!res.ok) throw new Error(`github ${init?.method ?? "GET"} ${path} -> ${res.status}`);
+  if (!res.ok) throw new Error(`github ${init?.method ?? "GET"} ${path} -> ${res.status} ${await errorMessage(res)}`.trimEnd());
   return res;
 }
 
@@ -350,6 +360,18 @@ export async function getReviews(gh: GithubFetch, repo: string, number: number, 
  * `codeReview` marks a code review sent to the pull request.
  */
 export type Review = { reviewer?: string; state?: string; submittedAt?: string; commitId?: string; triageRequest?: true; codeReview?: true };
+
+export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
+
+const ReviewDecisionReply = type({ data: { repository: { pullRequest: { reviewDecision: "'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null" } } } });
+
+/** Whether the branch's rules still want a review, which only GraphQL says; null when no review is required. */
+export async function readReviewDecision(gh: GithubFetch, repo: string, number: number): Promise<ReviewDecision | null> {
+  const [owner, name] = repo.split("/");
+  const query = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewDecision } } }";
+  const reply = await json(gh, "/graphql", { method: "POST", body: JSON.stringify({ query, variables: { owner, name, number } }), headers: { "content-type": "application/json" } });
+  return ReviewDecisionReply.assert(reply).data.repository.pullRequest.reviewDecision;
+}
 
 /** Reviewers whose latest review still stands on the current head, when the review names its commit. */
 export function reviewedOnHead(reviews: Review[], headSha: string): string[] {

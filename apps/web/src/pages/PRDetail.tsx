@@ -11,7 +11,8 @@ import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
-import { approvedHead, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { approvedHead, canRun, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { heldReason, isHeldBlock } from "../lib/pane-report.ts";
 import { offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
@@ -30,6 +31,7 @@ import {
   checkValueText,
   findPrItem,
   relativeTime,
+  upperFirst,
   verdictText,
 } from "../lib/triage-view.ts";
 
@@ -320,10 +322,9 @@ export default function PRDetail() {
   const selected = useMemo(() => files.find((file) => file.path === filePath) ?? files[0], [files, filePath]);
   const pending = approval?.status.toLowerCase() === "pending";
   const gated = Boolean(item?.needsHuman && pending);
-  const facts = item === undefined ? null : paneFacts(item, pull.data);
-  const mergeable = facts === null ? null : facts.mergeable;
+  const gate = item === undefined ? null : { item, facts: paneFacts(item, pull.data), readOnly, busy };
   const closed = pull.data?.pr.state === "closed";
-  const canMerge = facts !== null && facts.mergeable === true && facts.draft !== true;
+  const canMerge = gate !== null && canRun("merge", gate);
   const [handled, setHandled] = useState<Record<string, "posted" | "dismissed">>({});
   const head = pull.data?.pr.sha ?? item?.sha ?? "";
   const handledKey = `${item?.key}@${head}`;
@@ -476,8 +477,10 @@ export default function PRDetail() {
 
   function mergeBadge(): ReactNode {
     if (closed) return <Badge>{pull.data?.pr.merged ? "Merged" : "Closed"}</Badge>;
-    if (mergeable === null) return null;
-    return <Badge>{mergeable ? "Mergeable" : "Not mergeable"}</Badge>;
+    if (gate === null || gate.facts.mergeable === null || gate.facts.hostBlock === "mergeability-unknown") return null;
+    if (!gate.facts.mergeable) return <Badge>Not mergeable</Badge>;
+    if (isHeldBlock(gate.facts.hostBlock)) return <Badge>{`Merge blocked · ${upperFirst(heldReason(gate.facts.hostBlock, pull.data))}`}</Badge>;
+    return <Badge>Mergeable</Badge>;
   }
 
   function sliverText(what: string, loaded: string): string {
@@ -566,7 +569,7 @@ export default function PRDetail() {
               {!closed && (
                 <>
                   <Button type="button" variant="outline" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</Button>
-                  <Button type="button" variant={canMerge && !gated ? "primary" : "outline"} disabled={!item.number || !canMerge || busy || readOnly} onClick={() => void requestWrite("merge")}>Merge</Button>
+                  <Button type="button" variant={canMerge && !gated ? "primary" : "outline"} disabled={!canMerge} onClick={() => void requestWrite("merge")}>Merge</Button>
                   <Menu>
                     <MenuTrigger asChild><Button type="button" variant="outline" aria-label="More actions">More</Button></MenuTrigger>
                     <MenuContent align="end">

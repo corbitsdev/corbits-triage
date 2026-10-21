@@ -11,15 +11,32 @@ export function titleText(title: string | null): string {
   return title === null ? UNTITLED : title;
 }
 
-type PaneFacts = { title: string | null; author: string | null; draft: boolean | null; mergeable: boolean | null };
+/** Why the host holds a merge free of conflicts. */
+export type HeldBlock = "behind" | "review-required" | "changes-requested" | "blocked";
+
+type HostBlock = "mergeability-unknown" | HeldBlock;
+
+/** `hostBlock` is known only once the host's detail has loaded. */
+type PaneFacts = { title: string | null; author: string | null; draft: boolean | null; mergeable: boolean | null; hostBlock: HostBlock | null };
+
+const GITHUB_BLOCK: Partial<Record<string, HostBlock>> = { unknown: "mergeability-unknown", behind: "behind", blocked: "blocked" };
+
+const REVIEW_BLOCK: Partial<Record<string, HostBlock>> = { REVIEW_REQUIRED: "review-required", CHANGES_REQUESTED: "changes-requested" };
+
+function hostBlock(pr: GithubPullDetail["pr"]): HostBlock | null {
+  if (pr.canMerge === false) return "blocked";
+  const block = pr.mergeableState === undefined ? undefined : GITHUB_BLOCK[pr.mergeableState];
+  if (block === "blocked" && pr.reviewDecision) return REVIEW_BLOCK[pr.reviewDecision] ?? block;
+  return block ?? null;
+}
 
 /** Once GitHub's detail has loaded it replaces the verdict's facts outright, so its null mergeable means GitHub is still computing it. */
 export function paneFacts(item: PrItem, detail: GithubPullDetail | undefined): PaneFacts {
-  if (detail === undefined) return { title: item.title, author: item.author, draft: item.draft, mergeable: item.mergeable };
-  return { title: detail.pr.title, author: detail.pr.author, draft: detail.pr.draft, mergeable: detail.pr.mergeable };
+  if (detail === undefined) return { title: item.title, author: item.author, draft: item.draft, mergeable: item.mergeable, hostBlock: null };
+  return { title: detail.pr.title, author: detail.pr.author, draft: detail.pr.draft, mergeable: detail.pr.mergeable, hostBlock: hostBlock(detail.pr) };
 }
 
-export type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "unchecked-commits" | "mergeability-unknown" | "not-mergeable" | "draft";
+export type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "unchecked-commits" | "not-mergeable" | "draft" | HostBlock;
 
 export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha" | "waitingHeadSha">): boolean {
   const head = item.waitingHeadSha ?? item.headSha;
@@ -45,7 +62,7 @@ function actionBlocker(kind: PaneKind, gate: PaneGate): ActionBlocker | null {
   if (gate.facts.mergeable === null) return "mergeability-unknown";
   if (!gate.facts.mergeable) return "not-mergeable";
   if (gate.facts.draft === true) return "draft";
-  return null;
+  return gate.facts.hostBlock;
 }
 
 type PaneAction<K extends PaneKind = PaneKind> = { kind: K; blocker: ActionBlocker | null };

@@ -367,6 +367,7 @@ export type MergePrInput = {
   sha?: string;
 };
 
+// Merge checks are GitHub's to make: a ruleset's bypass actors may merge what mergeable_state calls blocked.
 export async function mergePr(gh: GithubFetch, input: MergePrInput) {
   const pr = await getPr(gh, input.repo, input.number);
   if (pr.mergeable !== true) throw new Error("pull request is not mergeable");

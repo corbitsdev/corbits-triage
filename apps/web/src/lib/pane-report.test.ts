@@ -195,3 +195,21 @@ describe("passedChecks", () => {
     expect(passedChecks([check({ check: "a" }), check({ check: "b", gate: true }), check({ check: "c", gate: true, result: "fail" })]).map((row) => row.check)).toEqual(["a", "b"]);
   });
 });
+
+describe("a merge the host blocks", () => {
+  const ready = { state: "ready", verdict: "pass", ci: "success" } as const;
+
+  test("a pass free of conflicts that a ruleset holds for a review offers no merge and says why", () => {
+    const live = detail({ mergeable: true, mergeableState: "blocked", reviewDecision: "REVIEW_REQUIRED" });
+    expect(barOf(item(ready), live).primary?.blocker).toBe("review-required");
+    expect(statusOf(ready, { detail: live })).toMatchObject({ tone: "you", text: "Ready, but waiting for a required review" });
+  });
+
+  test("other blocks on GitHub and Bitbucket's merge checks hold the merge too", () => {
+    expect(statusOf(ready, { detail: detail({ mergeableState: "blocked", reviewDecision: null }) }).text).toBe("Ready, but the branch's rules block the merge");
+    expect(statusOf(ready, { detail: detail({ mergeableState: "behind" }) }).text).toBe("Ready, but behind its base branch");
+    expect(statusOf(ready, { detail: detail({ mergeableState: "unknown" }) }).text).toBe("Ready, once GitHub has checked for conflicts");
+    expect(statusOf(ready, { detail: detail({ canMerge: false, mergeVetoes: ["Needs 2 approvals"] }) }).text).toBe("Ready, but the merge checks say: Needs 2 approvals");
+    expect(statusOf(ready, { detail: detail({ mergeableState: "clean" }) }).text).toBe("Ready to merge");
+  });
+});
