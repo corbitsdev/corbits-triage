@@ -1,6 +1,6 @@
-import { bitbucketCalls } from "@corbits/bitbucket-datacenter-tool";
+import { bitbucketCalls } from "@corbits/bitbucket-datacenter-tool/calls";
 import { isRecord } from "@corbits/common";
-import { githubCalls } from "@corbits/github-tool";
+import { githubCalls } from "@corbits/github-tool/calls";
 import type { RepoSource } from "@corbits/triage-contracts";
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";

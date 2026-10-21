@@ -33,7 +33,8 @@ import {
   requestReviewers,
 } from "./github";
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
-import { cachedLoads, checkRepo, checkTarget, linesOf, MAX_LINES } from "@corbits/repo-read-tool";
+import { cachedLoads, checkRepo, checkTarget } from "@corbits/repo-read-tool/host-reads";
+import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
 
 export const CREDENTIAL_HANDLE = "github";
 

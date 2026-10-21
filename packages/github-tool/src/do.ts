@@ -1,6 +1,6 @@
 import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
-import { checkRepo } from "@corbits/repo-read-tool";
+import { checkRepo } from "@corbits/repo-read-tool/host-reads";
 import {
   ciRefusal,
   codeownersForPr,

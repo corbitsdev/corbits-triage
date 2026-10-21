@@ -2,4 +2,4 @@ export { refused, repoRead, REPO_READ_DEFINITIONS, repoReadUnder, rootedAt } fro
 export { checkoutsUnder, sidecarDataDir } from "./checkouts";
 export { unpackArchive } from "./archive";
 export { cachedLoads, checkRepo, checkTarget } from "./host-reads";
-export { linesOf, MAX_LINES } from "./repo-read";
+export { linesOf, MAX_LINES } from "./lines";

@@ -3,7 +3,8 @@ import { isAbsolute, relative, sep } from "node:path";
 import { defineTool } from "@intx/agent";
 import type { ToolDefinition } from "@intx/types/runtime";
 import { checkoutsUnder, sidecarDataDir } from "./checkouts";
-import { grep, list, MAX_ENTRIES, MAX_LINES, MAX_MATCHES, readLines } from "./repo-read";
+import { MAX_LINES } from "./lines";
+import { grep, list, MAX_ENTRIES, MAX_MATCHES, readLines } from "./repo-read";
 
 const str = { type: "string" };
 const path = { type: "string", description: "Path relative to the repository root" };

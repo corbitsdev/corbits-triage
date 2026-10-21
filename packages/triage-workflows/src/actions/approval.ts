@@ -1,7 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { APPROVE_DO_KIND, DoList, isFromTriageSender, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
-import { parseDoInput, type DoInput } from "@corbits/github-tool";
+import { parseDoInput, type DoInput } from "@corbits/github-tool/do";
 import { doEffectId } from "../logic/actions.js";
 import { errorText, isRecord } from "@corbits/common";
 
