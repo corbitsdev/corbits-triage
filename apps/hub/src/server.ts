@@ -66,7 +66,7 @@ import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettin
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
 import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
-import { githubTenants, moveAppKey } from "./github/app-key.js";
+import { appKeyWriteRefusal, githubTenants, moveAppKey } from "./github/app-key.js";
 import { createGithubAppConnection } from "./github/app-connection.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
 import { createProviderHookHandler } from "./provider-hooks/intake.js";
@@ -977,16 +977,14 @@ const refuseUnverified = createVerifiedGate({ isHubOwner, getSession: compositio
 const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
 
 /** A stock credential write: App JSON it leaves in `github` is moved to the hub and taken back from sidecars at once. */
-const CREDENTIAL_WRITE = /^\/api\/tenants\/([^/]+)\/credentials(?:\/[^/]+)?$/;
+const CREDENTIAL_WRITE = /^\/api\/tenants\/([^/]+)\/credentials(?:\/([^/]+))?$/;
 
-async function secureWrittenCredential(encodedTenantId: string): Promise<void> {
-  let tenantId: string;
+function decodedSegment(segment: string): string | undefined {
   try {
-    tenantId = decodeURIComponent(encodedTenantId);
+    return decodeURIComponent(segment);
   } catch {
-    return;
+    return undefined;
   }
-  await githubToken.secure(tenantId);
 }
 
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
@@ -1040,9 +1038,14 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       return stock.fetch(prepared, server);
     }
   }
-  const response = await stock.fetch(req, server);
   const written = req.method === "POST" || req.method === "PATCH" ? CREDENTIAL_WRITE.exec(url.pathname) : null;
-  if (written && response.ok) await secureWrittenCredential(written[1]!);
+  const writtenTenant = written ? decodedSegment(written[1]!) : undefined;
+  if (writtenTenant === undefined) return stock.fetch(req, server);
+  const refused = await appKeyWriteRefusal(composition.db, writtenTenant, written?.[2] === undefined ? undefined : decodedSegment(written[2]), req);
+  if (refused) return refused;
+  const response = await stock.fetch(req, server);
+  // A backstop for App JSON a write still leaves in `github`.
+  if (response.ok) await githubToken.secure(writtenTenant);
   return response;
 }
 

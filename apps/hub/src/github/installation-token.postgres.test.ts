@@ -271,3 +271,23 @@ test("PostgreSQL: App JSON a stock write leaves in the bound credential is taken
     expect(key.ok ? "delivered" : key.reason.code).toBe("no_origin");
   });
 }, 120_000);
+
+test("PostgreSQL: an early retry after one workspace fails renews only that workspace", async () => {
+  const working = app("1", [7]);
+  const unknown = app("9", [7]);
+  await withWorkspace([working], async function retryFailed({ db, cipher, origin, github }) {
+    await db.insert(schema.tenant).values({ id: "tnt_failing", name: "Failing", slug: "failing", domain: "failing.test" });
+    for (const [tenantId, theApp] of [[TENANT, working], ["tnt_failing", unknown]] as const) {
+      const id = `crd_${tenantId}`;
+      await db.insert(schema.credential).values({
+        id, tenantId, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
+        secret: await cipher.encrypt(theApp.json, credentialAad(id, "secret")), status: "active", metadata: { appSlug: "app" },
+      });
+    }
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router: deliveries().router, log: noLog });
+    expect(await renewal.renewAll()).toEqual({ retry: true });
+    expect(github.minted()).toBe(1);
+    expect(await renewal.renewAll()).toEqual({ retry: true });
+    expect(github.minted()).toBe(1);
+  });
+}, 120_000);

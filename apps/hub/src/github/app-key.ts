@@ -93,6 +93,24 @@ export async function moveAppKey({ db, cipher }: AppKeyDeps, tenantId: string): 
   });
 }
 
+const APP_KEY_WRITE_REFUSED = "The GitHub App key is saved through the GitHub App setup, not as the github credential.";
+
+/** A stock credential write (`credentialId` absent for a new one) that would put App JSON where workflows bind it. */
+export async function appKeyWriteRefusal(db: DB["db"], tenantId: string, credentialId: string | undefined, req: Request): Promise<Response | undefined> {
+  let fields: Record<string, unknown> | undefined;
+  try {
+    fields = asRecord(await req.clone().json());
+  } catch {
+    return undefined;
+  }
+  const secret = fields?.["secret"];
+  if (typeof secret !== "string" || !isGithubAppJson(secret)) return undefined;
+  const existing = credentialId === undefined ? undefined : await db.query.credential.findFirst({ where: and(eq(credential.id, credentialId), eq(credential.tenantId, tenantId)) });
+  const name = typeof fields?.["name"] === "string" ? fields["name"] : existing?.name;
+  if (name !== GITHUB_CREDENTIAL) return undefined;
+  return Response.json({ error: { code: "github_app_key_write", message: APP_KEY_WRITE_REFUSED } }, { status: 400 });
+}
+
 /** Every workspace holding a GitHub credential or App key, so each is checked before any sidecar is restored. */
 export async function githubTenants(db: DB["db"]): Promise<string[]> {
   const rows = await db.selectDistinct({ tenantId: credential.tenantId }).from(credential).where(inArray(credential.name, [GITHUB_CREDENTIAL, GITHUB_APP_KEY_CREDENTIAL]));
