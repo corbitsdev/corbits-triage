@@ -105,7 +105,8 @@ function CheckList({ repo, sha, checks, fallback }: { repo: string; sha: string 
   );
 }
 
-function About({ item }: { item: PrItem }) {
+/** `drafted`: the recommended comment is open for editing above, so the overview does not repeat it. */
+function About({ item, drafted }: { item: PrItem; drafted: boolean }) {
   const pull = useGithubPull(item.repo, item.number);
   const pr = pull.data?.pr;
   const facts = paneFacts(item, pull.data);
@@ -161,7 +162,7 @@ function About({ item }: { item: PrItem }) {
         <h1>{title}</h1>
         {hasUncheckedCommits(item) ? <p className="soft">New commits since Triage checked</p> : null}
         <p className="verdict-why">{item.evidence[0] ?? item.nextAction ?? "No evidence recorded."}</p>
-        {item.comment ? <Markdown text={item.comment} /> : null}
+        {item.comment && !drafted ? <Markdown text={item.comment} /> : null}
       </header>
       <section className="brief">
         <h2>Pull request</h2>
@@ -511,7 +512,7 @@ export default function PRDetail() {
     if (tab === "conversation") return <p className="sliver-empty">{sliverText("conversation", `${comments.length} comments`)}</p>;
     return <p className="sliver-empty">Overview of this pull request.</p>;
   }
-  let pane: ReactNode = <About item={item} />;
+  let pane: ReactNode = <About item={item} drafted={showRecommended && !recommendedPosted} />;
   const loadState = loadNotice();
   if (tab === "files") pane = filesPane();
   if (tab === "commits") {

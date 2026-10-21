@@ -12,10 +12,8 @@ export function SuggestedActions({ dos, disabled, onApprove, onSkip }: Suggested
         <div key={group.list} className="suggest">
           <p className="suggest-text">{group.reason}</p>
           <div className="suggest-actions">
-            {group.dos.flatMap((pending) => [
-              <Button key={pending.key} type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onApprove(pending)}>Approve: {pending.label}</Button>,
-              <Button key={`${pending.key}:skip`} type="button" variant="ghost" size="sm" onClick={() => onSkip(pending)}>Hide for me</Button>,
-            ])}
+            {group.dos.map((pending) => <Button key={pending.key} type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onApprove(pending)}>Approve: {pending.label}</Button>)}
+            <Button type="button" variant="ghost" size="sm" onClick={() => group.dos.forEach(onSkip)}>Hide for me</Button>
           </div>
           {group.dos.filter((pending) => pending.error !== null).map((pending) => <p key={pending.key} role="alert" className="error">{pending.label} failed last time: {pending.error}</p>)}
         </div>

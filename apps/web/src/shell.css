@@ -213,6 +213,8 @@
 .inbox .byline { display: flex; align-items: center; font-size: 13px; white-space: nowrap; min-width: 0; }
 .inbox .byline > * { flex: none; }
 .inbox .byline > * + *::before { content: "·"; margin: 0 8px; }
+.inbox .byline > .tag { margin-left: 8px; }
+.inbox .byline > .tag::before { content: none; }
 .inbox .byline .who { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
 .inbox .byline .who .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .inbox .r3 .ph { margin-bottom: 28px; }
@@ -304,6 +306,9 @@
 .inbox .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); }
 .inbox .bar .det { font-weight: 400; }
 .inbox .bar .det::before { content: "· "; }
+.held-menu { max-width: min(360px, calc(100vw - 32px)); }
+.held-menu .held-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+.held-menu .held-why { font-size: 12px; color: var(--ink-mute); }
 .inbox .pane-back { display: none; }
 .inbox .pane:focus { outline: none; }
 
@@ -367,6 +372,7 @@
   .inbox .toast { white-space: normal; }
   .inbox .toast button { margin-left: auto; }
   .inbox .pane .bar { position: fixed; left: 0; right: 0; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 21; }
+  .inbox .bar .bar-primary { flex: 1 0 100%; }
   .inbox .pane-in { padding: 16px 16px 160px; }
   .inbox.has-selection .toasts { bottom: calc(148px + env(safe-area-inset-bottom)); }
 }
