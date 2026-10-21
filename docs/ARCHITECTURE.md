@@ -326,16 +326,17 @@ review's (`codeReviewSteps` in `pr-code-review`) under `codeReview_`, whose
 actions read their steps under the `$prefix` their input carries.
 
 Once triage has decided, `codeReview_scope` reads the trigger request's
-`codeReview` (`on`, `for`, the `triage` verdicts it runs on and optional
+`codeReview` (`on`, `for`, the `triage` verdicts it runs on, optional
 `paths` globs, where `*` stays within one folder and `**/` matches zero or more
-folders) and `codeReviewRequest`, triage's verdict, the changed files and,
-unless `for` holds `everyone`, the author's groups from the pack's `groups` and
-triage's facts. Whatever the scope cannot read leaves the review incomplete. A
-gate runs the review or skips it, and `codeReview` records the
-outcome: `findings`, `clean`, `skipped` with the reason, or `incomplete` when
-the scope or a review step failed, the review cannot be read, the reader
-stopped early, the diff was cut, or a paths rule met unread files. The block's
-`clean` thresholds are not applied yet.
+folders, and the block's optional `clean`) and `codeReviewRequest`, triage's
+verdict, the changed files and, unless `for` holds `everyone`, the author's
+groups from the pack's `groups` and triage's facts. Whatever the scope cannot
+read leaves the review incomplete. A gate runs the review or skips it, and
+`codeReview` records the outcome: `findings` with the worst that counts,
+`clean`, `skipped` with the reason, or `incomplete` when the scope or a review
+step failed, the review cannot be read, the reader stopped early, the diff was
+cut, or a paths rule met unread files. A finding counts unless its severity is
+below `clean.below`.
 
 `decide` is the run's one decision. It reads the trigger request's `decide`
 (the policy file's rules; the parser writes a file's `actions` as one rule per
@@ -344,9 +345,8 @@ triage outcome, and with a block on, approve and merge only under
 `blocks` (the blocks the policy turns on), triage's verdict, the events that
 woke the run, the author's groups
 (`authorGroupsOf` over the pack's `groups`) and code review's outcome, whose
-worst finding's priority reads as a severity (0 critical, 1 high, 2 medium, 3
-low; any other, or none, critical). A review cut short or stopped early is
-`incomplete` whatever it found. Rules run in order and the first that matches
+findings' priorities read as severities (0 critical, 1 high, 2 medium, 3 low;
+any other, or none, critical), as does a worst it cannot read. Rules run in order and the first that matches
 wins; skipped blocks never count, so `{ all: clean }` holds when every block
 that ran is clean. Every block with an outcome counts, whatever
 `blocks` says, and one that is on, or that a rule names, with no outcome reads
@@ -354,7 +354,7 @@ as `incomplete`: this variant runs only code review, so `security` or
 `deslop` on is incomplete here. It flags for a maintainer when nothing
 matches, when the rules are missing or invalid, when a rule names groups and
 the author's cannot be read, and when a matched rule approves or merges after
-an incomplete block. The blocks' `clean` thresholds are not applied yet. Only
+an incomplete block. Only
 `decide` chooses: with any block in `blocks`, the verdict comment names no Do,
 so it never claims an approve or merge `decide` may hold.
 

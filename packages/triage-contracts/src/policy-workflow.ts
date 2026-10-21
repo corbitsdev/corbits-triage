@@ -23,12 +23,14 @@ const Severity = type.enumerated(...SEVERITIES);
 const Duration = type(/^[1-9]\d*[smhd]$/);
 const Count = type("number.integer").atLeast(1);
 
+export const blockCleanSchema = type({ "+": "reject", "below?": Severity });
+
 const BlockSchema = type({
   "+": "reject",
   on: "boolean",
   "for?": GroupNames,
   "when?": { "+": "reject", "triage?": Verdicts, "paths?": Globs },
-  "clean?": { "+": "reject", "below?": Severity, "minConfidence?": "0 <= number <= 1", "coverage?": "'full'" },
+  "clean?": blockCleanSchema,
   "provider?": type.enumerated(...PROVIDERS),
 });
 

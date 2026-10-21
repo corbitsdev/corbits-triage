@@ -38,6 +38,7 @@ export function workflowPart(workflow: PolicyWorkflow | undefined) {
     for: block?.for ?? [EVERYONE],
     triage: triage === undefined ? [...VERDICTS] : [triage].flat(),
     ...(block?.when?.paths && { paths: block.when.paths }),
+    ...(block?.clean && { clean: block.clean }),
     ...(block?.provider && { provider: block.provider }),
   };
   const blocks = BLOCK_KINDS.filter((kind) => workflow[kind]?.on === true);

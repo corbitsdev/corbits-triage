@@ -20,7 +20,7 @@ code-review: { on: true, for: [maintainers], provider: anthropic, when: { triage
 security:
   on: true
   when: { triage: [pass, unsure], paths: ["src/**"] }
-  clean: { below: medium, minConfidence: 0.7, coverage: full }
+  clean: { below: medium }
 deslop: { on: false, provider: openai }
 pace: { debounce: 30s, maxWait: 2m, perHead: 1, cap: { runs: 5, per: 24h }, backoff: { pushes: 5, within: 10m, pause: 30m } }
 pauseLabel: "corbits: pause"
@@ -44,7 +44,7 @@ describe("policy file v4", () => {
     expect(checked.workflow).toEqual({
       groups: { maintainers: { association: ["OWNER", "MEMBER", "COLLABORATOR"] }, core: { teams: ["acme/core"], users: ["octocat"] } },
       "code-review": { on: true, for: ["maintainers"], provider: "anthropic", when: { triage: "pass", paths: ["!**/*.md", "!**/*.lock"] } },
-      security: { on: true, when: { triage: ["pass", "unsure"], paths: ["src/**"] }, clean: { below: "medium", minConfidence: 0.7, coverage: "full" } },
+      security: { on: true, when: { triage: ["pass", "unsure"], paths: ["src/**"] }, clean: { below: "medium" } },
       deslop: { on: false, provider: "openai" },
       pace: { debounce: "30s", maxWait: "2m", perHead: 1, cap: { runs: 5, per: "24h" }, backoff: { pushes: 5, within: "10m", pause: "30m" } },
       pauseLabel: "corbits: pause",
@@ -159,8 +159,8 @@ describe("policy file v4", () => {
     [`${RULES}blocks: {}\n`, "`blocks` is not a key; use extends, onFail, rules, actions, labels, groups, code-review, security, deslop, pace, pauseLabel or decide.", 6],
     [`${RULES}security: { on: true, whn: { triage: pass } }\n`, "`security.whn` is not a key; did you mean `security.when`?", 6],
     [`${RULES}security: { on: true, clean: { below: severe } }\n`, "`security.clean.below` must be low, medium, high or critical.", 6],
-    [`${RULES}security: { on: true, clean: { minConfidence: 2 } }\n`, "`security.clean.minConfidence` must be a number from 0 to 1.", 6],
-    [`${RULES}security: { on: true, clean: { coverage: some } }\n`, "`security.clean.coverage` must be full.", 6],
+    [`${RULES}security: { on: true, clean: { minConfidence: 0.7 } }\n`, "`security.clean.minConfidence` is not available yet; remove it.", 6],
+    [`${RULES}security: { on: true, clean: { coverage: full } }\n`, "`security.clean.coverage` is not available yet; remove it.", 6],
     [`${RULES}security: { on: true, provider: azure }\n`, "`security.provider` must be anthropic, openai, xai, google, opencode or custom.", 6],
     [`${RULES}code-review: { on: true, provider: anthropic }\nsecurity: { on: true, provider: openai }\n`, "`security.provider` is openai but `code-review.provider` is anthropic; blocks that are on must name the same provider.", 7],
     [`${RULES}security: { on: true, for: [maintainer] }\n`, "`security.for` names `maintainer`, which is not a group; did you mean `maintainers`?", 6],

@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { isRecord } from "@corbits/common";
-import { AUTHOR_KINDS, authorGroupsOf, EVERYONE, fileGroupSchema, triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, authorGroupsOf, blockCleanSchema, EVERYONE, fileGroupSchema, SEVERITIES, triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 
 /** The code review block's outcome step; every other step of the block has its id under `CODE_REVIEW_PREFIX`. */
@@ -11,10 +11,11 @@ export const CODE_REVIEW_REVIEW = `${CODE_REVIEW_PREFIX}review`;
 
 /**
  * Code review's part of the PR workflow's trigger, filled from the parsed policy: whether it is on, the groups it is
- * for, the triage verdicts it runs on and, when set, the globs a changed file must match. Nothing here is defaulted: a
- * part that does not parse leaves the review incomplete. The author's groups are the pack's, read from triage's facts.
+ * for, the triage verdicts it runs on and, when set, the globs a changed file must match and the block's `clean`. Nothing
+ * here is defaulted: a part that does not parse leaves the review incomplete. The author's groups are the pack's, read
+ * from triage's facts.
  */
-const CodeReviewTrigger = type({ on: "boolean", for: "string[]", triage: type.enumerated(...VERDICTS).array(), "paths?": "string[]" });
+const CodeReviewTrigger = type({ on: "boolean", for: "string[]", triage: type.enumerated(...VERDICTS).array(), "paths?": "string[]", "clean?": blockCleanSchema });
 
 const Groups = type({ "[string]": fileGroupSchema });
 
@@ -26,8 +27,10 @@ const Review = type({ comments: "object[]", budgetExhausted: "boolean", "cut?": 
 
 export type Steps = Record<string, { output: unknown } | undefined>;
 
+type Clean = typeof blockCleanSchema.infer;
+type Severity = (typeof SEVERITIES)[number];
 type Closed = { open: false; outcome: "skipped" | "incomplete"; reason: string };
-type Scope = { open: true; request: object } | Closed;
+type Scope = { open: true; request: object; clean: Clean } | Closed;
 
 /** A step's output, unless it was pruned: a resumed run hydrates a pruned step's skip sentinel, which a live run never shows. */
 export function settled(steps: Steps, id: string): unknown {
@@ -106,7 +109,7 @@ export function scopeOf(trigger: unknown, steps: Steps): Scope {
     if (changed === undefined) return incomplete("triage could not read the changed files");
     if (!changed.some((path) => inPaths(path, codeReview.paths!))) return skipped(`no changed file matches ${codeReview.paths.join(", ")}`);
   }
-  return { open: true, request: codeReviewRequest };
+  return { open: true, request: codeReviewRequest, clean: codeReview.clean ?? {} };
 }
 
 /** The scope action: its input is every settled step's output beside the trigger as `payload`. */
@@ -116,11 +119,25 @@ export async function codeReviewScope(input: unknown): Promise<Scope> {
   return scopeOf(payload, steps as Steps);
 }
 
-/** Incomplete when the review read less than the whole change or cannot be read, whatever it found; else findings when it commented, or clean. */
-function outcomeOf(review: unknown) {
+/** Code review's priorities, 0 the most severe and 3 the least. */
+const BY_PRIORITY: readonly Severity[] = [...SEVERITIES].reverse();
+
+/** A finding whose priority is not one of code review's, or is missing, is the most severe. */
+function severityOf(comment: object): Severity {
+  const priority = "priority" in comment ? comment.priority : undefined;
+  return (typeof priority === "number" && BY_PRIORITY[priority]) || "critical";
+}
+
+/**
+ * Incomplete when the review read less than the whole change or cannot be read, whatever it found; else findings, with
+ * the worst, when a finding at `below` or worse remains, or clean.
+ */
+function outcomeOf(review: unknown, { below }: Clean) {
   const parsed = Review(review);
-  if (parsed instanceof type.errors || parsed.budgetExhausted || parsed.cut) return "incomplete";
-  return parsed.comments.length > 0 ? "findings" : "clean";
+  if (parsed instanceof type.errors || parsed.budgetExhausted || parsed.cut) return { outcome: "incomplete" };
+  const counted = below === undefined ? parsed.comments : parsed.comments.filter((comment) => SEVERITIES.indexOf(severityOf(comment)) >= SEVERITIES.indexOf(below));
+  if (counted.length === 0) return { outcome: "clean" };
+  return { outcome: "findings", worst: SEVERITIES[Math.max(...counted.map((comment) => SEVERITIES.indexOf(severityOf(comment))))] };
 }
 
 /**
@@ -134,7 +151,7 @@ function outcomeIn(steps: Steps) {
   if (!scope.open) return { outcome: scope.outcome, reason: scope.reason };
   const review = settled(steps, CODE_REVIEW_REVIEW);
   if (review === undefined) return { outcome: "incomplete", reason: "the review did not finish" };
-  return { outcome: outcomeOf(review), review };
+  return { ...outcomeOf(review, scope.clean), review };
 }
 
 /** The block's outcome. */

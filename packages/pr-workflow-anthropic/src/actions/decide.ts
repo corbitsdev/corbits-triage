@@ -13,27 +13,11 @@ export const DECIDE = "decide";
 /** The policy's `decide` rules and the blocks it turns on, which the hub sends beside the pack. */
 const Trigger = policyWorkflowSchema.pick("decide").required().merge({ blocks: type.enumerated(...BLOCK_KINDS).array() }).onUndeclaredKey("ignore");
 
-type Severity = (typeof SEVERITIES)[number];
-
-/** Code review's priorities, 0 the most severe and 3 the least. */
-const BY_PRIORITY: readonly Severity[] = [...SEVERITIES].reverse();
-
-/** A finding whose priority is not one of code review's, or is missing, is the most severe. */
-export function severityOf(comment: unknown): Severity {
-  const priority = isRecord(comment) ? comment.priority : undefined;
-  return (typeof priority === "number" && BY_PRIORITY[priority]) || "critical";
-}
-
-function worstOf(review: unknown): Severity {
-  const comments = isRecord(review) && Array.isArray(review.comments) ? review.comments : [];
-  if (comments.length === 0) return "critical";
-  return SEVERITIES[Math.max(...comments.map((comment) => SEVERITIES.indexOf(severityOf(comment))))]!;
-}
-
+/** A worst finding that cannot be read is the most severe. */
 function codeReviewResult(steps: Steps): BlockResult | undefined {
   const output = settled(steps, CODE_REVIEW);
   if (!isRecord(output)) return undefined;
-  if (output.outcome === "findings") return { outcome: "findings", worst: worstOf(output.review) };
+  if (output.outcome === "findings") return { outcome: "findings", worst: SEVERITIES.find((severity) => severity === output.worst) ?? "critical" };
   if (output.outcome === "clean" || output.outcome === "incomplete" || output.outcome === "skipped") return { outcome: output.outcome };
   return undefined;
 }

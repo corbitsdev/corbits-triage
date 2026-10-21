@@ -56,8 +56,6 @@ const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact
   [[BLOCK, "when", "paths"], "a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches"],
   [[BLOCK, "clean"], MAPPING],
   [[BLOCK, "clean", "below"], SEVERITY_TEXT],
-  [[BLOCK, "clean", "minConfidence"], "a number from 0 to 1"],
-  [[BLOCK, "clean", "coverage"], "full"],
   [[BLOCK, "provider"], words(PROVIDERS)],
   [["pace"], MAPPING],
   [["pace", "debounce"], DURATION_TEXT],
@@ -80,6 +78,12 @@ const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact
   [["decide", INDEX, "if", "author"], GROUPS_TEXT],
   [["decide", INDEX, "if", BLOCK], `${words(BLOCK_OUTCOMES)}, a list of them, or { findings: <severity> } with a severity of ${SEVERITY_TEXT}`],
   [["decide", INDEX, "do"], `one of ${words(quoted(DECIDE_KINDS))}, or a list of them`, "exact"],
+];
+
+/** Keys the policy will take once something acts on them. */
+const NOT_YET: readonly Pattern[] = [
+  [BLOCK, "clean", "minConfidence"],
+  [BLOCK, "clean", "coverage"],
 ];
 
 function segmentMatches(segment: Segment, key: PropertyKey): boolean {
@@ -205,6 +209,7 @@ function errorProblems({ path, code, problem, message }: SchemaError, file: unkn
   const step = stepOf(path, file);
   if (step) return stepProblems(step, path.slice(step.root.length), code, problem, message);
   if (problem === "must be removed") {
+    if (NOT_YET.some((pattern) => matches(pattern, path))) return [{ message: `\`${pathText(path)}\` is not available yet; remove it.`, path }];
     const allowed = keysAt(path.slice(0, -1));
     if (allowed.length > 0) return [unknownKey(path, allowed)];
   }
