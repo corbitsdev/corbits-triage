@@ -68,7 +68,7 @@ Unless you are the first person to use this Corbits Triage, you then see **Verif
 
 ![Verify your email on a server that cannot send email: Ask whoever runs this Triage to verify your address, with a Sign out button](images/46.png)
 
-Creating an account also creates a **workspace**, the shared space your whole team will use. Invite teammates from Settings to join yours. If someone has already invited you, open the link in the invitation email instead of creating an account from scratch. Someone who signs in without an invitation gets a workspace of their own; inviting them later adds yours, and they switch between the two from the workspace switcher at the bottom left of the sidebar, just above your name. Its first entry, **+ New workspace**, creates another empty workspace of your own.
+Creating an account also creates a **workspace**, the shared space your whole team will use. Invite teammates from Settings to join yours. If someone has already invited you, open the invite link they sent instead of creating an account from scratch. Someone who signs in without an invitation gets a workspace of their own; inviting them later adds yours, and they switch between the two from the workspace switcher at the bottom left of the sidebar, just above your name. Its last entry, **New workspace**, creates another empty workspace of your own.
 
 ### First-time setup
 
@@ -490,9 +490,9 @@ The row says **Key stored** or **No key**. With no key, its form is open below i
 
 Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine**, **Docker on another machine (TLS)** **E2B sandboxes** and **Railway Sandboxes**, each with a line on why you would choose it. Code review never runs inside Triage itself. It runs in the first place in the list, in the order shown, that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
 
-Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins also see why it is failing. Under a place that is not set up or failing are the lines to add to the Triage server's `.env`, with **Copy**, and its **Setup guide**. Add them, restart the server, and the place turns **Ready** or **In use**. For **Docker on another machine (TLS)**, the lines carry the certificates themselves, each as one line of base64, so nothing is copied onto the server's disk; its setup guide shows how to make them.
+Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins also see why it is failing. Under a failing place are the lines to add to the Triage server's `.env`, with **Copy**, and its **Setup guide**; under a place that is not set up, press **How to set it up** to show them. Add them, restart the server, and the place turns **Ready** or **In use**. For **Docker on another machine (TLS)**, the lines carry the certificates themselves, each as one line of base64, so nothing is copied onto the server's disk; its setup guide shows how to make them.
 
-![Where it runs on a server with no place set up: Docker on this machine and Docker on another machine (TLS), both Not set up, each with its setup lines and Setup guide](images/44.png)
+![Where it runs on a server with no place set up: Docker on this machine and Docker on another machine (TLS), both Not set up, each with How to set it up](images/44.png)
 
 ### People
 

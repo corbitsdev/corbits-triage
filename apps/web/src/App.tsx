@@ -7,13 +7,13 @@ import { INVITE_PATH, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { HeldInboxProvider, useSignOutAfterSending } from "./lib/held-inbox.tsx";
 import { SessionProvider, useSession } from "./lib/session.tsx";
 import { UserQueryCache } from "./lib/user-cache.tsx";
-import { DeniedNotice } from "./lib/denied.tsx";
 import type { PortalSnapshot, WorkspaceOption } from "./lib/hub-api.ts";
 import Layout from "./components/Layout.tsx";
 import LoadingIndicator from "./components/LoadingIndicator.tsx";
 import NewerPortalNotice from "./components/NewerPortalNotice.tsx";
 import Connect from "./pages/Connect.tsx";
 import { OtherWorkspaces } from "./components/OtherWorkspaces.tsx";
+import { SignInShell } from "./components/SignInShell.tsx";
 import { useGithubSync } from "./lib/github-sync.ts";
 import { AcceptInvite } from "./pages/AcceptInvite.tsx";
 import { Device, DEVICE_PATH } from "./pages/Device.tsx";
@@ -34,26 +34,24 @@ function InboxRedirect() {
 
 function NotConfigured() {
   return (
-    <div className="gate">
-      <section className="onboarding centered-setup">
+    <SignInShell>
+      <div className="signin-head">
         <h1>Service URL not configured</h1>
-        <p className="muted">Set VITE_HUB_URL to the Interchange hub URL, then reload this page.</p>
-      </section>
-    </div>
+        <p>Set VITE_HUB_URL to the Interchange hub URL, then reload this page.</p>
+      </div>
+    </SignInShell>
   );
 }
 
 function HubOutage({ message }: { message: string }) {
   return (
-    <div className="gate">
-      <section className="onboarding centered-setup">
+    <SignInShell>
+      <div className="signin-head">
         <h1>Service unavailable</h1>
-        <p role="alert" className="error">
-          {message}
-        </p>
-        <p className="muted">Check the service, then reload this page.</p>
-      </section>
-    </div>
+        <p>Check the service, then reload this page.</p>
+      </div>
+      <p role="alert" className="field-error">{message}</p>
+    </SignInShell>
   );
 }
 
@@ -68,11 +66,12 @@ function GithubReturn() {
 
   if (sync.denied) {
     return (
-      <div className="gate">
-        <section className="onboarding centered-setup">
-          <p className="muted">Ask an owner or admin to finish connecting GitHub.</p>
-        </section>
-      </div>
+      <SignInShell>
+        <div className="signin-head">
+          <h1>Only an owner or admin can finish this</h1>
+          <p>Your role cannot connect GitHub to this workspace. Ask an owner or admin to finish connecting it.</p>
+        </div>
+      </SignInShell>
     );
   }
   if (sync.error) return <HubOutage message={`Could not read your repositories from GitHub. ${sync.error.message}`} />;
@@ -92,40 +91,35 @@ function LoadingGate() {
 }
 
 function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
+  const signOut = useSignOutAfterSending();
   const sections: string[] = [];
   if (snapshot.denied.repos) sections.push("repositories");
   if (snapshot.denied.credentials) sections.push("credentials");
   if (snapshot.denied.models) sections.push("models");
   return (
-    <div className="gate">
-      <section className="onboarding centered-setup" aria-label="Access denied">
+    <SignInShell>
+      <div className="signin-head">
         <h1>Access denied</h1>
-        <p className="muted">
-          You do not have access to {sections.join(" and ")}. Ask an administrator for access.
-        </p>
-        {sections.map((section) => (
-          <DeniedNotice key={section} section={section} />
-        ))}
-        <OtherWorkspaces />
-      </section>
-    </div>
+        <p>You do not have access to {sections.join(" and ")}. Ask an administrator for access.</p>
+      </div>
+      <OtherWorkspaces />
+      <Button type="button" variant="outline" size="lg" onClick={() => void signOut()}>Sign out</Button>
+    </SignInShell>
   );
 }
 
 function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
   const signOut = useSignOutAfterSending();
   return (
-    <div className="gate">
-      <section className="onboarding centered-setup" aria-label="Invitation pending">
+    <SignInShell>
+      <div className="signin-head">
         <h1>Invitation pending</h1>
         {invitations.map((invitation) => (
-          <p key={invitation.tenantId} className="muted">
-            {invitation.name} has invited you. Open the link in your invitation email to join, or ask for a new one.
-          </p>
+          <p key={invitation.tenantId}><b>{invitation.name}</b> invited you. Open the invite link you were sent to join, or ask for a new one.</p>
         ))}
-        <Button type="button" variant="outline" onClick={() => void signOut()}>Sign out</Button>
-      </section>
-    </div>
+      </div>
+      <Button type="button" variant="outline" size="lg" onClick={() => void signOut()}>Sign out</Button>
+    </SignInShell>
   );
 }
 

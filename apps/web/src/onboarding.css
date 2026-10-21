@@ -217,6 +217,10 @@ body:has(.setup-flow),
 @media (max-width: 720px) {
   .setup-flow { padding: 20px 16px 40px; }
   .setup { padding-top: 24px; }
+  /* On a phone only the step's title sits beside its number; the step's content takes the full width under both. */
   .setup-step { gap: 12px; padding: 16px; }
+  .setup-step-body { display: contents; }
+  .setup-step-body > :not(:first-child) { grid-column: 1 / -1; }
+  .setup-flow .setup-help { padding: 12px; }
   .setup-flow .setup-help .connection-fields { grid-template-columns: minmax(0, 1fr); }
 }
