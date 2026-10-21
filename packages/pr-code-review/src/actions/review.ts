@@ -45,6 +45,8 @@ interface Reported extends Finding {
 }
 
 interface Steps {
+  /** The review's step ids sit under it in a definition that holds other steps too. */
+  $prefix?: string;
   reviewInput?: { output: ReviewInput };
   plan?: { output: unknown };
   findDiff?: { output: unknown };
@@ -115,8 +117,10 @@ function jsonReply<T>(output: unknown): T {
   }
 }
 
-function stepOutput<K extends keyof Steps>(steps: Steps, id: K): NonNullable<Steps[K]>["output"] {
-  const step = steps[id];
+type StepId = Exclude<keyof Steps, "$prefix">;
+
+function stepOutput<K extends StepId>(steps: Steps, id: K): NonNullable<Steps[K]>["output"] {
+  const step = (steps as Record<string, Steps[K]>)[`${steps.$prefix ?? ""}${id}`];
   if (!step) throw new Error(`missing step output ${id}`);
   return step.output as NonNullable<Steps[K]>["output"];
 }

@@ -163,7 +163,10 @@ function withResults(verdict: Record<string, unknown> | undefined, results: Read
   if (!verdict || !Array.isArray(actions) || results.size === 0) return verdict;
   function withResult(action: unknown): unknown {
     const result = results.get(String(asRecord(action)?.["effectId"]));
-    return result ? { ...asRecord(action), status: result.status, ...(result.error !== undefined && { error: result.error }) } : action;
+    if (!result) return action;
+    // The PR workflow holds an approve or merge its code review did not clear; it waits as one evaluate held.
+    if (result.status === "held") return { ...asRecord(action), held: true, ...(result.error !== undefined && { reason: result.error }) };
+    return { ...asRecord(action), status: result.status, ...(result.error !== undefined && { error: result.error }) };
   }
   return { ...verdict, actions: actions.map(withResult) };
 }

@@ -10,7 +10,7 @@ import { evaluate, type Case, type CheckFn } from "@corbits/evals";
 import { readPrTemplates, type GithubFetch } from "@corbits/github-reads";
 import { emptyPack, type CheckPack } from "../../triage-contracts/src/index.js";
 import type { Snapshot } from "./cases.js";
-import { runDefinition, type Endpoint } from "./run-definition.js";
+import { PR_TRIAGE, runDefinition, type Endpoint } from "./run-definition.js";
 import { fixtureGithub, triggerMail } from "./serve.js";
 
 // No rule asks the model, so nothing reaches this endpoint.
@@ -107,7 +107,7 @@ function pack(repo: string): CheckPack {
 
 async function triage(input: Input): Promise<Outcome> {
   const pr = snapshot(input);
-  const { verdict } = await runDefinition({ fetch: fixtureGithub(pr, templatesOf(input)), apiKey: "none", endpoint: NO_MODEL, triggerPayload: triggerMail(pr, pack(pr.repo)) });
+  const { verdict } = await runDefinition({ definition: PR_TRIAGE, fetch: fixtureGithub(pr, templatesOf(input)), apiKey: "none", endpoint: NO_MODEL, triggerPayload: triggerMail(pr, pack(pr.repo)) });
   const row = verdict.checks.find((check) => check.check === "hidden-content");
   return { result: row?.result ?? "missing", evidence: row?.evidence ?? [] };
 }

@@ -14,7 +14,18 @@ export interface Endpoint {
   model: string;
 }
 
+/** A deployed definition and what its package supplies to run it. */
+export interface Definition {
+  workflow: RunLocalInput["workflow"];
+  directors: NonNullable<RunLocalInput["directors"]>;
+  actions: RunLocalInput["actions"];
+  credentialBindings: RunLocalInput["credentialBindings"];
+}
+
+export const PR_TRIAGE: Definition = { workflow, directors: [triageJudgeDirector.factory], actions, credentialBindings };
+
 interface RunDefinitionInput {
+  definition: Definition;
   /** GitHub's reads; writes are recorded and answered here, never passed on. */
   fetch: (url: URL) => Promise<Response>;
   apiKey: string;
@@ -41,7 +52,7 @@ const loggedAuthorize: WorkflowAuthorizeFn = async function loggedAuthorize(reso
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
 };
 
-function recordingGithub(read: RunDefinitionInput["fetch"], writes: Write[]) {
+export function recordingGithub(read: RunDefinitionInput["fetch"], writes: Write[]) {
   return async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const url = new URL(input instanceof Request ? input.url : input);
     const method = init?.method ?? "GET";
@@ -52,17 +63,14 @@ function recordingGithub(read: RunDefinitionInput["fetch"], writes: Write[]) {
 }
 
 /**
- * Runs the deployed pr-triage body locally: GitHub is `fetch`, and the judge calls `endpoint`. Returns what evaluate
+ * Runs the deployed definition's body locally: GitHub is `fetch`, and the judge calls `endpoint`. Returns what evaluate
  * decided and every GitHub write the execute and mirror steps made.
  */
-export async function runDefinition({ fetch, apiKey, endpoint, triggerPayload, onEvent, onStepDone }: RunDefinitionInput) {
+export async function runDefinition({ definition, fetch, apiKey, endpoint, triggerPayload, onEvent, onStepDone }: RunDefinitionInput) {
   const writes: Write[] = [];
   const origin = new URL(endpoint.url).origin;
   const run = await runLocalWorkflow({
-    workflow,
-    directors: [triageJudgeDirector.factory],
-    actions,
-    credentialBindings,
+    ...definition,
     authorize: loggedAuthorize,
     github: recordingGithub(fetch, writes),
     inference: { credentialId: INFERENCE_CREDENTIAL, origin, apiKey },
@@ -72,6 +80,6 @@ export async function runDefinition({ fetch, apiKey, endpoint, triggerPayload, o
     ...(onStepDone && { onStepDone }),
   });
   const verdict = (run.outputs["evaluate"] ?? run.outputs["evaluateRules"]) as Verdict | undefined;
-  if (!verdict) throw new Error(`pr-triage ended ${run.terminalStatus} before evaluate`);
+  if (!verdict) throw new Error(`${definition.workflow.id} ended ${run.terminalStatus} before evaluate`);
   return { terminalStatus: run.terminalStatus, verdict, writes };
 }

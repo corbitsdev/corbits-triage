@@ -1,5 +1,5 @@
 import { mailPayload } from "../../../apps/hub/src/github/bridge.js";
-import { DEFAULT_REPO_POLICY, TRIAGE_MAIL_SENDER, type CheckPack } from "../../triage-contracts/src/index.js";
+import { DEFAULT_REPO_POLICY, TRIAGE_MAIL_SENDER, type ActionKind, type CheckPack } from "../../triage-contracts/src/index.js";
 import { PR_TRIAGE_ADDRESS } from "../src/pr-triage.js";
 import type { Snapshot } from "./cases.js";
 
@@ -51,9 +51,9 @@ export function fixtureGithub(pr: Snapshot, templates: Readonly<Record<string, r
   };
 }
 
-/** The mail the hub's bridge sends when a pull request opens, as stock hands it to the run. */
-export function triggerMail(pr: Snapshot, pack: CheckPack) {
-  const request = mailPayload({ name: pr.repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic: [], source: { repo: { id: "eval", version: 1 } } }, { prNumber: pr.number, headSha: "eval", events: ["opened"] });
+/** The mail the hub's bridge sends when a pull request opens, as stock hands it to the run, with `extra` beside its request's own fields and `automatic` the kinds triage may run unattended. */
+export function triggerMail(pr: Pick<Snapshot, "repo" | "number">, pack: CheckPack, extra: Record<string, unknown> = {}, automatic: ActionKind[] = []) {
+  const request = mailPayload({ name: pr.repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic, source: { repo: { id: "eval", version: 1 } } }, { ...extra, prNumber: pr.number, headSha: "eval", events: ["opened"] });
   return {
     headers: { from: `${TRIAGE_MAIL_SENDER}@${DOMAIN}`, to: [`${PR_TRIAGE_ADDRESS}@${DOMAIN}`] },
     rawHeaders: {},

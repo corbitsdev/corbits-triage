@@ -241,6 +241,19 @@
         "arktype": "catalog:",
       },
     },
+    "packages/pr-workflow-anthropic": {
+      "name": "@corbits/pr-workflow-anthropic",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/common": "workspace:*",
+        "@corbits/pr-code-review": "workspace:*",
+        "@corbits/pr-code-review-anthropic": "workspace:*",
+        "@corbits/triage-contracts": "workspace:*",
+        "@corbits/triage-workflows": "workspace:*",
+        "@intx/workflow": "workspace:*",
+        "arktype": "catalog:",
+      },
+    },
     "packages/provisioner-docker": {
       "name": "@corbits/provisioner-docker",
       "version": "0.1.0",
@@ -898,6 +911,8 @@
     "@corbits/pr-code-review": ["@corbits/pr-code-review@workspace:packages/pr-code-review"],
 
     "@corbits/pr-code-review-anthropic": ["@corbits/pr-code-review-anthropic@workspace:packages/pr-code-review-anthropic"],
+
+    "@corbits/pr-workflow-anthropic": ["@corbits/pr-workflow-anthropic@workspace:packages/pr-workflow-anthropic"],
 
     "@corbits/provisioner-docker": ["@corbits/provisioner-docker@workspace:packages/provisioner-docker"],
 
