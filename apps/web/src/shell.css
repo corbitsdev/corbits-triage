@@ -103,7 +103,7 @@
 .settings .place-steps { padding: 0 0 10px; font-size: 13px; }
 .settings .place-steps > summary { cursor: pointer; width: fit-content; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .settings .place-steps[open] > summary { margin-bottom: 4px; }
-.settings .sec td:last-child { white-space: nowrap; text-align: right; }
+.settings .sec td:last-child { text-align: right; }
 .settings .sec [data-slot="badge"] { white-space: nowrap; }
 .settings .sentence span.mono { white-space: nowrap; }
 .settings .place { border-bottom: 1px solid var(--rule); }
