@@ -20,6 +20,7 @@ function WorkspaceSwitcher() {
   const openWorkspace = useOpenWorkspaceAfterSending();
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
+  const [opening, setOpening] = useState(false);
   const create = useMutation({ mutationFn: (workspaceName: string) => createExtraWorkspace(createHubTransport(), workspaceName) });
   if (!snapshot) return null;
   const current = snapshot.workspace.tenantId;
@@ -43,9 +44,11 @@ function WorkspaceSwitcher() {
       warn(`Could not create the workspace. ${cause instanceof Error ? cause.message : String(cause)}`);
       return;
     }
+    setOpening(true);
     try {
       await openWorkspace(tenantId);
     } catch (cause) {
+      setOpening(false);
       warn(`The workspace was created but could not be opened. ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }
@@ -74,7 +77,7 @@ function WorkspaceSwitcher() {
         {naming ? (
           <form className="ws-new" onSubmit={(event) => void submit(event)} onKeyDown={(event) => event.stopPropagation()}>
             <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Workspace name" aria-label="Workspace name" autoFocus required />
-            <Button type="submit" disabled={create.isPending || !name.trim()}>Create</Button>
+            <Button type="submit" disabled={create.isPending || opening || !name.trim()}>Create</Button>
           </form>
         ) : (
           <MenuItem onSelect={startNaming}><Plus size={16} strokeWidth={1.7} aria-hidden="true" />New workspace</MenuItem>

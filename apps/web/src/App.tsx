@@ -68,8 +68,8 @@ function GithubReturn() {
     return (
       <SignInShell>
         <div className="signin-head">
-          <h1>GitHub is not connected yet</h1>
-          <p>Ask an owner or admin to finish connecting GitHub.</p>
+          <h1>Only an owner or admin can finish this</h1>
+          <p>Your role cannot connect GitHub to this workspace. Ask an owner or admin to finish connecting it.</p>
         </div>
       </SignInShell>
     );
@@ -91,6 +91,7 @@ function LoadingGate() {
 }
 
 function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
+  const signOut = useSignOutAfterSending();
   const sections: string[] = [];
   if (snapshot.denied.repos) sections.push("repositories");
   if (snapshot.denied.credentials) sections.push("credentials");
@@ -102,6 +103,7 @@ function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
         <p>You do not have access to {sections.join(" and ")}. Ask an administrator for access.</p>
       </div>
       <OtherWorkspaces />
+      <Button type="button" variant="outline" size="lg" onClick={() => void signOut()}>Sign out</Button>
     </SignInShell>
   );
 }

@@ -358,7 +358,8 @@
   .repos .lh-top { flex-wrap: wrap; }
   /* The page draws its own 16px gutter, so the stage card runs edge to edge under a top hairline. */
   .shell > .stage { margin: 12px 0 0; border-width: 1px 0 0; border-radius: 0; }
-  .ws-menu [role="menuitem"] { min-height: 44px; }
+  .ws-menu [role="menuitem"], .ws-new :is(input, [data-slot="button"]) { min-height: 44px; }
+  .settings .place-steps > summary { padding: 13px 0; }
   .inbox :is(.search, .tbtn) { height: 44px; }
   .inbox .seg button { min-height: 36px; padding: 0 12px; }
   /* A phone row stacks the title over its number, status and age, so the title is never cut to a few characters. */
