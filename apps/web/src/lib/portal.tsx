@@ -480,7 +480,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       notify("Anthropic key saved.");
       // A new key can mean new offerings, which a deployment resolves only when deployed.
       const fresh = await refreshNow();
-      if (!fresh) return;
+      // Every converge deploys triage, which needs the decision model.
+      if (!fresh?.decisionModel) return;
       const freshHosts = hostsOf(fresh);
       if (freshHosts.codeReview.length > 0 || (freshHosts.prWorkflow ?? []).length > 0) convergeWorkflows(fresh.workspace.tenantId, freshHosts, REDEPLOY_CODE_REVIEW);
     },

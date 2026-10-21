@@ -27,9 +27,9 @@ type Status = { sources: RepoSource[]; undeployed: RepoSource[]; model: boolean;
 
 function statusText({ sources, undeployed, model, triaging, total }: Status): string {
   if (sources.length === 0) return "Triage is not running: no source is connected.";
+  if (!model) return "Triage needs a decision model before it can run. Add one below.";
   if (undeployed.length === sources.length) return "Triage is not running: its workflow is not deployed.";
   if (undeployed.length > 0) return `Triage is not running on ${undeployed.map((source) => SOURCE_NAME[source]).join(" or ")}: its workflow is not deployed.`;
-  if (!model) return "Triage is not running: no decision model is connected.";
   if (total === 0) return "Triage is running, but no repository is connected yet.";
   return `Triage is running on ${triaging} of ${counted(total, "repository", "repositories")}.`;
 }

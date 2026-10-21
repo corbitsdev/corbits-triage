@@ -1,8 +1,11 @@
 import { useId, useState, type FormEvent } from "react";
 import { Button, Input } from "@corbits/react-ui";
+import { useMutation } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "@corbits/triage-contracts";
 import { usePortal } from "../lib/portal.tsx";
+
+export const DECISION_MODEL_SAVE = ["save-key", "decision-model"];
 
 type Draft = { custom: boolean; endpoint: string; model: string; apiKey: string };
 
@@ -18,47 +21,36 @@ function keyHelp(stored: boolean): string {
   return "Stored in the hub's credential vault. You won't see it again.";
 }
 
-export function DecisionModelForm({ onSaved }: { onSaved?: () => void }) {
+type DecisionModelFormProps = { onSaved?: () => void; onCancel?: () => void; submitLabel?: string };
+
+export function DecisionModelForm({ onSaved, onCancel, submitLabel = "Save decision model" }: DecisionModelFormProps) {
   const { snapshot, saveInferenceSecret, readOnly } = usePortal();
   const saved = snapshot?.decisionModel;
   const [preset, setPreset] = useState<DecisionModelPreset>(presetFor(saved));
   const [endpoint, setEndpoint] = useState(saved?.endpoint ?? "");
   const [model, setModel] = useState(saved?.model ?? "");
   const [apiKey, setApiKey] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const save = useMutation({
+    mutationKey: DECISION_MODEL_SAVE,
+    mutationFn: saveInferenceSecret,
+    onSuccess: function clearKey() {
+      setApiKey("");
+    },
+  });
   const custom = preset.id === "custom";
-  const disabled = readOnly || saving;
+  const disabled = readOnly || save.isPending;
   const stored = saved !== undefined;
   const blocker = saveBlocker({ custom, endpoint, model, apiKey });
   const blockerId = useId();
 
   function choose(next: DecisionModelPreset) {
     setPreset(next);
-    setError("");
-  }
-
-  async function save() {
-    setSaving(true);
-    setError("");
-    try {
-      await saveInferenceSecret({
-        endpoint: custom ? endpoint : preset.endpoint,
-        model: custom ? model : preset.model,
-        secret: apiKey,
-      });
-      setApiKey("");
-      onSaved?.();
-    } catch (cause) {
-      setError(`Could not save the decision model. ${errorText(cause)}`);
-    } finally {
-      setSaving(false);
-    }
+    save.reset();
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void save();
+    save.mutate({ endpoint: custom ? endpoint : preset.endpoint, model: custom ? model : preset.model, secret: apiKey }, { onSuccess: onSaved });
   }
 
   function renderPreset(option: DecisionModelPreset) {
@@ -72,9 +64,10 @@ export function DecisionModelForm({ onSaved }: { onSaved?: () => void }) {
       <label>Model<Input value={model} onChange={(event) => setModel(event.target.value)} disabled={disabled} autoComplete="off" /></label>
     </>}
     <label>{preset.keyLabel}<Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} disabled={disabled} autoComplete="off" /><small>{keyHelp(stored)}</small></label>
-    {error && <p role="alert" className="error">{error}</p>}
+    {save.error && <p role="alert" className="error">Could not save the decision model. {errorText(save.error)}</p>}
     <div className="task-actions">
-      <Button type="submit" aria-describedby={blockerId} disabled={disabled || blocker !== null}>{saving ? "Saving…" : "Save decision model"}</Button>
+      <Button type="submit" aria-describedby={blockerId} disabled={disabled || blocker !== null}>{save.isPending ? "Saving…" : submitLabel}</Button>
+      {onCancel && <Button type="button" variant="ghost" disabled={save.isPending} onClick={onCancel}>Cancel</Button>}
       <small id={blockerId} className="muted" aria-live="polite">{blocker}</small>
     </div>
   </form>;

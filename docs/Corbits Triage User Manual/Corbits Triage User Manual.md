@@ -70,7 +70,7 @@ Creating an account also creates a **workspace**, the shared space your whole te
 
 ### First-time setup
 
-The first time you sign in to a new workspace, the portal walks you through three steps. Until all three are done, Triage does not look at any pull requests.
+The first time you sign in to a new workspace, the portal walks you through three steps. The third, the decision model, can wait: press **Skip for now** and add it later.
 
 ![The setup screen listing three steps: Connect a source, Repositories and Decision model. The first step offers Create GitHub App, Connect an existing GitHub App instead and Use Bitbucket Data Center instead](images/03.png)
 
@@ -82,7 +82,7 @@ The first time you sign in to a new workspace, the portal walks you through thre
 
    ![Use Bitbucket Data Center instead, expanded: the Instance URL and HTTP access token fields, the note on the Corbits Triage user and its permissions, the Download the Corbits Triage avatar link and the Connect button](images/24.png)
 2. **Repositories.** On GitHub, the portal lists the repositories you picked. To change them, or if you connected an existing App, press **Choose repositories on GitHub** (**Choose repositories again** once some are listed) and pick which repositories the App may see. GitHub tells Triage which ones you chose. With Bitbucket Data Center there is nothing to pick: Triage lists every repository the token can see, and you turn triage on for each one under Repositories. Either way they arrive with triage switched off, so nothing runs yet.
-3. **Decision model.** Pick an AI provider from the list, paste the key your provider gave you, and press **Save decision model**. The key is stored in the server's vault and you will not see it again. If your organization runs its own compatible model service, choose **Add my own provider** and enter its address, model name and key.
+3. **Decision model.** Pick an AI provider from the list, paste the key your provider gave you, and press **Save decision model**. The key is stored in the server's vault and you will not see it again. If your organization runs its own compatible model service, choose **Add my own provider** and enter its address, model name and key. To do this later, press **Skip for now**. Triage does not run without a decision model: the first time you turn triage on for a repository, the portal asks for it in a popup, and **Save and turn on** saves it and turns triage on.
 
 ![The setup screen after the first two steps are done: Bitbucket Data Center connected, Turn triage on for each repository in Repositories, and the decision-model choices](images/05.png)
 
@@ -90,7 +90,7 @@ You can also invite teammates from this screen by expanding **Invite people**, o
 
 ### After setup
 
-Once all three steps are done, the portal takes you to the Inbox. Nothing appears there yet, because triage is still off for every repository. The next section shows how to turn it on, and the one after it shows what you will see.
+Once the steps are done or skipped, the portal takes you to Repositories, where triage is still off for every repository. The next section shows how to turn it on, and the one after it shows what you will see.
 
 ## Setting up a repository: rules, verdicts and actions
 
@@ -440,7 +440,7 @@ Everything triage needs, top to bottom: its status, where pull requests come fro
 
 ![The top of the Triage section of Settings: Triage is running on 0 of 2 repositories, with Choose repositories](images/22.png)
 
-The first line says how many repositories Triage is running on, with a **Choose repositories** link.
+The first line says how many repositories Triage is running on, with a **Choose repositories** link. Until a decision model is added, it says **Triage needs a decision model before it can run. Add one below.**
 
 #### GitHub and Bitbucket Data Center
 
