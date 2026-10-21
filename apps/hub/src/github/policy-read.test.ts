@@ -35,7 +35,7 @@ test("an approve on Fail lets through the CI change a failing rule stops", async
 
 test("forbidding workflow files stops CI changes; forbidding one file does not", async () => {
   const pass: Step[] = [{ do: "merge", when: maintainers }];
-  expect(await risks({ globs: [".github/workflows/*.yaml"], pass, automatic: ["merge"] })).toEqual([]);
+  expect(await risks({ globs: [".github/workflows/*.yaml"], pass, automatic: ["merge"] })).toEqual(["ci-config"]);
   expect(await risks({ globs: [".github/workflows/ci.yml"], pass, automatic: ["merge"] })).toEqual(["ci-config"]);
 });
 

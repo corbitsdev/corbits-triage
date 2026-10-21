@@ -61,7 +61,7 @@ function mergeRisks(pack: CheckPack, decide: readonly DecideRule[], automatic: r
   const landings = [...steps, ...decide.flatMap((rule) => decideLandings(rule, automatic))];
   const risks: MergeRisk[] = [];
   if (landings.some((each) => admitsFirstTimers(pack, each.whens))) risks.push("first-timers");
-  if (WORKFLOW_FILES.every((path) => landings.some((each) => each.verdicts.includes(verdictOn(pack, path))))) risks.push("ci-config");
+  if (WORKFLOW_FILES.some((path) => landings.some((each) => each.verdicts.includes(verdictOn(pack, path))))) risks.push("ci-config");
   return risks;
 }
 
