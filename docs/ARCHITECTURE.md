@@ -113,6 +113,15 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     `unstable` or `has_hooks`, Bitbucket `canMerge`); anything else not
     explained is "Checking merge state". Pull request actions are synchronous: a maintainer's click
     must not wait on a workflow spin-up.
+    GitHub's answers to open pull requests, details and merge states are
+    shared by the workspace and kept per repository until a GitHub webhook
+    about it, or the hub's own write to it, arrives; check and push events
+    leave the open pull request listing kept. A lost webhook costs at most
+    `KEPT_MS` in `src/github/repo-reads.ts`: longer for the listing, short
+    for details and merge states, which also follow commit statuses the App
+    is not sent. A mergeability GitHub has not worked out yet, or a block
+    without its review decision, is never kept, and at most `MAX_KEPT` reads
+    are kept. Bitbucket Data Center is read live.
   - **GitHub calls**: every hub request to GitHub passes one gate. It logs a
     `github_calls` line each minute with the calls by route and installation
     and the last rate limit GitHub reported. Once GitHub rate limits an

@@ -152,6 +152,7 @@ beforeAll(async () => {
   policyFile = createPolicyFile({
     db,
     openPulls: createMemberOpenPulls({ db, cipher, authorize, list, cache: createOpenPullsCache(() => new Date()) }),
+    changed() {},
     settle: settled,
     refusal: refused,
     cipher,

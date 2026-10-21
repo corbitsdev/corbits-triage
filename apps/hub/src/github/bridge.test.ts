@@ -174,6 +174,7 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
       return Response.json({}, { status: 409 });
     },
     heard() {},
+    repoChanged() {},
     ...overrides,
   });
 }
@@ -293,14 +294,19 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(1);
   });
 
-  test("closed pull requests are 202 ignored", async () => {
+  test("closed pull requests are 202 ignored, yet the repository's kept reads are read again", async () => {
     const sent: Sent[] = [];
+    const changed: string[] = [];
     const base = JSON.parse(prPayload);
     const closed = JSON.stringify({ ...base, pull_request: { ...base.pull_request, state: "closed" } });
-    const res = await bridge({ sent })(githubRequest(closed), TARGET);
+    function repoChanged(tenantId: string, repo: string, event?: string) {
+      changed.push(`${tenantId} ${repo} ${event}`);
+    }
+    const res = await bridge({ sent, repoChanged })(githubRequest(closed), TARGET);
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
+    expect(changed).toEqual([`${TENANT_ID} octocat/hello pull_request`]);
   });
 
   test("a merge into the default branch reads the policy file again and re-checks that repository's other open pull requests", async () => {

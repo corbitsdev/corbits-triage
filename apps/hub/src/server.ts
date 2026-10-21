@@ -73,7 +73,8 @@ import { createCoordinator, type Coordinator, type TriageJob } from "./github/co
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
-import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
+import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
+import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
@@ -359,6 +360,7 @@ const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: comp
 const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
 const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: pullRequests.withDiff, log: logJson });
+const repoReads = createRepoReads(now);
 const githubPrActions = createGithubPrActions({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -366,9 +368,11 @@ const githubPrActions = createGithubPrActions({
   authorize: authorizePortal,
   readCheckPack,
   codeReviews: codeReviewRuns,
+  changed: repoReads.changed,
   log: logJson,
 });
 const githubPrDetails = createGithubPrDetails({
+  reads: repoReads,
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
@@ -378,6 +382,7 @@ const githubPrDetails = createGithubPrDetails({
 });
 
 const mergeStates = createMergeStates({
+  reads: repoReads,
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
@@ -463,7 +468,7 @@ const routePrWorkflow = createPrWorkflowRouter({
   log: logJson,
 });
 const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
-const tenantOpenPrs = createTenantOpenPrs(tenantSources);
+const tenantOpenPrs = keptOpenPrs(createTenantOpenPrs(tenantSources), repoReads);
 const openPullsCache = createOpenPullsCache(now);
 const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, db: composition.db, cipher: composition.credentialCipher, list: tenantOpenPrs, authorize: authorizePortal });
 const policyFile = createPolicyFile({
@@ -475,6 +480,7 @@ const policyFile = createPolicyFile({
   tenantGithub,
   tenantBitbucket,
   openPulls: memberOpenPulls,
+  changed: repoReads.changed,
   log: logJson,
 });
 const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
@@ -775,6 +781,7 @@ const bridge = createBridgeHandler({
   refreshPolicyFile,
   heard: repoActivity.heard,
   startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
+  repoChanged: repoReads.changed,
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
   db: hookDeps.db,

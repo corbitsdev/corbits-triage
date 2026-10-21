@@ -25,6 +25,7 @@ import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCre
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
 import { tenantConfigOf } from "./bridge.js";
 import { forInstallation } from "./open-pulls.js";
+import type { RepoReads } from "./repo-reads.js";
 import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
@@ -140,6 +141,8 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
   githubApiOrigin: string;
   readCheckPack: PolicyReader;
   codeReviews: Pick<CodeReviewRuns, "latest">;
+  /** The portal reads the pull request again right after its own write, before GitHub's webhook for it may arrive. */
+  changed: RepoReads["changed"];
   log: (entry: Record<string, unknown>) => void;
 }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
@@ -170,6 +173,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
       const { repo, number } = body;
       const result = await act(gh, tenantId, body);
       if (result instanceof Response) return result;
+      deps.changed(tenantId, repo);
       deps.log({ level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number });
       return Response.json(result);
     } catch (err) {

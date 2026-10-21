@@ -14,6 +14,7 @@ import { createGithubOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createTenantOpenPrs } from "./tenant-open-heads.js";
 import { createGithubPrActions } from "./pr-actions.js";
 import { createGithubPrDetails } from "./pr-details.js";
+import { createRepoReads } from "./repo-reads.js";
 import { createTriageStats } from "./triage-stats.js";
 import { createTriageTimeline } from "./triage-timeline.js";
 import { createTriageVerdicts } from "./triage-verdicts.js";
@@ -101,9 +102,11 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
 const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigin };
 const list = createTenantOpenPrs({ ...deps, tenantBitbucket: async () => undefined });
 const openPulls = createGithubOpenPulls({ ...deps, list, cache: createOpenPullsCache(() => new Date()) });
-const prDetails = createGithubPrDetails({ ...deps, tenantBitbucket: async () => undefined, log() {} });
+const reads = createRepoReads(() => new Date());
+const prDetails = createGithubPrDetails({ ...deps, tenantBitbucket: async () => undefined, reads, log() {} });
 const prActions = createGithubPrActions({
   ...deps,
+  changed: reads.changed,
   log() {},
   async readCheckPack() { return { status: "missing" } as const; },
   codeReviews: { async latest() { return { review: completed, completed, carriedTo }; } },
