@@ -24,7 +24,8 @@ const DIFF_LIMIT = 100_000;
 /** Heads remembered as sent, so a webhook delivered twice is reviewed once. */
 const REMEMBERED_HEADS = 10_000;
 
-export type PullRequestToReview = { title: string; description: string; headSha: string; draft: boolean; open: boolean; diff: string };
+/** `labels` only where the host has them. */
+export type PullRequestToReview = { title: string; description: string; headSha: string; draft: boolean; open: boolean; diff: string; labels?: string[] };
 
 export type CodeReviewFeedDeps = {
   /**
@@ -92,7 +93,7 @@ export function createPullRequestReader(deps: PullRequestReaderDeps) {
     if (!app) throw new Error(`no GitHub App credential for ${record.name}`);
     const gh = forInstallation(app, record.installationId);
     const [pr, diff] = await Promise.all([readPr(gh, record.name, number), readPrDiff(gh, record.name, number)]);
-    return { ...shown(pr, source, record.name, number), headSha: pr.sha, draft: pr.draft === true, open: pr.state === "open", diff };
+    return { ...shown(pr, source, record.name, number), headSha: pr.sha, draft: pr.draft === true, open: pr.state === "open", diff, labels: pr.labels };
   };
 }
 

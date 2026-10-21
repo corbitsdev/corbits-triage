@@ -16,9 +16,9 @@ import { repoRecords, triageNs } from "./tenant-config.js";
 
 /**
  * `automatic` is the Do kinds the pr-triage role is granted on the repository; `source` is what `pack` was resolved from;
- * `policyWorkflow` the policy file's v4 keys while only the PR workflow can run them.
+ * `policyWorkflow` the policy file's v4 keys while only the PR workflow can run them; `pauseLabel` the file's, whichever runs it.
  */
-export type StoredPack = { pack: CheckPack; automatic: ActionKind[]; source: PolicySource; policyWorkflow?: PolicyWorkflow };
+export type StoredPack = { pack: CheckPack; automatic: ActionKind[]; source: PolicySource; policyWorkflow?: PolicyWorkflow; pauseLabel?: string };
 
 function withPrWorkflowKeys(workflow: PolicyWorkflow, pack: CheckPack): Pick<StoredPack, "policyWorkflow"> {
   const policyWorkflow = prWorkflowKeys(workflow, pack);
@@ -146,7 +146,7 @@ async function fileRead(deps: CheckPackStoreDeps & { policyFile: PolicyFileReade
   }
   const { pack, ...from } = read;
   const source: PolicySource = { file: { path: file.file.path, sha: file.file.sha }, ...from };
-  return { status: "ok", pack, source, automatic: await deps.automaticKinds(tenantId, repo), ...withPrWorkflowKeys(file.workflow, pack) };
+  return { status: "ok", pack, source, automatic: await deps.automaticKinds(tenantId, repo), ...withPrWorkflowKeys(file.workflow, pack), ...(file.workflow.pauseLabel && { pauseLabel: file.workflow.pauseLabel }) };
 }
 
 /** Archiving hides and keeps restorable; every saved policy titled for the repository goes, since an older one would otherwise become the saved rules. */

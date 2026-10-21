@@ -157,7 +157,7 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
  * live deployment reads `pack`. `policy.source` names the policy artifact versions `pack` was resolved from, so the
  * run records what it used.
  */
-export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { pack, automatic, source, policyWorkflow }: StoredPack, extra: Record<string, unknown>) {
+export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { pack, automatic, source, policyWorkflow, pauseLabel }: StoredPack, extra: Record<string, unknown>) {
   const repo = record.name;
   const repoSource = sourceOf(record);
   return {
@@ -171,6 +171,7 @@ export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy:
     pack,
     automatic,
     ...workflowPart(policyWorkflow),
+    ...(pauseLabel && { pauseLabel }),
   };
 }
 
@@ -491,7 +492,9 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, hook: loaded.credentialId });
       return json(202, { status: "ignored" });
     }
-    const triageEvent = triageEventOf(mail);
+    const unlabeled = asRecord(asRecord(payload)?.["label"])?.["name"];
+    const unpausing = event === "pull_request" && mail.action === "unlabeled" && typeof unlabeled === "string";
+    const triageEvent = unpausing ? "updated" : triageEventOf(mail);
     if (triageEvent === null) {
       log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "no_triage_event" });
       return json(202, { status: "ignored" });
@@ -549,13 +552,17 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "needs_setup", delivery, event, repo: mail.repo, hook: loaded.credentialId });
       return json(202, { status: "needs-setup" });
     }
+    if (unpausing && unlabeled !== stored.pauseLabel) {
+      log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "no_triage_event" });
+      return json(202, { status: "ignored" });
+    }
     if (!hasEnabledRules(stored.pack)) {
       log({ level: "info", msg: "triage_skipped_no_rules", delivery, event, repo: mail.repo, pr: mail.prNumber, headSha, hook: loaded.credentialId });
       return json(202, { status: "ignored" });
     }
     let accepted: Accepted;
     try {
-      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, ...(stored.policyWorkflow && { policyWorkflow: stored.policyWorkflow }), mail, number: mail.prNumber, headSha, event: triageEvent });
+      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, ...(stored.policyWorkflow && { policyWorkflow: stored.policyWorkflow }), ...(stored.pauseLabel && { pauseLabel: stored.pauseLabel }), mail, number: mail.prNumber, headSha, event: triageEvent });
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });

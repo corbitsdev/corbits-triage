@@ -41,6 +41,7 @@ export type CoalescedEvent = {
   /** Read with `pack` when the event was accepted, shared policy included, so the mail names the versions it carries. */
   source: PolicySource;
   policyWorkflow?: PolicyWorkflow;
+  pauseLabel?: string;
   mail: PrMail;
   number: number;
   headSha: string;
