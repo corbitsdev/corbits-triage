@@ -9,8 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@intx/hub-sessions": "0.5.0",
-    "@intx/types": "workspace:*"
+    "@intx/hub-sessions": "0.5.0"
   },
   "main": "./src/index.ts",
   "description": "Conformance tests any Interchange sidecar provisioner can run"

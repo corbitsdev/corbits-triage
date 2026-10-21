@@ -309,5 +309,3 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   return { current, onPush, fileRoute, exportRoute, upgradesRoute };
 }
-
-export type PolicyFile = ReturnType<typeof createPolicyFile>;

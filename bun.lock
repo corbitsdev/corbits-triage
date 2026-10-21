@@ -163,7 +163,6 @@
       },
       "devDependencies": {
         "@types/bun": "latest",
-        "tar": "catalog:",
       },
     },
     "packages/common": {
@@ -231,7 +230,6 @@
       "name": "@corbits/pr-code-review-anthropic",
       "version": "0.1.0",
       "dependencies": {
-        "@corbits/github-tool": "workspace:*",
         "@corbits/pr-code-review": "workspace:*",
         "@corbits/repo-read-tool": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
@@ -312,7 +310,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@intx/hub-sessions": "0.5.0",
-        "@intx/types": "workspace:*",
       },
     },
     "packages/repo-read-tool": {
