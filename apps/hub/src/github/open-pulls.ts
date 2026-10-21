@@ -35,7 +35,7 @@ export function forInstallation(gh: GithubFetch, installationId: number | undefi
 export type OpenPrsLister = (tenantId: string, record: RepoRecord) => Promise<GithubOpenPr[]>;
 
 /**
- * Lists a GitHub repository again only once a webhook says its pull requests changed, or its listing is `SAFETY_MS` old.
+ * Lists a GitHub repository again only once a webhook says its pull requests changed, or its listing is `KEPT_MS.pulls` old.
  * Another host's webhooks are the tenant's to set up, so its repositories are listed on every read.
  */
 export function keptOpenPrs(list: OpenPrsLister, reads: RepoReads): OpenPrsLister {

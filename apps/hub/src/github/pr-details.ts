@@ -23,12 +23,16 @@ const Query = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "string.integer.parse" 
 
 type Log = (entry: Record<string, unknown>) => void;
 
-/** Only a blocked merge asks whether a review is what blocks it; a decision GitHub will not give leaves the block unexplained, not the details unread. */
+/**
+ * Only a blocked merge asks whether a review is what blocks it; a decision GitHub will not give (404) leaves the block
+ * unexplained, not the details unread. Any other failure, a rate limit among them, fails the read.
+ */
 async function reviewDecisionOf(gh: GithubFetch, repo: string, number: number, log: Log): Promise<ReviewDecision | null> {
   try {
     const [state] = await readMergeStates(gh, repo, [number]);
     return state?.reviewDecision ?? null;
   } catch (err) {
+    if (!/ -> 404\b/.test(errorText(err))) throw err;
     log({ level: "warn", msg: "review_decision_failed", repo, number, error: errorText(err) });
     return null;
   }
@@ -56,9 +60,13 @@ async function githubDetails(gh: GithubFetch, repo: string, number: number, log:
   return { pr: { ...pr, shownBody: body, reviewDecision }, files, commits, comments, issues, checks, reviews };
 }
 
-/** GitHub works mergeability out after a change without a webhook saying it is done, so details still missing it are read again. */
+/**
+ * GitHub works mergeability out after a change without a webhook saying it is done, so open details still missing it, or
+ * a block without the review decision that explains it, are read again.
+ */
 function mergeabilityKnown({ pr }: Awaited<ReturnType<typeof githubDetails>>): boolean {
-  return pr.state !== "open" || pr.mergeable !== null;
+  if (pr.state !== "open") return true;
+  return pr.mergeable !== null && (pr.mergeableState !== "blocked" || pr.reviewDecision !== null);
 }
 
 /** Data Center lists changes without patches or line counts and has no issue tracker of its own. */

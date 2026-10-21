@@ -18,6 +18,7 @@ import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody, validManifestMutationRequest } from "../github/manifest.js";
 import { MERGE_STATES_PATH } from "../github/merge-states.js";
 import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
+import { KEPT_MS, type ReadScope } from "../github/repo-reads.js";
 import { failure } from "../github/portal-credential.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
@@ -100,7 +101,9 @@ export type IntegrationHandlers = {
 };
 
 const TAGS = ["integrations"];
-const KEPT_GITHUB_READS = "GitHub's answer is shared by the workspace and kept until a webhook or the hub's own write says the repository changed, and at most 10 minutes; another host's answer is not kept this way.";
+function keptGithubReads(scope: ReadScope): string {
+  return `GitHub's answer is shared by the workspace and kept until a webhook or the hub's own write says the repository changed, and at most ${KEPT_MS[scope] / 1000} seconds; another host's answer is not kept this way.`;
+}
 
 const Failure = type({ error: { code: "string", message: "string" } });
 const PolicyPullOpen = type({ error: { code: "'policy_pull_open'", message: "string", url: "string", number: "number" } });
@@ -471,7 +474,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_OPEN_PULLS_PATH}/:tenantId`,
     describeRoute({
       summary: "Open pull requests of the connected repositories",
-      description: KEPT_GITHUB_READS,
+      description: keptGithubReads("pulls"),
       tags: TAGS,
       responses: { 200: json("Open pull requests per repository", OpenPulls), ...failures },
     }),
@@ -485,7 +488,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_DETAILS_PATH}/:tenantId`,
     describeRoute({
       summary: "Pull request details",
-      description: KEPT_GITHUB_READS,
+      description: keptGithubReads("all"),
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
@@ -503,7 +506,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${MERGE_STATES_PATH}/:tenantId`,
     describeRoute({
       summary: "Whether the host would merge these pull requests now",
-      description: KEPT_GITHUB_READS,
+      description: keptGithubReads("all"),
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },

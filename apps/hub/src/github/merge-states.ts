@@ -54,7 +54,7 @@ export function createMergeStates(deps: SourceFetchDeps & { reads: RepoReads; lo
     if (numbers.some((number) => number > MAX_NUMBER)) return failure(400, "invalid_request", `A pull request number is at most ${MAX_NUMBER}.`);
     /** GitHub works mergeability out after a change without a webhook saying it is done, so a read still missing one is read again. */
     function everyNumberKnown(states: MergeState[]): boolean {
-      return numbers.every((number) => states.some((state) => state.number === number && state.mergeable !== null));
+      return numbers.every((number) => states.some((state) => state.number === number && (!state.open || state.mergeable !== null)));
     }
 
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });

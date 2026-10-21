@@ -373,7 +373,7 @@ const repoReads = createRepoReads(now);
 /** The portal reads the pull request again right after its own write, before GitHub's webhook for it may arrive. */
 async function prActionsThenChanged(...[body, member]: Parameters<typeof githubPrActions>): Promise<Response> {
   const response = await githubPrActions(body, member);
-  repoReads.changed(member.tenantId, body.repo);
+  if (response.ok) repoReads.changed(member.tenantId, body.repo);
   return response;
 }
 const githubPrDetails = createGithubPrDetails({
