@@ -70,6 +70,7 @@ import { setup, getLogger } from "@intx/log";
 import { errorText } from "@corbits/common";
 import type { DatabaseConfig, InterchangeSettings } from "./env.js";
 import { createHubAuth, type HubAuthConfig } from "./auth.js";
+import { withBlobOutputs } from "./run-outputs.js";
 
 export type CreateHubServerOpts = {
   readonly database: DatabaseConfig;
@@ -538,7 +539,7 @@ export async function createInterchangeHub({
     principalKeyStore,
     getSession,
     auth,
-    runReader,
+    runReader: withBlobOutputs(runReader, agentRepoStore.repoStore, log),
     workflowAllocationService,
     workflowLifecycleService,
     sidecarPlugins,
