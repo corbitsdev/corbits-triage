@@ -8,7 +8,7 @@ import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import { loadRepoPolicy } from "./hub-api.ts";
 import { createHubTransport, type Transport } from "./hub-transport.ts";
 import { createAutosave, type Autosave, type AutosaveState, type DraftUpdate } from "./pack-autosave.ts";
-import { fromPack, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
+import { fromPack, hasRuleOn, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
 import { POLICY_UPGRADES_QUERY_KEY } from "./policy-upgrades.ts";
 import { usePortal, useSignOutWhenRejected } from "./portal.tsx";
@@ -127,8 +127,8 @@ export function useRepoPack(store: RepoPackStore | null, repo: string, source: R
   async function afterSave(before: PackSession, after: PackSession) {
     setAfterError("");
     try {
-      // Open pull requests are triaged on turning on through GitHub's backlog route only.
-      if (source === "github" && !before.saved.policy.enabled && after.saved.policy.enabled) await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
+      // Open pull requests are triaged on turning on through GitHub's backlog route only, which refuses a policy without a rule on.
+      if (source === "github" && hasRuleOn(after.saved.pack) && !before.saved.policy.enabled && after.saved.policy.enabled) await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
       await refreshNow();
     } catch (cause) {
       signOutWhenRejected(cause);
