@@ -97,7 +97,8 @@ import { createBacklogStart, createGithubBacklog } from "./github/backlog-triage
 import { fileRefusal, loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
-import { createTriageReconciler } from "./github/triage-reconciler.js";
+import { githubUsage } from "./github/github-usage.js";
+import { createTriageReconciler, type ReconcileOutcome } from "./github/triage-reconciler.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
@@ -142,6 +143,7 @@ const TRIAGE_RETRY_MAX_MS = 120_000;
 /** How often the live logs of tenants with a pr-triage run in flight are read and recorded, and how stale a shared read may be. */
 const TRIAGE_RECORD_MS = 2_000;
 const WORKER_FIRE_TIMEOUT_MS = 120_000;
+const GITHUB_CALLS_LOG_MS = 60_000;
 const WORKER_POLL_MS = 2_000;
 /** A tenant whose logs could not be read is left at most this long before the recording loop tries again. */
 const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
@@ -205,6 +207,11 @@ let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
 let coordinator: Coordinator | undefined;
 let e2bTender: ReturnType<typeof setInterval> | undefined;
+function logGithubCalls(): void {
+  const line = githubUsage.flush();
+  if (line) logJson(line);
+}
+const githubCallsLogger = setInterval(logGithubCalls, GITHUB_CALLS_LOG_MS);
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -214,6 +221,7 @@ async function shutdown(): Promise<void> {
   coalescer?.stop();
   coordinator?.stop();
   clearInterval(e2bTender);
+  clearInterval(githubCallsLogger);
   try {
     await local.shutdown();
   } finally {
@@ -629,10 +637,12 @@ async function recordAll() {
   for (const stack of recordings) await stack.recordPass.pass();
   return { retry: false };
 }
-async function reconcileAll() {
-  let retry = false;
-  for (const stack of stacks) if ((await stack.reconcile()).retry) retry = true;
-  return { retry };
+async function reconcileAll(): Promise<ReconcileOutcome> {
+  const outcomes: ReconcileOutcome[] = [];
+  for (const stack of stacks) outcomes.push(await stack.reconcile());
+  const soon = outcomes.some((outcome) => outcome.retry && outcome.retryAt === undefined);
+  const limits = outcomes.flatMap((outcome) => outcome.retryAt ?? []);
+  return soon || limits.length === 0 ? { retry: soon } : { retry: true, retryAt: Math.max(...limits) };
 }
 recordLoop = createReconcileLoop(recordAll, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);

@@ -9,6 +9,7 @@ import { WorkflowProvisioningError } from "@intx/hub-sessions";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
+import { GithubRateLimited } from "./github-usage.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
@@ -65,8 +66,11 @@ type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
 type LoadedRepo = EnabledRepo & StoredPack & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
 
-/** `retry` asks for another pass soon: a repository's pass failed, or a failed deployment is being redeployed. */
-export type ReconcileOutcome = { retry: boolean };
+/**
+ * `retry` asks for another pass soon: a repository's pass failed, or a failed deployment is being redeployed.
+ * `retryAt` is when a GitHub rate limit the pass ran into lifts; no sooner pass could read anything.
+ */
+export type ReconcileOutcome = { retry: boolean; retryAt?: number };
 
 /** A failed deployment is left this long first, so a portal visit can bring one back. */
 const HEAL_AFTER_MS = 2 * 60_000;
@@ -116,6 +120,13 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   const buildPolls = new Map<string, BuildPoll>();
   /** Repositories skipped last pass and why, so the skip is logged once rather than every pass. */
   const skippedRepos = new Map<string, string>();
+  /** The latest reset among the GitHub rate limits this pass ran into. */
+  let limitedUntil: number | undefined;
+
+  function reconcileFailed(entry: Record<string, unknown>, err: unknown): void {
+    if (err instanceof GithubRateLimited) limitedUntil = Math.max(limitedUntil ?? 0, err.resetAt);
+    deps.log({ level: "error", msg: "triage_reconcile_failed", ...entry, error: String(err) });
+  }
 
   /** The newest verdict on the head, from the live logs or as recorded, since the run that gave it may be on a released deployment. */
   function latestVerdict(pass: TenantPass, recorded: readonly VerdictRecord[], repo: string, row: PrTriageRow) {
@@ -434,7 +445,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         const repoLoaded = await loadRepo(pass, repo);
         if (repoLoaded) loaded.push(repoLoaded);
       } catch (err) {
-        deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: repo.record.name, error: String(err) });
+        reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err);
       }
     }
     const plans = planTenant({
@@ -452,7 +463,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         await deliverRepo(pass, repo, plans.get(repo.record.name)!);
       } catch (err) {
         failed = true;
-        deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: repo.record.name, error: String(err) });
+        reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err);
       }
     }
     return failed;
@@ -460,13 +471,14 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
 
   return async function reconcileTriage(): Promise<ReconcileOutcome> {
     let retry = false;
+    limitedUntil = undefined;
     for (const tenant of await deps.tenants()) {
       try {
         if (await reconcileTenant(tenant)) retry = true;
       } catch (err) {
-        deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, error: String(err) });
+        reconcileFailed({ tenantId: tenant.id }, err);
       }
     }
-    return { retry };
+    return limitedUntil === undefined ? { retry } : { retry: true, retryAt: limitedUntil };
   };
 }

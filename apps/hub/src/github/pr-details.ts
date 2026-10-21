@@ -9,6 +9,7 @@ import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readMergeStates, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
 import { shownBody, visibleText } from "@corbits/triage-contracts";
+import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
@@ -92,7 +93,7 @@ export function createGithubPrDetails(deps: SourceFetchDeps & { log: Log }) {
     } catch (err) {
       const message = errorText(err);
       deps.log({ level: "warn", msg: "pr_details_failed", tenantId, repo: query.repo, number: query.number, error: message });
-      return failure(502, "source_failed", `Could not read ${query.repo}#${query.number} from ${sourceOf(record)}: ${message}.`);
+      return githubLimited(err) ?? failure(502, "source_failed", `Could not read ${query.repo}#${query.number} from ${sourceOf(record)}: ${message}.`);
     }
   };
 }

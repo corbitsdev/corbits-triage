@@ -25,7 +25,9 @@ export function createReconcileLoop(
       again = false;
       try {
         const outcome = await reconcile();
-        if (outcome.retry) {
+        if (outcome.retryAt !== undefined) {
+          schedule(kick, Math.max(0, outcome.retryAt - Date.now()));
+        } else if (outcome.retry) {
           // The sidecar is still reconnecting after a restart: try again well before the interval.
           schedule(kick, retryIn);
           retryIn = Math.min(retryIn * 2, options.retryMaxMs);

@@ -14,6 +14,15 @@ function assertAllowedEventName(eventName: string | undefined): string {
   return name;
 }
 
+/** The hub's failure message; GitHub's rate limit reads with when it lifts, in the viewer's time. */
+export function hubErrorMessage(status: number, body: unknown): string {
+  const detail = (body as { error?: { code?: unknown; message?: unknown; resetAt?: unknown } } | undefined)?.error;
+  if (detail?.code === "github_rate_limited" && typeof detail.resetAt === "string") {
+    return `GitHub limit reached, back at ${new Date(detail.resetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
+  }
+  return typeof detail?.message === "string" ? detail.message : `HTTP ${status}`;
+}
+
 export function createHubTransport(): Transport {
   return hubTransport(false);
 }
@@ -49,12 +58,8 @@ function hubTransport(keepalive: boolean): Transport {
         parsed = undefined;
       }
       if (!response.ok) {
-        const detail = (parsed as { error?: { code?: string; message?: string } } | undefined)?.error;
-        throw new ApiError(
-          response.status,
-          detail?.code ?? "unknown",
-          detail?.message ?? `HTTP ${response.status}`,
-        );
+        const detail = (parsed as { error?: { code?: string } } | undefined)?.error;
+        throw new ApiError(response.status, detail?.code ?? "unknown", hubErrorMessage(response.status, parsed));
       }
       return parsed as T;
     },

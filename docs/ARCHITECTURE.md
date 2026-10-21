@@ -106,6 +106,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     `unstable` or `has_hooks`, Bitbucket `canMerge`); anything else not
     explained is "Checking merge state". Pull request actions are synchronous: a maintainer's click
     must not wait on a workflow spin-up.
+  - **GitHub calls**: every hub request to GitHub passes one gate. It logs a
+    `github_calls` line each minute with the calls by route and installation
+    and the last rate limit GitHub reported. Once GitHub rate limits an
+    installation, the gate refuses its requests without calling GitHub until
+    the reset: routes answer 503 `github_rate_limited` with `Retry-After`, and
+    the reconciler's next pass waits for the reset.
 - **Sidecars**: one per live deployment, started by the hub's
   `SidecarProvisioner`s. The local-process provisioner runs child processes
   on the hub's machine, restores them on boot and declines a placement while
