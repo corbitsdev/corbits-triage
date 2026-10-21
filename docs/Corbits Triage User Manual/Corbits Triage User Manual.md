@@ -365,7 +365,7 @@ Pull requests are grouped by what you need to do: **Unblock** for ones that are 
 
 A pull request whose first triage run failed is under **Failed** and says **Couldn't triage**. Its pane says why, such as **Couldn't triage: the run failed**, and **Triage again** tries once more.
 
-Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval or a held action waiting always stays, drafts and ones waiting on the author included, until you approve the action or click **Hide for me**, which hides it in this browser only. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back.
+Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval or a held action waiting always stays, drafts and ones waiting on the author included, until you approve the action or click **Hide for me** on its page, which hides it in this browser only. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back.
 
 ![The Waiting view grouped by Waits on: two drafts under Waits on author, one of them checked by Triage before it became a draft, and a pull request under Waits on CI. The pane shows the draft, Draft · waiting on @ivan-p](images/37.png)
 
@@ -385,7 +385,7 @@ A pull request that has not been checked yet shows **Not triaged** until its fir
 
 Clicking a pull request opens it on the right. The pane is built to be read top to bottom.
 
-![The reading pane for a failing pull request: the status line Blocked with 1 thing to fix, the problem Merge conflicts with base, the description, folded rows for linked issue, files and rules passed, and a bottom bar with Request changes, Close, Approve and More](images/12.png)
+![The reading pane for a failing pull request: the status line Blocked with 1 thing to fix, the problem Merge conflicts with base, the description, folded rows for linked issue, files and rules passed, and a bottom bar with Request changes, Close, Approve and the other actions](images/12.png)
 
 1. **The header**: repository and number, the title, the author with their chip, when it was opened, and how many lines were added and removed. The **View on GitHub** or **View on Bitbucket** link in the corner opens the same pull request there. The pull request's own page has the same link.
 2. **The status line** in one sentence, such as **Ready to merge**, **Waiting for review**, or **Blocked · 2 things to fix, 1 to check**. A pull request that passed but that GitHub or Bitbucket will not merge yet says why instead of **Ready to merge**, such as **Ready, but waiting for a required review**, **Ready, but behind its base branch**, **Ready, but the branch's rules block the merge** or, on Bitbucket, the reason its merge checks give, and **Merge** stays off until it can.
@@ -405,9 +405,7 @@ Expanding **rules passed** shows every rule with a short note on why it passed, 
 
 ### Taking action
 
-The bar at the bottom of the pane always offers the next step first. For a passing pull request that is **Merge**, for a failing one it is **Request changes**, and for an unsure one it is usually **Comment** or **Approve**. The other actions are beside it, and anything else, including the actions the repository's policy suggested, is under **More**.
-
-![The More menu open at the bottom of the reading pane, listing Edit feedback, Post reply, Comment, Merge and Triage again](images/15.png)
+The bar at the bottom of the pane always offers the next step first. For a passing pull request that is **Merge**, for a failing one it is **Request changes**, and for an unsure one it is usually **Comment** or **Approve**. Every other action is a button beside it. An action the repository's policy held for you has the same button as doing it yourself, so clicking **Approve** carries out the held approval; a held action with no such button, such as adding a label, gets its own button, and a held comment shows the start of what it posts, such as **Comment "Please split this."**.
 
 - **Merge** merges the exact commit Triage checked. If the author pushes a new commit in the meantime, the merge is refused and Triage checks the new commit first. Merge is off while GitHub or Bitbucket would not merge the pull request, here and on the pull request's own page, which shows the reason beside its status, such as **Merge blocked · Waiting for a required review**. If the host refuses a merge anyway, the message gives its reason.
 - **Request changes** sends the author a review listing the rules they need to fix. When they fix them, Triage withdraws the request on its own.

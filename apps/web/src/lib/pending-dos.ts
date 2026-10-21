@@ -9,6 +9,14 @@ function teamName(slug: string, repo: string): string {
   return `@${repo.split("/", 1)[0]}/${slug}`;
 }
 
+const PREVIEW_MAX = 40;
+
+/** The policy's own comment, not Triage's drafted feedback, so its button names what it posts. */
+function preview(body: string): string {
+  const line = body.trim().split("\n", 1)[0];
+  return line.length > PREVIEW_MAX ? `${line.slice(0, PREVIEW_MAX).trimEnd()}…` : line;
+}
+
 function label(action: SuggestedAction, repo: string): string | null {
   const { kind, target } = action;
   if ("unresolved" in target) return null;
@@ -27,7 +35,7 @@ function label(action: SuggestedAction, repo: string): string | null {
       return reviewers.length ? `Request review from ${reviewers.join(", ")}` : null;
     }
     case "comment":
-      return typeof target.body === "string" && target.body.trim() ? "Comment" : null;
+      return typeof target.body === "string" && target.body.trim() ? `Comment "${preview(target.body)}"` : null;
     case "approve":
       return "Approve";
     case "request-changes":

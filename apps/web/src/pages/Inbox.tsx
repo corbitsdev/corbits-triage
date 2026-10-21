@@ -12,7 +12,7 @@ import { pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDoKeys } from "../lib/held-dos.ts";
 import { CodeReviewThreads } from "../components/CodeReviewThreads.tsx";
 import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
-import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, rowStatus, type PaneBar } from "../lib/pane-report.ts";
+import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, rowStatus, type BarEntry, type PaneBar } from "../lib/pane-report.ts";
 import {
   COMPOSER_COPY,
   canRun,
@@ -75,7 +75,7 @@ import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
 import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
-import { CheckIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
+import { CheckIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
@@ -230,54 +230,27 @@ type PaneProps = {
   onBack: () => void;
 };
 
-type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; dos: PendingDo[]; doBlocked: boolean; running: boolean; onRun: (kind: PaneKind) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void; onSkip: (pending: PendingDo) => void };
+type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; doBlocked: boolean; onRun: (kind: PaneKind) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void };
 
-function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo, onSkip }: BottomBarProps) {
-  const [menu, setMenu] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const { primary, secondary, more } = bar;
-  const narrowOnly = secondary[1];
+function BottomBar({ bar, draft, doBlocked, onRun, onEdit, onDo }: BottomBarProps) {
+  const { primary, rest, dos } = bar;
 
-  useEffect(function closeMenuOnOutsideClick() {
-    if (!menu) return;
-    function onPointerDown(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
-    }
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [menu]);
-
-  function choose(run: () => void) {
-    setMenu(false);
-    run();
+  function choose(entry: BarEntry) {
+    if (entry.held === null) onRun(entry.kind);
+    else onDo(entry.held);
   }
 
   return (
-    <div className="bar bar3">
+    <div className="bar">
       {primary !== null && (
-        <Button type="button" disabled={primary.blocker !== null} onClick={() => onRun(primary.kind)}>
+        <Button type="button" disabled={primary.blocker !== null} onClick={() => choose(primary)}>
           {primary.kind === "reply" && draft?.edited ? "Send edited feedback" : primary.label}
           {primary.detail === null ? null : <span className="det">{primary.detail}</span>}
         </Button>
       )}
-      {secondary.map((entry, index) => <Button key={entry.kind} type="button" variant="ghost" className={index === 1 ? "sec2" : undefined} onClick={() => onRun(entry.kind)}>{entry.label}</Button>)}
-      <span className="sp" />
-      <div className="menu-wrap" ref={menuRef}>
-        <Button type="button" variant="ghost" aria-haspopup="menu" aria-expanded={menu} disabled={running} onClick={() => setMenu(!menu)}>More <DownIcon /></Button>
-        {menu && (
-          <div className="menu up" role="menu">
-            {narrowOnly === undefined ? null : <button type="button" role="menuitem" className="m-only" onClick={() => choose(() => onRun(narrowOnly.kind))}>{narrowOnly.label}</button>}
-            {onEdit === null ? null : <button type="button" role="menuitem" onClick={() => choose(onEdit)}>Edit feedback</button>}
-            {more.map((entry) => (
-              <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => choose(() => onRun(entry.kind))}>{entry.label}</button>
-            ))}
-            {dos.flatMap((pending) => [
-              <button key={pending.key} type="button" role="menuitem" disabled={doBlocked} onClick={() => choose(() => onDo(pending))}>Approve: {pending.label}</button>,
-              <button key={`${pending.key}:skip`} type="button" role="menuitem" onClick={() => choose(() => onSkip(pending))}>Hide for me: {pending.label}</button>,
-            ])}
-          </div>
-        )}
-      </div>
+      {onEdit === null ? null : <Button type="button" variant="ghost" onClick={onEdit}>Edit feedback</Button>}
+      {rest.map((entry) => <Button key={entry.kind} type="button" variant="ghost" disabled={entry.blocker !== null} onClick={() => choose(entry)}>{entry.label}</Button>)}
+      {dos.map((pending) => <Button key={pending.key} type="button" variant="ghost" disabled={doBlocked} onClick={() => onDo(pending)}>{pending.label}</Button>)}
     </div>
   );
 }
@@ -424,13 +397,10 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
       {!ended && <BottomBar
         bar={bar}
         draft={draft}
-        dos={dos}
         doBlocked={doBlocked}
-        running={item.running}
         onRun={run}
         onEdit={draft === null || editing ? null : () => setEditing(true)}
         onDo={approveDo}
-        onSkip={(pending) => heldDoKeys.hide(pending.key)}
       />}
     </section>
   );

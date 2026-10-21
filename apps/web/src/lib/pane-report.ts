@@ -1,7 +1,8 @@
-import { citationOf } from "@corbits/triage-contracts";
+import { citationOf, type ActionKind } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, HeldBlock, MergeBlock, PrItem, QueueState, RunFailure } from "./hub-api.ts";
 import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, postedLabel, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
+import { pendingDos, type PendingDo } from "./pending-dos.ts";
 import { upperFirst } from "./triage-view.ts";
 
 /** A failed check is something to fix; a model check the judge did not settle is the maintainer's call; anything else unconfirmed could not be checked. */
@@ -171,13 +172,15 @@ export function paneStatus({ item, detail, handled, approved, primary }: StatusI
   return status("ready", approved ? "Approved by Triage · ready for you to merge" : "Ready to merge");
 }
 
-type BarAction = MenuEntry & { detail: string | null };
+/** `held` is Triage's held action of the same kind, which the button completes instead of writing a second one. */
+export type BarEntry = MenuEntry & { held: PendingDo | null };
 
-export type PaneBar = { primary: BarAction | null; secondary: MenuEntry[]; more: MenuEntry[] };
+type BarAction = BarEntry & { detail: string | null };
 
-const SECONDARY_ORDER: PaneKind[] = ["changes", "close", "approve", "merge"];
+/** `dos` are the held actions no other button stands for. */
+export type PaneBar = { primary: BarAction | null; rest: BarEntry[]; dos: PendingDo[] };
 
-const MAX_SECONDARY = 2;
+const HELD_KIND: Partial<Record<PaneKind, ActionKind>> = { approve: "approve", changes: "request-changes", close: "close", merge: "merge" };
 
 function primaryText(kind: PaneKind, author: string | null, base: string | null): Pick<BarAction, "label" | "detail"> {
   const to = author === null ? null : `to @${author}`;
@@ -190,23 +193,22 @@ function primaryText(kind: PaneKind, author: string | null, base: string | null)
 }
 
 /**
- * The bottom bar: the pane's primary action, worded for the state, then up to two runnable secondaries; everything else
- * waits in More. Once the feedback is on GitHub the author has the turn, so replying to them comes first.
+ * The bottom bar: the pane's primary action, worded for the state, then every other action. Once the feedback is on
+ * GitHub the author has the turn, so replying to them comes first.
  */
 export function paneBar(gate: PaneGate, base: string | null, author: string | null): PaneBar {
   const actions = paneActions(gate);
+  const dos = pendingDos(gate.item);
+  function withHeld<E extends MenuEntry>(entry: E): E & { held: PendingDo | null } {
+    return { ...entry, held: dos.find((pending) => pending.kind === HELD_KIND[entry.kind]) ?? null };
+  }
   const fallback = actions.primary === null && isPostedToAuthor(gate.item) ? actions.more.find((entry) => entry.kind === "comment") ?? null : null;
-  // Commits Triage has not checked are never merged from here; the merge waits in More until the hub has checked them.
+  // Commits Triage has not checked are never merged from here; the merge stays blocked until the hub has checked them.
   const checked = actions.primary?.blocker === "unchecked-commits" ? null : actions.primary;
   const primaryEntry = checked ?? fallback;
-  const primary = primaryEntry === null ? null : { ...primaryEntry, ...primaryText(primaryEntry.kind, author, base) };
+  const primary = primaryEntry === null ? null : withHeld({ ...primaryEntry, ...primaryText(primaryEntry.kind, author, base) });
   const demoted = actions.primary === null || checked !== null ? [] : [{ ...actions.primary, label: primaryLabel(actions.primary.kind) }];
-  const rest = [...demoted, ...actions.more.filter((entry) => entry !== fallback)];
-  const secondary = SECONDARY_ORDER
-    .map((kind) => rest.find((entry) => entry.kind === kind && entry.blocker === null))
-    .filter((entry) => entry !== undefined)
-    .slice(0, MAX_SECONDARY)
-    .map((entry) => (entry.kind === "close" ? { ...entry, label: "Close" } : entry));
-  const kinds = new Set(secondary.map((entry) => entry.kind));
-  return { primary, secondary, more: rest.filter((entry) => !kinds.has(entry.kind)) };
+  const rest = [...demoted, ...actions.more.filter((entry) => entry !== fallback)].map(withHeld);
+  const taken = [primary, ...rest].map((entry) => entry?.held);
+  return { primary, rest, dos: dos.filter((pending) => !taken.includes(pending)) };
 }

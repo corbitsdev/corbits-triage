@@ -106,11 +106,6 @@ describe("paneActions", () => {
     expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
   });
 
-  test("a held pack close Do stands in for the menu's plain close", () => {
-    const actions = [{ list: "unsure" as const, index: 0, effectId: "e", kind: "close" as const, reason: "Stale.", target: {}, held: true }];
-    expect(paneActions(gate({ actions })).more.map((row) => row.kind)).not.toContain("close");
-  });
-
   test("triage again is offered once the hub has run or given up on the pull request, under the same gate as writes", () => {
     const triage = (overrides: Partial<PrItem>, flags: Partial<Pick<PaneGate, "readOnly" | "busy">> = {}) => paneActions(gate(overrides, undefined, flags)).more.find((row) => row.kind === "triage");
     expect(triage({})).toEqual({ kind: "triage", blocker: null, label: "Triage again" });

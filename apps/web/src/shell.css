@@ -303,11 +303,9 @@
 .inbox .composer .foot { gap: 8px; }
 .inbox .note { font-size: 12px; margin: 8px 0 0; }
 .inbox .error { font-size: 13px; margin: 12px 0 0; }
-.inbox .bar { display: flex; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); }
-.inbox .bar .sp { flex: 1; }
+.inbox .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); }
 .inbox .bar .det { font-weight: 400; }
 .inbox .bar .det::before { content: "· "; }
-.inbox .bar .menu .m-only { display: none; }
 .inbox .pane-back { display: none; }
 .inbox .pane:focus { outline: none; }
 
@@ -328,8 +326,6 @@
   .inbox.has-selection .panel.list, .inbox:not(.has-selection) .panel.pane { display: none; }
   .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }
   .inbox .bar { padding: 12px 16px; gap: 4px; }
-  .inbox .bar .sec2 { display: none; }
-  .inbox .bar .menu .m-only { display: flex; }
   .inbox .bar .det { display: none; }
   .inbox .st3 { font-size: 19px; }
 }
