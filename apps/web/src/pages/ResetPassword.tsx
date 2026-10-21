@@ -28,21 +28,25 @@ export function ResetPassword() {
   }
 
   return (
-    <SignInShell>
+    <SignInShell footer={done ? undefined : <a className="signin-link" href="/">Back to sign in</a>}>
       <div className="signin-head">
         <h1>Set a password</h1>
-        {done && <p role="status">Password set. Sign in with it.</p>}
-        <p><a className="signin-link" href="/">{done ? "Go to sign in" : "Back to sign in"}</a></p>
       </div>
-      {!token && <p role="alert" className="field-error">This reset link was already used or has expired. Ask for a new one from the sign-in page.</p>}
+      {!token && <p role="alert" className="signin-error">This reset link was already used or has expired. Ask for a new one from the sign-in page.</p>}
+      {done && (
+        <>
+          <p role="status" className="signin-notice">Password set. Sign in with it.</p>
+          <Button asChild size="lg"><a href="/">Go to sign in</a></Button>
+        </>
+      )}
       {token && !done && (
         <form className="signin-form" aria-busy={pending} onSubmit={(event) => void save(event)}>
-          <label className="field">
+          <label className="signin-field">
             New password
             <Input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required disabled={pending} />
           </label>
-          {error && <p role="alert" className="field-error">{error}</p>}
-          <Button type="submit" size="lg" disabled={pending || !password}>{pending ? "Saving…" : "Set password"}</Button>
+          {error && <p role="alert" className="signin-error">{error}</p>}
+          <Button type="submit" size="lg" disabled={pending}>{pending ? "Saving…" : "Set password"}</Button>
         </form>
       )}
     </SignInShell>

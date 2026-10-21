@@ -66,9 +66,9 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
       <SignInShell>
         <div className="signin-head">
           <h1>Could not join</h1>
-          <p><a className="signin-link" href="/">{session ? "Go to Corbits Triage" : "Go to sign in"}</a></p>
         </div>
-        <p role="alert" className="field-error">{message}</p>
+        <p role="alert" className="signin-error">{message}</p>
+        <Button asChild size="lg"><a href="/">{session ? "Go to Corbits Triage" : "Go to sign in"}</a></Button>
       </SignInShell>
     );
   }
@@ -78,9 +78,9 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
       <SignInShell>
         <div className="signin-head">
           <h1>Join the workspace</h1>
-          <p>You were invited to a Corbits Triage workspace.</p>
+          <p>You were invited to a Corbits Triage workspace. You are signed in as {session.email}.</p>
         </div>
-        <Button type="button" size="lg" onClick={() => void accept()}>Join</Button>
+        <Button type="button" size="lg" onClick={() => void accept()}>Join workspace</Button>
       </SignInShell>
     );
   }

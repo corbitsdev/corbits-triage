@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { Button, Input } from "@corbits/react-ui";
+import { useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Button, Input, LoginForm } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { getAuthMethods, requestPasswordReset, signInWithGoogle, type AuthMethods } from "../lib/hub-auth.ts";
+import { getAuthMethods, requestPasswordReset, signInWithGoogle } from "../lib/hub-auth.ts";
 import { useSession } from "../lib/session.tsx";
 import { SignInShell } from "../components/SignInShell.tsx";
 
@@ -16,45 +17,25 @@ function returnedSignInError(): string {
   return code === null ? "" : `Google sign-in failed (${code.replaceAll("_", " ")}). Use an allowed account, then try again.`;
 }
 
-function submitLabel(signingUp: boolean, pending: boolean): string {
-  if (signingUp) return pending ? "Signing up…" : "Sign up";
-  return pending ? "Signing in…" : "Sign in";
-}
-
 /** `intro` explains why sign-in is asked for, such as an invite waiting behind it. */
 export function Welcome({ intro }: { intro?: string }) {
   const { signIn, signUp, error } = useSession();
+  const methods = useQuery({ queryKey: ["auth-methods"], queryFn: getAuthMethods });
   const [mode, setMode] = useState<Mode>("sign-in");
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [localError, setLocalError] = useState(returnedSignInError);
-  const [methods, setMethods] = useState<AuthMethods | null>(null);
   const [notice, setNotice] = useState("");
 
-  useEffect(function loadAuthMethods() {
-    async function load() {
-      try {
-        setMethods(await getAuthMethods());
-      } catch (cause: unknown) {
-        setLocalError(`Could not load sign-in options. ${message(cause)}.`);
-      }
-    }
-    void load();
-  }, []);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submit(credentials: { name?: string; email: string; password: string }) {
     setPending(true);
     setLocalError("");
     try {
-      await (mode === "sign-up" ? signUp(email, password, name) : signIn(email, password));
+      await (mode === "sign-up"
+        ? signUp(credentials.email, credentials.password, credentials.name ?? "")
+        : signIn(credentials.email, credentials.password));
     } catch (cause: unknown) {
-      const reason = message(cause);
-      setLocalError(mode === "sign-up"
-        ? `Could not create the account. ${reason}.`
-        : `Could not sign in. ${reason}. Check your email and password, then try again.`);
+      setLocalError(`${message(cause)}.`);
     } finally {
       setPending(false);
     }
@@ -93,72 +74,66 @@ export function Welcome({ intro }: { intro?: string }) {
 
   const shownError = localError || (error ? `Could not load your session. ${error} Reload the page to try again.` : null);
 
-  if (mode === "reset") {
+  if (methods.error) {
     return (
       <SignInShell>
         <div className="signin-head">
-          <h1>Reset your password</h1>
-          <p><button type="button" className="signin-link" onClick={() => switchTo("sign-in")}>Back to sign in</button></p>
+          <h1>Sign in</h1>
         </div>
+        <p role="alert" className="signin-error">Could not load sign-in options. {message(methods.error)}.</p>
+        <Button type="button" size="lg" disabled={methods.isFetching} onClick={() => void methods.refetch()}>
+          {methods.isFetching ? "Trying again…" : "Try again"}
+        </Button>
+      </SignInShell>
+    );
+  }
+
+  if (mode === "reset") {
+    return (
+      <SignInShell footer={<button type="button" className="signin-link" onClick={() => switchTo("sign-in")}>Back to sign in</button>}>
+        <div className="signin-head">
+          <h1>Reset your password</h1>
+          <p>Enter your email and we will send you a link to set a new password.</p>
+        </div>
+        {shownError && <p role="alert" className="signin-error">{shownError}</p>}
+        {notice && <p role="status" className="signin-notice">{notice}</p>}
         <form className="signin-form" aria-busy={pending} onSubmit={(event) => void resetPassword(event)}>
-          <label className="field">
+          <label className="signin-field">
             Email
             <Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={pending} />
           </label>
-          {notice && <p role="status" className="field-help">{notice}</p>}
-          {shownError && <p role="alert" className="field-error">{shownError}</p>}
-          <Button type="submit" size="lg" disabled={pending || !email}>{pending ? "Sending…" : "Send reset link"}</Button>
+          <Button type="submit" size="lg" disabled={pending}>{pending ? "Sending…" : "Send reset link"}</Button>
         </form>
       </SignInShell>
     );
   }
 
   const signingUp = mode === "sign-up";
+  const switcher = methods.data?.emailPassword && (
+    <>
+      {signingUp ? "Have an account? " : "New to Corbits Triage? "}
+      <button type="button" className="signin-link" disabled={pending} onClick={() => switchTo(signingUp ? "sign-in" : "sign-up")}>
+        {signingUp ? "Sign in" : "Create an account"}
+      </button>
+    </>
+  );
 
   return (
-    <SignInShell>
-      <div className="signin-head">
-        <h1>{signingUp ? "Create an account" : "Sign in"}</h1>
-        {intro && <p>{intro}</p>}
-        {methods?.emailPassword && (
-          <p>
-            {signingUp ? "Have an account? " : "New to Corbits Triage? "}
-            <button type="button" className="signin-link" disabled={pending} onClick={() => switchTo(signingUp ? "sign-in" : "sign-up")}>
-              {signingUp ? "Sign in" : "Sign up for an account"}
-            </button>.
-          </p>
-        )}
-      </div>
-      {shownError && <p role="alert" aria-live="assertive" className="field-error">{shownError}</p>}
-      {methods?.emailPassword && (
-        <form className="signin-form" aria-busy={pending} onSubmit={(event) => void submit(event)}>
-          {signingUp && (
-            <label className="field">
-              Name
-              <Input type="text" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required disabled={pending} />
-            </label>
-          )}
-          <label className="field">
-            Email
-            <Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={pending} />
-          </label>
-          <label className="field">
-            Password
-            <Input type="password" autoComplete={signingUp ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} required disabled={pending} />
-          </label>
-          {methods.passwordReset && !signingUp && (
-            <button type="button" className="signin-link signin-forgot" disabled={pending} onClick={() => switchTo("reset")}>Forgot password?</button>
-          )}
-          <Button type="submit" size="lg" disabled={pending}>{submitLabel(signingUp, pending)}</Button>
-        </form>
-      )}
-      {methods?.google && (
-        <>
-          {methods.emailPassword && <p className="signin-or">Or with</p>}
-          <Button type="button" variant="outline" size="lg" disabled={pending} aria-label="Continue with Google" onClick={() => void continueWithGoogle()}>
-            <GoogleMark />Google
-          </Button>
-        </>
+    <SignInShell footer={switcher}>
+      {intro && <p role="status" className="signin-notice">{intro}</p>}
+      {methods.data && (
+        <LoginForm
+          mode={signingUp ? "sign-up" : "sign-in"}
+          heading={signingUp ? "Create an account" : "Sign in"}
+          providers={methods.data.google ? [{ id: "google", label: "Continue with Google", icon: <GoogleMark /> }] : []}
+          onProvider={() => void continueWithGoogle()}
+          onSubmit={methods.data.emailPassword ? (credentials) => void submit(credentials) : undefined}
+          busy={pending}
+          error={shownError}
+          footer={methods.data.passwordReset && !signingUp
+            ? <button type="button" className="signin-link" disabled={pending} onClick={() => switchTo("reset")}>Forgot password?</button>
+            : undefined}
+        />
       )}
     </SignInShell>
   );

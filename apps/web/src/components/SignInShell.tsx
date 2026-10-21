@@ -1,14 +1,12 @@
 import type { ReactNode } from "react";
 
-export function SignInShell({ children }: { children: ReactNode }) {
+/** `footer` sits under the panel, for a way to the other form such as signing up. */
+export function SignInShell({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
   return (
     <div className="signin">
-      <main className="signin-main">
-        <div className="signin-column">{children}</div>
-      </main>
-      <div className="signin-brand" aria-hidden="true">
-        <span className="signin-wordmark"><img src="/triage-logo.svg" width="48" height="48" alt="" />Corbits Triage</span>
-      </div>
+      <p className="signin-brand"><img src="/triage-logo.svg" width="40" height="40" alt="" />Corbits Triage</p>
+      <main className="signin-panel">{children}</main>
+      {footer && <p className="signin-footer">{footer}</p>}
     </div>
   );
 }

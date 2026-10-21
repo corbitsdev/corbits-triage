@@ -52,15 +52,15 @@ You use Corbits Triage through a website called the portal. Your administrator w
 
 Open the portal address. You will see the sign-in screen.
 
-![The sign-in screen: an email field, a password field, a Sign in button and a link to create an account](images/01.png)
+![The sign-in screen: an email field, a password field, a Continue button, a Continue with Google button and a link to create an account](images/01.png)
 
-Type your email address and password and press **Sign in**. If your organization uses Google sign-in, a **Google** button appears instead of, or below, the password fields. If the sign-in screen shows **Forgot password?**, use it to reset a forgotten password.
+Type your email address and password and press **Continue**. If your organization uses Google sign-in, a **Continue with Google** button appears instead of, or below, the password fields. If the sign-in screen shows **Forgot password?**, use it to reset a forgotten password.
 
 To keep the portal on your home screen or desktop, use your browser's **Install** or **Add to Home Screen** option; it then opens in its own window like an app.
 
 ### Creating an account
 
-If you are the first person from your team, click **Sign up for an account**. The form asks for your name, your email address and a password.
+If you are the first person from your team, click **Create an account** below the sign-in box. The form asks for your name, your email address and a password.
 
 ![The create-account form with Name, Email and Password fields](images/02.png)
 
