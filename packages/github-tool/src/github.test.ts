@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { githubCalls, githubWrite } from "./sidecar-bundle.js";
 import { type GithubFetch } from "@corbits/github-reads";
-import { mergePr, mirror, sendCodeReview, upsertTriageComment } from "./github.js";
+import { createReview, mergePr, mirror, sendCodeReview, upsertTriageComment } from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
 
@@ -317,6 +317,15 @@ describe("mergePr", () => {
       return { mergeable: true, mergeable_state: "blocked", head: { sha: "abc123" }, state: "open" };
     });
     await expect(mergePr(gh, { repo: "acme/widgets", number: 8 })).rejects.toThrow(`github PUT /repos/acme/widgets/pulls/8/merge -> 405 ${reason}`);
+  });
+});
+
+describe("createReview", () => {
+  test("a review GitHub refuses fails with the reason under its errors, not its generic message", async () => {
+    const { gh } = recorder(function respond() {
+      return Response.json({ message: "Unprocessable Entity", errors: ["Can not approve your own pull request"] }, { status: 422 });
+    });
+    await expect(createReview(gh, { repo: "acme/widgets", number: 8, body: "", event: "APPROVE" })).rejects.toThrow("-> 422 Can not approve your own pull request");
   });
 });
 

@@ -50,7 +50,8 @@ export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha" 
   return item.verdictSha !== null && head !== null && item.verdictSha !== head;
 }
 
-export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean };
+/** `ownPull`: Triage's own App opened the pull request, and GitHub refuses a review from its author. */
+export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean; ownPull: boolean };
 
 export type PaneKind = PrimaryAction;
 
@@ -80,6 +81,14 @@ type PaneActions = { primary: PaneAction<PrimaryAction> | null; more: MenuEntry[
 
 const MORE_ORDER: PrimaryAction[] = ["reply", "approve", "changes", "comment", "merge"];
 
+const REVIEWS: ReadonlySet<PrimaryAction> = new Set(["approve", "changes"]);
+
+/** A pull request Triage opened is merged rather than approved, and its changes are asked for on GitHub. */
+function ownPullAction(kind: PrimaryAction | null): PrimaryAction | null {
+  if (kind === "approve") return "merge";
+  return kind === "changes" ? null : kind;
+}
+
 function paneAction<K extends PaneKind>(kind: K, gate: PaneGate): PaneAction<K> {
   return { kind, blocker: actionBlocker(kind, gate) };
 }
@@ -99,10 +108,11 @@ function triageEntry(gate: PaneGate, primaryKind: PrimaryAction | null): MenuEnt
 
 export function paneActions(gate: PaneGate): PaneActions {
   const action = inboxAction(gate.item);
-  const primaryKind = primaryAction(gate.item, action);
+  const offered = primaryAction(gate.item, action);
+  const primaryKind = gate.ownPull ? ownPullAction(offered) : offered;
   const primary = primaryKind === null ? null : paneAction(primaryKind, gate);
   const more: MenuEntry[] = MORE_ORDER
-    .filter((kind) => kind !== primaryKind && (kind !== "reply" || hasDraftComment(gate.item.comment)))
+    .filter((kind) => kind !== primaryKind && (kind !== "reply" || hasDraftComment(gate.item.comment)) && !(gate.ownPull && REVIEWS.has(kind)))
     .map((kind) => ({ ...paneAction(kind, gate), label: primaryLabel(kind) }));
   const close = closeEntry(gate);
   if (close !== null) more.push(close);

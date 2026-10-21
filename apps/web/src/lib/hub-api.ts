@@ -1004,7 +1004,7 @@ export type PrGithubWriteInput =
   | { action: "review"; repo: string; number: number; event: "REQUEST_CHANGES"; body: string }
   | { action: "review"; repo: string; number: number; event: "APPROVE"; body: string; headSha: string }
   | { action: "code-review"; repo: string; number: number; headSha: string }
-  | { action: "merge"; repo: string; number: number; headSha: string }
+  | { action: "merge"; repo: string; number: number; headSha?: string }
   | { action: "close"; repo: string; number: number; labels: string[]; comment: string };
 
 /** The hub answers a reply with the GitHub comment it wrote, and a code review send with whether it was already there. */

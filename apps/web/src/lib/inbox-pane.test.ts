@@ -47,9 +47,9 @@ function item(overrides: Partial<PrItem>): PrItem {
   };
 }
 
-function gate(overrides: Partial<PrItem>, detail?: GithubPullDetail, flags: Partial<Pick<PaneGate, "readOnly" | "busy">> = {}): PaneGate {
+function gate(overrides: Partial<PrItem>, detail?: GithubPullDetail, flags: Partial<Pick<PaneGate, "readOnly" | "busy" | "ownPull">> = {}): PaneGate {
   const pr = item(overrides);
-  return { item: pr, facts: paneFacts(pr, detail), readOnly: false, busy: false, ...flags };
+  return { item: pr, facts: paneFacts(pr, detail), readOnly: false, busy: false, ownPull: false, ...flags };
 }
 
 function detail(pr: Partial<GithubPullDetail["pr"]>): GithubPullDetail {
@@ -104,6 +104,13 @@ describe("paneActions", () => {
   test("the menu leaves out the suggested action; anything writable closes plainly", () => {
     expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close", "Triage again"]);
     expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
+  });
+
+  test("a pull request Triage opened is merged, never reviewed, since GitHub refuses a review from its author", () => {
+    const own = paneActions(gate({ state: "awaiting-review", mergeable: true }, undefined, { ownPull: true }));
+    expect(own.primary).toEqual({ kind: "merge", blocker: null });
+    expect(own.more.map((row) => row.label)).toEqual(["Comment", "Close", "Triage again"]);
+    expect(paneActions(gate({ state: "blocked" }, undefined, { ownPull: true })).primary).toBeNull();
   });
 
   test("triage again is offered once the hub has run or given up on the pull request, under the same gate as writes", () => {

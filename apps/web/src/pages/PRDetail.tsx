@@ -26,7 +26,7 @@ import { Markdown } from "../components/Markdown.tsx";
 import { useDiffLayout } from "../lib/diff-layout.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
-import { hostName, pullUrl, viewOnHost } from "../lib/pull-link.ts";
+import { hostName, openedByTriage, pullUrl, viewOnHost } from "../lib/pull-link.ts";
 import {
   approvalHeadline,
   checkValueText,
@@ -324,7 +324,8 @@ export default function PRDetail() {
   const selected = useMemo(() => files.find((file) => file.path === filePath) ?? files[0], [files, filePath]);
   const pending = approval?.status.toLowerCase() === "pending";
   const gated = Boolean(item?.needsHuman && pending);
-  const gate = item === undefined ? null : { item, facts: paneFacts(item, pull.data), readOnly, busy };
+  const ownPull = item !== undefined && openedByTriage(item.source, paneFacts(item, pull.data).author, snapshot?.credentials ?? []);
+  const gate = item === undefined ? null : { item, facts: paneFacts(item, pull.data), readOnly, busy, ownPull };
   const closed = pull.data?.pr.state === "closed";
   const canMerge = gate !== null && canRun("merge", gate);
   const [handled, setHandled] = useState<Record<string, "posted" | "dismissed">>({});
@@ -558,7 +559,7 @@ export default function PRDetail() {
               <Badge>{QUEUE_STATE_LABEL[item.state]}</Badge>
               {mergeBadge()}
               <VerdictChip item={item} />
-              {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source)}</a> : null}
+              {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source, ownPull)}</a> : null}
             </div>
           </div>
           <div className="pr-actions">
@@ -576,8 +577,12 @@ export default function PRDetail() {
                   <Menu>
                     <MenuTrigger asChild><Button type="button" variant="outline" aria-label="More actions">More</Button></MenuTrigger>
                     <MenuContent align="end">
-                      <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("approve")}>Approve</MenuItem>
-                      <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("changes")}>Request changes</MenuItem>
+                      {ownPull ? null : (
+                        <>
+                          <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("approve")}>Approve</MenuItem>
+                          <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("changes")}>Request changes</MenuItem>
+                        </>
+                      )}
                       {!offersClose(item) && <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("close")}>Close pull request</MenuItem>}
                     </MenuContent>
                   </Menu>

@@ -78,7 +78,7 @@ import { findPrItem } from "../lib/triage-view.ts";
 import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
-import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
+import { openedByTriage, pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
 
@@ -287,7 +287,7 @@ function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: Bo
 }
 
 function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }: PaneProps) {
-  const { triagePullRequest, readOnly } = usePortal();
+  const { snapshot, triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const pack = useRepoPack(item.repo);
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
@@ -299,7 +299,8 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const verdict = useRef({ runId: item.runId, comment: item.comment });
   const facts = paneFacts(item, pull.data);
-  const gate = { item, facts, readOnly, busy };
+  const ownPull = openedByTriage(item.source, facts.author, snapshot?.credentials ?? []);
+  const gate = { item, facts, readOnly, busy, ownPull };
   const bar = paneBar(gate, pull.data?.pr.base ?? null, facts.author);
   const draft = replyDraft(item, reply);
   const dos = useMemo(() => pendingDos(item), [item]);
@@ -414,7 +415,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
               <Link className="mono repo-link" to={`/repositories/${item.repo}`} title="Repository settings">{item.repo}</Link>
               {item.number === null ? null : <span className="mono">#{item.number}</span>}
               <span className="sp" />
-              {link === null ? null : <Button asChild variant="ghost" size="sm"><a href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source)} <ExternalIcon /></a></Button>}
+              {link === null ? null : <Button asChild variant="ghost" size="sm"><a href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source, ownPull)} <ExternalIcon /></a></Button>}
             </div>
             <h2 className="title">{titleText(facts.title)}</h2>
             <Byline item={item} author={facts.author} detail={pull.data} />

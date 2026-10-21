@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { minimatch } from "minimatch";
-import { compare } from "@corbits/common";
+import { asRecord, compare } from "@corbits/common";
 import { parseFindingHeadline } from "@corbits/triage-contracts/code-review";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
@@ -18,10 +18,21 @@ export function isTriageComment(body: string): boolean {
   return body.startsWith(TRIAGE_COMMENT_PREFIX);
 }
 
-/** GitHub's reason for a refusal, such as the review a ruleset requires; empty when the body gives none. */
+function detailText(entry: unknown): string {
+  if (typeof entry === "string") return entry;
+  const message = asRecord(entry)?.["message"];
+  return typeof message === "string" ? message : "";
+}
+
+/**
+ * GitHub's reason for a refusal, such as the review a ruleset requires; empty when the body gives none. A 422 says only
+ * "Unprocessable Entity" in `message` and the reason in `errors`.
+ */
 async function errorMessage(res: Response): Promise<string> {
   try {
-    const body = await res.json() as { message?: unknown };
+    const body = await res.json() as { message?: unknown; errors?: unknown };
+    const details = Array.isArray(body.errors) ? body.errors.map(detailText).filter(Boolean) : [];
+    if (details.length) return details.join("; ");
     return typeof body.message === "string" ? body.message : "";
   } catch {
     return "";
