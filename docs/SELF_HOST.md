@@ -212,8 +212,8 @@ anyone in its workspace, member or invited, verified under **Settings → People
 
 Admins invite teammates from the portal. Someone who signs in without an
 invitation gets a workspace of their own; an invitation later adds the
-inviting workspace to theirs. The invitee gets a one-time sign-in
-link that works once, expires after 15 minutes and can be resent. With email
+inviting workspace to theirs. With email set up, the invitee gets a one-time
+sign-in link that works once, expires after 15 minutes and can be resent. With email
 set up, an account whose address is not verified (an email and password
 sign-up) cannot be invited. With email set up, anyone can also reset their password from the
 sign-in page, and an email and password sign-up is sent a link to verify its
@@ -226,8 +226,8 @@ unverified accounts see the same screen once email is set up.
 | `SMTP_URL` | Any SMTP provider, credentials in the URL: `smtps://user:password@smtp.example.com:465`, or `smtp://` to upgrade with STARTTLS when offered. Percent-encode special characters in the password. |
 | `EMAIL_FROM` | The sender, for example `Triage <triage@example.com>`, on a domain the provider accepts. |
 
-Set both or neither. Without them the portal shows each invite link to copy
-and send yourself, and invitees sign in with Google or with email and password.
+Set both or neither. Without them only people who have already signed in can be
+invited, and the portal shows each invite link to copy and send yourself.
 An email and password account other than the first then sees **Verify your
 email**, asking whoever runs the hub to verify it, until the hub's first
 account invites it to its workspace and presses **Mark verified** beside it
