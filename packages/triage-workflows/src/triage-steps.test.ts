@@ -68,7 +68,7 @@ describe("facts policy", () => {
     const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true, checks: { draft: false } }, checkPack: emptyPack("acme/widgets") };
     const read = await readFacts(request, () => answering({
       github_list_open_prs: { prs: [{ number: 8, title: "Fix" }] },
-      "pr:8": { title: "Fix", author: "octocat", sha: "abc", state: "open", draft: true, mergeable: true, requestedReviewers: 1 },
+      "pr:8": { title: "Fix", author: "octocat", sha: "abc0000000000000000000000000000000000000", state: "open", draft: true, mergeable: true, requestedReviewers: 1 },
       "reviews:8": { reviews: [{ reviewer: "a", state: "APPROVED" }] },
       "comments:8": { comments: [] },
       "commits:8": { commits: [] },
@@ -125,7 +125,7 @@ describe("facts policy", () => {
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
       "docs:0": { docs: [], rules: [], ref: "tree" },
-      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
+      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc0000000000000000000000000000000000000", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "comments:8": { comments: [] },
       "commits:8": { commits: [] },
@@ -140,7 +140,7 @@ describe("facts policy", () => {
   test.each(["github", "bitbucket-datacenter"])("a failed %s read degrades the item instead of reading as nothing", async (repoSource) => {
     const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, repoSource, policy: { enabled: true }, checkPack: emptyPack("acme/widgets") };
     const results: Record<string, unknown> = {
-      "pr:8": { title: "Fix", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, body: "" },
+      "pr:8": { title: "Fix", author: "octocat", sha: "abc0000000000000000000000000000000000000", state: "open", draft: false, mergeable: true, body: "" },
       "reviews:8": { reviews: [] },
       "comments:8": { comments: [] },
       "commits:8": { commits: [] },
@@ -169,7 +169,7 @@ describe("judge on a blocked pull request", () => {
     return readFacts(request, () => answering({
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
       "docs:0": { docs: [], rules: [], ref: "tree" },
-      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
+      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc0000000000000000000000000000000000000", state: "open", draft, mergeable, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
       "files:8:0": { files },
@@ -208,7 +208,7 @@ describe("judge on a blocked pull request", () => {
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
       "docs:0": { docs: [], rules: [], ref: "tree" },
-      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
+      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc0000000000000000000000000000000000000", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "comments:8": { comments: [] },
       "commits:8": { commits: [] },
@@ -276,7 +276,7 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual([]);
     expect(verdict).toMatchObject({ verdict: "unsure", degraded: null, mirror: true, humanGated: false, feedback: "", actions: [] });
     expect(verdict.checks.find((c) => c.check === "not-a-draft")).toEqual({ check: "not-a-draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } });
-    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "", header: { head: "abc", policy: null, verdict: "unsure" } });
+    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "", header: { head: "abc0000000000000000000000000000000000000", policy: null, verdict: "unsure" } });
     expect(unsettledBy(verdict)).toEqual({});
   });
 
@@ -324,7 +324,7 @@ describe("focused judge input", () => {
       title: "Refactor",
       author: "octocat",
       tier: "external",
-      headSha: "abc",
+      headSha: "abc0000000000000000000000000000000000000",
       state: "open",
       draft: false,
       mergeable: true,
@@ -473,7 +473,7 @@ describe("mirror grants", () => {
     repo: "acme/widgets",
     number: 8,
     state: "ready-monitoring",
-    headSha: "abc",
+    headSha: "abc0000000000000000000000000000000000000",
     verdict: "pass",
     mirror: true,
     request,
@@ -546,7 +546,7 @@ describe("execute", () => {
     return { calls, dos };
   }
 
-  const verdict = { repo: "acme/widgets", number: 8, headSha: "abc", degraded: null, state: "ready", automatic: ["comment"], request: REQUEST, checks: [], actions: [comment(0)] };
+  const verdict = { repo: "acme/widgets", number: 8, headSha: "abc0000000000000000000000000000000000000", degraded: null, state: "ready", automatic: ["comment"], request: REQUEST, checks: [], actions: [comment(0)] };
 
   test("a verdict whose judge was skipped runs no Do", async () => {
     const skipped = { ...verdict, checks: [{ check: "focused", kind: "model", result: "unconfirmed", reason: NEEDS_JUDGE_REASON }] };
@@ -562,7 +562,7 @@ describe("execute", () => {
     const many = { ...verdict, actions: Array.from({ length: MAX_DOS_PER_RUN + 2 }, (_, index) => comment(index)) };
     const { calls, dos } = await execute(many);
     expect(calls).toHaveLength(MAX_DOS_PER_RUN);
-    expect(calls[0]!.arguments).toEqual({ request: REQUEST, step: { effectId: "e0", headSha: "abc", kind: "comment", target: { body: "hi" } } });
+    expect(calls[0]!.arguments).toEqual({ request: REQUEST, step: { effectId: "e0", headSha: "abc0000000000000000000000000000000000000", kind: "comment", target: { body: "hi" } } });
     expect(dos.filter((d) => d.status === "skipped").map((d) => d.effectId)).toEqual([`e${MAX_DOS_PER_RUN}`, `e${MAX_DOS_PER_RUN + 1}`]);
   });
 });

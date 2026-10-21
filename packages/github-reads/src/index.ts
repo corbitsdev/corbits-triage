@@ -42,6 +42,8 @@ export async function json(gh: GithubFetch, path: string, init?: RequestInit): P
   return res.status === 204 ? null : res.json();
 }
 
+const SHA = /^[0-9a-f]{40}$/;
+
 const NEXT_LINK = /<([^>]+)>;\s*rel="next"/;
 
 type PageOptions<T> = { init?: RequestInit; items?: (page: unknown) => T[] };
@@ -180,11 +182,17 @@ export type AuthorTeams = { teams: string[]; unknown: string[] };
 
 type Membership = "member" | "not" | "unknown";
 
+/** A value put in one path segment; `.` and `..` move the path even when encoded. */
+function segment(value: string): string {
+  if (value === "" || value === "." || value === "..") throw new Error(`"${value}" cannot name a path segment`);
+  return encodeURIComponent(value);
+}
+
 /** A 404 hides both a non-member and a team the App cannot see, so the team itself is read to tell them apart. */
 async function membership(gh: GithubFetch, org: string, slug: string, author: string): Promise<Membership> {
   const team = `/orgs/${encodeURIComponent(org)}/teams/${encodeURIComponent(slug)}`;
   const headers = { accept: "application/vnd.github+json" };
-  const res = await gh(`${team}/memberships/${encodeURIComponent(author)}`, { headers });
+  const res = await gh(`${team}/memberships/${segment(author)}`, { headers });
   if (res.ok) return (await res.json() as { state?: unknown }).state === "active" ? "member" : "not";
   if (res.status !== 404) return "unknown";
   const found = await gh(team, { headers });
@@ -308,6 +316,7 @@ function latestPerName(runs: CheckRunRow[]): CheckRunRow[] {
 }
 
 export async function getChecks(gh: GithubFetch, repo: string, sha: string): Promise<CheckRun[]> {
+  if (!SHA.test(sha)) throw new Error(`sha must be 40 hex characters, got ${sha}`);
   const runs = await jsonAll<CheckRunRow>(gh, `/repos/${repo}/commits/${sha}/check-runs?per_page=100`, { items: (page) => (page as { check_runs: CheckRunRow[] }).check_runs });
   return latestPerName(runs).map((c) => ({
     name: c.name,
@@ -608,7 +617,7 @@ function budget(blobs: DocBlob[], max: number): Map<string, number> {
 }
 
 async function docTree(gh: GithubFetch, repo: string, ref: string): Promise<{ sha: string; blobs: DocBlob[] }> {
-  const tree = await json(gh, `/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+  const tree = await json(gh, `/repos/${repo}/git/trees/${segment(ref)}?recursive=1`);
   if (typeof tree?.sha !== "string" || !Array.isArray(tree.tree)) throw new Error(`github returned an invalid tree for ${repo}@${ref}`);
   const blobs = (tree.tree as any[]).flatMap((row) => (row?.type === "blob" && typeof row.path === "string" && typeof row.sha === "string" && typeof row.size === "number" && isDocPath(row.path)
     ? [{ path: row.path as string, sha: row.sha as string, size: row.size as number }]

@@ -9,9 +9,9 @@ type FakeReview = { id: number; user: { login: string; type: string }; state: st
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[] } = {}) {
-  const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc" }, base: { repo: { id: 1 } }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
+  const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc0000000000000000000000000000000000000" }, base: { repo: { id: 1 } }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
-  const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc" })), ...(seed.approvals ?? [])];
+  const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" })), ...(seed.approvals ?? [])];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
@@ -27,7 +27,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
       return Response.json(reviews.at(-1));
     }
     if (path.includes("/pulls/8/reviews?")) return Response.json(reviews);
-    if (path.includes("/commits/abc/check-runs?")) return Response.json({ check_runs: seed.checkRuns ?? [{ name: "build", status: "completed", conclusion: "success" }] });
+    if (path.includes("/commits/abc0000000000000000000000000000000000000/check-runs?")) return Response.json({ check_runs: seed.checkRuns ?? [{ name: "build", status: "completed", conclusion: "success" }] });
     if (path.endsWith("/dismissals")) {
       const review = reviews.find((r) => path.includes(`/reviews/${r.id}/`))!;
       review.state = "DISMISSED";
@@ -67,7 +67,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
 }
 
 function step(kind: DoStep["kind"], target: ResolvedTarget): DoStep {
-  return { effectId: "e1", headSha: "abc", kind, target };
+  return { effectId: "e1", headSha: "abc0000000000000000000000000000000000000", kind, target };
 }
 
 const REQUEST = { repo: "acme/widgets", number: 8, labels: ["triage:blocked"], owned: ["triage:blocked"], comment: "Blocked" };
@@ -108,7 +108,7 @@ describe("executeDo", () => {
     const { gh, writes } = fakeGithub();
     expect(await run(gh, step("merge", {}))).toMatchObject({ status: "done", result: { merged: true } });
     expect(await run(gh, step("merge", {}))).toMatchObject({ status: "satisfied" });
-    expect(writes).toEqual([{ method: "PUT", path: "/repos/acme/widgets/pulls/8/merge", body: { sha: "abc" } }]);
+    expect(writes).toEqual([{ method: "PUT", path: "/repos/acme/widgets/pulls/8/merge", body: { sha: "abc0000000000000000000000000000000000000" } }]);
   });
 
   test("a merge reads CI and reviews again, and refuses unless CI passed, or there is none and the policy allows it, with no changes requested", async () => {
@@ -116,7 +116,7 @@ describe("executeDo", () => {
     await expect(run(pending.gh, step("merge", {}))).rejects.toThrow("CI has not finished on this head");
     await expect(run(fakeGithub({ checkRuns: [] }).gh, step("merge", {}))).rejects.toThrow("There is no CI on this head");
     expect(await run(fakeGithub({ checkRuns: [] }).gh, step("merge", { ciOptional: true }))).toMatchObject({ status: "done" });
-    const changes = fakeGithub({ approvals: [{ id: 9, user: { login: "maya", type: "User" }, state: "CHANGES_REQUESTED", commit_id: "abc" }] });
+    const changes = fakeGithub({ approvals: [{ id: 9, user: { login: "maya", type: "User" }, state: "CHANGES_REQUESTED", commit_id: "abc0000000000000000000000000000000000000" }] });
     await expect(run(changes.gh, step("merge", {}))).rejects.toThrow("changes are requested by maya");
     expect([...pending.writes, ...changes.writes]).toEqual([]);
   });
@@ -126,10 +126,10 @@ describe("executeDo", () => {
     const earlier = fakeGithub({ approvals: [{ id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "older", body }] });
     expect(await run(earlier.gh, step("merge", {}))).toMatchObject({ status: "done", result: { merged: true } });
     expect(earlier.writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/merge"]);
-    const same = fakeGithub({ approvals: [{ id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "abc", body }] });
+    const same = fakeGithub({ approvals: [{ id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "abc0000000000000000000000000000000000000", body }] });
     expect(await run(same.gh, step("merge", {}))).toMatchObject({ status: "done" });
     expect(same.writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/reviews/7", "PUT /repos/acme/widgets/pulls/8/reviews/7/dismissals", "PUT /repos/acme/widgets/pulls/8/merge"]);
-    const dismissed = fakeGithub({ approvals: [{ id: 7, user: APP, state: "DISMISSED", commit_id: "abc", body: (same.writes[0]!.body as { body: string }).body }] });
+    const dismissed = fakeGithub({ approvals: [{ id: 7, user: APP, state: "DISMISSED", commit_id: "abc0000000000000000000000000000000000000", body: (same.writes[0]!.body as { body: string }).body }] });
     const again = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
     expect(await run(dismissed.gh, again)).toMatchObject({ status: "done" });
   });
@@ -161,10 +161,12 @@ describe("executeDo", () => {
     expect(writes).toEqual([{ method: "POST", path: "/repos/acme/widgets/issues/8/comments", body: { body: `${doMarker("e1")}\nThanks` } }]);
   });
 
-  test("a person's comment with the marker does not count as posted", async () => {
-    const { gh, writes } = fakeGithub({ comments: [{ id: 7, user: { login: "mallory", type: "User" }, body: doMarker("e1") }] });
-    expect(await run(gh, step("comment", { body: "Thanks" }))).toMatchObject({ status: "done" });
-    expect(writes).toHaveLength(1);
+  test("another account's comment with the marker does not count as posted", async () => {
+    for (const user of [{ login: "mallory", type: "User" }, { login: "github-actions[bot]", type: "Bot" }]) {
+      const { gh, writes } = fakeGithub({ comments: [{ id: 7, user, body: doMarker("e1") }] });
+      expect(await run(gh, step("comment", { body: "Thanks" }))).toMatchObject({ status: "done" });
+      expect(writes).toHaveLength(1);
+    }
   });
 
   test("a close sends the verdict's labels and comment, as the pane's Close does, once", async () => {
@@ -182,7 +184,7 @@ describe("executeDo", () => {
     const { gh, writes } = fakeGithub();
     expect(await run(gh, step("approve", {}))).toMatchObject({ status: "done" });
     expect(await run(gh, step("approve", {}))).toEqual({ status: "satisfied", result: { reviewId: 100 } });
-    expect(writes).toEqual([{ method: "POST", path: "/repos/acme/widgets/pulls/8/reviews", body: { body: APPROVE_DO_MARKER, event: "APPROVE", commit_id: "abc" } }]);
+    expect(writes).toEqual([{ method: "POST", path: "/repos/acme/widgets/pulls/8/reviews", body: { body: APPROVE_DO_MARKER, event: "APPROVE", commit_id: "abc0000000000000000000000000000000000000" } }]);
   });
 
   test("changes are requested on the verdict's head with their list, once, and a later approval still stands over them", async () => {
@@ -192,14 +194,14 @@ describe("executeDo", () => {
     expect(await run(gh, task)).toEqual({ status: "satisfied", result: { reviewId: 100 } });
     expect(await run(gh, step("approve", {}))).toMatchObject({ status: "done" });
     expect(writes).toEqual([
-      { method: "POST", path: "/repos/acme/widgets/pulls/8/reviews", body: { body: `${REQUEST_CHANGES_DO_MARKER}\nTriage requests changes:\n- CI: CI failed`, event: "REQUEST_CHANGES", commit_id: "abc" } },
-      { method: "POST", path: "/repos/acme/widgets/pulls/8/reviews", body: { body: APPROVE_DO_MARKER, event: "APPROVE", commit_id: "abc" } },
+      { method: "POST", path: "/repos/acme/widgets/pulls/8/reviews", body: { body: `${REQUEST_CHANGES_DO_MARKER}\nTriage requests changes:\n- CI: CI failed`, event: "REQUEST_CHANGES", commit_id: "abc0000000000000000000000000000000000000" } },
+      { method: "POST", path: "/repos/acme/widgets/pulls/8/reviews", body: { body: APPROVE_DO_MARKER, event: "APPROVE", commit_id: "abc0000000000000000000000000000000000000" } },
     ]);
   });
 
   test.each<[string, FakeReview]>([
-    ["an approval of this head from the inbox", { id: 3, user: APP, state: "APPROVED", commit_id: "abc" }],
-    ["an approval of this head a person dismissed", { id: 3, user: APP, state: "DISMISSED", commit_id: "abc" }],
+    ["an approval of this head from the inbox", { id: 3, user: APP, state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" }],
+    ["an approval of this head a person dismissed", { id: 3, user: APP, state: "DISMISSED", commit_id: "abc0000000000000000000000000000000000000" }],
   ])("the App does not approve again over %s", async (_, approval) => {
     const { gh, writes } = fakeGithub({ approvals: [approval] });
     expect(await run(gh, step("approve", {}))).toEqual({ status: "satisfied", result: { reviewId: 3 } });
@@ -207,7 +209,7 @@ describe("executeDo", () => {
   });
 
   test("another bot's or an earlier head's approval does not count as the App's", async () => {
-    const other = { id: 3, user: { login: "renovate[bot]", type: "Bot" }, state: "APPROVED", commit_id: "abc" };
+    const other = { id: 3, user: { login: "renovate[bot]", type: "Bot" }, state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" };
     const earlier = { id: 4, user: APP, state: "APPROVED", commit_id: "older" };
     const { gh, writes } = fakeGithub({ approvals: [other, earlier] });
     expect(await run(gh, step("approve", {}))).toMatchObject({ status: "done" });

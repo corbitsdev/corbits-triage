@@ -411,6 +411,23 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
+  test("a Bitbucket repository of the same name is not the GitHub one", async () => {
+    const sent: Sent[] = [];
+    const rechecks: Recheck[] = [];
+    const refreshed: string[] = [];
+    const db = stubDb([hookRow()], { corbitsTriage: { repos: [{ name: "octocat/hello", source: "bitbucket-datacenter", connected: true, enabled: true }] } });
+    const handle = bridge({ db, sent, rechecks, refreshed });
+    const pr = JSON.parse(prPayload);
+    const merged = JSON.stringify({ ...pr, action: "closed", repository: { full_name: "octocat/hello", default_branch: "main" }, pull_request: { ...pr.pull_request, state: "closed", merged: true, base: { ref: "main" } } });
+    const pushed = JSON.stringify({ ref: "refs/heads/main", forced: true, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [] });
+    const deliveries: Array<[string, string]> = [["pull_request", prPayload], ["pull_request", merged], ["push", pushed]];
+    for (const [i, [event, body]] of deliveries.entries()) {
+      const res = await handle(githubRequest(body, { event, delivery: `b${i}` }), TARGET);
+      expect(await res.json()).toEqual({ status: "ignored" });
+    }
+    expect([sent, rechecks, refreshed]).toEqual([[], [], []]);
+  });
+
   test("a disabled repo is 202 ignored, and its pull request event still reaches code review", async () => {
     const sent: Sent[] = [];
     const offered: string[] = [];
@@ -570,6 +587,7 @@ describe("bridge installation events", () => {
       corbitsTriage: {
         repos: [
           { name: "octocat/hello", connected: true, installationId: 42 },
+          { name: "octocat/hello", source: "bitbucket-datacenter", connected: true },
           { name: "octocat/keep", connected: true, installationId: 42 },
         ],
       },
@@ -580,7 +598,7 @@ describe("bridge installation events", () => {
       repositories_removed: [{ full_name: "octocat/hello" }],
     }, "removed-1"), TARGET);
     expect(await res.json()).toEqual({ status: "accepted" });
-    expect(repos(db)).toEqual([expect.objectContaining({ name: "octocat/keep" })]);
+    expect(repos(db)).toEqual([expect.objectContaining({ name: "octocat/hello", source: "bitbucket-datacenter" }), expect.objectContaining({ name: "octocat/keep" })]);
     expect(sent).toHaveLength(0);
   });
 

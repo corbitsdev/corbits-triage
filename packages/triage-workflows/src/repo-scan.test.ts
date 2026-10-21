@@ -36,11 +36,11 @@ async function github(input: string | URL | Request): Promise<Response> {
   if (path === `/pulls/${number}`) {
     return Response.json({
       number, title: `Change ${number}`, body: number === 3 ? "Fixes #9" : "", body_html: number === 3 ? '<p dir="auto">Fixes <a href="https://github.com/acme/widgets/issues/9">#9</a></p>' : "", state: "closed", draft: false, user: { login: "ana", type: "User" }, author_association: "CONTRIBUTOR",
-      head: { sha: `sha${number}`, ref: "topic" }, base: { ref: "main" }, changed_files: files.length, additions: files.length * 40, deletions: 0,
+      head: { sha: String(number).padStart(40, "0"), ref: "topic" }, base: { ref: "main" }, changed_files: files.length, additions: files.length * 40, deletions: 0,
     });
   }
   if (path === `/pulls/${number}/files`) return Response.json(files);
-  if (path.startsWith("/commits/")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: path === "/commits/sha2/check-runs" ? "failure" : "success" }] });
+  if (path.startsWith("/commits/")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: path === `/commits/${"2".padStart(40, "0")}/check-runs` ? "failure" : "success" }] });
   return Response.json([]);
 }
 

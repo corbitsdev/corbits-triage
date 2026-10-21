@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { githubWrite } from "./sidecar-bundle.js";
+import { githubCalls, githubWrite } from "./sidecar-bundle.js";
 import { type GithubFetch } from "@corbits/github-reads";
 import { mergePr, mirror, sendCodeReview, upsertTriageComment } from "./github.js";
 
@@ -252,6 +252,31 @@ describe("github write tool approval", () => {
       { name: "github_request_reviewers", approval: "ask" },
       { name: "github_merge_pr", approval: "ask" },
     ]);
+  });
+});
+
+describe("github tool arguments", () => {
+  test("a repository, number, sha, ref or author that would leave its API path is refused before any request", async () => {
+    const { gh, requests } = recorder(function respond() {
+      return {};
+    });
+    const run = githubCalls(async () => gh);
+    const step = { effectId: "e1", headSha: "abc", kind: "comment", target: { body: "Hi" } };
+    const refused: Array<[string, Record<string, unknown>]> = [
+      ["github_get_pr", { repo: "acme/../../user", number: 1 }],
+      ["github_get_pr", { repo: "acme/./widgets", number: 1 }],
+      ["github_get_pr", { repo: "acme/widgets?x=1", number: 1 }],
+      ["github_get_pr", { repo: "acme/widgets", number: "1/merge" }],
+      ["github_get_checks", { repo: "acme/widgets", sha: ".." }],
+      ["github_get_checks", { repo: "acme/widgets", sha: "main/../../x" }],
+      ["github_read_repo_docs", { repo: "acme/widgets", ref: ".." }],
+      ["github_read_repo_docs", { repo: "acme/widgets", ref: "." }],
+      ["github_author_teams", { repo: "acme/widgets", author: "..", teams: ["core"] }],
+      ["github_execute_do_auto", { request: { repo: "acme/w/../../x", number: 1, labels: [], comment: "" }, step }],
+    ];
+    for (const [name, args] of refused) expect(await run({ id: "c", name, arguments: args })).toMatchObject({ isError: true });
+    expect(requests).toEqual([]);
+    expect(await run({ id: "c", name: "github_nope", arguments: {} })).toMatchObject({ isError: true, content: "unknown tool github_nope" });
   });
 });
 

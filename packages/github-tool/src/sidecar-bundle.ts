@@ -33,7 +33,7 @@ import {
   requestReviewers,
 } from "./github";
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
-import { cachedLoads, checkTarget, linesOf, MAX_LINES } from "@corbits/repo-read-tool";
+import { cachedLoads, checkRepo, checkTarget, linesOf, MAX_LINES } from "@corbits/repo-read-tool";
 
 export const CREDENTIAL_HANDLE = "github";
 
@@ -228,8 +228,18 @@ async function readWindow(fileAt: FileAt, a: Record<string, any>) {
   return linesOf(a.path, text, a.start, a.end);
 }
 
+/** Every tool but the Do, which checks its own. */
+const REPO_TOOLS = new Set([...READ_DEFINITIONS, ...WRITE_DEFINITIONS].map((d) => d.name).filter((name) => name !== "github_execute_do_auto"));
+
+/** Refuses a repository or number that would leave the API path it is put in. */
+function checkArgs(a: Record<string, any>): void {
+  checkRepo(a.repo);
+  if ("number" in a && !(Number.isSafeInteger(a.number) && a.number > 0)) throw new Error(`number must be a positive integer, got ${a.number}`);
+}
+
 async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, fileAt: FileAt): Promise<unknown> {
   const a = call.arguments;
+  if (REPO_TOOLS.has(call.name)) checkArgs(a);
   switch (call.name) {
     case "github_list_open_prs":
       return { prs: await listOpenPrs(gh, a.repo) };

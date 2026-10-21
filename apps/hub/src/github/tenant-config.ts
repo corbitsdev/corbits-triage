@@ -316,9 +316,9 @@ export function upsertConnectedRepos(
   return { ...ns, repos };
 }
 
-export function dropReposByName(ns: CorbitsTriageNs, names: readonly string[]): CorbitsTriageNs {
+export function dropGithubReposByName(ns: CorbitsTriageNs, names: readonly string[]): CorbitsTriageNs {
   const drop = new Set(names);
-  return { ...ns, repos: repoRecords(ns).filter((row) => !drop.has(row.name)) };
+  return { ...ns, repos: repoRecords(ns).filter((row) => sourceOf(row) !== "github" || !drop.has(row.name)) };
 }
 
 export function dropReposByInstallation(ns: CorbitsTriageNs, installationId: number): CorbitsTriageNs {

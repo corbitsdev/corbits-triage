@@ -24,7 +24,7 @@ import type { CompletedReview } from "../code-review-runs.js";
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_read_access";
 const REPO = "acme/widgets";
-const HEAD = "abc123";
+const HEAD = "abc1230000000000000000000000000000000000";
 const testSchema = `corbits_read_access_${randomBytes(6).toString("hex")}`;
 const requested: string[] = [];
 const reviewed: unknown[] = [];

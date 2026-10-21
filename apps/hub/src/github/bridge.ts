@@ -25,7 +25,7 @@ import type { PolicyFileState } from "./policy-file.js";
 import { readCappedBody } from "../read-json.js";
 import {
   dropReposByInstallation,
-  dropReposByName,
+  dropGithubReposByName,
   patchCorbitsTriage,
   repoRecords,
   setConnectedForInstallation,
@@ -71,20 +71,6 @@ export interface BridgeDeps {
   recheckOpenPulls: (tenantId: string, key: string, except: number) => Promise<number>;
   /** Reads the repository's policy file again; undefined when the repository is not connected. */
   refreshPolicyFile: (tenantId: string, repo: string) => Promise<PolicyFileState | undefined>;
-}
-
-function repoRows(config: unknown): Array<Record<string, unknown>> {
-  if (!config || typeof config !== "object") return [];
-  const app = (config as Record<string, unknown>)["corbitsTriage"];
-  if (!app || typeof app !== "object") return [];
-  const repos = (app as Record<string, unknown>)["repos"];
-  if (!Array.isArray(repos)) return [];
-  return repos.flatMap((row) => (row && typeof row === "object" ? [row as Record<string, unknown>] : []));
-}
-
-function policyForRepo(config: unknown, repo: string): RepoPolicy {
-  const row = repoRows(config).find((item) => item["name"] === repo);
-  return repoPolicy(row);
 }
 
 /** Mirrors @corbits/webhooks parseWebhookMeta (not exported upstream). */
@@ -258,7 +244,7 @@ export function applyInstallationListing(ns: CorbitsTriageNs, listings: readonly
     }
     const listed = new Set(listing.names);
     const gone = repoRecords(next).filter((row) => row.installationId === installationId && !listed.has(row.name));
-    next = dropReposByName(next, gone.map((row) => row.name));
+    next = dropGithubReposByName(next, gone.map((row) => row.name));
     next = upsertConnectedRepos(next, listing.names, listing.fields);
   }
   return next;
@@ -282,7 +268,7 @@ function applyInstallAction(
     );
   }
   if (event === "installation_repositories" && action === "removed") {
-    return { ns: dropReposByName(ns, repoFullNames(payload["repositories_removed"])) };
+    return { ns: dropGithubReposByName(ns, repoFullNames(payload["repositories_removed"])) };
   }
   if (event === "installation" && action === "deleted") {
     return { ns: dropReposByInstallation(ns, fields.installationId) };
@@ -355,6 +341,28 @@ export async function tenantConfigOf(d: Pick<BridgeDeps, "db">, tenantId: string
   return (await d.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } }))?.config;
 }
 
+/** The connected GitHub record of `repo`, or the response to return; another host's repository of the same name is not this one. */
+async function connectedRecord(
+  d: BridgeDeps,
+  log: (entry: Record<string, unknown>) => void,
+  loaded: BridgeHook,
+  delivery: string,
+  event: string,
+  repo: string,
+): Promise<RepoRecord | Response> {
+  let tenantConfig: unknown;
+  try {
+    tenantConfig = await tenantConfigOf(d, loaded.tenantId);
+  } catch {
+    d.cache.forget(`${loaded.credentialId}:${delivery}`);
+    return json(500, { error: "tenant_config_unavailable" });
+  }
+  const record = repoRecords(triageNs(tenantConfig)).find((row) => row.name === repo && sourceOf(row) === "github" && row.connected);
+  if (record) return record;
+  log({ level: "info", msg: "ignored", delivery, event, repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
+  return json(202, { status: "ignored" });
+}
+
 /**
  * A moved default branch can change every other open pull request's conflicts, so they are triaged again; the merged one is
  * not. The merge may also have changed the policy file, and an App registered before it subscribed to `push` hears only this.
@@ -367,6 +375,8 @@ async function handleBaseMove(
   event: string,
   { repo, merged }: BaseMove,
 ): Promise<Response> {
+  const record = await connectedRecord(d, log, loaded, delivery, event, repo);
+  if (record instanceof Response) return record;
   try {
     await d.refreshPolicyFile(loaded.tenantId, repo);
   } catch (err) {
@@ -374,16 +384,8 @@ async function handleBaseMove(
     log({ level: "error", msg: "policy_file_read_failed", delivery, event, repo, error: errorText(err) });
     return json(500, { error: "policy_file_read_failed" });
   }
-  let tenantConfig: unknown;
-  try {
-    tenantConfig = await tenantConfigOf(d, loaded.tenantId);
-  } catch {
-    d.cache.forget(`${loaded.credentialId}:${delivery}`);
-    return json(500, { error: "tenant_config_unavailable" });
-  }
-  const connected = repoRecords(triageNs(tenantConfig)).some((row) => row.name === repo && row.connected);
-  if (!connected || !policyForRepo(tenantConfig, repo).enabled) {
-    log({ level: "info", msg: "ignored", delivery, event, repo, hook: loaded.credentialId, reason: connected ? "repo_not_enabled" : "unconfigured_repo" });
+  if (!repoPolicy(record).enabled) {
+    log({ level: "info", msg: "ignored", delivery, event, repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
     return json(202, { status: "ignored" });
   }
   let due: number;
@@ -407,6 +409,8 @@ async function handlePolicyPush(
   event: string,
   { repo }: PolicyPush,
 ): Promise<Response> {
+  const record = await connectedRecord(d, log, loaded, delivery, event, repo);
+  if (record instanceof Response) return record;
   let read: PolicyFileState | undefined;
   try {
     read = await d.refreshPolicyFile(loaded.tenantId, repo);
@@ -492,20 +496,10 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "own_event" });
       return json(202, { status: "ignored" });
     }
-    let tenantConfig: unknown;
-    try {
-      tenantConfig = await tenantConfigOf(d, loaded.tenantId);
-    } catch {
-      d.cache.forget(`${loaded.credentialId}:${delivery}`);
-      return json(500, { error: "tenant_config_unavailable" });
-    }
-    const record = repoRecords(triageNs(tenantConfig)).find((row) => row.name === mail.repo && row.connected);
-    if (!record) {
-      log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
-      return json(202, { status: "ignored" });
-    }
+    const record = await connectedRecord(d, log, loaded, delivery, event, mail.repo);
+    if (record instanceof Response) return record;
     void d.codeReview.offer(loaded.tenantId, record, mail);
-    const policy = policyForRepo(tenantConfig, mail.repo);
+    const policy = repoPolicy(record);
     if (!policy.enabled) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
       return json(202, { status: "ignored" });
