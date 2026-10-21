@@ -320,15 +320,40 @@ the scope or a review step failed, the review cannot be read, the reader
 stopped early, the diff was cut, or a paths rule met unread files. The block's
 `clean` thresholds are not applied yet.
 
-Stock runs a step whose dependencies failed, so ordering alone holds nothing
-back. Triage's execute is one step after the mirror and `codeReview`, whose
-output carries the verdict: without an outcome it fails and writes nothing.
-Approve and merge run only after a clean or skipped review; otherwise execute
-records each `held`, which the hub reads as a Do triage held, so it waits in
-Needs you and its approval mail runs triage's own execute. An approval or
-waiting mail never triages, so it never reaches the scope. The definition binds
-both pipelines' credentials and, like code review, requires
-`isolation:workload`.
+`decide` is the run's one decision. It reads the trigger request's `decide`
+(the policy file's rules; the parser writes a file's `actions` as one rule per
+triage outcome, and with a block on, approve and merge only under
+`{ all: clean }`, the other steps kept in their places in a second rule) and
+`blocks` (the blocks the policy turns on), triage's verdict, the events that
+woke the run, the author's groups
+(`authorGroupsOf` over the pack's `groups`) and code review's outcome, whose
+worst finding's priority reads as a severity (0 critical, 1 high, 2 medium, 3
+low; any other, or none, critical). A review cut short or stopped early is
+`incomplete` whatever it found. Rules run in order and the first that matches
+wins; skipped blocks never count, so `{ all: clean }` holds when every block
+that ran is clean. Every block with an outcome counts, whatever
+`blocks` says, and one that is on, or that a rule names, with no outcome reads
+as `incomplete`: this variant runs only code review, so `security` or
+`deslop` on is incomplete here. It flags for a maintainer when nothing
+matches, when the rules are missing or invalid, when a rule names groups and
+the author's cannot be read, and when a matched rule approves or merges after
+an incomplete block. The blocks' `clean` thresholds are not applied yet. Only
+`decide` chooses: with any block in `blocks`, the verdict comment names no Do,
+so it never claims an approve or merge `decide` may hold.
+
+The matched rule's own steps, with their targets and `when`, become the Dos,
+resolved, held and granted as triage's own (`suggestedDos` in pr-triage's
+evaluate); the labelling rules' labels Do runs as triage adds it, whatever is
+decided. Every other Do the verdict would have run unattended is recorded
+`held` with the reason (on a flag, the flag; otherwise the block that was not
+clean, such as "Code review is findings"), which the hub reads as a Do triage
+held, so it waits in Needs you and its approval mail runs triage's own
+execute. So a schema 3 file's approve and merge wait for a maintainer after a
+review that was not clean. Stock runs a step whose dependencies failed, so ordering
+alone holds nothing back: triage's execute is one step after the mirror and
+`decide`, and without a decision it fails and writes nothing. An approval or waiting mail never triages, so it never reaches the
+scope. The definition binds both pipelines' credentials and, like code review,
+requires `isolation:workload`.
 
 ## Tenancy and authority
 

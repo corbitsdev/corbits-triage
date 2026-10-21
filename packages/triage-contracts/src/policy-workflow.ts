@@ -5,7 +5,7 @@ import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, GROUP_NAM
 import { EVERYONE } from "./step-when.js";
 
 export const BLOCK_KINDS = ["code-review", "security", "deslop"] as const;
-type BlockKind = (typeof BLOCK_KINDS)[number];
+export type BlockKind = (typeof BLOCK_KINDS)[number];
 
 export const PROVIDERS = ["anthropic", "openai", "xai", "google", "opencode", "custom"] as const;
 
@@ -184,7 +184,7 @@ function providerProblems(workflow: PolicyWorkflow): PathProblem[] {
     }));
 }
 
-function kindsOf(written: DecideRule["do"]): string[] {
+export function kindsOf(written: DecideRule["do"]): string[] {
   return (Array.isArray(written) ? written : [written]).map((item) => (typeof item === "string" ? item : item.do));
 }
 
@@ -199,6 +199,7 @@ function ruleProblems(rule: DecideRule, at: number, workflow: PolicyWorkflow): P
   if (Object.keys(rule.if).length === 0) return [{ message: `\`decide[${at}].if\` must set a condition.`, path: ["decide", at, "if"] }];
   const kinds = kindsOf(rule.do);
   const mixed = kinds.includes("nothing") && kinds.length > 1 ? [{ message: `\`decide[${at}].do\` can't mix \`nothing\` with other actions; keep one or the other.`, path: ["decide", at, "do"] }] : [];
+  const reviewing = kinds.includes("review") ? [{ message: `\`decide[${at}].do\` can't use \`review\` yet; use \`request-review\` or remove it.`, path: ["decide", at, "do"] }] : [];
   const approving = kinds.includes("approve") || kinds.includes("merge");
   const blocks = BLOCK_KINDS.flatMap((kind) => {
     const condition = rule.if[kind];
@@ -208,7 +209,7 @@ function ruleProblems(rule: DecideRule, at: number, workflow: PolicyWorkflow): P
     if (approving && outcomesOf(condition).includes("incomplete")) return [{ message: `\`${pathText(path)}\` can't match incomplete in a rule that approves or merges; incomplete is never clean.`, path }];
     return [];
   });
-  return [...mixed, ...blocks];
+  return [...mixed, ...reviewing, ...blocks];
 }
 
 /**
@@ -249,18 +250,23 @@ export function withAuthors<T extends StepObject>(step: T, groups: Readonly<Reco
   return { ...step, when: { ...step.when, author: readAuthors(step.when.author, groups) } };
 }
 
+const UNCLEAN_KINDS: readonly string[] = ["approve", "merge"];
+
 /**
  * Schema 3 `actions` as `decide`: each verdict's steps become one rule on that triage outcome, every step kept with its
  * target and conditions, and limited to the events the actions wake on when they wake on fewer than all. A Pass or Fail
  * with no steps did nothing, so it maps to `nothing`; an Unsure with none maps to no rule, which `decide` flags for a
- * maintainer, as the Unsure label did.
+ * maintainer, as the Unsure label did. With a block on, approve and merge run only when every block that ran is clean:
+ * otherwise a second rule runs the other steps, each in its own place so its effect stays the same.
  */
-export function decideOf(actions: PolicyActions): DecideRule[] {
+export function decideOf(actions: PolicyActions, blocksOn: boolean): DecideRule[] {
   const limited = POLICY_EVENTS.some((event) => !actions.when.includes(event));
   return VERDICTS.flatMap((verdict): DecideRule[] => {
     const condition = { triage: verdict, ...(limited && { event: [...actions.when] }) };
     const steps: Step[] = actions[verdict];
-    if (steps.length > 0) return [{ if: condition, do: steps }];
-    return verdict === "unsure" ? [] : [{ if: condition, do: "nothing" }];
+    if (steps.length === 0) return verdict === "unsure" ? [] : [{ if: condition, do: "nothing" }];
+    if (!blocksOn || !steps.some((step) => UNCLEAN_KINDS.includes(step.do))) return [{ if: condition, do: steps }];
+    const unclean = steps.map((step): Step => (UNCLEAN_KINDS.includes(step.do) ? { do: "nothing" } : step));
+    return [{ if: { ...condition, all: "clean" }, do: steps }, { if: condition, do: unclean }];
   });
 }

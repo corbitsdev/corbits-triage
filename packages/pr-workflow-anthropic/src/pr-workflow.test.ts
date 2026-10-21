@@ -8,7 +8,7 @@ import { checkoutUnder } from "@corbits/pr-code-review/actions/checkout";
 import { codeReviewAgents } from "@corbits/pr-code-review/agents";
 import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
 import { ANTHROPIC } from "@corbits/pr-code-review-anthropic/profile";
-import { APPROVE_DO_KIND, emptyPack, stockTriggerMail, VERDICTS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, checkPolicyFile, emptyPack, stockTriggerMail, VERDICTS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { SuggestedDo } from "@corbits/triage-workflows/logic/actions";
 import type { Verdict } from "@corbits/triage-workflows/logic/render";
 import { triageJudgeDirector } from "@corbits/triage-workflows/directors";
@@ -20,6 +20,7 @@ import * as actions from "./actions/index.js";
 import { workflow as bitbucket } from "./pr-workflow-bitbucket-datacenter.js";
 import { workflow as github } from "./pr-workflow-github.js";
 import { scopeOf } from "./actions/code-review.js";
+import { severityOf } from "./actions/decide.js";
 import { credentialBindingsFor, prWorkflowOf } from "./pr-workflow.js";
 
 // joho/godotenv#262 as GitHub served it; its head is checked out from the new side of its patches.
@@ -35,7 +36,7 @@ function newSide(patch: string): string {
 const FILES = Object.fromEntries(PR.files.map((file) => [file.filename, newSide(file.patch!)]));
 const DIFF = PR.files.map((file) => `diff --git a/${file.filename} b/${file.filename}\n--- a/${file.filename}\n+++ b/${file.filename}\n${file.patch}\n`).join("");
 const QUOTED = FILES["parser.go"]!.split("\n").findIndex((line) => line.includes("escaped only"));
-const FINDING = { path: "parser.go", start: QUOTED + 1, end: QUOTED + 1, priority: 1, confidence: 0.9, title: "odd count", why: "an even run of backslashes", trigger: "FOO=\"a\\\\\\\"\"", code: FILES["parser.go"]!.split("\n")[QUOTED] };
+const FINDING = { path: "parser.go", start: QUOTED + 1, end: QUOTED + 1, priority: 0, confidence: 0.9, title: "odd count", why: "an even run of backslashes", trigger: "FOO=\"a\\\\\\\"\"", code: FILES["parser.go"]!.split("\n")[QUOTED] };
 const REVIEW_REQUEST = { kind: "code-review", number: PR.number, title: PR.title, description: PR.body, diff: DIFF, checkout: { source: "github", repo: PR.repo, sha: HEAD } };
 
 let dir: string;
@@ -154,7 +155,7 @@ const REVIEW_STEPS = ["reviewInput", "plan", "checkout", "findersInput", "findDi
 const ON = { on: true, for: ["everyone"], triage: [...VERDICTS], groups: ["maintainers", "everyone"] };
 
 function triageOf(ran: readonly string[]) {
-  return ran.filter((id) => !id.startsWith("codeReview"));
+  return ran.filter((id) => !id.startsWith("codeReview") && id !== "decide");
 }
 
 function at(events: readonly { kind: string; stepId?: string }[], kind: string, stepId: string): number {
@@ -194,7 +195,13 @@ async function boom(): Promise<never> {
   throw new Error("boom");
 }
 
-const HELD = "Code review is findings; a maintainer decides.";
+/** The policy's decide rules: approve when every block that ran is clean, or on any pass. */
+const ALL_CLEAN = [{ if: { all: "clean" }, do: "approve" }];
+const ON_PASS = [{ if: { triage: "pass" }, do: ["approve", "merge"] }];
+
+function held(dos: unknown, error: string) {
+  expect((dos as { dos: unknown[] }).dos).toEqual([0, 1].map(() => ({ effectId: expect.any(String), status: "held", error })));
+}
 
 /** The hub's approval mail for the Do `effectId` the run's verdict named. */
 function approvalMail(verdict: Verdict, effectId: string) {
@@ -203,19 +210,20 @@ function approvalMail(verdict: Verdict, effectId: string) {
   return { ...triggerMail(PR, PACK), parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
 }
 
-test("code review off runs none of its steps, records skipped, and approve runs", async () => {
-  const composed = await run(variant(), { codeReview: { ...ON, on: false }, codeReviewRequest: REVIEW_REQUEST }, APPROVING);
+test("code review off runs none of its steps, records skipped, and the approve decide chose runs", async () => {
+  const composed = await run(variant(), { codeReview: { ...ON, on: false }, codeReviewRequest: REVIEW_REQUEST, blocks: [], decide: ALL_CLEAN }, APPROVING);
   expect(composed.ran.filter((id) => id.startsWith("codeReview"))).toEqual(["codeReview_scope", "codeReview_gate", "codeReview"]);
   expect(composed.outputs["codeReview"]).toMatchObject({ outcome: "skipped", reason: "code review is off" });
   expect(approved(composed.writes)).toBe(true);
+  expect(merged(composed.writes)).toBe(false);
 });
 
-test("after findings, approve and merge wait for a maintainer, whose approval mail writes the approve", async () => {
-  const findings = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST }, APPROVING);
+test("after findings no rule matches, so approve and merge wait for a maintainer, whose approval mail writes the approve", async () => {
+  const findings = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST, blocks: ["code-review"], decide: ALL_CLEAN }, APPROVING);
   expect(findings.outputs["codeReview"]).toMatchObject({ outcome: "findings" });
+  expect(findings.outputs["decide"]).toMatchObject({ decision: { flag: "no rule matched" } });
   expect(approved(findings.writes) || merged(findings.writes)).toBe(false);
-  const dos = (findings.outputs["execute"] as { dos: { effectId: string; status: string; error?: string }[] }).dos;
-  expect(dos).toEqual([0, 1].map(() => ({ effectId: expect.any(String), status: "held", error: HELD })));
+  held(findings.outputs["execute"], "Flagged for a maintainer: no rule matched.");
   const verdict = findings.outputs["evaluate"] as Verdict;
   const approve = verdict.actions.find((action) => action.kind === "approve") as SuggestedDo;
   const approval = await run(variant(), {}, { mail: approvalMail(verdict, approve.effectId) });
@@ -223,21 +231,43 @@ test("after findings, approve and merge wait for a maintainer, whose approval ma
   expect(approved(approval.writes)).toBe(true);
 });
 
-test("a review step that fails for good records the review incomplete, and approve never runs", async () => {
-  const composed = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST }, { ...APPROVING, actions: { writeInput: boom } });
+test("a v4 rule's own steps are the Dos that run: approve on a pass writes the approve, which the comment never claimed", async () => {
+  const composed = await run(variant(), { codeReview: { ...ON, on: false }, codeReviewRequest: REVIEW_REQUEST, blocks: [], decide: [{ if: { triage: "pass" }, do: "approve" }] }, { automatic: ["approve"] });
+  expect(composed.outputs["decide"]).toMatchObject({ decision: { do: "approve", rule: 0 } });
+  expect(approved(composed.writes)).toBe(true);
+  expect((composed.outputs["evaluate"] as Verdict).feedback).not.toContain("Triage will");
+});
+
+test("schema 3 actions beside code review on never approve or merge after a P0 finding, nor claim to in the comment; both wait for a maintainer", async () => {
+  const file = checkPolicyFile("rules:\n  - { check: ci-green, text: CI passes., reason: Required., evidence: [maintainer-stated] }\ncode-review: { on: true }\nactions:\n  pass: [{ do: approve }, { do: merge }]\n", PR.repo);
+  if (!file.ok) throw new Error(JSON.stringify(file.problems));
+  const composed = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST, blocks: ["code-review"], decide: file.workflow.decide }, APPROVING);
+  expect(composed.outputs["codeReview"]).toMatchObject({ outcome: "findings" });
+  expect(composed.outputs["decide"]).toMatchObject({ decision: { rule: 1 } });
+  expect(approved(composed.writes) || merged(composed.writes)).toBe(false);
+  held(composed.outputs["execute"], "Code review is findings; a maintainer decides.");
+  expect((composed.outputs["evaluate"] as Verdict).feedback).not.toContain("Triage will");
+});
+
+test("a finding's priority 0 to 3 reads as critical to low, and any other, or none, as critical", () => {
+  expect([0, 3, 4, undefined].map((priority) => severityOf({ priority }))).toEqual(["critical", "low", "critical", "critical"]);
+});
+
+test("a review step that fails for good records the review incomplete, which holds a rule's approve and merge", async () => {
+  const composed = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST, blocks: ["code-review"], decide: ON_PASS }, { ...APPROVING, actions: { writeInput: boom } });
   expect(composed.outputs["codeReview"]).toMatchObject({ outcome: "incomplete", reason: "the review did not finish" });
-  expect(composed.ran).toContain("execute");
-  expect(approved(composed.writes)).toBe(false);
+  expect(approved(composed.writes) || merged(composed.writes)).toBe(false);
+  held(composed.outputs["execute"], "Flagged for a maintainer: a block is incomplete.");
 });
 
 test("a scope that fails records the review incomplete, and approve never runs", async () => {
-  const composed = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST }, { ...APPROVING, actions: { codeReviewScope: boom } });
+  const composed = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST, blocks: ["code-review"], decide: ON_PASS }, { ...APPROVING, actions: { codeReviewScope: boom } });
   expect(composed.outputs["codeReview"]).toMatchObject({ outcome: "incomplete", reason: "the scope did not settle" });
   expect(approved(composed.writes)).toBe(false);
 });
 
-test("an outcome step that fails fails triage's execute before it writes anything", async () => {
-  const composed = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST }, { ...APPROVING, actions: { codeReviewOutcome: boom } });
+test("a decide step that fails fails triage's execute before it writes anything", async () => {
+  const composed = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST, blocks: ["code-review"], decide: ON_PASS }, { ...APPROVING, actions: { decideActions: boom } });
   expect(composed.events.find((event) => event.kind === "StepFailed" && event.stepId === "execute")).toBeDefined();
   expect("execute" in composed.outputs).toBe(false);
   expect(approved(composed.writes)).toBe(false);

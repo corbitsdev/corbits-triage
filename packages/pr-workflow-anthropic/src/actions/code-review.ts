@@ -20,19 +20,19 @@ const Trigger = type({ codeReview: CodeReviewTrigger, "codeReviewRequest?": "obj
 
 const Review = type({ comments: "object[]", budgetExhausted: "boolean", "cut?": "object" });
 
-type Steps = Record<string, { output: unknown } | undefined>;
+export type Steps = Record<string, { output: unknown } | undefined>;
 
 type Closed = { open: false; outcome: "skipped" | "incomplete"; reason: string };
 type Scope = { open: true; request: object } | Closed;
 
 /** A step's output, unless it was pruned: a resumed run hydrates a pruned step's skip sentinel, which a live run never shows. */
-function settled(steps: Steps, id: string): unknown {
+export function settled(steps: Steps, id: string): unknown {
   const output = steps[id]?.output;
   return isRecord(output) && output.skipped === true ? undefined : output;
 }
 
 /** Triage's verdict, from whichever of its branches ran. */
-function verdictOutput(steps: Steps): unknown {
+export function verdictOutput(steps: Steps): unknown {
   return settled(steps, "evaluate") ?? settled(steps, "evaluateRules");
 }
 
@@ -87,12 +87,11 @@ export async function codeReviewScope(input: unknown): Promise<Scope> {
   return scopeOf(payload, steps as Steps);
 }
 
-/** Findings when the review commented; incomplete when it read less than the whole change or cannot be read; else clean. */
+/** Incomplete when the review read less than the whole change or cannot be read, whatever it found; else findings when it commented, or clean. */
 function outcomeOf(review: unknown) {
   const parsed = Review(review);
-  if (parsed instanceof type.errors) return "incomplete";
-  if (parsed.comments.length > 0) return "findings";
-  return parsed.budgetExhausted || parsed.cut ? "incomplete" : "clean";
+  if (parsed instanceof type.errors || parsed.budgetExhausted || parsed.cut) return "incomplete";
+  return parsed.comments.length > 0 ? "findings" : "clean";
 }
 
 /**
@@ -109,11 +108,7 @@ function outcomeIn(steps: Steps) {
   return { outcome: outcomeOf(review), review };
 }
 
-/**
- * The block's outcome, with triage's verdict beside it for execute: a host action's input must be JSON, so execute
- * reads this one output rather than the whole steps record.
- */
+/** The block's outcome. */
 export async function codeReviewOutcome(input: unknown) {
-  const steps = input as Steps;
-  return { ...outcomeIn(steps), verdict: verdictOutput(steps) };
+  return outcomeIn(input as Steps);
 }

@@ -197,7 +197,7 @@ security: { on: true, when: { triage: pass, paths: ["src/**"] }, clean: { below:
 decide:
   - { if: { triage: fail }, do: request-changes }
   - { if: { all: clean }, do: approve }
-  - { if: { code-review: findings }, do: review }
+  - { if: { code-review: findings }, do: [{ do: request-review, target: { to: codeowners } }] }
 ```
 
 Triage checks these keys when it reads the file but doesn't act on them yet: what runs and what happens still come from `rules`, `actions` and your Code review settings. The one exception is groups: an action's `when: { author: [...] }` can name one. An author is in the first of your groups they match, in the order you wrote them, and in each built-in group (`maintainers`, `external`, `first-timers`, `bots`) their role puts them in. Everyone is in `everyone`. The built-in groups go by the author's role alone, so they still work when Triage can't read teams; only when it can't tell the author's role are they unknown too. For a group you define, Triage can't tell whether the author is in it when it can't tell their role, or when teams it can't read would decide which of your groups is theirs. An action for a group Triage can't tell about doesn't run. `everyone` always matches. Never let Approve or Merge rest on `everyone` alone. In `decide`, `{ all: clean }` means every check that actually ran came back clean; checks that were skipped don't count. A file that uses `extends` can't hold these keys. Every key is listed in the setup skill's [reference](../../skills/corbits-triage-setup/reference.md#blocks-and-decide).
