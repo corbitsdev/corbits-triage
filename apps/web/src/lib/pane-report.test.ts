@@ -120,7 +120,7 @@ describe("paneStatus", () => {
     expect(statusOf(stale, { approved: true })).toMatchObject({ tone: "quiet", text: "New commits since Triage checked · rechecking" });
     const bar = barOf(item(stale));
     expect(bar.primary).toBeNull();
-    expect(bar.more.find((entry) => entry.kind === "merge")).toMatchObject({ blocker: "unchecked-commits", label: "Merge" });
+    expect(bar.rest.find((entry) => entry.kind === "merge")).toMatchObject({ blocker: "unchecked-commits", label: "Merge" });
   });
 
   test("a ready pull request says what holds the merge, and Triage's approval only shows with nothing left to call", () => {
@@ -183,11 +183,19 @@ describe("paneBar", () => {
     expect(barOf(item({ state: "needs-author-update", posted: true, comment: "Fix it." })).primary).toMatchObject({ kind: "comment", label: "Reply", detail: "to @ada" });
   });
 
-  test("at most two runnable secondaries; the rest, and anything blocked, wait in More", () => {
-    const ready = barOf(item({ state: "ready", comment: "Thanks" }));
-    expect(ready.secondary.map((entry) => entry.label)).toEqual(["Request changes", "Close"]);
-    expect(ready.more.map((entry) => entry.kind)).toEqual(["reply", "approve", "comment", "triage"]);
-    expect(barOf(item({ state: "ready" }), undefined, true).secondary).toEqual([]);
+  const held = (effectId: string, kind: SuggestedAction["kind"], target: SuggestedAction["target"]): SuggestedAction => ({ list: "unsure", index: 0, effectId, kind, reason: "", target, held: true });
+
+  test("a held action is the button of its kind; one with no button gets its own", () => {
+    const bar = barOf(item({ state: "awaiting-review", actions: [held("e1", "approve", {}), held("e2", "labels", { labels: ["bug"] })] }));
+    expect(bar.primary).toMatchObject({ kind: "approve", label: "Approve", held: { key: "e1" } });
+    expect(bar.rest.map((entry) => entry.kind)).toEqual(["changes", "comment", "merge", "close", "triage"]);
+    expect(bar.dos.map((pending) => pending.label)).toEqual(["Add label bug"]);
+  });
+
+  test("a held merge off an unsure list keeps its own button and its warning", () => {
+    const bar = barOf(item({ state: "ready", actions: [held("e1", "merge", {})] }));
+    expect(bar.primary).toMatchObject({ kind: "merge", held: null });
+    expect(bar.dos.map((pending) => pending.label)).toEqual(["Merge (the verdict was unsure, not pass)"]);
   });
 });
 

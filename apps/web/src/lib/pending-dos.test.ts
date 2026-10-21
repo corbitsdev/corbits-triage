@@ -42,7 +42,7 @@ describe("pendingDos", () => {
       step("comment", { body: "Please split this." }, 3),
       step("close", {}, 4),
     ]));
-    expect(labels(dos)).toEqual(["Add labels size/xl, needs-split", "Assign alice", "Request review from @acme/core, bob", "Comment", "Close"]);
+    expect(labels(dos)).toEqual(["Add labels size/xl, needs-split", "Assign alice", "Request review from @acme/core, bob", "Comment \"Please split this.\"", "Close"]);
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const transport: Transport = {
       fetch: async (method, path, body) => {
@@ -91,7 +91,7 @@ describe("pendingDos", () => {
     const sent = new Set([`effect-0:held`]);
     expect(pendingDos(withoutDecidedDos(verdict([step("comment", { body: "Hi" }, 0)]), NONE, sent))).toEqual([]);
     const [failed] = pendingDos(withoutDecidedDos(verdict([{ ...step("comment", { body: "Hi" }, 0), status: "failed", error: "github POST -> 500" }]), NONE, sent));
-    expect(failed).toMatchObject({ label: "Comment", error: "github POST -> 500" });
+    expect(failed).toMatchObject({ label: "Comment \"Hi\"", error: "github POST -> 500" });
   });
 
   test("a Do approved is hidden and offered again on Undo, without reaching the hub", () => {
@@ -114,9 +114,9 @@ describe("pendingDos", () => {
       restore: () => write.restore?.(),
       failText: (error) => error,
     });
-    expect(labels(pendingDos(withoutDecidedDos(item, NONE, held)))).toEqual(["Comment"]);
+    expect(labels(pendingDos(withoutDecidedDos(item, NONE, held)))).toEqual(["Comment \"Hi\""]);
     expect(queue.undo()).toBe(true);
-    expect(labels(pendingDos(withoutDecidedDos(item, NONE, held)))).toEqual(["Add label size/xl", "Comment"]);
+    expect(labels(pendingDos(withoutDecidedDos(item, NONE, held)))).toEqual(["Add label size/xl", "Comment \"Hi\""]);
     expect(sent).toEqual([]);
   });
 });

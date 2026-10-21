@@ -102,13 +102,8 @@ describe("paneActions", () => {
   });
 
   test("the menu leaves out the suggested action; anything writable closes plainly", () => {
-    expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close pull request", "Triage again"]);
+    expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close", "Triage again"]);
     expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
-  });
-
-  test("a held pack close Do stands in for the menu's plain close", () => {
-    const actions = [{ list: "unsure" as const, index: 0, effectId: "e", kind: "close" as const, reason: "Stale.", target: {}, held: true }];
-    expect(paneActions(gate({ actions })).more.map((row) => row.kind)).not.toContain("close");
   });
 
   test("triage again is offered once the hub has run or given up on the pull request, under the same gate as writes", () => {

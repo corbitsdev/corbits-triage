@@ -1,7 +1,7 @@
 import { errorText } from "@corbits/common";
 import type { Outcome } from "./held-actions.ts";
 import type { GithubPullDetail, HeldBlock, HeldDoRef, MergeBlock, MergeState, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
-import { offersClose, type PendingDo } from "./pending-dos.ts";
+import type { PendingDo } from "./pending-dos.ts";
 import { inboxAction, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
 
 const UNTITLED = "Untitled pull request";
@@ -86,7 +86,7 @@ function paneAction<K extends PaneKind>(kind: K, gate: PaneGate): PaneAction<K> 
 
 function closeEntry(gate: PaneGate): MenuEntry | null {
   const close = paneAction("close", gate);
-  if (close.blocker !== null || offersClose(gate.item)) return null;
+  if (close.blocker !== null) return null;
   return { ...close, label: primaryLabel("close") };
 }
 

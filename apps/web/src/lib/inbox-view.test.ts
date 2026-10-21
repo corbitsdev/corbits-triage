@@ -164,7 +164,7 @@ describe("requested changes", () => {
   });
 
   test("a held action keeps it in Needs you until it is approved, refused or skipped", () => {
-    const action = { list: "fail", index: 0, effectId: "e", kind: "request-changes", reason: "Size failed.", target: {}, held: true } as const;
+    const action = { list: "fail", index: 0, effectId: "e", kind: "request-changes", reason: "Size failed.", target: { body: "Split this." }, held: true } as const;
     const held = { ...reviewed, posted: true, actions: [action] };
     expect(listCounts(entries(held), READY)["needs-you"]).toBe(1);
     expect(listCounts(entries({ ...held, actions: [{ ...action, status: "failed" }] }), READY)["needs-you"]).toBe(1);
