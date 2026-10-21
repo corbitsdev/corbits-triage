@@ -32,8 +32,7 @@
     "arktype": "catalog:"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "tar": "catalog:"
+    "@types/bun": "latest"
   },
   "main": "./src/index.ts",
   "files": [

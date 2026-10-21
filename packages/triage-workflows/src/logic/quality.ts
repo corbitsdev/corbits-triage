@@ -9,10 +9,8 @@ import type { BooleanQuestion, ChoiceQuestion, ScoreQuestion } from "@corbits/sy
 export type QualityQuestion = BooleanQuestion | ChoiceQuestion | ScoreQuestion;
 
 export const FOCUSED_CHOICES = ["one_thing", "more_than_one_thing", "cant_tell"] as const;
-export type FocusedChoice = typeof FOCUSED_CHOICES[number];
 
 export const SLICE_CHOICES = ["serves_purpose", "separate_change", "cant_tell"] as const;
-export type SliceChoice = typeof SLICE_CHOICES[number];
 
 export const VERDICT_CHOICES = ["pass", "fail", "cant_tell"] as const;
 export type VerdictChoice = typeof VERDICT_CHOICES[number];
