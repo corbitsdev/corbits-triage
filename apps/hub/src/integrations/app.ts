@@ -163,7 +163,8 @@ const CODE_REVIEW_SEND_REFUSALS = [
   "`code_review_empty`: no summary and no findings;",
   "`head_moved`: the pull request has moved past `headSha`.",
 ].join(" ");
-const githubFailed = { 502: json("GitHub failed", Failure) };
+const githubLimited = { 503: json("`github_rate_limited`: GitHub's rate limit is reached; `Retry-After` and `resetAt` say when it lifts", Failure) };
+const githubFailed = { 502: json("GitHub failed", Failure), ...githubLimited };
 
 const manifestFailures = {
   401: json("Not signed in", ManifestFailure),
@@ -363,7 +364,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         ...invalid,
         ...failures,
         502: json("GitHub or the run trigger failed", Failure),
-        503: json("The pr-triage service is not running", Failure),
+        503: json("`service_not_running`: the pr-triage service is not running; `github_rate_limited`: GitHub's rate limit is reached, `Retry-After` and `resetAt` say when it lifts", Failure),
       },
     }),
     member,
@@ -433,6 +434,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         413: json("The body is too large", Failure),
         422: json("`policy_file_invalid`: triage refuses `text`, or the policy it `extends`; `message` holds each problem, one per line, led by its line", Failure),
         502: json("The host refused", Failure),
+        ...githubLimited,
       },
     }),
     member,
@@ -702,6 +704,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         404: json("No such connected repository", Failure),
         409: json("`no_isolated_place`, `code_review_off`, `draft` or `not_open`", Failure),
         502: json("The host or the run trigger failed", Failure),
+        ...githubLimited,
       },
     }),
     member,

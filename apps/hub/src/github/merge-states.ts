@@ -7,6 +7,7 @@ import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readMergeStates } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
+import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
@@ -66,7 +67,7 @@ export function createMergeStates(deps: SourceFetchDeps & { log: (entry: Record<
     } catch (err) {
       const message = errorText(err);
       deps.log({ level: "warn", msg: "merge_states_failed", tenantId, repo: query.repo, error: message });
-      return failure(502, "source_failed", `Could not read merge states for ${query.repo} from ${sourceOf(record)}: ${message}.`);
+      return githubLimited(err) ?? failure(502, "source_failed", `Could not read merge states for ${query.repo} from ${sourceOf(record)}: ${message}.`);
     }
   };
 }

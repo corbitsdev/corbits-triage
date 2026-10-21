@@ -20,6 +20,7 @@ import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type Policy
 import { checkPending, summarizeChecks, type CheckRun } from "@corbits/github-reads";
 import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
+import { GithubRateLimited } from "./github-usage.js";
 import type { PrMail } from "./normalize.js";
 import { sourceOf, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader } from "./tenant-open-heads.js";
@@ -163,12 +164,13 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     }, ms);
   }
 
-  /** Undefined when they could not be read, so the head is triaged rather than held. */
+  /** Undefined when they could not be read, so the head is triaged rather than held; a rate limit is thrown, so the head waits for the reconciler. */
   async function checksOf(open: Open): Promise<CheckRun[] | undefined> {
     const { tenantId, record } = open.latest;
     try {
       return await deps.headChecks(tenantId, record, open.head.headSha);
     } catch (err) {
+      if (err instanceof GithubRateLimited) throw err;
       deps.log({ level: "warn", msg: "coalesced_checks_unread", tenantId, repo: record.name, pr: open.head.number, headSha: open.head.headSha, error: String(err) });
       return undefined;
     }
@@ -201,7 +203,13 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     const readsCi = dependsOnCi(latest.pack);
     // A head the reconciler released from waiting after its CI finished already has its one run.
     if (readsCi && checksOnly && prior !== undefined && inFlight(prior) && prior.events !== undefined) return drop(open, entry, "released");
-    const checks = checksOnly || readsCi ? await checksOf(open) : undefined;
+    let checks: CheckRun[] | undefined;
+    try {
+      checks = checksOnly || readsCi ? await checksOf(open) : undefined;
+    } catch (err) {
+      if (err instanceof GithubRateLimited) return drop(open, entry, "github_rate_limited");
+      throw err;
+    }
     const ci = checks && summarizeChecks(checks);
     // CI still running on the head is re-triaged once by its last completed check run; a head waiting for CI is released by its first failed check.
     const pending = prior?.status === "waiting" ? ci === "pending" : checks?.some(checkPending) === true;
@@ -222,6 +230,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       const payload = mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events, ...(noWait && { noWait }) });
       await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", record: latest.record, payload });
     } catch (err) {
+      if (err instanceof GithubRateLimited) return drop({ ...open, remembered }, entry, "github_rate_limited");
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
       await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());
       return;

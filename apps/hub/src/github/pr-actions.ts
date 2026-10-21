@@ -23,6 +23,9 @@ import type { PolicyReader } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
+import { tenantConfigOf } from "./bridge.js";
+import { forInstallation } from "./open-pulls.js";
+import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
@@ -160,7 +163,8 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
     if (appJson instanceof Response) return appJson;
     const refused = await doRefused(deps, principalId, tenantId, body.repo, doKind(body));
     if (refused) return refused;
-    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+    const record = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).find((row) => row.name === body.repo && sourceOf(row) === "github");
+    const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record?.installationId);
 
     try {
       const { repo, number } = body;

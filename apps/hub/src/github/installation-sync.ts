@@ -3,6 +3,7 @@
 import { errorText } from "@corbits/common";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { applyInstallationListing, type InstallationListing } from "./bridge.js";
+import { githubLimited } from "./github-refusal.js";
 import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { patchCorbitsTriage } from "./tenant-config.js";
@@ -35,7 +36,7 @@ export function createInstallationSync(deps: PortalCredentialDeps & { githubApiO
     try {
       listings = await Promise.all((await listInstallations(gh)).map((installation) => listingFor(gh, installation)));
     } catch (err) {
-      return failure(502, "github_failed", `Could not read the App's installations from GitHub: ${errorText(err)}.`);
+      return githubLimited(err) ?? failure(502, "github_failed", `Could not read the App's installations from GitHub: ${errorText(err)}.`);
     }
 
     const next = await patchCorbitsTriage(deps.db, tenantId, function reconcile(ns) {
