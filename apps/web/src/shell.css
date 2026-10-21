@@ -88,7 +88,7 @@
 /* Pulse and workspace settings: a centred page inside the stage card */
 :is(.pulse, .settings) { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 960px; margin: 0 auto; padding: 40px 40px 80px; }
 :is(.pulse, .settings) h1 { font-size: 34px; margin: 0; letter-spacing: -0.02em; }
-.pulse { display: grid; gap: 36px; align-content: start; }
+.pulse { display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px; align-content: start; }
 .settings h1 { font-weight: 700; }
 .settings .lede { margin: 6px 0 10px; font-size: 16px; color: var(--ink); }
 .settings > .byline { margin-bottom: 28px; }
@@ -323,17 +323,27 @@
 @media (max-width: 960px) {
   .inbox { grid-template-columns: minmax(0, 1fr); }
   .inbox.has-selection .panel.list, .inbox:not(.has-selection) .panel.pane { display: none; }
-  .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }
+  .inbox .pane-back { display: inline-flex; align-self: flex-start; margin: 12px 0 0 24px; }
   .inbox .bar { padding: 12px 16px; gap: 4px; }
   .inbox .bar .det { display: none; }
   .inbox .st3 { font-size: 19px; }
 }
 
-/* On a phone the mobile nav replaces the rail, search gets its own line, the filter popover is a bottom sheet, and toasts span the width above the mobile nav. */
+/* On a phone the mobile nav replaces the rail links, leaving the workspace on a top strip; search gets its own line, the filter popover is a bottom sheet, and toasts span the width above the mobile nav. */
 @media (max-width: 720px) {
-  .shell .rail { display: none; }
+  .shell .rail { flex-direction: row; align-items: center; gap: 12px; padding: 12px 12px 0; }
+  .shell .rail > :not(.brand, .ws) { display: none; }
+  .shell .rail :is(.brand, .ws) { margin: 0; padding-bottom: 0; min-height: 40px; }
+  .shell .rail .ws { flex: 1; min-width: 0; }
+  .shell > :is(.inbox, .repos) { padding-left: 12px; }
+  .repos .lh-top { flex-wrap: wrap; }
+  .shell > .stage { margin-left: 12px; }
+  .inbox .seg button { min-height: 36px; padding: 0 12px; }
+  .inbox .row { height: 44px; }
+  .inbox .row .who { display: none; }
   :is(.pulse, .settings) { padding: 24px 16px 100px; }
   :is(.pulse, .settings) h1 { font-size: 28px; }
+  .settings nav.byline a { display: inline-block; padding: 12px 0; }
   .pulse { gap: 28px; }
   .pulse :is(th, td) { white-space: normal; padding-right: 8px; }
   .pulse tbody th { overflow-wrap: anywhere; }
@@ -350,7 +360,7 @@
   .inbox .toast { white-space: normal; }
   .inbox .toast button { margin-left: auto; }
   .inbox .pane .bar { position: fixed; left: 0; right: 0; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 21; }
-  .inbox .pane-in { padding-bottom: 160px; }
+  .inbox .pane-in { padding: 16px 16px 160px; }
   .inbox.has-selection .toasts { bottom: calc(148px + env(safe-area-inset-bottom)); }
 }
 

@@ -5,6 +5,7 @@ import type { AuthorKind } from "@corbits/triage-contracts";
 import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
+import { useMediaQuery } from "../lib/media-query.ts";
 import { errorText } from "@corbits/common";
 import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
@@ -85,6 +86,9 @@ const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", ready: 
 const WAITING = "Waiting";
 
 const WAITING_PARAM = "waiting";
+
+// Narrower screens show the list or the pane, so only side by side does the first row open by itself.
+const SIDE_BY_SIDE = "not (max-width: 960px)";
 
 function actionDot(action: InboxAction | null): string {
   if (action === "merge") return "dot ready";
@@ -564,7 +568,8 @@ export default function Inbox({ view }: { view: ListView }) {
     return needsYouPiles(regroupInbox(needsYou, needsYouGrouping));
   }, [view, waiting, shown, openGrouping, waitingGrouping, needsSetup, needsYou, needsYouGrouping]);
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
-  const selected = params.number === undefined ? flat[0]?.item : findPrItem(items, params);
+  const firstRow = useMediaQuery(SIDE_BY_SIDE) ? flat[0]?.item : undefined;
+  const selected = params.number === undefined ? firstRow : findPrItem(items, params);
   const selectedMark = entries.find((entry) => entry.item.key === selected?.key)?.handled ?? null;
   // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
   const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
