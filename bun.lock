@@ -30,7 +30,6 @@
         "@corbits/common": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/react-ui": "0.3.1",
-        "@corbits/system-one": "0.3.1",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-workflows": "workspace:*",
         "@fontsource-variable/red-hat-display": "^5.3.0",

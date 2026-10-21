@@ -5,7 +5,7 @@ import { policyFor } from "./policy-source.ts";
 import { prKey, type PrRef } from "./pr.ts";
 import { runStepsInBrowser } from "./run-steps-in-browser.ts";
 import { openPanelOnActionClick, openSidePanel } from "./side-panel.ts";
-import { clearRunning, githubToken, policyFiles, runStates, saveView, setRunState, systemOne, tokenSaved, views } from "./storage.ts";
+import { clearRunning, githubToken, policyFiles, runStates, saveView, setRunState, tokenSaved, views } from "./storage.ts";
 import { FRESH_MS, type TriageView } from "./view.ts";
 
 type Triage = Extract<Request, { type: "triage" }>;
@@ -35,6 +35,10 @@ async function headOf(api: GithubApi, pr: PrRef): Promise<string> {
   return ((await res.json()) as { head: { sha: string } }).head.sha;
 }
 
+async function noPolicy(api: GithubApi, pr: PrRef): Promise<TriageView> {
+  return { pr, headSha: await headOf(api, pr), ranAt: new Date().toISOString(), policy: null, rules: [], decided: null, notes: [], codeReview: { review: null } };
+}
+
 /** A recent check is reused only while the pull request's head is the one it checked, so a new push is checked again. */
 async function triage({ pr, mode }: Triage): Promise<null> {
   const saved = (await views.getValue())[prKey(pr)];
@@ -45,7 +49,7 @@ async function triage({ pr, mode }: Triage): Promise<null> {
     const api = githubApi(token, mode === "refetch" ? "no-cache" : "default");
     if (!(mode === "if-stale" && isFresh(saved) && (await headOf(api, pr)) === saved.headSha)) {
       const policy = await policyFor(api, pr.repo, mode === "refetch");
-      await saveView(await runStepsInBrowser(pr, api.gh, policy, await systemOne.getValue()));
+      await saveView(policy ? await runStepsInBrowser(pr, api.gh, policy) : await noPolicy(api, pr));
     }
     await setRunState(pr, { running: false });
   } catch (cause) {
@@ -125,14 +129,14 @@ function onMessage(request: Request, sender: Browser.runtime.MessageSender, send
   return true;
 }
 
-/** A token saved before the flag existed still counts as saved. */
-async function syncTokenSaved(): Promise<void> {
-  await tokenSaved.setValue((await githubToken.getValue()) !== null);
+/** Checks saved by an older version may not read in this one, and a new version may check differently. */
+function onInstalled({ reason }: Browser.runtime.InstalledDetails): void {
+  if (reason === "update") settle(Promise.all([views.setValue({}), runStates.setValue({}), policyFiles.setValue({})]));
 }
 
 export function startBackground(): void {
   settle(clearRunning());
-  settle(syncTokenSaved());
+  browser.runtime.onInstalled.addListener(onInstalled);
   browser.runtime.onMessage.addListener(onMessage);
   settle(openPanelOnActionClick());
 }

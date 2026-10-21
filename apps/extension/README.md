@@ -1,10 +1,10 @@
 # @corbits/extension
 
 A browser extension (WXT, Manifest V3, Chrome and Firefox) that checks the GitHub pull request you are viewing against
-its repository's policy and shows the result on the pull request page. It reads GitHub with your own token, runs
-pr-triage's rules in the browser with the same shared code the hub runs, and writes nothing.
+its repository's `.corbits-triage.yml` and shows the result on the pull request page. It reads GitHub with your own
+token, runs pr-triage's rules in the browser with the same shared code the hub runs, and writes nothing.
 
-## Use
+## Install
 
 From a packaged zip (`bun run zip` writes them to `.output/`):
 
@@ -25,45 +25,37 @@ Load `.output/chrome-mv3` in Chrome, or `.output/firefox-mv3/manifest.json` as a
 the toolbar button to open the side panel (the sidebar in Firefox), save a GitHub token, and open any
 `https://github.com/<owner>/<repo>/pull/<number>` page.
 
-### What it checks
+## What it shows
 
-The policy comes from, in order:
+The policy is `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the repository's default branch. A pull
+request's own head is never read for it, so a pull request cannot change the rules it is checked by. The file is kept
+for 10 minutes, then revalidated by ETag; files over 64 KB are refused.
 
-1. `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the repository's default branch, read through GitHub's
-   contents API. A pull request's own head is never read for it, so a pull request cannot change the rules it is
-   checked by. The file is kept for 10 minutes, then revalidated by ETag; files over 64 KB are refused.
-2. Rules saved in this browser for the repository, edited in the side panel.
-3. The recommended rules.
+The block at the top of GitHub's sidebar links the policy file, then lists each rule as Pass, Fail or Waiting with its
+evidence. Rules that need the decision model are not run here and say so. The verdict is named only when the rules
+decide it without the decision model. A chip beside the title repeats it, and the Files tab marks the files and lines
+a failing rule cites.
 
-The block at the top of GitHub's sidebar says which one applied, then lists each rule as Pass, Fail or Waiting with its
-evidence. Decision-model rules show as "Not evaluated here" unless a decision model is set in the side panel. The
-verdict is named only when the rules decide it without the decision model; then the block also shows the labels,
-comment and other steps the policy would post (the hub's, when the policy is the file). A chip beside the title
-repeats the verdict, and the Files tab marks the files and lines a failing rule cites.
+When the repository has no policy file, the block says so and links to how to write one.
 
-When the Corbits Triage App has sent a code review to the pull request, the block links to the newest one, names the
-account that wrote it, and lists each of its inline comments by title, file and line, linked to the comment; a
-comment whose line has since changed is marked outdated, and a review of an earlier commit says so. A review counts
-only when it carries code review's marker and was written by a GitHub App's bot account; the App's own login is not
-readable with your token, so another App installed on the repository could write one, which the account name shows.
-A review that cannot be read is said so without failing the rules.
+When the Corbits Triage App has sent a code review to the pull request, the block links to the newest one and lists
+its inline comments by title, file and line. A review counts only when it carries code review's marker and was written
+by a GitHub App's bot account, which the account name shows.
 
 ### Limits
 
 - Every read needs a GitHub token. A fine-grained token with read-only access to public repositories is enough;
   private repositories need read access to their contents and pull requests.
 - Author team membership is not read, so a step meant for a team is skipped.
-- Approved authors are set on the hub, not in the policy, so the extension treats no author as approved.
-- The token is kept in the extension's `storage.local`, which every part of the extension can read, the content
-  script on github.com included. Only the background reads it, and changing or removing it clears every saved check
-  and policy file.
+- The token is kept in the extension's `storage.local`. Only the background reads it, and changing or removing it
+  clears every saved check and policy file.
 - A policy file that extends a shared policy is not checked; only the hub holds the shared policy.
 
 ## Test
 
 `bun run check` at the repository root typechecks the extension and `e2e/`. The end-to-end check drives the Chrome
-build in Playwright's Chromium on a real pull request; build first, then, here, pipe the token in so it never sits on the
-command line:
+build in Playwright's Chromium on a real pull request; build first, then, here, pipe the token in so it never sits on
+the command line:
 
 ```sh
 printenv GITHUB_TOKEN | bun --conditions=intx-src e2e/verify.ts <owner/repo> <number>
@@ -73,5 +65,5 @@ It saves a screenshot of the sidebar block to `.output/e2e/settings-extension-pr
 
 ## Docs
 
-- [User Manual](../../docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md)
+- [User Manual](../../docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#browser-extension)
 - [PRODUCT.md](../../docs/PRODUCT.md)

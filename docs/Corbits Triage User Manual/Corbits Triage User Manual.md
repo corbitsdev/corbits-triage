@@ -230,6 +230,12 @@ jobs:
 
 Each pull request that changes the file then gets a **Corbits Triage policy / check** check. It reads the file exactly as Triage does and fails if Triage could not read it. Each problem is marked on its line in the pull request's **Files changed**, or on the file as a whole when it has no line. It needs no Triage account and no secrets, and sets up its own Bun for the job. `@main` will be replaced by a release tag with the first pre-release.
 
+#### Browser extension
+
+The Corbits Triage browser extension, for Chrome and Firefox, shows how a GitHub pull request fares against its repository's policy file without a Triage account. Install it ([how](../../apps/extension/README.md#install)), open its side panel from the toolbar and save a read-only GitHub token. It reads GitHub only and changes nothing.
+
+On any pull request it adds a **Corbits Triage** section at the top of the sidebar. The section links the policy file on the default branch and lists each rule as **Pass**, **Fail** or **Waiting**, with its evidence. Rules that need the decision model are not run in the extension and say so. A chip beside the title names the verdict when the rules alone decide it, and **Files changed** marks the files and lines a failing rule points to. **Check again** reads the pull request and the policy file afresh. A repository with no policy file gets a short note linking to [Writing the file](#writing-the-file).
+
 ### Rules
 
 A rule asks one question about a pull request and answers pass, fail or unconfirmed. The Policy section shows each rule that is on as one sentence. A file can turn on:

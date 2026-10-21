@@ -115,32 +115,6 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.text-button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  justify-self: start;
-  padding: var(--space-1) 0;
-  border: 0;
-  background: transparent;
-  color: var(--foreground);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  text-decoration: underline;
-  text-decoration-color: var(--border-strong);
-  text-underline-offset: 0.25em;
-}
-
-.text-button:hover {
-  text-decoration-color: currentColor;
-}
-
-.text-button svg {
-  width: 14px;
-  height: 14px;
-}
-
 /* Side panel: a sticky header above a scrolling middle. */
 .panel {
   display: flex;
@@ -159,10 +133,6 @@ h2 {
   padding: 0 var(--space-2) 0 var(--space-4);
   border-bottom: 1px solid var(--rule);
   background: var(--background);
-}
-
-.panel-header:has(> button:first-child) {
-  padding-left: var(--space-2);
 }
 
 .panel-header .mark {
@@ -189,15 +159,6 @@ h2 {
   padding: var(--space-4) var(--space-4) var(--space-6);
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.part {
-  display: grid;
-  gap: var(--space-3);
-}
-
 .saved-mark {
   flex: none;
   width: 14px;
@@ -206,8 +167,7 @@ h2 {
 }
 
 /* Forms */
-.form,
-.editor {
+.form {
   display: grid;
   gap: var(--space-3);
 }
@@ -240,23 +200,7 @@ input.mono {
   gap: var(--space-1) var(--space-2);
 }
 
-.saved-provider {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-/* Settings and the check manager */
-.repo-name {
-  overflow: hidden;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings,
-.manager {
+.settings {
   display: grid;
   gap: var(--space-5);
 }
@@ -284,42 +228,6 @@ input.mono {
   gap: var(--space-2);
 }
 
-.repo-links {
-  display: grid;
-  border-top: 1px solid var(--rule);
-}
-
-.repo-link {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 16px;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-3) 0;
-  border: 0;
-  border-bottom: 1px solid var(--rule);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-}
-
-.repo-link .mono {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.repo-link svg {
-  width: 16px;
-  height: 16px;
-}
-
-.empty-line {
-  font-size: 13px;
-}
-
 .facts {
   display: grid;
   gap: var(--space-1);
@@ -336,200 +244,3 @@ input.mono {
   color: var(--muted-foreground);
 }
 
-.scope {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md, 8px);
-  background: var(--muted);
-  font-size: 13px;
-}
-
-.scope[data-changed="true"] {
-  background: var(--surface);
-}
-
-/* Stays in view under the header, so a change far down the list still shows its saved note. */
-.manager-status {
-  position: sticky;
-  top: 48px;
-  z-index: 1;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-4);
-  margin: calc(var(--space-3) - var(--space-5)) calc(-1 * var(--space-4)) 0;
-  padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--rule);
-  background: var(--background);
-}
-
-.manager-status:not(:has(> :not(:empty))) {
-  display: none;
-}
-
-.saved-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: 13px;
-}
-
-.saved-status:empty {
-  display: none;
-}
-
-/* Each switch is a setting, not the view's action, so "on" takes the text colour rather than the orange accent. */
-.manage-list {
-  --primary: var(--foreground);
-  display: grid;
-  border-top: 1px solid var(--rule);
-}
-
-.manage-row {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--rule);
-  scroll-margin: 64px;
-}
-
-.manage-row[data-focused="true"] {
-  animation: arrive 1.6s ease-out;
-}
-
-@keyframes arrive {
-  from { background: var(--surface); }
-  to { background: transparent; }
-}
-
-.manage-row[data-on="false"] .manage-sentence {
-  color: var(--muted-foreground);
-}
-
-.manage-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-3);
-}
-
-.manage-text {
-  display: grid;
-  gap: 2px;
-}
-
-.manage-name {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  font-weight: 600;
-}
-
-.manage-sentence {
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.eval {
-  justify-self: start;
-}
-
-.part h2 .count {
-  margin-left: var(--space-1);
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.manage-row .editor {
-  padding: var(--space-3);
-  border-radius: var(--radius-md, 8px);
-  background: var(--muted);
-}
-
-.add-check {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.gallery {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.gallery-item {
-  display: grid;
-  gap: 2px;
-  width: 100%;
-  padding: var(--space-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md, 8px);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-}
-
-.gallery-item:hover {
-  border-color: var(--foreground);
-}
-
-.gallery-item span {
-  color: var(--muted-foreground);
-}
-
-.provider[aria-checked="true"] {
-  border-color: var(--foreground);
-  box-shadow: inset 0 0 0 1px var(--foreground);
-}
-
-/* Decision model providers */
-.providers {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--space-2);
-}
-
-.provider {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 52px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md, 8px);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-align: left;
-}
-
-.provider-logo {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-}
-
-.provider-logo img {
-  max-width: 24px;
-  max-height: 24px;
-}
-
-.provider-logo .on-dark {
-  display: none;
-}
-
-h1[tabindex="-1"]:focus {
-  outline: none;
-}
