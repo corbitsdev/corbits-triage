@@ -69,7 +69,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
         {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
         <PolicySection repo={repo.name} source={repo.source} pack={settings.saved.pack} disabled={readOnly || snapshot?.denied.repos === true} onSettled={settings.reload} />
         <CodeReviewCard repo={repo} disabled={readOnly || snapshot?.denied.repos === true} />
-        <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><PolicyGrants repo={repo.name} source={repo.source} pack={settings.saved.pack} disabled={disabled} /></div>
+        <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><PolicyGrants repo={repo.name} source={repo.source} disabled={disabled} /></div>
         {stats ? <OutcomesCard outcomes={stats.outcomes} source={repo.source} /> : null}
         <RemoveRepository repo={repo.name} source={repo.source} disabled={readOnly || snapshot?.denied.repos === true} onRemoved={onClose} />
       </>

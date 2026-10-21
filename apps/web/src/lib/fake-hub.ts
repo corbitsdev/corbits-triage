@@ -33,7 +33,7 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
       .find((item) => item.archivedAt === undefined && item.title === checkPackName(repo));
     if (!row) return { status: "missing" };
     try {
-      return { status: "ok", pack: readCheckPack(row.content, repo), source: { repo: { id: row.id, version: row.version } } };
+      return { status: "ok", pack: readCheckPack(row.content, repo), source: { repo: { id: row.id, version: row.version } }, automatic: [], decide: [] };
     } catch (error) {
       return { status: "corrupt", reason: (error as Error).message, repo: { id: row.id, version: row.version } };
     }

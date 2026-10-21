@@ -1,11 +1,12 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { DO_GRANT_ACTION, doResource, hostKinds, VERDICTS, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
-import { findTriageRole, triageRunsAlone } from "../../lib/automation-grid.ts";
+import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, VERDICTS, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { findTriageRole } from "../../lib/automation-grid.ts";
+import { checkPackQuery } from "../../lib/check-packs.ts";
 import { DO_NAMES } from "../../lib/pack-prose.ts";
 import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
-import { useGrants, useRoles } from "../../lib/tenant-entities.ts";
+import { useAllowed, useRoles } from "../../lib/tenant-entities.ts";
 
 /** The verdict is always posted: as a comment, and as labels where the host has them. */
 const POSTING: readonly ActionKind[] = ["comment", "labels"];
@@ -15,38 +16,47 @@ function doName(source: RepoSource, kind: ActionKind): string {
   return kind === "comment" && !hostKinds(source).includes("labels") ? "Comment and build status" : DO_NAMES[kind];
 }
 
-function policyKinds(pack: CheckPack, source: RepoSource): ActionKind[] {
-  const used = new Set<string>([...POSTING, ...VERDICTS.flatMap((verdict) => pack.actions[verdict].map((step) => step.do))]);
+function policyKinds(pack: CheckPack, decide: readonly ActionKind[], source: RepoSource): ActionKind[] {
+  const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].flatMap((step) => (step.do === "nothing" || alwaysHeld(verdict, step.do) ? [] : [step.do])));
+  const used = new Set<string>([...POSTING, ...decide, ...steps]);
   return hostKinds(source).filter((kind) => used.has(kind));
 }
 
-type PolicyGrantsProps = { repo: string; source: RepoSource; pack: CheckPack; disabled: boolean };
+type PolicyGrantsProps = { repo: string; source: RepoSource; disabled: boolean };
 
-export default function PolicyGrants({ repo, source, pack, disabled }: PolicyGrantsProps) {
-  const { addGrant } = usePortal();
-  const grants = useGrants();
+export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsProps) {
+  const { addGrant, snapshot } = usePortal();
+  const tenantId = snapshot?.workspace.tenantId;
+  const policy = useQuery(checkPackQuery(tenantId, repo));
   const roles = useRoles();
+  const canCreate = useAllowed("grant:*", "create");
   const queryClient = useQueryClient();
   const allow = useMutation({
     mutationFn: async function allowKinds({ roleId, kinds }: { roleId: string; kinds: ActionKind[] }) {
       for (const kind of kinds) await addGrant({ roleId, resource: doResource(kind, repo), action: DO_GRANT_ACTION });
-      await queryClient.invalidateQueries({ queryKey: [GRANTS_QUERY_KEY] });
+      await Promise.all([queryClient.invalidateQueries({ queryKey: [GRANTS_QUERY_KEY] }), queryClient.invalidateQueries({ queryKey: ["check-pack", tenantId, repo] })]);
     },
   });
-  const kinds = policyKinds(pack, source);
-  const names = (list: ActionKind[]) => list.map((kind) => doName(source, kind)).join(", ");
+
+  function names(kinds: readonly ActionKind[]): string {
+    return kinds.map((kind) => doName(source, kind)).join(", ");
+  }
 
   function body() {
-    if (grants.loading || roles.loading) return <p className="help">Checking what Triage may do here…</p>;
-    if (grants.unavailable || roles.unavailable || grants.denied || roles.denied) return <p className="help">Could not read what Triage may do here, so it asks before every action.</p>;
+    if (policy.isPending || roles.loading) return <p className="help">Checking what Triage may do here…</p>;
+    if (policy.isError) return <p className="help">Could not read what Triage may do here, so it asks before every action.</p>;
+    const found = policy.data;
+    if (found?.kind !== "file" && found?.kind !== "pack") return <p className="help">This repository has no policy to allow, so Triage asks before every action.</p>;
+    if (!found.automatic || roles.unavailable || roles.denied) return <p className="help">Could not read what Triage may do here, so it asks before every action.</p>;
     const triage = findTriageRole(roles.rows);
     if (!triage) return <p className="help">This workspace has no Triage role, so Triage asks before every action.</p>;
-    const missing = kinds.filter((kind) => !triageRunsAlone(roles.rows, grants.rows, kind, repo));
+    const kinds = policyKinds(found.pack, found.decide ?? [], source);
+    const missing = kinds.filter((kind) => !found.automatic?.includes(kind));
     if (missing.length === 0) return <p className="help">Triage does these on its own: {names(kinds)}.</p>;
     return (
       <>
         <p className="help">This policy wants Triage to: {names(missing)}. Until you allow it, these wait for you in the inbox.</p>
-        <Button type="button" size="sm" disabled={disabled || allow.isPending} onClick={() => allow.mutate({ roleId: triage.id, kinds: missing })}>{allow.isPending ? "Allowing…" : "Allow"}</Button>
+        <Button type="button" size="sm" disabled={disabled || !canCreate || allow.isPending} onClick={() => allow.mutate({ roleId: triage.id, kinds: missing })}>{allow.isPending ? "Allowing…" : "Allow"}</Button>
         {allow.error ? <p role="alert" className="error">Could not allow {names(missing)}. {errorText(allow.error)} Try again.</p> : null}
       </>
     );

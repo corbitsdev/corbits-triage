@@ -38,8 +38,8 @@ describe("duplicate check-pack titles", () => {
 
   test("a policy that extends a workspace policy is not saved over", async () => {
     const hub = fakeHub([row("O", 1, { version: 4 })]);
-    hub.policies["acme/widgets"] = { status: "ok", pack: newer, source: { repo: { id: "O", version: 4 }, shared: { id: "S", version: 1 } } };
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "O", version: 4, pack: newer, shared: { id: "S", version: 1 } });
+    hub.policies["acme/widgets"] = { status: "ok", pack: newer, source: { repo: { id: "O", version: 4 }, shared: { id: "S", version: 1 } }, automatic: [], decide: [] };
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "O", version: 4, pack: newer, automatic: [], decide: [], shared: { id: "S", version: 1 } });
     await expect(writeCheckPack(hub.transport, "t", "acme/widgets", older, { id: "O", version: 4 })).rejects.toBeInstanceOf(ExtendedPolicyError);
     expect(hub.artifacts.map((item) => item.version)).toEqual([4]);
   });

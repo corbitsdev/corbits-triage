@@ -25,7 +25,7 @@ describe("check-pack client", () => {
 
   test("a repository's pack is read with its artifact and version; a repository without one reads nothing", async () => {
     const hub = fakeHub([row("art_1", "check-pack/acme/widgets", widgets, 1, 3)]);
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "art_1", version: 3, pack: widgets });
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "art_1", version: 3, pack: widgets, automatic: [], decide: [] });
     expect(await loadRepoCheckPack(hub.transport, "t", "acme/gadgets")).toBeNull();
   });
 
