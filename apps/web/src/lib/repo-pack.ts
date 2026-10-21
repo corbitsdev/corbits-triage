@@ -132,7 +132,7 @@ export function useRepoPack(store: RepoPackStore | null, repo: string, source: R
       await refreshNow();
     } catch (cause) {
       signOutWhenRejected(cause);
-      setAfterError(`Saved, but ${errorText(cause)}`);
+      setAfterError(`Saved. ${errorText(cause)}`);
     }
   }
 

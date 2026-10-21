@@ -63,7 +63,7 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
     <>
       <div className="switch-card" id="rp-triage" ref={afterRender}>
         <div className="sc-t">
-          <b>Triage pull requests in this repository</b>
+          <label htmlFor={switchId}>Triage pull requests in this repository</label>
           {hint()}
         </div>
         <Switch id={switchId} className="sw lg" checked={enabled} onCheckedChange={flip} label="Triage pull requests in this repository" disabled={disabled} />
