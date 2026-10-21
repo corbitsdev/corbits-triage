@@ -318,6 +318,11 @@ A workspace is an Interchange tenant; repositories are tenant config
 (`corbitsTriage.repos`) plus a per-repository policy and triage state, both
 tenant artifacts. Runs act under the grants materialized for their deployment.
 
+A model step gets only read tools confined to the checkout or the pull
+request's head (repo-read-tool's `read_file`, `grep` and `list`, and the
+host's `*_read_file`), never a shell, network, write or push tool, and
+`tooling/model-step-tools.test.ts` fails `bun run test` otherwise.
+
 GitHub access is a tenant credential bound to the GitHub tool packages: the
 vault holds the App as `{"appId","privateKey"}` under provider `github` and its
 webhook secret under `github-hook`. A trusted sidecar adapter turns the App
