@@ -4,6 +4,7 @@ import {
   codeownersFor,
   codeownersForPr,
   CODE_REVIEW_MARKER,
+  getChecks,
   getPostedCodeReview,
   listInstallations,
   listOpenPrs,
@@ -17,6 +18,7 @@ import {
   REPO_DOCS_MAX_BYTES,
   REPO_RULES_MAX_BYTES,
   repoDocs,
+  summarizeChecks,
   type GithubFetch,
   type PrFilesPage,
   type RepoDocsPage,
@@ -317,4 +319,22 @@ test("listPrTimeline: comments and reviews by account, upper-case review states,
     { kind: "reviewed", actor: "bob", bot: false, at: "2026-10-01T02:00:00Z", state: "APPROVED" },
   ]);
   expect(requests.map((r) => r.path)).toEqual(["/repos/acme/widgets/issues/7/timeline?per_page=100"]);
+});
+
+test("summarizeChecks: a cancelled or stale run has not finished, a failed one fails, a skipped one passes", () => {
+  const done = (conclusion: string) => ({ name: conclusion, status: "completed", conclusion });
+  expect(summarizeChecks([done("success"), done("cancelled")])).toBe("pending");
+  expect(summarizeChecks([done("success"), done("stale")])).toBe("pending");
+  expect(summarizeChecks([done("cancelled"), done("failure")])).toBe("failure");
+  expect(summarizeChecks([done("success"), done("skipped")])).toBe("success");
+});
+
+test("getChecks: only the latest run of each check name counts", async () => {
+  function ci(older: string, newer: string) {
+    const run = (id: number, conclusion: string) => ({ id, name: "cla", status: "completed", conclusion, started_at: `2026-10-20T0${id}:00:00Z` });
+    const { gh } = recorder(() => ({ check_runs: [run(2, newer), run(1, older)] }));
+    return getChecks(gh, "acme/widgets", "abc");
+  }
+  expect(summarizeChecks(await ci("cancelled", "success"))).toBe("success");
+  expect(summarizeChecks(await ci("success", "failure"))).toBe("failure");
 });
