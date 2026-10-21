@@ -279,23 +279,53 @@ export interface CheckRun {
   conclusion?: string | null;
 }
 
+interface CheckRunRow {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  started_at: string | null;
+}
+
+// A run not started yet is the newest, so a queued re-run keeps CI pending.
+function startedAt(run: CheckRunRow): string {
+  return run.started_at ?? "￿";
+}
+
+function newer(a: CheckRunRow, b: CheckRunRow): boolean {
+  if (startedAt(a) === startedAt(b)) return a.id > b.id;
+  return startedAt(a) > startedAt(b);
+}
+
+/** Re-runs of a check share its name across suites; only the latest counts, as on GitHub's merge box. */
+function latestPerName(runs: CheckRunRow[]): CheckRunRow[] {
+  const latest = new Map<string, CheckRunRow>();
+  for (const run of runs) {
+    const kept = latest.get(run.name);
+    if (kept === undefined || newer(run, kept)) latest.set(run.name, run);
+  }
+  return [...latest.values()];
+}
+
 export async function getChecks(gh: GithubFetch, repo: string, sha: string): Promise<CheckRun[]> {
-  const runs = await jsonAll<any>(gh, `/repos/${repo}/commits/${sha}/check-runs?per_page=100`, { items: (page) => (page as { check_runs: any[] }).check_runs });
-  return runs.map((c: any) => ({
+  const runs = await jsonAll<CheckRunRow>(gh, `/repos/${repo}/commits/${sha}/check-runs?per_page=100`, { items: (page) => (page as { check_runs: CheckRunRow[] }).check_runs });
+  return latestPerName(runs).map((c) => ({
     name: c.name,
     status: c.status,
     conclusion: c.conclusion,
   }));
 }
 
-const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required"]);
+const FAILED = new Set(["failure", "timed_out", "action_required"]);
+// A cancelled or stale run ended without a result, so it has not finished rather than failed.
+const UNFINISHED = new Set(["cancelled", "stale"]);
 
 export function checkFailed(run: CheckRun): boolean {
   return run.conclusion !== undefined && run.conclusion !== null && FAILED.has(run.conclusion);
 }
 
 export function checkPending(run: CheckRun): boolean {
-  return run.status !== "completed";
+  return run.status !== "completed" || UNFINISHED.has(run.conclusion ?? "");
 }
 
 export type CiState = "success" | "failure" | "pending" | "none";
