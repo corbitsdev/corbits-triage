@@ -10,7 +10,7 @@ import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import { triageWorkflowFor } from "./source-workflow.js";
-import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
+import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks, type CiState } from "@corbits/github-reads";
 import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
@@ -54,7 +54,7 @@ export type TriageReconcilerDeps = {
   /** Reads and records the live deployments' runs, shared with the recording loop. */
   observeTenant: TenantObserver["observe"];
   store: TriageStateStore;
-  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  readCheckPack: PolicyReader;
   send: (job: TriageJob) => Promise<void>;
   policy: ReconcilePolicy;
   now: () => Date;
@@ -174,7 +174,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   }
 
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
-    const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
+    const read = await deps.readCheckPack(pass.tenantId, repo.record.name, sourceOf(repo.record));
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
     // Without a policy, or with every rule off, triage has nothing to decide: no run starts and nothing is written to the pull request.
     const key = `${pass.tenantId}\n${repo.record.name}`;

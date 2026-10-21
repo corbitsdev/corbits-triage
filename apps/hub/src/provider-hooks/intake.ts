@@ -59,7 +59,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
   async function policyPush(at: Delivery, { repo }: PolicyPush): Promise<Response> {
     let read: Awaited<ReturnType<ProviderHookDeps["refreshPolicyFile"]>>;
     try {
-      read = await d.refreshPolicyFile(at.hook.tenantId, repo);
+      read = await d.refreshPolicyFile(at.hook.tenantId, repo, sourceOf(at.record));
     } catch (err) {
       return failed(at, 500, "policy_file_read_failed", err);
     }
@@ -89,7 +89,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     if (mail.headSha === null) return ignored(at, "not_open", { pr: mail.prNumber });
     let stored: Awaited<ReturnType<typeof resolvedPack>>;
     try {
-      stored = await resolvedPack(d.readCheckPack, at.hook.tenantId, at.record.name);
+      stored = await resolvedPack(d.readCheckPack, at.hook.tenantId, at.record.name, sourceOf(at.record));
     } catch (err) {
       return failed(at, 500, "policy_read_failed", err);
     }

@@ -68,7 +68,7 @@ type CodeReviewDeps = {
   onChanged: (tenantId: string) => Promise<void>;
   place: PlaceCodeReview;
   /** Whether the repository's policy file needs the PR workflow, whose code review follows the file. */
-  inPrWorkflow: (tenantId: string, repo: string) => Promise<boolean>;
+  inPrWorkflow: (tenantId: string, repo: string, source: RepoSource) => Promise<boolean>;
 };
 
 const HOST_NAMES = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" } as const;
@@ -88,7 +88,7 @@ export function createCodeReviewSwitch(deps: CodeReviewDeps) {
       return failure(403, "forbidden", "You do not have permission to manage this workspace.");
     }
     const source = body.source ?? "github";
-    if (await deps.inPrWorkflow(tenantId, body.repo)) return fileDecides("Change `code-review` in the file instead.");
+    if (await deps.inPrWorkflow(tenantId, body.repo, source)) return fileDecides("Change `code-review` in the file instead.");
     if (body.enabled && (await deps.place(tenantId)) === null) return noPlace();
     if (body.enabled && !(await connectedSources(deps.db, tenantId)).includes(source)) {
       return failure(409, "source_not_connected", `Connect ${HOST_NAMES[source]} before turning on code review.`);
@@ -127,7 +127,7 @@ export function createCodeReviewRun(deps: CodeReviewRunDeps) {
     const source = body.source ?? "github";
     const record = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).find((row) => row.name === body.repo && sourceOf(row) === source && row.connected);
     if (!record) return failure(404, "repo_not_found", "The workspace has no such connected repository.");
-    if (await deps.inPrWorkflow(tenantId, record.name)) return fileDecides("Press Triage again to review the latest commit.");
+    if (await deps.inPrWorkflow(tenantId, record.name, source)) return fileDecides("Press Triage again to review the latest commit.");
     let offered: Offered;
     try {
       offered = await deps.feed.again(tenantId, record, body.number);

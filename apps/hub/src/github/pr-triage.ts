@@ -5,12 +5,12 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { hasEnabledRules, repoPolicy } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
-import type { CheckPackRead } from "./check-pack-store.js";
+import type { PolicyReader } from "./check-pack-store.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
@@ -28,7 +28,7 @@ export const TriageBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.int
 export type GithubPrTriageDeps = PortalCredentialDeps & {
   /** The open pull request's head on the record's host, or undefined when it is not open. */
   pullHead: (tenantId: string, record: RepoRecord, number: number) => Promise<string | undefined>;
-  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  readCheckPack: PolicyReader;
   /** The named workflow's, newest first; mail goes to the first, and a head may still be running on a replaced one. */
   liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
   observeRuns: ObserveRuns;
@@ -39,20 +39,24 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   log: (entry: Record<string, unknown>) => void;
 };
 
-/** The member's connected record of `repo`, or why they may not triage it. */
-export async function grantedTriageRecord(deps: PortalCredentialDeps, { tenantId, principalId }: Member, repo: string) {
+/**
+ * The member's connected record of `repo` on `source`, or why they may not triage it. A caller that cannot name the host
+ * gets none where both hosts hold the name.
+ */
+export async function grantedTriageRecord(deps: PortalCredentialDeps, { tenantId, principalId }: Member, repo: string, source: RepoSource | undefined) {
   const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true, config: true } });
   if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
-  const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected);
-  if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
+  const named = repoRecords(triageNs(tenant.config)).filter((row) => row.name === repo && row.connected && (source === undefined || sourceOf(row) === source));
+  const record = named.length === 1 ? named[0] : undefined;
+  if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace, or is connected from both hosts.`);
   return (await sourceCredentialGrant(deps, principalId, tenantId, record, "use")) ?? { tenant, record };
 }
 
 /** The policy and rules `record` is triaged with, or why it is not triaged. */
-export async function triageInputs(deps: { readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead> }, tenantId: string, record: RepoRecord) {
+export async function triageInputs(deps: { readCheckPack: PolicyReader }, tenantId: string, record: RepoRecord) {
   const policy = repoPolicy(record);
   if (!policy.enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
-  const pack = await deps.readCheckPack(tenantId, record.name);
+  const pack = await deps.readCheckPack(tenantId, record.name, sourceOf(record));
   if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: pack.reason });
   if (pack.status === "invalid") return failure(409, "policy_file_invalid", `Triage does not run until ${pack.path} is fixed.`, { reason: pack.reason });
   if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
@@ -61,7 +65,7 @@ export async function triageInputs(deps: { readCheckPack: (tenantId: string, rep
 }
 
 async function readyToTriage(deps: GithubPrTriageDeps, member: Member, repo: string) {
-  const granted = await grantedTriageRecord(deps, member, repo);
+  const granted = await grantedTriageRecord(deps, member, repo, "github");
   if (granted instanceof Response) return granted;
   const inputs = await triageInputs(deps, member.tenantId, granted.record);
   if (inputs instanceof Response) return inputs;

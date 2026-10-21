@@ -6,7 +6,7 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { createArtifact, findArtifactByTitle, runArtifactMigrations } from "@corbits/artifacts";
-import { checkPackName, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, starterPack, type CheckPack } from "@corbits/triage-contracts";
+import { checkPackName, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, starterPack, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { fileRefusal, settlePolicy } from "./check-pack-store.js";
 import { createPolicyFile } from "./policy-file.js";
 import { POLICY_BRANCH } from "./policy-pull.js";
@@ -25,6 +25,7 @@ const EXTENDS = "acme/extends";
 const CHOSEN = "acme/chosen";
 const CHOSEN_SAVED = "acme/chosen-saved";
 const CHOSEN_RACED = "acme/chosen-raced";
+const BOTH = "acme/both";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 const FILE = `rules:
   - check: ci-green
@@ -132,7 +133,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_SAVED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }];
+  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_SAVED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -168,16 +169,16 @@ afterAll(async () => {
   await admin.close();
 });
 
-function settled(tenantId: string, repo: string) {
-  return settlePolicy({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {}, policyFile: policyFile.current }, tenantId, repo);
+function settled(tenantId: string, repo: string, source: RepoSource | undefined) {
+  return settlePolicy({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {}, policyFile: policyFile.current }, tenantId, repo, source);
 }
 
-function refused(tenantId: string, repo: string, policy: Record<string, unknown>) {
-  return fileRefusal({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {}, policyFile: policyFile.current }, tenantId, repo, policy);
+function refused(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
+  return fileRefusal({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {}, policyFile: policyFile.current }, tenantId, repo, source, policy);
 }
 
 async function readPack(repo: string) {
-  return (await settled(TENANT, repo)).read;
+  return (await settled(TENANT, repo, "github")).read;
 }
 
 async function upgrades(): Promise<Array<Record<string, unknown>>> {
@@ -211,7 +212,7 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
   // The answer is kept until a push to the default branch says the file changed.
   onMain(FROM_FILE, YML, FILE, "blob1");
   expect(await readPack(FROM_FILE)).toEqual({ status: "missing" });
-  expect(await policyFile.onPush(TENANT, FROM_FILE)).toMatchObject({ status: "ok", file: { path: YML, sha: "blob1" } });
+  expect(await policyFile.onPush(TENANT, FROM_FILE, "github")).toMatchObject({ status: "ok", file: { path: YML, sha: "blob1" } });
   const read = await readPack(FROM_FILE);
   expect(read).toEqual({ status: "ok", pack: expect.anything(), automatic: [], source: { file: { path: YML, sha: "blob1" } } });
   expect(read.status === "ok" && read.pack.checks).toEqual({ "ci-green": { enabled: true, text: "CI passes.", reason: "Required by branch protection.", evidence: ["maintainer-stated"] } });
@@ -232,7 +233,7 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
   for (const [i, [text, reason]] of refused.entries()) {
     onMain(FROM_FILE, YML, text === DIRECTORY ? null : text, text === DIRECTORY ? DIRECTORY : `bad${i}`);
     const started = performance.now();
-    await policyFile.onPush(TENANT, FROM_FILE);
+    await policyFile.onPush(TENANT, FROM_FILE, "github");
     expect(await readPack(FROM_FILE)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(reason) });
     expect(performance.now() - started).toBeLessThan(2_000);
     if (text === DIRECTORY) {
@@ -245,13 +246,13 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
   // `.yml` is read first; `.yaml` still counts when it is the only one.
   files.delete(`${FROM_FILE}@main/${YML}`);
   onMain(FROM_FILE, YAML, FILE, "blob2");
-  await policyFile.onPush(TENANT, FROM_FILE);
+  await policyFile.onPush(TENANT, FROM_FILE, "github");
   expect(await readPack(FROM_FILE)).toMatchObject({ status: "ok", source: { file: { path: YAML, sha: "blob2" } } });
 
   // A push whose read fails keeps nothing, so the next trigger reads the file itself.
   files.delete(`${FROM_FILE}@main/${YAML}`);
   readFails = true;
-  await expect(policyFile.onPush(TENANT, FROM_FILE)).rejects.toThrow("502");
+  await expect(policyFile.onPush(TENANT, FROM_FILE, "github")).rejects.toThrow("502");
   readFails = false;
   expect(await readPack(FROM_FILE)).toEqual({ status: "missing" });
 }, 60_000);
@@ -264,24 +265,24 @@ test("PostgreSQL: saved rules apply while the file runs differently or is refuse
   expect(await upgradeOf(SAVED)).toEqual({ repo: SAVED, upgrade: { state: "upgrade", saved: { id: expect.any(String), version: 1 }, unexpressed: [] } });
 
   onMain(SAVED, YAML, "checks:\n  no-forbidden-paths: { enabled: true, forbiddenGlobs: [node_modules/**] }\n");
-  await policyFile.onPush(TENANT, SAVED);
+  await policyFile.onPush(TENANT, SAVED, "github");
   expect(await readPack(SAVED)).toEqual(stored);
   expect(await upgradeOf(SAVED)).toMatchObject({ upgrade: { state: "differs", path: YAML, differences: [{ rule: "Never accept changes to", saved: ["vendor/**", "node_modules/**"], file: ["node_modules/**"] }], fixable: true } });
 
   onMain(SAVED, YAML, "rules: [");
-  await policyFile.onPush(TENANT, SAVED);
+  await policyFile.onPush(TENANT, SAVED, "github");
   expect(await readPack(SAVED)).toEqual(stored);
   expect(await upgradeOf(SAVED)).toMatchObject({ upgrade: { state: "differs", differences: [], problem: "Line 1: The policy file is not YAML: Flow sequence in block collection must be sufficiently indented and end with a ]." } });
 
   onMain(SAVED, YAML, "checks:\n  no-forbidden-paths: { enabled: true, forbiddenGlobs: [node_modules/**, vendor/**] }\n");
-  await policyFile.onPush(TENANT, SAVED);
+  await policyFile.onPush(TENANT, SAVED, "github");
   expect(await readPack(SAVED)).toMatchObject({ status: "ok", source: { file: { path: YAML } } });
   expect(await findArtifactByTitle(handle.db, TENANT, checkPackName(SAVED))).toBeNull();
   expect(await upgradeOf(SAVED)).toEqual({ repo: SAVED, upgrade: { state: "ok" } });
 
   // With the saved rules gone, an edit to the file is the policy.
   onMain(SAVED, YAML, "checks:\n  ci-green: { enabled: true }\n");
-  await policyFile.onPush(TENANT, SAVED);
+  await policyFile.onPush(TENANT, SAVED, "github");
   expect(await readPack(SAVED)).toMatchObject({ status: "ok", pack: { checks: { "ci-green": { enabled: true } } } });
 }, 60_000);
 
@@ -308,7 +309,7 @@ test("PostgreSQL: writing the saved rules to the file opens one pull request, up
   // Merged: the file lands on the default branch and runs the same, so it is the policy and the saved rules retire.
   onMain(EXPORTED, YML, files.get(`${EXPORTED}@${POLICY_BRANCH}/${YML}`)!.text);
   pull!.open = false;
-  await policyFile.onPush(TENANT, EXPORTED);
+  await policyFile.onPush(TENANT, EXPORTED, "github");
   expect(await readPack(EXPORTED)).toMatchObject({ status: "ok", source: { file: { path: YML } } });
   expect(await upgradeOf(EXPORTED)).toEqual({ repo: EXPORTED, upgrade: { state: "ok" } });
   expect(await exportOf(EXPORTED)).toMatchObject({ http: 409 });
@@ -322,7 +323,7 @@ test("PostgreSQL: a file already holding all a file can of the saved rules is no
   };
   await writePolicy(FROM_FILE, JSON.stringify(saved));
   onMain(FROM_FILE, YML, exportPolicyFile(saved, false).text);
-  await policyFile.onPush(TENANT, FROM_FILE);
+  await policyFile.onPush(TENANT, FROM_FILE, "github");
   expect(await readPack(FROM_FILE)).toMatchObject({ status: "ok", source: { repo: { version: 1 } } });
   expect(await upgradeOf(FROM_FILE)).toMatchObject({ upgrade: { state: "differs", differences: [{ rule: "Risk", file: [] }], fixable: false } });
   expect(await exportOf(FROM_FILE)).toMatchObject({ http: 409, error: { code: "policy_file_full" } });
@@ -350,7 +351,7 @@ test("PostgreSQL: an enabled repository with no rules and no file is offered a s
 
   onMain(STARTER, YML, files.get(`${STARTER}@${POLICY_BRANCH}/${YML}`)!.text);
   pulls.find((row) => row.repo === STARTER)!.open = false;
-  await policyFile.onPush(TENANT, STARTER);
+  await policyFile.onPush(TENANT, STARTER, "github");
   const read = await readPack(STARTER);
   expect(read).toMatchObject({ status: "ok", source: { file: { path: YML } } });
   expect(read.status === "ok" && policyDifferences(starterPack(STARTER), read.pack)).toMatchObject([{ rule: "Most files changed", saved: ["30", "on fail, labels size: large"], file: ["40", "on fail, labels size: large"] }]);
@@ -394,21 +395,29 @@ async function writePolicy(repo: string, content: string): Promise<void> {
 
 test("PostgreSQL: a policy file extending another repository runs over that repository's file as last pushed, and is refused while that file cannot be read or extends again", async () => {
   onMain(EXTENDS, YML, `extends: ${SHARED}\nrules:\n  - check: max-files-changed\n    max: 50\n    text: At most 50 files.\n    reason: Reviewable.\n    evidence: [maintainer-stated]\n`, "own1");
-  await policyFile.onPush(TENANT, EXTENDS);
+  await policyFile.onPush(TENANT, EXTENDS, "github");
   expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: `${SHARED} is not connected to this workspace or has no policy file.` });
 
   onMain(SHARED, YML, FILE, "shared1");
-  await policyFile.onPush(TENANT, SHARED);
+  await policyFile.onPush(TENANT, SHARED, "github");
   const read = await readPack(EXTENDS);
   expect(read).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "own1" }, sharedFile: { repo: SHARED, path: YML, sha: "shared1" } } });
   expect(read.status === "ok" && Object.keys(read.pack.checks)).toEqual(["ci-green", "max-files-changed"]);
 
   // A push to the shared repository reaches every repository extending it.
   onMain(SHARED, YML, `extends: ${EXTENDS}\n${FILE}`, "shared2");
-  await policyFile.onPush(TENANT, SHARED);
+  await policyFile.onPush(TENANT, SHARED, "github");
   expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: `${SHARED}'s policy extends another, so no policy can extend it.` });
 
   onMain(SHARED, YML, "rules: [", "shared3");
-  await policyFile.onPush(TENANT, SHARED);
+  await policyFile.onPush(TENANT, SHARED, "github");
   expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 1: The policy file is not YAML`) });
+});
+
+test("PostgreSQL: a name both hosts hold is read only for the host asked, and a caller naming no host reads no policy", async () => {
+  onMain(BOTH, YML, FILE, "both1");
+  await policyFile.onPush(TENANT, BOTH, "github");
+  expect(await readPack(BOTH)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "both1" } } });
+  expect((await settled(TENANT, BOTH, undefined)).read).toEqual({ status: "missing" });
+  expect((await policyFile.fileRoute({ repo: BOTH }, MEMBER)).status).toBe(409);
 });

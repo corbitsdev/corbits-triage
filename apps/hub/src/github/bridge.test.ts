@@ -520,7 +520,7 @@ describe("bridge handler", () => {
     const read = packsFor(["octocat/hello"]);
     async function readCheckPack(tenantId: string, repo: string) {
       if (failures-- > 0) throw new Error("github GET /repos/octocat/hello/contents/.corbits-triage.yml -> 502");
-      return read(tenantId, repo);
+      return read(tenantId, repo, "github");
     }
     const handle = bridge({ readCheckPack });
     expect(await (await handle(githubRequest(prPayload, { delivery: "unread" }), TARGET)).json()).toEqual({ error: "policy_read_failed" });

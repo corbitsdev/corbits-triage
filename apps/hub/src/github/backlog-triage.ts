@@ -4,7 +4,7 @@ import { type } from "arktype";
 import { errorText } from "@corbits/common";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { mailPayload } from "./bridge.js";
-import type { CheckPackRead } from "./check-pack-store.js";
+import type { PolicyReader } from "./check-pack-store.js";
 import { DeploymentNotReadyError, NoLiveDeploymentError } from "./deployment.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
 import { grantedTriageRecord, triageInputs } from "./pr-triage.js";
@@ -14,7 +14,7 @@ import type { Member } from "../integrations/app.js";
 export const BacklogBody = type({ repo: /^[\w.-]+\/[\w.-]+$/ });
 
 export type BacklogStartDeps = {
-  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  readCheckPack: PolicyReader;
   sendMail: (tenantId: string, payload: unknown) => Promise<void>;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -45,7 +45,7 @@ export function createBacklogStart(deps: BacklogStartDeps): BacklogStart {
 export function createGithubBacklog(deps: GithubBacklogDeps) {
   const startBacklog = createBacklogStart(deps);
   return async function handle({ repo }: typeof BacklogBody.infer, member: Member): Promise<Response> {
-    const granted = await grantedTriageRecord(deps, member, repo);
+    const granted = await grantedTriageRecord(deps, member, repo, undefined);
     if (granted instanceof Response) return granted;
     const started = await startBacklog(member.tenantId, granted.record);
     if (started.ok) deps.log({ level: "info", msg: "backlog_requested", tenantId: member.tenantId, principalId: member.principalId, repo });
