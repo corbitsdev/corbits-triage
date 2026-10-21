@@ -1,4 +1,4 @@
-import { citationOf, type ActionKind } from "@corbits/triage-contracts";
+import { citationOf } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, HeldBlock, MergeBlock, PrItem, QueueState, RunFailure } from "./hub-api.ts";
 import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, postedLabel, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
@@ -172,15 +172,13 @@ export function paneStatus({ item, detail, handled, approved, primary }: StatusI
   return status("ready", approved ? "Approved by Triage · ready for you to merge" : "Ready to merge");
 }
 
-/** `held` is Triage's held action of the same kind, which the button completes instead of writing a second one. */
+/** `held` is Triage's held action with the same kind and label, which the button completes instead of writing a second one. */
 export type BarEntry = MenuEntry & { held: PendingDo | null };
 
 type BarAction = BarEntry & { detail: string | null };
 
 /** `dos` are the held actions no other button stands for. */
 export type PaneBar = { primary: BarAction | null; rest: BarEntry[]; dos: PendingDo[] };
-
-const HELD_KIND: Partial<Record<PaneKind, ActionKind>> = { approve: "approve", changes: "request-changes", close: "close", merge: "merge" };
 
 function primaryText(kind: PaneKind, author: string | null, base: string | null): Pick<BarAction, "label" | "detail"> {
   const to = author === null ? null : `to @${author}`;
@@ -200,7 +198,7 @@ export function paneBar(gate: PaneGate, base: string | null, author: string | nu
   const actions = paneActions(gate);
   const dos = pendingDos(gate.item);
   function withHeld<E extends MenuEntry>(entry: E): E & { held: PendingDo | null } {
-    return { ...entry, held: dos.find((pending) => pending.kind === HELD_KIND[entry.kind]) ?? null };
+    return { ...entry, held: dos.find((pending) => pending.kind === entry.kind && pending.label === primaryLabel(entry.kind)) ?? null };
   }
   const fallback = actions.primary === null && isPostedToAuthor(gate.item) ? actions.more.find((entry) => entry.kind === "comment") ?? null : null;
   // Commits Triage has not checked are never merged from here; the merge stays blocked until the hub has checked them.

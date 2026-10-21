@@ -230,27 +230,23 @@ type PaneProps = {
   onBack: () => void;
 };
 
-type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; doBlocked: boolean; onRun: (kind: PaneKind) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void };
+type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; doBlocked: boolean; onChoose: (entry: BarEntry) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void; onHide: (() => void) | null };
 
-function BottomBar({ bar, draft, doBlocked, onRun, onEdit, onDo }: BottomBarProps) {
+function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: BottomBarProps) {
   const { primary, rest, dos } = bar;
-
-  function choose(entry: BarEntry) {
-    if (entry.held === null) onRun(entry.kind);
-    else onDo(entry.held);
-  }
 
   return (
     <div className="bar">
       {primary !== null && (
-        <Button type="button" disabled={primary.blocker !== null} onClick={() => choose(primary)}>
+        <Button type="button" disabled={primary.blocker !== null} onClick={() => onChoose(primary)}>
           {primary.kind === "reply" && draft?.edited ? "Send edited feedback" : primary.label}
           {primary.detail === null ? null : <span className="det">{primary.detail}</span>}
         </Button>
       )}
       {onEdit === null ? null : <Button type="button" variant="ghost" onClick={onEdit}>Edit feedback</Button>}
-      {rest.map((entry) => <Button key={entry.kind} type="button" variant="ghost" disabled={entry.blocker !== null} onClick={() => choose(entry)}>{entry.label}</Button>)}
+      {rest.map((entry) => <Button key={entry.kind} type="button" variant="ghost" disabled={entry.blocker !== null} onClick={() => onChoose(entry)}>{entry.label}</Button>)}
       {dos.map((pending) => <Button key={pending.key} type="button" variant="ghost" disabled={doBlocked} onClick={() => onDo(pending)}>{pending.label}</Button>)}
+      {onHide === null ? null : <Button type="button" variant="ghost" onClick={onHide}>Hide for me</Button>}
     </div>
   );
 }
@@ -338,6 +334,16 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
     hold(kind, reply);
   }
 
+  function choose(entry: BarEntry) {
+    if (entry.blocker !== null) return;
+    if (entry.held === null) run(entry.kind);
+    else approveDo(entry.held);
+  }
+
+  function hideDos() {
+    for (const pending of dos) heldDoKeys.hide(pending.key);
+  }
+
   function onComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (composer !== null && canRun(composer.kind, gate)) hold(composer.kind, composer.body);
@@ -352,7 +358,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
       if (event.metaKey || event.ctrlKey || event.altKey || event.repeat || modalOpen() || isInteractiveShortcutTarget(event.target)) return;
       if (event.key === "a" && bar.primary !== null) {
         event.preventDefault();
-        run(bar.primary.kind);
+        choose(bar.primary);
       }
       if (event.key === "e" && draft !== null) {
         event.preventDefault();
@@ -398,9 +404,10 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
         bar={bar}
         draft={draft}
         doBlocked={doBlocked}
-        onRun={run}
+        onChoose={choose}
         onEdit={draft === null || editing ? null : () => setEditing(true)}
         onDo={approveDo}
+        onHide={dos.length === 0 ? null : hideDos}
       />}
     </section>
   );

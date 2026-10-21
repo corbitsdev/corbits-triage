@@ -183,12 +183,19 @@ describe("paneBar", () => {
     expect(barOf(item({ state: "needs-author-update", posted: true, comment: "Fix it." })).primary).toMatchObject({ kind: "comment", label: "Reply", detail: "to @ada" });
   });
 
+  const held = (effectId: string, kind: SuggestedAction["kind"], target: SuggestedAction["target"]): SuggestedAction => ({ list: "unsure", index: 0, effectId, kind, reason: "", target, held: true });
+
   test("a held action is the button of its kind; one with no button gets its own", () => {
-    const held = (effectId: string, kind: SuggestedAction["kind"], target: SuggestedAction["target"]): SuggestedAction => ({ list: "unsure", index: 0, effectId, kind, reason: "", target, held: true });
     const bar = barOf(item({ state: "awaiting-review", actions: [held("e1", "approve", {}), held("e2", "labels", { labels: ["bug"] })] }));
     expect(bar.primary).toMatchObject({ kind: "approve", label: "Approve", held: { key: "e1" } });
     expect(bar.rest.map((entry) => entry.kind)).toEqual(["changes", "comment", "merge", "close", "triage"]);
     expect(bar.dos.map((pending) => pending.label)).toEqual(["Add label bug"]);
+  });
+
+  test("a held merge off an unsure list keeps its own button and its warning", () => {
+    const bar = barOf(item({ state: "ready", actions: [held("e1", "merge", {})] }));
+    expect(bar.primary).toMatchObject({ kind: "merge", held: null });
+    expect(bar.dos.map((pending) => pending.label)).toEqual(["Merge (the verdict was unsure, not pass)"]);
   });
 });
 

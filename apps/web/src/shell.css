@@ -55,7 +55,6 @@
 .shell .av.none { border-style: dashed; background: none; }
 .shell .menu-wrap { position: relative; }
 .shell .menu { position: absolute; z-index: 30; min-width: 230px; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12); padding: 6px; }
-.shell .menu.up { bottom: calc(100% + 6px); right: 0; }
 .shell .menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; background: none; border-radius: var(--r-sm); font: 500 13px var(--font); color: inherit; cursor: pointer; text-align: left; }
 .shell .menu button:hover { background: var(--fill-hover); }
 .shell .menu button[disabled] { opacity: 0.45; cursor: not-allowed; }

@@ -11,7 +11,7 @@ function teamName(slug: string, repo: string): string {
 
 const PREVIEW_MAX = 40;
 
-/** The policy's own comment, not Triage's drafted feedback, so its button names what it posts. */
+/** A held comment or change request posts its own text, not Triage's drafted feedback, so its button names what it posts. */
 function preview(body: string): string {
   const line = body.trim().split("\n", 1)[0];
   return line.length > PREVIEW_MAX ? `${line.slice(0, PREVIEW_MAX).trimEnd()}…` : line;
@@ -39,7 +39,7 @@ function label(action: SuggestedAction, repo: string): string | null {
     case "approve":
       return "Approve";
     case "request-changes":
-      return "Request changes";
+      return typeof target.body === "string" && target.body.trim() ? `Request changes "${preview(target.body)}"` : null;
     case "close":
       return "Close";
     case "merge":

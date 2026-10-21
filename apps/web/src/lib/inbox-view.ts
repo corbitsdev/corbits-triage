@@ -45,7 +45,7 @@ const PRIMARY_LABEL: Record<PrimaryAction, string> = {
   comment: "Comment",
   approve: "Approve",
   changes: "Request changes",
-  close: "Close pull request",
+  close: "Close",
   merge: "Merge",
   triage: "Triage again",
 };
