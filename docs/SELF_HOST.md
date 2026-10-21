@@ -360,6 +360,10 @@ migrations on every start.
   Until then Triage's runs cannot read or write GitHub, because the workflows
   deployed earlier ask GitHub for the App with a credential that can no longer
   do that.
+- A workspace whose GitHub App is installed on more than one account must
+  sync its repositories after upgrading and keep the App on one account: one
+  installation token serves the workspace, so the other accounts' repositories
+  are left out.
 
 - A GitHub App created by an earlier build may lack permissions or events
   added since. Accept new permissions (Contents: write, Members: read) when

@@ -125,7 +125,8 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
     expect(await secretOf("github-app")).toBe(first.json);
     expect(await secretOf("github")).toBe("ghs_1_7_1");
     expect(await slugOf(db)).toBe("app-1");
-    expect(pushed()).toEqual([{ address: LISTENER, secrets: ["ghs_1_7_1"] }]);
+    // The blank that replaces the key a sidecar held, then the token.
+    expect(pushed()).toEqual([{ address: LISTENER, secrets: [""] }, { address: LISTENER, secrets: ["ghs_1_7_1"] }]);
 
     const launch = await buildCredentialDelivery({ db, tenantId: TENANT, bindings: credentialBindingsFor(["github"]), creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher });
     if (!launch.ok) throw new Error(`launch delivery failed: ${JSON.stringify(launch.reason)}`);
@@ -145,7 +146,7 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
     await renewal.renew(TENANT);
     github.hooks.onMint = async function quiet() {};
     expect(await secretOf("github")).toBe(replacement.json);
-    expect(pushed()).toHaveLength(2);
+    expect(pushed()).toHaveLength(3);
 
     // The next worker moves the replacement off the bound credential and mints from it.
     await renewal.ensure(TENANT);
@@ -232,9 +233,41 @@ test("PostgreSQL: a child workspace inheriting its parent's App gets the parent'
     await expect(withAppLogin(db, "tnt_none", { kind: "pr" })).rejects.toThrow("github app credential is missing");
 
     expect(await renewal.renewAll()).toEqual({ retry: false });
-    expect(pushed()).toEqual([{ address: "run_child@child.test", secrets: ["ghs_1_7_1"] }]);
+    expect(pushed().at(-1)).toEqual({ address: "run_child@child.test", secrets: ["ghs_1_7_1"] });
 
     await renewal.renew("tnt_child");
     expect(pushed().at(-1)).toEqual({ address: "run_child@child.test", secrets: ["ghs_1_7_2"] });
   });
-});
+}, 120_000);
+
+test("PostgreSQL: App JSON a stock write leaves in the bound credential is taken back from the sidecars holding it, and the key itself is never deliverable", async () => {
+  const theApp = app("1", [7]);
+  await withWorkspace([theApp], async function secureKey({ db, cipher, origin }) {
+    await db.insert(schema.credential).values({
+      id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
+      secret: await cipher.encrypt("ghs_old", credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "app-1" },
+    });
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_triage", tenantId: TENANT, name: "pr-triage-github" });
+    await db.insert(schema.workflowRun).values({
+      id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed", address: LISTENER,
+      credentialRefs: { credentialIds: ["crd_github"], bindings: [{ handle: "github", credentialId: "crd_github", consumer: "action:facts" }] },
+    });
+    const { sent, router } = deliveries();
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    const secretOf = secrets(db, cipher);
+
+    // A stock credential write puts the App JSON where workflows bind it; securing that write moves it and pushes the blank.
+    await db.update(schema.credential).set({ secret: await cipher.encrypt(theApp.json, credentialAad("crd_github", "secret")) }).where(eq(schema.credential.id, "crd_github"));
+    await renewal.secure(TENANT);
+    expect(await secretOf("github-app")).toBe(theApp.json);
+    expect(await secretOf("github")).toBe("");
+    expect(sent.map(({ address }) => address)).toEqual([LISTENER]);
+    expect(JSON.stringify(sent)).not.toContain("PRIVATE KEY");
+
+    const key = await buildCredentialDelivery({
+      db, tenantId: TENANT, creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher,
+      bindings: [{ action: "facts", handle: "github-app", provider: "github-app", name: "github-app", locator: "tenant" }],
+    });
+    expect(key.ok ? "delivered" : key.reason.code).toBe("no_origin");
+  });
+}, 120_000);

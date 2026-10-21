@@ -8,16 +8,20 @@ import { pushCredentialReconcile } from "@intx/hub-sessions";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import { asRecord, errorText } from "@corbits/common";
 import { json, listInstallations, type GithubInstallation } from "@corbits/github-reads";
-import { decryptSecret, GITHUB_APP_KEY_CREDENTIAL, GITHUB_CREDENTIAL, githubAppKey, lockedCredential, lockGithubCredentials, renewedMetadata, TOKEN_ERROR } from "./app-key.js";
+import { decryptSecret, GITHUB_APP_KEY_CREDENTIAL, GITHUB_CREDENTIAL, githubAppKey, lockedCredential, lockGithubCredentials, moveAppKey, renewedMetadata, TOKEN_ERROR } from "./app-key.js";
 import { tenantConfigOf } from "./bridge.js";
 import { createGithubAppCredentialFetch, isGithubAppJson, mintInstallationToken } from "./github-app-credential-adapter.js";
-import { activeCredential, appGithubFetch, heldCredential } from "./portal-credential.js";
+import { GithubRateLimited } from "./github-usage.js";
+import type { ReconcileOutcome } from "./triage-reconciler.js";
+import { appGithubFetch, heldCredential } from "./portal-credential.js";
 import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
 /** Installation tokens last an hour. */
 export const GITHUB_TOKEN_RENEW_MS = 45 * 60_000;
 /** A worker is deployed with the token it reads, so one with less left than this is renewed first. */
 const MIN_TOKEN_LIFE_MS = 15 * 60_000;
+/** A full pass falls due a little before the renewal interval fires, so the interval's pass is always full. */
+const RETRY_SLACK_MS = 60_000;
 
 export type InstallationToken = { token: string; expiresAt: number };
 /** What GitHub says of an App: its slug, and a token for the workspace's installation once it is installed. */
@@ -72,9 +76,12 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     return runs.flatMap((run) => (run.address === null ? [] : [run.address]));
   }
 
-  /** Sends the current token of the `github` credential `tenantId` resolves to, its own or a parent's, to each running deployment holding it. */
+  /**
+   * Sends the current material of the `github` credential `tenantId` resolves to, its own or a parent's, to each running
+   * deployment holding it, expired too: a blank sent after a key moved replaces the key a sidecar was given.
+   */
   async function push(tenantId: string): Promise<void> {
-    const github = await activeCredential(deps.db, tenantId, GITHUB_CREDENTIAL);
+    const github = await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL);
     if (!github) return;
     for (const address of await holders(github.id)) await pushCredentialReconcile(deps.db, deps.router, address, deps.cipher);
   }
@@ -125,10 +132,16 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
   }
 
   /** Renews the token of the workspace whose credential `tenantId` resolves to, its own or a parent's. */
+  /** Moves App JSON a stock write left in the `github` credential to the hub, and takes it back from every sidecar given it. */
+  async function secure(tenantId: string): Promise<void> {
+    if (await moveAppKey(deps, tenantId)) await push(tenantId);
+  }
+
   async function renew(tenantId: string): Promise<void> {
     const owner = (await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL))?.tenantId;
     if (owner === undefined) return;
     await recorded(owner, async function renewToken() {
+      await secure(owner);
       await renewWith(owner, await githubAppKey(deps, owner));
     });
   }
@@ -141,6 +154,7 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     const owner = (await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL))?.tenantId;
     if (owner === undefined) return;
     await recorded(owner, async function ensureToken() {
+      await secure(owner);
       const appJson = await githubAppKey(deps, owner);
       const github = await heldCredential(deps.db, owner, GITHUB_CREDENTIAL);
       if (github?.status === "active" && github.expiresAt && github.expiresAt.getTime() - Date.now() > MIN_TOKEN_LIFE_MS) return;
@@ -148,35 +162,48 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     });
   }
 
-  /** A key whose `github` credential was removed through the stock route goes with it. */
+  /** A key whose `github` credential was removed or revoked through the stock route goes with it. */
   async function dropOrphanKey(tenantId: string): Promise<void> {
     await deps.db.transaction(async function drop(tx) {
       await lockGithubCredentials(tx, tenantId);
-      if (await lockedCredential(tx, tenantId, GITHUB_CREDENTIAL)) return;
+      const github = await lockedCredential(tx, tenantId, GITHUB_CREDENTIAL);
+      if (github && github.status !== "revoked") return;
       await tx.delete(credential).where(and(eq(credential.tenantId, tenantId), eq(credential.name, GITHUB_APP_KEY_CREDENTIAL)));
       deps.log({ level: "info", msg: "github_app_key_dropped", tenantId });
     });
   }
 
-  /** Every workspace with GitHub connected; a workspace that failed asks for an early retry. */
-  async function renewAll(): Promise<{ retry: boolean }> {
-    const rows = await deps.db.select({ tenantId: credential.tenantId, name: credential.name }).from(credential)
-      .where(and(inArray(credential.name, [GITHUB_CREDENTIAL, GITHUB_APP_KEY_CREDENTIAL]), inArray(credential.status, ["active", "error", "expired"])));
-    const connected = new Set(rows.flatMap((row) => (row.name === GITHUB_CREDENTIAL ? [row.tenantId] : [])));
-    let retry = false;
-    for (const { tenantId, name } of rows) {
+  /** Workspaces whose last renewal failed; until the next full pass is due, an early pass retries only these. */
+  const failed = new Set<string>();
+  let fullPassAt = 0;
+
+  /** Every workspace with GitHub connected, or only the failed ones on an early retry; a rate limit names when it lifts. */
+  async function renewAll(): Promise<ReconcileOutcome> {
+    const full = failed.size === 0 || Date.now() >= fullPassAt;
+    if (full) fullPassAt = Date.now() + GITHUB_TOKEN_RENEW_MS - RETRY_SLACK_MS;
+    const rows = await deps.db.select({ tenantId: credential.tenantId, name: credential.name, status: credential.status }).from(credential)
+      .where(inArray(credential.name, [GITHUB_CREDENTIAL, GITHUB_APP_KEY_CREDENTIAL]));
+    const connected = new Set(rows.flatMap((row) => (row.name === GITHUB_CREDENTIAL && row.status !== "revoked" ? [row.tenantId] : [])));
+    let retryAt: number | undefined;
+    for (const { tenantId, name, status } of rows) {
+      if (name === GITHUB_APP_KEY_CREDENTIAL) {
+        if (full && !connected.has(tenantId)) await dropOrphanKey(tenantId);
+        continue;
+      }
+      if (status === "revoked" || (!full && !failed.has(tenantId))) continue;
       try {
-        if (name === GITHUB_CREDENTIAL) await renew(tenantId);
-        else if (!connected.has(tenantId)) await dropOrphanKey(tenantId);
+        await renew(tenantId);
+        failed.delete(tenantId);
       } catch (err) {
-        retry = true;
+        failed.add(tenantId);
+        if (err instanceof GithubRateLimited) retryAt = Math.min(retryAt ?? err.resetAt, err.resetAt);
         deps.log({ level: "error", msg: "github_token_renew_failed", tenantId, error: errorText(err) });
       }
     }
-    return { retry };
+    return { retry: failed.size > 0, ...(retryAt !== undefined && { retryAt }) };
   }
 
-  return { issue, push, renew, ensure, renewAll };
+  return { issue, push, secure, renew, ensure, renewAll };
 }
 
 export type GithubTokenRenewal = ReturnType<typeof createGithubTokenRenewal>;

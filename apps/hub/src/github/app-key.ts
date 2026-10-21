@@ -1,6 +1,6 @@
 // The GitHub App's private key is read only on the hub, from a credential no
 // workflow binds; the `github` credential workflows bind holds an installation token.
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
@@ -10,8 +10,10 @@ import { isGithubAppJson } from "./github-app-credential-adapter.js";
 
 export const GITHUB_CREDENTIAL = "github";
 export const GITHUB_APP_KEY_CREDENTIAL = "github-app";
+/** The key's provider has no API origin, so stock refuses to deliver the key to any sidecar (`no_origin`). */
+const GITHUB_APP_KEY_PROVIDER = "github-app";
 
-const { credential } = schema;
+const { credential, provider } = schema;
 
 export type AppKeyDeps = { db: DB["db"]; cipher: CredentialCipher };
 
@@ -45,14 +47,22 @@ export async function lockedCredential(tx: Tx, tenantId: string, name: string) {
   return row;
 }
 
+async function keyProviderId(tx: Tx, tenantId: string): Promise<string> {
+  await tx.insert(provider).values({ id: generateId("provider"), tenantId, name: GITHUB_APP_KEY_PROVIDER, plugin: "http", apiBaseUrl: null }).onConflictDoNothing();
+  const [row] = await tx.select({ id: provider.id }).from(provider).where(and(eq(provider.tenantId, tenantId), eq(provider.name, GITHUB_APP_KEY_PROVIDER)));
+  if (!row) throw new Error("the GitHub App key provider is missing");
+  return row.id;
+}
+
 /** Writes the App JSON to the hub-only credential; the caller holds the lock. */
-export async function storeAppKey(tx: Tx, cipher: CredentialCipher, { tenantId, providerId, appJson }: { tenantId: string; providerId: string; appJson: string }): Promise<void> {
+export async function storeAppKey(tx: Tx, cipher: CredentialCipher, { tenantId, appJson }: { tenantId: string; appJson: string }): Promise<void> {
   const held = await lockedCredential(tx, tenantId, GITHUB_APP_KEY_CREDENTIAL);
   const id = held?.id ?? generateId("credential");
   const secret = await cipher.encrypt(appJson, credentialAad(id, "secret"));
+  const providerId = await keyProviderId(tx, tenantId);
   const stamp = new Date();
   if (held) {
-    await tx.update(credential).set({ secret, status: "active", updatedAt: stamp }).where(eq(credential.id, id));
+    await tx.update(credential).set({ secret, providerId, status: "active", updatedAt: stamp }).where(eq(credential.id, id));
     return;
   }
   await tx.insert(credential).values({
@@ -62,19 +72,31 @@ export async function storeAppKey(tx: Tx, cipher: CredentialCipher, { tenantId, 
   });
 }
 
-/** App JSON a stock credential write left in the `github` credential moves to the hub-only one, leaving no token. */
-async function moveAppKey({ db, cipher }: AppKeyDeps, tenantId: string): Promise<void> {
-  await db.transaction(async function move(tx) {
+/**
+ * App JSON a stock credential write left in the `github` credential moves to the hub-only one, leaving no token; a key
+ * stored before it had its own provider is moved onto it. Whether App JSON was moved, so its holders are sent the blank.
+ */
+export async function moveAppKey({ db, cipher }: AppKeyDeps, tenantId: string): Promise<boolean> {
+  return db.transaction(async function move(tx) {
     await lockGithubCredentials(tx, tenantId);
+    const key = await lockedCredential(tx, tenantId, GITHUB_APP_KEY_CREDENTIAL);
+    if (key) await tx.update(credential).set({ providerId: await keyProviderId(tx, tenantId) }).where(eq(credential.id, key.id));
     const github = await lockedCredential(tx, tenantId, GITHUB_CREDENTIAL);
-    if (!github) return;
+    if (!github) return false;
     const appJson = await decryptSecret(cipher, github);
-    if (!isGithubAppJson(appJson)) return;
-    await storeAppKey(tx, cipher, { tenantId, providerId: github.providerId, appJson });
+    if (!isGithubAppJson(appJson)) return false;
+    await storeAppKey(tx, cipher, { tenantId, appJson });
     const stamp = new Date();
     const noToken = await cipher.encrypt("", credentialAad(github.id, "secret"));
     await tx.update(credential).set({ secret: noToken, expiresAt: stamp, updatedAt: stamp }).where(eq(credential.id, github.id));
+    return true;
   });
+}
+
+/** Every workspace holding a GitHub credential or App key, so each is checked before any sidecar is restored. */
+export async function githubTenants(db: DB["db"]): Promise<string[]> {
+  const rows = await db.selectDistinct({ tenantId: credential.tenantId }).from(credential).where(inArray(credential.name, [GITHUB_CREDENTIAL, GITHUB_APP_KEY_CREDENTIAL]));
+  return rows.map((row) => row.tenantId);
 }
 
 /** The workspace's App JSON; called only once its `github` credential exists. */

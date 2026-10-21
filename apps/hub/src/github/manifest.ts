@@ -290,7 +290,7 @@ export function createGithubManifestIntegration({
           });
         }
       }
-      await storeAppKey(tx, cipher, { tenantId: state.tenantId, providerId: state.providerId, appJson: prepared.appJson });
+      await storeAppKey(tx, cipher, { tenantId: state.tenantId, appJson: prepared.appJson });
       await grantAdminGithub(tx, state.tenantId, state.appCredentialId, stamp);
       await ensureTriageRole(tx, state.tenantId, stamp);
     });

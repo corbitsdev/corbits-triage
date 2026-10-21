@@ -66,6 +66,7 @@ import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettin
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
 import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
+import { githubTenants, moveAppKey } from "./github/app-key.js";
 import { createGithubAppConnection } from "./github/app-connection.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
 import { createProviderHookHandler } from "./provider-hooks/intake.js";
@@ -263,6 +264,11 @@ const composition = await createInterchangeHub({
 const stock = composition.server;
 composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
 
+// App JSON a stock write left where workflows bind it moves to the hub before any sidecar is restored with it.
+const movedAppKeys: string[] = [];
+for (const tenantId of await githubTenants(composition.db)) {
+  if (await moveAppKey({ db: composition.db, cipher: composition.credentialCipher }, tenantId)) movedAppKeys.push(tenantId);
+}
 await restoreLocalSidecars(composition.db, local);
 if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
 async function tendE2b(sidecars: E2bSidecarProvisioner): Promise<void> {
@@ -410,6 +416,7 @@ async function deliverToDeployment(tenantId: string, address: string, payload: u
   await githubDeliverer.to(address, JSON.stringify(await withAppLogin(composition.db, tenantId, payload)), tenantId, undefined);
 }
 const githubToken = createGithubTokenRenewal({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, log: logJson });
+for (const tenantId of movedAppKeys) await githubToken.push(tenantId);
 tokenLoop = createReconcileLoop(githubToken.renewAll, { intervalMs: GITHUB_TOKEN_RENEW_MS, retryMs: GITHUB_TOKEN_RETRY_MS, retryMaxMs: GITHUB_TOKEN_RETRY_MAX_MS }, logJson);
 /** A failed renewal is retried by the token loop. */
 async function renewGithubToken(tenantId: string): Promise<void> {
@@ -419,7 +426,11 @@ async function renewGithubToken(tenantId: string): Promise<void> {
     logJson({ level: "error", msg: "github_token_renew_failed", tenantId, error: String(err) });
   }
 }
-const GITHUB_JOB_WORKFLOWS = new Set([triageWorkflowFor("github").id, codeReviewWorkflowFor("github").id]);
+const GITHUB_JOB_WORKFLOWS = new Set([
+  triageWorkflowFor("github").id,
+  codeReviewWorkflowFor("github").id,
+  ...PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === "github").map((variant) => variant.id),
+]);
 /** A token that could not be renewed may still have time left, so the worker goes ahead and the token loop retries. */
 async function readyWorkerCredentials(job: TriageJob): Promise<void> {
   if (!GITHUB_JOB_WORKFLOWS.has(job.workflow)) return;
@@ -965,6 +976,19 @@ composition.app.route("/", providerHooks);
 const refuseUnverified = createVerifiedGate({ isHubOwner, getSession: composition.getSession, allowedEmails: signIn.allowedEmails });
 const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
 
+/** A stock credential write: App JSON it leaves in `github` is moved to the hub and taken back from sidecars at once. */
+const CREDENTIAL_WRITE = /^\/api\/tenants\/([^/]+)\/credentials(?:\/[^/]+)?$/;
+
+async function secureWrittenCredential(encodedTenantId: string): Promise<void> {
+  let tenantId: string;
+  try {
+    tenantId = decodeURIComponent(encodedTenantId);
+  } catch {
+    return;
+  }
+  await githubToken.secure(tenantId);
+}
+
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
   if (servePortal && isPortalRequest(req)) return servePortal(req);
   const url = new URL(req.url);
@@ -1016,7 +1040,10 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       return stock.fetch(prepared, server);
     }
   }
-  return stock.fetch(req, server);
+  const response = await stock.fetch(req, server);
+  const written = req.method === "POST" || req.method === "PATCH" ? CREDENTIAL_WRITE.exec(url.pathname) : null;
+  if (written && response.ok) await secureWrittenCredential(written[1]!);
+  return response;
 }
 
 triageLoop.start();

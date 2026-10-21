@@ -35,7 +35,7 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
   async function store(tenantId: string, providerId: string, appJson: string, issued: IssuedApp): Promise<void> {
     await db.transaction(async function connect(tx) {
       await lockGithubCredentials(tx, tenantId);
-      await storeAppKey(tx, cipher, { tenantId, providerId, appJson });
+      await storeAppKey(tx, cipher, { tenantId, appJson });
       const current = await lockedCredential(tx, tenantId, GITHUB_CREDENTIAL);
       const id = current?.id ?? generateId("credential");
       const stamp = new Date();
