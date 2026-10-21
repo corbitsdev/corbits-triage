@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { findArtifactByTitle, getArtifact, setArtifactArchived, type ArtifactDb, type ArtifactRow } from "@corbits/artifacts";
 import { schema, type DB } from "@intx/db";
 import { asRepo } from "@corbits/common";
-import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type PolicyWorkflow, type SharedFileRef } from "@corbits/triage-contracts";
+import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type PolicyWorkflow, type RepoSource, type SharedFileRef } from "@corbits/triage-contracts";
 import type { PolicyFileState } from "./policy-file.js";
 import { prWorkflowKeys } from "./pr-workflow.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
@@ -104,26 +104,30 @@ export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, 
 
 type FileRead = Extract<CheckPackRead, { status: "ok" | "invalid" }>;
 
-type PolicyFileReader = (tenantId: string, repo: string) => Promise<PolicyFileState>;
+/** `source` is the repository's host; a caller without one reads no file where both hosts hold the name. */
+type PolicyFileReader = (tenantId: string, repo: string, source: RepoSource | undefined) => Promise<PolicyFileState>;
+
+/** The policy triage runs on for `repo` on `source`; see `PolicyFileReader` for a caller without a host. */
+export type PolicyReader = (tenantId: string, repo: string, source: RepoSource | undefined) => Promise<CheckPackRead>;
 
 /** Over the policy file of the repository `extends` names, read with this workspace's own access to it. */
-async function overSharedFile(policyFile: PolicyFileReader, tenantId: string, repo: string, content: Record<string, unknown>, shared: string): Promise<Pick<StoredPack, "pack"> & { sharedFile: SharedFileRef }> {
-  const state = await policyFile(tenantId, shared);
+async function overSharedFile(policyFile: PolicyFileReader, tenantId: string, repo: string, source: RepoSource | undefined, content: Record<string, unknown>, shared: string): Promise<Pick<StoredPack, "pack"> & { sharedFile: SharedFileRef }> {
+  const state = await policyFile(tenantId, shared, source);
   if (state.status === "absent") throw new Error(`${shared} is not connected to this workspace or has no policy file.`);
   if (state.status === "invalid") throw new Error(`${shared}'s policy file is refused: ${state.reason}`);
   return { pack: extendedFilePack(repo, content, { repo: shared, policy: state.policy }), sharedFile: { repo: shared, path: state.file.path, sha: state.file.sha } };
 }
 
-async function fileResolved(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, content: Record<string, unknown>) {
+async function fileResolved(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, source: RepoSource | undefined, content: Record<string, unknown>) {
   const shared = extendsOf(content);
-  if (shared !== undefined && asRepo(shared) !== undefined) return overSharedFile(deps.policyFile, tenantId, repo, content, shared);
+  if (shared !== undefined && asRepo(shared) !== undefined) return overSharedFile(deps.policyFile, tenantId, repo, source, content, shared);
   return resolved(tenantId, repo, content, await sharedOf(deps.artifacts, content));
 }
 
 /** Why triage would refuse a policy file holding `policy`, resolved as a pushed file is; undefined when it would run it. */
-export async function fileRefusal(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, policy: Record<string, unknown>): Promise<string | undefined> {
+export async function fileRefusal(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, source: RepoSource | undefined, policy: Record<string, unknown>): Promise<string | undefined> {
   try {
-    await fileResolved(deps, tenantId, repo, policy);
+    await fileResolved(deps, tenantId, repo, source, policy);
     return undefined;
   } catch (error) {
     if (!(error instanceof Error)) throw error;
@@ -131,11 +135,11 @@ export async function fileRefusal(deps: CheckPackStoreDeps & { policyFile: Polic
   }
 }
 
-async function fileRead(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, file: Exclude<PolicyFileState, { status: "absent" }>): Promise<FileRead> {
+async function fileRead(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, host: RepoSource | undefined, file: Exclude<PolicyFileState, { status: "absent" }>): Promise<FileRead> {
   if (file.status === "invalid") return { status: "invalid", reason: file.reason, path: file.path };
   let read: Awaited<ReturnType<typeof fileResolved>>;
   try {
-    read = await fileResolved(deps, tenantId, repo, file.policy);
+    read = await fileResolved(deps, tenantId, repo, host, file.policy);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     return { status: "invalid", reason: error.message, path: file.file.path };
@@ -170,13 +174,13 @@ export type PolicySettled = { read: CheckPackRead; upgrade: PolicyUpgrade; saved
  * saved rules and no file is `upgrade`; both, running differently or with a file triage refuses, is `differs`, and the
  * saved rules apply; else the file or the saved rules alone apply and it is `ok`.
  */
-export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string): Promise<PolicySettled> {
-  const file = await deps.policyFile(tenantId, repo);
+export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, source: RepoSource | undefined): Promise<PolicySettled> {
+  const file = await deps.policyFile(tenantId, repo, source);
   const stored = await loadCheckPack(deps, tenantId, repo);
   const saved = stored.status === "ok" ? stored : undefined;
   if (file.status === "absent" && saved) return { read: stored, upgrade: { state: "upgrade", saved: saved.source.repo, unexpressed: exported(saved).unexpressed }, saved };
   if (file.status === "absent") return { read: stored, upgrade: { state: stored.status === "missing" ? "start" : "ok" } };
-  const read = await fileRead(deps, tenantId, repo, file);
+  const read = await fileRead(deps, tenantId, repo, source, file);
   if (!saved) return { read, upgrade: { state: "ok" } };
   const differences = read.status === "ok" ? policyDifferences(saved.pack, read.pack) : [];
   const problem = read.status === "ok" ? undefined : read.reason;

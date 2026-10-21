@@ -14,7 +14,7 @@
 // traffic then flows through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATHS, repoPolicy, triageEventOf, WAITING_KIND, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATHS, repoPolicy, triageEventOf, WAITING_KIND, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, errorText, isRecord } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
@@ -38,7 +38,7 @@ import {
   type InstallationFields,
   type RepoRecord,
 } from "./tenant-config.js";
-import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
+import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
 import type { CodeReviewFeed } from "../code-review-feed.js";
@@ -67,12 +67,12 @@ export interface BridgeDeps {
   /** Code review is fed whether or not triage is on for the repository. */
   codeReview: Pick<CodeReviewFeed, "offer">;
   log?: (entry: Record<string, unknown>) => void;
-  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  readCheckPack: PolicyReader;
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   /** Has the repository's open pull requests but `except` triaged again, by its triage state key; resolves to how many were due. */
   recheckOpenPulls: (tenantId: string, key: string, except: number) => Promise<number>;
   /** Reads the repository's policy file again; undefined when the repository is not connected. */
-  refreshPolicyFile: (tenantId: string, repo: string) => Promise<PolicyFileState | undefined>;
+  refreshPolicyFile: (tenantId: string, repo: string, source: RepoSource) => Promise<PolicyFileState | undefined>;
   startBacklog: BacklogStart;
 }
 
@@ -180,11 +180,12 @@ export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, poli
 }
 
 export async function resolvedPack(
-  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>,
+  readCheckPack: PolicyReader,
   tenantId: string,
   repo: string,
+  source: RepoSource,
 ): Promise<StoredPack | null> {
-  const read = await readCheckPack(tenantId, repo);
+  const read = await readCheckPack(tenantId, repo, source);
   return read.status === "ok" ? read : null;
 }
 
@@ -382,7 +383,7 @@ async function handleBaseMove(
   const record = await connectedRecord(d, log, loaded, delivery, event, repo);
   if (record instanceof Response) return record;
   try {
-    await d.refreshPolicyFile(loaded.tenantId, repo);
+    await d.refreshPolicyFile(loaded.tenantId, repo, "github");
   } catch (err) {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
     log({ level: "error", msg: "policy_file_read_failed", delivery, event, repo, error: errorText(err) });
@@ -420,7 +421,7 @@ async function handlePolicyPush(
   if (record instanceof Response) return record;
   let read: PolicyFileState | undefined;
   try {
-    read = await d.refreshPolicyFile(loaded.tenantId, repo);
+    read = await d.refreshPolicyFile(loaded.tenantId, repo, "github");
   } catch (err) {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
     log({ level: "error", msg: "policy_file_read_failed", delivery, event, repo, error: errorText(err) });
@@ -538,7 +539,7 @@ export function createBridgeHandler(d: BridgeDeps) {
     }
     let stored: StoredPack | null;
     try {
-      stored = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo);
+      stored = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo, "github");
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "policy_read_failed", delivery, event, repo: mail.repo, error: errorText(err) });

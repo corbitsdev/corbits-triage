@@ -59,9 +59,9 @@ function listedPolicyPull(listing: OpenPullsRead | Response, repo: string): gith
 
 export type PolicyFileDeps = PortalCredentialDeps & {
   /** The repository's policy and how its saved rules stand against its file. */
-  settle: (tenantId: string, repo: string) => Promise<PolicySettled>;
+  settle: (tenantId: string, repo: string, source: RepoSource) => Promise<PolicySettled>;
   /** Why triage would refuse a policy file holding `policy`, its `extends` resolved; undefined when it would run it. */
-  refusal: (tenantId: string, repo: string, policy: Record<string, unknown>) => Promise<string | undefined>;
+  refusal: (tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) => Promise<string | undefined>;
   /** GitHub as the tenant's App; undefined when the tenant has no active GitHub App credential. */
   tenantGithub: (tenantId: string) => Promise<GithubFetch | undefined>;
   tenantBitbucket: TenantBitbucket;
@@ -108,9 +108,16 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return { name: repo, source: "bitbucket-datacenter", connected: true };
   }
 
-  async function connectedRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
+  /**
+   * The connected record for `repo` on `source`. A caller that cannot name the host gets none where both hosts hold the
+   * name, so one host's policy is never read for the other's repository.
+   */
+  async function connectedRecord(tenantId: string, repo: string, source: RepoSource | undefined): Promise<RepoRecord | undefined> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
-    return repoRecords(triageNs(tenant?.config)).find((row) => row.name === repo && row.connected) ?? visibleBitbucketRecord(tenantId, repo);
+    const named = repoRecords(triageNs(tenant?.config)).filter((row) => row.name === repo && row.connected && (source === undefined || sourceOf(row) === source));
+    if (named.length > 1) return undefined;
+    if (named[0]) return named[0];
+    return source === "github" ? undefined : visibleBitbucketRecord(tenantId, repo);
   }
 
   async function repoGithub(tenantId: string, record: RepoRecord): Promise<GithubFetch> {
@@ -148,7 +155,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   /** A failed read is not kept, so the next trigger reads again rather than run on a stale answer. */
   async function cached(tenantId: string, record: RepoRecord, maxAgeMs: number): Promise<PolicyFileState> {
-    const key = `${tenantId}\n${record.name}`;
+    const key = `${tenantId}\n${sourceOf(record)}\n${record.name}`;
     const kept = cache.get(key);
     if (kept && Date.now() - kept.at < maxAgeMs) return kept.read;
     const entry = { read: load(tenantId, record), at: Date.now() };
@@ -162,20 +169,20 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   }
 
   /** The repository's policy file as triage takes it; absent when the repository is not connected. */
-  async function current(tenantId: string, repo: string): Promise<PolicyFileState> {
-    const record = await connectedRecord(tenantId, repo);
+  async function current(tenantId: string, repo: string, source: RepoSource | undefined): Promise<PolicyFileState> {
+    const record = await connectedRecord(tenantId, repo, source);
     return record ? cached(tenantId, record, maxAgeOf(record)) : { status: "absent" };
   }
 
   /** A push to the default branch that touched the file reads it again; undefined when the repository is not connected. */
-  async function onPush(tenantId: string, repo: string): Promise<PolicyFileState | undefined> {
-    const record = await connectedRecord(tenantId, repo);
+  async function onPush(tenantId: string, repo: string, source: RepoSource): Promise<PolicyFileState | undefined> {
+    const record = await connectedRecord(tenantId, repo, source);
     return record && cached(tenantId, record, 0);
   }
 
   async function grantedRecord(member: Member, repo: string, action: "read" | "use"): Promise<RepoRecord | Response> {
-    const record = await connectedRecord(member.tenantId, repo);
-    if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
+    const record = await connectedRecord(member.tenantId, repo, undefined);
+    if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace, or is connected from both hosts.`);
     return (await sourceCredentialGrant(deps, member.principalId, member.tenantId, record, action)) ?? record;
   }
 
@@ -243,11 +250,11 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function chosenFile(member: Member, record: RepoRecord, text: string): Promise<Response> {
     const checked = checkPolicyFile(text, record.name);
     if (!checked.ok) return failure(422, "policy_file_invalid", policyFileReason(checked.problems));
-    const refusal = await deps.refusal(member.tenantId, record.name, checked.policy);
+    const refusal = await deps.refusal(member.tenantId, record.name, sourceOf(record), checked.policy);
     if (refusal !== undefined) return failure(422, "policy_file_invalid", refusal);
     // Read again: a file merged where no push is heard is not in the kept read.
     if ((await cached(member.tenantId, record, 0)).status !== "absent") return failure(409, "policy_file_present", `${record.name} already has a policy file; change it by editing it.`);
-    const { upgrade } = await deps.settle(member.tenantId, record.name);
+    const { upgrade } = await deps.settle(member.tenantId, record.name, sourceOf(record));
     if (upgrade.state !== "start") return failure(409, "saved_rules", `${record.name} has saved rules; write them to its policy file instead.`);
     const pull = await openPull(member.tenantId, record);
     if (pull) return failure(409, "policy_pull_open", `${record.name}'s policy pull request is open; merge or close it first.`, pull);
@@ -263,7 +270,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     if (record instanceof Response) return record;
     try {
       if (chosen !== undefined) return await chosenFile(member, record, chosen);
-      const { upgrade, saved } = await deps.settle(member.tenantId, repo);
+      const { upgrade, saved } = await deps.settle(member.tenantId, repo, sourceOf(record));
       if (upgrade.state === "start" && record.enabled) return await startFile(member, record);
       if (upgrade.state === "ok" || upgrade.state === "start" || !saved) return failure(409, "policy_settled", `${repo} has no saved rules apart from its policy file.`);
       if (upgrade.state === "differs" && !upgrade.fixable) return failure(409, "policy_file_full", `${repo}'s policy file already holds all of its saved rules that a file can; keep the file to settle it.`);
@@ -280,7 +287,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function upgradeOf(member: Member, record: RepoRecord, listed: () => Promise<OpenPullsRead | Response>): Promise<PolicyUpgradeRow | undefined> {
     if (await sourceCredentialGrant(deps, member.principalId, member.tenantId, record, "read")) return undefined;
     try {
-      const { upgrade } = await deps.settle(member.tenantId, record.name);
+      const { upgrade } = await deps.settle(member.tenantId, record.name, sourceOf(record));
       if (upgrade.state === "ok") return { repo: record.name, upgrade };
       if (upgrade.state === "start") {
         const pull = listedPolicyPull(await listed(), record.name);

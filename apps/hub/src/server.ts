@@ -409,13 +409,13 @@ async function codeReviewPlaced(tenantId: string): Promise<boolean> {
   return (await placeCodeReview(tenantId)) !== null;
 }
 /** Whether the repository's policy file needs the PR workflow, which reviews the code itself. */
-async function inPrWorkflow(tenantId: string, repo: string): Promise<boolean> {
-  const read = await readCheckPack(tenantId, repo);
+async function inPrWorkflow(tenantId: string, repo: string, source: RepoSource): Promise<boolean> {
+  const read = await readCheckPack(tenantId, repo, source);
   return read.status === "ok" && read.policyWorkflow !== undefined;
 }
 // Repositories left switched on send nothing while code review has nowhere to run, nor one the PR workflow reviews.
 async function reviewedSources(tenantId: string, record: RepoRecord) {
-  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name))) return [];
+  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name, sourceOf(record)))) return [];
   return codeReviewSources(composition.db, tenantId);
 }
 /** The hosts whose PR workflow deploys: a connected repository's policy file needs it, and code review has a place to run. */
@@ -424,7 +424,7 @@ async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
   const tenant = await composition.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
   const sources = new Set<RepoSource>();
   for (const record of repoRecords(triageNs(tenant?.config)).filter((row) => row.connected)) {
-    if (await inPrWorkflow(tenantId, record.name)) sources.add(sourceOf(record));
+    if (await inPrWorkflow(tenantId, record.name, sourceOf(record))) sources.add(sourceOf(record));
   }
   return [...sources];
 }
@@ -472,19 +472,19 @@ const checkPackStore = { db: composition.db, artifacts: composition.db, automati
 function readStoredCheckPack(tenantId: string, repo: string) {
   return loadCheckPack(checkPackStore, tenantId, repo);
 }
-function settleRepoPolicy(tenantId: string, repo: string) {
-  return settlePolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo);
+function settleRepoPolicy(tenantId: string, repo: string, source: RepoSource | undefined) {
+  return settlePolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source);
 }
-function chosenFileRefusal(tenantId: string, repo: string, policy: Record<string, unknown>) {
-  return fileRefusal({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, policy);
+function chosenFileRefusal(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
+  return fileRefusal({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source, policy);
 }
-async function readCheckPack(tenantId: string, repo: string) {
-  return (await settleRepoPolicy(tenantId, repo)).read;
+async function readCheckPack(tenantId: string, repo: string, source: RepoSource | undefined) {
+  return (await settleRepoPolicy(tenantId, repo, source)).read;
 }
 /** A push that lands a file matching the saved rules retires them now, so an edit after it is not taken for a difference. */
-async function refreshPolicyFile(tenantId: string, repo: string) {
-  const state = await policyFile.onPush(tenantId, repo);
-  if (state) await settleRepoPolicy(tenantId, repo);
+async function refreshPolicyFile(tenantId: string, repo: string, source: RepoSource) {
+  const state = await policyFile.onPush(tenantId, repo, source);
+  if (state) await settleRepoPolicy(tenantId, repo, source);
   return state;
 }
 // A tenant's system principal never changes once minted.

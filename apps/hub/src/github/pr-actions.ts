@@ -19,7 +19,7 @@ import { appLogin, codeownersForPr, type GithubFetch } from "@corbits/github-rea
 import { BUDGET_EXHAUSTED_NOTE, notReviewedNote, ownedLabels, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
 import { inlineCode } from "@corbits/triage-workflows/logic/render";
 import type { CodeReviewRuns, CompletedReview } from "../code-review-runs.js";
-import type { CheckPackRead } from "./check-pack-store.js";
+import type { PolicyReader } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
@@ -135,7 +135,7 @@ function doKind(body: typeof ActionBody.infer): ActionKind {
 
 export function createGithubPrActions(deps: PortalCredentialDeps & {
   githubApiOrigin: string;
-  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  readCheckPack: PolicyReader;
   codeReviews: Pick<CodeReviewRuns, "latest">;
   log: (entry: Record<string, unknown>) => void;
 }) {
@@ -143,7 +143,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
 
   async function ownedBy(tenantId: string, body: { action: string; repo: string }): Promise<readonly string[]> {
     if (body.action !== "close") return TRIAGE_LABELS;
-    const read = await deps.readCheckPack(tenantId, body.repo);
+    const read = await deps.readCheckPack(tenantId, body.repo, "github");
     return read.status === "ok" ? ownedLabels(read.pack.labels) : TRIAGE_LABELS;
   }
 

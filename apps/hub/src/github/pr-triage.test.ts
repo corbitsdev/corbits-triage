@@ -132,6 +132,12 @@ describe("createGithubPrTriage", () => {
     expect(s.delivered).toEqual([]);
   });
 
+  test("takes only the GitHub record of the name, so a Bitbucket repository of that name is not triaged", async () => {
+    const s = stub();
+    await refused(await handler({ ...ENABLED, source: "bitbucket-datacenter" }, s)(request(), MEMBER), 409, "repo_not_connected");
+    expect(s.delivered).toEqual([]);
+  });
+
   test("refuses a repository whose check pack is missing or unreadable, each by name", async () => {
     const s = stub();
     await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "missing" }) })(request(), MEMBER), 409, "needs_setup");
