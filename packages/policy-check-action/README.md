@@ -1,16 +1,20 @@
 # @corbits/policy-check-action
 
 A GitHub Action that checks a repository's `.corbits-triage.yml` (or `.yaml`) as the hub reads it and marks each
-problem on its line. It needs no Triage account and no secrets.
+problem on its line. On a pull request it also runs the rules of the base branch's policy that need no model through
+the pr-triage definition, read-only: each failed rule is an error, or a warning when its failure only asks a
+maintainer, and the job summary lists every rule with its result and how many passed. Rules a model answers are listed
+as skipped, a policy that `extends` another is not run, and the job fails when a rule whose failure means Fail fails.
+It needs no Triage account and no secrets, and works on pull requests from forks.
 
 ## Use
 
 ```yaml
-on:
-  pull_request:
-    paths: [".corbits-triage.yml", ".corbits-triage.yaml"]
+on: pull_request
 permissions:
+  checks: read
   contents: read
+  pull-requests: read
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -21,7 +25,8 @@ jobs:
       - uses: corbitsdev/corbits-triage/packages/policy-check-action@main
 ```
 
-Locally, from here: `bun src/main.ts <repository root> <owner/name>`.
+`github-token` defaults to the job's token. Locally, from here: `bun --conditions=intx-src src/main.ts <repository root> <owner/name>`;
+with `GITHUB_EVENT_NAME=pull_request`, `GITHUB_EVENT_PATH`, `GITHUB_API_URL` and `GITHUB_TOKEN` set it also runs the rules.
 
 ## Test
 
