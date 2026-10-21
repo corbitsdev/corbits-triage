@@ -4,7 +4,7 @@ import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@in
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
 import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, WAITING_LABEL, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
-import { localActionCredentials } from "./run-local.js";
+import { localActionCredentials } from "./local-credentials.js";
 import * as actions from "./actions/index.js";
 import type { ExecuteOutput } from "./actions/execute.js";
 import { credentialBindings, credentialBindingsFor } from "./agents.js";

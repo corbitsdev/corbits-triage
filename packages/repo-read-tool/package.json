@@ -6,7 +6,9 @@
   "type": "module",
   "module": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./host-reads": "./src/host-reads.ts",
+    "./lines": "./src/lines.ts"
   },
   "interchange": {
     "tools": "./src/index.ts"

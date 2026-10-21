@@ -3,11 +3,10 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { minimatch } from "minimatch";
 import { RE2JS } from "re2js";
+import { clip, linesOf, MAX_LINES } from "./lines";
 
-export const MAX_LINES = 400;
 export const MAX_MATCHES = 100;
 export const MAX_ENTRIES = 500;
-const MAX_LINE_CHARS = 500;
 const MAX_FILE_BYTES = 2_000_000;
 
 /** The real path of `path` under root; one that resolves outside it, through `..`, an absolute path or a symlink, is refused. */
@@ -24,10 +23,6 @@ async function confine(root: string, path: string): Promise<string> {
   return real;
 }
 
-function clip(line: string): string {
-  return line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}…` : line;
-}
-
 async function textOf(file: string): Promise<string | undefined> {
   if ((await stat(file)).size > MAX_FILE_BYTES) return undefined;
   const text = await readFile(file, "utf8");
@@ -41,17 +36,6 @@ export async function readLines(root: string, path: string, start = 1, end = sta
   const text = await textOf(file);
   if (text === undefined) throw new Error(`${path} is binary or larger than ${MAX_FILE_BYTES} bytes`);
   return linesOf(path, text, start, end);
-}
-
-/** Lines start..end (1-based, inclusive) of `text`, numbered, at most MAX_LINES of them. */
-export function linesOf(path: string, text: string, start = 1, end = start + MAX_LINES - 1) {
-  if (!Number.isInteger(start) || !Number.isInteger(end)) throw new Error("start and end must be integers");
-  if (text.includes("\0")) throw new Error(`${path} is binary`);
-  const lines = text.split("\n");
-  const from = Math.max(1, start);
-  const to = Math.min(lines.length, end, from + MAX_LINES - 1);
-  const numbered = lines.slice(from - 1, to).map((line, i) => `${from + i}\t${clip(line)}`);
-  return { path, start: from, end: to, totalLines: lines.length, text: numbered.join("\n") };
 }
 
 async function* walk(dir: string): AsyncGenerator<string> {

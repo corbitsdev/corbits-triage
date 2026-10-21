@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import * as tar from "tar";
 
 import bitbucketTool from "../../../packages/bitbucket-datacenter-tool/package.json";
@@ -48,3 +49,29 @@ test("packs each workflow deterministically, importing the host tools instead of
     }
   }
 });
+
+// Bundling keeps tool imports external, so only loading them against the packed tools shows every imported name exists.
+test("every packed workflow entry loads under Node beside the packed tools", async () => {
+  const index = await packWorkflows(path.join(scratch, "load"));
+  const isWorkflow = (entry: (typeof index)[number]) => entry.name.endsWith("-workflow");
+  const tools = new Map<string, string>();
+  for (const entry of index.filter((row) => !isWorkflow(row))) {
+    const dir = path.join(scratch, "load-tools", entry.name);
+    await mkdir(dir, { recursive: true });
+    await tar.x({ file: path.join(scratch, "load", entry.filename), cwd: dir, strip: 1 });
+    tools.set(entry.name, dir);
+  }
+  for (const entry of index.filter(isWorkflow)) {
+    const dir = path.join(scratch, "load-workflows", entry.name);
+    await mkdir(path.join(dir, "node_modules/@corbits"), { recursive: true });
+    await tar.x({ file: path.join(scratch, "load", entry.filename), cwd: dir, strip: 1 });
+    for (const [name, toolDir] of tools) await symlink(toolDir, path.join(dir, "node_modules", name));
+    const manifest = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    for (const rel of [manifest.interchange.workflow, manifest.interchange.directors, manifest.interchange.actions]) {
+      const program = `await import(${JSON.stringify(pathToFileURL(path.join(dir, rel)).href)});`;
+      const proc = Bun.spawn(["node", "--input-type=module", "-e", program], { cwd: dir, stdout: "pipe", stderr: "pipe" });
+      const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+      expect({ entry: `${entry.name} ${rel}`, stderr, code }).toEqual({ entry: `${entry.name} ${rel}`, stderr: "", code: 0 });
+    }
+  }
+}, 120_000);

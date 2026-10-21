@@ -1,30 +1,24 @@
-import { errorText } from "@corbits/common";
 import { readRepoFileResponse, type RepoFileRead } from "@corbits/github-reads";
-import { notAFileReason, POLICY_FILE_PATHS, readCheckPack, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
+import { checkPolicyFile, notAFileReason, POLICY_FILE_PATHS, policyFileReason, readCheckPack, type CheckPack, type PolicyWorkflow } from "@corbits/triage-contracts";
 import type { GithubApi } from "./github-api.ts";
-import { savedPackFor } from "./pack-store.ts";
-import { keepPolicyFile, localPacks, policyFiles } from "./storage.ts";
+import { keepPolicyFile, policyFiles } from "./storage.ts";
 
 // A file read within this long is used as read; after it, GitHub is asked whether it changed.
 const REVALIDATE_MS = 10 * 60 * 1000;
 
-type FileOutcome = { kind: "absent" } | { kind: "policy"; url: string; policy: Record<string, unknown> } | { kind: "refused"; reason: string };
+type FileOutcome = { kind: "absent" } | { kind: "policy"; path: string; url: string; policy: Record<string, unknown>; workflow: PolicyWorkflow } | { kind: "refused"; reason: string };
 
 /** `etag` is the response for `path`, the name the file was found under. */
 export type KeptPolicyFile = { path?: string; etag: string | null; checkedAt: string; outcome: FileOutcome };
 
-export type PolicyOrigin = { from: "file"; url: string } | { from: "saved" } | { from: "default" };
-
-export type PolicyRead = { pack: CheckPack; origin: PolicyOrigin };
+export type PolicyRead = { pack: CheckPack; workflow: PolicyWorkflow; path: string; url: string };
 
 function outcomeOf(read: RepoFileRead, repo: string, path: string): FileOutcome {
   if (read.kind === "not-a-file") return { kind: "refused", reason: notAFileReason(path) };
   if (read.text === null) return { kind: "refused", reason: `${path} is too large.` };
-  try {
-    return { kind: "policy", url: read.url, policy: readPolicyFile(read.text, repo) };
-  } catch (cause) {
-    return { kind: "refused", reason: errorText(cause) };
-  }
+  const checked = checkPolicyFile(read.text, repo);
+  if (!checked.ok) return { kind: "refused", reason: policyFileReason(checked.problems) };
+  return { kind: "policy", path, url: read.url, policy: checked.policy, workflow: checked.workflow };
 }
 
 /** The file on the default branch, never a pull request's head, so a pull request cannot change the rules it is checked by. */
@@ -51,16 +45,15 @@ async function policyFile(api: GithubApi, repo: string, fresh: boolean): Promise
   return { kind: "absent" };
 }
 
-function fromFile(policy: Record<string, unknown>, url: string, repo: string): PolicyRead {
+function fromFile({ policy, workflow, path, url }: Extract<FileOutcome, { kind: "policy" }>, repo: string): PolicyRead {
   if (policy.extends !== undefined) throw new Error("The policy file extends a shared policy only the hub holds, so it is not checked here.");
-  return { pack: readCheckPack(policy, repo), origin: { from: "file", url } };
+  return { pack: readCheckPack(policy, repo), workflow, path, url };
 }
 
-/** The repository's policy file first, then the rules saved in this browser, then the recommended rules; a file that cannot be used throws why. */
-export async function policyFor(api: GithubApi, repo: string, fresh: boolean): Promise<PolicyRead> {
+/** The repository's policy file, or null when it has none; a file that cannot be used throws why. */
+export async function policyFor(api: GithubApi, repo: string, fresh: boolean): Promise<PolicyRead | null> {
   const file = await policyFile(api, repo, fresh);
-  if (file.kind === "policy") return fromFile(file.policy, file.url, repo);
+  if (file.kind === "policy") return fromFile(file, repo);
   if (file.kind === "refused") throw new Error(file.reason);
-  const saved = (await localPacks.getValue())[repo] !== undefined;
-  return { pack: await savedPackFor(repo), origin: { from: saved ? "saved" : "default" } };
+  return null;
 }

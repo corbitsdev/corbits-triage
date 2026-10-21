@@ -11,8 +11,6 @@ export default defineConfig({
     permissions: ["storage", ...(browser === "firefox" ? [] : ["sidePanel"])],
     // Every read goes through GitHub's REST API; the content script's github.com match comes from its own entrypoint.
     host_permissions: ["https://api.github.com/*"],
-    // A custom decision model endpoint is granted one origin at a time, when the person enters it.
-    optional_host_permissions: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
     action: { default_title: "Corbits Triage" },
     ...(browser === "firefox" ? { browser_specific_settings: { gecko: { id: "triage@corbits.dev", strict_min_version: "128.0" } } } : {}),
   }),

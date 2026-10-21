@@ -1,4 +1,4 @@
-import { Button, Input, type ButtonProps } from "@corbits/react-ui";
+import { Button, Input } from "@corbits/react-ui";
 import { Check } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import { ask } from "../messages.ts";
@@ -6,13 +6,11 @@ import { tokenSaved } from "../storage.ts";
 import { useStorageItem } from "./use-storage.ts";
 import { errorText } from "@corbits/common";
 
-type GithubTokenFormProps = { onSaved?: () => void; variant?: ButtonProps["variant"] };
-
 // Public repositories, read-only, is the fine-grained form's default access, so the template needs no permissions.
 const NEW_TOKEN_URL = "https://github.com/settings/personal-access-tokens/new?name=Corbits+Triage&description=Reads+public+pull+requests+for+the+Corbits+Triage+extension.&expires_in=90";
 
 /** Stays in this browser. */
-export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFormProps) {
+export function GithubTokenForm() {
   const saved = useStorageItem(tokenSaved);
   const [token, setToken] = useState("");
   const [replacing, setReplacing] = useState(false);
@@ -34,7 +32,6 @@ export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFor
       await ask({ type: "save-token", token: token.trim() });
       setToken("");
       setReplacing(false);
-      onSaved?.();
     } catch (cause) {
       setError(errorText(cause));
     } finally {
@@ -96,7 +93,7 @@ export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFor
       </div>
       {error ? <p className="error" id={errorId} role="alert">{error}</p> : null}
       <div className="row">
-        <Button type="submit" size="sm" variant={variant} disabled={checking}>{checking ? "Checking…" : "Save token"}</Button>
+        <Button type="submit" size="sm" variant="outline" disabled={checking}>{checking ? "Checking…" : "Save token"}</Button>
         {replacing ? <Button type="button" size="sm" variant="ghost" onClick={cancel}>Cancel</Button> : null}
       </div>
     </form>

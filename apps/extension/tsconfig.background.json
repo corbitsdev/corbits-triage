@@ -1,0 +1,13 @@
+// The background runs Interchange's workflow runtime from source, which type-checks against Bun's fetch types but not
+// the DOM lib's, so the background is checked on its own without the DOM; nothing there touches a page.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["bun"],
+    "typeRoots": ["../../node_modules/@types"],
+    "customConditions": ["intx-src"]
+  },
+  "include": ["entrypoints/background.ts", "src/**/*.test.ts", ".wxt/wxt.d.ts"],
+  "exclude": []
+}

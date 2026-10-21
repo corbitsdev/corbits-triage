@@ -232,6 +232,12 @@ Each pull request then gets a **Corbits Triage policy / check** check. It reads 
 
 It also runs the rules that need no model, from the policy on the branch the pull request merges into, such as size, linked issue, merge conflicts and forbidden paths, against the pull request. Each failed rule shows as an error when its failure means Fail, and as a warning otherwise, and the run's summary lists every rule with its result and how many passed. Rules a model answers, such as **focused** or your own written rules, show as skipped, and so does **CI must pass before merge**, since the check is itself still running. A policy that uses `extends` is not checked, and one Triage cannot read shows a warning instead. The check fails when a rule whose failure means Fail fails. It only reads the pull request, never posts to it, and works on pull requests from forks. It needs no Triage account and no secrets, and sets up its own Bun for the job. `@main` will be replaced by a release tag with the first pre-release.
 
+#### Browser extension
+
+The Corbits Triage browser extension, for Chrome and Firefox, shows how a GitHub pull request fares against its repository's policy file without a Triage account. Install it ([how](../../apps/extension/README.md#install)), open its side panel from the toolbar and save a read-only GitHub token. It reads GitHub only and changes nothing.
+
+On any pull request it adds a **Corbits Triage** section at the top of the sidebar. The section links the policy file on the default branch, shows how many of the checks it ran passed, such as **5/6 passed**, and lists each check as **Pass**, **Fail** or **Waiting**, with its evidence. Checks that need the decision model show as **Not run here** and do not count. A chip beside the title repeats the score, and **Files changed** marks the files and lines a failing check points to. A pull request with the policy's pause label shows **Paused** and is not checked. **Check again** reads the pull request and the policy file afresh. A repository with no policy file gets a short note linking to [Writing the file](#writing-the-file).
+
 ### Rules
 
 A rule asks one question about a pull request and answers pass, fail or unconfirmed. The Policy section shows each rule that is on as one sentence. A file can turn on:

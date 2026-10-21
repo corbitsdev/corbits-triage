@@ -1,8 +1,6 @@
-import type { CheckPack } from "@corbits/triage-contracts";
 import { storage } from "@wxt-dev/storage";
 import type { KeptPolicyFile } from "./policy-source.ts";
 import { prKey, type PrRef } from "./pr.ts";
-import type { SystemOneSettings } from "./system-one.ts";
 import type { TriageView } from "./view.ts";
 
 export type RunState = {
@@ -15,9 +13,7 @@ const MAX_VIEWS = 200;
 
 export const views = storage.defineItem<Record<string, TriageView>>("local:runs", { fallback: {} });
 export const runStates = storage.defineItem<Record<string, RunState>>("local:run-states", { fallback: {} });
-export const localPacks = storage.defineItem<Record<string, CheckPack>>("local:packs", { fallback: {} });
 export const policyFiles = storage.defineItem<Record<string, KeptPolicyFile>>("local:policy-files", { fallback: {} });
-export const systemOne = storage.defineItem<SystemOneSettings | null>("local:system-one", { fallback: null });
 /** The person's own GitHub token; every read is made with it. Only the background reads it. */
 export const githubToken = storage.defineItem<string | null>("local:github-token", { fallback: null });
 /** Whether a token is saved, for the side panel, so no page but the background reads the token itself. */

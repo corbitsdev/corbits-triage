@@ -16,7 +16,8 @@ import {
   readRepoDocsPage,
   readStack,
 } from "@corbits/bitbucket-datacenter-reads";
-import { cachedLoads, checkTarget, linesOf, MAX_LINES } from "@corbits/repo-read-tool";
+import { cachedLoads, checkTarget } from "@corbits/repo-read-tool/host-reads";
+import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
 import { BitbucketRefusal, mirror, readPr, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";

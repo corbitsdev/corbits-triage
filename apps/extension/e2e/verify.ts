@@ -1,5 +1,5 @@
 // End-to-end check of the Chrome build on a real pull request: the chip and the sidebar block appear, the block names
-// where the policy came from and lists every rule the policy runs, and a pull request with no token says how to add one.
+// the policy file and lists every rule the policy runs, and a pull request with no token says how to add one.
 // The token is read from standard input, so it never sits on a command line; it is used for GET requests only.
 // Run: printenv GITHUB_TOKEN | bun --conditions=intx-src e2e/verify.ts <owner/repo> <number>
 import { mkdtemp, mkdir } from "node:fs/promises";
@@ -58,7 +58,7 @@ try {
   const verdict = await blockText(page, ".tb-verdict");
   const chip = await page.locator("corbits-triage-chip").locator(".chip").innerText();
   console.log(`${verdict}\n${policy}\n${rules}`);
-  check("the block names where the policy came from", /Policy: (\.corbits-triage\.yaml|rules saved|recommended rules)/.test(policy));
+  check("the block names the policy file", /Policy: \.corbits-triage\.ya?ml/.test(policy));
   check("the block lists the policy's rules", rules.split("\n").filter(Boolean).length > 0);
   check("the chip and the block agree", chip === `Triage: ${verdict}`);
   check("no rule failed to read", (await page.locator("corbits-triage-sidebar").locator(".tb-warn").count()) === 0);

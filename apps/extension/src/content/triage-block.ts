@@ -2,13 +2,14 @@ import type { PostedCodeReview } from "@corbits/github-reads";
 import { CORBITS_MARK_PATH } from "@corbits/react-ui";
 import { findingTitle, POLICY_FILE_PATH } from "@corbits/triage-contracts";
 import { clock } from "../clock.ts";
-import type { PolicyOrigin } from "../policy-source.ts";
 import type { RunState } from "../storage.ts";
-import type { Posted, RuleState, TriageView, ViewRule } from "../view.ts";
+import type { RuleState, TriageView, ViewRule } from "../view.ts";
 import { summaryOf } from "./chip.ts";
 
-const STATE_NAMES: Record<RuleState, string> = { pass: "Pass", fail: "Fail", waiting: "Waiting", "not-evaluated": "Not evaluated here" };
-const ORDER: Record<RuleState, number> = { fail: 0, waiting: 1, "not-evaluated": 2, pass: 3 };
+const POLICY_GUIDE_URL = "https://github.com/corbitsdev/corbits-triage/blob/main/docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#writing-the-file";
+
+const STATE_NAMES: Record<RuleState, string> = { pass: "Pass", fail: "Fail", waiting: "Waiting", "not-run": "Not run here" };
+const ORDER: Record<RuleState, number> = { fail: 0, waiting: 1, "not-run": 2, pass: 3 };
 
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
   const made = document.createElement(tag);
@@ -30,49 +31,36 @@ function link(text: string, href: string): HTMLAnchorElement {
   return made;
 }
 
-function policyLine(origin: PolicyOrigin): HTMLElement {
+function noPolicyGuide(): HTMLElement {
+  const guide = node("p", "tb-meta", `This repository has no ${POLICY_FILE_PATH} on its default branch, so there is nothing to check. `);
+  guide.append(link("How to write one", POLICY_GUIDE_URL), ".");
+  return guide;
+}
+
+function policyLine(policy: TriageView["policy"]): HTMLElement {
+  if (!policy) return noPolicyGuide();
   const line = node("p", "tb-meta", "Policy: ");
-  if (origin.from === "file") {
-    line.append(link(POLICY_FILE_PATH, origin.url), " on the default branch");
-  } else {
-    line.append(origin.from === "saved" ? "rules saved in this browser" : `recommended rules (no ${POLICY_FILE_PATH})`);
-  }
+  line.append(link(policy.path, policy.url), " on the default branch");
   return line;
 }
 
-function ruleReason(rule: ViewRule, modelAsked: boolean): string {
-  if (rule.state === "not-evaluated") return modelAsked ? "The decision model did not answer." : "Needs a decision model; add one in the side panel.";
+function ruleReason(rule: ViewRule): string {
   const reason = rule.reason.startsWith(`${rule.name}: `) ? rule.reason.slice(rule.name.length + 2) : rule.reason;
   return rule.evidence.length ? `${reason}: ${rule.evidence.join(", ")}` : reason;
 }
 
 function rulesList(view: TriageView): HTMLElement {
   const list = node("ul", "tb-rules");
-  list.setAttribute("aria-label", "Rules");
+  list.setAttribute("aria-label", "Checks");
   for (const rule of [...view.rules].sort((a, b) => ORDER[a.state] - ORDER[b.state])) {
     const item = node("li", "tb-rule");
     item.dataset.state = rule.state;
-    const reason = ruleReason(rule, view.modelAsked);
+    const reason = ruleReason(rule);
     item.title = reason;
     item.append(node("span", "tb-state", STATE_NAMES[rule.state]), node("b", "", rule.name), node("span", "tb-reason", reason));
     list.append(item);
   }
   return list;
-}
-
-// Only the file is the policy the hub syncs; rules saved in the browser or the recommended ones are this browser's own.
-function postedPart(posted: Posted, origin: PolicyOrigin): HTMLElement[] {
-  const parts: HTMLElement[] = [node("h3", "tb-subhead", origin.from === "file" ? "The hub would post" : "This policy would post")];
-  parts.push(node("p", "tb-line", `Labels: ${posted.labels.join(", ") || "none"}`));
-  for (const step of posted.steps) parts.push(node("p", "tb-line", step));
-  if (!posted.comment) {
-    parts.push(node("p", "tb-line", "No comment"));
-    return parts;
-  }
-  const comment = node("details", "tb-comment");
-  comment.append(node("summary", "", "Comment"), node("pre", "", posted.comment));
-  parts.push(comment);
-  return parts;
 }
 
 function findingLink(comment: PostedCodeReview["comments"][number]): HTMLElement {
@@ -81,7 +69,7 @@ function findingLink(comment: PostedCodeReview["comments"][number]): HTMLElement
   return item;
 }
 
-function codeReviewPart(read: NonNullable<TriageView["codeReview"]>): HTMLElement[] {
+function codeReviewPart(read: TriageView["codeReview"]): HTMLElement[] {
   if ("error" in read) return [node("h3", "tb-subhead", "Code review"), node("p", "tb-warn", `Couldn't read the code review: ${read.error}`)];
   const { review } = read;
   if (!review) return [];
@@ -101,8 +89,8 @@ function codeReviewPart(read: NonNullable<TriageView["codeReview"]>): HTMLElemen
 export type TriageBlock = { element: HTMLElement; render(view: TriageView | undefined, run: RunState | undefined): void };
 
 /**
- * Triage's section atop GitHub's pull request sidebar: where the policy came from, each rule's result with its
- * evidence, and, when the rules decide the verdict without the decision model, the verdict and what the policy would post.
+ * Triage's section atop GitHub's pull request sidebar: the policy file, the score of the checks run here and each
+ * check's result with its evidence.
  */
 export function triageBlock(handlers: { rerun(): void; openPanel(): void }): TriageBlock {
   const element = node("section", "tb");
@@ -134,10 +122,10 @@ export function triageBlock(handlers: { rerun(): void; openPanel(): void }): Tri
     const parts: HTMLElement[] = [head(view, run)];
     if (run?.error) parts.push(node("p", "tb-warn", view ? `${run.error} Showing the check from ${clock(view.ranAt)}.` : run.error));
     if (view) {
-      parts.push(policyLine(view.policy), rulesList(view));
-      if (view.decided) parts.push(...postedPart(view.decided, view.policy));
-      else parts.push(node("p", "tb-meta", "The verdict needs the decision model, so it is not named here."));
-      if (view.codeReview) parts.push(...codeReviewPart(view.codeReview));
+      parts.push(policyLine(view.policy));
+      if (view.paused !== undefined) parts.push(node("p", "tb-meta", `Paused: this pull request has the ${view.paused} label, so Triage leaves it alone.`));
+      else if (view.policy) parts.push(rulesList(view));
+      parts.push(...codeReviewPart(view.codeReview));
     }
     parts.push(foot(view, run));
     element.replaceChildren(...parts);
