@@ -94,7 +94,7 @@ export function buildFacts(
 }
 
 // Patch text past three judge requests' worth is not read, so later pages leave patches out.
-export const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
+const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
 
 export type FilesPage = { files: PrFileFacts[]; next?: number; patchNext?: number };
 

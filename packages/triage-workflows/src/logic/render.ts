@@ -581,7 +581,7 @@ export function authorFailures(all: CheckResult[], sources: Sources): CheckResul
 
 const VERDICT_TITLES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
 
-export function commentTitle(verdict: VerdictWord): string {
+function commentTitle(verdict: VerdictWord): string {
   return `**Triage: ${VERDICT_TITLES[verdict]}**`;
 }
 
@@ -591,7 +591,7 @@ function skippedLine(c: CheckResult, sources: NonNullable<Sources>): string[] {
 }
 
 /** What a passing comment tells the author when nothing else is listed. */
-export const NOTHING_TO_CHANGE = "No changes needed from you. ";
+const NOTHING_TO_CHANGE = "No changes needed from you. ";
 
 /**
  * Public: the verdict, what the author must fix and what is not yet confirmed; never a score or model reasoning. A

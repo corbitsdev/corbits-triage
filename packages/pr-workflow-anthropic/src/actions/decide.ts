@@ -67,7 +67,7 @@ function unattended(verdict: Verdict) {
  * `held` for a maintainer with the reason, so one a schema 3 file's actions approve or merge with waits in Needs you. A
  * host action's input must be JSON, so execute reads this one output rather than the whole steps record.
  */
-export function decided(trigger: unknown, steps: Steps) {
+function decided(trigger: unknown, steps: Steps) {
   const verdict = verdictOutput(steps) as Verdict | undefined;
   const item = itemOf(steps);
   if (!isRecord(verdict) || !item) throw new Error("decide: triage gave no verdict");

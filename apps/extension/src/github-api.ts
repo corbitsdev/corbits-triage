@@ -3,7 +3,7 @@ import { clock } from "./clock.ts";
 
 export const GITHUB_API = "https://api.github.com";
 
-export class GithubRateLimitError extends Error {
+class GithubRateLimitError extends Error {
   constructor(resetAt: string) {
     super(`Your GitHub token's hourly limit is used up. It resets at ${clock(resetAt)}.`);
     this.name = "GithubRateLimitError";

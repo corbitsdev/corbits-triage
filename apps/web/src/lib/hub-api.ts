@@ -250,7 +250,7 @@ export async function listCatalog(transport: Transport, tenantId: string): Promi
 }
 
 /** The saved decision model: its catalog provider's endpoint and the model its decision offering names, while the provider's key is active. */
-export function decisionModelOf({ providers, models, offerings }: Catalog, credentials: readonly HubCredential[]): Inference | undefined {
+function decisionModelOf({ providers, models, offerings }: Catalog, credentials: readonly HubCredential[]): Inference | undefined {
   const provider = providers.find((row) => row.name === INFERENCE_PROVIDER);
   const decision = models.find((row) => row.canonicalName === DECISION_MODEL_ALIAS);
   if (!provider?.baseURL || !decision) return undefined;
