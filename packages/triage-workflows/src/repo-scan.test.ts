@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { WorkflowAuthorizeFn } from "@intx/workflow";
-import { runLocalWorkflow } from "../evals/run-local.js";
+import { runLocalWorkflow } from "./run-local.js";
 import * as actions from "./actions/index.js";
 import { credentialBindings } from "./agents.js";
 import type { Measured } from "./logic/history.js";

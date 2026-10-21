@@ -11,6 +11,7 @@ import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import type { PolicyReader } from "./check-pack-store.js";
+import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
@@ -88,7 +89,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
       openHead = await deps.pullHead(tenantId, record, number);
     } catch (err) {
       const message = errorText(err);
-      return failure(502, "source_failed", `Could not read ${repo}#${number}: ${message}.`);
+      return githubLimited(err) ?? failure(502, "source_failed", `Could not read ${repo}#${number}: ${message}.`);
     }
     if (openHead === undefined) return failure(409, "pull_request_not_open", `${repo}#${number} is not an open pull request.`);
     const headSha = openHead;

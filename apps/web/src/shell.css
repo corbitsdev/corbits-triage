@@ -32,7 +32,7 @@
 
 /* Rail */
 .shell .rail { display: flex; flex-direction: column; gap: 4px; padding: 18px 12px 14px; min-height: 0; overflow: auto; }
-.shell .brand { display: flex; align-items: center; padding: 0 8px 12px; }
+.shell .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 12px; color: inherit; text-decoration: none; font-size: 16px; font-weight: 620; letter-spacing: -0.02em; line-height: 1.3; }
 .shell .brand img { width: 26px; height: 26px; }
 .shell .ws { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; margin-bottom: 4px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--white); font: inherit; font-size: 14px; font-weight: 600; color: inherit; }
 .shell button.ws { cursor: pointer; }
@@ -60,7 +60,8 @@
 .shell .menu button[disabled] { opacity: 0.45; cursor: not-allowed; }
 .shell .menu button kbd { margin-left: auto; }
 .shell .menu hr { border: 0; border-top: 1px solid var(--rule); margin: 6px 0; }
-.me-menu, .ws-menu { width: var(--radix-dropdown-menu-trigger-width); }
+.me-menu { width: var(--radix-dropdown-menu-trigger-width); }
+.ws-menu { width: max(var(--radix-dropdown-menu-trigger-width), 260px); }
 .ws-option { min-width: 0; flex: 1; }
 .ws-option b, .ws-option small { display: block; overflow: hidden; text-overflow: ellipsis; }
 .ws-option small { font-size: 11px; font-weight: 400; }
@@ -88,7 +89,7 @@
 /* Pulse and workspace settings: a centred page inside the stage card */
 :is(.pulse, .settings) { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 960px; margin: 0 auto; padding: 40px 40px 80px; }
 :is(.pulse, .settings) h1 { font-size: 34px; margin: 0; letter-spacing: -0.02em; }
-.pulse { display: grid; gap: 36px; align-content: start; }
+.pulse { display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px; align-content: start; }
 .settings h1 { font-weight: 700; }
 .settings .lede { margin: 6px 0 10px; font-size: 16px; color: var(--ink); }
 .settings > .byline { margin-bottom: 28px; }
@@ -96,8 +97,15 @@
 .settings .support-versions summary { cursor: pointer; }
 .settings .support-versions .sentence { margin-top: 8px; }
 .settings .place-why { display: block; font-size: 12px; color: var(--ink-mute); }
-.settings .place-setup { display: grid; gap: 6px; padding: 6px 0 10px; font-size: 13px; }
-.settings .place-setup pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.settings .place-setup { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 6px 0 10px; font-size: 13px; }
+.settings .place-setup .sentence { align-items: start; }
+.settings .place-setup pre { margin: 0; padding: 8px 10px; white-space: pre; overflow-x: auto; background: var(--fill); border-radius: var(--r-sm); }
+.settings .place-steps { padding: 0 0 10px; font-size: 13px; }
+.settings .place-steps > summary { cursor: pointer; width: fit-content; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.settings .place-steps[open] > summary { margin-bottom: 4px; }
+.settings .sec td:last-child { white-space: nowrap; text-align: right; }
+.settings .sec [data-slot="badge"] { white-space: nowrap; }
+.settings .sentence span.mono { white-space: nowrap; }
 .settings .place { border-bottom: 1px solid var(--rule); }
 .settings .place:last-child { border-bottom: 0; }
 .settings .place .sentence { border-bottom: 0; }
@@ -195,11 +203,10 @@
 .inbox .row .st { font-size: 12px; white-space: nowrap; }
 .inbox .tag { display: inline-flex; align-items: center; gap: 3px; font: 600 11px var(--font); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
 .inbox .tag.quiet { font-weight: 500; border-color: var(--rule); color: var(--ink-mute); }
-.inbox .zero { margin: auto; text-align: center; display: grid; gap: 10px; justify-items: center; padding: 40px; max-width: 420px; }
-.inbox .zero h2 { margin: 0; font-size: 26px; letter-spacing: -0.015em; }
-.inbox .zero p { margin: 0; font-size: 15px; }
-.inbox .zero .glyph { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--green-light); margin-bottom: 6px; }
-.inbox .zero .glyph .ic { width: 26px; height: 26px; stroke-width: 2; }
+.inbox .list-empty { display: grid; justify-items: start; gap: 4px; padding: 20px 16px; }
+.inbox .list-empty h2 { margin: 0; font-size: 16px; font-weight: 620; line-height: 1.3; letter-spacing: -0.02em; }
+.inbox .list-empty p { margin: 0; font-size: 14px; color: var(--ink-mute); }
+.inbox .list-empty [data-slot="button"] { margin-top: 8px; }
 .inbox .pane-empty { margin: auto; text-align: center; font-size: 14px; display: grid; gap: 6px; }
 
 /* Reading pane */
@@ -214,6 +221,8 @@
 .inbox .byline { display: flex; align-items: center; font-size: 13px; white-space: nowrap; min-width: 0; }
 .inbox .byline > * { flex: none; }
 .inbox .byline > * + *::before { content: "·"; margin: 0 8px; }
+.inbox .byline > .tag { margin-left: 8px; }
+.inbox .byline > .tag::before { content: none; }
 .inbox .byline .who { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
 .inbox .byline .who .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .inbox .r3 .ph { margin-bottom: 28px; }
@@ -304,7 +313,17 @@
 .inbox .error { font-size: 13px; margin: 12px 0 0; }
 .inbox .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); }
 .inbox .bar .det { font-weight: 400; }
-.inbox .bar .det::before { content: "· "; }
+.inbox .bar .det::before, .inbox .bar .held-hint::before { content: "· "; }
+.inbox .bar .held-hint { font-weight: 400; }
+.inbox .bar .bar-more { display: none; }
+@media (max-width: 767px) {
+  .inbox .bar .bar-write { display: none; }
+  .inbox .bar .bar-more { display: inline-flex; }
+  .inbox .bar .bar-primary { flex: 1 0 100%; }
+}
+.held-menu { max-width: min(360px, calc(100vw - 32px)); }
+.held-menu .held-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+.held-menu .held-why { font-size: 12px; color: var(--ink-mute); }
 .inbox .pane-back { display: none; }
 .inbox .pane:focus { outline: none; }
 
@@ -323,17 +342,43 @@
 @media (max-width: 960px) {
   .inbox { grid-template-columns: minmax(0, 1fr); }
   .inbox.has-selection .panel.list, .inbox:not(.has-selection) .panel.pane { display: none; }
-  .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }
+  .inbox .pane-back { display: inline-flex; align-self: flex-start; margin: 12px 0 0 24px; }
   .inbox .bar { padding: 12px 16px; gap: 4px; }
   .inbox .bar .det { display: none; }
   .inbox .st3 { font-size: 19px; }
 }
 
-/* On a phone the mobile nav replaces the rail, search gets its own line, the filter popover is a bottom sheet, and toasts span the width above the mobile nav. */
+/* On a phone the mobile nav replaces the rail links, leaving the workspace on a top strip; search gets its own line, the filter popover is a bottom sheet, and toasts span the width above the mobile nav. */
 @media (max-width: 720px) {
-  .shell .rail { display: none; }
+  .shell .rail { flex-direction: row; align-items: center; gap: 12px; padding: 12px 12px 0; }
+  .shell .rail > :not(.brand, .ws) { display: none; }
+  .shell .rail :is(.brand, .ws) { margin: 0; padding-bottom: 0; min-height: 40px; }
+  .shell .rail .ws { flex: 1; min-width: 0; }
+  .shell > :is(.inbox, .repos) { padding-left: 12px; }
+  .repos .lh-top { flex-wrap: wrap; }
+  /* The page draws its own 16px gutter, so the stage card runs edge to edge under a top hairline. */
+  .shell > .stage { margin: 12px 0 0; border-width: 1px 0 0; border-radius: 0; }
+  .ws-menu [role="menuitem"], .ws-new :is(input, [data-slot="button"]) { min-height: 44px; }
+  .settings .place-steps > summary { padding: 13px 0; }
+  .inbox :is(.search, .tbtn) { height: 44px; }
+  .inbox .seg button { min-height: 36px; padding: 0 12px; }
+  /* A phone row stacks the title over its number, status and age, so the title is never cut to a few characters. */
+  .inbox .groups { display: block; padding: 4px 4px 24px; }
+  .inbox .row { grid-template-columns: 8px auto minmax(0, 1fr) auto; grid-template-areas: "dot tw tw tw" ". num st age"; column-gap: 10px; row-gap: 2px; height: auto; min-height: 56px; padding: 9px 8px; }
+  .inbox .row .dot { grid-area: dot; align-self: start; margin-top: 6px; }
+  .inbox .row .tw { grid-area: tw; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.35; }
+  .inbox .row .num { grid-area: num; }
+  .inbox .row .st { grid-area: st; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-mute); }
+  .inbox .row .age { grid-area: age; }
+  .inbox .row .who { display: none; }
   :is(.pulse, .settings) { padding: 24px 16px 100px; }
   :is(.pulse, .settings) h1 { font-size: 28px; }
+  .settings nav.byline a { display: inline-block; padding: 12px 0; }
+  .settings .gcard { padding: 2px 12px 8px; }
+  .settings .place-setup .sentence { flex-wrap: nowrap; }
+  .settings .sec tbody tr { gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+  .settings .sec tbody td { padding: 0; border: 0; }
+  .settings .sec td:last-child { margin-left: auto; }
   .pulse { gap: 28px; }
   .pulse :is(th, td) { white-space: normal; padding-right: 8px; }
   .pulse tbody th { overflow-wrap: anywhere; }
@@ -350,11 +395,13 @@
   .inbox .toast { white-space: normal; }
   .inbox .toast button { margin-left: auto; }
   .inbox .pane .bar { position: fixed; left: 0; right: 0; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 21; }
-  .inbox .pane-in { padding-bottom: 160px; }
+  .inbox .pane-in { padding: 16px 16px 160px; }
   .inbox.has-selection .toasts { bottom: calc(148px + env(safe-area-inset-bottom)); }
 }
 
 /* With nothing selected the list takes the whole width; the pane only appears for a selection. */
 .inbox:not(.has-selection) { grid-template-columns: minmax(0, 1fr); }
 .inbox:not(.has-selection) .panel.pane { display: none; }
-.ws-new { display: flex; gap: 6px; padding: 4px; }
+.ws-new { display: flex; align-items: center; gap: 6px; padding: 4px; }
+.ws-new input { flex: 1; min-width: 0; }
+.ws-new [data-slot="button"] { height: 40px; }

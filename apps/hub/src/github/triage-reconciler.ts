@@ -9,12 +9,14 @@ import { WorkflowProvisioningError } from "@intx/hub-sessions";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
+import { GithubRateLimited } from "./github-usage.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks, type CiState } from "@corbits/github-reads";
 import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
+import type { RepoActivity } from "./repo-activity.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
@@ -43,6 +45,8 @@ export type TriageReconcilerDeps = {
   rotation: DeploymentRotation;
   /** Undefined when the tenant holds no credential for any pull request host. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
+  /** A repository's open pull requests are listed again only once its last listing may be stale. */
+  activity: Pick<RepoActivity, "stale">;
   /**
    * Reads the CI of heads waiting for it, and of settled heads whose verdict waits on CI: those are read again on the
    * unconfirmed retry interval, with backoff, and queued once CI changed, for a host that sends no webhook when a build
@@ -65,8 +69,11 @@ type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
 type LoadedRepo = EnabledRepo & StoredPack & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
 
-/** `retry` asks for another pass soon: a repository's pass failed, or a failed deployment is being redeployed. */
-export type ReconcileOutcome = { retry: boolean };
+/**
+ * `retry` asks for another pass soon: a repository's pass failed, or a failed deployment is being redeployed.
+ * `retryAt` is when a GitHub rate limit the pass ran into lifts; no sooner pass could read anything.
+ */
+export type ReconcileOutcome = { retry: boolean; retryAt?: number };
 
 /** A failed deployment is left this long first, so a portal visit can bring one back. */
 const HEAL_AFTER_MS = 2 * 60_000;
@@ -116,6 +123,39 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   const buildPolls = new Map<string, BuildPoll>();
   /** Repositories skipped last pass and why, so the skip is logged once rather than every pass. */
   const skippedRepos = new Map<string, string>();
+  /** The latest reset among the GitHub rate limits this pass ran into. */
+  let limitedUntil: number | undefined;
+  /** The limit last logged, so one limit is logged once rather than per repository per pass. */
+  let loggedLimit: number | undefined;
+
+  /** False for a GitHub rate limit, which is noted for the pass's outcome rather than logged and retried. */
+  function reconcileFailed(entry: Record<string, unknown>, err: unknown): boolean {
+    if (err instanceof GithubRateLimited) {
+      limitedUntil = Math.max(limitedUntil ?? 0, err.resetAt);
+      return false;
+    }
+    deps.log({ level: "error", msg: "triage_reconcile_failed", ...entry, error: String(err) });
+    return true;
+  }
+
+  /**
+   * Each tenant's last listing of each repository's open pull requests, with when it started. A failed read or a tenant
+   * without a reader drops it, so a credential failure shows on the next pass; lost on restart, when every repository is listed again.
+   */
+  const listings = new Map<string, Map<string, { at: number; prs: OpenPr[] }>>();
+
+  async function openPrs(pass: TenantPass, record: RepoRecord): Promise<OpenPr[]> {
+    const listed = listings.get(pass.tenantId) ?? new Map<string, { at: number; prs: OpenPr[] }>();
+    listings.set(pass.tenantId, listed);
+    const key = `${sourceOf(record)}\n${record.name}`;
+    const last = listed.get(key);
+    if (last && !deps.activity.stale(pass.tenantId, sourceOf(record), record.name, last.at)) return last.prs;
+    listed.delete(key);
+    const at = deps.now().getTime();
+    const prs = await pass.openHeads(record);
+    listed.set(key, { at, prs });
+    return prs;
+  }
 
   /** The newest verdict on the head, from the live logs or as recorded, since the run that gave it may be on a released deployment. */
   function latestVerdict(pass: TenantPass, recorded: readonly VerdictRecord[], repo: string, row: PrTriageRow) {
@@ -177,7 +217,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name, sourceOf(repo.record));
     const pauseLabel = read.status === "ok" ? read.pauseLabel : undefined;
     // A paused pull request is left out like a draft, so its rows go and nothing retries it until its label comes off.
-    const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft && !(pauseLabel !== undefined && pr.labels?.includes(pauseLabel)));
+    const prs = (await openPrs(pass, repo.record)).filter((pr) => !pr.draft && !(pauseLabel !== undefined && pr.labels?.includes(pauseLabel)));
     // Without a policy, or with every rule off, triage has nothing to decide: no run starts and nothing is written to the pull request.
     const key = `${pass.tenantId}\n${repo.record.name}`;
     if (read.status === "ok" && hasEnabledRules(read.pack)) {
@@ -411,8 +451,15 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
       return heal(tenant.id);
     }
-    const openHeads = await deps.openHeadsFor(tenant.id);
+    let openHeads: OpenHeadsReader | undefined;
+    try {
+      openHeads = await deps.openHeadsFor(tenant.id);
+    } catch (err) {
+      listings.delete(tenant.id);
+      throw err;
+    }
     if (!openHeads) {
+      listings.delete(tenant.id);
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_source_credential" });
       return false;
     }
@@ -434,7 +481,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         const repoLoaded = await loadRepo(pass, repo);
         if (repoLoaded) loaded.push(repoLoaded);
       } catch (err) {
-        deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: repo.record.name, error: String(err) });
+        reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err);
       }
     }
     const plans = planTenant({
@@ -451,8 +498,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         await pollBuilds(pass, repo, plans.get(repo.record.name)!);
         await deliverRepo(pass, repo, plans.get(repo.record.name)!);
       } catch (err) {
-        failed = true;
-        deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: repo.record.name, error: String(err) });
+        if (reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err)) failed = true;
       }
     }
     return failed;
@@ -460,13 +506,17 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
 
   return async function reconcileTriage(): Promise<ReconcileOutcome> {
     let retry = false;
+    limitedUntil = undefined;
     for (const tenant of await deps.tenants()) {
       try {
         if (await reconcileTenant(tenant)) retry = true;
       } catch (err) {
-        deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, error: String(err) });
+        reconcileFailed({ tenantId: tenant.id }, err);
       }
     }
-    return { retry };
+    if (limitedUntil === undefined) return { retry };
+    if (limitedUntil !== loggedLimit) deps.log({ level: "warn", msg: "triage_github_rate_limited", resetAt: new Date(limitedUntil).toISOString() });
+    loggedLimit = limitedUntil;
+    return { retry, retryAt: limitedUntil };
   };
 }

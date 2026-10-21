@@ -1,7 +1,8 @@
 // Read-only pull request details for the portal's PR view (files with
 // patches, commits, conversation, referenced issues). Workflow run logs keep
-// only step outputs, so the view reads the pull request's host live: GitHub
-// with the tenant's App, Bitbucket Data Center with the tenant's token.
+// only step outputs, so the view reads the pull request's host: GitHub with
+// the tenant's App, kept until a webhook says the repository changed, and
+// Bitbucket Data Center live with the tenant's token.
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
@@ -9,8 +10,11 @@ import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readMergeStates, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
 import { shownBody, visibleText } from "@corbits/triage-contracts";
+import { githubLimited } from "./github-refusal.js";
+import { GithubRateLimited } from "./github-usage.js";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
+import type { RepoReads } from "./repo-reads.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 
@@ -20,12 +24,16 @@ const Query = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "string.integer.parse" 
 
 type Log = (entry: Record<string, unknown>) => void;
 
-/** Only a blocked merge asks whether a review is what blocks it; a decision GitHub will not give leaves the block unexplained, not the details unread. */
+/**
+ * Only a blocked merge asks whether a review is what blocks it; a decision GitHub will not give leaves the block
+ * unexplained, not the details unread. GitHub's rate limit fails the read like any other part of it.
+ */
 async function reviewDecisionOf(gh: GithubFetch, repo: string, number: number, log: Log): Promise<ReviewDecision | null> {
   try {
     const [state] = await readMergeStates(gh, repo, [number]);
     return state?.reviewDecision ?? null;
   } catch (err) {
+    if (err instanceof GithubRateLimited) throw err;
     log({ level: "warn", msg: "review_decision_failed", repo, number, error: errorText(err) });
     return null;
   }
@@ -53,6 +61,15 @@ async function githubDetails(gh: GithubFetch, repo: string, number: number, log:
   return { pr: { ...pr, shownBody: body, reviewDecision }, files, commits, comments, issues, checks, reviews };
 }
 
+/**
+ * GitHub works mergeability out after a change without a webhook saying it is done, so open details still missing it, or
+ * a block without the review decision that explains it, are read again.
+ */
+function mergeabilityKnown({ pr }: Awaited<ReturnType<typeof githubDetails>>): boolean {
+  if (pr.state !== "open") return true;
+  return pr.mergeable !== null && (pr.mergeableState !== "blocked" || pr.reviewDecision !== null);
+}
+
 /** Data Center lists changes without patches or line counts and has no issue tracker of its own. */
 async function bitbucketDetails(bb: bitbucket.BitbucketFetch, repo: string, number: number) {
   const [pr, files, commits, comments, reviews] = await Promise.all([
@@ -66,13 +83,17 @@ async function bitbucketDetails(bb: bitbucket.BitbucketFetch, repo: string, numb
   return { pr: { ...pr, shownBody: visibleText(pr.body ?? "") }, files: files.map((file) => ({ ...file, additions: 0, deletions: 0 })), commits, comments, issues: [], checks, reviews };
 }
 
-export function createGithubPrDetails(deps: SourceFetchDeps & { log: Log }) {
+export function createGithubPrDetails(deps: SourceFetchDeps & { reads: RepoReads; log: Log }) {
   const sourceFetch = createSourceFetch(deps);
 
   async function detailsOf(tenantId: string, principalId: string, record: RepoRecord, number: number) {
     const source = await sourceFetch(tenantId, principalId, record);
     if (!source) throw new Error(`no readable ${sourceOf(record)} credential`);
-    return "bb" in source ? bitbucketDetails(source.bb, record.name, number) : githubDetails(source.gh, record.name, number, deps.log);
+    if ("bb" in source) return bitbucketDetails(source.bb, record.name, number);
+    const { gh } = source;
+    return deps.reads.read({ scope: "all", tenantId, repo: record.name, key: `details:${number}`, usable: mergeabilityKnown }, function readNow() {
+      return githubDetails(gh, record.name, number, deps.log);
+    });
   }
 
   return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {
@@ -92,7 +113,7 @@ export function createGithubPrDetails(deps: SourceFetchDeps & { log: Log }) {
     } catch (err) {
       const message = errorText(err);
       deps.log({ level: "warn", msg: "pr_details_failed", tenantId, repo: query.repo, number: query.number, error: message });
-      return failure(502, "source_failed", `Could not read ${query.repo}#${query.number} from ${sourceOf(record)}: ${message}.`);
+      return githubLimited(err) ?? failure(502, "source_failed", `Could not read ${query.repo}#${query.number} from ${sourceOf(record)}: ${message}.`);
     }
   };
 }

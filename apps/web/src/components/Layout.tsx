@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Button, Input } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Plus } from "lucide-react";
 import { initialsOf, listCounts } from "../lib/inbox-view.ts";
 import { useOpenWorkspaceAfterSending, useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { useOpenItems, useOpenPullsUnanswered } from "../lib/open-pulls.ts";
@@ -12,13 +13,14 @@ import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useSession } from "../lib/session.tsx";
-import { CheckIcon, GearIcon, InboxIcon, ListIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, GearIcon, InboxIcon, ListIcon, MergeIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
   const { snapshot, warn } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
+  const [opening, setOpening] = useState(false);
   const create = useMutation({ mutationFn: (workspaceName: string) => createExtraWorkspace(createHubTransport(), workspaceName) });
   if (!snapshot) return null;
   const current = snapshot.workspace.tenantId;
@@ -42,9 +44,11 @@ function WorkspaceSwitcher() {
       warn(`Could not create the workspace. ${cause instanceof Error ? cause.message : String(cause)}`);
       return;
     }
+    setOpening(true);
     try {
       await openWorkspace(tenantId);
     } catch (cause) {
+      setOpening(false);
       warn(`The workspace was created but could not be opened. ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }
@@ -58,15 +62,6 @@ function WorkspaceSwitcher() {
         </button>
       </MenuTrigger>
       <MenuContent side="top" align="start" className="ws-menu">
-        {naming ? (
-          <form className="ws-new" onSubmit={(event) => void submit(event)} onKeyDown={(event) => event.stopPropagation()}>
-            <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Workspace name" aria-label="Workspace name" autoFocus required />
-            <Button type="submit" size="sm" disabled={create.isPending || !name.trim()}>Create</Button>
-          </form>
-        ) : (
-          <MenuItem onSelect={startNaming}>+ New workspace</MenuItem>
-        )}
-        <MenuSeparator />
         {snapshot.workspaces.map((workspace) => (
           <MenuItem key={workspace.tenantId} aria-current={workspace.tenantId === current ? "true" : undefined} onSelect={() => void choose(workspace.tenantId)}>
             <span className="ws-option"><b>{workspace.name}</b>{sharesName(workspace, options) ? <small>{workspace.slug}</small> : null}</span>
@@ -75,9 +70,18 @@ function WorkspaceSwitcher() {
         ))}
         {snapshot.invitations.map((invitation) => (
           <MenuItem key={invitation.tenantId} disabled>
-            <span className="ws-option"><b>{invitation.name}</b><small>Invited. Open the link in your invitation email to join.</small></span>
+            <span className="ws-option"><b>{invitation.name}</b><small>Invited. Open your invite link to join.</small></span>
           </MenuItem>
         ))}
+        <MenuSeparator />
+        {naming ? (
+          <form className="ws-new" onSubmit={(event) => void submit(event)} onKeyDown={(event) => event.stopPropagation()}>
+            <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Workspace name" aria-label="Workspace name" autoFocus required />
+            <Button type="submit" disabled={create.isPending || opening || !name.trim()}>Create</Button>
+          </form>
+        ) : (
+          <MenuItem onSelect={startNaming}><Plus size={16} strokeWidth={1.7} aria-hidden="true" />New workspace</MenuItem>
+        )}
       </MenuContent>
     </Menu>
   );
@@ -151,7 +155,8 @@ export default function Layout({ children }: { children: ReactNode }) {
         </a>
         <nav className="rail" aria-label="Main">
           <Link className="brand" to="/inbox">
-            <img src="/triage-logo.svg" alt="Corbits Triage" />
+            <img src="/triage-logo.svg" alt="" />
+            Corbits Triage
           </Link>
           <Link className="nav-a" to="/pulse" aria-current={room === "pulse" ? "true" : undefined}>
             <PulseIcon />
@@ -164,10 +169,12 @@ export default function Layout({ children }: { children: ReactNode }) {
             {openPullsUnanswered ? null : <span className="n">{counts["needs-you"]}</span>}
           </Link>
           <Link className="nav-a" to="/ready" aria-current={readyActive ? "true" : undefined}>
+            <MergeIcon />
             Ready
             {openPullsUnanswered ? null : <span className="n">{counts.ready}</span>}
           </Link>
           <Link className="nav-a" to="/open" aria-current={allOpenActive ? "true" : undefined}>
+            <ListIcon />
             All open
             {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
           </Link>
@@ -184,6 +191,10 @@ export default function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/inbox" className={needsYouActive ? "active" : undefined}>
             <InboxIcon />
             Needs you
+          </NavLink>
+          <NavLink to="/ready" className={readyActive ? "active" : undefined}>
+            <MergeIcon />
+            Ready
           </NavLink>
           <NavLink to="/open" className={allOpenActive ? "active" : undefined}>
             <ListIcon />

@@ -3,6 +3,7 @@ import { resolveTenantSidecarCapabilityPolicies, type DB } from "@intx/db";
 import type { SidecarPluginRegistry } from "@intx/hub-sessions";
 import { CODE_REVIEW_PLACEMENT } from "@corbits/pr-code-review/pr-code-review";
 import { REPO_SOURCES, type CodeReviewPlace, type CodeReviewPlaceOption, type PlaceGuide, type RepoSource } from "@corbits/triage-contracts";
+import { githubLimited } from "./github/github-refusal.js";
 import { failure } from "./github/portal-credential.js";
 import { connectedSources, hasCodeReviewKey } from "./github/source-workflow.js";
 import { tenantConfigOf } from "./github/bridge.js";
@@ -132,7 +133,7 @@ export function createCodeReviewRun(deps: CodeReviewRunDeps) {
     try {
       offered = await deps.feed.again(tenantId, record, body.number);
     } catch (err) {
-      return failure(502, "code_review_unavailable", `Could not send the pull request to code review: ${err instanceof Error ? err.message : String(err)}`);
+      return githubLimited(err) ?? failure(502, "code_review_unavailable", `Could not send the pull request to code review: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (offered !== "sent") return failure(409, REFUSED[offered].code, REFUSED[offered].message);
     return Response.json({ status: "queued" }, { status: 202 });

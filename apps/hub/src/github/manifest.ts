@@ -39,8 +39,6 @@ const GITHUB_APP_EVENTS = [
   "check_run",
   "check_suite",
   "push",
-  "installation",
-  "installation_repositories",
 ] as const;
 
 export type GithubAppManifest = {

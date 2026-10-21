@@ -14,15 +14,18 @@
 // sees CI finish, or the reconciler, mails it; a new commit first takes over
 // the events an earlier head held. Check events on a waiting head
 // leave its row as it is until CI is read done, and a completed check suite
-// closes their window on the burst. The window map lives in
+// closes their window on the burst. A window of check events alone reads
+// whether its pull request is still open and ready once at its flush, since
+// their payloads do not say. The window map lives in
 // process: the hub runs as one replica.
 import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type PolicySource, type PolicyWorkflow, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import { checkPending, summarizeChecks, type CheckRun } from "@corbits/github-reads";
 import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
+import { GithubRateLimited } from "./github-usage.js";
 import type { PrMail } from "./normalize.js";
 import { sourceOf, triageStateKey, type RepoRecord } from "./tenant-config.js";
-import type { HeadChecksReader } from "./tenant-open-heads.js";
+import type { HeadChecksReader, OpenHeadReader } from "./tenant-open-heads.js";
 import { inFlight, waitedOut, waitsForCi, type ReconcilePolicy } from "./reconcile-plan.js";
 import { failHead, queueHead, restoreHead, waitHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
@@ -46,6 +49,8 @@ export type CoalescedEvent = {
   number: number;
   headSha: string;
   event: TriageEvent;
+  /** The payload did not say whether the pull request is a draft or still open, as on a check event. */
+  draftUnread?: true;
 };
 
 export type Accepted = "queued" | "coalesced";
@@ -54,6 +59,7 @@ export type CoalescerDeps = {
   store: TriageStateStore;
   sendMail: (job: TriageJob) => Promise<unknown>;
   headChecks: HeadChecksReader;
+  openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   window: CoalesceWindow;
   ciWait: Pick<ReconcilePolicy, "ciWaitMaxMs" | "ciStartGraceMs">;
   setTimer: SetTimer;
@@ -74,6 +80,8 @@ type Open = {
   /** Undefined while the window holds only check events on a head waiting for CI, whose row stays as it is. */
   remembered: Remembered | undefined;
   events: TriageEvent[];
+  /** Every event in the window left unread whether the pull request is open and ready. */
+  draftUnread: boolean;
   /** Holds a head-moving event, an approval or a change request, so it closes on the burst and later events do not extend it. */
   closesOnBurst: boolean;
   cancelQuiet: () => void;
@@ -163,15 +171,26 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     }, ms);
   }
 
-  /** Undefined when they could not be read, so the head is triaged rather than held. */
+  /** Undefined when they could not be read, so the head is triaged rather than held; a rate limit is thrown, so the head waits for the reconciler. */
   async function checksOf(open: Open): Promise<CheckRun[] | undefined> {
     const { tenantId, record } = open.latest;
     try {
       return await deps.headChecks(tenantId, record, open.head.headSha);
     } catch (err) {
+      if (err instanceof GithubRateLimited) throw err;
       deps.log({ level: "warn", msg: "coalesced_checks_unread", tenantId, repo: record.name, pr: open.head.number, headSha: open.head.headSha, error: String(err) });
       return undefined;
     }
+  }
+
+  /** Why the window's pull request is not triaged: a draft, no longer open, or moved past the window's head. */
+  async function notReady({ latest, head }: Open): Promise<string | undefined> {
+    const read = await deps.openHeadFor(head.tenantId);
+    if (!read) throw new Error("no active github credential");
+    const pr = await read(latest.record, head.number);
+    if (pr === undefined) return "not_open";
+    if (pr.headSha !== head.headSha) return "superseded";
+    return pr.draft ? "draft" : undefined;
   }
 
   async function drop(open: Open, entry: Record<string, unknown>, reason: string): Promise<void> {
@@ -201,7 +220,24 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     const readsCi = dependsOnCi(latest.pack);
     // A head the reconciler released from waiting after its CI finished already has its one run.
     if (readsCi && checksOnly && prior !== undefined && inFlight(prior) && prior.events !== undefined) return drop(open, entry, "released");
-    const checks = checksOnly || readsCi ? await checksOf(open) : undefined;
+    let unready: string | undefined;
+    try {
+      unready = open.draftUnread ? await notReady(open) : undefined;
+    } catch (err) {
+      if (err instanceof GithubRateLimited) return drop(open, entry, "github_rate_limited");
+      deps.log({ level: "error", msg: "head_lookup_failed", ...entry, error: String(err) });
+      // Failed, the head stays due for the reconciler, so a verdict made while CI still ran is not left standing.
+      if (open.remembered) await failHead(deps.store, head, `head lookup failed: ${String(err)}`, deps.now());
+      return;
+    }
+    if (unready !== undefined) return drop(open, entry, unready);
+    let checks: CheckRun[] | undefined;
+    try {
+      checks = checksOnly || readsCi ? await checksOf(open) : undefined;
+    } catch (err) {
+      if (err instanceof GithubRateLimited) return drop(open, entry, "github_rate_limited");
+      throw err;
+    }
     const ci = checks && summarizeChecks(checks);
     // CI still running on the head is re-triaged once by its last completed check run; a head waiting for CI is released by its first failed check.
     const pending = prior?.status === "waiting" ? ci === "pending" : checks?.some(checkPending) === true;
@@ -222,6 +258,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       const payload = mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events, ...(noWait && { noWait }) });
       await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", record: latest.record, payload });
     } catch (err) {
+      if (err instanceof GithubRateLimited) return drop({ ...open, remembered }, entry, "github_rate_limited");
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
       await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());
       return;
@@ -260,6 +297,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       open.events = [...new Set([...held, ...queued.held, ...open.events])];
     }
     open.latest = input;
+    open.draftUnread &&= input.draftUnread === true;
     for (const event of eventsOf(input, open.remembered?.rows ?? [])) if (!open.events.includes(event)) open.events.push(event);
     if (open.closesOnBurst) return "coalesced";
     const closesOnBurst = startsBurst || mayReleaseHold(input, open.prior);
@@ -288,6 +326,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       prior,
       remembered,
       events: [...new Set([...held, ...eventsOf(input, remembered?.rows ?? [])])],
+      draftUnread: input.draftUnread === true,
       closesOnBurst,
       cancelQuiet: timer(key, closesOnBurst ? deps.window.burstMs : deps.window.quietMs),
       cancelDeadline: timer(key, deps.window.maxWaitMs),

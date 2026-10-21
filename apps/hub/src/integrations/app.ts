@@ -18,6 +18,7 @@ import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody, validManifestMutationRequest } from "../github/manifest.js";
 import { MERGE_STATES_PATH } from "../github/merge-states.js";
 import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
+import { KEPT_MS, type ReadScope } from "../github/repo-reads.js";
 import { failure } from "../github/portal-credential.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
@@ -100,6 +101,9 @@ export type IntegrationHandlers = {
 };
 
 const TAGS = ["integrations"];
+function keptGithubReads(scope: ReadScope): string {
+  return `GitHub's answer is shared by the workspace and kept until a webhook or the hub's own write says the repository changed, and at most ${KEPT_MS[scope] / 1000} seconds; another host's answer is not kept this way.`;
+}
 
 const Failure = type({ error: { code: "string", message: "string" } });
 const PolicyPullOpen = type({ error: { code: "'policy_pull_open'", message: "string", url: "string", number: "number" } });
@@ -163,7 +167,8 @@ const CODE_REVIEW_SEND_REFUSALS = [
   "`code_review_empty`: no summary and no findings;",
   "`head_moved`: the pull request has moved past `headSha`.",
 ].join(" ");
-const githubFailed = { 502: json("GitHub failed", Failure) };
+const githubLimited = { 503: json("`github_rate_limited`: GitHub's rate limit is reached; `Retry-After` and `resetAt` say when it lifts", Failure) };
+const githubFailed = { 502: json("GitHub failed", Failure), ...githubLimited };
 
 const manifestFailures = {
   401: json("Not signed in", ManifestFailure),
@@ -363,7 +368,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         ...invalid,
         ...failures,
         502: json("GitHub or the run trigger failed", Failure),
-        503: json("The pr-triage service is not running", Failure),
+        503: json("`service_not_running`: the pr-triage service is not running; `github_rate_limited`: GitHub's rate limit is reached, `Retry-After` and `resetAt` say when it lifts", Failure),
       },
     }),
     member,
@@ -433,6 +438,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         413: json("The body is too large", Failure),
         422: json("`policy_file_invalid`: triage refuses `text`, or the policy it `extends`; `message` holds each problem, one per line, led by its line", Failure),
         502: json("The host refused", Failure),
+        ...githubLimited,
       },
     }),
     member,
@@ -468,6 +474,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_OPEN_PULLS_PATH}/:tenantId`,
     describeRoute({
       summary: "Open pull requests of the connected repositories",
+      description: keptGithubReads("pulls"),
       tags: TAGS,
       responses: { 200: json("Open pull requests per repository", OpenPulls), ...failures },
     }),
@@ -481,6 +488,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_DETAILS_PATH}/:tenantId`,
     describeRoute({
       summary: "Pull request details",
+      description: keptGithubReads("all"),
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
@@ -498,6 +506,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${MERGE_STATES_PATH}/:tenantId`,
     describeRoute({
       summary: "Whether the host would merge these pull requests now",
+      description: keptGithubReads("all"),
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
@@ -702,6 +711,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         404: json("No such connected repository", Failure),
         409: json("`no_isolated_place`, `code_review_off`, `draft` or `not_open`", Failure),
         502: json("The host or the run trigger failed", Failure),
+        ...githubLimited,
       },
     }),
     member,

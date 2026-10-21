@@ -41,6 +41,7 @@ import {
 import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
+import type { RepoReads } from "./repo-reads.js";
 import type { CodeReviewFeed } from "../code-review-feed.js";
 
 const HOOK_VERIFY = ["bearer", "standard-webhooks", "slack", "x-hub-signature"] as const;
@@ -74,6 +75,10 @@ export interface BridgeDeps {
   /** Reads the repository's policy file again; undefined when the repository is not connected. */
   refreshPolicyFile: (tenantId: string, repo: string, source: RepoSource) => Promise<PolicyFileState | undefined>;
   startBacklog: BacklogStart;
+  /** Told of each verified delivery naming a repository, so the reconciler lists that repository's pull requests again. */
+  heard: (tenantId: string, source: RepoSource, repo: string) => void;
+  /** Every verified delivery about a repository, so the GitHub reads kept for it are read again. */
+  repoChanged: RepoReads["changed"];
 }
 
 /** Mirrors @corbits/webhooks parseWebhookMeta (not exported upstream). */
@@ -481,6 +486,11 @@ export function createBridgeHandler(d: BridgeDeps) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       return json(400, { error: "invalid_json" });
     }
+    const named = asRecord(asRecord(payload)?.["repository"])?.["full_name"];
+    if (typeof named === "string") {
+      d.heard(loaded.tenantId, "github", named);
+      d.repoChanged(loaded.tenantId, named, event);
+    }
     if (INSTALL_EVENTS.has(event) && isRecord(payload)) {
       return handleInstallEvent(d, log, loaded, delivery, event, payload);
     }
@@ -520,8 +530,10 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
       return json(202, { status: "ignored" });
     }
+    // A check event names its head but not whether the pull request is a draft or open; its window reads that once at its flush.
+    const draftUnread = mail.headSha !== null && mail.draft === null;
     let head: Awaited<ReturnType<OpenHeadReader>>;
-    if (mail.headSha === null || mail.draft === null) {
+    if (mail.headSha === null) {
       try {
         head = await openHead(d, loaded.tenantId, record, mail.prNumber);
       } catch (err) {
@@ -563,7 +575,7 @@ export function createBridgeHandler(d: BridgeDeps) {
     }
     let accepted: Accepted;
     try {
-      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, ...(stored.policyWorkflow && { policyWorkflow: stored.policyWorkflow }), ...(stored.pauseLabel && { pauseLabel: stored.pauseLabel }), mail, number: mail.prNumber, headSha, event: triageEvent });
+      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, ...(stored.policyWorkflow && { policyWorkflow: stored.policyWorkflow }), ...(stored.pauseLabel && { pauseLabel: stored.pauseLabel }), mail, number: mail.prNumber, headSha, event: triageEvent, ...(draftUnread && { draftUnread: true }) });
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });

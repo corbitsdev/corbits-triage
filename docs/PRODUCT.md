@@ -312,7 +312,8 @@ most 50, and a verdict at most 20 steps. The JSON Schema is `policyFile` at the 
 `/api/integrations/pack-schema`, and `POST /api/integrations/policy/validate`
 checks a file's text without signing in. The GitHub Action in
 [packages/policy-check-action](../packages/policy-check-action/action.yml)
-checks the file the same way on pull requests that change it.
+checks the file the same way on pull requests, and runs the base branch policy's
+rules that need no model, except ci-green, against each one.
 
 A push to the default branch that changes the file is read before the next
 verdict. A file Triage refuses stops triage on the repository until it is

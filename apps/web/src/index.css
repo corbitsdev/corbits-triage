@@ -164,6 +164,7 @@ input, textarea { caret-color: var(--heat); }
   height: 100dvh;
   overflow: hidden;
   min-height: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   background: var(--paper);
 }
 .app.is-auth { background: var(--paper); }
@@ -863,7 +864,8 @@ input, textarea { caret-color: var(--heat); }
 }
 .pr-composer textarea { min-height: 72px; background: var(--sheet); }
 .pr-composer .suggest-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.pr-composer .suggest-text { margin: 0 0 8px; }
+.pr-composer .suggest-text { margin: 0 0 8px; font-size: 13px; color: var(--ink-mute); }
+.pr-composer :is(h2, h3) { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0; }
 
 .check-group {
   border-top: 1px solid var(--rule);
@@ -1122,29 +1124,12 @@ textarea {
   color: var(--ink-soft);
 }
 
-.composer {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
-  padding: 0;
-  width: min(480px, calc(100vw - 32px));
-  background: var(--sheet);
-  box-shadow: 0 12px 32px rgba(10, 12, 17, 0.22);
-}
-.composer::backdrop {
-  background: rgba(10, 12, 17, 0.45);
-}
-.composer form {
-  display: grid;
-  gap: 12px;
-  padding: 20px;
-}
-.composer h2 {
-  font-size: 1.333rem;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
-
 .mobile-nav { display: none; }
+
+/* Touch screens get buttons big enough to tap. */
+@media (max-width: 720px), (pointer: coarse) {
+  [data-slot="button"] { min-height: 40px; min-width: 40px; }
+}
 
 .workspace {
   flex: 1;
@@ -1339,7 +1324,7 @@ details.setup-help[open] { display: grid; gap: 12px; }
     right: 0;
     bottom: 0;
     z-index: 20;
-    min-height: 68px;
+    min-height: calc(68px + env(safe-area-inset-bottom));
     background: var(--rail);
     border-top: 1px solid rgba(232, 234, 240, 0.08);
     padding: 4px 8px env(safe-area-inset-bottom);
@@ -1389,8 +1374,14 @@ details.setup-help[open] { display: grid; gap: 12px; }
 .sec .invite { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
 .sec .invite [data-slot="button"] { height: 40px; }
 .sec .invite label:first-child { flex: 1; }
-@media (max-width: 720px) {
+@media (max-width: 960px) {
   .sec { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}
+/* On a phone each person is a wrapped row, so the actions stay on screen. */
+@media (max-width: 720px) {
+  :is(.sec, .setup-invite) thead { display: none; }
+  :is(.sec, .setup-invite) tbody tr { display: flex; flex-wrap: wrap; align-items: center; }
+  :is(.sec, .setup-invite) tbody td:first-child { flex-basis: 100%; }
 }
 .gate, .loading-gate {
   min-height: 100dvh;

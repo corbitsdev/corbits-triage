@@ -52,8 +52,8 @@ triage on and its policy has a rule.
   into your agent's skills folder (such as `.claude/skills/` or
   `.agents/skills/`) and ask it to set up Corbits Triage.
 - **Policy check Action.** [packages/policy-check-action](packages/policy-check-action/action.yml)
-  checks the policy file on every pull request that changes it, with no hub
-  or secrets ([workflow to copy](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#checking-the-file-in-pull-requests)).
+  checks the policy file and runs its rules that need no model on every pull
+  request, with no hub or secrets ([workflow to copy](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#checking-the-file-in-pull-requests)).
 - **Browser extension.** [apps/extension](apps/extension/README.md) checks the
   GitHub pull request you are viewing against its policy and shows each rule's
   result on the page, with your own GitHub token and no hub. Build and load it

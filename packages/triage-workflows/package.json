@@ -31,18 +31,18 @@
     "@corbits/system-one": "0.3.1",
     "@corbits/triage-contracts": "workspace:*",
     "@intx/agent": "workspace:*",
-    "@intx/authz": "workspace:*",
-    "@intx/harness": "workspace:*",
     "@intx/workflow": "workspace:*",
     "@noble/hashes": "^2.4.0",
     "@intx/types": "workspace:*",
     "arktype": "catalog:",
-    "re2js": "2.8.6"
-  },
-  "devDependencies": {
-    "@corbits/evals": "0.1.2",
+    "re2js": "2.8.6",
+    "@intx/authz": "workspace:*",
+    "@intx/harness": "workspace:*",
     "@intx/inference": "workspace:*",
     "@intx/storage-isogit": "workspace:*",
     "@intx/workflow-host": "workspace:*"
+  },
+  "devDependencies": {
+    "@corbits/evals": "0.1.2"
   }
 }

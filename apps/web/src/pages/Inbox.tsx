@@ -1,10 +1,12 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { Button, EmptyState } from "@corbits/react-ui";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { Button } from "@corbits/react-ui";
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { AuthorKind } from "@corbits/triage-contracts";
 import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
+import { useMediaQuery } from "../lib/media-query.ts";
 import { errorText } from "@corbits/common";
 import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
@@ -12,7 +14,7 @@ import { pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDoKeys } from "../lib/held-dos.ts";
 import { CodeReviewThreads } from "../components/CodeReviewThreads.tsx";
 import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
-import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, rowStatus, type BarEntry, type PaneBar } from "../lib/pane-report.ts";
+import { approvedByTriage, endedText, heldChoices, paneBar, paneProblems, paneStatus, rowStatus, type BarEntry, type HeldChoice, type PaneBar } from "../lib/pane-report.ts";
 import {
   COMPOSER_COPY,
   canRun,
@@ -75,7 +77,7 @@ import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
 import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
-import { CheckIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
+import { ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
@@ -85,6 +87,9 @@ const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", ready: 
 const WAITING = "Waiting";
 
 const WAITING_PARAM = "waiting";
+
+// Narrower screens show the list or the pane, so only side by side does the first row open by itself.
+const SIDE_BY_SIDE = "not (max-width: 960px)";
 
 function actionDot(action: InboxAction | null): string {
   if (action === "merge") return "dot ready";
@@ -232,21 +237,51 @@ type PaneProps = {
 
 type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; doBlocked: boolean; onChoose: (entry: BarEntry) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void; onHide: (() => void) | null };
 
+/** Held actions sit behind one menu; the other writes are buttons, or behind More on a phone where they cannot fit. */
 function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: BottomBarProps) {
-  const { primary, rest, dos } = bar;
+  const { primary, rest } = bar;
+  const writes = rest.filter((entry) => entry.held === null);
+  const held = heldChoices(bar);
+
+  function chooseHeld({ pending, entry }: HeldChoice) {
+    if (entry === null) onDo(pending);
+    else onChoose(entry);
+  }
 
   return (
     <div className="bar">
       {primary !== null && (
-        <Button type="button" disabled={primary.blocker !== null} onClick={() => onChoose(primary)}>
+        <Button type="button" className="bar-primary" disabled={primary.blocker !== null} onClick={() => onChoose(primary)}>
           {primary.kind === "reply" && draft?.edited ? "Send edited feedback" : primary.label}
           {primary.detail === null ? null : <span className="det">{primary.detail}</span>}
+          {primary.held === null ? null : <span className="held-hint">held for you</span>}
         </Button>
       )}
       {onEdit === null ? null : <Button type="button" variant="ghost" onClick={onEdit}>Edit feedback</Button>}
-      {rest.map((entry) => <Button key={entry.kind} type="button" variant="ghost" disabled={entry.blocker !== null} onClick={() => onChoose(entry)}>{entry.label}</Button>)}
-      {dos.map((pending) => <Button key={pending.key} type="button" variant="ghost" disabled={doBlocked} onClick={() => onDo(pending)}>{pending.label}</Button>)}
-      {onHide === null ? null : <Button type="button" variant="ghost" onClick={onHide}>Hide for me</Button>}
+      {held.length === 0 ? null : (
+        <Menu>
+          <MenuTrigger asChild><Button type="button" variant="outline">{held.length === 1 ? "1 held action" : `${held.length} held actions`}</Button></MenuTrigger>
+          <MenuContent side="top" align="start" className="held-menu">
+            <MenuLabel>Approve to run</MenuLabel>
+            {held.map((choice) => (
+              <MenuItem key={choice.pending.key} className="held-item" disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onSelect={() => chooseHeld(choice)}>
+                <span>{choice.pending.label}</span>
+                <span className="held-why">{choice.pending.reason}</span>
+              </MenuItem>
+            ))}
+            {onHide === null ? null : <><MenuSeparator /><MenuItem onSelect={onHide}>Hide for me</MenuItem></>}
+          </MenuContent>
+        </Menu>
+      )}
+      {writes.map((entry) => <Button key={entry.kind} type="button" variant="ghost" className="bar-write" disabled={entry.blocker !== null} onClick={() => onChoose(entry)}>{entry.label}</Button>)}
+      {writes.length === 0 ? null : (
+        <Menu>
+          <MenuTrigger asChild><Button type="button" variant="ghost" className="bar-more">More</Button></MenuTrigger>
+          <MenuContent side="top" align="end">
+            {writes.map((entry) => <MenuItem key={entry.kind} disabled={entry.blocker !== null} onSelect={() => onChoose(entry)}>{entry.label}</MenuItem>)}
+          </MenuContent>
+        </Menu>
+      )}
     </div>
   );
 }
@@ -422,10 +457,15 @@ function NoneOpen({ title }: { title: string }) {
   const openPulls = useOpenPulls();
   const repos = openPulls.data?.repos;
   if (repos === undefined || openPulls.isError || repos.some((repo) => repo.error !== undefined)) return null;
-  return <EmptyState title={title} description={`${repositoriesText(repos.length)} checked.`} />;
+  return <ListEmpty title={title} text={`${repositoriesText(repos.length)} checked.`} />;
 }
 
-type EmptyListProps = { view: ListView; waiting: boolean; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
+/** An empty list names the condition in a left-aligned mute sentence under its heading. */
+function ListEmpty({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
+  return <div className="list-empty"><h2>{title}</h2><p>{text}</p>{action}</div>;
+}
+
+type EmptyListProps = { view: ListView; waiting: boolean; waitingCount: number; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void; onShowWaiting: () => void };
 
 /** A repository whose policy file triage refuses runs nothing, so its pull requests wait here without a verdict. */
 function RefusedPolicies({ repos }: { repos: string[] }) {
@@ -456,19 +496,20 @@ function PolicyUpgradeNotice() {
   );
 }
 
-function EmptyList({ view, waiting, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
+function EmptyList({ view, waiting, waitingCount, loading, denied, noRepos, filtered, onClear, onShowWaiting }: EmptyListProps) {
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
   if (noRepos) {
-    return <div className="zero"><h2>No repositories yet</h2><p>Choose the repositories Triage should read.</p><Button asChild variant="outline" size="sm"><Link to="/repositories">Choose repositories on GitHub</Link></Button></div>;
+    return <ListEmpty title="No repositories yet" text="Choose the repositories Triage should read." action={<Button asChild variant="outline"><Link to="/repositories">Choose repositories on GitHub</Link></Button>} />;
   }
   if (filtered) {
-    return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><Button type="button" variant="outline" size="sm" onClick={onClear}>Clear filters</Button></div>;
+    return <ListEmpty title="Nothing here" text="No pull requests match these filters." action={<Button type="button" variant="outline" onClick={onClear}>Clear filters</Button>} />;
   }
   if (view === "all-open") return <NoneOpen title="No open pull requests" />;
-  if (view === "ready") return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing ready</h2><p>No pull requests can be merged now.</p></div>;
-  if (waiting) return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing waiting</h2><p>No pull requests are waiting on others.</p></div>;
-  return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
+  if (view === "ready") return <ListEmpty title="Nothing ready" text="No pull requests can be merged now." />;
+  if (waiting) return <ListEmpty title="Nothing waiting" text="No pull requests are waiting on others." />;
+  const showWaiting = waitingCount > 0 ? <Button type="button" variant="outline" onClick={onShowWaiting}>Show {waitingCount} waiting</Button> : undefined;
+  return <ListEmpty title="Inbox zero" text="Nothing needs you." action={showWaiting} />;
 }
 
 function Outcome({ outcome }: { outcome: Notices["outcome"] }) {
@@ -564,7 +605,8 @@ export default function Inbox({ view }: { view: ListView }) {
     return needsYouPiles(regroupInbox(needsYou, needsYouGrouping));
   }, [view, waiting, shown, openGrouping, waitingGrouping, needsSetup, needsYou, needsYouGrouping]);
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
-  const selected = params.number === undefined ? flat[0]?.item : findPrItem(items, params);
+  const firstRow = useMediaQuery(SIDE_BY_SIDE) ? flat[0]?.item : undefined;
+  const selected = params.number === undefined ? firstRow : findPrItem(items, params);
   const selectedMark = entries.find((entry) => entry.item.key === selected?.key)?.handled ?? null;
   // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
   const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
@@ -574,6 +616,8 @@ export default function Inbox({ view }: { view: ListView }) {
   const byRepo = view !== "ready" && grouping === "repo";
   const listTitle = waiting ? WAITING : LIST_TITLE[view];
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
+  // Search, filters and grouping have nothing to work on in an empty list; at inbox zero the list itself offers Waiting.
+  const searchable = loading || entries.some((entry) => listsRest || inNeedsYou(entry.item));
 
   function setFilters(next: InboxFilters) {
     setSearchParams(filtersToParams(next, searchParams), { replace: true });
@@ -687,29 +731,35 @@ export default function Inbox({ view }: { view: ListView }) {
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
           <div className="lh-top"><h1>{listTitle}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && !waiting && !packsPending(packs) && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}<PulseLine /></div>
-          <div className="tools">
-            <label className="search">
-              <SearchIcon />
-              <input ref={searchRef} placeholder="Search" aria-keyshortcuts="/" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
-            </label>
-            <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
-            {view === "needs-you" ? <WaitingToggle on={waiting} count={waitingEntries.length} onToggle={toggleWaiting} /> : null}
-            {groupings.length === 0 ? null : (
-              <div className="seg" role="group" aria-label="Group by">
-                {groupings.map((mode, index) => (
-                  <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
-                ))}
-              </div>
-            )}
-          </div>
-          <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} />
+          {searchable || waiting ? (
+            <div className="tools">
+              {searchable ? (
+                <>
+                  <label className="search">
+                    <SearchIcon />
+                    <input ref={searchRef} placeholder="Search" aria-keyshortcuts="/" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
+                  </label>
+                  <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
+                </>
+              ) : null}
+              {view === "needs-you" ? <WaitingToggle on={waiting} count={waitingEntries.length} onToggle={toggleWaiting} /> : null}
+              {searchable && groupings.length > 0 ? (
+                <div className="seg" role="group" aria-label="Group by">
+                  {groupings.map((mode, index) => (
+                    <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {searchable || activeFilters(filters).length > 0 ? <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} /> : null}
         </div>
         <div className="scroll" id="main">
           <RefusedPolicies repos={enabledNames} />
           <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
           {flat.length === 0 ? (
-            <EmptyList view={view} waiting={waiting} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
+            <EmptyList view={view} waiting={waiting} waitingCount={waitingEntries.length} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} onShowWaiting={toggleWaiting} />
           ) : (
             <div className={byRepo ? "groups by-repo" : "groups"}>
               {piles.map((pile) => <Pile key={pile.key} view={view} byRepo={byRepo} pile={pile} selectedKey={selected?.key} search={search} />)}

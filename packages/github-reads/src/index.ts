@@ -404,12 +404,12 @@ export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED
 
 const MERGEABLE = { MERGEABLE: true, CONFLICTING: false, UNKNOWN: null } as const;
 
-const MergeStateNode = type({ number: "number", mergeable: "'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'", mergeStateStatus: "string", reviewDecision: "'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null" });
+const MergeStateNode = type({ number: "number", state: "'OPEN' | 'CLOSED' | 'MERGED'", mergeable: "'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'", mergeStateStatus: "string", reviewDecision: "'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null" });
 
 const MergeStatesReply = type({ data: { repository: { "[string]": MergeStateNode.or("null") } }, "errors?": type({ "path?": "(string | number)[]" }).array() });
 
 /** `mergeableState` is REST's `mergeable_state`; `reviewDecision` is null when no review is required. */
-export type MergeState = { number: number; mergeable: boolean | null; mergeableState: string; reviewDecision: ReviewDecision | null };
+export type MergeState = { number: number; open: boolean; mergeable: boolean | null; mergeableState: string; reviewDecision: ReviewDecision | null };
 
 /**
  * Whether GitHub would merge each pull request now and whether the branch's rules still want a review, which only GraphQL says, all in one query.
@@ -417,13 +417,13 @@ export type MergeState = { number: number; mergeable: boolean | null; mergeableS
  */
 export async function readMergeStates(gh: GithubFetch, repo: string, numbers: readonly number[]): Promise<MergeState[]> {
   const [owner, name] = repo.split("/");
-  const pulls = numbers.map((number) => `pr${number}: pullRequest(number: ${number}) { number mergeable mergeStateStatus reviewDecision }`).join(" ");
+  const pulls = numbers.map((number) => `pr${number}: pullRequest(number: ${number}) { number state mergeable mergeStateStatus reviewDecision }`).join(" ");
   const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${pulls} } }`;
   const reply = await json(gh, "/graphql", { method: "POST", body: JSON.stringify({ query, variables: { owner, name } }), headers: { "content-type": "application/json" } });
   const { data, errors = [] } = MergeStatesReply.assert(reply);
   if (errors.some((error) => typeof error.path?.[1] !== "string")) return [];
   const failed = new Set(errors.map((error) => error.path?.[1]));
-  return Object.entries(data.repository).flatMap(([alias, node]) => (node === null || failed.has(alias) ? [] : [{ number: node.number, mergeable: MERGEABLE[node.mergeable], mergeableState: node.mergeStateStatus.toLowerCase(), reviewDecision: node.reviewDecision }]));
+  return Object.entries(data.repository).flatMap(([alias, node]) => (node === null || failed.has(alias) ? [] : [{ number: node.number, open: node.state === "OPEN", mergeable: MERGEABLE[node.mergeable], mergeableState: node.mergeStateStatus.toLowerCase(), reviewDecision: node.reviewDecision }]));
 }
 
 /** Reviewers whose latest review still stands on the current head, when the review names its commit. */

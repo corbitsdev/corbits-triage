@@ -26,7 +26,7 @@ import type { StepInvokeRequest, WorkflowAuthorizeFn } from "@intx/workflow";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { startBaseline, writeBaseline, type Stamp } from "../../triage-workflows/evals/baseline.js";
 import { addCost, costOf, priceKey, priceOf, type ProviderId } from "../../triage-workflows/evals/prices.js";
-import { runLocalWorkflow } from "../../triage-workflows/evals/run-local.js";
+import { runLocalWorkflow } from "../../triage-workflows/src/run-local.js";
 import * as actions from "../src/actions/index.js";
 import { BUDGET_EXHAUSTED } from "@corbits/pr-code-review/actions/checkout";
 import { credentialBindingsFor } from "@corbits/pr-code-review/agents";

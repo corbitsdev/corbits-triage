@@ -17,8 +17,8 @@ function OutcomeRow({ field, view }: { field: OutcomeField; view: MeasuredView }
 
 function OutcomesTable({ view }: { view: MeasuredView }) {
   return (
-    <>
-      <p>{humansText(view.humans)}</p>
+    <div className="gcard">
+      <p className="humans">{humansText(view.humans)}</p>
       <table className="outcomes">
         <thead>
           <tr>
@@ -31,7 +31,7 @@ function OutcomesTable({ view }: { view: MeasuredView }) {
           {FIELDS.map((field) => <OutcomeRow key={field} field={field} view={view} />)}
         </tbody>
       </table>
-    </>
+    </div>
   );
 }
 
@@ -42,8 +42,9 @@ export default function OutcomesCard({ outcomes, source }: OutcomesCardProps) {
   const view = outcomesView(outcomes, source);
   if (view === null) return null;
   return (
-    <section className="gcard outcomes-card" aria-label="Outcomes">
-      <header><b>Outcomes</b><span>Medians from opening, over the newest triaged pull requests and those closed before Triage.</span></header>
+    <section className="rs outcomes-card" aria-labelledby="rs-outcomes">
+      <h3 id="rs-outcomes">Outcomes</h3>
+      <p className="help">Medians from opening, over the newest triaged pull requests and those closed before Triage.</p>
       {"missing" in view ? <p className="note">{view.missing}</p> : <OutcomesTable view={view} />}
     </section>
   );

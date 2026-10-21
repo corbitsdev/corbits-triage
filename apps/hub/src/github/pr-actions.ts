@@ -23,6 +23,10 @@ import type { PolicyReader } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
+import { tenantConfigOf } from "./bridge.js";
+import { forInstallation } from "./open-pulls.js";
+import type { RepoReads } from "./repo-reads.js";
+import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
@@ -137,6 +141,8 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
   githubApiOrigin: string;
   readCheckPack: PolicyReader;
   codeReviews: Pick<CodeReviewRuns, "latest">;
+  /** The portal reads the pull request again right after its own write, before GitHub's webhook for it may arrive. */
+  changed: RepoReads["changed"];
   log: (entry: Record<string, unknown>) => void;
 }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
@@ -160,12 +166,14 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
     if (appJson instanceof Response) return appJson;
     const refused = await doRefused(deps, principalId, tenantId, body.repo, doKind(body));
     if (refused) return refused;
-    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+    const record = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).find((row) => row.name === body.repo && sourceOf(row) === "github");
+    const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record?.installationId);
 
     try {
       const { repo, number } = body;
       const result = await act(gh, tenantId, body);
       if (result instanceof Response) return result;
+      deps.changed(tenantId, repo);
       deps.log({ level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number });
       return Response.json(result);
     } catch (err) {

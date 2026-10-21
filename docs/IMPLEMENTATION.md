@@ -97,7 +97,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `github-tool`, `bitbucket-datacenter-tool` | The sidecar tool bundles: reads, the mirror, and actions. |
 | `repo-read-tool` | `read_file`, `grep` and `list`, read-only and confined to a checkout folder under the sidecar data dir's `checkouts` (no `..`, absolute path or symlink out); the host tool packages export `checkout` and their read bundles add `*_read_file`. |
 | `pr-code-review`, `pr-code-review-anthropic` | The provider-neutral code review workflow and the Anthropic provider's package and eval; see [its README](../packages/pr-code-review/README.md). |
-| `policy-check-action` | The GitHub Action that checks `.corbits-triage.yml` as the hub reads it. |
+| `policy-check-action` | The GitHub Action that checks `.corbits-triage.yml` as the hub reads it, and runs the policy's rules that need no model on a pull request through pr-triage's `runLocal`. |
 | `provisioner-docker`, `provisioner-template`, `provisioner-test` | The Docker provisioner, a template for a new backend, and the contract tests; see [provisioners/](provisioners/README.md). |
 | `openai-null-delta` | Inference adapter fix for null stream deltas. |
 | `common` | Dependency-free helpers shared across apps and packages. |

@@ -209,6 +209,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@corbits/triage-contracts": "workspace:*",
+        "@corbits/triage-workflows": "workspace:*",
+        "@intx/workflow": "workspace:*",
       },
     },
     "packages/pr-code-review": {
@@ -349,17 +351,17 @@
         "@intx/agent": "workspace:*",
         "@intx/authz": "workspace:*",
         "@intx/harness": "workspace:*",
+        "@intx/inference": "workspace:*",
+        "@intx/storage-isogit": "workspace:*",
         "@intx/types": "workspace:*",
         "@intx/workflow": "workspace:*",
+        "@intx/workflow-host": "workspace:*",
         "@noble/hashes": "^2.4.0",
         "arktype": "catalog:",
         "re2js": "2.8.6",
       },
       "devDependencies": {
         "@corbits/evals": "0.1.2",
-        "@intx/inference": "workspace:*",
-        "@intx/storage-isogit": "workspace:*",
-        "@intx/workflow-host": "workspace:*",
       },
     },
     "vendor/interchange/apps/hub": {

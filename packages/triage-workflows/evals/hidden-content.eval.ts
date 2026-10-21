@@ -10,7 +10,8 @@ import { evaluate, type Case, type CheckFn } from "@corbits/evals";
 import { readPrTemplates, type GithubFetch } from "@corbits/github-reads";
 import { emptyPack, type CheckPack } from "../../triage-contracts/src/index.js";
 import type { Snapshot } from "./cases.js";
-import { PR_TRIAGE, runDefinition, type Endpoint } from "./run-definition.js";
+import { PR_TRIAGE } from "../src/run-local.js";
+import { runDefinition, type Endpoint } from "./run-definition.js";
 import { fixtureGithub, triggerMail } from "./serve.js";
 
 // No rule asks the model, so nothing reaches this endpoint.

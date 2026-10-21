@@ -5,7 +5,9 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "dependencies": {
-    "@corbits/triage-contracts": "workspace:*"
+    "@corbits/triage-contracts": "workspace:*",
+    "@corbits/triage-workflows": "workspace:*",
+    "@intx/workflow": "workspace:*"
   },
-  "description": "GitHub Action that checks .corbits-triage.yml as the hub reads it"
+  "description": "GitHub Action that checks .corbits-triage.yml as the hub reads it and runs its rules that need no model on a pull request"
 }

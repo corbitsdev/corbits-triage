@@ -5,6 +5,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
 import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
+import { githubUsage } from "./github-usage.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
 export type PortalCredentialDeps = {
@@ -135,11 +136,11 @@ export function appGithubFetch(
   apiOrigin: string,
   appJson: string,
 ): GithubFetch {
-  return function appCredentialFetch(path, init) {
+  return githubUsage.gate(function appCredentialFetch(path, init) {
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${appJson}`);
     // A read that asks for another media type, such as a pull request's diff, keeps it.
     if (!headers.has("accept")) headers.set("accept", "application/vnd.github+json");
     return appFetch(`${apiOrigin}${path}`, { ...init, headers });
-  };
+  });
 }

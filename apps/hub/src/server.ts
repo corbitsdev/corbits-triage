@@ -73,7 +73,8 @@ import { createCoordinator, type Coordinator, type TriageJob } from "./github/co
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
-import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
+import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
+import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
@@ -97,7 +98,9 @@ import { createBacklogStart, createGithubBacklog } from "./github/backlog-triage
 import { fileRefusal, loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
-import { createTriageReconciler } from "./github/triage-reconciler.js";
+import { githubUsage } from "./github/github-usage.js";
+import { createTriageReconciler, type ReconcileOutcome } from "./github/triage-reconciler.js";
+import { createRepoActivity } from "./github/repo-activity.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
@@ -139,9 +142,14 @@ const EXPECTED_DEPLOYMENT_SET = {
 const TRIAGE_KNOWN_RUNS = 10_000;
 const TRIAGE_RETRY_MS = 15_000;
 const TRIAGE_RETRY_MAX_MS = 120_000;
+/** A repository is listed again once its listing is this old, and every pass once its webhook (the App's, on GitHub) heard nothing this long. */
+const TRIAGE_RELIST_QUIET_MS = 30 * 60_000;
+/** A listing that started this soon after a repository's webhook is read again, since GitHub's listing can trail it. */
+const TRIAGE_RELIST_GRACE_MS = 60_000;
 /** How often the live logs of tenants with a pr-triage run in flight are read and recorded, and how stale a shared read may be. */
 const TRIAGE_RECORD_MS = 2_000;
 const WORKER_FIRE_TIMEOUT_MS = 120_000;
+const GITHUB_CALLS_LOG_MS = 60_000;
 const WORKER_POLL_MS = 2_000;
 /** A tenant whose logs could not be read is left at most this long before the recording loop tries again. */
 const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
@@ -205,6 +213,11 @@ let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
 let coordinator: Coordinator | undefined;
 let e2bTender: ReturnType<typeof setInterval> | undefined;
+function logGithubCalls(): void {
+  const line = githubUsage.flush();
+  if (line) logJson(line);
+}
+const githubCallsLogger = setInterval(logGithubCalls, GITHUB_CALLS_LOG_MS);
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -214,6 +227,7 @@ async function shutdown(): Promise<void> {
   coalescer?.stop();
   coordinator?.stop();
   clearInterval(e2bTender);
+  clearInterval(githubCallsLogger);
   try {
     await local.shutdown();
   } finally {
@@ -342,7 +356,11 @@ const githubManifest = createGithubManifestIntegration({
   authorizeCredential: authorizePortal,
   stateSecret: env.BETTER_AUTH_SECRET,
 });
-const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: readPullToReview, log: logJson });
+const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
+const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
+const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
+const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: pullRequests.withDiff, log: logJson });
+const repoReads = createRepoReads(now);
 const githubPrActions = createGithubPrActions({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -350,10 +368,11 @@ const githubPrActions = createGithubPrActions({
   authorize: authorizePortal,
   readCheckPack,
   codeReviews: codeReviewRuns,
+  changed: repoReads.changed,
   log: logJson,
 });
-const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
 const githubPrDetails = createGithubPrDetails({
+  reads: repoReads,
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
@@ -363,6 +382,7 @@ const githubPrDetails = createGithubPrDetails({
 });
 
 const mergeStates = createMergeStates({
+  reads: repoReads,
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
@@ -405,7 +425,6 @@ async function sendTriageMail(job: TriageJob): Promise<void> {
   const routed = await routePrWorkflow({ ...job, workflow: workflowIdFor(job.workflow) });
   if (routed) await sendToWorker(routed);
 }
-const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
 async function codeReviewPlaced(tenantId: string): Promise<boolean> {
   return (await placeCodeReview(tenantId)) !== null;
@@ -430,13 +449,9 @@ async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
   }
   return [...sources];
 }
-const readPullRequest = createPullRequestReader({ tenantGithub, tenantBitbucket });
-function readPullToReview(tenantId: string, record: RepoRecord, number: number) {
-  return readPullRequest(tenantId, record, number);
-}
 const codeReviewFeed = createCodeReviewFeed({
   reviewed: reviewedSources,
-  read: readPullRequest,
+  read: pullRequests.withDiff,
   carries: codeReviewRuns.carries,
   send: sendToWorker,
   log: logJson,
@@ -448,11 +463,12 @@ const routePrWorkflow = createPrWorkflowRouter({
   live: async function variantLive(tenantId, workflow) {
     return (await resolveLiveDeployment(composition.db, tenantId, workflow)) !== null;
   },
-  readPull: readPullRequest,
+  readHead: pullRequests.head,
+  readPull: pullRequests.withDiff,
   log: logJson,
 });
 const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
-const tenantOpenPrs = createTenantOpenPrs(tenantSources);
+const tenantOpenPrs = keptOpenPrs(createTenantOpenPrs(tenantSources), repoReads);
 const openPullsCache = createOpenPullsCache(now);
 const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, db: composition.db, cipher: composition.credentialCipher, list: tenantOpenPrs, authorize: authorizePortal });
 const policyFile = createPolicyFile({
@@ -464,6 +480,7 @@ const policyFile = createPolicyFile({
   tenantGithub,
   tenantBitbucket,
   openPulls: memberOpenPulls,
+  changed: repoReads.changed,
   log: logJson,
 });
 const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
@@ -526,6 +543,7 @@ const observeTriageRuns = createTriageRuns({
 });
 const tenantVersions = createTenantVersions();
 const reconcilePolicy = triageReconcilePolicy(env);
+const repoActivity = createRepoActivity(now, { quietMs: TRIAGE_RELIST_QUIET_MS, graceMs: TRIAGE_RELIST_GRACE_MS });
 const runRecorder = createRunRecorder({ verdicts: verdictRecordStore, log: logJson });
 
 /**
@@ -593,6 +611,7 @@ function triageStack(triage: TriageWorkflow) {
     },
     rotation: { afterRuns: triageRotateAfterRuns(env), ...rotation },
     openHeadsFor: tenantOpenHeads,
+    activity: repoActivity,
     observeTenant: observer.observe,
     store: triageStateStore,
     readCheckPack,
@@ -629,10 +648,12 @@ async function recordAll() {
   for (const stack of recordings) await stack.recordPass.pass();
   return { retry: false };
 }
-async function reconcileAll() {
-  let retry = false;
-  for (const stack of stacks) if ((await stack.reconcile()).retry) retry = true;
-  return { retry };
+async function reconcileAll(): Promise<ReconcileOutcome> {
+  const outcomes: ReconcileOutcome[] = [];
+  for (const stack of stacks) outcomes.push(await stack.reconcile());
+  const retry = outcomes.some((outcome) => outcome.retry);
+  const limits = outcomes.flatMap((outcome) => outcome.retryAt ?? []);
+  return limits.length === 0 ? { retry } : { retry, retryAt: Math.min(...limits) };
 }
 recordLoop = createReconcileLoop(recordAll, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
@@ -732,6 +753,7 @@ coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendTriageMail,
   headChecks: tenantHeadChecks,
+  openHeadFor: tenantOpenHead,
   window: triageCoalesceWindow(env, reconcilePolicy),
   ciWait: reconcilePolicy,
   setTimer,
@@ -757,7 +779,9 @@ const bridge = createBridgeHandler({
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
   refreshPolicyFile,
+  heard: repoActivity.heard,
   startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
+  repoChanged: repoReads.changed,
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
   db: hookDeps.db,
@@ -768,6 +792,7 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   readCheckPack,
   recheckOpenPulls,
   refreshPolicyFile,
+  heard: repoActivity.heard,
 }));
 
 function decodeSegments(rest: string): string[] | null {

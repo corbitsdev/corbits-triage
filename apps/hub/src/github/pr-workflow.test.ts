@@ -14,15 +14,23 @@ const REVIEW = reviewRequestOf(RECORD, 8, PULL);
 
 function router(keys: string[], { live = true, read = async (): Promise<PullRequestToReview> => PULL } = {}) {
   const logged: Array<Record<string, unknown>> = [];
+  const diffsRead: number[] = [];
   const route = createPrWorkflowRouter({
     credentials: async () => keys,
     live: async () => live,
-    readPull: read,
+    async readHead() {
+      const { diff: _diff, ...head } = await read();
+      return head;
+    },
+    readPull(_tenantId, _record, number) {
+      diffsRead.push(number);
+      return read();
+    },
     log(entry) {
       logged.push(entry);
     },
   });
-  return { route, logged };
+  return { route, logged, diffsRead };
 }
 
 function job(policyWorkflow: PolicyWorkflow | undefined, kind = "pr", pauseLabel?: string): TriageJob {
@@ -86,6 +94,15 @@ test("a pull request carrying the pause label starts no run; one whose labels ca
   const sent = job(undefined, "pr", "bug");
   expect(await unread.route(sent)).toEqual(sent);
   expect(await router(["anthropic"]).route(job(undefined, "pr", "wip"))).toEqual(job(undefined, "pr", "wip"));
+});
+
+test("only code review reads the diff; a pause label alone reads the pull request without it", async () => {
+  const paused = router(["anthropic"]);
+  expect(await paused.route(job(undefined, "pr", "bug"))).toBeUndefined();
+  expect(await paused.route(job({ decide: DECIDE }, "pr", "wip"))).toMatchObject({ workflow: "pr-workflow-anthropic-github" });
+  expect(paused.diffsRead).toEqual([]);
+  await paused.route(job({ "code-review": { on: true } }, "pr", "wip"));
+  expect(paused.diffsRead).toEqual([8]);
 });
 
 test("a policy pr-triage runs, and a waiting mail, leave the job as it is", async () => {

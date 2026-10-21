@@ -210,3 +210,13 @@ export function paneBar(gate: PaneGate, base: string | null, author: string | nu
   const taken = [primary, ...rest].map((entry) => entry?.held);
   return { primary, rest, dos: dos.filter((pending) => !taken.includes(pending)) };
 }
+
+/** `entry` is the bar's button that carries the held action out, null for one with no button. */
+export type HeldChoice = { pending: PendingDo; entry: BarEntry | null };
+
+/** Every held action on the bar, the primary's included, so each can be read with its reason and hidden. */
+export function heldChoices(bar: PaneBar): HeldChoice[] {
+  const entries: BarEntry[] = bar.primary === null ? bar.rest : [bar.primary, ...bar.rest];
+  const carried = entries.flatMap((entry) => entry.held === null ? [] : [{ pending: entry.held, entry }]);
+  return [...carried, ...bar.dos.map((pending) => ({ pending, entry: null }))];
+}

@@ -11,7 +11,7 @@ import { codeReviewAgents, credentialBindingsFor } from "@corbits/pr-code-review
 import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
 import { codeReviewWorkflow } from "@corbits/pr-code-review/pr-code-review";
 import { stockTriggerMail } from "@corbits/triage-contracts";
-import { runLocalWorkflow } from "../../triage-workflows/evals/run-local.js";
+import { runLocalWorkflow } from "../../triage-workflows/src/run-local.js";
 import * as actions from "./actions/index.js";
 import { workflow as bitbucket } from "./pr-code-review-bitbucket-datacenter.js";
 import { workflow as github } from "./pr-code-review-github.js";

@@ -16,7 +16,8 @@ import { startBaseline, writeBaseline, type Stamp } from "./baseline.js";
 import { MODEL_CHECKS, SCORED, variant, type CaseInput, type Expected, type JudgeCase, type ModelCheck, type Scored } from "./cases.js";
 import { fixture, pullOf } from "./fixtures.js";
 import { addCost, costOf, priceKey, priceOf } from "./prices.js";
-import { PR_TRIAGE, runDefinition, type Definition, type Endpoint } from "./run-definition.js";
+import { PR_TRIAGE, type Definition } from "../src/run-local.js";
+import { runDefinition, type Endpoint } from "./run-definition.js";
 import { fixtureGithub, triggerMail } from "./serve.js";
 
 // The OpenCode Zen preset the production workspace's decision model uses.

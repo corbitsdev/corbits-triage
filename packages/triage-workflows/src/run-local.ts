@@ -10,7 +10,12 @@ import { createRuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import type { InferenceEvent } from "@intx/types/inference-events";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvokeRequest, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
 import { createWorkflowStepInvoker } from "@intx/workflow-host";
-import { delivered, grantsFor, localActionCredentials, type Bindings, type Fetch } from "../src/local-credentials.js";
+import { delivered, grantsFor, localActionCredentials, type Bindings, type Fetch } from "./local-credentials.js";
+import * as systemOne from "@corbits/system-one";
+import * as actions from "./actions/index.js";
+import { credentialBindings } from "./agents.js";
+import { triageJudgeDirector } from "./directors.js";
+import { workflow } from "./pr-triage.js";
 
 type Source = { id: string; provider: string; baseURL: string; credentialId: string; model: string; quirks?: Record<string, unknown> };
 
@@ -36,6 +41,34 @@ export interface RunLocalInput {
   clock?: () => Date;
 }
 
+/** A deployed definition and what its package supplies to run it. */
+export interface Definition {
+  workflow: RunLocalInput["workflow"];
+  directors: NonNullable<RunLocalInput["directors"]>;
+  actions: RunLocalInput["actions"];
+  credentialBindings: RunLocalInput["credentialBindings"];
+}
+
+export const PR_TRIAGE: Definition = { workflow, directors: [triageJudgeDirector.factory], actions, credentialBindings };
+
+export type Write = { method: string; path: string; body: unknown };
+
+/** GitHub served by `read` for reads; each write is recorded in `writes` and answered here, never passed on. */
+export function recordingGithub(read: (url: URL, init?: RequestInit) => Promise<Response>, writes: Write[]) {
+  return async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+    const url = new URL(input instanceof Request ? input.url : input);
+    const method = init?.method ?? "GET";
+    if (method === "GET") return read(url, init);
+    writes.push({ method, path: url.pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
+    return Response.json(url.pathname.endsWith("/labels") ? [] : { id: writes.length });
+  };
+}
+
+/** The adapter's module from this package's own dependencies, wherever the inference package is installed. */
+async function importSystemOne(): Promise<unknown> {
+  return systemOne;
+}
+
 /**
  * Runs a pr-* workflow body through Interchange's local runner with the production step invoker, agents, directors and
  * action credentials. Returns the finished run; callers read the outputs they score.
@@ -45,7 +78,7 @@ export async function runLocalWorkflow(input: RunLocalInput) {
   const grants = grantsFor(input.credentialBindings);
   const cell = delivered(input.credentialBindings, [{ credentialId: inference.credentialId, providerKey: "http", origin: inference.origin, secret: inference.apiKey }]);
   const providers = createCredentialProviderRegistry([createHttpCredentialProvider({ fetch: input.github })]);
-  const adapters = await loadAdapterRegistry([{ provider: "corbits-system-one", specifier: "@corbits/system-one", export: "createSystemOneAdapterFactory" }]);
+  const adapters = await loadAdapterRegistry([{ provider: "corbits-system-one", specifier: "@corbits/system-one", export: "createSystemOneAdapterFactory" }], { import: importSystemOne });
   const directors = createWorkflowDirectorRegistry(input.directors ?? []);
   const root = mkdtempSync(join(tmpdir(), "workflow-run-"));
 

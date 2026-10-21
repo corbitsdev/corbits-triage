@@ -21,8 +21,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   - **GitHub bridge**: verifies GitHub's HMAC on `/api/hooks/*`, updates the
     tenant's repository list from installation events, and hands pull
     request, review, comment, `check_run` and `check_suite` events to the
-    coalescer. A pull request merged into the default branch marks the
-    repository's other triaged heads `stale`; a push to the default branch
+    coalescer. A check event does not say whether its pull request is a
+    draft or still open, so a window of check events alone reads that once
+    at its flush rather than once per delivery. A pull request merged into
+    the default branch marks the repository's other triaged heads `stale`; a push to the default branch
     that touches the policy file reads it again. Bitbucket Data Center has a
     provider hook of its own (`apps/hub/src/provider-hooks`). Both verify with
     `@corbits/common/x-hub-signature`, the scheme `@corbits/webhooks` 0.4 adds
@@ -62,7 +64,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   - **Reconciler**: one per host. On an interval it compares each enabled
     repository's open pull requests with the run logs and stored state, and
     re-queues every head without a verdict, and every stale head at most once
-    per 15 minutes, under a per-tenant in-flight cap. It reads the CI of every
+    per 15 minutes, under a per-tenant in-flight cap. A repository's open pull
+    requests are listed again only once a webhook named it, until a minute
+    after that webhook since the host's listing can trail it, or its last
+    listing is 30 minutes old. Once its webhook heard nothing for 30 minutes
+    (on GitHub the App's, for every repository; on Bitbucket the repository's
+    own) it is listed every pass. It reads the CI of every
     `waiting` head and queues it once CI finished or its wait ran out; this
     releases Bitbucket heads, whose builds send no webhook, and any head whose
     `check_run` never arrived. Moving a head from `waiting` to `queued` is a
@@ -106,6 +113,25 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     `unstable` or `has_hooks`, Bitbucket `canMerge`); anything else not
     explained is "Checking merge state". Pull request actions are synchronous: a maintainer's click
     must not wait on a workflow spin-up.
+    GitHub's answers to open pull requests, details and merge states are
+    shared by the workspace and kept per repository until a GitHub webhook
+    about it, or the hub's own write to it, arrives; check and push events
+    leave the open pull request listing kept. A lost webhook costs at most
+    `KEPT_MS` in `src/github/repo-reads.ts`: longer for the listing, short
+    for details and merge states, which also follow commit statuses the App
+    is not sent. A mergeability GitHub has not worked out yet, or a block
+    without its review decision, is never kept, and at most `MAX_KEPT` reads
+    are kept. Bitbucket Data Center is read live.
+  - **GitHub calls**: every hub request to GitHub passes one gate. It logs a
+    `github_calls` line each minute with the calls by route and installation
+    and the last rate limit GitHub reported. Once GitHub rate limits an
+    installation, the gate refuses that installation's requests without
+    calling GitHub until the reset; a request that names no installation is
+    counted but never refused. Routes answer 503 `github_rate_limited` with
+    `Retry-After`. The reconciler logs the limit once and schedules a pass for
+    the reset; earlier passes make no calls to that installation. A webhook
+    whose pull request or CI cannot be read for the limit is not mailed; its
+    head is left for the reconciler.
 - **Sidecars**: one per live deployment, started by the hub's
   `SidecarProvisioner`s. The local-process provisioner runs child processes
   on the hub's machine, restores them on boot and declines a placement while

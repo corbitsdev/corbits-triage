@@ -1,10 +1,6 @@
 import type { WorkflowAuthorizeFn } from "@intx/workflow";
-import * as actions from "../src/actions/index.js";
-import { credentialBindings } from "../src/agents.js";
-import { triageJudgeDirector } from "../src/directors.js";
 import type { Verdict } from "../src/logic/render.js";
-import { workflow } from "../src/pr-triage.js";
-import { runLocalWorkflow, type RunLocalInput } from "./run-local.js";
+import { recordingGithub, runLocalWorkflow, type Definition, type RunLocalInput, type Write } from "../src/run-local.js";
 
 const INFERENCE_CREDENTIAL = "system-one";
 
@@ -14,28 +10,16 @@ export interface Endpoint {
   model: string;
 }
 
-/** A deployed definition and what its package supplies to run it. */
-export interface Definition {
-  workflow: RunLocalInput["workflow"];
-  directors: NonNullable<RunLocalInput["directors"]>;
-  actions: RunLocalInput["actions"];
-  credentialBindings: RunLocalInput["credentialBindings"];
-}
-
-export const PR_TRIAGE: Definition = { workflow, directors: [triageJudgeDirector.factory], actions, credentialBindings };
-
 interface RunDefinitionInput {
   definition: Definition;
   /** GitHub's reads; writes are recorded and answered here, never passed on. */
-  fetch: (url: URL) => Promise<Response>;
+  fetch: (url: URL, init?: RequestInit) => Promise<Response>;
   apiKey: string;
   endpoint: Endpoint;
   triggerPayload: unknown;
   onEvent?: RunLocalInput["onEvent"];
   onStepDone?: RunLocalInput["onStepDone"];
 }
-
-type Write = { method: string; path: string; body: unknown };
 
 const logged = new Set<string>();
 
@@ -51,16 +35,6 @@ const loggedAuthorize: WorkflowAuthorizeFn = async function loggedAuthorize(reso
   }
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
 };
-
-export function recordingGithub(read: RunDefinitionInput["fetch"], writes: Write[]) {
-  return async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-    const url = new URL(input instanceof Request ? input.url : input);
-    const method = init?.method ?? "GET";
-    if (method === "GET") return read(url);
-    writes.push({ method, path: url.pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
-    return Response.json(url.pathname.endsWith("/labels") ? [] : { id: writes.length });
-  };
-}
 
 /**
  * Runs the deployed definition's body locally: GitHub is `fetch`, and the judge calls `endpoint`. Returns what evaluate

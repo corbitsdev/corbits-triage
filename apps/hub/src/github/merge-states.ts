@@ -5,10 +5,12 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
-import { readMergeStates } from "@corbits/github-reads";
+import { readMergeStates, type MergeState } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
+import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
+import type { RepoReads } from "./repo-reads.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
 import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
@@ -23,7 +25,7 @@ const MAX_NUMBER = 2 ** 31 - 1;
 
 const BITBUCKET_CONCURRENCY = 10;
 
-export function createMergeStates(deps: SourceFetchDeps & { log: (entry: Record<string, unknown>) => void }) {
+export function createMergeStates(deps: SourceFetchDeps & { reads: RepoReads; log: (entry: Record<string, unknown>) => void }) {
   const sourceFetch = createSourceFetch(deps);
 
   async function bitbucketMergeState(bb: bitbucket.BitbucketFetch, repo: string, number: number) {
@@ -50,6 +52,10 @@ export function createMergeStates(deps: SourceFetchDeps & { log: (entry: Record<
     const numbers = [...new Set(query.numbers.split(",").map(Number))];
     if (numbers.length > MAX_MERGE_STATES) return failure(400, "invalid_request", `Ask about at most ${MAX_MERGE_STATES} pull requests at once.`);
     if (numbers.some((number) => number > MAX_NUMBER)) return failure(400, "invalid_request", `A pull request number is at most ${MAX_NUMBER}.`);
+    /** GitHub works mergeability out after a change without a webhook saying it is done, so a read still missing one is read again. */
+    function everyNumberKnown(states: MergeState[]): boolean {
+      return numbers.every((number) => states.some((state) => state.number === number && (!state.open || state.mergeable !== null)));
+    }
 
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
@@ -61,12 +67,18 @@ export function createMergeStates(deps: SourceFetchDeps & { log: (entry: Record<
     try {
       const source = await sourceFetch(tenantId, principalId, record);
       if (!source) throw new Error(`no readable ${sourceOf(record)} credential`);
-      if ("gh" in source) return Response.json({ prs: await readMergeStates(source.gh, record.name, numbers) });
+      if ("gh" in source) {
+        const { gh } = source;
+        const prs = await deps.reads.read({ scope: "all", tenantId, repo: record.name, key: `merge-states:${numbers.toSorted((a, b) => a - b).join(",")}`, usable: everyNumberKnown }, function readNow() {
+          return readMergeStates(gh, record.name, numbers);
+        });
+        return Response.json({ prs });
+      }
       return Response.json({ prs: await bitbucketMergeStates(source.bb, record.name, numbers) });
     } catch (err) {
       const message = errorText(err);
       deps.log({ level: "warn", msg: "merge_states_failed", tenantId, repo: query.repo, error: message });
-      return failure(502, "source_failed", `Could not read merge states for ${query.repo} from ${sourceOf(record)}: ${message}.`);
+      return githubLimited(err) ?? failure(502, "source_failed", `Could not read merge states for ${query.repo} from ${sourceOf(record)}: ${message}.`);
     }
   };
 }

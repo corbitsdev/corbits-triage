@@ -52,15 +52,15 @@ You use Corbits Triage through a website called the portal. Your administrator w
 
 Open the portal address. You will see the sign-in screen.
 
-![The sign-in screen: an email field, a password field, a Sign in button and a link to create an account](images/01.png)
+![The sign-in screen: an email field, a password field, a Continue button, a Continue with Google button and a link to create an account](images/01.png)
 
-Type your email address and password and press **Sign in**. If your organization uses Google sign-in, a **Google** button appears instead of, or below, the password fields. If the sign-in screen shows **Forgot password?**, use it to reset a forgotten password.
+Type your email address and password and press **Continue**. If your organization uses Google sign-in, a **Continue with Google** button appears instead of, or below, the password fields. If the sign-in screen shows **Forgot password?**, use it to reset a forgotten password.
 
 To keep the portal on your home screen or desktop, use your browser's **Install** or **Add to Home Screen** option; it then opens in its own window like an app.
 
 ### Creating an account
 
-If you are the first person from your team, click **Sign up for an account**. The form asks for your name, your email address and a password.
+If you are the first person from your team, click **Create an account** below the sign-in box. The form asks for your name, your email address and a password.
 
 ![The create-account form with Name, Email and Password fields](images/02.png)
 
@@ -68,7 +68,7 @@ Unless you are the first person to use this Corbits Triage, you then see **Verif
 
 ![Verify your email on a server that cannot send email: Ask whoever runs this Triage to verify your address, with a Sign out button](images/46.png)
 
-Creating an account also creates a **workspace**, the shared space your whole team will use. Invite teammates from Settings to join yours. If someone has already invited you, open the link in the invitation email instead of creating an account from scratch. Someone who signs in without an invitation gets a workspace of their own; inviting them later adds yours, and they switch between the two from the workspace switcher at the bottom left of the sidebar, just above your name. Its first entry, **+ New workspace**, creates another empty workspace of your own.
+Creating an account also creates a **workspace**, the shared space your whole team will use. Invite teammates from Settings to join yours. If someone has already invited you, open the invite link they sent instead of creating an account from scratch. Someone who signs in without an invitation gets a workspace of their own; inviting them later adds yours, and they switch between the two from the workspace switcher at the bottom left of the sidebar, just above your name. Its last entry, **New workspace**, creates another empty workspace of your own.
 
 ### First-time setup
 
@@ -209,15 +209,15 @@ If the file has a mistake, each problem names its line and what the value must b
 
 #### Checking the file in pull requests
 
-On GitHub, a mistake in the file can be caught before it reaches the default branch. Add this workflow to the repository as `.github/workflows/corbits-triage-policy.yml`:
+On GitHub, a mistake in the file can be caught before it reaches the default branch, and each pull request can be checked against the rules that need no model. Add this workflow to the repository as `.github/workflows/corbits-triage-policy.yml`:
 
 ```yaml
 name: Corbits Triage policy
-on:
-  pull_request:
-    paths: [".corbits-triage.yml", ".corbits-triage.yaml"]
+on: pull_request
 permissions:
+  checks: read
   contents: read
+  pull-requests: read
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -228,7 +228,9 @@ jobs:
       - uses: corbitsdev/corbits-triage/packages/policy-check-action@main
 ```
 
-Each pull request that changes the file then gets a **Corbits Triage policy / check** check. It reads the file exactly as Triage does and fails if Triage could not read it. Each problem is marked on its line in the pull request's **Files changed**, or on the file as a whole when it has no line. It needs no Triage account and no secrets, and sets up its own Bun for the job. `@main` will be replaced by a release tag with the first pre-release.
+Each pull request then gets a **Corbits Triage policy / check** check. It reads the file exactly as Triage does and fails if Triage could not read it. Each problem is marked on its line in the pull request's **Files changed**, or on the file as a whole when it has no line.
+
+It also runs the rules that need no model, from the policy on the branch the pull request merges into, such as size, linked issue, merge conflicts and forbidden paths, against the pull request. Each failed rule shows as an error when its failure means Fail, and as a warning otherwise, and the run's summary lists every rule with its result and how many passed. Rules a model answers, such as **focused** or your own written rules, show as skipped, and so does **CI must pass before merge**, since the check is itself still running. A policy that uses `extends` is not checked, and one Triage cannot read shows a warning instead. The check fails when a rule whose failure means Fail fails. It only reads the pull request, never posts to it, and works on pull requests from forks. It needs no Triage account and no secrets, and sets up its own Bun for the job. `@main` will be replaced by a release tag with the first pre-release.
 
 #### Browser extension
 
@@ -363,7 +365,9 @@ The dark strip on the left is the same on every page:
 
 When a newer version of Corbits Triage is released while the portal is open, a notice at the top says **A new version of Corbits Triage is available.** Press **Reload** to switch to it; the page never reloads on its own.
 
-Each view has a search box and a **Filter** button. **Needs you** and **All open** add quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
+Each view with pull requests in it has a search box and a **Filter** button. **Needs you** and **All open** add quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
+
+On a phone the strip becomes a bar at the bottom of the screen with **Needs you**, **Ready**, **All open**, **Repos** and **Settings**; tap the counters for Pulse. Each row shows the title on its own line, with the number, status and age beneath it.
 
 ### Needs you
 
@@ -373,7 +377,7 @@ Pull requests are grouped by what you need to do: **Unblock** for ones that are 
 
 A pull request whose first triage run failed is under **Failed** and says **Couldn't triage**. Its pane says why, such as **Couldn't triage: the run failed**, and **Triage again** tries once more.
 
-Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval or a held action waiting always stays, drafts and ones waiting on the author included, until you approve the action or click **Hide for me** in its pane or on its page, which hides it in this browser only. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back.
+Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval or a held action waiting always stays, drafts and ones waiting on the author included, until you approve the action or click **Hide for me** in its pane or on its page, which hides it in this browser only. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back. When nothing needs you, the list says **Inbox zero**, with **Show 7 waiting** (or however many there are) to open Waiting.
 
 ![The Waiting view grouped by Waits on: two drafts under Waits on author, one of them checked by Triage before it became a draft, and a pull request under Waits on CI. The pane shows the draft, Draft · waiting on @ivan-p](images/37.png)
 
@@ -413,7 +417,7 @@ Expanding **rules passed** shows every rule with a short note on why it passed, 
 
 ### Taking action
 
-The bar at the bottom of the pane always offers the next step first. For a passing pull request that is **Merge**, for a failing one it is **Request changes**, and for an unsure one it is usually **Comment** or **Approve**. Every other action is a button beside it. An action the repository's policy held for you shares the button for doing it yourself when it does exactly the same, so clicking **Approve** carries out the held approval. Any other held action gets its own button: adding a label, a merge off a fail or unsure verdict, which says so, and a held comment or change request, which shows the start of what it posts, such as **Comment "Please split this."**. **Hide for me** hides the held actions in this browser only.
+The bar at the bottom of the pane always offers the next step first. For a passing pull request that is **Merge**, for a failing one it is **Request changes**, and for an unsure one it is usually **Comment** or **Approve**. **Edit feedback** and every other action sit beside it as buttons. Actions the repository's policy held for you are behind one button that counts them, such as **2 held actions**; it lists each with why Triage suggests it, and choosing one approves it. When the next step is itself a held action, such as a held **Merge** on a passing pull request, its button also says **held for you**, clicking it approves the held action, and the action is listed with the others. The list names what each does: adding a label, a merge off a fail or unsure verdict, which says so, and a held comment or change request, which shows the start of what it posts, such as **Comment "Please split this."**. **Hide for me** at the end of the list hides the held actions in this browser only. On a phone the next step spans the width, with **Edit feedback**, the held actions and **More**, which holds the other actions, on one row under it.
 
 - **Merge** merges the exact commit Triage checked. If the author pushes a new commit in the meantime, the merge is refused and Triage checks the new commit first. Merge is off while GitHub or Bitbucket would not merge the pull request, here and on the pull request's own page, which shows the reason beside its status, such as **Merge blocked · Waiting for a required review**. If the host refuses a merge anyway, the message gives its reason.
 - **Request changes** sends the author a review listing the rules they need to fix. When they fix them, Triage withdraws the request on its own.
@@ -492,9 +496,9 @@ The row says **Key stored** or **No key**. With no key, its form is open below i
 
 Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine**, **Docker on another machine (TLS)** **E2B sandboxes** and **Railway Sandboxes**, each with a line on why you would choose it. Code review never runs inside Triage itself. It runs in the first place in the list, in the order shown, that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
 
-Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins also see why it is failing. Under a place that is not set up or failing are the lines to add to the Triage server's `.env`, with **Copy**, and its **Setup guide**. Add them, restart the server, and the place turns **Ready** or **In use**. For **Docker on another machine (TLS)**, the lines carry the certificates themselves, each as one line of base64, so nothing is copied onto the server's disk; its setup guide shows how to make them.
+Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins also see why it is failing. Under a failing place are the lines to add to the Triage server's `.env`, with **Copy**, and its **Setup guide**; under a place that is not set up, press **How to set it up** to show them. Add them, restart the server, and the place turns **Ready** or **In use**. For **Docker on another machine (TLS)**, the lines carry the certificates themselves, each as one line of base64, so nothing is copied onto the server's disk; its setup guide shows how to make them.
 
-![Where it runs on a server with no place set up: Docker on this machine and Docker on another machine (TLS), both Not set up, each with its setup lines and Setup guide](images/44.png)
+![Where it runs on a server with no place set up: Docker on this machine and Docker on another machine (TLS), both Not set up, each with How to set it up](images/44.png)
 
 ### People
 

@@ -1,4 +1,5 @@
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
+import { useMediaQuery } from "./media-query.ts";
 import { useSession } from "./session.tsx";
 
 export type DiffLayout = "stacked" | "split";
@@ -26,23 +27,13 @@ function writeLayout(userId: string, layout: DiffLayout) {
   }
 }
 
-function subscribeSplitQuery(onChange: () => void) {
-  const query = window.matchMedia(SPLIT_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
-}
-
-function splitFits(): boolean {
-  return window.matchMedia(SPLIT_QUERY).matches;
-}
-
 export function useDiffLayout() {
   const { session } = useSession();
   if (!session) throw new Error("The diff layout needs a signed-in user.");
   const userId = session.id;
   const [stored, setStored] = useState(() => ({ userId, layout: readLayout(userId) }));
   const layout = stored.userId === userId ? stored.layout : readLayout(userId);
-  const fits = useSyncExternalStore(subscribeSplitQuery, splitFits);
+  const fits = useMediaQuery(SPLIT_QUERY);
   function choose(next: DiffLayout) {
     setStored({ userId, layout: next });
     writeLayout(userId, next);
