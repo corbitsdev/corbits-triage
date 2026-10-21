@@ -279,14 +279,14 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     GITHUB_MANIFEST_CALLBACK_PATH,
     describeRoute({
       summary: "GitHub App manifest callback",
-      description: "GitHub redirects here with a one-time code; answers with a redirect to the portal or an HTML error page.",
+      description: "GitHub redirects here with a one-time code; answers with a redirect to the new App's GitHub install page or an HTML error page.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "state", required: true, schema: { type: "string" } },
         { in: "query", name: "code", required: true, schema: { type: "string" } },
       ],
       responses: {
-        303: { description: "Setup completed; redirects to the portal" },
+        303: { description: "Setup completed; redirects to GitHub to choose repositories" },
         400: html("Setup could not be verified or completed"),
         401: html("Not signed in"),
         403: html("Not allowed to complete setup"),
