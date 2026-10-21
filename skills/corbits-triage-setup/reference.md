@@ -27,9 +27,9 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | `max-additions` | `max:` whole number ≥ 1 (required) | no | Fails over `max` lines added. |
 | `max-deletions` | `max:` whole number ≥ 1 (required) | no | Fails over `max` lines deleted. |
 | `no-merge-conflicts` | none | no | Fails when the pull request conflicts with its base. |
-| `ci-green` | none | no | Fails when checks fail; unconfirmed while they run; passes when there are no checks. |
+| `ci-green` | none | no | Fails when checks fail; unconfirmed while they run or when one was cancelled or went stale; a skipped check passes; passes when there are no checks. Only the newest run of each check counts. |
 | `linked-issue` | `tracker:` `github`, `linear` or `either` (optional, default `either`) | no | Fails unless the title, description, a commit or the branch name references an issue. `github` reads `#123`, GitHub issue links and branches like `123-title`; `linear` reads any key like `ABC-123` (so Jira keys match too), Linear links and branches like `abc-123-title` in any case. |
-| `no-forbidden-paths` | `paths:` list of 1–50 globs (required) | no | Fails when any changed file matches; for every author, maintainers too. `*` stays within a folder, `**` crosses folders. |
+| `no-forbidden-paths` | `paths:` list of 1–50 globs (required) | no | Fails when any changed file matches; for every author, maintainers too. `*` stays within a folder, `**` crosses folders, and `**/` also matches no folder. |
 | `conventional-commits` | `types:` list of words (optional, default `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `ci`, `build`, `style`, `revert`); `fields:` `title`, `commits` or both (optional, default both) | no | Fails unless the title and each commit's first line (first 100 commits) start `type: `, `type(scope): ` or `type!: ` with a listed type, in any case. Merges and `Revert "…"` commits are skipped. |
 | `hidden-content` | none | no | Fails when the title, description, a commit message or a changed path hides text: two or more invisible characters together, Unicode tag characters other than the England, Scotland and Wales flags, variation selectors that change nothing shown (a lone emoji-style one is allowed), bidi overrides or isolates (not the embeddings and marks RTL text uses), or a link with no visible content. On GitHub it also fails when a comment, `[//]: #` definition or other hidden markup the author added to the description speaks to a model, such as "ignore previous instructions", or holds those characters; a comment exactly as the repository's pull request templates (or, with none, its organisation's `.github` repository's) have it is skipped. Bitbucket Data Center checks the characters only. Names what it found and where, never the text. Misses paraphrased, look-alike-letter, entity-encoded or split instructions. |
 | `focused` | none | yes | The decision model checks the change is focused on one thing. |
@@ -45,7 +45,7 @@ At most 8 in total. `id` is lowercase letters, digits and single hyphens, at mos
   - `failWhen`: `contains` (fail when any field has any phrase) or `not-contains` (fail when a field has none of them).
   - `phrases`: 1–50 strings.
 
-A model rule costs one model request per pull request and needs a decision model set up in Corbits Triage (Settings → Models). Rules without a model always give the same answer for the same pull request and cost nothing.
+A model rule costs one model request per pull request and needs a decision model set up in Corbits Triage (Settings → Triage → Decision model). Rules without a model always give the same answer for the same pull request and cost nothing.
 
 ### When to add
 
@@ -111,7 +111,9 @@ labels:
 
 ## Blocks and decide
 
-Triage checks these keys but does not act on them yet; write them only when the user asks. A file holds `decide` or `actions`, never both.
+Write these only when the user asks. A file holds `decide` or `actions`, never both.
+
+A file with a block on, or its own `decide`, runs the PR workflow: triage, then code review, then `decide` once. The file then decides code review for the repository, whatever its Code review switch says. It needs the workspace's Anthropic key and a place for code review to run; without them triage runs alone and approve and merge wait for a person. Only `code-review` with provider `anthropic` runs today; with `security` or `deslop` on, approve and merge also wait for a person. `pace` and `pauseLabel` don't act yet.
 
 ```yaml
 groups:
@@ -120,12 +122,8 @@ code-review:
   on: true
   for: [maintainers]
   when: { paths: ["!**/*.md", "!**/*.lock", "!**/package-lock.json", "!**/pnpm-lock.yaml"] }
-  provider: anthropic
-security:
-  on: true
-  when: { triage: pass, paths: ["src/**"] }
   clean: { below: medium }
-deslop: { on: false }
+  provider: anthropic
 pace: { debounce: 30s, maxWait: 2m, perHead: 1, cap: { runs: 5, per: 24h }, backoff: { pushes: 5, within: 10m, pause: 30m } }
 pauseLabel: "corbits: pause"
 decide:
@@ -139,7 +137,7 @@ decide:
   - `on`: `true` or `false` (required).
   - `for`: list of groups; default everyone.
   - `when`: `triage` (`pass`, `fail`, `unsure` or a list of them) and `paths` (globs; any changed file matching is enough). A glob starting with `!` leaves out the files it matches; with only `!` globs, every other file matches. A renamed file counts under its old and new path. When Triage can't read every changed file, the block is recorded as unfinished (`incomplete`), never skipped. When the user asks to turn on `code-review`, suggest skipping pull requests that change only Markdown docs or lockfiles (`*.lock`, which covers `bun.lock`, plus `package-lock.json` and `pnpm-lock.yaml`), as in the example.
-  - `clean`: `below` (`low`, `medium`, `high` or `critical`), `minConfidence` (0 to 1), `coverage: full`.
+  - `clean`: `below` (`low`, `medium`, `high` or `critical`); findings below it don't count. `minConfidence` and `coverage` are refused.
   - `provider`: `anthropic`, `openai`, `xai`, `google`, `opencode` or `custom`. Every block that is on and names one must name the same.
 - `pace`: `debounce`, `maxWait` (durations of at least 1, such as `30s`, `2m`, `24h`, `7d`), `perHead` (whole number ≥ 1), `cap: { runs, per }`, `backoff: { pushes, within, pause }`.
 - `pauseLabel`: a label of at most 50 characters.
