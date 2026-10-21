@@ -2,7 +2,7 @@
 // host's pr-code-review once, through the same send path as triage, in a worker of its own.
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readPr, readPrDiff, type GithubFetch } from "@corbits/github-reads";
-import type { RepoSource } from "@corbits/triage-contracts";
+import { shownBody, visibleText, type RepoSource } from "@corbits/triage-contracts";
 import type { TenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { filesFrom } from "./diff-files.js";
 import type { TriageJob } from "./github/coordinator.js";
@@ -55,20 +55,28 @@ type PullRequestReaderDeps = {
   tenantBitbucket: TenantBitbucket;
 };
 
+/** The title and description as the host shows them, as triage reads them. */
+function shown(pr: { title: string; body?: string | null; bodyHtml?: string | null }, source: RepoSource, name: string, number: number) {
+  const description = shownBody(pr, source);
+  if (description === undefined) throw new Error(`${name}#${number}: the host returned no rendered body`);
+  return { title: visibleText(pr.title), description };
+}
+
 /** Reads a pull request and its diff as the tenant's GitHub App or Bitbucket Data Center token. */
 export function createPullRequestReader(deps: PullRequestReaderDeps) {
   return async function readPullRequest(tenantId: string, record: RepoRecord, number: number): Promise<PullRequestToReview> {
-    if (sourceOf(record) === "bitbucket-datacenter") {
+    const source = sourceOf(record);
+    if (source === "bitbucket-datacenter") {
       const bb = await deps.tenantBitbucket(tenantId);
       if (!bb) throw new Error(`no Bitbucket Data Center token for ${record.name}`);
       const [pr, diff] = await Promise.all([bitbucket.getPr(bb, record.name, number), bitbucket.readPrDiff(bb, record.name, number)]);
-      return { title: pr.title, description: pr.body ?? "", headSha: pr.sha, draft: pr.draft, open: pr.state === "open", diff };
+      return { ...shown(pr, source, record.name, number), headSha: pr.sha, draft: pr.draft, open: pr.state === "open", diff };
     }
     const app = await deps.tenantGithub(tenantId);
     if (!app) throw new Error(`no GitHub App credential for ${record.name}`);
     const gh = forInstallation(app, record.installationId);
     const [pr, diff] = await Promise.all([readPr(gh, record.name, number), readPrDiff(gh, record.name, number)]);
-    return { title: pr.title, description: pr.body ?? "", headSha: pr.sha, draft: pr.draft === true, open: pr.state === "open", diff };
+    return { ...shown(pr, source, record.name, number), headSha: pr.sha, draft: pr.draft === true, open: pr.state === "open", diff };
   };
 }
 

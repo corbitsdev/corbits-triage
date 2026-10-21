@@ -8,6 +8,7 @@ import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readMergeStates, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
+import { shownBody, visibleText } from "@corbits/triage-contracts";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
@@ -37,7 +38,10 @@ async function githubDetails(gh: GithubFetch, repo: string, number: number, log:
     listPrCommits(gh, repo, number),
     listIssueComments(gh, repo, number),
   ]);
-  const text = [pr.title ?? "", pr.body ?? "", ...commits.map((c) => c.message)].join("\n");
+  const body = shownBody(pr, "github");
+  if (body === undefined) throw new Error("GitHub returned no rendered body");
+  // Referenced issues are found only in text a reader sees, as triage reads it.
+  const text = [visibleText(pr.title ?? ""), body, ...commits.map((c) => visibleText(c.message))].join("\n");
   const [issues, checks, reviews, reviewDecision] = await Promise.all([
     listReferencedIssues(gh, repo, number, text),
     getChecks(gh, repo, pr.sha),

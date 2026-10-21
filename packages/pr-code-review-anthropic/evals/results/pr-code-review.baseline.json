@@ -25,11 +25,11 @@
   },
   "usage": {
     "anthropic/claude-haiku-5-5": {
-      "input": 666,
-      "output": 261529,
-      "cacheRead": 3897328,
-      "cacheWrite": 1230677,
-      "costUsd": 0.3746,
+      "input": 636,
+      "output": 248058,
+      "cacheRead": 3261789,
+      "cacheWrite": 1195972,
+      "costUsd": 0.3235,
       "price": {
         "source": "https://www.anthropic.com/pricing",
         "asOf": "2026-10-16",
@@ -52,10 +52,10 @@
     },
     "anthropic/claude-opus-5-5": {
       "input": 100,
-      "output": 49167,
+      "output": 49953,
       "cacheRead": 12456,
-      "cacheWrite": 356573,
-      "costUsd": 2.7691,
+      "cacheWrite": 355730,
+      "costUsd": 2.7806,
       "price": {
         "source": "https://www.anthropic.com/pricing",
         "asOf": "2026-10-16",
@@ -80,7 +80,7 @@
         {
           "path": "linera-core/src/updater.rs",
           "line": 180,
-          "priority": 1,
+          "priority": 2,
           "bug": "b1"
         },
         {
@@ -103,32 +103,26 @@
           "line": 184,
           "priority": 2,
           "bug": "b1"
-        },
-        {
-          "path": "src/agent/tasks.ts",
-          "line": 82,
-          "priority": 2
-        },
-        {
-          "path": "src/agent/codex-tool-proxies.test.ts",
-          "line": 95,
-          "priority": 3
         }
       ]
     },
     {
       "id": "code-1248",
       "failed": false,
-      "caught": [
+      "caught": [],
+      "missed": [
         "b1"
       ],
-      "missed": [],
       "findings": [
         {
           "path": "src/session/compaction-handoff.ts",
-          "line": 160,
-          "priority": 2,
-          "bug": "b1"
+          "line": 167,
+          "priority": 2
+        },
+        {
+          "path": "src/session/compaction-handoff.ts",
+          "line": 186,
+          "priority": 2
         }
       ]
     },
@@ -139,29 +133,22 @@
         "b1",
         "b2",
         "b3",
-        "b4"
-      ],
-      "missed": [
+        "b4",
         "b5"
       ],
+      "missed": [],
       "findings": [
         {
           "path": "src/agent/apply-patch-tool.ts",
-          "line": 66,
+          "line": 73,
+          "priority": 0,
+          "bug": "b3"
+        },
+        {
+          "path": "src/agent/tool-search.ts",
+          "line": 171,
           "priority": 1,
-          "bug": "b2"
-        },
-        {
-          "path": "src/agent/apply-patch-tool.ts",
-          "line": 55,
-          "priority": 2,
-          "bug": "b2"
-        },
-        {
-          "path": "src/agent/apply-patch-tool.ts",
-          "line": 93,
-          "priority": 2,
-          "bug": "b2"
+          "bug": "b5"
         },
         {
           "path": "src/agent/apply-patch-tool.ts",
@@ -170,16 +157,21 @@
           "bug": "b1"
         },
         {
+          "path": "src/agent/apply-patch-tool.ts",
+          "line": 58,
+          "priority": 2,
+          "bug": "b2"
+        },
+        {
+          "path": "src/agent/apply-patch-tool.ts",
+          "line": 98,
+          "priority": 2
+        },
+        {
           "path": "src/subagent/run.ts",
           "line": 813,
           "priority": 2,
           "bug": "b1"
-        },
-        {
-          "path": "src/agent/apply-patch-tool.ts",
-          "line": 50,
-          "priority": 3,
-          "bug": "b2"
         }
       ]
     },
@@ -187,49 +179,44 @@
       "id": "code-618",
       "failed": false,
       "caught": [
-        "b1",
         "b2"
       ],
       "missed": [
+        "b1",
         "b3",
         "b4"
       ],
       "findings": [
         {
           "path": "src/subagent/run.ts",
-          "line": 801,
-          "priority": 1
-        },
-        {
-          "path": "src/subagent/agent-fleet.ts",
-          "line": 469,
+          "line": 921,
           "priority": 1
         },
         {
           "path": "src/subagent/session-store.ts",
-          "line": 691,
+          "line": 683,
           "priority": 1,
           "bug": "b2"
         },
         {
           "path": "src/subagent/session-store.ts",
-          "line": 384,
-          "priority": 1,
-          "bug": "b1"
+          "line": 670,
+          "priority": 2,
+          "bug": "b2"
         },
         {
           "path": "src/subagent/session-store.ts",
-          "line": 369,
+          "line": 703,
           "priority": 2
         },
         {
           "path": "src/subagent/run.ts",
-          "line": 811,
-          "priority": 3
+          "line": 801,
+          "priority": 2
         },
         {
           "path": "src/subagent/session-store.ts",
-          "line": 671,
+          "line": 677,
           "priority": 3,
           "bug": "b2"
         }
@@ -244,26 +231,26 @@
       "missed": [],
       "findings": [
         {
-          "path": "src/auth/oauth/store.ts",
-          "line": 129,
-          "priority": 1,
-          "bug": "b1"
-        },
-        {
           "path": "src/auth/oauth/session.ts",
           "line": 57,
           "priority": 1
         },
         {
           "path": "src/auth/oauth/store.ts",
-          "line": 112,
-          "priority": 2
+          "line": 146,
+          "priority": 2,
+          "bug": "b1"
         },
         {
           "path": "src/auth/oauth/store.ts",
-          "line": 146,
-          "priority": 3,
+          "line": 145,
+          "priority": 2,
           "bug": "b1"
+        },
+        {
+          "path": "src/auth/oauth/store.ts",
+          "line": 48,
+          "priority": 2
         }
       ]
     },
@@ -277,12 +264,22 @@
       "findings": [
         {
           "path": "CONTRIBUTING.md",
+          "line": 66,
+          "priority": 2
+        },
+        {
+          "path": "CONTRIBUTING.md",
           "line": 48,
           "priority": 2
         },
         {
-          "path": "plugins/corbits-skills/skills/review/SKILL.md",
-          "line": 262,
+          "path": "plugins/corbits-skills/skills/style/SKILL.md",
+          "line": 107,
+          "priority": 2
+        },
+        {
+          "path": "CONTRIBUTING.md",
+          "line": 215,
           "priority": 2
         },
         {
@@ -291,13 +288,13 @@
           "priority": 2
         },
         {
-          "path": "CONTRIBUTING.md",
-          "line": 66,
-          "priority": 2
+          "path": "AGENTS.md",
+          "line": 69,
+          "priority": 3
         },
         {
-          "path": "plugins/corbits-skills/skills/style/SKILL.md",
-          "line": 107,
+          "path": "CONTRIBUTING.md",
+          "line": 156,
           "priority": 3
         }
       ]
@@ -323,18 +320,23 @@
           "bug": "b1"
         },
         {
+          "path": "pkg/gofr/logging/logger.go",
+          "line": 256,
+          "priority": 1
+        },
+        {
           "path": "pkg/gofr/logging/ctx_logger.go",
           "line": 31,
           "priority": 2
         },
         {
           "path": "pkg/gofr/logging/logger.go",
-          "line": 256,
-          "priority": 2
+          "line": 255,
+          "priority": 3
         },
         {
           "path": "pkg/gofr/logging/logger.go",
-          "line": 255,
+          "line": 79,
           "priority": 3
         }
       ]
@@ -347,8 +349,13 @@
       "findings": [
         {
           "path": "packages/inference/src/default-director.ts",
-          "line": 253,
+          "line": 251,
           "priority": 2
+        },
+        {
+          "path": "packages/inference/src/default-director.ts",
+          "line": 131,
+          "priority": 3
         }
       ]
     },
@@ -361,11 +368,10 @@
         "b3",
         "b4",
         "b5",
+        "b6",
         "b7"
       ],
-      "missed": [
-        "b6"
-      ],
+      "missed": [],
       "findings": [
         {
           "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
@@ -374,20 +380,14 @@
           "bug": "b1"
         },
         {
-          "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
-          "line": 8,
-          "priority": 0,
+          "path": "packages/app-store/zoho-bigin/lib/CalendarService.ts",
+          "line": 93,
+          "priority": 1,
           "bug": "b1"
         },
         {
-          "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
-          "line": 25,
-          "priority": 1,
-          "bug": "b3"
-        },
-        {
-          "path": "packages/app-store/zoho-bigin/lib/CalendarService.ts",
-          "line": 93,
+          "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
+          "line": 8,
           "priority": 1,
           "bug": "b1"
         },
@@ -398,19 +398,20 @@
           "bug": "b4"
         },
         {
-          "path": "packages/app-store/salesforce/lib/CalendarService.ts",
-          "line": 75,
+          "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+          "line": 26,
           "priority": 1,
-          "bug": "b7"
+          "bug": "b3"
+        },
+        {
+          "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+          "line": 86,
+          "priority": 2,
+          "bug": "b4"
         },
         {
           "path": "apps/web/pages/api/webhook/app-credential.ts",
           "line": 31,
-          "priority": 3
-        },
-        {
-          "path": "apps/web/pages/api/webhook/app-credential.ts",
-          "line": 24,
           "priority": 3
         }
       ]
@@ -425,11 +426,6 @@
       "missed": [],
       "findings": [
         {
-          "path": "app/assets/javascripts/discourse/models/user.js.es6",
-          "line": 171,
-          "priority": 2
-        },
-        {
           "path": "app/serializers/user_serializer.rb",
           "line": 153,
           "priority": 3,
@@ -438,11 +434,6 @@
         {
           "path": "app/serializers/user_serializer.rb",
           "line": 144,
-          "priority": 3
-        },
-        {
-          "path": "app/serializers/user_serializer.rb",
-          "line": 141,
           "priority": 3
         }
       ]
@@ -453,30 +444,19 @@
       "caught": [
         "b1",
         "b2",
-        "b3",
         "b4",
-        "b5",
+        "b5"
+      ],
+      "missed": [
+        "b3",
         "b6"
       ],
-      "missed": [],
       "findings": [
-        {
-          "path": "public/app/features/alerting/unified/hooks/useAbilities.ts",
-          "line": 318,
-          "priority": 1,
-          "bug": "b6"
-        },
         {
           "path": "public/app/features/alerting/unified/hooks/useAbilities.ts",
           "line": 245,
           "priority": 1,
           "bug": "b4"
-        },
-        {
-          "path": "public/app/features/alerting/unified/components/rule-viewer/AlertRuleMenu.tsx",
-          "line": 165,
-          "priority": 1,
-          "bug": "b3"
         },
         {
           "path": "public/app/features/alerting/unified/rule-list/components/RuleActionsButtons.V2.tsx",
@@ -491,16 +471,15 @@
           "bug": "b2"
         },
         {
-          "path": "public/app/features/alerting/unified/components/rule-viewer/AlertRuleMenu.tsx",
-          "line": 123,
-          "priority": 2,
-          "bug": "b3"
-        },
-        {
           "path": "public/app/features/alerting/unified/rule-list/GrafanaRuleListItem.tsx",
           "line": 40,
-          "priority": 3,
+          "priority": 2,
           "bug": "b5"
+        },
+        {
+          "path": "public/app/features/alerting/unified/hooks/useAbilities.ts",
+          "line": 324,
+          "priority": 3
         }
       ]
     },
@@ -518,8 +497,8 @@
       "findings": [
         {
           "path": "pkg/apiserver/rest/dualwriter_mode3.go",
-          "line": 110,
-          "priority": 0,
+          "line": 51,
+          "priority": 1,
           "bug": "b5"
         },
         {
@@ -529,21 +508,9 @@
         },
         {
           "path": "pkg/apiserver/rest/dualwriter_mode3.go",
-          "line": 51,
+          "line": 110,
           "priority": 1,
           "bug": "b5"
-        },
-        {
-          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
-          "line": 106,
-          "priority": 1,
-          "bug": "b3"
-        },
-        {
-          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
-          "line": 101,
-          "priority": 1,
-          "bug": "b3"
         },
         {
           "path": "pkg/apiserver/rest/dualwriter_mode3.go",
@@ -559,20 +526,26 @@
         },
         {
           "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "line": 106,
+          "priority": 2,
+          "bug": "b3"
+        },
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
           "line": 45,
           "priority": 2,
           "bug": "b4"
         },
         {
           "path": "pkg/apiserver/rest/dualwriter_mode3.go",
-          "line": 56,
-          "priority": 2
-        },
-        {
-          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
           "line": 97,
           "priority": 3,
           "bug": "b2"
+        },
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "line": 55,
+          "priority": 3
         }
       ]
     },
@@ -580,27 +553,22 @@
       "id": "martian-keycloak-2",
       "failed": false,
       "caught": [
-        "b1",
+        "b1"
+      ],
+      "missed": [
         "b2"
       ],
-      "missed": [],
       "findings": [
         {
-          "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
-          "line": 93,
-          "priority": 1,
-          "bug": "b2"
+          "path": "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java",
+          "line": 254,
+          "priority": 1
         },
         {
           "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java",
           "line": 381,
           "priority": 3,
           "bug": "b1"
-        },
-        {
-          "path": "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java",
-          "line": 254,
-          "priority": 3
         }
       ]
     },
@@ -624,6 +592,16 @@
           "line": 122,
           "priority": 1,
           "bug": "b1"
+        },
+        {
+          "path": "services/src/main/java/org/keycloak/services/resources/admin/UsersResource.java",
+          "line": 448,
+          "priority": 1
+        },
+        {
+          "path": "services/src/main/java/org/keycloak/services/resources/admin/UsersResource.java",
+          "line": 425,
+          "priority": 1
         }
       ]
     },
@@ -653,31 +631,37 @@
         {
           "path": "src/sentry/api/paginator.py",
           "line": 840,
-          "priority": 1,
+          "priority": 0,
           "bug": "b1"
         },
         {
           "path": "src/sentry/api/paginator.py",
-          "line": 880,
+          "line": 882,
           "priority": 1,
           "bug": "b3"
         },
         {
           "path": "src/sentry/api/paginator.py",
           "line": 843,
-          "priority": 2,
+          "priority": 1,
           "bug": "b1"
         },
         {
           "path": "src/sentry/api/endpoints/organization_auditlogs.py",
           "line": 71,
-          "priority": 2,
+          "priority": 1,
           "bug": "b2"
         },
         {
           "path": "src/sentry/api/paginator.py",
+          "line": 884,
+          "priority": 2,
+          "bug": "b3"
+        },
+        {
+          "path": "src/sentry/api/paginator.py",
           "line": 182,
-          "priority": 3
+          "priority": 2
         }
       ]
     },
@@ -691,13 +675,13 @@
       "findings": [
         {
           "path": "astropy/setup_helpers.py",
-          "line": 315,
+          "line": 319,
           "priority": 2,
           "bug": "b1"
         },
         {
           "path": "astropy/setup_helpers.py",
-          "line": 319,
+          "line": 322,
           "priority": 3,
           "bug": "b1"
         }
@@ -713,14 +697,20 @@
       "findings": [
         {
           "path": "sklearn/neural_network/_base.py",
-          "line": 221,
+          "line": 244,
           "priority": 1,
           "bug": "b1"
         },
         {
           "path": "sklearn/calibration.py",
           "line": 447,
-          "priority": 2
+          "priority": 1
+        },
+        {
+          "path": "sklearn/neural_network/_base.py",
+          "line": 221,
+          "priority": 1,
+          "bug": "b1"
         }
       ]
     },
@@ -734,16 +724,16 @@
       "missed": [],
       "findings": [
         {
-          "path": "seaborn/tests/test_matrix.py",
-          "line": 237,
-          "priority": 2,
-          "bug": "b2"
-        },
-        {
           "path": "seaborn/matrix.py",
           "line": 223,
           "priority": 2,
           "bug": "b1"
+        },
+        {
+          "path": "seaborn/tests/test_matrix.py",
+          "line": 237,
+          "priority": 3,
+          "bug": "b2"
         }
       ]
     },
@@ -765,28 +755,33 @@
       "failed": false,
       "caught": [
         "b1",
-        "b2"
-      ],
-      "missed": [
+        "b2",
         "b3"
       ],
+      "missed": [],
       "findings": [
         {
-          "path": "apps/web/src/pages/PRDetail.tsx",
-          "line": 119,
-          "priority": 1
-        },
-        {
           "path": "packages/triage-workflows/src/logic/rule-checks.ts",
-          "line": 53,
+          "line": 69,
           "priority": 2,
           "bug": "b1"
         },
         {
           "path": "packages/triage-workflows/src/logic/rule-checks.ts",
-          "line": 70,
-          "priority": 3,
+          "line": 43,
+          "priority": 2,
           "bug": "b1"
+        },
+        {
+          "path": "apps/web/src/pages/PRDetail.tsx",
+          "line": 119,
+          "priority": 2
+        },
+        {
+          "path": "packages/triage-workflows/src/logic/render.ts",
+          "line": 290,
+          "priority": 2,
+          "bug": "b3"
         }
       ]
     },
@@ -800,12 +795,12 @@
       "findings": [
         {
           "path": "packages/triage-workflows/src/directors.ts",
-          "line": 368,
+          "line": 364,
           "priority": 1
         },
         {
           "path": "apps/hub/src/github/pr-actions.ts",
-          "line": 87,
+          "line": 86,
           "priority": 3
         }
       ]
@@ -825,13 +820,13 @@
           "bug": "b1"
         },
         {
-          "path": "packages/triage-workflows/src/logic/facts.ts",
-          "line": 68,
-          "priority": 2
-        },
-        {
           "path": "apps/hub/src/github/triage-runs.ts",
           "line": 178,
+          "priority": 3
+        },
+        {
+          "path": "packages/triage-workflows/src/directors.ts",
+          "line": 288,
           "priority": 3
         }
       ]
@@ -846,13 +841,13 @@
       "findings": [
         {
           "path": "vllm/multimodal/profiling.py",
-          "line": 222,
+          "line": 224,
           "priority": 1,
           "bug": "b1"
         },
         {
           "path": "vllm/multimodal/profiling.py",
-          "line": 247,
+          "line": 249,
           "priority": 1,
           "bug": "b1"
         }
@@ -861,57 +856,57 @@
   ],
   "totals": {
     "union": {
-      "caught": 46,
+      "caught": 45,
       "bugs": 52,
-      "findings": 137,
-      "falseAlarms": 45,
+      "findings": 139,
+      "falseAlarms": 48,
       "cleanFlagged": 3,
       "clean": 3
     },
     "consolidated": {
-      "caught": 45,
+      "caught": 43,
       "bugs": 52,
       "findings": 91,
-      "falseAlarms": 35,
+      "falseAlarms": 39,
       "cleanFlagged": 3,
       "clean": 3
     },
     "confirmed": {
-      "caught": 45,
+      "caught": 43,
       "bugs": 52,
       "findings": 91,
-      "falseAlarms": 35,
+      "falseAlarms": 39,
       "cleanFlagged": 3,
       "clean": 3
     },
     "final": {
-      "caught": 45,
+      "caught": 43,
       "bugs": 52,
       "findings": 91,
-      "falseAlarms": 35,
+      "falseAlarms": 39,
       "cleanFlagged": 3,
       "clean": 3
     },
     "bothFinders": {
-      "caught": 31,
+      "caught": 33,
       "bugs": 52,
-      "findings": 40,
-      "falseAlarms": 7,
+      "findings": 44,
+      "falseAlarms": 11,
       "cleanFlagged": 1,
       "clean": 3
     },
     "oneFinder": {
-      "caught": 18,
+      "caught": 17,
       "bugs": 52,
-      "findings": 51,
+      "findings": 47,
       "falseAlarms": 28,
-      "cleanFlagged": 2,
+      "cleanFlagged": 3,
       "clean": 3
     }
   },
-  "commit": "e2177f1589819b3136eccace8f380533c084276b",
+  "commit": "532a3561d694b295bd9db1b905cc048e9cf682f3",
   "dirty": false,
-  "date": "2026-10-21T00:11:37.447Z",
+  "date": "2026-10-21T00:57:56.066Z",
   "pricesAsOf": "2026-10-20",
-  "costUsd": 3.1437
+  "costUsd": 3.1041
 }

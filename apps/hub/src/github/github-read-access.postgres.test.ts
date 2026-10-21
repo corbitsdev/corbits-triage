@@ -45,7 +45,13 @@ let completed: CompletedReview | null = FINISHED;
 
 const READS: Record<string, unknown> = {
   [`/repos/${REPO}/pulls`]: [{ number: 8, title: "Fix the widget", draft: false, user: { login: "octocat" }, head: { sha: HEAD } }],
-  [`/repos/${REPO}/pulls/8`]: { number: 8, title: "Fix the widget", state: "open", user: { login: "octocat" }, head: { sha: HEAD, ref: "fix" }, mergeable: true, labels: [], assignees: [] },
+  [`/repos/${REPO}/pulls/8`]: {
+    number: 8, title: "Fix the widget", state: "open",
+    body: "Fixes #10, see https://github.com/acme/widgets/issues/11\n<!-- Closes #9 -->",
+    body_html: "<p>Fixes <a href=\"https://github.com/acme/widgets/issues/10\">#10</a>, see <a href=\"https://github.com/acme/widgets/issues/11\">#11</a></p>\n", user: { login: "octocat" }, head: { sha: HEAD, ref: "fix" }, mergeable: true, labels: [], assignees: [] },
+  [`/repos/${REPO}/issues/9`]: { number: 9, title: "Hidden", state: "open", body: "", html_url: "https://github.com/acme/widgets/issues/9" },
+  [`/repos/${REPO}/issues/10`]: { number: 10, title: "Shown", state: "open", body: "", html_url: "https://github.com/acme/widgets/issues/10" },
+  [`/repos/${REPO}/issues/11`]: { number: 11, title: "Pasted", state: "open", body: "", html_url: "https://github.com/acme/widgets/issues/11" },
   [`/repos/${REPO}/pulls/8/commits`]: [{ sha: HEAD, commit: { message: "fix: the widget" } }],
   [`/repos/${REPO}/pulls/8/files`]: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+fixed" }],
   [`/repos/${REPO}/issues/8/comments`]: [],
@@ -204,6 +210,11 @@ test("PostgreSQL: a review decision GitHub does not give leaves it unknown and s
   const blocked = await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=9`), member("usr_member"));
   expect(blocked.status).toBe(200);
   expect(await blocked.json()).toMatchObject({ pr: { number: 9, mergeableState: "blocked", reviewDecision: null } });
+});
+
+test("PostgreSQL: pull request details find referenced issues only in the description GitHub shows, a pasted issue URL included", async () => {
+  const details = await (await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=8`), member("usr_member"))).json() as { issues: Array<{ number: number }> };
+  expect(details.issues.map((issue) => issue.number)).toEqual([10, 11]);
 });
 
 test("PostgreSQL: pull request details serve only repositories connected to the workspace", async () => {
