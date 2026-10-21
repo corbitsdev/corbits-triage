@@ -170,6 +170,9 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
       refreshed.push(repo);
       return { status: "absent" };
     },
+    async startBacklog() {
+      return Response.json({}, { status: 409 });
+    },
     ...overrides,
   });
 }
@@ -342,6 +345,26 @@ describe("bridge handler", () => {
       expect(await res.json()).toEqual({ status });
     }
     expect(refreshed).toEqual(["octocat/hello", "octocat/hello", "octocat/hello"]);
+  });
+
+  test("a push that changes the policy file triages the open pull requests once per delivery, and a forced push alone does not", async () => {
+    const started: string[] = [];
+    const handle = bridge({
+      async startBacklog(_tenantId, record) {
+        started.push(record.name);
+        return Response.json({}, { status: 503 });
+      },
+    });
+    function push(commit: Record<string, string[]>, forced = false) {
+      return JSON.stringify({ ref: "refs/heads/main", forced, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [commit] });
+    }
+    const deliveries: Array<[string, string, number]> = [
+      [push({ added: [".corbits-triage.yml"] }), "changed", 202],
+      [push({ added: [".corbits-triage.yml"] }), "changed", 200],
+      [push({ modified: ["README.md"] }, true), "forced", 202],
+    ];
+    for (const [body, delivery, status] of deliveries) expect((await handle(githubRequest(body, { event: "push", delivery }), TARGET)).status).toBe(status);
+    expect(started).toEqual(["octocat/hello"]);
   });
 
   test("a base move the triage state refused is 500 and releases the id for retry", async () => {

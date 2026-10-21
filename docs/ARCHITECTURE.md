@@ -152,7 +152,8 @@ name per tenant; no deployment ids are configured anywhere.
   once `pr-triage-github` is live.
 - `pr-triage-historical`: one run that triages every open pull request of a
   GitHub repository, skipping drafts. The hub mails it through its backlog
-  route when triage is turned on or someone clicks **Triage open pull requests
+  route when triage is turned on, when a push to the default branch changes the
+  policy file of an enabled repository and leaves it valid, or when someone clicks **Triage open pull requests
   again**, and records its verdicts like pr-triage's.
 - `repo-scan`: one run that reads a repository's most recently updated closed
   pull requests (200 by default) and measures what maintainers merged and
