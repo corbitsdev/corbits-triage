@@ -16,6 +16,7 @@ import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type
 import { summarizeChecks, type CiState } from "@corbits/github-reads";
 import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
+import type { RepoActivity } from "./repo-activity.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
@@ -44,6 +45,8 @@ export type TriageReconcilerDeps = {
   rotation: DeploymentRotation;
   /** Undefined when the tenant holds no credential for any pull request host. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
+  /** A repository's open pull requests are listed again only once its last listing may be stale. */
+  activity: Pick<RepoActivity, "stale">;
   /**
    * Reads the CI of heads waiting for it, and of settled heads whose verdict waits on CI: those are read again on the
    * unconfirmed retry interval, with backoff, and queued once CI changed, for a host that sends no webhook when a build
@@ -135,6 +138,25 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     return true;
   }
 
+  /**
+   * Each tenant's last listing of each repository's open pull requests, with when it started. A failed read or a tenant
+   * without a reader drops it, so a credential failure shows on the next pass; lost on restart, when every repository is listed again.
+   */
+  const listings = new Map<string, Map<string, { at: number; prs: OpenPr[] }>>();
+
+  async function openPrs(pass: TenantPass, record: RepoRecord): Promise<OpenPr[]> {
+    const listed = listings.get(pass.tenantId) ?? new Map<string, { at: number; prs: OpenPr[] }>();
+    listings.set(pass.tenantId, listed);
+    const key = `${sourceOf(record)}\n${record.name}`;
+    const last = listed.get(key);
+    if (last && !deps.activity.stale(pass.tenantId, sourceOf(record), record.name, last.at)) return last.prs;
+    listed.delete(key);
+    const at = deps.now().getTime();
+    const prs = await pass.openHeads(record);
+    listed.set(key, { at, prs });
+    return prs;
+  }
+
   /** The newest verdict on the head, from the live logs or as recorded, since the run that gave it may be on a released deployment. */
   function latestVerdict(pass: TenantPass, recorded: readonly VerdictRecord[], repo: string, row: PrTriageRow) {
     return [...pass.runs.verdicts, ...recorded].filter((verdict) => verdict.repo === repo && verdict.number === row.number && verdict.headSha === row.headSha).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
@@ -195,7 +217,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name, sourceOf(repo.record));
     const pauseLabel = read.status === "ok" ? read.pauseLabel : undefined;
     // A paused pull request is left out like a draft, so its rows go and nothing retries it until its label comes off.
-    const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft && !(pauseLabel !== undefined && pr.labels?.includes(pauseLabel)));
+    const prs = (await openPrs(pass, repo.record)).filter((pr) => !pr.draft && !(pauseLabel !== undefined && pr.labels?.includes(pauseLabel)));
     // Without a policy, or with every rule off, triage has nothing to decide: no run starts and nothing is written to the pull request.
     const key = `${pass.tenantId}\n${repo.record.name}`;
     if (read.status === "ok" && hasEnabledRules(read.pack)) {
@@ -429,8 +451,15 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
       return heal(tenant.id);
     }
-    const openHeads = await deps.openHeadsFor(tenant.id);
+    let openHeads: OpenHeadsReader | undefined;
+    try {
+      openHeads = await deps.openHeadsFor(tenant.id);
+    } catch (err) {
+      listings.delete(tenant.id);
+      throw err;
+    }
     if (!openHeads) {
+      listings.delete(tenant.id);
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_source_credential" });
       return false;
     }

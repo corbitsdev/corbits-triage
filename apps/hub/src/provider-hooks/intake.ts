@@ -28,7 +28,7 @@ export type ProviderHook = {
   ownUser?: (ns: CorbitsTriageNs) => string | undefined;
 };
 
-export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "codeReview" | "log" | "readCheckPack" | "recheckOpenPulls" | "refreshPolicyFile">;
+export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "codeReview" | "log" | "readCheckPack" | "recheckOpenPulls" | "refreshPolicyFile" | "heard">;
 
 type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord; ns: CorbitsTriageNs };
 
@@ -171,6 +171,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       return json(500, { error: "tenant_config_unavailable" });
     }
     const repo = repoOf(intake);
+    d.heard(hook.tenantId, provider.source, repo);
     const ns = triageNs(tenantConfig);
     const record = repoRecords(ns).find((row) => sourceOf(row) === provider.source && row.name === repo && row.connected);
     if (!record) {

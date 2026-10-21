@@ -173,6 +173,7 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
     async startBacklog() {
       return Response.json({}, { status: 409 });
     },
+    heard() {},
     ...overrides,
   });
 }

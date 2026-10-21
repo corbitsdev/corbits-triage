@@ -15,6 +15,8 @@ import { createRunRecorder } from "./run-recorder.js";
 import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
 import type { ApprovedDo, RecordedVerdict, VerdictRecord } from "./verdict-record-store.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
+import { createRepoActivity, type RepoActivity } from "./repo-activity.js";
+import { GithubRateLimited } from "./github-usage.js";
 import { markBaseMoved } from "./triage-queue.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
@@ -197,6 +199,9 @@ type HarnessOptions = {
   rows?: PrTriageRow[];
   /** Verdicts recorded from runs no live log holds any more. */
   recorded?: VerdictRecord[];
+  activity?: RepoActivity;
+  /** Thrown by every listing of open pull requests while set. */
+  listError?: Error;
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
@@ -211,6 +216,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
   const saved = new Map<string, PrTriageRow[]>(options.rows ? [[REPO, options.rows]] : []);
   let refusals = options.refuseSaves ?? 0;
   const logged: Array<Record<string, unknown>> = [];
+  const listings: string[] = [];
   const now = options.now ?? (() => NOW);
   const deployments = (options.deployments ?? [LIVE]).map((live) => ({ ...live }));
   const released: string[] = [];
@@ -277,9 +283,12 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     openHeadsFor: async function openHeadsFor() {
       if (options.github === false) return undefined;
       return async function openHeads(record) {
+        listings.push(record.name);
+        if (options.listError) throw options.listError;
         return repos[record.name]!;
       };
     },
+    activity: options.activity ?? { stale: () => true },
     observeTenant: observer.observe,
     headChecks: async () => options.headChecks ?? [],
     verdicts: { latest: async () => options.recorded ?? [] },
@@ -315,7 +324,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     const stopped = deployments.filter((live) => live.cancelling);
     for (const live of stopped) deployments.splice(deployments.indexOf(live), 1);
   }
-  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, verdicts, approved, store: store() };
+  return { reconcile, listings, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, verdicts, approved, store: store() };
 }
 
 function settled(from: number, count: number): Record<string, WorkflowRunEvent[]> {
@@ -957,5 +966,79 @@ describe("triage reconciler", () => {
     await reconcile();
     expect(delivered).toEqual([]);
     expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_reconcile_skipped", reason: "no_source_credential" }));
+  });
+
+  test("a repository is listed again once a webhook named it or half an hour passed, and every pass while its webhook heard nothing that long", async () => {
+    let clock = NOW;
+    const activity = createRepoActivity(() => clock, { quietMs: 30 * MINUTE, graceMs: MINUTE });
+    const { reconcile, listings } = harness({ [repoKey(LIVE.runId)]: settled(1, 1) }, { [REPO]: [head(1)], "acme/gadgets": [] }, { now: () => clock, activity });
+    function hear(minutes: number, repo: string): void {
+      clock = at(minutes);
+      activity.heard(TENANT_ID, "github", repo);
+    }
+    async function pass(minutes: number): Promise<string[]> {
+      clock = at(minutes);
+      listings.length = 0;
+      await reconcile();
+      return [...listings];
+    }
+    expect(await pass(0)).toEqual([REPO, "acme/gadgets"]);
+    hear(2, REPO);
+    hear(2, "acme/gadgets");
+    // A listing that started within a minute of the delivery may not show it yet, so it is read once more.
+    expect(await pass(2)).toEqual([REPO, "acme/gadgets"]);
+    expect(await pass(5)).toEqual([REPO, "acme/gadgets"]);
+    expect(await pass(10)).toEqual([]);
+    hear(12, REPO);
+    expect(await pass(15)).toEqual([REPO]);
+    expect(await pass(20)).toEqual([]);
+    // Half an hour after its last listing a repository is listed again, in case a delivery for it was lost.
+    expect(await pass(35)).toEqual(["acme/gadgets"]);
+    // The App's webhook heard nothing for half an hour: it may be broken, so every pass lists every repository as before.
+    expect(await pass(42)).toEqual([REPO, "acme/gadgets"]);
+    expect(await pass(47)).toEqual([REPO, "acme/gadgets"]);
+    // A Bitbucket webhook is each repository's own, so one repository's delivery says nothing of another's.
+    clock = at(50);
+    activity.heard(TENANT_ID, "bitbucket-datacenter", "PROJ/one");
+    clock = at(55);
+    expect(activity.stale(TENANT_ID, "bitbucket-datacenter", "PROJ/one", at(52).getTime())).toBe(false);
+    expect(activity.stale(TENANT_ID, "bitbucket-datacenter", "PROJ/two", at(52).getTime())).toBe(true);
+  });
+
+  test("a repository's kept listing is dropped once the tenant's reader cannot be built, so the next pass reads again", async () => {
+    let clock = NOW;
+    const activity = createRepoActivity(() => clock, { quietMs: 30 * MINUTE, graceMs: MINUTE });
+    const options = { now: () => clock, activity, github: true };
+    const { reconcile, listings } = harness({ [repoKey(LIVE.runId)]: settled(1, 1) }, [head(1)], options);
+    activity.heard(TENANT_ID, "github", REPO);
+    clock = at(2);
+    await reconcile();
+    options.github = false;
+    clock = at(5);
+    await reconcile();
+    options.github = true;
+    clock = at(10);
+    await reconcile();
+    expect(listings).toEqual([REPO, REPO]);
+  });
+
+  test("a listing GitHub rate limited is not kept, and the pass waits for the limit's reset", async () => {
+    let clock = NOW;
+    const activity = createRepoActivity(() => clock, { quietMs: 30 * MINUTE, graceMs: MINUTE });
+    const options: HarnessOptions = { now: () => clock, activity };
+    const { reconcile, listings } = harness({ [repoKey(LIVE.runId)]: settled(1, 1) }, [head(1)], options);
+    activity.heard(TENANT_ID, "github", REPO);
+    clock = at(25);
+    await reconcile();
+    // The App's webhook went quiet, so the listing is read again, and GitHub refuses it.
+    clock = at(31);
+    options.listError = new GithubRateLimited("1", at(33).getTime());
+    expect(await reconcile()).toEqual(expect.objectContaining({ retryAt: at(33).getTime() }));
+    options.listError = undefined;
+    clock = at(32);
+    activity.heard(TENANT_ID, "github", "acme/gadgets");
+    clock = at(33);
+    await reconcile();
+    expect(listings).toEqual([REPO, REPO, REPO]);
   });
 });

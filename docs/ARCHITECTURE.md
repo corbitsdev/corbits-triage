@@ -62,7 +62,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   - **Reconciler**: one per host. On an interval it compares each enabled
     repository's open pull requests with the run logs and stored state, and
     re-queues every head without a verdict, and every stale head at most once
-    per 15 minutes, under a per-tenant in-flight cap. It reads the CI of every
+    per 15 minutes, under a per-tenant in-flight cap. A repository's open pull
+    requests are listed again only once a webhook named it, until a minute
+    after that webhook since the host's listing can trail it, or its last
+    listing is 30 minutes old. Once its webhook heard nothing for 30 minutes
+    (on GitHub the App's, for every repository; on Bitbucket the repository's
+    own) it is listed every pass. It reads the CI of every
     `waiting` head and queues it once CI finished or its wait ran out; this
     releases Bitbucket heads, whose builds send no webhook, and any head whose
     `check_run` never arrived. Moving a head from `waiting` to `queued` is a
