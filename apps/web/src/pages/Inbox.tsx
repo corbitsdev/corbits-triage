@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { Button, EmptyState } from "@corbits/react-ui";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { Button } from "@corbits/react-ui";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { AuthorKind } from "@corbits/triage-contracts";
 import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
@@ -76,7 +76,7 @@ import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
 import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
-import { CheckIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
+import { ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
@@ -426,7 +426,12 @@ function NoneOpen({ title }: { title: string }) {
   const openPulls = useOpenPulls();
   const repos = openPulls.data?.repos;
   if (repos === undefined || openPulls.isError || repos.some((repo) => repo.error !== undefined)) return null;
-  return <EmptyState title={title} description={`${repositoriesText(repos.length)} checked.`} />;
+  return <ListEmpty title={title} text={`${repositoriesText(repos.length)} checked.`} />;
+}
+
+/** An empty list names the condition in a left-aligned mute sentence under its heading. */
+function ListEmpty({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
+  return <div className="list-empty"><h2>{title}</h2><p>{text}</p>{action}</div>;
 }
 
 type EmptyListProps = { view: ListView; waiting: boolean; waitingCount: number; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void; onShowWaiting: () => void };
@@ -464,16 +469,16 @@ function EmptyList({ view, waiting, waitingCount, loading, denied, noRepos, filt
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
   if (noRepos) {
-    return <EmptyState title="No repositories yet" description="Choose the repositories Triage should read." action={<Button asChild variant="outline" size="sm"><Link to="/repositories">Choose repositories on GitHub</Link></Button>} />;
+    return <ListEmpty title="No repositories yet" text="Choose the repositories Triage should read." action={<Button asChild variant="outline"><Link to="/repositories">Choose repositories on GitHub</Link></Button>} />;
   }
   if (filtered) {
-    return <EmptyState title="Nothing here" description="No pull requests match these filters." action={<Button type="button" variant="outline" size="sm" onClick={onClear}>Clear filters</Button>} />;
+    return <ListEmpty title="Nothing here" text="No pull requests match these filters." action={<Button type="button" variant="outline" onClick={onClear}>Clear filters</Button>} />;
   }
   if (view === "all-open") return <NoneOpen title="No open pull requests" />;
-  if (view === "ready") return <EmptyState title="Nothing ready" description="No pull requests can be merged now." />;
-  if (waiting) return <EmptyState title="Nothing waiting" description="No pull requests are waiting on others." />;
-  const showWaiting = waitingCount > 0 ? <Button type="button" variant="outline" size="sm" onClick={onShowWaiting}>Show {waitingCount} waiting</Button> : undefined;
-  return <EmptyState icon={<CheckIcon />} title="Inbox zero" description="Nothing needs you." action={showWaiting} />;
+  if (view === "ready") return <ListEmpty title="Nothing ready" text="No pull requests can be merged now." />;
+  if (waiting) return <ListEmpty title="Nothing waiting" text="No pull requests are waiting on others." />;
+  const showWaiting = waitingCount > 0 ? <Button type="button" variant="outline" onClick={onShowWaiting}>Show {waitingCount} waiting</Button> : undefined;
+  return <ListEmpty title="Inbox zero" text="Nothing needs you." action={showWaiting} />;
 }
 
 function Outcome({ outcome }: { outcome: Notices["outcome"] }) {
@@ -580,7 +585,7 @@ export default function Inbox({ view }: { view: ListView }) {
   const byRepo = view !== "ready" && grouping === "repo";
   const listTitle = waiting ? WAITING : LIST_TITLE[view];
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
-  // Search, filters and grouping have nothing to work on in an empty list.
+  // Search, filters and grouping have nothing to work on in an empty list; at inbox zero the list itself offers Waiting.
   const searchable = loading || entries.some((entry) => listsRest || inNeedsYou(entry.item));
 
   function setFilters(next: InboxFilters) {
@@ -695,7 +700,7 @@ export default function Inbox({ view }: { view: ListView }) {
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
           <div className="lh-top"><h1>{listTitle}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && !waiting && !packsPending(packs) && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}<PulseLine /></div>
-          {searchable || view === "needs-you" ? (
+          {searchable || waiting ? (
             <div className="tools">
               {searchable ? (
                 <>
@@ -716,7 +721,7 @@ export default function Inbox({ view }: { view: ListView }) {
               ) : null}
             </div>
           ) : null}
-          {searchable ? <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} /> : null}
+          {searchable || activeFilters(filters).length > 0 ? <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} /> : null}
         </div>
         <div className="scroll" id="main">
           <RefusedPolicies repos={enabledNames} />

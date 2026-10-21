@@ -195,9 +195,10 @@
 .inbox .row .st { font-size: 12px; white-space: nowrap; }
 .inbox .tag { display: inline-flex; align-items: center; gap: 3px; font: 600 11px var(--font); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
 .inbox .tag.quiet { font-weight: 500; border-color: var(--rule); color: var(--ink-mute); }
-/* The shared empty state's sizes are rem-based and come out small against the shell's 14px root. */
-.inbox [data-slot="empty-state"] > div > p:first-child { font-size: 16px; font-weight: 650; }
-.inbox [data-slot="empty-state"] > div > p + p { font-size: 14px; color: var(--ink-mute); }
+.inbox .list-empty { display: grid; justify-items: start; gap: 4px; padding: 20px 16px; }
+.inbox .list-empty h2 { margin: 0; font-size: 16px; font-weight: 620; line-height: 1.3; letter-spacing: -0.02em; }
+.inbox .list-empty p { margin: 0; font-size: 14px; color: var(--ink-mute); }
+.inbox .list-empty [data-slot="button"] { margin-top: 8px; }
 .inbox .pane-empty { margin: auto; text-align: center; font-size: 14px; display: grid; gap: 6px; }
 
 /* Reading pane */
@@ -336,7 +337,7 @@
   .shell > :is(.inbox, .repos) { padding-left: 12px; }
   .repos .lh-top { flex-wrap: wrap; }
   .shell > .stage { margin-left: 12px; }
-  .inbox :is(.search, .tbtn) { height: 40px; }
+  .inbox :is(.search, .tbtn) { height: 44px; }
   .inbox .seg button { min-height: 36px; padding: 0 12px; }
   /* A phone row stacks the title over its number, status and age, so the title is never cut to a few characters. */
   .inbox .groups { display: block; padding: 4px 4px 24px; }
