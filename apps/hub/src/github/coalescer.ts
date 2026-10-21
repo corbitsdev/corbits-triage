@@ -183,19 +183,14 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     }
   }
 
-  /** Why the window's pull request is not triaged: a draft, no longer open, or unread, which fails closed. */
+  /** Why the window's pull request is not triaged: a draft, no longer open, or moved past the window's head. */
   async function notReady({ latest, head }: Open): Promise<string | undefined> {
-    try {
-      const read = await deps.openHeadFor(head.tenantId);
-      if (!read) throw new Error("no active github credential");
-      const pr = await read(latest.record, head.number);
-      if (pr === undefined) return "not_open";
-      return pr.draft ? "draft" : undefined;
-    } catch (err) {
-      if (err instanceof GithubRateLimited) return "github_rate_limited";
-      deps.log({ level: "error", msg: "head_lookup_failed", tenantId: head.tenantId, repo: latest.record.name, pr: head.number, error: String(err) });
-      return "head_unread";
-    }
+    const read = await deps.openHeadFor(head.tenantId);
+    if (!read) throw new Error("no active github credential");
+    const pr = await read(latest.record, head.number);
+    if (pr === undefined) return "not_open";
+    if (pr.headSha !== head.headSha) return "superseded";
+    return pr.draft ? "draft" : undefined;
   }
 
   async function drop(open: Open, entry: Record<string, unknown>, reason: string): Promise<void> {
@@ -225,7 +220,16 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     const readsCi = dependsOnCi(latest.pack);
     // A head the reconciler released from waiting after its CI finished already has its one run.
     if (readsCi && checksOnly && prior !== undefined && inFlight(prior) && prior.events !== undefined) return drop(open, entry, "released");
-    const unready = open.draftUnread ? await notReady(open) : undefined;
+    let unready: string | undefined;
+    try {
+      unready = open.draftUnread ? await notReady(open) : undefined;
+    } catch (err) {
+      if (err instanceof GithubRateLimited) return drop(open, entry, "github_rate_limited");
+      deps.log({ level: "error", msg: "head_lookup_failed", ...entry, error: String(err) });
+      // Failed, the head stays due for the reconciler, so a verdict made while CI still ran is not left standing.
+      if (open.remembered) await failHead(deps.store, head, `head lookup failed: ${String(err)}`, deps.now());
+      return;
+    }
     if (unready !== undefined) return drop(open, entry, unready);
     let checks: CheckRun[] | undefined;
     try {

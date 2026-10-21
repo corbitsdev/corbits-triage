@@ -23,8 +23,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     request, review, comment, `check_run` and `check_suite` events to the
     coalescer. A check event does not say whether its pull request is a
     draft or still open, so a window of check events alone reads that once
-    at its flush rather than once per delivery. A pull request merged into the default branch marks the
-    repository's other triaged heads `stale`; a push to the default branch
+    at its flush rather than once per delivery. A pull request merged into
+    the default branch marks the repository's other triaged heads `stale`; a push to the default branch
     that touches the policy file reads it again. Bitbucket Data Center has a
     provider hook of its own (`apps/hub/src/provider-hooks`). Both verify with
     `@corbits/common/x-hub-signature`, the scheme `@corbits/webhooks` 0.4 adds
