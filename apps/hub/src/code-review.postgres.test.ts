@@ -55,7 +55,7 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
       { guide: { ...DOCKER_PLACE, id: "unset" }, found: undefined },
     ];
     async function statesOf(tenantId: string, manages: boolean) {
-      const codeReviewPlace = createCodeReviewPlace({ authorize: async () => manages, place, probes });
+      const codeReviewPlace = createCodeReviewPlace({ authorize: async () => manages, place, probes, prWorkflowSources: async () => [] });
       const body = await (await codeReviewPlace({ tenantId, principalId: "prn_member" })).json() as CodeReviewPlace;
       return body.places.map(({ id, state, reason }) => ({ id, state, reason }));
     }
@@ -75,6 +75,7 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
         changed.push(tenantId);
       },
       place,
+      inPrWorkflow: async (_tenantId, repo) => repo === "acme/decided",
     });
     async function answer(body: Parameters<typeof setCodeReview>[0]) {
       const response = await setCodeReview(body, MEMBER);
@@ -86,7 +87,8 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
       body: { error: { code: "anthropic_key_missing", message: "Save an Anthropic key in Settings before turning on code review." } },
     });
     await db.insert(schema.credential).values({ id: "crd_anthropic", tenantId: TENANT, principalId: null, providerId: "prv_anthropic", oauthClientId: null, name: "anthropic", type: "api_key", secret: "unused", status: "active" });
-    const switchNowhere = createCodeReviewSwitch({ db, authorize: async () => true, onChanged: async () => {}, place: nowhere });
+    expect((await answer({ repo: "acme/decided", enabled: true })).body.error?.code).toBe("policy_file_decides");
+    const switchNowhere = createCodeReviewSwitch({ db, authorize: async () => true, onChanged: async () => {}, place: nowhere, inPrWorkflow: async () => false });
     expect((await (await switchNowhere({ repo: "acme/widgets", enabled: true }, MEMBER)).json() as { error: { code: string } }).error.code).toBe("no_isolated_place");
     expect((await answer({ repo: "TRI/widgets", source: "bitbucket-datacenter", enabled: true })).body.error?.code).toBe("source_not_connected");
     expect((await answer({ repo: "acme/missing", enabled: true })).status).toBe(404);
@@ -112,8 +114,11 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
         },
       },
       place,
+      inPrWorkflow: async () => false,
     });
-    const runNowhere = createCodeReviewRun({ db, authorize: async () => true, feed: { again: async () => "sent" }, place: nowhere });
+    const runNowhere = createCodeReviewRun({ db, authorize: async () => true, feed: { again: async () => "sent" }, place: nowhere, inPrWorkflow: async () => false });
+    const runDecided = createCodeReviewRun({ db, authorize: async () => true, feed: { again: async () => "sent" }, place, inPrWorkflow: async () => true });
+    expect(((await (await runDecided({ repo: "acme/widgets", number: 7 }, MEMBER)).json()) as { error: { code: string } }).error.code).toBe("policy_file_decides");
     expect((await runNowhere({ repo: "acme/widgets", number: 7 }, MEMBER)).status).toBe(409);
     async function run(repo: string) {
       const response = await runCodeReview({ repo, number: 7 }, MEMBER);

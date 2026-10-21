@@ -3,10 +3,14 @@
 // released when its one run ends. Capacity is the provisioner's: a spawn it
 // refuses for want of room, or one with no listener to copy yet, waits and is
 // retried. A queued job for a pull request whose head moved is replaced, not
-// added, as the coalescer keys its windows; a job for a pull request whose
+// added, as the coalescer keys its windows, whichever workflow of its lane
+// either names, and a deferred one a newer head replaced is dropped; a job for a pull request whose
 // worker is still running waits for it, and the reconciler supersedes the old
 // run's result. The queue lives in process: the hub runs as one replica, and
 // the heads stay `queued` rows for the reconciler.
+import { CODE_REVIEW_WORKFLOWS } from "./source-workflow.js";
+import type { RepoRecord } from "./tenant-config.js";
+
 /** Where a job came from; every source goes through the one queue. */
 export type TriageSource = "event" | "retry" | "reconcile";
 
@@ -18,6 +22,8 @@ export type TriageJob = {
   headSha: string;
   source: TriageSource;
   payload: unknown;
+  /** The repository a triage job's mail names, which the hub reads the pull request through. */
+  record?: RepoRecord;
 };
 
 type JobView = Pick<TriageJob, "repo" | "number" | "headSha" | "source" | "workflow">;
@@ -58,9 +64,10 @@ export type Coordinator = {
   stop: () => void;
 };
 
-/** Triage and code review of one pull request are separate jobs. */
-function keyOf({ tenantId, workflow, repo, number }: Pick<TriageJob, "tenantId" | "workflow" | "repo" | "number">): string {
-  return `${tenantId}\n${workflow}\n${repo}\n${number}`;
+/** One job per pull request for its triage, whichever triage workflow it names, and one for its code review. */
+function keyOf({ tenantId, workflow, repo, number }: TriageJob): string {
+  const lane = CODE_REVIEW_WORKFLOWS.some((review) => review.id === workflow) ? "code-review" : "triage";
+  return `${tenantId}\n${lane}\n${repo}\n${number}`;
 }
 
 function view(job: TriageJob): JobView {
@@ -77,6 +84,13 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
   let cancelTimer: (() => void) | undefined;
   let pumping = false;
   let stopped = false;
+
+
+  /** A newer head of the pull request is queued: the job it replaced is dropped, never run. */
+  function superseded(job: TriageJob): boolean {
+    const queued = queue.get(keyOf(job));
+    return queued !== undefined && queued.job.headSha !== job.headSha;
+  }
 
   function isRunning(job: TriageJob): boolean {
     for (const worker of running.values()) if (keyOf(worker.job) === keyOf(job)) return true;
@@ -124,7 +138,10 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
       runId = await deps.spawner.spawn(job);
     } catch (err) {
       running.delete(slot);
-      if (err instanceof WorkerDeferredError) {
+      if (err instanceof WorkerDeferredError && superseded(job)) {
+        refused.delete(keyOf(job));
+        deps.log({ level: "info", msg: "worker_job_superseded", ...entry, headSha: job.headSha });
+      } else if (err instanceof WorkerDeferredError) {
         deps.log({ level: "warn", msg: "worker_spawn_deferred", ...entry, error: String(err), retryMs: defer(job) });
       } else {
         deps.log({ level: "error", msg: "worker_spawn_failed", ...entry, error: String(err) });

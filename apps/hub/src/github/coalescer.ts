@@ -16,7 +16,7 @@
 // leave its row as it is until CI is read done, and a completed check suite
 // closes their window on the burst. The window map lives in
 // process: the hub runs as one replica.
-import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type PolicySource, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
+import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type PolicySource, type PolicyWorkflow, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import { checkPending, summarizeChecks, type CheckRun } from "@corbits/github-reads";
 import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
@@ -40,6 +40,7 @@ export type CoalescedEvent = {
   automatic: ActionKind[];
   /** Read with `pack` when the event was accepted, shared policy included, so the mail names the versions it carries. */
   source: PolicySource;
+  policyWorkflow?: PolicyWorkflow;
   mail: PrMail;
   number: number;
   headSha: string;
@@ -218,7 +219,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     try {
       const noWait = waitedOut(firstSeenAt, deps.now(), deps.ciWait);
       const payload = mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events, ...(noWait && { noWait }) });
-      await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", payload });
+      await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", record: latest.record, payload });
     } catch (err) {
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
       await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());

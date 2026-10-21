@@ -184,3 +184,40 @@ test("a pull request's code review is a job of its own beside its triage", async
   await clock.advance(0);
   expect(fake.spawned.map((j) => j.workflow)).toEqual(["pr-triage-github", "pr-code-review-github"]);
 });
+
+test("a newer head's job replaces a queued one whatever workflow of the lane each names, so one pull request gets one run", async () => {
+  const { clock, fake, coordinator } = setup();
+  const spawn = fake.spawner.spawn;
+  fake.spawner.spawn = async function refuseFirst(j: TriageJob): Promise<string> {
+    if (j.headSha === "sha1") throw new WorkerDeferredError("no sidecar slots");
+    return spawn(j);
+  };
+  coordinator.enqueue(job("t1", 1));
+  await clock.advance(0);
+  coordinator.enqueue({ ...job("t1", 1), workflow: "pr-workflow-anthropic-github", headSha: "sha2" });
+  await clock.advance(3_000);
+  expect(fake.spawned.map((j) => [j.workflow, j.headSha])).toEqual([["pr-workflow-anthropic-github", "sha2"]]);
+});
+
+test("a deferred job whose head a newer job replaced while it spawned is dropped, never run later", async () => {
+  const { clock, fake, failed, coordinator } = setup();
+  const spawn = fake.spawner.spawn;
+  let refuse: (() => void) | undefined;
+  fake.spawner.spawn = async function deferFirstLater(j: TriageJob): Promise<string> {
+    if (j.headSha !== "sha1") return spawn(j);
+    await new Promise<void>(function untilRefused(resolve) {
+      refuse = resolve;
+    });
+    throw new WorkerDeferredError("no sidecar slots");
+  };
+  coordinator.enqueue(job("t1", 1));
+  await clock.advance(0);
+  coordinator.enqueue({ ...job("t1", 1), workflow: "pr-workflow-anthropic-github", headSha: "sha2" });
+  refuse!();
+  await Bun.sleep(0);
+  await clock.advance(10_000);
+  await fake.end("run_1");
+  await clock.advance(10_000);
+  expect(fake.spawned.map((j) => j.headSha)).toEqual(["sha2"]);
+  expect(failed).toEqual([]);
+});

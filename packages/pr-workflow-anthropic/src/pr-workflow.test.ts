@@ -151,8 +151,8 @@ function variant() {
 
 const REVIEW_STEPS = ["reviewInput", "plan", "checkout", "findersInput", "findDiff", "findRepo", "candidates", "consolidate", "checks", "check", "writeInput", "write", "review"].map((id) => `codeReview_${id}`);
 
-/** Code review as the hub fills it from the policy, for a maintainer on any verdict. */
-const ON = { on: true, for: ["everyone"], triage: [...VERDICTS], groups: ["maintainers", "everyone"] };
+/** Code review as the hub fills it from the policy, for everyone on any verdict. */
+const ON = { on: true, for: ["everyone"], triage: [...VERDICTS] };
 
 function triageOf(ran: readonly string[]) {
   return ran.filter((id) => !id.startsWith("codeReview") && id !== "decide");
@@ -170,7 +170,7 @@ test("every deployed PR workflow requires a sidecar of its own", () => {
 
 test("triage decides as pr-triage does, code review in scope records its findings, and triage executes only after it", async () => {
   const alone = await run(PR_TRIAGE);
-  const composed = await run(variant(), { codeReview: { ...ON, for: ["maintainers"], triage: ["pass"], paths: ["*.go", "**/*.go"] }, codeReviewRequest: REVIEW_REQUEST });
+  const composed = await run(variant(), { codeReview: { ...ON, triage: ["pass"], paths: ["*.go", "**/*.go"] }, codeReviewRequest: REVIEW_REQUEST });
   expect(composed.terminalStatus).toBe("completed");
   expect(triageOf(composed.ran)).toEqual(alone.ran);
   expect(composed.outputs["evaluate"]).toEqual(alone.outputs["evaluate"]);
@@ -273,22 +273,29 @@ test("a decide step that fails fails triage's execute before it writes anything"
   expect(approved(composed.writes)).toBe(false);
 });
 
+const GROUPS = { core: { users: ["octocat"] } };
+
 function scope(codeReview: unknown, steps: Record<string, { output: unknown }>) {
-  return scopeOf(stockTriggerMail({ kind: "pr", codeReview, codeReviewRequest: REVIEW_REQUEST }), steps);
+  return scopeOf(stockTriggerMail({ kind: "pr", codeReview, codeReviewRequest: REVIEW_REQUEST, pack: { ...PACK, groups: GROUPS } }), steps);
 }
 
-const JUDGED = { evaluate: { output: { verdict: "pass" } }, facts: { output: { items: [{ facts: { paths: ["parser.go"] } }] } } };
+function judged(author: Record<string, unknown>) {
+  return { evaluate: { output: { verdict: "pass" } }, facts: { output: { items: [{ facts: { paths: ["parser.go"], authorTeams: [], authorTeamsUnknown: [], ...author } }] } } };
+}
+
+const JUDGED = judged({ author: "octocat", authorKind: "MEMBER" });
 
 test("the scope runs for any group the author is in, on the verdicts and paths the policy names", () => {
-  expect(scope({ ...ON, for: ["external"], groups: ["first-timers", "external", "everyone"] }, JUDGED)).toEqual({ open: true, request: REVIEW_REQUEST });
-  expect(scope({ ...ON, for: ["external"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "the author is in maintainers, everyone, not external" });
+  expect(scope({ ...ON, for: ["core"] }, JUDGED)).toEqual({ open: true, request: REVIEW_REQUEST });
+  expect(scope({ ...ON, for: ["external"] }, judged({ author: "SAY-5", authorKind: "FIRST_TIME_CONTRIBUTOR" }))).toEqual({ open: true, request: REVIEW_REQUEST });
+  expect(scope({ ...ON, for: ["external"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "the author is in core, maintainers, everyone, not external" });
   expect(scope({ ...ON, triage: ["fail", "unsure"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "triage is pass, not fail or unsure" });
   expect(scope({ ...ON, paths: ["docs/**"] }, JUDGED)).toEqual({ open: false, outcome: "skipped", reason: "no changed file matches docs/**" });
 });
 
 test("in doubt the scope never opens: what it cannot read leaves the review incomplete", () => {
   expect(scope({ ...ON, triage: "pass" }, JUDGED)).toMatchObject({ open: false, outcome: "incomplete" });
-  expect(scope({ on: true, for: ["everyone"], triage: ["pass"] }, JUDGED)).toMatchObject({ open: false, outcome: "incomplete" });
+  expect(scope({ ...ON, for: ["core"] }, judged({ author: "octocat" }))).toEqual({ open: false, outcome: "incomplete", reason: "triage could not tell the author's groups" });
   const degraded = { evaluate: { output: { verdict: "unsure" } }, facts: { output: { items: [{ error: "not found" }] } } };
   expect(scope({ ...ON, paths: ["*.go"] }, degraded)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
 });

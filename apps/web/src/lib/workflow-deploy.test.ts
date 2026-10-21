@@ -4,8 +4,8 @@ import { cancelsSuperseded, ensureWorkflows } from "./workflow-deploy.ts";
 import type { PackageIndexEntry } from "./workflow-packages.ts";
 
 const DECISION = [{ canonicalName: "decision", offerings: [{ offeringId: "mof_1", providerName: "corbits-system-one" }] }];
-const BOTH = { connected: ["github", "bitbucket-datacenter"], codeReview: [], codeReviewProvider: "anthropic" } as const;
-const GITHUB = { connected: ["github"], codeReview: [], codeReviewProvider: "anthropic" } as const;
+const BOTH = { connected: ["github", "bitbucket-datacenter"], codeReview: [], codeReviewProvider: "anthropic", prWorkflow: [] } as const;
+const GITHUB = { connected: ["github"], codeReview: [], codeReviewProvider: "anthropic", prWorkflow: [] } as const;
 const MISSING = new Set<never>();
 const INDEX: PackageIndexEntry[] = [
   { name: "@corbits/github-tool", version: "0.2.0", filename: "@corbits-github-tool-0.2.0.tgz", integrity: "sha512-tool" },
@@ -13,6 +13,7 @@ const INDEX: PackageIndexEntry[] = [
   { name: "@corbits/pr-triage-bitbucket-datacenter-workflow", version: "0.1.0-sha-cccccccc", filename: "@corbits-pr-triage-bitbucket-datacenter-workflow-0.1.0-sha-cccccccc.tgz", integrity: "sha512-bitbucket" },
   { name: "@corbits/pr-triage-historical-workflow", version: "0.1.0-sha-bbbbbbbb", filename: "@corbits-pr-triage-historical-workflow-0.1.0-sha-bbbbbbbb.tgz", integrity: "sha512-historical" },
   { name: "@corbits/pr-code-review-github-workflow", version: "0.1.0-sha-dddddddd", filename: "@corbits-pr-code-review-github-workflow-0.1.0-sha-dddddddd.tgz", integrity: "sha512-review" },
+  { name: "@corbits/pr-workflow-anthropic-github-workflow", version: "0.1.0-sha-eeeeeeee", filename: "@corbits-pr-workflow-anthropic-github-workflow-0.1.0-sha-eeeeeeee.tgz", integrity: "sha512-pr-workflow" },
 ];
 
 type Asset = { id: string; kind: string; name: string };
@@ -224,10 +225,27 @@ describe("ensureWorkflows", () => {
       { canonicalName: "claude-haiku-5-5", offerings: [{ offeringId: "mof_haiku", providerName: "anthropic" }] },
     ];
     const hub = fakeHub({}, [], models);
-    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic" }, MISSING, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical", "pr-code-review-github"]);
+    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic", prWorkflow: [] }, MISSING, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical", "pr-code-review-github"]);
     expect(hub.deployed.at(-1)).toMatchObject({ entry: "./pr-code-review-github.mjs", sourceOfferingIds: ["mof_opus", "mof_haiku"], defaultSourceOfferingId: "mof_opus" });
 
-    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic" }, new Set(["code-review"]), hub.fetchRaw)).toEqual(["pr-code-review-github"]);
+    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic", prWorkflow: [] }, new Set(["code-review"]), hub.fetchRaw)).toEqual(["pr-code-review-github"]);
+  });
+
+  test("a host's PR workflow deploys while its provider's key is stored and code review has a place, whatever the repositories' switches", async () => {
+    const models = [
+      ...DECISION,
+      { canonicalName: "claude-opus-5-5", offerings: [{ offeringId: "mof_opus", providerName: "anthropic" }] },
+      { canonicalName: "claude-haiku-5-5", offerings: [{ offeringId: "mof_haiku", providerName: "anthropic" }] },
+    ];
+    const hub = fakeHub({}, [], models);
+    expect(await ensureWorkflows(hub.transport, "t", { ...GITHUB, prWorkflow: ["github"] }, MISSING, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical", "pr-workflow-anthropic-github"]);
+    expect(hub.deployed.at(-1)).toMatchObject({ entry: "./pr-workflow-github.mjs", sourceOfferingIds: ["mof_1", "mof_opus", "mof_haiku"], defaultSourceOfferingId: "mof_1" });
+
+    // Unknown leaves it; once no repository's policy file needs it, it is released.
+    await ensureWorkflows(hub.transport, "t", { ...GITHUB, prWorkflow: undefined }, MISSING, hub.fetchRaw);
+    expect(hub.requests.filter((line) => line.startsWith("DELETE") && line.includes("/workflows/runs/"))).toEqual([]);
+    await ensureWorkflows(hub.transport, "t", GITHUB, MISSING, hub.fetchRaw);
+    expect(hub.requests.filter((line) => line.startsWith("DELETE") && line.includes("/workflows/runs/"))).toEqual(["DELETE /api/tenants/t/workflows/runs/run_3"]);
   });
 
   test("refuses to deploy a workflow whose model the workspace does not offer", async () => {

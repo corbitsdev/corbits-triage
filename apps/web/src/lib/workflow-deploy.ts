@@ -142,15 +142,30 @@ function sourceNotConnected(cause: unknown): boolean {
   return cause instanceof ApiError && cause.status === 409 && cause.code === "source_not_connected";
 }
 
-/** The hosts the workspace connected, those whose code review is on, and the provider it runs code review on. */
-export type DeployHosts = { connected: readonly RepoSource[]; codeReview: readonly RepoSource[]; codeReviewProvider: CodeReviewProvider | undefined };
+/**
+ * The hosts the workspace connected, those whose code review is on, the provider it runs code review on, and the hosts
+ * whose PR workflow deploys, undefined when the hub did not say.
+ */
+export type DeployHosts = { connected: readonly RepoSource[]; codeReview: readonly RepoSource[]; codeReviewProvider: CodeReviewProvider | undefined; prWorkflow: readonly RepoSource[] | undefined };
 
 function wanted(workflow: WorkflowPackage, hosts: DeployHosts): boolean {
   if (!hosts.connected.includes(workflow.source)) return false;
-  return workflow.kind === "triage" || (workflow.provider === hosts.codeReviewProvider && hosts.codeReview.includes(workflow.source));
+  if (workflow.kind === "triage") return true;
+  if (workflow.provider !== hosts.codeReviewProvider) return false;
+  if (workflow.kind === "pr-workflow") return hosts.prWorkflow?.includes(workflow.source) === true;
+  return hosts.codeReview.includes(workflow.source);
 }
 
-/** Each host's triage deploys while the host is connected, its code review while that is on too; `redeploy` names the kinds deployed again even at the same version. */
+/** The PR workflow follows the policy files: once none needs it on a host, or its key is gone, its deployment goes. */
+async function releaseUnwanted(transport: Transport, tenantId: string, hosts: DeployHosts, deployments: readonly DeployedWorkflow[]): Promise<void> {
+  if (hosts.prWorkflow === undefined) return;
+  const unwanted = new Set<string>(WORKFLOW_PACKAGES.filter((workflow) => workflow.kind === "pr-workflow" && !wanted(workflow, hosts)).map((workflow) => workflow.name));
+  for (const deployment of deployments) {
+    if (unwanted.has(deployment.workflow) && !deployment.cancelling && !deployment.worker) await cancelDeployment(transport, tenantId, deployment.id);
+  }
+}
+
+/** Each host's triage deploys while the host is connected, its code review while that is on too, its PR workflow while a repository's policy file needs it; `redeploy` names the kinds deployed again even at the same version. */
 export async function ensureWorkflows(
   transport: Transport,
   tenantId: string,
@@ -190,6 +205,7 @@ export async function ensureWorkflows(
     }
     if (cancelsSuperseded(workflow.name, deploy)) await cancelSuperseded(transport, tenantId, asset.id);
   }
+  await releaseUnwanted(transport, tenantId, hosts, deployments);
   return deployed;
 }
 

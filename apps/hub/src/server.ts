@@ -35,7 +35,7 @@ import {
 import { runCronMigrations } from "@corbits/cron/migrations";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
+import { TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
@@ -53,12 +53,13 @@ import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { checkedBitbucketSpawner, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
+import { createPrWorkflowRouter, PR_WORKFLOW_VARIANTS, prWorkflowVariantOf } from "./github/pr-workflow.js";
+import { codeReviewKeys, codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
-import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
+import { createCodeReviewFeed, createPullRequestReader, reviewRequestOf } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
@@ -104,7 +105,7 @@ import { createSettledStatusReader, createTriageRuns } from "./github/triage-run
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { failHead, markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
+import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead } from "@corbits/github-tool";
@@ -113,12 +114,16 @@ import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 // Per host: a workspace deploys a host's workflow and tools once that host's credential exists; pr-triage-historical
 // reads GitHub only. A workspace with both hosts runs both pr-triage workflows. A host's code review deploys while a
 // repository of it has code review on.
+function variantsOf(source: RepoSource) {
+  return PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === source).map((variant) => ({ address: variant.id, id: variant.id }));
+}
 const EXPECTED_DEPLOYMENT_SET = {
   github: {
     workflows: [
       { address: triageWorkflowFor("github").address, id: prTriageGithub.id },
       { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
       { address: codeReviewWorkflowFor("github").id, id: codeReviewWorkflowFor("github").id },
+      ...variantsOf("github"),
     ],
     tools: [githubRead.id],
   },
@@ -126,6 +131,7 @@ const EXPECTED_DEPLOYMENT_SET = {
     workflows: [
       { address: triageWorkflowFor("bitbucket-datacenter").address, id: triageWorkflowFor("bitbucket-datacenter").id },
       { address: codeReviewWorkflowFor("bitbucket-datacenter").id, id: codeReviewWorkflowFor("bitbucket-datacenter").id },
+      ...variantsOf("bitbucket-datacenter"),
     ],
     tools: [bitbucketRead.id],
   },
@@ -397,22 +403,52 @@ async function sendToWorker(job: TriageJob): Promise<void> {
   coordinator!.enqueue(job);
 }
 async function sendTriageMail(job: TriageJob): Promise<void> {
-  await sendToWorker({ ...job, workflow: workflowIdFor(job.workflow) });
+  await sendToWorker(await routePrWorkflow({ ...job, workflow: workflowIdFor(job.workflow) }));
 }
 const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
 async function codeReviewPlaced(tenantId: string): Promise<boolean> {
   return (await placeCodeReview(tenantId)) !== null;
 }
-// Repositories left switched on send nothing while code review has nowhere to run.
-async function reviewedSources(tenantId: string) {
-  if (!(await codeReviewPlaced(tenantId))) return [];
+/** Whether the repository's policy file needs the PR workflow, which reviews the code itself. */
+async function inPrWorkflow(tenantId: string, repo: string): Promise<boolean> {
+  const read = await readCheckPack(tenantId, repo);
+  return read.status === "ok" && read.policyWorkflow !== undefined;
+}
+// Repositories left switched on send nothing while code review has nowhere to run, nor one the PR workflow reviews.
+async function reviewedSources(tenantId: string, record: RepoRecord) {
+  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name))) return [];
   return codeReviewSources(composition.db, tenantId);
 }
+/** The hosts whose PR workflow deploys: a connected repository's policy file needs it, and code review has a place to run. */
+async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
+  if (!(await codeReviewPlaced(tenantId))) return [];
+  const tenant = await composition.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
+  const sources = new Set<RepoSource>();
+  for (const record of repoRecords(triageNs(tenant?.config)).filter((row) => row.connected)) {
+    if (await inPrWorkflow(tenantId, record.name)) sources.add(sourceOf(record));
+  }
+  return [...sources];
+}
+const readPullRequest = createPullRequestReader({ tenantGithub, tenantBitbucket });
 const codeReviewFeed = createCodeReviewFeed({
   reviewed: reviewedSources,
-  read: createPullRequestReader({ tenantGithub, tenantBitbucket }),
+  read: readPullRequest,
   send: sendToWorker,
+  log: logJson,
+});
+async function openReviewRequest(tenantId: string, record: RepoRecord, number: number, headSha: string) {
+  const pull = await readPullRequest(tenantId, record, number);
+  return pull.headSha === headSha ? reviewRequestOf(record, number, pull) : undefined;
+}
+const routePrWorkflow = createPrWorkflowRouter({
+  credentials: function workspaceCodeReviewKeys(tenantId) {
+    return codeReviewKeys(composition.db, tenantId);
+  },
+  live: async function variantLive(tenantId, workflow) {
+    return (await resolveLiveDeployment(composition.db, tenantId, workflow)) !== null;
+  },
+  reviewRequest: openReviewRequest,
   log: logJson,
 });
 const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
@@ -492,13 +528,22 @@ const tenantVersions = createTenantVersions();
 const reconcilePolicy = triageReconcilePolicy(env);
 const runRecorder = createRunRecorder({ verdicts: verdictRecordStore, log: logJson });
 
-/** The observer and recording loop that copy one workflow's verdicts from its deployments' run logs into the verdict table. */
-function recordingStack(workflowId: string) {
+/**
+ * The observer and recording loop that copy verdicts into the verdict table from the run logs of one workflow's
+ * listeners and of the workers of `workerIds`: a host's pr-triage reads its PR workflow variants' workers too, so their
+ * runs settle its heads.
+ */
+function recordingStack(workflowId: string, workerIds: readonly string[] = [workflowId]) {
   function liveDeployments(tenantId: string) {
     return liveTriageDeployments(tenantId, workflowId);
   }
   async function workerDeployments(tenantId: string, endedSince: Date) {
-    return withWorkflowVersions(launchSpecs, await recentWorkers(composition.db, tenantId, workflowId, endedSince));
+    const workers = await Promise.all(workerIds.map((id) => recentWorkers(composition.db, tenantId, id, endedSince)));
+    return withWorkflowVersions(launchSpecs, workers.flat());
+  }
+  async function activeTriageTenants(what: "runs" | "deployments", endedSince?: Date) {
+    const active = await Promise.all([...new Set([workflowId, ...workerIds])].map((id) => activeTenants(composition.db, id, what, endedSince)));
+    return [...new Map(active.flat().map((tenant) => [tenant.id, tenant])).values()];
   }
   const observer = createTenantObserver({
     liveDeployments,
@@ -512,9 +557,7 @@ function recordingStack(workflowId: string) {
   });
   const recordPass = createRecordPass({
     observer,
-    activeTenants: function activeTriageTenants(what, endedSince) {
-      return activeTenants(composition.db, workflowId, what, endedSince);
-    },
+    activeTenants: activeTriageTenants,
     endedWithinMs: 2 * TRIAGE_RECORD_MS,
     backoffMs: TRIAGE_RECORD_MS,
     maxBackoffMs: TRIAGE_RECORD_MAX_BACKOFF_MS,
@@ -526,7 +569,8 @@ function recordingStack(workflowId: string) {
 
 /** One host's observer, run recorder, rotation and reconciler over its own workflow's deployments. */
 function triageStack(triage: TriageWorkflow) {
-  const { observer, recordPass, liveDeployments } = recordingStack(triage.id);
+  const variants = PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === triage.source).map((variant) => variant.id);
+  const { observer, recordPass, liveDeployments } = recordingStack(triage.id, [triage.id, ...variants]);
   const rotation = createDeploymentRotation({
     db: composition.db,
     launchSpecs,
@@ -562,7 +606,8 @@ function triageStack(triage: TriageWorkflow) {
 
 const stacks = TRIAGE_WORKFLOWS.map(triageStack);
 // pr-triage-historical is only recorded: the reconcilers never mail or rotate it.
-const recordings = [...stacks, recordingStack(prTriageHistoricalWorkflow.id)];
+// A PR workflow variant's listener runs only the approvals of Dos its workers held; those workers are its host's stack's.
+const recordings = [...stacks, recordingStack(prTriageHistoricalWorkflow.id), ...PR_WORKFLOW_VARIANTS.map((variant) => recordingStack(variant.id, []))];
 // The portal's verdict listing reads every host's observations; connection changes use the GitHub stack's rotation to release.
 const github = stacks.find((stack) => stack.triage.source === "github")!;
 const deploymentRotation = github.rotation;
@@ -659,7 +704,7 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
 }
 /** A code review job keeps no state to fail: its head is forgotten, so the next event for it sends it again. */
 async function failCoordinatedJob(job: TriageJob, error: string): Promise<void> {
-  if (!triageWorkflowOf(job.workflow)) {
+  if (!triageWorkflowOf(job.workflow) && !prWorkflowVariantOf(job.workflow)) {
     codeReviewFeed.forget(job);
     logJson({ level: "error", msg: "code_review_failed", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error });
     return;
@@ -824,13 +869,13 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     runReader: composition.runReader,
     sameSource: deploymentRotation.sameSource,
     authorize: authorizePortal,
-    workflows: TRIAGE_WORKFLOWS.map((workflow) => workflow.id),
+    workflows: [...TRIAGE_WORKFLOWS, ...PR_WORKFLOW_VARIANTS].map((workflow) => workflow.id),
   }),
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
-  codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview }),
-  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
-  codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview }),
+  codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview, inPrWorkflow }),
+  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, prWorkflowSources, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
+  codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview, inPrWorkflow }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({
     db: composition.db,

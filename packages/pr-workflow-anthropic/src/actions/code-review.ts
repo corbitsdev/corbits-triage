@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { isRecord } from "@corbits/common";
-import { triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, authorGroupsOf, EVERYONE, fileGroupSchema, triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 
 /** The code review block's outcome step; every other step of the block has its id under `CODE_REVIEW_PREFIX`. */
@@ -11,12 +11,16 @@ export const CODE_REVIEW_REVIEW = `${CODE_REVIEW_PREFIX}review`;
 
 /**
  * Code review's part of the PR workflow's trigger, filled from the parsed policy: whether it is on, the groups it is
- * for, the triage verdicts it runs on and, when set, the globs a changed file must match; and the author's every group,
- * `everyone` among them. Nothing here is defaulted: a part that does not parse leaves the review incomplete.
+ * for, the triage verdicts it runs on and, when set, the globs a changed file must match. Nothing here is defaulted: a
+ * part that does not parse leaves the review incomplete. The author's groups are the pack's, read from triage's facts.
  */
-const CodeReviewTrigger = type({ on: "boolean", for: "string[]", triage: type.enumerated(...VERDICTS).array(), groups: "string[]", "paths?": "string[]" });
+const CodeReviewTrigger = type({ on: "boolean", for: "string[]", triage: type.enumerated(...VERDICTS).array(), "paths?": "string[]" });
 
-const Trigger = type({ codeReview: CodeReviewTrigger, "codeReviewRequest?": "object" });
+const Groups = type({ "[string]": fileGroupSchema });
+
+const Trigger = type({ codeReview: CodeReviewTrigger, "codeReviewRequest?": "object", pack: { "groups?": Groups } });
+
+const Author = type({ author: "string", "authorKind?": type.enumerated(...AUTHOR_KINDS), authorTeams: "string[]", authorTeamsUnknown: "string[]" });
 
 const Review = type({ comments: "object[]", budgetExhausted: "boolean", "cut?": "object" });
 
@@ -42,12 +46,24 @@ function verdictOf(steps: Steps): VerdictWord | undefined {
   return VERDICTS.find((known) => known === word);
 }
 
-/** Undefined when facts could not read the pull request. */
-function changedPaths(steps: Steps): string[] | undefined {
+/** The one pull request's facts; undefined when facts could not read it. */
+function factsOf(steps: Steps): Record<string, unknown> | undefined {
   const facts = settled(steps, "facts");
   const item = isRecord(facts) && Array.isArray(facts.items) && facts.items.length === 1 ? facts.items[0] : undefined;
-  const paths = isRecord(item) && isRecord(item.facts) ? item.facts.paths : undefined;
+  return isRecord(item) && isRecord(item.facts) ? item.facts : undefined;
+}
+
+function changedPaths(steps: Steps): string[] | undefined {
+  const paths = factsOf(steps)?.paths;
   return Array.isArray(paths) ? paths.filter((path) => typeof path === "string") : undefined;
+}
+
+/** Undefined when the facts do not say who the author is, or not enough to tell their group. */
+function authorGroups(steps: Steps, groups: typeof Groups.infer): string[] | undefined {
+  const facts = Author(factsOf(steps));
+  if (facts instanceof type.errors) return undefined;
+  const { author, authorKind, authorTeams, authorTeamsUnknown } = facts;
+  return authorGroupsOf(groups, { login: author, ...(authorKind && { kind: authorKind }), teams: authorTeams, teamsUnknown: authorTeamsUnknown });
 }
 
 function skipped(reason: string): Closed {
@@ -65,10 +81,14 @@ function incomplete(reason: string): Closed {
 export function scopeOf(trigger: unknown, steps: Steps): Scope {
   const parsed = Trigger(triggerRequestOf(trigger));
   if (parsed instanceof type.errors) return incomplete(`the trigger's code review part is invalid: ${parsed.summary}`);
-  const { codeReview, codeReviewRequest } = parsed;
+  const { codeReview, codeReviewRequest, pack } = parsed;
   if (!codeReview.on) return skipped("code review is off");
   if (!codeReviewRequest) return incomplete("code review is on but the trigger carries no review request");
-  if (!codeReview.for.some((group) => codeReview.groups.includes(group))) return skipped(`the author is in ${codeReview.groups.join(", ")}, not ${codeReview.for.join(" or ")}`);
+  if (!codeReview.for.includes(EVERYONE)) {
+    const groups = authorGroups(steps, pack.groups ?? {});
+    if (groups === undefined) return incomplete("triage could not tell the author's groups");
+    if (!codeReview.for.some((group) => groups.includes(group))) return skipped(`the author is in ${groups.join(", ")}, not ${codeReview.for.join(" or ")}`);
+  }
   const verdict = verdictOf(steps);
   if (verdict === undefined) return incomplete("triage gave no verdict");
   if (!codeReview.triage.includes(verdict)) return skipped(`triage is ${verdict}, not ${codeReview.triage.join(" or ")}`);

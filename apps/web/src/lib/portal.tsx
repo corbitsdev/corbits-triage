@@ -173,10 +173,11 @@ export function useSignOutWhenRejected(): (cause: unknown) => void {
 /** Each tenant's converge, keyed by the hosts it was connected to, so connecting or disconnecting one converges again. */
 const convergedTenants = new Set<string>();
 
-const NO_HOSTS: DeployHosts = { connected: [], codeReview: [], codeReviewProvider: undefined };
+const NO_HOSTS: DeployHosts = { connected: [], codeReview: [], codeReviewProvider: undefined, prWorkflow: undefined };
 const DEPLOY_MISSING: ReadonlySet<WorkflowKind> = new Set();
-const REDEPLOY_TRIAGE: ReadonlySet<WorkflowKind> = new Set(["triage"]);
-const REDEPLOY_CODE_REVIEW: ReadonlySet<WorkflowKind> = new Set(["code-review"]);
+// The PR workflow triages on the decision model too.
+const REDEPLOY_TRIAGE: ReadonlySet<WorkflowKind> = new Set(["triage", "pr-workflow"]);
+const REDEPLOY_CODE_REVIEW: ReadonlySet<WorkflowKind> = new Set(["code-review", "pr-workflow"]);
 
 /** A workspace's converges are remembered per set of hosts; switching code review back on must deploy it again even when that set was seen before. */
 function forgetConverged(tenantId: string): void {
@@ -184,7 +185,7 @@ function forgetConverged(tenantId: string): void {
 }
 
 function hostsOf(snapshot: PortalSnapshot): DeployHosts {
-  return { connected: connectedSources(snapshot.credentials), codeReview: codeReviewSources(snapshot), codeReviewProvider: codeReviewProvider(snapshot.credentials) };
+  return { connected: connectedSources(snapshot.credentials), codeReview: codeReviewSources(snapshot), codeReviewProvider: codeReviewProvider(snapshot.credentials), prWorkflow: snapshot.prWorkflowSources };
 }
 
 type PortalLoad = PortalSnapshot | InvitedAccess;
@@ -481,7 +482,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const fresh = await refreshNow();
       if (!fresh) return;
       const freshHosts = hostsOf(fresh);
-      if (freshHosts.codeReview.length > 0) convergeWorkflows(fresh.workspace.tenantId, freshHosts, REDEPLOY_CODE_REVIEW);
+      if (freshHosts.codeReview.length > 0 || (freshHosts.prWorkflow ?? []).length > 0) convergeWorkflows(fresh.workspace.tenantId, freshHosts, REDEPLOY_CODE_REVIEW);
     },
     [convergeWorkflows, notify, refreshNow, requireSnapshot],
   );
@@ -491,6 +492,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const current = requireSnapshot();
       const transport = createHubTransport();
       await releaseWorkflows(transport, current.workspace.tenantId, "code-review");
+      await releaseWorkflows(transport, current.workspace.tenantId, "pr-workflow");
       await removeModelKey(transport, current.workspace.tenantId, ANTHROPIC_PROVIDER, credentialId);
       notify("Anthropic key removed.");
       refresh();
@@ -503,6 +505,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const current = requireSnapshot();
       const transport = createHubTransport();
       await releaseWorkflows(transport, current.workspace.tenantId, "triage");
+      await releaseWorkflows(transport, current.workspace.tenantId, "pr-workflow");
       await removeModelKey(transport, current.workspace.tenantId, INFERENCE_PROVIDER, credentialId);
       notify("Secret removed.");
       refresh();

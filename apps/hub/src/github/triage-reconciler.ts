@@ -182,7 +182,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       skippedRepos.delete(key);
       const stored = await deps.store.load(pass.tenantId, triageStateKey(repo.record));
       const ci = dependsOnCi(read.pack) ? await headsCi(pass.tenantId, repo.record, prs, stored.rows) : new Map<string, CiState>();
-      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored, ci };
+      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, ...(read.policyWorkflow && { policyWorkflow: read.policyWorkflow }), prs, stored, ci };
     }
     const skipped = read.status === "ok" ? "triage_skipped_no_rules" : "triage_skipped_no_policy";
     // Once per repository, and again only once a policy or rule came and went, so a repository left unset stays quiet.
@@ -243,7 +243,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         ? { items: [{ prNumber: queued.number, headSha, ...(queued.judged && { judged: queued.judged }) }] }
         : { prNumber: queued.number, headSha, events: queued.events };
       const payload = mailPayload(repo.record, repo.policy, repo, { ...extra, ...(queued.noWait && { noWait: true }) });
-      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, number: queued.number, headSha, source: "reconcile", payload });
+      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, number: queued.number, headSha, source: "reconcile", record: repo.record, payload });
       deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, reason: queued.reason });
     }
   }

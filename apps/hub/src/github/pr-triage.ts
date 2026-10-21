@@ -96,7 +96,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     }
     if (queued.status === "conflict") return failure(409, "conflict", `${repo}#${number} was just updated by the hub. Try again.`);
     try {
-      await deps.send({ ...head, workflow: triage.id, source: "retry", payload: mailPayload(record, policy, pack, { prNumber: number, headSha, noWait: true }) });
+      await deps.send({ ...head, workflow: triage.id, source: "retry", record, payload: mailPayload(record, policy, pack, { prNumber: number, headSha, noWait: true }) });
     } catch (err) {
       deps.log({ level: "error", msg: "triage_request_failed", tenantId, repo, pr: number, headSha, error: String(err) });
       try {

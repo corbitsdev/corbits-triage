@@ -161,7 +161,8 @@ name per tenant; no deployment ids are configured anywhere.
   names one pull request and the run returns a review.
 - `pr-workflow-anthropic-github` and `pr-workflow-anthropic-bitbucket-datacenter`:
   triage, then code review behind a gate, in one run ([PR workflow](#pr-workflow)).
-  The hub does not deploy or mail them yet.
+  The portal deploys a host's while a repository's policy file needs it; the
+  hub picks it per pull request.
 
 ## Triage pipeline
 
@@ -312,12 +313,12 @@ review's (`codeReviewSteps` in `pr-code-review`) under `codeReview_`, whose
 actions read their steps under the `$prefix` their input carries.
 
 Once triage has decided, `codeReview_scope` reads the trigger request's
-`codeReview` (`on`, `for`, the author's `groups`, the `triage` verdicts it
-runs on and optional `paths` globs, where `*` stays within one folder and
-`**/` matches zero or more folders) and
-`codeReviewRequest`, triage's verdict and the changed files. The hub fills
-them from the parsed policy; whatever the scope cannot read leaves the review
-incomplete. A gate runs the review or skips it, and `codeReview` records the
+`codeReview` (`on`, `for`, the `triage` verdicts it runs on and optional
+`paths` globs, where `*` stays within one folder and `**/` matches zero or more
+folders) and `codeReviewRequest`, triage's verdict, the changed files and,
+unless `for` holds `everyone`, the author's groups from the pack's `groups` and
+triage's facts. Whatever the scope cannot read leaves the review incomplete. A
+gate runs the review or skips it, and `codeReview` records the
 outcome: `findings`, `clean`, `skipped` with the reason, or `incomplete` when
 the scope or a review step failed, the review cannot be read, the reader
 stopped early, the diff was cut, or a paths rule met unread files. The block's
@@ -357,6 +358,40 @@ alone holds nothing back: triage's execute is one step after the mirror and
 `decide`, and without a decision it fails and writes nothing. An approval or waiting mail never triages, so it never reaches the
 scope. The definition binds both pipelines' credentials and, like code review,
 requires `isolation:workload`.
+
+The hub picks the workflow per mail, wherever the mail came from
+(`github/pr-workflow.ts`). A policy file needs the PR workflow when it turns a
+block on or its `decide` is not the one the parser derives from its `actions`;
+only then does the stored policy keep its v4 keys, and its pull request mails
+carry `codeReview`, `blocks` and `decide`. Such a `pr` mail goes to the host's
+variant for code review's `provider`, else the first provider in the default
+order whose key is stored; only credential names are read. With code review
+on, the hub reads the diff, through the repository record the job carries,
+into `codeReviewRequest`, and leaves it out when the head moved or the read
+failed, so the review is incomplete. The mail runs in a worker copied from the
+variant's listener, like pr-triage's. Without that key, with a block on that
+the variant does not run (`security`, `deslop`), or with no live variant
+listener, pr-triage runs it with approve and merge taken out of `automatic`,
+so they wait in Needs you, and the hub logs `pr_workflow_unavailable`. Saved
+rules carry no v4 keys, so they always run pr-triage.
+
+The coordinator keeps one triage job per pull request whichever workflow it
+names, so a newer head's job replaces a queued one and a deferred job a newer
+head replaced is dropped. In a repository the PR workflow reviews, the file
+alone decides code review: the standalone feed skips it, and the code review
+switch and "Review again" refuse with `policy_file_decides`. A host's
+pr-triage observer also reads its variants' workers, so their runs settle its
+heads, and reads a run's Dos from `decide`: the Dos it made, then evaluate's it
+did not make that wait, those `decide` left held with its reason and those
+evaluate held itself, such as for a missing grant. A held Do's approval goes to
+the listener of the workflow whose run held it; with that listener released,
+the approval is refused. The portal deploys a variant while a connected
+repository's policy file needs it (`prWorkflow` on the code review place
+route) and the provider's key is stored, redeploys it with the key or the
+decision model, and releases it once no repository needs it or either is
+removed; the hub releases it once its host is disconnected or code review has
+no place to run. The separate `pr-code-review` deployments still run beside
+it.
 
 ## Tenancy and authority
 

@@ -131,6 +131,8 @@ export function approvalIn(events: readonly WorkflowRunEvent[]): Approval | unde
 
 /** The evaluate action on either gate branch outputs the verdict; deployments before it rendered it in a `render` step, or older still in `renderJudged`, `renderDet` or `renderAll`. */
 const VERDICT_STEPS = new Set(["evaluate", "evaluateRules", "render", "renderJudged", "renderDet", "renderAll"]);
+/** The PR workflow's `decide` replaces the verdict's Dos with those it chose. */
+const DECIDE_STEPS = new Set(["decide"]);
 const RULES_STEPS = new Set(["rules"]);
 const MIRROR_STEPS = new Set(["mirror", "mirrorRules"]);
 const EXECUTE_STEPS = new Set(["execute", "executeRules"]);
@@ -171,13 +173,40 @@ function withResults(verdict: Record<string, unknown> | undefined, results: Read
   return { ...verdict, actions: actions.map(withResult) };
 }
 
+function listOf(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * The PR workflow's one verdict once its `decide` step ran: the Dos it made, then evaluate's Dos it did not make that
+ * wait for a maintainer: those it left `held`, with why, and those evaluate held itself, with evaluate's reason.
+ */
+function decidedOf(events: readonly WorkflowRunEvent[], verdict: Record<string, unknown>): Record<string, unknown> {
+  const decided = inlineOutput(lastCompleted(events, DECIDE_STEPS));
+  const chosen = asRecord(decided?.["verdict"]);
+  if (!chosen) return verdict;
+  const made = new Set(listOf(chosen["actions"]).map((action) => asRecord(action)?.["effectId"]));
+  const held = new Map(listOf(decided?.["held"]).flatMap((entry) => {
+    const read = DoResult(entry);
+    return read instanceof type.errors ? [] : [[read.effectId, read.error] as const];
+  }));
+  const left = listOf(verdict["actions"]).flatMap((action) => {
+    const own = asRecord(action);
+    const effectId = own?.["effectId"];
+    if (typeof effectId !== "string" || made.has(effectId)) return [];
+    if (held.has(effectId)) return [{ ...own, held: true, reason: held.get(effectId) }];
+    return own?.["held"] === true ? [own] : [];
+  });
+  return { ...chosen, actions: [...listOf(chosen["actions"]), ...left] };
+}
+
 /** A batch run outputs `{ items }` in the order its mail named the heads; a single run outputs the verdict itself. */
 function verdictsOf(events: readonly WorkflowRunEvent[]): Array<Record<string, unknown> | undefined> {
   const verdict = inlineOutput(lastCompleted(events, VERDICT_STEPS));
   if (!verdict) return [];
   const items = verdict["items"];
   const results = doResults(events);
-  return (Array.isArray(items) ? items.map(asRecord) : [verdict]).map((item) => withResults(item, results));
+  return (Array.isArray(items) ? items.map(asRecord) : [decidedOf(events, verdict)]).map((item) => withResults(item, results));
 }
 
 type Ruled = { facts: Record<string, unknown>; evidence: string[] };

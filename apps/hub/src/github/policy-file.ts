@@ -13,7 +13,7 @@ import { defaultBranch, readRepo } from "../bitbucket-datacenter/client.js";
 import * as bitbucketPull from "../bitbucket-datacenter/policy-pull.js";
 import { splitName } from "../bitbucket-datacenter/records.js";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { checkPolicyFile, exportPolicyFile, POLICY_FILE_PATH, notAFileReason, POLICY_FILE_PATHS, policyFileReason, starterPack, type PolicyFileStatus, type PolicyUpgrades, type RepoSource } from "@corbits/triage-contracts";
+import { checkPolicyFile, exportPolicyFile, POLICY_FILE_PATH, notAFileReason, POLICY_FILE_PATHS, policyFileReason, starterPack, type PolicyFileStatus, type PolicyUpgrades, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
 import type { PolicySettled } from "./check-pack-store.js";
 import { forInstallation, type MemberOpenPulls, type OpenPullsRead } from "./open-pulls.js";
 import * as github from "./policy-pull.js";
@@ -74,7 +74,7 @@ export type PolicyFileDeps = PortalCredentialDeps & {
 export type PolicyFileState =
   | { status: "absent" }
   | { status: "invalid"; path: string; reason: string; file?: PolicyFileStatus }
-  | { status: "ok"; file: PolicyFileStatus; policy: Record<string, unknown> };
+  | { status: "ok"; file: PolicyFileStatus; policy: Record<string, unknown>; workflow: PolicyWorkflow };
 
 type FoundFile = { path: string; read: RepoFileRead };
 
@@ -84,7 +84,7 @@ function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
   if (read.text === null) return { status: "invalid", path, reason: `${path} is too large or uses aliases.`, file };
   const checked = checkPolicyFile(read.text, repo);
   if (!checked.ok) return { status: "invalid", path, reason: policyFileReason(checked.problems), file };
-  return { status: "ok", file, policy: checked.policy };
+  return { status: "ok", file, policy: checked.policy, workflow: checked.workflow };
 }
 
 /** How long a read of a repository the hub hears no push from is kept. */
