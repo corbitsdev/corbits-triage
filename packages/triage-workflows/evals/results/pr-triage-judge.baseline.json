@@ -1,0 +1,542 @@
+{
+  "workflow": "pr-triage",
+  "eval": "judge",
+  "steps": {
+    "triage-judge": {
+      "provider": "opencode-zen",
+      "model": "jev-1.13"
+    }
+  },
+  "usage": {
+    "opencode-zen/jev-1.13": {
+      "input": 1531577,
+      "output": 22635,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "costUsd": 0.0643,
+      "price": {
+        "source": "https://opencode.ai/zen",
+        "asOf": "2026-10-20",
+        "price": {
+          "input": 0.042,
+          "output": 0,
+          "cacheRead": "unknown",
+          "cacheWrite": "unknown"
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "45",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "46",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "46-no-docs",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "fail",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "71",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "96",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "98",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "101",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "103",
+      "failed": false,
+      "verdict": "unsure",
+      "rules": {
+        "docs": "unsure",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "106",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "108",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "112",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "113",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "119",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "122",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "125",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "135",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "137",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "139",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "141",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "144",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "145",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "148",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "149",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "151",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "153",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "154",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "154-no-docs",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "fail",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "155",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "156",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "157",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "158",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "186",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "186-no-docs",
+      "failed": false,
+      "verdict": "unsure",
+      "rules": {
+        "docs": "unsure",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "187",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "187-no-docs",
+      "failed": false,
+      "verdict": "unsure",
+      "rules": {
+        "docs": "unsure",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "188",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "190",
+      "failed": false,
+      "verdict": "unsure",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "191",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "joho/godotenv#262",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "joho/godotenv#235",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "joho/godotenv#245",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "joho/godotenv#200",
+      "failed": false,
+      "verdict": "pass",
+      "rules": {
+        "docs": "pass",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "joho/godotenv#200-no-docs",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "fail",
+        "focused": "pass"
+      }
+    },
+    {
+      "id": "155+139",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "137+151",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "113+125",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "149+156",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "148+45",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "190+186",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "187+188",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "155+139-described",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "137+151-described",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "113+125-described",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    },
+    {
+      "id": "190+186-described",
+      "failed": false,
+      "verdict": "fail",
+      "rules": {
+        "docs": "pass",
+        "focused": "fail"
+      }
+    }
+  ],
+  "totals": {
+    "docs": {
+      "passed": 51,
+      "counted": 54,
+      "missed": 3,
+      "unsure": 3
+    },
+    "focused": {
+      "passed": 54,
+      "counted": 54,
+      "missed": 0,
+      "unsure": 0
+    },
+    "verdict": {
+      "passed": 50,
+      "counted": 54,
+      "missed": 4,
+      "unsure": 4
+    }
+  },
+  "commit": "e2177f1589819b3136eccace8f380533c084276b",
+  "dirty": false,
+  "date": "2026-10-20T23:50:41.454Z",
+  "pricesAsOf": "2026-10-20",
+  "costUsd": 0.0643
+}

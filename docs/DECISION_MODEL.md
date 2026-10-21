@@ -140,7 +140,7 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 
 - **Cases**: 54 in `cases.jsonl`. These are 38 pull requests labelled in `labels.json` (needs docs), 34 of this repository and 4 of `joho/godotenv`, 5 variants with their docs removed (body and matching commit messages dropped too), 7 mixes of two unrelated pull requests that focused must fail, and 4 of those mixes again with a title and body describing both halves (`describedMixes`). #190 and #191 are one feature each spread across hub, portal, contracts and workflows, which focused must pass.
 - **Allowed misses**: docs 7, focused 2, verdict 4 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
-- **Latest result** (2026-10-16, 54 cases): docs 2 misses, focused 0, verdict 2, every miss an unsure answer on the two docs-removed variants of #186 and #187. Custom rules are unmeasured.
+- **Latest result** (2026-10-20, 54 cases, `packages/triage-workflows/evals/results/pr-triage-judge.baseline.json`): docs 3 misses, focused 0, verdict 4 (the allowance), every miss an unsure answer: #103, #190 and the two docs-removed variants of #186 and #187. Custom rules are unmeasured.
 
 A change to how a rule is asked or decided states the eval's misses before and after in its pull request.
 

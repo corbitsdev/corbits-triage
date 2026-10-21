@@ -22,7 +22,8 @@ bun run eval:hidden-content   # hidden-content rule eval; calls no model
 model and tokens with its price, source and `pricesAsOf` date (a rate with no recorded price reads `unknown`, and a cost
 that needs it is null), each case's verdict and rule answers, and each check's totals. It refuses on a dirty working tree
 or when any case's repository is not public. The writer (`evals/baseline.ts`) and price table (`evals/prices.ts`) are
-shared with the code review eval.
+shared with the code review eval. The committed file is the baseline for the commit it names; rerun and commit it when a
+change moves the numbers.
 
 ## Test
 
