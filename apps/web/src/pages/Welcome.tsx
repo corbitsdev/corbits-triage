@@ -12,6 +12,11 @@ function message(cause: unknown): string {
   return errorText(cause).replace(/[.\s]*$/, "");
 }
 
+/** The hub's own fallback repeats `what`, so the reason is shown only when it adds something. */
+function failure(what: string, reason: string, hint: string): string {
+  return reason === what ? `${what}.${hint}` : `${what}. ${reason}.${hint}`;
+}
+
 function returnedSignInError(): string {
   const code = new URLSearchParams(window.location.search).get("error");
   return code === null ? "" : `Google sign-in failed (${code.replaceAll("_", " ")}). Use an allowed account, then try again.`;
@@ -32,10 +37,12 @@ export function Welcome({ intro }: { intro?: string }) {
     setLocalError("");
     try {
       await (mode === "sign-up"
-        ? signUp(credentials.email, credentials.password, credentials.name ?? "")
+        ? signUp(credentials.email, credentials.password, credentials.name)
         : signIn(credentials.email, credentials.password));
     } catch (cause: unknown) {
-      setLocalError(`${message(cause)}.`);
+      setLocalError(mode === "sign-up"
+        ? failure("Could not create the account", message(cause), "")
+        : failure("Could not sign in", message(cause), " Check your email and password, then try again."));
     } finally {
       setPending(false);
     }
@@ -88,27 +95,9 @@ export function Welcome({ intro }: { intro?: string }) {
     );
   }
 
-  if (mode === "reset") {
-    return (
-      <SignInShell footer={<button type="button" className="signin-link" onClick={() => switchTo("sign-in")}>Back to sign in</button>}>
-        <div className="signin-head">
-          <h1>Reset your password</h1>
-          <p>Enter your email and we will send you a link to set a new password.</p>
-        </div>
-        {shownError && <p role="alert" className="signin-error">{shownError}</p>}
-        {notice && <p role="status" className="signin-notice">{notice}</p>}
-        <form className="signin-form" aria-busy={pending} onSubmit={(event) => void resetPassword(event)}>
-          <label className="signin-field">
-            Email
-            <Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={pending} />
-          </label>
-          <Button type="submit" size="lg" disabled={pending}>{pending ? "Sending…" : "Send reset link"}</Button>
-        </form>
-      </SignInShell>
-    );
-  }
-
+  const resetting = mode === "reset";
   const signingUp = mode === "sign-up";
+  const back = <button type="button" className="signin-link" onClick={() => switchTo("sign-in")}>Back to sign in</button>;
   const switcher = methods.data?.emailPassword && (
     <>
       {signingUp ? "Have an account? " : "New to Corbits Triage? "}
@@ -118,22 +107,51 @@ export function Welcome({ intro }: { intro?: string }) {
     </>
   );
 
+  function keepEmail(event: FormEvent<HTMLDivElement>) {
+    if (event.target instanceof HTMLInputElement && event.target.type === "email") setEmail(event.target.value);
+  }
+
   return (
-    <SignInShell footer={switcher}>
-      {intro && <p role="status" className="signin-notice">{intro}</p>}
+    <SignInShell footer={resetting ? back : switcher}>
+      {resetting && (
+        <>
+          <div className="signin-head">
+            <h1>Reset your password</h1>
+            <p>Enter your email and we will send you a link to set a new password.</p>
+          </div>
+          {shownError && <p role="alert" className="signin-error">{shownError}</p>}
+          {notice && <p role="status" className="signin-notice">{notice}</p>}
+          <form className="signin-form" aria-busy={pending} onSubmit={(event) => void resetPassword(event)}>
+            <label className="signin-field">
+              Email
+              <Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={pending} />
+            </label>
+            <Button type="submit" size="lg" disabled={pending}>{pending ? "Sending…" : "Send reset link"}</Button>
+          </form>
+        </>
+      )}
+      {!resetting && intro && <p role="status" className="signin-notice">{intro}</p>}
+      {!methods.data && (
+        <div className="signin-head" aria-busy="true">
+          <h1>Sign in</h1>
+        </div>
+      )}
       {methods.data && (
-        <LoginForm
-          mode={signingUp ? "sign-up" : "sign-in"}
-          heading={signingUp ? "Create an account" : "Sign in"}
-          providers={methods.data.google ? [{ id: "google", label: "Continue with Google", icon: <GoogleMark /> }] : []}
-          onProvider={() => void continueWithGoogle()}
-          onSubmit={methods.data.emailPassword ? (credentials) => void submit(credentials) : undefined}
-          busy={pending}
-          error={shownError}
-          footer={methods.data.passwordReset && !signingUp
-            ? <button type="button" className="signin-link" disabled={pending} onClick={() => switchTo("reset")}>Forgot password?</button>
-            : undefined}
-        />
+        // LoginForm keeps its own fields, so it stays mounted while resetting to keep what was typed.
+        <div hidden={resetting} onInput={keepEmail}>
+          <LoginForm
+            mode={signingUp ? "sign-up" : "sign-in"}
+            heading={signingUp ? "Create an account" : "Sign in"}
+            providers={methods.data.google ? [{ id: "google", label: "Continue with Google", icon: <GoogleMark /> }] : []}
+            onProvider={() => void continueWithGoogle()}
+            onSubmit={methods.data.emailPassword ? (credentials) => void submit(credentials) : undefined}
+            busy={pending}
+            error={resetting ? null : shownError}
+            footer={methods.data.passwordReset && !signingUp
+              ? <button type="button" className="signin-link" disabled={pending} onClick={() => switchTo("reset")}>Forgot password?</button>
+              : undefined}
+          />
+        </div>
       )}
     </SignInShell>
   );
