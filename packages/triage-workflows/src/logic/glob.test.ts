@@ -1,10 +1,22 @@
 import { expect, test } from "bun:test";
 import { globMatch } from "./glob.js";
 
-test("* stays within a segment and ** crosses segments", () => {
-  expect(globMatch("vendor/a/b.ts", "vendor/**")).toBe(true);
-  expect(globMatch("vendor/a/b.ts", "vendor/*")).toBe(false);
-  expect(globMatch("src/a.test.ts", "src/*.test.ts")).toBe(true);
+test.each([
+  ["vendor/a/b.ts", "vendor/**", true],
+  ["vendor/a/b.ts", "vendor/*", false],
+  ["src/a.test.ts", "src/*.test.ts", true],
+  ["README.md", "**/*.md", true],
+  ["docs/a/README.md", "**/*.md", true],
+  ["src/a.ts", "src/**/*.ts", true],
+  ["src/a/b/c.ts", "src/**/*.ts", true],
+  ["lib/a.ts", "src/**/*.ts", false],
+  [".env", "**/.env", true],
+  ["app/.env", "**/.env", true],
+  ["app/.env.local", "**/.env", false],
+  ["docs/a.md", "**.md", true],
+  ["xsrc/a.ts", "**/src/*.ts", false],
+] as const)("%s against %s is %p", (path, glob, matches) => {
+  expect(globMatch(path, glob)).toBe(matches);
 });
 
 test("regex metacharacters match literally", () => {

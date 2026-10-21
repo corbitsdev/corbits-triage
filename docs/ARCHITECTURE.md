@@ -313,8 +313,8 @@ actions read their steps under the `$prefix` their input carries.
 
 Once triage has decided, `codeReview_scope` reads the trigger request's
 `codeReview` (`on`, `for`, the author's `groups`, the `triage` verdicts it
-runs on and optional `paths` globs, where `*` stays within one folder, so
-`["*.go", "**/*.go"]` matches Go files at the root and below) and
+runs on and optional `paths` globs, where `*` stays within one folder and
+`**/` matches zero or more folders) and
 `codeReviewRequest`, triage's verdict and the changed files. The hub fills
 them from the parsed policy; whatever the scope cannot read leaves the review
 incomplete. A gate runs the review or skips it, and `codeReview` records the
