@@ -79,8 +79,8 @@ export function createUserCache(queryClient: QueryClient, storage: AsyncStorage<
   async function signOut() {
     stop();
     holder = null;
-    queryClient.clear();
-    await userPersister(storage, never).removeClient();
+    // Reset, not clear: the signed-out screen's own queries, such as the sign-in options in flight, keep their observers.
+    await Promise.all([queryClient.resetQueries(), userPersister(storage, never).removeClient()]);
   }
 
   async function signIn(userId: string) {
