@@ -4,7 +4,8 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "exports": {
-    "./*": "./src/*.ts"
+    "./*": "./src/*.ts",
+    "./evals/*": "./evals/*.ts"
   },
   "interchange": {
     "workflow": "./src/pr-triage.ts",

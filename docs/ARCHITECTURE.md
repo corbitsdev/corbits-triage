@@ -156,6 +156,9 @@ name per tenant; no deployment ids are configured anywhere.
   closed. Not deployed by the hub yet.
 - `pr-code-review-github` and `pr-code-review-bitbucket-datacenter`: one mail
   names one pull request and the run returns a review.
+- `pr-workflow-anthropic-github` and `pr-workflow-anthropic-bitbucket-datacenter`:
+  triage, then code review behind a gate, in one run ([PR workflow](#pr-workflow)).
+  The hub does not deploy or mail them yet.
 
 ## Triage pipeline
 
@@ -292,6 +295,35 @@ The steps, the provider profile and how to add a provider are in
 [packages/pr-code-review/README.md](../packages/pr-code-review/README.md); the
 eval and its numbers in
 [packages/pr-code-review-anthropic/evals/README.md](../packages/pr-code-review-anthropic/evals/README.md).
+
+## PR workflow
+
+`@corbits/pr-workflow-anthropic` composes the two pipelines into one
+definition per host. Its steps are pr-triage's under their own ids, then code
+review's (`codeReviewSteps` in `pr-code-review`) under `codeReview_`, whose
+actions read their steps under the `$prefix` their input carries.
+
+Once triage has decided, `codeReview_scope` reads the trigger request's
+`codeReview` (`on`, `for`, the author's `groups`, the `triage` verdicts it
+runs on and optional `paths` globs, where `*` stays within one folder, so
+`["*.go", "**/*.go"]` matches Go files at the root and below) and
+`codeReviewRequest`, triage's verdict and the changed files. The hub fills
+them from the parsed policy; whatever the scope cannot read leaves the review
+incomplete. A gate runs the review or skips it, and `codeReview` records the
+outcome: `findings`, `clean`, `skipped` with the reason, or `incomplete` when
+the scope or a review step failed, the review cannot be read, the reader
+stopped early, the diff was cut, or a paths rule met unread files. The block's
+`clean` thresholds are not applied yet.
+
+Stock runs a step whose dependencies failed, so ordering alone holds nothing
+back. Triage's execute is one step after the mirror and `codeReview`, whose
+output carries the verdict: without an outcome it fails and writes nothing.
+Approve and merge run only after a clean or skipped review; otherwise execute
+records each `held`, which the hub reads as a Do triage held, so it waits in
+Needs you and its approval mail runs triage's own execute. An approval or
+waiting mail never triages, so it never reaches the scope. The definition binds
+both pipelines' credentials and, like code review, requires
+`isolation:workload`.
 
 ## Tenancy and authority
 

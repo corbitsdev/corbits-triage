@@ -1,4 +1,4 @@
-import { action, defineWorkflow, map, onTrigger, step, type Selector } from "@intx/workflow";
+import { action, defineWorkflow, map, onTrigger, step, type Primitive, type Selector } from "@intx/workflow";
 import { READ_REPOSITORY } from "./actions/checkout.js";
 import { credentialBindingsFor, type CodeReviewAgents, type Sources } from "./agents.js";
 import { MODEL_ATTEMPTS } from "./failures.js";
@@ -18,17 +18,16 @@ const MODEL_RETRY = { maxAttempts: MODEL_ATTEMPTS, initialBackoffMs: 5_000 };
 /** Its own sidecar, never one shared with other work: the review checks out the pull request's code. */
 export const CODE_REVIEW_PLACEMENT = { capabilities: [{ capability: "isolation:workload", effect: "require" as const }] };
 
-function stepsOf(...ids: string[]) {
-  return { project: { from: "steps" }, fields: ids } as const;
-}
-
-function inferenceOf(role: string) {
-  return { from: `steps.reviewInput.output.inference.${role}` };
-}
-
 /** Checks the head out on the sidecar through the credential bound to it for each of `sources`; its output names the folder. */
 export function checkoutAction(sources: Sources, input: Selector, after: readonly string[]) {
   return action({ handler: "checkout", input, after, credentials: sources, effect: { requires: [READ_REPOSITORY] }, timeout: TIMEOUT });
+}
+
+/** Where a review's steps sit in a definition: every step id under `prefix`, the request read from `request`, after `after`. */
+export interface CodeReviewPlace {
+  prefix: string;
+  request: Selector;
+  after?: readonly string[];
 }
 
 /**
@@ -36,34 +35,52 @@ export function checkoutAction(sources: Sources, input: Selector, after: readonl
  * lines at the head, group findings by defect) → checks (every group, by severity then agreement) → check (one call per group,
  * only when the request asks for it) → writeInput → write → review (the review to post).
  * Each model step's effort comes from the request, else the profile; its model is the one the profile names for it.
- * The definition for the given hosts under `id`, also its mail address, binds only their credentials; the deployed
- * packages are one per host, and a request's checkout names that host. The checkout's folder is on the sidecar, which
- * the review has to itself.
+ * Under a prefix, every action's input also carries it as `$prefix`, so the action finds its steps' outputs.
  */
-export function codeReviewWorkflow({ checkAgent, consolidateAgent, finderAgent, planAgent, repoFinderAgent, writeAgent }: CodeReviewAgents) {
+export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { prefix, request, after }: CodeReviewPlace): Record<string, Primitive> {
+  const { checkAgent, consolidateAgent, finderAgent, planAgent, repoFinderAgent, writeAgent } = agents;
+  function id(name: string) {
+    return `${prefix}${name}`;
+  }
+  function stepsOf(...names: string[]): Selector {
+    const steps = { project: { from: "steps" }, fields: names.map(id) };
+    return prefix === "" ? steps : { merge: [{ literal: { $prefix: prefix } }, steps] };
+  }
+  function outputOf(name: string, path: string) {
+    return { from: `steps.${id(name)}.output.${path}` };
+  }
+  return {
+    [id("reviewInput")]: action({ handler: "reviewInput", input: request, ...(after && { after }) }),
+    [id("plan")]: step({ agent: planAgent, input: outputOf("reviewInput", "plan"), inference: outputOf("reviewInput", "inference.plan"), after: [id("reviewInput")], timeout: TIMEOUT, retry: MODEL_RETRY }),
+    [id("checkout")]: checkoutAction(sources, outputOf("reviewInput", "request.checkout"), [id("reviewInput")]),
+    [id("findersInput")]: action({ handler: "findersInput", input: stepsOf("reviewInput", "plan"), after: [id("plan")] }),
+    [id("findDiff")]: step({ agent: finderAgent(), input: outputOf("findersInput", "diff"), inference: outputOf("reviewInput", "inference.diffFinder"), after: [id("findersInput")], timeout: TIMEOUT, retry: MODEL_RETRY }),
+    [id("findRepo")]: step({ agent: repoFinderAgent(), input: outputOf("findersInput", "repo"), inference: outputOf("reviewInput", "inference.repoFinder"), after: [id("findersInput"), id("checkout")], timeout: TIMEOUT, retry: MODEL_RETRY }),
+    [id("candidates")]: action({ handler: "candidates", input: stepsOf("reviewInput", "findDiff", "findRepo"), after: [id("findDiff"), id("findRepo")] }),
+    [id("consolidate")]: step({ agent: consolidateAgent(sources), input: outputOf("candidates", "consolidate"), inference: outputOf("candidates", "inference"), after: [id("candidates")], timeout: TIMEOUT, retry: MODEL_RETRY }),
+    [id("checks")]: action({ handler: "checks", input: stepsOf("reviewInput", "candidates", "consolidate"), after: [id("consolidate")] }),
+    [id("check")]: map({
+      over: outputOf("checks", "checks"),
+      step: step({ agent: checkAgent, input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: TIMEOUT, retry: MODEL_RETRY }),
+      after: [id("checks")],
+    }),
+    [id("writeInput")]: action({ handler: "writeInput", input: stepsOf("reviewInput", "candidates", "checks", "check"), after: [id("check")] }),
+    [id("write")]: step({ agent: writeAgent, input: outputOf("writeInput", "text"), inference: outputOf("writeInput", "inference"), after: [id("writeInput")], timeout: TIMEOUT, retry: MODEL_RETRY }),
+    [id("review")]: action({ handler: "review", input: stepsOf("reviewInput", "writeInput", "write"), after: [id("write")] }),
+  };
+}
+
+/**
+ * The review on its own: the definition for the given hosts under `id`, also its mail address, binds only their
+ * credentials; the deployed packages are one per host, and a request's checkout names that host. The checkout's folder
+ * is on the sidecar, which the review has to itself.
+ */
+export function codeReviewWorkflow(agents: CodeReviewAgents) {
   return function prCodeReview({ id = PR_CODE_REVIEW_ADDRESS, sources }: { id?: string; sources: Sources }) {
     const body = defineWorkflow({
       id: `${id}-run`,
       trigger: { type: "manual" },
-      steps: {
-        reviewInput: action({ handler: "reviewInput", input: { from: "trigger.payload" } }),
-        plan: step({ agent: planAgent, input: { from: "steps.reviewInput.output.plan" }, inference: inferenceOf("plan"), after: ["reviewInput"], timeout: TIMEOUT, retry: MODEL_RETRY }),
-        checkout: checkoutAction(sources, { from: "steps.reviewInput.output.request.checkout" }, ["reviewInput"]),
-        findersInput: action({ handler: "findersInput", input: stepsOf("reviewInput", "plan"), after: ["plan"] }),
-        findDiff: step({ agent: finderAgent(), input: { from: "steps.findersInput.output.diff" }, inference: inferenceOf("diffFinder"), after: ["findersInput"], timeout: TIMEOUT, retry: MODEL_RETRY }),
-        findRepo: step({ agent: repoFinderAgent(), input: { from: "steps.findersInput.output.repo" }, inference: inferenceOf("repoFinder"), after: ["findersInput", "checkout"], timeout: TIMEOUT, retry: MODEL_RETRY }),
-        candidates: action({ handler: "candidates", input: stepsOf("reviewInput", "findDiff", "findRepo"), after: ["findDiff", "findRepo"] }),
-        consolidate: step({ agent: consolidateAgent(sources), input: { from: "steps.candidates.output.consolidate" }, inference: { from: "steps.candidates.output.inference" }, after: ["candidates"], timeout: TIMEOUT, retry: MODEL_RETRY }),
-        checks: action({ handler: "checks", input: stepsOf("reviewInput", "candidates", "consolidate"), after: ["consolidate"] }),
-        check: map({
-          over: { from: "steps.checks.output.checks" },
-          step: step({ agent: checkAgent, input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: TIMEOUT, retry: MODEL_RETRY }),
-          after: ["checks"],
-        }),
-        writeInput: action({ handler: "writeInput", input: stepsOf("reviewInput", "candidates", "checks", "check"), after: ["check"] }),
-        write: step({ agent: writeAgent, input: { from: "steps.writeInput.output.text" }, inference: { from: "steps.writeInput.output.inference" }, after: ["writeInput"], timeout: TIMEOUT, retry: MODEL_RETRY }),
-        review: action({ handler: "review", input: stepsOf("reviewInput", "writeInput", "write"), after: ["write"] }),
-      },
+      steps: codeReviewSteps(agents, sources, { prefix: "", request: { from: "trigger.payload" } }),
     });
     return defineWorkflow({
       id,

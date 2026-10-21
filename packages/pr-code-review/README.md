@@ -7,7 +7,9 @@ profile (`src/profile.ts`); the hub imports its workflow addresses and placement
 ## Use
 
 Every file under `src/` is a subpath export (`@corbits/pr-code-review/pr-code-review`, `/agents`, `/directors`,
-`/findings`, `/profile`, `/actions/review`, `/actions/checkout`).
+`/findings`, `/profile`, `/actions/review`, `/actions/checkout`). `codeReviewSteps(agents, sources, { prefix, request,
+after })` places the same steps in another definition, every id under `prefix`, as
+[pr-workflow-anthropic](../pr-workflow-anthropic/README.md) does.
 
 The request is `{ kind: "code-review", title, description, diff, checkout }` with optional `number` (the pull
 request's), `efforts` per step, `budgets.repoFinder`, `check`, and `cut` (`{ lines, of, unread? }`) when the sender cut
