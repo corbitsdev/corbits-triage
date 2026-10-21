@@ -3,7 +3,6 @@ import { ApiError, type Transport } from "@intx/hub-client";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import {
   createGrant,
-  deleteGrant,
   ensureWorkspace,
   configureGithubApp,
   ensureHookCredential,
@@ -422,34 +421,6 @@ describe("access grant transport", () => {
         },
       },
     ]);
-  });
-
-  test("deleteGrant does not call the hub for system origin", async () => {
-    let called = false;
-    const transport: Transport = {
-      fetch: async () => {
-        called = true;
-        return undefined as never;
-      },
-      subscribe: () => () => {},
-    };
-    await expect(deleteGrant(transport, "tenant", { id: "grn_sys", origin: "system" })).rejects.toThrow(
-      "This built-in rule cannot be removed.",
-    );
-    expect(called).toBe(false);
-  });
-
-  test("deleteGrant revokes a creator grant", async () => {
-    const calls: Array<{ method: string; path: string }> = [];
-    const transport: Transport = {
-      fetch: async (method, path) => {
-        calls.push({ method, path });
-        return undefined as never;
-      },
-      subscribe: () => () => {},
-    };
-    await deleteGrant(transport, "tenant", { id: "grn_user", origin: "creator" });
-    expect(calls).toEqual([{ method: "DELETE", path: "/api/tenants/tenant/grants/grn_user" }]);
   });
 });
 

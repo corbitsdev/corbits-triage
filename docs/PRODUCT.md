@@ -198,8 +198,8 @@ actions:
 ### Which actions run on their own
 
 Actions of the kinds Triage's own `pr-triage` role holds run during triage,
-switched per kind for every repository in Settings → Triage or per repository
-on its page; the rest wait in the Inbox for a person whose role holds that
+allowed per repository on its page, where one approval allows every kind its
+policy uses; the rest wait in the Inbox for a person whose role holds that
 kind. Turning triage on for a repository lets
 Triage post its comment and verdict label there; everything else waits until
 you allow it. Close never runs on its own on Unsure, and merge never on

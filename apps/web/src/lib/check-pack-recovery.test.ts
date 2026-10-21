@@ -16,6 +16,6 @@ describe("check-pack recovery", () => {
     const replaced = await writeCheckPack(hub.transport, "t", "acme/widgets", recommended, { id: "c", version: 1 });
     expect(replaced).toEqual({ kind: "pack", id: "c", version: 2, pack: recommended });
     expect(hub.artifacts).toHaveLength(1);
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual(replaced);
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ ...replaced, automatic: [], decide: [] });
   });
 });

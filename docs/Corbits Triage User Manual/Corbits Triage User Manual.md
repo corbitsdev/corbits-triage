@@ -298,7 +298,7 @@ A step can be limited to some authors, shown after it, such as "Approve, for mai
 
 A step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for.
 
-Under Code review, **Actions Triage takes on its own** lists each action with its own switch. On, Triage does that action in this repository without asking; off, it waits for you in the Inbox, in this repository only. An action switched on for every repository under [Settings → Triage](#actions-that-run-on-their-own) shows on and changes only there. Bitbucket Data Center repositories list **Comment and build status** instead of Comment, and do not list Add labels or Assign. When Triage's verdict is not on the pull request, its page says why under its header, such as **Not posted on GitHub: Triage may not post here. Turn on Comment under Actions Triage takes on its own.** When a repository's latest verdict was not posted for that reason, the portal asks once per visit: **Triage can't post its verdict on** the repository. **Turn on Comment and labels** switches both on there (Comment and build status on Bitbucket Data Center); **Dismiss** leaves them off until your next visit.
+Under Code review, **Actions Triage takes on its own** lists what the repository's policy has Triage do, and posting its verdict, which Triage needs leave to do without asking. When some of it is not yet allowed, it says **This policy wants Triage to:** and names those actions, such as Comment and Add labels; **Allow** lets Triage do all of them in this repository on its own. Until then they wait for you in the Inbox. Once everything is allowed, it says **Triage does these on its own** and names them. Bitbucket Data Center repositories name **Comment and build status** instead of Comment, and never Add labels or Assign. When the portal cannot tell what Triage may do, or the workspace has no Triage role, the section says so and Triage asks before every action. When Triage's verdict is not on the pull request, its page says why under its header, such as **Not posted on GitHub: Triage may not post here. Allow it under Actions Triage takes on its own on the repository's page.**
 
 Enabling a repository switches on Comment and Add labels (Comment only on Bitbucket, which has no labels); every other action waits for a person to click until you switch it on, so you can watch what Triage suggests before you let it act. Turning triage off and on again switches them back on. Two actions are always held for a person: Close on Unsure, and Merge on anything but Pass.
 
@@ -310,7 +310,7 @@ An **Unsure** comment lists each rule Triage could not confirm, with checks stil
 
 ### Labels
 
-Triage keeps a verdict label on every pull request so that other tools, such as a coding agent, can react to it. It puts the verdict's label on the pull request and takes the other two off. The defaults are **Triage: Ready** for Pass, **Triage: Not Ready** for Fail and **Triage: Needs Human Review** for Unsure; the file can rename them. While Triage waits for CI it shows **Triage: Waiting for CI**, and when it could not read the pull request **Triage: Failed to Run** (see [What the author sees](#what-the-author-sees)). A step that labels each failed rule, shown as **Label each failed rule**, adds a label such as `rule: linked-issue` for every rule that failed. The label of a rule set to `onFail: label` is added whatever the verdict, after the verdict's own steps, as an **Add labels** action: on its own where Add labels is switched on, otherwise waiting for you in the Inbox.
+Triage keeps a verdict label on every pull request so that other tools, such as a coding agent, can react to it. It puts the verdict's label on the pull request and takes the other two off. The defaults are **Triage: Ready** for Pass, **Triage: Not Ready** for Fail and **Triage: Needs Human Review** for Unsure; the file can rename them. While Triage waits for CI it shows **Triage: Waiting for CI**, and when it could not read the pull request **Triage: Failed to Run** (see [What the author sees](#what-the-author-sees)). A step that labels each failed rule, shown as **Label each failed rule**, adds a label such as `rule: linked-issue` for every rule that failed. The label of a rule set to `onFail: label` is added whatever the verdict, after the verdict's own steps, as an **Add labels** action: where Add labels is allowed, otherwise waiting for you in the Inbox.
 
 On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repositories](#bitbucket-data-center-repositories).
 
@@ -432,7 +432,7 @@ Authors do not use the portal. Depending on the repository's actions, they see a
 
 ## Settings: Triage, code review and people
 
-**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with four sections: Triage, Code review, People and Your account. The links at the top jump to each section. At the very bottom, **Versions for support** opens the version of each Triage component running for your workspace, with a **Copy** button; support will ask for it when you report a problem. Most teams visit it once during setup and then only to invite people or change what Triage does on its own.
+**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with four sections: Triage, Code review, People and Your account. The links at the top jump to each section. At the very bottom, **Versions for support** opens the version of each Triage component running for your workspace, with a **Copy** button; support will ask for it when you report a problem. Most teams visit it once during setup and then only to invite people.
 
 ### Triage
 
@@ -477,12 +477,6 @@ Lists each connected repository and whether its default branch has a `.corbits-t
 **Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider. It answers your policies' Judgement rules and chooses the verdict.
 
 The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Change** opens the form again to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again. Every save of the decision model redeploys Triage's workers, so give it a minute before expecting new verdicts.
-
-#### Actions that run on their own
-
-![Actions that run on their own: a switch per action, all off, with Add labels and Comment on in acme/widgets](images/42.png)
-
-One switch per action. On, Triage carries that action out in every repository by itself during triage, without waiting for anyone; off, it waits for you in the Inbox, except in repositories where it is switched on from the repository page, which the action lists under its name. In a new workspace every switch is off. Turn actions on one at a time as you gain confidence, starting with low-risk ones such as adding labels.
 
 ### Code review
 
@@ -573,7 +567,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **A pull request shows "Not triaged yet" for a long time.** Check that triage is on for its repository, that its source is still connected under Settings → Triage, and that a decision model key is stored there. If all three look right, open the repository and press **Triage open pull requests again**. On Bitbucket, also check the repository has its **Corbits Triage** webhook.
 
-**Does Triage ever merge, close or approve on its own?** Only if you allow it. Each action has a switch under **Actions that run on their own** in Settings → Triage, and one per repository on its page. Enabling a repository switches on Comment and Add labels for it only; the others start off. Close is never run automatically on an Unsure verdict, and Merge never on anything but Pass, even when they are allowed.
+**Does Triage ever merge, close or approve on its own?** Only if you allow it. A repository's page lists what its policy has Triage do under **Actions Triage takes on its own**, and **Allow** lets Triage do those there without asking. Close is never run automatically on an Unsure verdict, and Merge never on anything but Pass, even when they are allowed.
 
 **Why did Triage not call the decision model for a failing pull request?** When a rule fails, the answer is already Fail, so the model is not asked the verdict question. A repository with no Judgement rules never asks it at all. This saves money and keeps verdicts predictable.
 

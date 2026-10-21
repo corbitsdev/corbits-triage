@@ -10,7 +10,6 @@ import { usePortal } from "../../lib/portal.tsx";
 import { packsPending, triageEnabledRepos, triageReadyRepos } from "../../lib/repo-rows.ts";
 import type { TenantSection } from "../../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../DecisionModelForm.tsx";
-import { ActionsOnTheirOwn } from "./ActionsOnTheirOwn.tsx";
 import { BitbucketDatacenterSource } from "./BitbucketDatacenterSource.tsx";
 import { GithubSource } from "./GithubSource.tsx";
 import { KeyRow } from "./KeyRow.tsx";
@@ -102,7 +101,6 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
         <BitbucketDatacenterSource />
         <PolicyFiles snapshot={snapshot} />
         <DecisionModel snapshot={snapshot} />
-        <ActionsOnTheirOwn repos={snapshot.repos.map((repo) => repo.name)} />
       </div>
     </section>
   );

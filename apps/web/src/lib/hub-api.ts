@@ -7,7 +7,7 @@ import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
 import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
-import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
+import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
@@ -393,11 +393,13 @@ export async function findArtifactByTitle(transport: Transport, tenantId: string
  * A check pack with the artifact it was read from; `version` is what a save must match. `shared` is the workspace
  * policy the stored policy extends, which `pack` is resolved over.
  */
-export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack; shared?: ArtifactRef };
+/** `automatic` is what Triage may do on its own in the repository; `decide` the kinds the policy file's `decide` names. */
+type PolicyKinds = { automatic?: ActionKind[]; decide?: ActionKind[] };
+export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack; shared?: ArtifactRef } & PolicyKinds;
 /** The repository's artifact holds something that is not a check pack; a save replaces it in place. */
 type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
 /** Read from the repository's policy file, which only a change to the file edits. */
-type FileCheckPack = { kind: "file"; path: string; pack: CheckPack; shared?: ArtifactRef };
+type FileCheckPack = { kind: "file"; path: string; pack: CheckPack; shared?: ArtifactRef } & PolicyKinds;
 /** The repository's policy file is refused, so triage runs nothing until it is fixed. */
 type InvalidPolicyFile = { kind: "invalid"; path: string; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack | FileCheckPack | InvalidPolicyFile;
@@ -410,9 +412,10 @@ export async function loadRepoCheckPack(transport: Transport, tenantId: string, 
   if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
   const { repo: stored, shared, file } = read.source;
   const pack = readCheckPack(read.pack, clean);
-  if (file) return { kind: "file", path: file.path, pack, ...(shared && { shared }) };
+  const kinds = { automatic: read.automatic, decide: read.decide };
+  if (file) return { kind: "file", path: file.path, pack, ...kinds, ...(shared && { shared }) };
   if (!stored) throw new Error(`The hub named no policy ${clean} was read from.`);
-  return { kind: "pack", ...stored, pack, ...(shared && { shared }) };
+  return { kind: "pack", ...stored, pack, ...kinds, ...(shared && { shared }) };
 }
 
 export type CheckPackLookup = (repo: string) => Promise<boolean>;
@@ -1220,17 +1223,6 @@ export async function createGrant(
   const tid = enc(requireTenantId(tenantId));
   const body = createGrantBody(input);
   return transport.fetch<HubGrant>("POST", `/api/tenants/${tid}/grants`, body);
-}
-
-export async function deleteGrant(
-  transport: Transport,
-  tenantId: string,
-  grant: Pick<HubGrant, "id" | "origin">,
-): Promise<void> {
-  assertCanRemoveGrant(grant);
-  const tid = enc(requireTenantId(tenantId));
-  const gid = enc(requireId(grant.id, "Grant id"));
-  await transport.fetch("DELETE", `/api/tenants/${tid}/grants/${gid}`);
 }
 
 /** Once and standing map to the hub approval scopes. Deny is the reject route. */

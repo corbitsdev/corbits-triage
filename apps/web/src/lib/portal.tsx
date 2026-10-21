@@ -14,7 +14,6 @@ import {
   configureGithubApp,
   configureGithubHook,
   createGrant,
-  deleteGrant,
   ensureWorkspace,
   loadPortal,
   legacyHookCredentials,
@@ -34,7 +33,6 @@ import {
   triagePullRequest as requestPullRequestTriage,
   untilDeploymentReady,
   WAITING_FOR_WORKFLOW,
-  type HubGrant,
   type InvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
@@ -82,7 +80,6 @@ interface PortalContextValue {
   replaceSecret: (credentialId: string, secret: string) => Promise<void>;
   revoke: (credentialId: string) => Promise<void>;
   addGrant: (input: CreateGrantInput) => Promise<void>;
-  removeGrants: (grants: readonly HubGrant[]) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
   saveAnthropic: (secret: string) => Promise<void>;
   removeAnthropic: (credentialId: string) => Promise<void>;
@@ -437,20 +434,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const removeGrants = useCallback(
-    async function removeGrants(grants: readonly HubGrant[]) {
-      const current = requireSnapshot();
-      const transport = createHubTransport();
-      try {
-        for (const grant of grants) await deleteGrant(transport, current.workspace.tenantId, grant);
-      } finally {
-        refresh();
-      }
-      notify(grants.length === 1 ? "Access rule removed." : "Access rules removed.");
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
   /** So returning from GitHub never waits on a webhook. */
   const syncFromGithub = useCallback(async function syncFromGithub() {
     const current = requireSnapshot();
@@ -553,7 +536,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         replaceSecret,
         revoke,
         addGrant,
-        removeGrants,
         saveInferenceSecret,
         saveAnthropic,
         removeAnthropic,
@@ -585,7 +567,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       replaceSecret,
       revoke,
       addGrant,
-      removeGrants,
       saveInferenceSecret,
       saveAnthropic,
       removeAnthropic,

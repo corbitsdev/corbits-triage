@@ -55,13 +55,6 @@
 .repos .outcomes thead span { display: block; font-weight: 400; color: var(--ink-mute); }
 .repos .outcomes tbody td { font: 700 13px var(--mono); }
 
-/* Actions on its own: a quiet two-column list of switches */
-.repos .alone h3 { font-size: 13px; }
-:is(.repos, .settings) .alone .sentences { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; border-top: 0; }
-:is(.repos, .settings) .alone .sentence { min-height: 34px; padding: 3px 0; font-size: 13px; }
-:is(.repos, .settings) .alone .sentence.off .txt { color: var(--ink-mute); }
-:is(.repos, .settings) .alone .wide { display: block; font-size: 12px; color: var(--ink-mute); }
-
 /* Policy: the file read back as sentences, then each verdict's steps */
 .repos .rs-h { display: flex; align-items: center; gap: 8px; }
 .repos .rs-h h3 { flex: 1; margin: 0; }
@@ -123,7 +116,6 @@
   .repos .rp .gh-link { display: none; }
   .repos .rp .rp-t { font-size: 19px; }
   .repos .gcard { padding: 2px 12px 8px; }
-  :is(.repos, .settings) .alone .sentences { grid-template-columns: minmax(0, 1fr); }
   .repos .then { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
   .repos .pr-row { flex-wrap: wrap; }
 }

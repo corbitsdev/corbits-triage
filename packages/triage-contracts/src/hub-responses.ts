@@ -1,6 +1,6 @@
 // What the hub's own integration routes answer; the hub describes its routes with these and the portal parses them.
 import { type } from "arktype";
-import { VERDICTS } from "./check-pack.js";
+import { ACTION_KINDS, VERDICTS } from "./check-pack.js";
 import { policyWorkflowSchema } from "./policy-workflow.js";
 import { REPO_SOURCES } from "./repo-source.js";
 
@@ -221,8 +221,13 @@ const FileRefShape = type({ path: "string", sha: "string" });
 
 export const PolicySourceShape = type({ "repo?": ArtifactRefShape, "shared?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) });
 
-/** `invalid` is a policy file triage refuses, so nothing runs until it is fixed. */
-export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape })
+const ActionKinds = type.enumerated(...ACTION_KINDS).array();
+
+/**
+ * `automatic` is what Triage may do on its own in the repository; `decide` the action kinds the policy file's own
+ * `decide` names. `invalid` is a policy file triage refuses, so nothing runs until it is fixed.
+ */
+export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, decide: ActionKinds })
   .or({ status: "'missing'" })
   .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape })
   .or({ status: "'invalid'", reason: "string", path: "string" });
