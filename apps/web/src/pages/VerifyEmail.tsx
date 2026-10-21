@@ -18,9 +18,9 @@ export function VerifyEmail({ email }: { email: string }) {
         {sendsEmail && <p>Check your inbox to verify {email}. Open the link in the email to continue.</p>}
         {methods.data && !sendsEmail && <p>Ask whoever runs this Triage to verify your address.</p>}
       </div>
-      {methods.error && <p role="alert" className="field-error">Could not load sign-in options. {errorText(methods.error)}</p>}
-      {resend.isSuccess && <p role="status" className="field-help">A new link is on its way to {email}.</p>}
-      {resend.error && <p role="alert" className="field-error">{errorText(resend.error)}</p>}
+      {methods.error && <p role="alert" className="signin-error">Could not load sign-in options. {errorText(methods.error)}</p>}
+      {resend.isSuccess && <p role="status" className="signin-notice">A new link is on its way to {email}.</p>}
+      {resend.error && <p role="alert" className="signin-error">{errorText(resend.error)}</p>}
       <div className="signin-form">
         {sendsEmail && (
           <Button type="button" size="lg" disabled={resend.isPending} onClick={() => resend.mutate()}>
