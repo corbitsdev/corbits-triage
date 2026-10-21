@@ -48,7 +48,6 @@ by a GitHub App's bot account, which the account name shows.
 
 - Every read needs a GitHub token. A fine-grained token with read-only access to public repositories is enough;
   private repositories need read access to their contents and pull requests.
-- Author team membership is not read, so a step meant for a team is skipped.
 - The token is kept in the extension's `storage.local`. Only the background reads it, and changing or removing it
   clears every saved check and policy file.
 - A policy file that extends a shared policy is not checked; only the hub holds the shared policy.

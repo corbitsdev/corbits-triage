@@ -34,6 +34,7 @@
         "@corbits/triage-workflows": "workspace:*",
         "@fontsource-variable/red-hat-display": "^5.3.0",
         "@fontsource/space-mono": "^5.3.0",
+        "@intx/workflow": "workspace:*",
         "@wxt-dev/storage": "1.3.0",
         "lucide-react": "^1.52.0",
         "react": "^19.2.8",
