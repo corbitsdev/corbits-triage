@@ -470,7 +470,7 @@ function failedStep(c: CheckResult, sources: Sources): Step {
 
 function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
   if (c.check === "no-merge-conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
-  if (c.check === "ci-green") return [{ actor: "system", action: "Wait for checks to finish" }];
+  if (c.check === "ci-green") return [hostPending(c) ? { actor: "system", action: "Wait for checks to finish" } : { actor: "maintainer", action: "Re-run the cancelled checks" }];
   if (c.kind === "model" && sources && c.reason !== NOT_ASKED_REASON) return [{ actor: "maintainer", action: `Confirm ${passText(c.check, sources)}` }];
   return [];
 }
@@ -523,9 +523,14 @@ function unsure(c: CheckResult): boolean {
   return c.kind === "model" && c.result === "unconfirmed" && c.reason !== NOT_ASKED_REASON && c.reason !== UNAVAILABLE_REASON;
 }
 
+/** A rule without a result: one the host had not computed yet, or CI cancelled, which waits on a re-run. */
+function unsettledMachine(c: CheckResult): boolean {
+  return c.kind === "machine" && c.result === "unconfirmed";
+}
+
 /** A rule the host had not computed yet: CI still running, or mergeability not computed. */
 function hostPending(c: CheckResult): boolean {
-  return c.kind === "machine" && c.result === "unconfirmed";
+  return unsettledMachine(c) && c.output.kind === "could-not-check";
 }
 
 /** A labelling rule's result that labels and notes the pull request. */
@@ -618,7 +623,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   const mine = authorFailures(checks, sources);
   const flagged = checks.filter(isFlagged);
   const unconfirmed = sources ? checks.filter(unsure) : [];
-  const pending = checks.filter(hostPending);
+  const pending = checks.filter(unsettledMachine);
   const lines: string[] = [];
   if (mine.length) {
     lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"

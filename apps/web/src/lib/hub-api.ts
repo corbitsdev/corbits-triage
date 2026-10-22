@@ -1373,9 +1373,9 @@ export const QUEUE_STATE_LABEL: Record<QueueState, string> = {
   new: "Not triaged yet",
 };
 
-type CiState = "success" | "failure" | "pending" | "none";
+type CiState = "success" | "failure" | "pending" | "cancelled" | "none";
 
-const CI_STATES: readonly unknown[] = ["success", "failure", "pending", "none"] satisfies CiState[];
+const CI_STATES: readonly unknown[] = ["success", "failure", "pending", "cancelled", "none"] satisfies CiState[];
 
 function isCiState(value: unknown): value is CiState {
   return CI_STATES.includes(value);

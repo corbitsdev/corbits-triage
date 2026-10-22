@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   authorTeams,
+  checkPending,
   codeownersFor,
   codeownersForPr,
   CODE_REVIEW_MARKER,
@@ -321,10 +322,12 @@ test("listPrTimeline: comments and reviews by account, upper-case review states,
   expect(requests.map((r) => r.path)).toEqual(["/repos/acme/widgets/issues/7/timeline?per_page=100"]);
 });
 
-test("summarizeChecks: a cancelled or stale run has not finished, a failed one fails, a skipped one passes", () => {
+test("summarizeChecks: a cancelled or stale run is cancelled, not running, a failed one fails, a skipped one passes", () => {
   const done = (conclusion: string) => ({ name: conclusion, status: "completed", conclusion });
-  expect(summarizeChecks([done("success"), done("cancelled")])).toBe("pending");
-  expect(summarizeChecks([done("success"), done("stale")])).toBe("pending");
+  expect(summarizeChecks([done("success"), done("cancelled")])).toBe("cancelled");
+  expect(summarizeChecks([done("success"), done("stale")])).toBe("cancelled");
+  expect(checkPending(done("cancelled"))).toBe(false);
+  expect(summarizeChecks([done("cancelled"), { name: "e2e", status: "in_progress", conclusion: null }])).toBe("pending");
   expect(summarizeChecks([done("cancelled"), done("failure")])).toBe("failure");
   expect(summarizeChecks([done("success"), done("skipped")])).toBe("success");
 });

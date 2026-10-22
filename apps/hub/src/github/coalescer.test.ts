@@ -395,6 +395,20 @@ test("a head held for CI where triage writes labels is mailed to be marked waiti
   expect(mails.map((mail) => mail.kind)).toEqual(["waiting", "pr"]);
 });
 
+test("a cancelled check releases a head held for CI, so it is mailed for its verdict", async () => {
+  let checks: CheckRun[] = [{ name: "build", status: "in_progress", conclusion: null }];
+  const { clock, state, mails, coalescer } = harness([], { headChecks: async () => checks });
+  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+  await coalescer.accept({ ...delivery("opened", "sha1"), pack });
+  await clock.advance(WINDOW.burstMs);
+  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting" })]);
+
+  checks = [{ name: "build", status: "completed", conclusion: "cancelled" }];
+  await coalescer.accept({ ...delivery("checks", "sha1"), pack });
+  await clock.advance(WINDOW.quietMs);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["opened", "checks"] })]);
+});
+
 test("a head with no checks yet is mailed to be marked waiting as having no CI", async () => {
   const { clock, mails, coalescer } = harness([], { headChecks: async () => [] });
   const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };

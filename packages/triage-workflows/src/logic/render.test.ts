@@ -374,7 +374,7 @@ describe("score and choose rules", () => {
 
 describe("a policy without a decision-model rule", () => {
   const det = (checks: DeterministicResult["checks"]): DeterministicResult => ({ state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks, needsJudgment: true, sources: { quality: [], custom: [] } });
-  const ci = (result: "pass" | "unconfirmed") => ({ check: "ci-green", kind: "machine" as const, result, reason: "checks", evidence: [], output: { kind: "values" as const, values: {} } });
+  const ci = (result: "pass" | "unconfirmed") => ({ check: "ci-green", kind: "machine" as const, result, reason: "checks", evidence: [], output: result === "pass" ? { kind: "values" as const, values: {} } : { kind: "could-not-check" as const, reason: "checks" } });
 
   test("passes without the model when every rule passes, and waits while CI is pending", () => {
     expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("pass")]) })).toMatchObject({ verdict: "pass", score: null, reason: "every rule passed, and the policy has no decision-model rule" });
