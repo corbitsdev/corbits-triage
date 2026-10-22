@@ -74,10 +74,11 @@ export type SidecarOperationFailure = typeof SidecarOperationFailure.infer;
  * Acceptance means the requested infrastructure exists, not that it is ready.
  * `sidecarId` names a sidecar this provisioner started for earlier work that
  * now also hosts this generation; omit it when the request's own identity is
- * used. The Hub accepts only a sidecar that still hosts another probe or
- * allocation of the same provisioner binding, including one whose release or
- * replacement has not yet destroyed it. A deployment also needs the sidecar to
- * have fewer active reservations than the capacity it advertised in hello. Copies
+ * used. The Hub accepts only a sidecar minted for the same provisioner binding
+ * and adapter manifest that is not retired, whether or not it still hosts
+ * other work. A rejected ensure, or a destroy that confirms cleanup, retires
+ * the identity. A deployment also needs the sidecar to have fewer active
+ * reservations than the capacity it advertised in hello. Copies
  * with confirmed removal or retained storage do not consume active capacity.
  * This is checked when an allocation is placed and when a deployment adopts
  * its probe's sidecar, not when the probe is placed.
@@ -98,12 +99,13 @@ export type EnsureSidecarResult = typeof EnsureSidecarResult.infer;
 /**
  * Destruction fences older ensure calls and releases the provisioner's hold.
  * `cleanup: confirmed` additionally proves that the deployment's worker and
- * local state are gone and cannot return. A shared worker that remains needs
- * `cleanup: required`; the Hub reserves its slot until the sidecar acknowledges
- * removal. Retries must preserve this distinction, including after restarts.
- * Stopping the last worker must also remove its restorable deployment state
- * and confirm cleanup. A result requiring sidecar cleanup must leave that
- * cleanup path available; absence from a provider's in-memory map is not proof.
+ * local state are gone and cannot return. A worker that remains, shared or
+ * kept running idle, needs `cleanup: required`; the Hub reserves its slot
+ * until the sidecar acknowledges removal. Retries must preserve this
+ * distinction, including after restarts. Stopping a worker in answer to a
+ * destroy must also remove its restorable deployment state and confirm
+ * cleanup. A result requiring sidecar cleanup must leave that cleanup path
+ * available; absence from a provider's in-memory map is not proof.
  * A non-retryable rejection of an outstanding hold release stops automatic cleanup
  * and leaves the provider obligation and cleanup binding for operator recovery.
  * A copy holds an active slot until removal or its transfer to retained storage
@@ -115,12 +117,50 @@ export const DestroySidecarResult = type({
 }).or(SidecarOperationFailure);
 export type DestroySidecarResult = typeof DestroySidecarResult.infer;
 
+/**
+ * `not_owned` is final: the Hub minted no sidecar with that id for this
+ * provisioner's current binding.
+ */
+export type SidecarStoppedResult =
+  | { readonly kind: "retired" }
+  | { readonly kind: "not_owned" };
+
+/**
+ * `endReconnectWindow` stops the Hub waiting for the sidecar's work to
+ * reconnect: its allocations get no reconnect window, now or after a later
+ * disconnect, and go to its connection loss handling at once. Without it,
+ * that work keeps its reconnect window, in case the provisioner brings the
+ * sidecar back elsewhere. Work still connected runs until it disconnects;
+ * probes are not touched.
+ */
+export const SidecarStoppedOptions = type({
+  "endReconnectWindow?": "boolean",
+});
+export type SidecarStoppedOptions = typeof SidecarStoppedOptions.infer;
+
+/** Calls the Hub offers a provisioner through `attach`. */
+export interface SidecarProvisionerHost {
+  /**
+   * Reports that a sidecar this provisioner started under its current binding
+   * is gone for good, such as an idle sidecar it stopped after its last
+   * destroy. The Hub retires the identity. Idempotent. A throw is transient:
+   * keep the report durably and retry it, also after a Hub restart. Invalid
+   * arguments also throw, and retrying them never succeeds.
+   */
+  sidecarStopped(
+    sidecarId: string,
+    options?: SidecarStoppedOptions,
+  ): Promise<SidecarStoppedResult>;
+}
+
 export interface SidecarProvisioner {
   readonly id: string;
   readonly apiVersion: 2;
   /** Stable, non-secret identity for the backend configuration. */
   readonly bindingFingerprint: string;
   readonly capabilities: readonly SidecarCapabilityDeclaration[];
+  /** Called once when the Hub starts, with the calls it offers. */
+  attach?(host: SidecarProvisionerHost): void;
   /**
    * Converges infrastructure for this generation. Implementations must be
    * idempotent and reject generations older than one they have observed.
@@ -160,6 +200,11 @@ export type SidecarCredentialIdentity =
 /** The sidecar a bearer token verifies as. */
 export type SidecarCredentials = {
   readonly sidecarId: string;
+  /**
+   * The identity is retired with neither current work nor cleanup left. Its
+   * handshake undeploys what the sidecar reports and closes.
+   */
+  readonly retired?: true;
 };
 
 /**
@@ -194,7 +239,8 @@ export type SidecarIdentityUse =
 export interface SidecarCredentialResolver {
   /**
    * Resolves a bearer token to its sidecar, or null for an unknown token. A
-   * sidecar hosting nothing current still resolves.
+   * retired one with neither current work nor cleanup left resolves marked
+   * `retired`. A sidecar hosting nothing current still resolves.
    */
   resolve(token: string): Promise<SidecarCredentials | null>;
   /** The current bindings of a sidecar, empty when it hosts nothing. */

@@ -5,6 +5,7 @@ export {
   type DBExecutor,
 } from "./client";
 export {
+  isReferencedRowViolation,
   pgErrorCode,
   PG_UNIQUE_VIOLATION,
   PG_FOREIGN_KEY_VIOLATION,
@@ -114,6 +115,9 @@ export {
   type RetainedSidecarIncarnation,
   type SidecarInventory,
   type SidecarAllocationStoreOptions,
+  type AllocationConnectionCheck,
+  type ProvisionerSidecarRetirement,
+  type SidecarProvisionerBinding,
 } from "./sidecar-reuse";
 export {
   createWorkflowProbeStore,
@@ -123,8 +127,12 @@ export {
   type WorkflowProbeStore,
 } from "./workflow-probe-store";
 export {
+  createWorkflowDefinitionArtifactStore,
+  type WorkflowDefinitionArtifactStore,
+} from "./workflow-definition-artifact-store";
+export {
   createWorkflowDefinitionStore,
-  loadFrozenGrantSnapshot,
+  loadDeploymentGrantSnapshot,
   resolveDefinitionIdForAsset,
   type WorkflowDefinitionRollbackResult,
   type WorkflowDefinitionSelector,

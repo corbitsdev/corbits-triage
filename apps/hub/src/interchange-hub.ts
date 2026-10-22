@@ -33,6 +33,7 @@ import {
   createMailTriggeredRunGrantsMaterializer,
 } from "@intx/hub-api";
 import {
+  attachSidecarProvisioners,
   createAgentRepoStore,
   createAssetService,
   createEventCollectorRegistry,
@@ -373,6 +374,13 @@ export async function createInterchangeHub({
 
   await workflowAllocationService.initialize?.();
   await sidecarAllocationReconciler.initialize();
+  // Initialization gives every allocated row a connection deadline, so a
+  // stopped-sidecar report retried at startup sees that work as disconnected.
+  attachSidecarProvisioners({
+    provisioners: [...sidecarProvisioners, ...probeSidecarProvisioners],
+    retireProvisionerSidecar: sidecarAllocationStore.retireProvisionerSidecar,
+    isConnected: sidecarRouter.holdsAllocatedBinding,
+  });
   async function handleDisconnect(target: AllocatedSidecarTarget): Promise<void> {
     try {
       await sidecarAllocationReconciler.handleDisconnect(target);

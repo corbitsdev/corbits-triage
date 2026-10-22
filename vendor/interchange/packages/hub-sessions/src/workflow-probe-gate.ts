@@ -26,11 +26,10 @@
 //      the definition's selector, and return the frozen approved grant set.
 //
 // The frozen approved set is the single source of truth for the definition's
-// grants: the deploy path materializes deploy grants as a SUBSET of it (never a
-// fresh walk), so a workflow can never acquire at deploy or run time a grant it
-// did not have frozen at approval. The wire hash is that freeze's anchor -- the
-// grant set is a deterministic projection of the exact content the hash
-// addresses, so pinning the hash pins the set.
+// grants: the deploy path materializes deploy grants as a SUBSET of it. The
+// snapshot records the capability walk, while the wire hash covers the inert
+// projection. A reusable artifact binds both to the pinned code and the
+// internal cache version.
 
 import { type } from "arktype";
 import { and, eq } from "drizzle-orm";
@@ -43,10 +42,7 @@ import type {
   GrantWalkSnapshot,
 } from "@intx/types";
 import type { PackumentFetcher, RegistryConfig } from "@intx/tool-packaging";
-import type {
-  WorkflowSourceAssetMount,
-  WorkflowProjectionDefinition,
-} from "@intx/types/sidecar";
+import type { WorkflowProjectionDefinition } from "@intx/types/sidecar";
 import type { ToolPackageManifest } from "@intx/types/tool-packages";
 import { computeWireDefinitionHash } from "@intx/types/wire-definition-hash";
 import type {
@@ -76,6 +72,10 @@ import {
 import type { SourceTreeReads } from "./workflow-source-closure";
 import { ensureWorkflowDefinitionForAsset } from "./workflow-definition-ensure";
 import type { SendProbeArgs, WorkflowProbeResult } from "./ws/sidecar-handler";
+import {
+  withCachedWorkflowProbe,
+  type WorkflowProbeCache,
+} from "./workflow-probe-cache";
 
 type WorkflowProbeRouter = {
   sendProbe(args: SendProbeArgs): Promise<WorkflowProbeResult>;
@@ -90,11 +90,10 @@ const FROZEN_VERSION = "1";
 /**
  * The frozen record an approval writes: the definition's asset selector, the
  * approved wire hash (the freeze anchor), the approved surface, and the
- * grant-walk snapshot the run path materializes grants from. The approved
- * surface is a deterministic projection of the content the hash addresses and
- * rides the deploy hand-off in memory; the snapshot is persisted onto the
- * version row so a run derives its grants from the frozen walk without
- * re-reading and re-walking the workflow's `workflow.json`.
+ * grant-walk snapshot. The approved surface comes from the probe's capability
+ * walk, which the wire hash does not cover, and rides the deploy hand-off in
+ * memory; the snapshot is persisted onto the version row as the catalog
+ * approval. Runs read the copy frozen into their deployment's launch spec.
  *
  * `approvedGrants` carries both kinds of approved item: the walk's grant-shape
  * strings and the definition's declared grant requirements. The requirements
@@ -263,9 +262,9 @@ export function describeProbeGateRefusal(refusal: ProbeGateRefusal): string {
  * the selector-keyed ensure helper (a definition keyed by `(assetId,
  * wireHash)`) and writes the approved wire hash and the grant-walk snapshot onto
  * that definition's version row in one transaction. The grant SET is not written
- * to a version-row column -- the approved wire hash already pins the content the
- * grants project from -- so it travels with the returned frozen approval; the
- * snapshot is written because the run path reads it back to materialize grants.
+ * to a version-row column; it travels with the returned frozen approval. The
+ * version snapshot remains the catalog approval. New deployments retain their
+ * own immutable snapshot so another approval cannot change their grant shape.
  */
 export function createDbFrozenApprovalWriter(
   db: DBExecutor,
@@ -671,6 +670,8 @@ type InstallAndApproveCommonArgs = {
   readonly db: DBExecutor;
   /** Optional durable handoff invoked before the approval gate writes. */
   readonly onProbeResult?: (result: WorkflowProbeResult) => Promise<void>;
+  readonly cache?: WorkflowProbeCache;
+  readonly assetCommitSha?: string;
 };
 
 /** Install a definition published to an npm registry. */
@@ -764,6 +765,9 @@ export type InstallAndApproveResult = {
   readonly approval: ProbeGateResult;
   readonly projection: WorkflowProjectionDefinition;
   readonly closure: ToolPackageManifest;
+  readonly grantSnapshot: GrantWalkSnapshot;
+  readonly artifactId?: string;
+  readonly assetCommitSha?: string;
 };
 
 /**
@@ -783,8 +787,70 @@ export type InstallAndApproveResult = {
 export async function installAndApproveWorkflowDefinition(
   args: InstallAndApproveArgs,
 ): Promise<InstallAndApproveResult> {
+  async function probe(closure: ToolPackageManifest) {
+    const assets =
+      isAssetSourceInstallArgs(args) || isAssetTarballInstallArgs(args)
+        ? await buildSourceAssetMounts(closure, args.resolveAttachment)
+        : [];
+    const result = await args.router.sendProbe({
+      source: args.source,
+      closure,
+      entry: args.entry,
+      ...(assets.length > 0 ? { assets } : {}),
+    });
+    await args.onProbeResult?.(result);
+    return result;
+  }
+  async function validate(
+    probeResult: WorkflowProbeResult,
+    closure: ToolPackageManifest,
+  ): Promise<InstallAndApproveResult> {
+    const approval = await gateAndFreezeProbeResult({
+      assetId: args.assetId,
+      source: args.source,
+      probeResult,
+      approvals: args.approvals,
+      persist: createDbFrozenApprovalWriter(args.db),
+    });
+    return {
+      approval,
+      projection: probeResult.projection,
+      closure,
+      grantSnapshot: probeResult.grantWalkSnapshot,
+      ...(args.assetCommitSha !== undefined
+        ? { assetCommitSha: args.assetCommitSha }
+        : {}),
+    };
+  }
+  if (args.cache === undefined) {
+    const closure = await resolveInstallClosure(args);
+    return validate(await probe(closure), closure);
+  }
+  if (args.assetCommitSha === undefined) {
+    throw new Error("A cached workflow probe requires a pinned asset commit");
+  }
+  const { value, artifactId } = await withCachedWorkflowProbe({
+    cache: args.cache,
+    revision: {
+      assetId: args.assetId,
+      assetCommitSha: args.assetCommitSha,
+      source: args.source,
+      entry: args.entry,
+      ...("pin" in args ? { pin: args.pin } : {}),
+    },
+    resolveClosure: () => resolveInstallClosure(args),
+    probe,
+    validate,
+    // A refused probe is returned to the caller but never reused.
+    publishable: (result) => result.approval.ok,
+  });
+  return artifactId === undefined ? value : { ...value, artifactId };
+}
+
+async function resolveInstallClosure(
+  args: InstallAndApproveArgs,
+): Promise<ToolPackageManifest> {
   let closure: ToolPackageManifest;
-  let assets: WorkflowSourceAssetMount[];
   if (isAssetSourceInstallArgs(args)) {
     closure = await resolveWorkflowClosure({
       source: args.source,
@@ -795,7 +861,6 @@ export async function installAndApproveWorkflowDefinition(
         ? { fetchPackument: args.fetchPackument }
         : {}),
     });
-    assets = await buildSourceAssetMounts(closure, args.resolveAttachment);
   } else if (isAssetTarballInstallArgs(args)) {
     closure = await resolveWorkflowClosure({
       source: args.source,
@@ -803,7 +868,6 @@ export async function installAndApproveWorkflowDefinition(
       readBlob: args.readBlob,
       listBlobs: args.listBlobs,
     });
-    assets = await buildSourceAssetMounts(closure, args.resolveAttachment);
   } else {
     closure = await resolveWorkflowClosure({
       source: args.source,
@@ -813,24 +877,7 @@ export async function installAndApproveWorkflowDefinition(
         ? { fetchPackument: args.fetchPackument }
         : {}),
     });
-    assets = [];
   }
 
-  const probeResult = await args.router.sendProbe({
-    source: args.source,
-    closure,
-    entry: args.entry,
-    ...(assets.length > 0 ? { assets } : {}),
-  });
-  await args.onProbeResult?.(probeResult);
-
-  const approval = await gateAndFreezeProbeResult({
-    assetId: args.assetId,
-    source: args.source,
-    probeResult,
-    approvals: args.approvals,
-    persist: createDbFrozenApprovalWriter(args.db),
-  });
-
-  return { approval, projection: probeResult.projection, closure };
+  return closure;
 }

@@ -54,6 +54,7 @@ import {
 } from "./sidecar-allocation";
 import {
   SessionLaunchError,
+  type DeployPreparedCodeSourcedWorkflowParams,
   type DeployWorkflowDefinitionResult,
   type PreparedWorkflowDeployer,
 } from "./session-service";
@@ -371,6 +372,8 @@ export function createWorkflowAllocationService({
           `Provisioner ${provisioner.id} rejected probe cleanup: ${destroyed.message}`,
         );
       }
+      if (destroyed.cleanup === "confirmed")
+        await probeStore.retireSidecar({ sidecarId, now: now() });
       allocationRouter.detachAllocation({
         allocationId: releasing.id,
         generation: releasing.generation,
@@ -409,16 +412,18 @@ export function createWorkflowAllocationService({
       approval: Extract<InstallAndApproveResult["approval"], { ok: true }>;
     };
     provisioner: SidecarProvisioner;
-    probe: WorkflowProbe;
-    adoptProbe: boolean;
+    /** Probe capacity to turn into the deployment's allocation, if any. */
+    adoptedProbe: WorkflowProbe | null;
     adapterManifestDigest: string;
   }): Promise<PreparedProvisionedWorkflowDeployment> {
-    const { request, approved, provisioner, probe, adoptProbe } = args;
-    const probeSidecarId = probe.sidecarId;
-    if (adoptProbe && probeSidecarId === null) {
-      throw new Error(`Workflow probe ${probe.id} has no sidecar to adopt`);
+    const { request, approved, provisioner, adoptedProbe } = args;
+    const probeSidecarId = adoptedProbe?.sidecarId ?? null;
+    if (adoptedProbe !== null && probeSidecarId === null) {
+      throw new Error(
+        `Workflow probe ${adoptedProbe.id} has no sidecar to adopt`,
+      );
     }
-    const allocationId = adoptProbe ? probe.id : createAllocationId();
+    const allocationId = adoptedProbe?.id ?? createAllocationId();
     const deploymentAddress = deriveRunAddress({
       runId: request.anchorRunId,
       domain: request.deploymentDomain,
@@ -429,6 +434,9 @@ export function createWorkflowAllocationService({
       projection: approved.projection,
       closure: approved.closure,
       approvedWireHash: approved.approval.approvedWireHash,
+      ...(approved.assetCommitSha !== undefined
+        ? { assetCommitSha: approved.assetCommitSha }
+        : {}),
       approvedGrants: [
         ...approvalItemsFromSet(approved.approval.approvedSurface),
       ],
@@ -472,6 +480,8 @@ export function createWorkflowAllocationService({
           deploymentDomain: request.deploymentDomain,
           sourceAuthorityPrincipalId: request.sourceAuthorityPrincipalId,
           frozenApprovalBundle,
+          grantSnapshot: approved.grantSnapshot,
+          definitionArtifactId: approved.artifactId ?? null,
           sourceOfferingIds: [...request.sourceOfferingIds],
           defaultSourceOfferingId: request.defaultSourceOfferingId,
           deployContent: request.deployContent,
@@ -482,9 +492,9 @@ export function createWorkflowAllocationService({
         },
         tx,
       );
-      if (adoptProbe) {
+      if (adoptedProbe !== null) {
         if (probeSidecarId === null) {
-          throw new Error(`Workflow probe ${probe.id} lost its sidecar`);
+          throw new Error(`Workflow probe ${adoptedProbe.id} lost its sidecar`);
         }
         await allocationStore.createAdopted(
           {
@@ -496,9 +506,9 @@ export function createWorkflowAllocationService({
             provisionerBindingFingerprint: provisioner.bindingFingerprint,
             sidecarId: probeSidecarId,
             adapterManifestDigest: args.adapterManifestDigest,
-            generation: probe.generation,
-            ...(probe.externalRef !== null
-              ? { externalRef: probe.externalRef }
+            generation: adoptedProbe.generation,
+            ...(adoptedProbe.externalRef !== null
+              ? { externalRef: adoptedProbe.externalRef }
               : {}),
             connectDeadline: new Date(createdAt.getTime() + connectTimeoutMs),
             maxDisconnectedMs,
@@ -507,13 +517,15 @@ export function createWorkflowAllocationService({
           tx,
         );
         const completed = await probeStore.transition(
-          probe.id,
+          adoptedProbe.id,
           ["probing"],
           "succeeded",
           { now: createdAt, tx },
         );
         if (completed === null) {
-          throw new Error(`Workflow probe ${probe.id} changed before adoption`);
+          throw new Error(
+            `Workflow probe ${adoptedProbe.id} changed before adoption`,
+          );
         }
       } else {
         await allocationStore.createPending(
@@ -539,7 +551,10 @@ export function createWorkflowAllocationService({
         await db.transaction(persistDeployment);
         break;
       } catch (error) {
-        if (!adoptProbe || !(error instanceof SidecarInventoryUnavailableError))
+        if (
+          adoptedProbe === null ||
+          !(error instanceof SidecarInventoryUnavailableError)
+        )
           throw error;
         // The creation transaction has rolled back before we wait. A timeout
         // must never release the probe while an adoption can still commit.
@@ -620,23 +635,26 @@ export function createWorkflowAllocationService({
         workflowRules: [],
       }),
     );
-    const probeId = createAllocationId();
     const digest = await currentAdapterManifestDigest;
-    let probe = await probeStore.create({
-      id: probeId,
-      tenantId: args.tenantId,
-      definitionAssetId: args.definitionAssetId,
-      source: args.source,
-      entry: args.entry,
-      ...(args.pin !== undefined ? { pin: args.pin } : {}),
-      provisionerId: probeProvisioner.id,
-      provisionerApiVersion: probeProvisioner.apiVersion,
-      provisionerBindingFingerprint: probeProvisioner.bindingFingerprint,
-      adapterManifestDigest: digest,
-      now: now(),
-    });
+    // The probe is assigned inside a closure, which TypeScript does not track,
+    // so a plain `let` would stay narrowed to `null` below.
+    const probeHolder: { current: WorkflowProbe | null } = { current: null };
+    async function getProbeTarget(): Promise<AllocatedSidecarTarget> {
+      const probeId = createAllocationId();
+      probeHolder.current = await probeStore.create({
+        id: probeId,
+        tenantId: args.tenantId,
+        definitionAssetId: args.definitionAssetId,
+        source: args.source,
+        entry: args.entry,
+        ...(args.pin !== undefined ? { pin: args.pin } : {}),
+        provisionerId: probeProvisioner.id,
+        provisionerApiVersion: probeProvisioner.apiVersion,
+        provisionerBindingFingerprint: probeProvisioner.bindingFingerprint,
+        adapterManifestDigest: digest,
+        now: now(),
+      });
 
-    try {
       const token = createToken();
       const sidecarId = createSidecarId();
       const bound = await probeStore.bindSidecar({
@@ -650,12 +668,12 @@ export function createWorkflowAllocationService({
           `Workflow probe ${probeId} changed before provisioning`,
         );
       }
-      probe = bound;
+      probeHolder.current = bound;
       const allocationTarget: AllocatedSidecarTarget = {
-        allocationId: probe.id,
-        generation: probe.generation,
+        allocationId: bound.id,
+        generation: bound.generation,
       };
-      allocationRouter.fenceAllocation(probe.id, probe.generation);
+      allocationRouter.fenceAllocation(bound.id, bound.generation);
       const ensured = parseEnsureResult(
         await runSidecarOperation(
           "Probe ensure",
@@ -663,12 +681,12 @@ export function createWorkflowAllocationService({
           (signal) =>
             probeProvisioner.ensure({
               signal,
-              allocationId: probe.id,
-              generation: probe.generation,
-              tenantId: probe.tenantId,
+              allocationId: bound.id,
+              generation: bound.generation,
+              tenantId: bound.tenantId,
               // The provisioner contract treats this as an opaque owner id. A
               // probe has no workflow run, so its own id is the honest owner.
-              anchorRunId: probe.id,
+              anchorRunId: bound.id,
               sidecarId,
               token,
               hubWebSocketUrl,
@@ -677,6 +695,8 @@ export function createWorkflowAllocationService({
         ),
       );
       if (ensured.kind === "rejected") {
+        // A rejected ensure started nothing.
+        await probeStore.retireSidecar({ sidecarId, now: now() });
         throw new WorkflowProvisioningError(ensured.code, ensured.message);
       }
       const probing = await probeStore.markProbing({
@@ -692,7 +712,7 @@ export function createWorkflowAllocationService({
       if (probing === null) {
         throw new Error(`Workflow probe ${probeId} changed after provisioning`);
       }
-      probe = probing;
+      probeHolder.current = probing;
       await runSidecarOperation(
         "Probe connection",
         connectTimeoutMs,
@@ -712,27 +732,35 @@ export function createWorkflowAllocationService({
         },
       );
 
+      return allocationTarget;
+    }
+
+    try {
       let resultRecorded = false;
       const approved = await preparedDeployer.installAndApproveWorkflowSource({
+        tenantId: args.tenantId,
         source: args.source,
         entry: args.entry,
         ...(args.pin !== undefined ? { pin: args.pin } : {}),
         definitionAssetId: args.definitionAssetId,
-        allocationTarget,
+        getProbeTarget,
         onProbeResult: async (result) => {
+          const probe = probeHolder.current;
+          if (probe === null)
+            throw new Error("Probe result arrived without probe capacity");
           if (
-            (await probeStore.recordResult(probeId, result, now())) === null
+            (await probeStore.recordResult(probe.id, result, now())) === null
           ) {
             throw new Error(
-              `Workflow probe ${probeId} changed before result persistence`,
+              `Workflow probe ${probe.id} changed before result persistence`,
             );
           }
           resultRecorded = true;
         },
       });
-      if (!resultRecorded) {
+      if (probeHolder.current !== null && !resultRecorded) {
         throw new Error(
-          `Workflow probe ${probeId} completed without persisting its result`,
+          "Workflow probe completed without persisting its result",
         );
       }
       if (!approved.approval.ok) {
@@ -770,28 +798,31 @@ export function createWorkflowAllocationService({
             approved.projection.sidecarPlacement?.capabilities ?? [],
         }),
       );
-      const adoptProbe =
+      const sameBinding =
         deploymentProvisioner.id === probeProvisioner.id &&
         deploymentProvisioner.apiVersion === probeProvisioner.apiVersion &&
         deploymentProvisioner.bindingFingerprint ===
           probeProvisioner.bindingFingerprint;
-      if (!adoptProbe) {
+      const probe = probeHolder.current;
+      const adoptedProbe = sameBinding ? probe : null;
+      if (probe !== null && adoptedProbe === null) {
         await releaseProbe(probe, "succeeded");
       }
       return await createDeployment({
         request: args,
         approved: narrowed,
         provisioner: deploymentProvisioner,
-        probe,
-        adoptProbe,
+        adoptedProbe,
         adapterManifestDigest: digest,
       });
     } catch (error) {
       try {
-        await releaseProbe(probe, "failed", {
-          code: "probe_failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
+        const probe = probeHolder.current;
+        if (probe !== null)
+          await releaseProbe(probe, "failed", {
+            code: "probe_failed",
+            message: error instanceof Error ? error.message : String(error),
+          });
       } catch {
         // Preserve the primary probe/provisioning error. The durable
         // `releasing` row remains discoverable for periodic cleanup.
@@ -889,7 +920,7 @@ export function createWorkflowAllocationService({
       // back into the gate's `ApprovalSet`, and the frozen definition id is the
       // anchor's own (set at prepare time from this freeze).
       const bundle = spec.frozenApprovalBundle;
-      const approved: InstallAndApproveResult = {
+      const approved: DeployPreparedCodeSourcedWorkflowParams["approved"] = {
         approval: {
           ok: true,
           definitionId: anchor.definitionId,
@@ -899,6 +930,9 @@ export function createWorkflowAllocationService({
         },
         projection: bundle.projection,
         closure: bundle.closure,
+        ...(bundle.assetCommitSha !== undefined
+          ? { assetCommitSha: bundle.assetCommitSha }
+          : {}),
       };
       // Re-resolve the inference chain from the catalog at launch time -- the
       // launch spec stores offering ids, never resolved sources, so a rotated
