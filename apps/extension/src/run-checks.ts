@@ -4,12 +4,11 @@ import * as actions from "@corbits/triage-workflows/actions/index";
 import type { RulesOutput } from "@corbits/triage-workflows/actions/rules";
 import { credentialBindings } from "@corbits/triage-workflows/agents";
 import { localActionCredentials } from "@corbits/triage-workflows/local-credentials";
-import type { Verdict } from "@corbits/triage-workflows/logic/render";
 import { workflow } from "@corbits/triage-workflows/pr-triage-github";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker, type WorkflowAuthorizeFn, type WorkflowRun } from "@intx/workflow";
 import { fileNotes, type FileNote } from "./notes.ts";
 import type { PrRef } from "./pr.ts";
-import type { VerdictPlan, ViewCheck, ViewVerdict } from "./view.ts";
+import type { VerdictPlan, ViewCheck } from "./view.ts";
 
 /** The trigger grants no action and every GitHub request but a read is refused, so the run can only read. */
 const allow: WorkflowAuthorizeFn = async function allow() {
@@ -32,14 +31,10 @@ function servedBy(gh: GithubFetch) {
 
 const QUALITY = new Set<string>(QUALITY_CHECK_IDS);
 
-/** Only the rules run here: the checks a model answers are left out, so the verdict comes from the rules alone. */
+/** Only the rules run here: the checks a model answers are left out. */
 function rulesOnly(pack: CheckPack): CheckPack {
   const checks = Object.fromEntries(Object.entries(pack.checks).map(([id, row]) => [id, QUALITY.has(id) ? { ...row, enabled: false } : row]));
   return { ...pack, checks, custom: pack.custom.filter((check) => !isModelCheck(check)) };
-}
-
-function verdictOf({ verdict, state, reason, nextAction }: Verdict): ViewVerdict {
-  return { verdict, state, reason, nextAction };
 }
 
 /** The policy's steps on each verdict, in words. */
@@ -47,11 +42,11 @@ export function plansOf(pack: CheckPack): VerdictPlan[] {
   return VERDICTS.map((verdict) => ({ verdict, when: VERDICT_RULES[verdict], steps: pack.actions[verdict].map(stepWords) }));
 }
 
-export type CheckRun = { headSha: string; checks: ViewCheck[]; notes: FileNote[]; verdict?: ViewVerdict };
+export type CheckRun = { headSha: string; checks: ViewCheck[]; notes: FileNote[] };
 
 /**
  * pr-triage's definition on one pull request, run by Interchange's local runner over read-only GitHub reads, with the
- * policy's rules only: the run settles them and gives the verdict they reach, writing nothing.
+ * policy's rules only, settling them and writing nothing.
  */
 export async function runChecks(pr: PrRef, gh: GithubFetch, policyPack: CheckPack): Promise<CheckRun> {
   const pack = rulesOnly(policyPack);
@@ -78,6 +73,5 @@ export async function runChecks(pr: PrRef, gh: GithubFetch, policyPack: CheckPac
   if (item.error !== undefined) throw new Error(item.error);
   const checks = [...item.det.checks, ...(item.det.labelled?.checks ?? [])];
   const named = checks.map((check) => ({ ...check, name: checkName(pack, check.check) }));
-  const evaluated = outputs["evaluateRules"] as Verdict | undefined;
-  return { headSha: item.facts.headSha, checks: named, notes: fileNotes(named), ...(evaluated ? { verdict: verdictOf(evaluated) } : {}) };
+  return { headSha: item.facts.headSha, checks: named, notes: fileNotes(named) };
 }

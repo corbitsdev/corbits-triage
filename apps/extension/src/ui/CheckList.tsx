@@ -65,7 +65,7 @@ function groupsOf(view: TriageView): Group[] {
   const shown = shownChecks(view);
   const groups: Group[] = [
     { id: "fail", title: "Failing", checks: shown.filter((check) => check.result === "fail") },
-    { id: "unsure", title: "Unsure", checks: shown.filter((check) => check.result === "unconfirmed") },
+    { id: "unsure", title: "Not settled", checks: shown.filter((check) => check.result === "unconfirmed") },
     { id: "pass", title: "Passed", checks: shown.filter((check) => check.result === "pass") },
   ];
   return groups.filter((group) => group.checks.length > 0);

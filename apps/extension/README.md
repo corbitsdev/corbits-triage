@@ -32,10 +32,11 @@ The policy is `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the reposit
 request's own head is never read for it, so a pull request cannot change the rules it is checked by. The file is kept
 for 10 minutes, then revalidated by ETag; files over 64 KB are refused.
 
-The block at the top of GitHub's sidebar shows a score dial (the hub's readiness over the checks run here), the verdict
-those checks reach (Pass, Fail, or Unsure while CI is still running) with the next step, the checks to look at and a
+The block at the top of GitHub's sidebar shows a score dial (the hub's readiness over the checks run here), Pass when
+every check run here passed or Fail when any failed (whatever the rule's `onFail`), Checks running while CI is
+pending, with how many passed or failed, the checks to look at and a
 link to the policy file. A chip beside the title repeats the score and, on hover, the failing checks. The side panel
-shows the score card, the checks grouped Failing, Unsure and Passed with their evidence, and, for reference, what the
+shows the score card, the checks grouped Failing, Not settled and Passed with their evidence, and, for reference, what the
 policy does on each verdict. The Files tab marks the files and lines a failing check cites. Only the policy's rules
 run here; its judgement rules are not run.
 
