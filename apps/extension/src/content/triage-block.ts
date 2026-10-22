@@ -4,7 +4,7 @@ import { findingTitle, POLICY_FILE_PATH } from "@corbits/triage-contracts";
 import { clock } from "../clock.ts";
 import type { RunState } from "../storage.ts";
 import { checkReason, shownChecks } from "../summary.ts";
-import { nextStep, outcomeOf, type TriageView } from "../view.ts";
+import { nextStep, outcomeOf, type TriageView, type ViewCheck } from "../view.ts";
 
 const POLICY_GUIDE_URL = "https://github.com/corbitsdev/corbits-triage/blob/main/docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#writing-the-file";
 
@@ -67,6 +67,11 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
     return [node("p", "tb-warn", view ? `${run.error} Showing the run from ${clock(view.ranAt)}.` : run.error)];
   }
 
+  function markLabel(check: ViewCheck): string {
+    if (check.result === "fail") return "Failed";
+    return check.check === "ci-green" ? "Running" : "Not settled";
+  }
+
   /** The checks that failed or are not settled yet, each with its reason; on a Pass, how many passed. */
   function checks(view: TriageView): HTMLElement[] {
     const open = shownChecks(view).filter((check) => check.result !== "pass");
@@ -78,7 +83,7 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
       item.dataset.result = check.result;
       const mark = node("span", "tb-mark");
       mark.setAttribute("role", "img");
-      mark.setAttribute("aria-label", check.result === "fail" ? "Failed" : "Not settled");
+      mark.setAttribute("aria-label", markLabel(check));
       mark.append(icon(check.result === "fail" ? "fail" : "unsure"));
       const reason = checkReason(check);
       const text = node("span", "tb-check-text");

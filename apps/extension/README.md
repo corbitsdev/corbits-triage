@@ -54,8 +54,9 @@ by a GitHub App's bot account, which the account name shows.
   github.com's page data, not a published API, so a read GitHub changes or cuts short (a long timeline, say) is not
   guessed at: it goes to the REST API when a token is saved, and otherwise the block says what could not be read and
   checks nothing.
-- Without a token, a pull request with a merge commit is not checked: a merge commit is left out of its `.patch`, so its
-  message cannot be read; the block says so, and saving a token fixes it.
+- Without a token, a pull request is not checked when github.com does not give its rendered description, or when a
+  commit (such as a merge commit) is not in its `.patch`, so its message cannot be read. The block says which, and
+  saving a token fixes it.
 - A saved token is optional. A fine-grained token with read-only access to public repositories is enough; private
   repositories need read access to their contents and pull requests. Cookies and the token never leave the browser:
   the session reads go only to github.com and the token only to api.github.com.

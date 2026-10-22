@@ -69,5 +69,5 @@ test("without GitHub's rendering of the description, with no token, the pull req
 test("a merge commit, left out of the .patch, with no token, leaves the pull request unchecked and says why", async () => {
   const reads = sessionGithub(signedIn(null, true, "f00d".padEnd(40, "0")), null);
   await expect(runChecks({ repo: PR.repo, number: PR.number }, reads.gh, pack)).rejects.toThrow("could not read the commits");
-  expect(reads.missed()[0]).toContain("has a merge commit, which can't be read without a GitHub token. Save a GitHub token");
+  expect(reads.missed()[0]).toContain("(such as a merge commit) is not in github.com's .patch, so it can't be read without a GitHub token. Save a GitHub token");
 });

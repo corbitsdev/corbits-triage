@@ -2,6 +2,7 @@ import type { PostedCodeReview } from "@corbits/github-reads";
 import type { CheckResult } from "@corbits/triage-workflows/logic/checks";
 import type { FileNote } from "./notes.ts";
 import type { PrRef } from "./pr.ts";
+import type { RunState } from "./storage.ts";
 
 export type ViewCheck = CheckResult & { name: string };
 
@@ -79,4 +80,12 @@ export function nextStep(view: TriageView): string {
     case "none":
       return "There is nothing to check on this pull request.";
   }
+}
+
+/** The status beside the title. A run that failed leaves the head unchecked, so an older result is never shown as this one's. */
+export function statusOf(view: TriageView | undefined, state: RunState | undefined): { text: string; tone: Tone | "busy" } {
+  if (state?.running) return { text: "Triaging", tone: "busy" };
+  if (state?.error) return { text: "Could not run", tone: "unknown" };
+  if (!view) return { text: "Not triaged yet", tone: "unknown" };
+  return { text: stateName(view), tone: toneOf(view) };
 }

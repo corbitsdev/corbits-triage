@@ -128,8 +128,7 @@ export function sessionGithub(session: Session, fallback: GithubFetch | null): S
     const rows = JSON.parse(listed) as Array<{ sha: string; commit: { message: string } }>;
     return Response.json(rows.map(function withMessage(row) {
       const message = messages.get(row.sha);
-      // A merge commit is left out of the .patch.
-      if (message === undefined) throw new Error(`${repo}#${number} has a merge commit, which can't be read without a GitHub token.`);
+      if (message === undefined) throw new Error(`A commit of ${repo}#${number} (such as a merge commit) is not in github.com's .patch, so it can't be read without a GitHub token.`);
       return { ...row, commit: { ...row.commit, message } };
     }));
   }
