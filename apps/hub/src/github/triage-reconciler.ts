@@ -118,9 +118,11 @@ function waitsOnCi(verdict: { checks: ReadonlyArray<{ check: string; result: str
   return verdict.checks.some((check) => check.check === "ci-green" && (check.result === "unconfirmed" || check.result === "fail"));
 }
 
-/** The verdict read its CI as cancelled, which stays so until a check is re-run. */
+/** The verdict read its CI as cancelled, which stays so until a check is re-run; one without its rule's detail is taken as cancelled, so it is not run again and again. */
 function readCancelled(verdict: { detail?: VerdictDetail | null }): boolean {
-  const values = verdict.detail?.checks?.find((check) => check.check === "ci-green")?.output?.["values"];
+  const ciGreen = verdict.detail?.checks?.find((check) => check.check === "ci-green");
+  if (ciGreen === undefined) return true;
+  const values = ciGreen.output?.["values"];
   return typeof values === "object" && values !== null && "status" in values && values.status === "cancelled";
 }
 
@@ -191,8 +193,13 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         continue;
       }
       const decided = verdict.checks.find((check) => check.check === "ci-green")!.result;
-      // Pending stays pending, and failed or cancelled stays so, until a build changes; a red build turning green is the change worth a run.
-      if (ci === "pending" || (decided === "fail" && ci === "failure") || (readCancelled(verdict) && ci === "cancelled")) {
+      // Cancelled CI waits on a person re-running it, however late, so its reads are not counted toward giving up.
+      if (readCancelled(verdict) && ci === "cancelled") {
+        buildPolls.set(key, { polls: poll.polls, at: now });
+        continue;
+      }
+      // Pending stays pending and failed stays failed until a build changes; a red build turning green is the change worth a run.
+      if (ci === "pending" || (decided === "fail" && ci === "failure")) {
         buildPolls.set(key, { polls: poll.polls + 1, at: now });
         continue;
       }

@@ -357,14 +357,25 @@ describe("triage reconciler", () => {
     const green = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await green.reconcile();
     expect(mailedNumbers(green.delivered)).toEqual([1]);
-    // A verdict that read CI as cancelled stays until a check is re-run, while one made as CI ran is queued once it is cancelled.
-    const cancelled = { ...waiting, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed", output: { kind: "values", values: { status: "cancelled" } } }] };
-    const stillCancelled = harness({ [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(cancelled), completed] } }, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] });
-    await stillCancelled.reconcile();
-    expect(stillCancelled.delivered).toHaveLength(0);
     const nowCancelled = harness(logs, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] });
     await nowCancelled.reconcile();
     expect(mailedNumbers(nowCancelled.delivered)).toEqual([1]);
+  });
+
+  test("a verdict that read CI as cancelled is not queued again while it stays cancelled, however many reads, and is once a check is re-run", async () => {
+    const cancelled = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed", output: { kind: "values", values: { status: "cancelled" } } }] };
+    let now = NOW;
+    const options: HarnessOptions = { now: () => now, headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] };
+    const run = harness({ [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(cancelled), completed] } }, [head(1)], options);
+    for (let pass = 0; pass <= DEFAULT_RECONCILE_POLICY.maxAttempts; pass++) {
+      now = new Date(now.getTime() + DEFAULT_RECONCILE_POLICY.backoffMaxMs);
+      await run.reconcile();
+    }
+    expect(run.delivered).toHaveLength(0);
+    options.headChecks = [{ name: "build", status: "completed", conclusion: "success" }];
+    now = new Date(now.getTime() + DEFAULT_RECONCILE_POLICY.backoffMaxMs);
+    await run.reconcile();
+    expect(mailedNumbers(run.delivered)).toEqual([1]);
   });
 
   test("a head whose verdict waits on CI is queued again once CI finished, though the deployment that gave the verdict was replaced", async () => {
@@ -374,6 +385,10 @@ describe("triage reconciler", () => {
     await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
     expect(run.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "build_status_changed" }));
+    // Without the rule's detail, cancelled CI is taken as already read, so the head is not run again and again.
+    const cancelled = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] });
+    await cancelled.reconcile();
+    expect(cancelled.delivered).toHaveLength(0);
   });
 
   test("a head the reconciler holds for CI is mailed to be marked waiting once, where triage writes labels", async () => {
