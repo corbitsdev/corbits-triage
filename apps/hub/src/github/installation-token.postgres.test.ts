@@ -11,6 +11,7 @@ import { createGithubAppConnection } from "./app-connection.js";
 import { withAppLogin } from "./bridge.js";
 import { githubAppCredential } from "./portal-credential.js";
 import { createGithubTokenRenewal } from "./installation-token.js";
+import { appKeyProviderWriteRefusal } from "./app-key.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_token";
@@ -340,5 +341,18 @@ test("PostgreSQL: a github-app provider given an origin loses it before the key 
       bindings: [{ action: "facts", handle: "github-app", provider: "github-app", name: "github-app", locator: "tenant" }],
     });
     expect(key.ok ? "delivered" : key.reason.code).toBe("no_origin");
+  });
+}, 120_000);
+
+test("PostgreSQL: a provider write cannot rename the App key's provider or give it an origin", async () => {
+  await withWorkspace([app("1", [7])], async function refusal({ db }) {
+    await db.insert(schema.provider).values({ id: "prv_app_key", tenantId: TENANT, name: "github-app", plugin: "http", apiBaseUrl: null });
+    function patch(body: unknown) {
+      return new Request("http://hub.test/", { method: "PATCH", body: JSON.stringify(body) });
+    }
+    expect((await appKeyProviderWriteRefusal(db, TENANT, "prv_app_key", patch({ name: "x", apiBaseUrl: "https://evil.test" })))?.status).toBe(400);
+    expect((await appKeyProviderWriteRefusal(db, TENANT, "prv_app_key", patch({ name: "x" })))?.status).toBe(400);
+    expect((await appKeyProviderWriteRefusal(db, TENANT, "prv_app_key", patch({ apiBaseUrl: "https://evil.test" })))?.status).toBe(400);
+    expect(await appKeyProviderWriteRefusal(db, TENANT, "prv_github", patch({ apiBaseUrl: "https://api.github.com" }))).toBeUndefined();
   });
 }, 120_000);

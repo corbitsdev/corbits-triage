@@ -130,7 +130,10 @@ export async function appKeyProviderWriteRefusal(db: DB["db"], tenantId: string,
   const existing = providerId === undefined ? undefined : await db.query.provider.findFirst({ where: and(eq(provider.id, providerId), eq(provider.tenantId, tenantId)) });
   const name = typeof fields?.["name"] === "string" ? fields["name"] : existing?.name;
   const apiBaseUrl = fields?.["apiBaseUrl"] === undefined ? existing?.apiBaseUrl : fields["apiBaseUrl"];
-  if (name !== GITHUB_APP_KEY_PROVIDER || apiBaseUrl === null || apiBaseUrl === undefined) return undefined;
+  // Renaming it away would leave the key on a provider that is no longer guarded.
+  const renamesKeyProvider = existing?.name === GITHUB_APP_KEY_PROVIDER && name !== GITHUB_APP_KEY_PROVIDER;
+  const keyProviderWithOrigin = name === GITHUB_APP_KEY_PROVIDER && apiBaseUrl !== null && apiBaseUrl !== undefined;
+  if (!renamesKeyProvider && !keyProviderWithOrigin) return undefined;
   return Response.json({ error: { code: "github_app_key_provider_write", message: APP_KEY_PROVIDER_REFUSED } }, { status: 400 });
 }
 
