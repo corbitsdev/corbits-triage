@@ -49,7 +49,7 @@ try {
 
   await setToken(worker, null);
   await page.goto(url);
-  check("without a token, the block says to add one", (await blockText(page, ".tb-warn")).includes("Add a GitHub token"));
+  check("without a token, a public pull request is checked", /Policy: \.corbits-triage\.ya?ml/.test(await blockText(page, ".tb-meta")));
 
   await setToken(worker, token);
   await page.reload();

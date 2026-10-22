@@ -22,7 +22,7 @@ function TokenSection() {
   const token = useStorageItem(tokenSaved);
   if (token === undefined) return null;
   return (
-    <SettingSection id="setting-github" title="GitHub token" status={token ? <Badge tone="success">Saved</Badge> : null} description="Optional. Needed for private repositories and a higher hourly limit. Reads only.">
+    <SettingSection id="setting-github" title="GitHub token" status={token ? <Badge tone="success">Saved</Badge> : null} description="Optional. Needed for private repositories, and raises GitHub's limit from 60 reads an hour to 5,000. Reads only.">
       <GithubTokenForm />
     </SettingSection>
   );

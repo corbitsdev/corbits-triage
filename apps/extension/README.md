@@ -46,7 +46,7 @@ by a GitHub App's bot account, which the account name shows.
 
 ### Limits
 
-- GitHub token: optional; needed for private repositories and a higher hourly limit. Without one, a private repository
+- GitHub token: optional; needed for private repositories and raises GitHub's limit from 60 reads an hour to 5,000. Without one, a private repository
   reads as not found and the block says to add a token. A token for private repositories needs read access to their
   contents and pull requests.
 - The token is kept in the extension's `storage.local`. Only the background reads it, and changing or removing it
