@@ -11,6 +11,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     title: "Fix",
     author: "ada",
     authorKind: null,
+    byTriage: false,
     draft: false,
     mergeable: true,
     mergeBlock: null,

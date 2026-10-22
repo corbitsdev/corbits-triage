@@ -133,7 +133,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       ready: () => ready,
       versions,
       openPulls,
-      list: async () => { throw new Error("the workspace has no host credential"); },
+      list: () => async () => { throw new Error("the workspace has no host credential"); },
       triageState: { load: async (_tenant, key) => ({ rows: key === REPO ? waitingRows : [], version: null }) },
       now: () => now,
     });
@@ -225,7 +225,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
       ready: () => true,
       versions: createTenantVersions(),
       openPulls,
-      list: async () => { throw new Error("the workspace has no host credential"); },
+      list: () => async () => { throw new Error("the workspace has no host credential"); },
       triageState: { load: async () => ({ rows: [], version: null }) },
       now: () => minutes(0),
     });
@@ -265,7 +265,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
         return resource !== "credential:crd_bitbucket";
       },
       openPulls,
-      async list(_tenantId: string, record: RepoRecord) {
+      list: () => async function listRepo(record: RepoRecord) {
         listed.push(record.name);
         return [{ number: 1, title: "PR 1", author: "ada", draft: false, sha: "sha1", branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null, authorAssociation: "MEMBER", authorBot: false }];
       },

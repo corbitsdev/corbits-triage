@@ -52,10 +52,13 @@ const CHOSEN_BODY = addBody(`Adds \`${POLICY_FILE_PATH}\`.`);
  * A starter's open pull request, found in the shared listing so a workspace of repositories without rules costs no host
  * calls on each load. A member the listing refuses is not told of one; opening the pull request answers it.
  */
-function listedPolicyPull(listing: OpenPullsRead | Response, repo: string): github.PolicyPull | undefined {
+export function listedPolicyPull(listing: OpenPullsRead | Response, repo: string): github.PolicyPull | undefined {
   if (listing instanceof Response) return undefined;
-  const pr = listing.repos.find((row) => row.repo === repo)?.prs.find((row) => row.branch === github.POLICY_BRANCH);
-  return pr?.url ? { url: pr.url, number: pr.number } : undefined;
+  const listed = listing.repos.find((row) => row.repo === repo);
+  const pr = listed?.prs.find((row) => row.branch === github.POLICY_BRANCH);
+  if (!pr?.url) return undefined;
+  // Only a GitHub pull request is merged from the portal, at the head it was shown.
+  return listed?.source === "github" && pr.sha ? { url: pr.url, number: pr.number, headSha: pr.sha } : { url: pr.url, number: pr.number };
 }
 
 export type PolicyFileDeps = PortalCredentialDeps & {

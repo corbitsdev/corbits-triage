@@ -11,6 +11,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     title: "Fix",
     author: "ada",
     authorKind: null,
+    byTriage: false,
     draft: false,
     mergeable: null,
     mergeBlock: null,
@@ -104,6 +105,13 @@ describe("paneActions", () => {
   test("the menu leaves out the suggested action; anything writable closes plainly", () => {
     expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close", "Triage again"]);
     expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
+  });
+
+  test("a pull request Triage opened is merged, never reviewed, since the host refuses a review from its author", () => {
+    const own = paneActions(gate({ state: "awaiting-review", mergeable: true, byTriage: true }));
+    expect(own.primary).toEqual({ kind: "merge", blocker: null });
+    expect(own.more.map((row) => row.label)).toEqual(["Comment", "Close", "Triage again"]);
+    expect(paneActions(gate({ state: "blocked", byTriage: true })).primary).toBeNull();
   });
 
   test("triage again is offered once the hub has run or given up on the pull request, under the same gate as writes", () => {

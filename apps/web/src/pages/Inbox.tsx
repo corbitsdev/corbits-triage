@@ -414,7 +414,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
               <Link className="mono repo-link" to={`/repositories/${item.repo}`} title="Repository settings">{item.repo}</Link>
               {item.number === null ? null : <span className="mono">#{item.number}</span>}
               <span className="sp" />
-              {link === null ? null : <Button asChild variant="ghost" size="sm"><a href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source)} <ExternalIcon /></a></Button>}
+              {link === null ? null : <Button asChild variant="ghost" size="sm"><a href={link} target="_blank" rel="noreferrer">{viewOnHost(item)} <ExternalIcon /></a></Button>}
             </div>
             <h2 className="title">{titleText(facts.title)}</h2>
             <Byline item={item} author={facts.author} detail={pull.data} />

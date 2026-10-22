@@ -131,16 +131,16 @@ A few things work differently from GitHub, because Bitbucket works differently:
 
 A repository's policy is the file `.corbits-triage.yml` (`.corbits-triage.yaml` works too) on its default branch, so changes to it are reviewed like any other code. The **Policy** section reads it back in plain sentences: each rule that is on, then what Triage does on **Pass**, **Fail** and **Unsure**. Rules and actions change only in the file. **Change on GitHub**, or **Change on Bitbucket** for a Bitbucket repository, opens it there.
 
-- With no file and no rules saved in Triage, the section shows a **Start a policy file** card with the steps **Review**, **Open pull request**, **Merge on GitHub** (or Bitbucket) and **Done**. It lists the rules the file starts with: at most 30 files and 3,000 lines changed, no merge conflicts and passing CI, with no actions. **Open the pull request** opens one adding `.corbits-triage.yml`, or shows the one already open; change the rules there before you merge. Triage runs nothing on the repository until it is merged.
+- With no file and no rules saved in Triage, the section shows a **Start a policy file** card with the steps **Review**, **Open pull request**, **Merge** (**Merge on Bitbucket** for a Bitbucket repository) and **Done**. It lists the rules the file starts with: at most 30 files and 3,000 lines changed, no merge conflicts and passing CI, with no actions. **Open the pull request** opens one adding `.corbits-triage.yml`, or shows the one already open; change the rules there before you merge. Triage runs nothing on the repository until it is merged.
 
-  ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge on GitHub and Done, the four starter rules with Nothing on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
+  ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge and Done, the four starter rules with Nothing on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
 
 - When a change to the file reaches the default branch, the next triage uses it.
 - If the file has a mistake, Triage runs nothing on the repository until it is fixed. The section says so and lists each problem, and the Inbox names the repository. A repository that still has rules saved in Triage keeps running on them instead, and its card below says **Triage can't read** the file and why.
 
 #### Moving saved rules into the file
 
-A repository set up before policy files has its rules saved in Triage. They move into the file once, through a pull request, with one card in the Policy section that walks through the steps **Review**, **Open pull request**, **Merge on GitHub** (or Bitbucket) and **Done**. Your saved rules keep applying until the move is done.
+A repository set up before policy files has its rules saved in Triage. They move into the file once, through a pull request, with one card in the Policy section that walks through the steps **Review**, **Open pull request**, **Merge** (**Merge on Bitbucket** for a Bitbucket repository) and **Done**. Your saved rules keep applying until the move is done.
 
 - **Move this repository's rules into a policy file.** The repository has saved rules and no file. **Open the pull request** opens one adding the file with your saved rules and actions. Anything a file can't hold is listed above it, one plain line each, such as "Risk stops after the merge; a policy file can't hold it."
 
@@ -152,9 +152,9 @@ A repository set up before policy files has its rules saved in Triage. They move
 
   ![The same card after Use the file instead: Pull requests that change vendor/** will no longer fail, with Use the file and Cancel](images/31.png)
 
-- **While the pull request is open,** the card shows it as **Open, waiting for merge**, with **Merge on GitHub** to open it there. **Update the pull request with your saved rules** brings it up to date; a second one is never opened. The card notices the merge on its own. If your file differs, **Use the file instead** is still offered.
+- **While the pull request is open,** the card shows it as **Open, waiting for merge**, with **Review on GitHub** to read it there and **Merge** to merge it from the card. On Bitbucket, **Merge on Bitbucket** opens it there. **Update the pull request with your saved rules** brings it up to date; a second one is never opened. The card notices the merge on its own. If your file differs, **Use the file instead** is still offered.
 
-  ![The card at Merge on GitHub: Pull request #2, Open, waiting for merge, a Merge on GitHub button and the link Update the pull request with your saved rules; the Repositories list marks acme/widgets Waiting for merge](images/32.png)
+  ![The card at Merge: Pull request #2, Open, waiting for merge, a Review on GitHub link, a Merge button and the link Update the pull request with your saved rules; the Repositories list marks acme/widgets Waiting for merge](images/32.png)
 
 - **Finish moving to the policy file.** The file holds everything from your saved rules that a file can hold. What is left is shown as a difference; press **Use the file**, then confirm, to switch.
 
@@ -400,7 +400,7 @@ Clicking a pull request opens it on the right. The pane is built to be read top 
 
 ![The reading pane for a failing pull request: the status line Blocked with 1 thing to fix, the problem Merge conflicts with base, the description, folded rows for linked issue, files and rules passed, and a bottom bar with Request changes, Close, Approve and the other actions](images/12.png)
 
-1. **The header**: repository and number, the title, the author with their chip, when it was opened, and how many lines were added and removed. The **View on GitHub** or **View on Bitbucket** link in the corner opens the same pull request there. The pull request's own page has the same link.
+1. **The header**: repository and number, the title, the author with their chip, when it was opened, and how many lines were added and removed. The **View on GitHub** or **View on Bitbucket** link in the corner opens the same pull request there. The pull request's own page has the same link. On a pull request Triage opened itself, such as the one adding its policy file, the link reads **Review on GitHub** or **Review on Bitbucket**.
 2. **The status line** in one sentence, such as **Ready to merge**, **Waiting for review**, or **Blocked · 2 things to fix, 1 to check**. A pull request that passed but that GitHub or Bitbucket will not merge yet says why instead of **Ready to merge**, such as **Ready, but waiting for a required review**, **Ready, but behind its base branch**, **Ready, but the branch's rules block the merge** or, on Bitbucket, the reason its merge checks give, and **Merge** stays off until it can.
 3. **The problems**, if any. Each failed rule is listed under **To fix** with the evidence, such as the name of the failing check. A rule Triage could not evaluate is listed under **Couldn't check**. A pull request with no problems skips straight to the description.
 4. **Code review**, when it is on for the repository: what the change does, then each bug it found as a comment from **Code review**, with the commit it reviewed, how severe it is (P0 is the most severe), the file and line, and the code it points at. A bug in a file code review could not read says **Not checked against the file**, here and on GitHub. If the model keeps failing or a reviewer's answer can't be read, the review shows **The last review did not finish** instead of **No findings**, with the reason under it. **Review again** reviews the latest commit once more. A commit that left the change as it was keeps the last review and says **Carried over from** the commit it was made for. On a GitHub pull request, **Send to GitHub** posts the review to the pull request, inline where the lines are part of the change; it then says **Sent to GitHub**. It needs the Comment permission for the repository, and is refused once the pull request has newer commits that did not keep the review: review again, then send.
@@ -423,6 +423,8 @@ The bar at the bottom of the pane always offers the next step first. For a passi
 - **Merge** merges the exact commit Triage checked. If the author pushes a new commit in the meantime, the merge is refused and Triage checks the new commit first. Merge is off while GitHub or Bitbucket would not merge the pull request, here and on the pull request's own page, which shows the reason beside its status, such as **Merge blocked · Waiting for a required review**. If the host refuses a merge anyway, the message gives its reason.
 - **Request changes** sends the author a review listing the rules they need to fix. When they fix them, Triage withdraws the request on its own.
 - **Approve** approves the pull request on GitHub or Bitbucket. Triage never withdraws an approval you made yourself.
+- A pull request Triage opened itself offers **Merge** but not **Approve** or **Request changes**, because GitHub and Bitbucket don't let a pull request's author review it. Review it on GitHub or Bitbucket.
+- When GitHub refuses an action, the message gives GitHub's reason, such as **Can not approve your own pull request**.
 - **Comment** posts a comment, and **Post reply** answers the author. **Edit feedback** lets you reword the comment Triage will post before it goes out.
 - **Close** closes the pull request.
 - **Triage again** re-runs the checks on the current commit.

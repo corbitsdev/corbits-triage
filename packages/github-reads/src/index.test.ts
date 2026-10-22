@@ -6,6 +6,7 @@ import {
   CODE_REVIEW_MARKER,
   getChecks,
   getPostedCodeReview,
+  json,
   listInstallations,
   listOpenPrs,
   listPrFiles,
@@ -39,6 +40,15 @@ function recorder(respond: (path: string, init?: RequestInit) => unknown) {
   }
   return { gh: gh satisfies GithubFetch, requests };
 }
+
+describe("json", () => {
+  test("a refusal carries the reason GitHub gives under errors, not its generic message", async () => {
+    const { gh } = recorder(function respond() {
+      return Response.json({ message: "Unprocessable Entity", errors: ["Can not approve your own pull request"] }, { status: 422 });
+    });
+    await expect(json(gh, "/repos/acme/widgets/pulls/8/reviews", { method: "POST" })).rejects.toThrow("github POST /repos/acme/widgets/pulls/8/reviews -> 422 Can not approve your own pull request");
+  });
+});
 
 describe("listOpenPrs", () => {
   test("follows the Link rel=next header across pages", async () => {

@@ -558,7 +558,7 @@ export default function PRDetail() {
               <Badge>{QUEUE_STATE_LABEL[item.state]}</Badge>
               {mergeBadge()}
               <VerdictChip item={item} />
-              {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source)}</a> : null}
+              {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">{viewOnHost(item)}</a> : null}
             </div>
           </div>
           <div className="pr-actions">
@@ -576,8 +576,12 @@ export default function PRDetail() {
                   <Menu>
                     <MenuTrigger asChild><Button type="button" variant="outline" aria-label="More actions">More</Button></MenuTrigger>
                     <MenuContent align="end">
-                      <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("approve")}>Approve</MenuItem>
-                      <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("changes")}>Request changes</MenuItem>
+                      {item.byTriage ? null : (
+                        <>
+                          <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("approve")}>Approve</MenuItem>
+                          <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("changes")}>Request changes</MenuItem>
+                        </>
+                      )}
                       {!offersClose(item) && <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("close")}>Close pull request</MenuItem>}
                     </MenuContent>
                   </Menu>

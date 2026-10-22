@@ -2,12 +2,14 @@
 // App or Bitbucket Data Center token by each record's source, for hub-side work.
 import type { DB } from "@intx/db";
 import type { CredentialCipher } from "@intx/types";
+import { asRecord } from "@corbits/common";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
+import { tokenUser } from "@corbits/bitbucket-datacenter-tool/bitbucket";
 import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation, type OpenPrsLister } from "./open-pulls.js";
-import { activeSecret, appGithubFetch } from "./portal-credential.js";
+import { activeCredential, activeSecret, appGithubFetch } from "./portal-credential.js";
 import type { OpenPr } from "./reconcile-plan.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
@@ -69,13 +71,47 @@ export function createTenantGithub(deps: TenantGithubDeps) {
   };
 }
 
-/** The portal's listing of a repository's open pull requests, on its host. */
+/** The login the workspace's GitHub App writes as, read from its credential without asking GitHub; undefined when it has no slug or can't be read, since the listing must not fail over it. */
+async function appBotLogin(db: DB["db"], tenantId: string): Promise<string | undefined> {
+  try {
+    const slug = asRecord((await activeCredential(db, tenantId, "github"))?.metadata)?.["appSlug"];
+    return typeof slug === "string" && slug !== "" ? `${slug}[bot]` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The user Triage's Bitbucket token acts as; undefined when Bitbucket can't say, since the listing must not fail over it. */
+async function bitbucketLogin(bb: bitbucket.BitbucketFetch): Promise<string | undefined> {
+  try {
+    return (await tokenUser(bb)).slug;
+  } catch {
+    return undefined;
+  }
+}
+
+function markTriage<P extends { author: string | null }>(prs: P[], login: string | undefined): Array<P & { byTriage?: true }> {
+  return prs.map((pr) => (login !== undefined && pr.author === login ? { ...pr, byTriage: true as const } : pr));
+}
+
+/** The portal's listing of a workspace's open pull requests, on each repository's host, marking the ones Triage opened; each host's login is read once a listing. */
 export function createTenantOpenPrs(deps: TenantSourcesDeps): OpenPrsLister {
   const tenantSources = createTenantSources(deps);
-  return async function openPrs(tenantId, record) {
+  return function tenantListing(tenantId) {
     const fetches = tenantSources(tenantId);
-    if (sourceOf(record) === "bitbucket-datacenter") return bitbucket.listOpenPrs(await bitbucketOf(fetches, record), record.name);
-    return listOpenPrs(await githubOf(fetches, record), record.name);
+    const githubLogin = once(() => appBotLogin(deps.db, tenantId));
+    const tokenLogin = once(async function readTokenLogin() {
+      const bb = await fetches.bitbucket();
+      return bb && bitbucketLogin(bb);
+    });
+    return async function openPrs(record) {
+      if (sourceOf(record) === "bitbucket-datacenter") {
+        const [prs, login] = await Promise.all([bitbucket.listOpenPrs(await bitbucketOf(fetches, record), record.name), tokenLogin()]);
+        return markTriage(prs, login);
+      }
+      const [prs, login] = await Promise.all([listOpenPrs(await githubOf(fetches, record), record.name), githubLogin()]);
+      return markTriage(prs, login);
+    };
   };
 }
 

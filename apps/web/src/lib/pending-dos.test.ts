@@ -34,6 +34,11 @@ describe("pendingDos", () => {
     expect(labels(pendingDos(verdict([step("merge", {}, 0)])))).toEqual(["Merge (the verdict was fail, not pass)"]);
   });
 
+  test("a pull request Triage opened offers no held review, only its other held actions", () => {
+    const own = { ...verdict([step("approve", {}, 0), step("comment", { body: "Thanks." }, 1)]), byTriage: true };
+    expect(pendingDos(own).map((pending) => pending.kind)).toEqual(["comment"]);
+  });
+
   test("each held kind is labelled and approved through the hub by reference only", async () => {
     const dos = pendingDos(verdict([
       step("labels", { labels: ["size/xl", "needs-split"] }, 0),

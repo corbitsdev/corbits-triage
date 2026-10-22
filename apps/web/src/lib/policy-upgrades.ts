@@ -76,9 +76,9 @@ export function usePolicyUpgrade(repo: string): PolicyUpgradeRow | undefined {
   return useUpgradeRows().find((row) => row.repo === repo && (row.error !== undefined || row.upgrade?.state !== "ok"));
 }
 
-/** Opening the pull request, and keeping the file in place of the saved rules; either is followed by reading every view of the policy again. */
+/** Opening the pull request, merging it, and keeping the file in place of the saved rules; each is followed by reading every view of the policy again. */
 export function usePolicyUpgradeActions(repo: string, onSettled: () => void) {
-  const { snapshot } = usePortal();
+  const { snapshot, writeGithub } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   const queryClient = useQueryClient();
 
@@ -104,5 +104,11 @@ export function usePolicyUpgradeActions(repo: string, onSettled: () => void) {
     },
     onSuccess: reread,
   });
-  return { propose, keepFile };
+  const merge = useMutation({
+    mutationFn: function mergePull({ number, headSha }: { number: number; headSha: string }) {
+      return writeGithub({ action: "merge", repo, number, headSha }, "now");
+    },
+    onSuccess: reread,
+  });
+  return { propose, keepFile, merge };
 }

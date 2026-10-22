@@ -8,7 +8,7 @@ import { credentialAad } from "@intx/types";
 import { createArtifact, findArtifactByTitle, runArtifactMigrations } from "@corbits/artifacts";
 import { checkPackName, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, starterPack, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { fileRefusal, settlePolicy } from "./check-pack-store.js";
-import { createPolicyFile } from "./policy-file.js";
+import { createPolicyFile, listedPolicyPull } from "./policy-file.js";
 import { POLICY_BRANCH } from "./policy-pull.js";
 import { createMemberOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createTenantGithub, createTenantOpenPrs } from "./tenant-open-heads.js";
@@ -78,7 +78,7 @@ async function github(req: Request): Promise<Response> {
     files.set(`${repo}@${branch}/${at}`, { sha: `blob${++commits}`, text: Buffer.from(content, "base64").toString("utf8") });
     if (raced) pulls.push(raced);
     raced = undefined;
-    return Response.json({ content: { sha: `blob${commits}` } }, { status: 201 });
+    return Response.json({ content: { sha: `blob${commits}` }, commit: { sha: `commit${commits}` } }, { status: 201 });
   }
   if (req.method === "GET" && path === "") return Response.json({ default_branch: "main" });
   if (req.method === "GET" && path === "git/ref/heads/main") return Response.json({ object: { sha: "main-sha" } });
@@ -102,18 +102,18 @@ async function github(req: Request): Promise<Response> {
   }
   if (req.method === "GET" && path === "pulls") {
     const head = url.searchParams.get("head");
-    return Response.json(pulls.filter((pull) => pull.repo === repo && pull.open && `${owner}:${pull.head}` === head).map((pull) => ({ number: pull.number, html_url: `https://github.com/${repo}/pull/${pull.number}` })));
+    return Response.json(pulls.filter((pull) => pull.repo === repo && pull.open && `${owner}:${pull.head}` === head).map((pull) => ({ number: pull.number, html_url: `https://github.com/${repo}/pull/${pull.number}`, head: { sha: "head-sha" } })));
   }
   if (req.method === "POST" && path === "pulls") {
     const body = await req.json() as { head: string; base: string; title: string; body: string };
     if (pulls.some((pull) => pull.repo === repo && pull.open && pull.head === body.head && pull.base === body.base)) return Response.json({ message: "Validation Failed" }, { status: 422 });
     pulls.push({ repo, number: pulls.length + 1, open: true, ...body });
-    return Response.json({ number: pulls.length, html_url: `https://github.com/${repo}/pull/${pulls.length}` }, { status: 201 });
+    return Response.json({ number: pulls.length, html_url: `https://github.com/${repo}/pull/${pulls.length}`, head: { sha: "head-sha" } }, { status: 201 });
   }
   if (req.method === "PATCH" && path.startsWith("pulls/")) {
     const pull = pulls.find((row) => row.repo === repo && row.number === Number(path.slice("pulls/".length)))!;
     Object.assign(pull, await req.json());
-    return Response.json({ number: pull.number });
+    return Response.json({ number: pull.number, html_url: `https://github.com/${repo}/pull/${pull.number}`, head: { sha: "patched-head" } });
   }
   return new Response(null, { status: 404 });
 }
@@ -143,7 +143,7 @@ beforeAll(async () => {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
   await db.insert(schema.credential).values({
     id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
-    secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_github", "secret")), status: "active",
+    secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "triage" },
   });
   async function authorize(principalId: string, _tenantId: string, resource: string, action: string) {
     return resource === "credential:crd_github" && action === "use" && principalId === "prn_user";
@@ -292,7 +292,7 @@ test("PostgreSQL: writing the saved rules to the file opens one pull request, up
   await writePolicy(EXPORTED, JSON.stringify(saved));
 
   const number = pulls.length + 1;
-  expect(await exportOf(EXPORTED)).toEqual({ http: 200, status: "opened", url: `https://github.com/${EXPORTED}/pull/${number}`, number });
+  expect(await exportOf(EXPORTED)).toEqual({ http: 200, status: "opened", url: `https://github.com/${EXPORTED}/pull/${number}`, number, headSha: "head-sha" });
   const [pull] = pulls.filter((row) => row.repo === EXPORTED);
   expect(pull).toMatchObject({ head: POLICY_BRANCH, base: "main", body: expect.stringContaining("The saved rules keep applying until this pull request is merged.") });
   const written = files.get(`${EXPORTED}@${POLICY_BRANCH}/${YML}`)!.text!;
@@ -303,9 +303,11 @@ test("PostgreSQL: writing the saved rules to the file opens one pull request, up
 
   // Asking again, after the saved rules changed, updates the same pull request.
   await writePolicy(EXPORTED, JSON.stringify({ ...saved, checks: { ...saved.checks, focused: { enabled: true } } }));
-  expect(await exportOf(EXPORTED)).toMatchObject({ http: 200, number: pull!.number });
+  expect(await exportOf(EXPORTED)).toMatchObject({ http: 200, number: pull!.number, headSha: files.get(`${EXPORTED}@${POLICY_BRANCH}/${YML}`)!.sha.replace("blob", "commit") });
   expect(pulls.filter((row) => row.repo === EXPORTED)).toHaveLength(1);
   expect(files.get(`${EXPORTED}@${POLICY_BRANCH}/${YML}`)!.text).toContain("check: focused");
+  // Nothing new to commit: the head is GitHub's answer to the update.
+  expect(await exportOf(EXPORTED)).toMatchObject({ http: 200, number: pull!.number, headSha: "patched-head" });
 
   // Merged: the file lands on the default branch and runs the same, so it is the policy and the saved rules retire.
   onMain(EXPORTED, YML, files.get(`${EXPORTED}@${POLICY_BRANCH}/${YML}`)!.text);
@@ -335,18 +337,18 @@ test("PostgreSQL: an enabled repository with no rules and no file is offered a s
   expect(await exportOf(OFF)).toMatchObject({ http: 409, error: { code: "policy_settled" } });
 
   const number = pulls.length + 1;
-  expect(await exportOf(STARTER)).toEqual({ http: 200, status: "opened", url: `https://github.com/${STARTER}/pull/${number}`, number });
+  expect(await exportOf(STARTER)).toEqual({ http: 200, status: "opened", url: `https://github.com/${STARTER}/pull/${number}`, number, headSha: "head-sha" });
   expect(pulls.filter((row) => row.repo === STARTER)).toMatchObject([{ head: POLICY_BRANCH, base: "main", title: `chore: add a Corbits Triage policy in ${YML}` }]);
   // Opening it lists the workspace's pull requests again; a reload then finds it in that listing without asking GitHub.
   requests.length = 0;
-  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "start" }, pull: { url: `https://github.com/${STARTER}/pull/${number}`, number } });
+  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "start" }, pull: { url: `https://github.com/${STARTER}/pull/${number}`, number, headSha: "head-sha" } });
   expect(requests.filter((request) => request.includes(STARTER))).toEqual([]);
 
   // Asking again answers the open pull request and keeps the maintainer's edit on its branch.
   const branchFile = `${STARTER}@${POLICY_BRANCH}/${YML}`;
   const edited = files.get(branchFile)!.text!.replace("max: 30", "max: 40");
   files.set(branchFile, { sha: "edited", text: edited });
-  expect(await exportOf(STARTER)).toEqual({ http: 200, status: "opened", url: `https://github.com/${STARTER}/pull/${number}`, number });
+  expect(await exportOf(STARTER)).toEqual({ http: 200, status: "opened", url: `https://github.com/${STARTER}/pull/${number}`, number, headSha: "head-sha" });
   expect(files.get(branchFile)).toEqual({ sha: "edited", text: edited });
   expect(pulls.filter((row) => row.repo === STARTER)).toHaveLength(1);
 
@@ -369,7 +371,7 @@ test("PostgreSQL: a file chosen for a repository with no file, saved rules or op
 
   const number = pulls.length + 1;
   const url = `https://github.com/${CHOSEN}/pull/${number}`;
-  expect(await exportOf(CHOSEN, FILE)).toEqual({ http: 200, status: "opened", url, number });
+  expect(await exportOf(CHOSEN, FILE)).toEqual({ http: 200, status: "opened", url, number, headSha: "head-sha" });
   expect(pulls.filter((row) => row.repo === CHOSEN)).toMatchObject([{ head: POLICY_BRANCH, base: "main", title: `chore: add a Corbits Triage policy in ${YML}` }]);
   expect(files.get(`${CHOSEN}@${POLICY_BRANCH}/${YML}`)!.text).toBe(FILE);
 
@@ -421,4 +423,11 @@ test("PostgreSQL: a name both hosts hold is read only for the host asked, and a 
   expect(await readPack(BOTH)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "both1" } } });
   expect((await settled(TENANT, BOTH, undefined)).read).toEqual({ status: "missing" });
   expect((await policyFile.fileRoute({ repo: BOTH }, MEMBER)).status).toBe(409);
+});
+
+test("a Bitbucket policy pull request carries no head, so it is merged on Bitbucket", () => {
+  const pr = { number: 4, title: "Add the policy file", author: "triage", draft: false, sha: "bb-head", branch: POLICY_BRANCH, updatedAt: "2026-10-17T00:00:00Z", labels: [], url: "https://bitbucket.example/pr/4" };
+  const listing = (source: RepoSource) => ({ at: 0, repos: [{ repo: "PROJ/widgets", source, prs: [pr] }] });
+  expect(listedPolicyPull(listing("bitbucket-datacenter"), "PROJ/widgets")).toEqual({ url: pr.url, number: 4 });
+  expect(listedPolicyPull(listing("github"), "PROJ/widgets")).toEqual({ url: pr.url, number: 4, headSha: "bb-head" });
 });

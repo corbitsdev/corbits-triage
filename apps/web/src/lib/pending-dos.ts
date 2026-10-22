@@ -51,6 +51,13 @@ function awaitsApproval({ held, status }: SuggestedAction): boolean {
   return status === undefined ? held : status === "failed" || status === "skipped";
 }
 
+const REVIEWS: ReadonlySet<ActionKind> = new Set(["approve", "request-changes"]);
+
+/** The host refuses a review from a pull request's author, so one Triage opened offers none. */
+function offered(item: PrItem, action: SuggestedAction): boolean {
+  return awaitsApproval(action) && !(item.byTriage && REVIEWS.has(action.kind));
+}
+
 function sentKeyOf(action: SuggestedAction): string {
   return `${action.effectId}:${action.status ?? "held"}`;
 }
@@ -65,7 +72,7 @@ export function pendingDos(item: PrItem): PendingDo[] {
   if (number === null || runId === null) return [];
   const out: PendingDo[] = [];
   for (const action of item.actions) {
-    const text = awaitsApproval(action) ? label(action, repo) : null;
+    const text = offered(item, action) ? label(action, repo) : null;
     if (text === null) continue;
     const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind };
     // A merge may be approved off a Fail or Unsure list, and the card says so.

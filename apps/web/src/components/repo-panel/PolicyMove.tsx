@@ -13,8 +13,8 @@ function stepState(index: number, at: number): "done" | "now" | undefined {
   return index === at ? "now" : undefined;
 }
 
-function Track({ at, host }: { at: number; host: string }) {
-  const steps = ["Review", "Open pull request", `Merge on ${host}`, "Done"];
+function Track({ at, merge }: { at: number; merge: string }) {
+  const steps = ["Review", "Open pull request", merge, "Done"];
   function step(label: string, index: number) {
     const state = stepState(index, at);
     return <li key={label} className={state} aria-current={state === "now" ? "step" : undefined}><span className="num">{index < at ? <CheckIcon /> : index + 1}</span>{label}</li>;
@@ -63,11 +63,11 @@ type PolicyMoveProps = { row: PolicyUpgradeRow; upgrade: Exclude<PolicyUpgrade, 
 
 /** Moving a repository's saved rules into its policy file, or starting one when it has none, one step at a time, until the pull request is merged. */
 export default function PolicyMove({ row, upgrade, source, disabled, onSettled }: PolicyMoveProps) {
-  const { propose, keepFile } = usePolicyUpgradeActions(row.repo, onSettled);
+  const { propose, keepFile, merge } = usePolicyUpgradeActions(row.repo, onSettled);
   const [confirming, setConfirming] = useState(false);
-  const busy = disabled || propose.isPending || keepFile.isPending;
+  const busy = disabled || propose.isPending || keepFile.isPending || merge.isPending;
   const pull = propose.data ?? row.pull;
-  const error = propose.error ?? keepFile.error;
+  const error = propose.error ?? keepFile.error ?? merge.error;
   const host = HOST_NAME[source];
   const differs = upgrade.state === "differs";
   const start = upgrade.state === "start";
@@ -122,13 +122,21 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
       );
     }
     if (pull) {
+      const { headSha } = pull;
       return (
         <>
           <div className="sentences">
             <div className="sentence pr-row">
               <span className="txt">Pull request #{pull.number}</span>
               <span className="state"><span className="dot" />Open, waiting for merge</span>
-              <Button asChild variant="outline" size="sm"><a href={pull.url} target="_blank" rel="noreferrer">Merge on {host} <ExternalIcon /></a></Button>
+              {headSha ? (
+                <>
+                  <Button asChild variant="ghost" size="sm"><a href={pull.url} target="_blank" rel="noreferrer">Review on {host} <ExternalIcon /></a></Button>
+                  <Button type="button" size="sm" disabled={busy} onClick={() => merge.mutate({ number: pull.number, headSha })}>Merge</Button>
+                </>
+              ) : (
+                <Button asChild variant="outline" size="sm"><a href={pull.url} target="_blank" rel="noreferrer">Merge on {host} <ExternalIcon /></a></Button>
+              )}
             </div>
           </div>
           <div className="acts">
@@ -153,7 +161,7 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
         <b id="move-title">{title()}</b>
         <span>{subtitle()}</span>
       </header>
-      <Track at={STAGE_STEP[stage]} host={host} />
+      <Track at={STAGE_STEP[stage]} merge={source === "github" ? "Merge" : `Merge on ${host}`} />
       {pull ? null : review()}
       {stage === "review" && unexpressed.length ? <div className="sentences">{unexpressed.map((line) => <div key={line} className="sentence out"><span className="txt">{line}</span></div>)}</div> : null}
       {actions()}

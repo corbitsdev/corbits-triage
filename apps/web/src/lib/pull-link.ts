@@ -12,6 +12,7 @@ export function pullUrl(pull: { source: RepoSource; url: string | null; repo: st
   return pull.source === "github" && pull.number !== null ? `https://github.com/${pull.repo}/pull/${pull.number}` : null;
 }
 
-export function viewOnHost(source: RepoSource): string {
-  return `View on ${hostName(source)}`;
+/** The host refuses a review from a pull request's author, so one Triage opened is reviewed there. */
+export function viewOnHost(pull: { source: RepoSource; byTriage: boolean }): string {
+  return `${pull.byTriage ? "Review" : "View"} on ${hostName(pull.source)}`;
 }

@@ -246,7 +246,10 @@ const PolicyProblem = type({ message: "string", "line?": "number", "column?": "n
 export const PolicyValidated = type({ ok: "true", policy: "Record<string, unknown>", workflow: policyWorkflowSchema }).or({ ok: "false", problems: PolicyProblem.array() });
 export type PolicyValidated = typeof PolicyValidated.infer;
 
-export const PolicyExported = type({ status: "'opened'", url: "string", number: "number" });
+/** `headSha`: the GitHub pull request's head, which a merge from the portal pins; a Bitbucket one is merged there. */
+const PolicyPull = type({ url: "string", number: "number", "headSha?": "string" });
+
+export const PolicyExported = type({ status: "'opened'" }).and(PolicyPull);
 export type PolicyExported = typeof PolicyExported.infer;
 
 /**
@@ -270,7 +273,7 @@ export const PolicyUpgrade = type({ state: "'ok'" })
 export type PolicyUpgrade = typeof PolicyUpgrade.infer;
 
 /** Each enabled repository the member may read; `pull` is the open pull request writing the saved rules to the file, `error` why the repository could not be read. */
-export const PolicyUpgrades = type({ repos: type({ repo: "string", "upgrade?": PolicyUpgrade, "pull?": { url: "string", number: "number" }, "error?": "string" }).array() });
+export const PolicyUpgrades = type({ repos: type({ repo: "string", "upgrade?": PolicyUpgrade, "pull?": PolicyPull, "error?": "string" }).array() });
 export type PolicyUpgrades = typeof PolicyUpgrades.infer;
 
 export const BacklogStarted = type({ status: "'started'" });

@@ -10,14 +10,14 @@ test("a GitHub repository is listed again only after a webhook about its pull re
   let at = 0;
   const reads = createRepoReads(() => new Date(at));
   const listed: string[] = [];
-  const list = keptOpenPrs(async function listNow(_tenantId, record) {
+  const list = keptOpenPrs(() => async function listNow(record) {
     listed.push(record.name);
     return [];
-  }, reads);
+  }, reads)(TENANT);
   const github = { name: REPO, connected: true };
   const bitbucket = { name: "ACME/widgets", source: "bitbucket-datacenter" as const, connected: true };
   async function poll() {
-    await Promise.all([list(TENANT, github), list(TENANT, github), list(TENANT, bitbucket)]);
+    await Promise.all([list(github), list(github), list(bitbucket)]);
   }
 
   await poll();

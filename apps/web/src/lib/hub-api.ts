@@ -990,7 +990,7 @@ export type OpenPulls = {
     repo: string;
     /** The host the pull requests are on; absent from a hub that predates other hosts, which listed GitHub only. */
     source?: RepoSource;
-    prs: Array<{ number: number; title: string; author: string | null; authorKind?: AuthorKind; draft: boolean; sha: string; updatedAt: string; labels: string[]; url?: string | null }>;
+    prs: Array<{ number: number; title: string; author: string | null; authorKind?: AuthorKind; byTriage?: true; draft: boolean; sha: string; updatedAt: string; labels: string[]; url?: string | null }>;
     error?: string;
   }>;
 };
@@ -1396,6 +1396,8 @@ export type PrItem = {
   author: string | null;
   /** Who the author is to the repository, known once the open pull requests have loaded; null when GitHub does not say. */
   authorKind: AuthorKind | null;
+  /** Opened by Triage, known once the open pull requests have loaded; the host refuses its review. */
+  byTriage: boolean;
   draft: boolean | null;
   mergeable: boolean | null;
   /** Why the host would refuse to merge it though free of conflicts, null once it said it would; read only for pull requests Triage passed. */
@@ -1559,6 +1561,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     title: facts.title || null,
     author: facts.author || null,
     authorKind: null,
+    byTriage: false,
     draft: facts.draft ?? null,
     mergeable: facts.mergeable ?? null,
     mergeBlock: "checking",
@@ -1638,7 +1641,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
       const known = items.get(key);
       if (known) {
         // A verdict recorded before the hub kept its facts takes the pull request's from GitHub; a draft is GitHub's now, not the verdict's.
-        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: pr.draft, authorKind: pr.authorKind ?? null, updatedAt: pr.updatedAt, headSha: pr.sha, source: repoSourceOf(source), url: pr.url ?? null });
+        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: pr.draft, authorKind: pr.authorKind ?? null, byTriage: pr.byTriage === true, updatedAt: pr.updatedAt, headSha: pr.sha, source: repoSourceOf(source), url: pr.url ?? null });
         continue;
       }
       const pull = triage.get(key);
@@ -1649,6 +1652,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         title: pr.title,
         author: pr.author,
         authorKind: pr.authorKind ?? null,
+        byTriage: pr.byTriage === true,
         draft: pr.draft,
         mergeable: null,
         mergeBlock: "checking",

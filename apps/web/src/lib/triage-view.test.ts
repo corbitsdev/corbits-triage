@@ -30,6 +30,7 @@ function item(repo: string, number: number): PrItem {
     title: null,
     author: null,
     authorKind: null,
+    byTriage: false,
     draft: null,
     mergeable: null,
     mergeBlock: null,

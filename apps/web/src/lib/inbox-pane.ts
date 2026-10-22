@@ -80,6 +80,14 @@ type PaneActions = { primary: PaneAction<PrimaryAction> | null; more: MenuEntry[
 
 const MORE_ORDER: PrimaryAction[] = ["reply", "approve", "changes", "comment", "merge"];
 
+const REVIEWS: ReadonlySet<PrimaryAction> = new Set(["approve", "changes"]);
+
+/** A pull request Triage opened is merged rather than approved, and its changes are asked for on its host. */
+function ownPullAction(kind: PrimaryAction | null): PrimaryAction | null {
+  if (kind === "approve") return "merge";
+  return kind === "changes" ? null : kind;
+}
+
 function paneAction<K extends PaneKind>(kind: K, gate: PaneGate): PaneAction<K> {
   return { kind, blocker: actionBlocker(kind, gate) };
 }
@@ -99,10 +107,11 @@ function triageEntry(gate: PaneGate, primaryKind: PrimaryAction | null): MenuEnt
 
 export function paneActions(gate: PaneGate): PaneActions {
   const action = inboxAction(gate.item);
-  const primaryKind = primaryAction(gate.item, action);
+  const offered = primaryAction(gate.item, action);
+  const primaryKind = gate.item.byTriage ? ownPullAction(offered) : offered;
   const primary = primaryKind === null ? null : paneAction(primaryKind, gate);
   const more: MenuEntry[] = MORE_ORDER
-    .filter((kind) => kind !== primaryKind && (kind !== "reply" || hasDraftComment(gate.item.comment)))
+    .filter((kind) => kind !== primaryKind && (kind !== "reply" || hasDraftComment(gate.item.comment)) && !(gate.item.byTriage && REVIEWS.has(kind)))
     .map((kind) => ({ ...paneAction(kind, gate), label: primaryLabel(kind) }));
   const close = closeEntry(gate);
   if (close !== null) more.push(close);

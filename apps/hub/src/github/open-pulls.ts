@@ -12,7 +12,8 @@ import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-confi
 
 export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
 
-type GithubOpenPr = Awaited<ReturnType<typeof listOpenPrs>>[number];
+/** `byTriage`: Triage opened it, as the GitHub App or the Bitbucket token's user, and the host refuses a review from its author. */
+type GithubOpenPr = Awaited<ReturnType<typeof listOpenPrs>>[number] & { byTriage?: true };
 type OpenPr = Omit<GithubOpenPr, "authorAssociation" | "authorBot"> & { authorKind?: AuthorKind };
 /** `source` names the host the pull requests and their `url` are on. */
 export type RepoPulls = { repo: string; source: RepoSource; prs: OpenPr[]; error?: string };
@@ -32,25 +33,28 @@ export function forInstallation(gh: GithubFetch, installationId: number | undefi
 }
 
 /** Lists one repository's open pull requests on its host; GitHub's through the tenant's App, another host's through its reader. */
-export type OpenPrsLister = (tenantId: string, record: RepoRecord) => Promise<GithubOpenPr[]>;
+export type OpenPrsLister = (tenantId: string) => (record: RepoRecord) => Promise<GithubOpenPr[]>;
 
 /**
  * Lists a GitHub repository again only once a webhook says its pull requests changed, or its listing is `KEPT_MS.pulls` old.
  * Another host's webhooks are the tenant's to set up, so its repositories are listed on every read.
  */
 export function keptOpenPrs(list: OpenPrsLister, reads: RepoReads): OpenPrsLister {
-  return function keptListing(tenantId, record) {
-    if (sourceOf(record) !== "github") return list(tenantId, record);
-    return reads.read({ scope: "pulls", tenantId, repo: record.name, key: "open-prs" }, function listNow() {
-      return list(tenantId, record);
-    });
+  return function keptListing(tenantId) {
+    const listing = list(tenantId);
+    return function keptRepo(record) {
+      if (sourceOf(record) !== "github") return listing(record);
+      return reads.read({ scope: "pulls", tenantId, repo: record.name, key: "open-prs" }, function listNow() {
+        return listing(record);
+      });
+    };
   };
 }
 
-async function pullsFor(list: OpenPrsLister, tenantId: string, record: RepoRecord): Promise<RepoPulls> {
+async function pullsFor(listing: ReturnType<OpenPrsLister>, record: RepoRecord): Promise<RepoPulls> {
   const source = sourceOf(record);
   try {
-    const prs = await list(tenantId, record);
+    const prs = await listing(record);
     return { repo: record.name, source, prs: prs.map(withAuthorKind) };
   } catch (err) {
     return { repo: record.name, source, prs: [], error: errorText(err) };
@@ -58,7 +62,8 @@ async function pullsFor(list: OpenPrsLister, tenantId: string, record: RepoRecor
 }
 
 function listRepoPulls(list: OpenPrsLister, tenantId: string, records: readonly RepoRecord[]): Promise<RepoPulls[]> {
-  return Promise.all(records.map((record) => pullsFor(list, tenantId, record)));
+  const listing = list(tenantId);
+  return Promise.all(records.map((record) => pullsFor(listing, record)));
 }
 
 export type SourceRefusal = CredentialRefusal & { source: RepoSource };
