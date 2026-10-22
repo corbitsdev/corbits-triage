@@ -19,6 +19,8 @@ export function createWorkflowRunLaunchSpecStore(db: DBHandle) {
         ...row,
         schemaVersion: row.schemaVersion ?? 1,
         toolPackagePins: row.toolPackagePins ?? null,
+        definitionArtifactId: row.definitionArtifactId ?? null,
+        grantSnapshot: row.grantSnapshot ?? null,
         createdAt: row.createdAt ?? new Date(),
       });
       const [inserted] = await (tx ?? db)
