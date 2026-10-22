@@ -63,7 +63,7 @@ import { createCodeReviewFeed, createPullRequestReader } from "./code-review-fee
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
-import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
+import { HOOK_MOUNT_PATH, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
 import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
 import { appKeyProviderWriteRefusal, appKeyWriteRefusal, githubTenants, moveAppKey } from "./github/app-key.js";
@@ -420,11 +420,6 @@ const mergeStates = createMergeStates({
 });
 
 const hookDeps = credentialDeps;
-const hookApp = createStockHookApp(
-  hookDeps,
-  composition.principalKeyStore,
-  composition.sidecarRouter,
-);
 
 const GITHUB_SENDER = TRIAGE_MAIL_SENDER;
 const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
@@ -1012,11 +1007,8 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       if (!target) return Response.json({ error: "unknown_hook" }, { status: 404 });
       return bridge(req, target);
     }
-    const rest = url.pathname.slice(HOOK_MOUNT_PATH.length);
-    if (decodeSegments(rest) === null) return Response.json({ error: "unknown_hook" }, { status: 404 });
-    const target = new URL(req.url);
-    target.pathname = rest === "" || rest === "/" ? "/" : rest;
-    return hookApp.fetch(new Request(target.href, req));
+    // @corbits/webhooks 0.3.1 fires a run without naming its sender, which Interchange's sender gate refuses.
+    return Response.json({ error: "unknown_hook" }, { status: 404 });
   }
   const unverified = await refuseUnverified(req);
   if (unverified) return unverified;
