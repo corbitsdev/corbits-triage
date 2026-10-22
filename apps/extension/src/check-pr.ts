@@ -10,6 +10,10 @@ export type Pull = { headSha: string; labels: string[] };
 
 export async function pullOf(api: GithubApi, pr: PrRef): Promise<Pull> {
   const res = await api.gh(`/repos/${pr.repo}/pulls/${pr.number}`);
+  // GitHub answers a private repository read without a token as not found.
+  if (res.status === 404 && !api.authenticated) {
+    throw new Error("This repository is private or the pull request was not found. Add a GitHub token in the side panel to check private repositories.");
+  }
   if (!res.ok) throw new Error(`GitHub did not return ${prKey(pr)} (${res.status}).`);
   const pull = (await res.json()) as { head: { sha: string }; labels: Array<{ name: string }> };
   return { headSha: pull.head.sha, labels: pull.labels.map((label) => label.name) };

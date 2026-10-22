@@ -234,7 +234,7 @@ It also runs the rules that need no model, from the policy on the branch the pul
 
 #### Browser extension
 
-The Corbits Triage browser extension, for Chrome and Firefox, shows how a GitHub pull request fares against its repository's policy file without a Triage account. Install it ([how](../../apps/extension/README.md#install)), open its side panel from the toolbar and save a read-only GitHub token. It reads GitHub only and changes nothing.
+The Corbits Triage browser extension, for Chrome and Firefox, shows how a GitHub pull request fares against its repository's policy file without a Triage account. Install it ([how](../../apps/extension/README.md#install)) and open any pull request on a public repository. It reads GitHub only and changes nothing. A read-only GitHub token, saved in its side panel from the toolbar, is optional: it is needed for private repositories and gives a higher hourly limit for reading GitHub.
 
 On any pull request it adds a **Corbits Triage** section at the top of the sidebar. The section links the policy file on the default branch, shows how many of the checks it ran passed, such as **5/6 passed**, and lists each check as **Pass**, **Fail** or **Waiting**, with its evidence. Checks that need the decision model show as **Not run here** and do not count. A chip beside the title repeats the score, and **Files changed** marks the files and lines a failing check points to. A pull request with the policy's pause label shows **Paused** and is not checked. **Check again** reads the pull request and the policy file afresh. A repository with no policy file gets a short note linking to [Writing the file](#writing-the-file).
 

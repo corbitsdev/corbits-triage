@@ -4,17 +4,21 @@ import { clock } from "./clock.ts";
 export const GITHUB_API = "https://api.github.com";
 
 class GithubRateLimitError extends Error {
-  constructor(resetAt: string) {
-    super(`Your GitHub token's hourly limit is used up. It resets at ${clock(resetAt)}.`);
+  constructor(resetAt: string, authenticated: boolean) {
+    super(
+      authenticated
+        ? `Your GitHub token's hourly limit is used up. It resets at ${clock(resetAt)}.`
+        : `GitHub's hourly limit for reading without a token is used up. It resets at ${clock(resetAt)}. Add a token in the side panel for a higher limit.`,
+    );
     this.name = "GithubRateLimitError";
   }
 }
 
 type Recorded = { status: number; headers: Headers; body: ArrayBuffer };
 
-export type GithubApi = { gh: GithubFetch };
+export type GithubApi = { gh: GithubFetch; authenticated: boolean };
 
-/** When the token's hourly limit resets, once it is used up. */
+/** When the hourly limit resets, once it is used up. */
 function exhaustedUntil(headers: Headers): string | undefined {
   const reset = headers.get("x-ratelimit-reset");
   if (headers.get("x-ratelimit-remaining") !== "0" || reset === null) return undefined;
@@ -22,19 +26,21 @@ function exhaustedUntil(headers: Headers): string | undefined {
 }
 
 /**
- * GitHub's REST API for one run, read-only, with the person's token. The files and docs pagers read the same page once
- * per slice, so each GET is sent once and replayed. The browser's cache revalidates GitHub's answers by ETag; `no-cache`
- * revalidates even those under a minute old, when a person asks for a fresh read.
+ * GitHub's REST API for one run, read-only, with the person's token when they saved one. The files and docs pagers read
+ * the same page once per slice, so each GET is sent once and replayed. The browser's cache revalidates GitHub's answers
+ * by ETag; `no-cache` revalidates even those under a minute old, when a person asks for a fresh read.
  */
-export function githubApi(token: string, cache: RequestInit["cache"]): GithubApi {
+export function githubApi(token: string | null, cache: RequestInit["cache"]): GithubApi {
   const sent = new Map<string, Promise<Recorded>>();
 
   async function send(path: string, init?: RequestInit): Promise<Recorded> {
     const headers = new Headers(init?.headers);
-    headers.set("authorization", `Bearer ${token}`);
+    // The local runner's credential provider signs each read with a placeholder secret, never sent to GitHub.
+    if (token === null) headers.delete("authorization");
+    else headers.set("authorization", `Bearer ${token}`);
     const res = await fetch(`${GITHUB_API}${path}`, { ...init, headers, cache: init?.cache ?? cache });
     const resetAt = exhaustedUntil(res.headers);
-    if ((res.status === 403 || res.status === 429) && resetAt) throw new GithubRateLimitError(resetAt);
+    if ((res.status === 403 || res.status === 429) && resetAt) throw new GithubRateLimitError(resetAt, token !== null);
     return { status: res.status, headers: res.headers, body: await res.arrayBuffer() };
   }
 
@@ -59,5 +65,5 @@ export function githubApi(token: string, cache: RequestInit["cache"]): GithubApi
     return new Response(status === 204 || status === 304 ? null : body.slice(0), { status, headers: answered });
   }
 
-  return { gh };
+  return { gh, authenticated: token !== null };
 }

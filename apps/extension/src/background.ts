@@ -35,7 +35,6 @@ async function triage({ pr, mode }: Triage): Promise<null> {
   await setRunState(pr, { running: true });
   try {
     const token = await githubToken.getValue();
-    if (!token) throw new Error("Add a GitHub token in the side panel to check pull requests.");
     const api = githubApi(token, mode === "refetch" ? "no-cache" : "default");
     const pull = await pullOf(api, pr);
     if (!(mode === "if-stale" && isFresh(saved) && pull.headSha === saved.headSha)) {

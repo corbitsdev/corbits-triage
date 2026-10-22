@@ -1,9 +1,9 @@
 # @corbits/extension
 
 A browser extension (WXT, Manifest V3, Chrome and Firefox) that checks the GitHub pull request you are viewing against
-its repository's `.corbits-triage.yml` and shows the result on the pull request page. It reads GitHub with your own
-token and runs pr-triage's own definition in the browser with Interchange's local runner, granted no action, so it
-writes nothing. Model checks are not run: the run stops at the first agent step.
+its repository's `.corbits-triage.yml` and shows the result on the pull request page. It reads GitHub, with your own
+token when you save one, and runs pr-triage's own definition in the browser with Interchange's local runner, granted
+no action, so it writes nothing. Model checks are not run: the run stops at the first agent step.
 
 ## Install
 
@@ -23,7 +23,7 @@ bun run dev             # Chrome with hot reload; dev:firefox for Firefox
 ```
 
 Load `.output/chrome-mv3` in Chrome, or `.output/firefox-mv3/manifest.json` as a temporary add-on in Firefox. Click
-the toolbar button to open the side panel (the sidebar in Firefox), save a GitHub token, and open any
+the toolbar button to open the side panel (the sidebar in Firefox), optionally save a GitHub token, and open any
 `https://github.com/<owner>/<repo>/pull/<number>` page.
 
 ## What it shows
@@ -46,8 +46,9 @@ by a GitHub App's bot account, which the account name shows.
 
 ### Limits
 
-- Every read needs a GitHub token. A fine-grained token with read-only access to public repositories is enough;
-  private repositories need read access to their contents and pull requests.
+- GitHub token: optional; needed for private repositories and a higher hourly limit. Without one, a private repository
+  reads as not found and the block says to add a token. A token for private repositories needs read access to their
+  contents and pull requests.
 - The token is kept in the extension's `storage.local`. Only the background reads it, and changing or removing it
   clears every saved check and policy file.
 - A policy file that extends a shared policy is not checked; only the hub holds the shared policy.
