@@ -14,6 +14,9 @@ import { createTriageReconciler } from "./triage-reconciler.js";
 import { createTriageStateStore, type TriageStateStore } from "./triage-state-store.js";
 import type { ObservedRuns } from "./triage-runs.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_state";
 const REPO = "acme/widgets";
@@ -43,6 +46,7 @@ function route(store: TriageStateStore, deliver: Deliver) {
   return createGithubPrTriage({
     db: stubDb(),
     cipher: { async decrypt() { return "{}"; } } as never,
+    onKeyMoved: noKeyPush,
     authorize: async () => true,
     pullHead: async () => "abc123",
     readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),

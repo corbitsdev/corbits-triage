@@ -21,6 +21,9 @@ import { createTriageVerdicts } from "./triage-verdicts.js";
 import type { VerdictRecord } from "./verdict-record-store.js";
 import type { CompletedReview } from "../code-review-runs.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_read_access";
 const REPO = "acme/widgets";
@@ -101,7 +104,7 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
   return (await authorize(grants, principalId, tenantId, resource, action)).effect === "allow";
 }
 
-const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigin };
+const deps = { db: handle.db, cipher, onKeyMoved: noKeyPush, authorize: authorizePortal, githubApiOrigin };
 const list = createTenantOpenPrs({ ...deps, tenantBitbucket: async () => undefined });
 const openPulls = createGithubOpenPulls({ ...deps, list, cache: createOpenPullsCache(() => new Date()) });
 const reads = createRepoReads(() => new Date());

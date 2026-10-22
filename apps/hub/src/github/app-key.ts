@@ -15,7 +15,12 @@ const GITHUB_APP_KEY_PROVIDER = "github-app";
 
 const { credential, provider } = schema;
 
-export type AppKeyDeps = { db: DB["db"]; cipher: CredentialCipher };
+export type AppKeyDeps = {
+  db: DB["db"];
+  cipher: CredentialCipher;
+  /** Sends the blank left in place of a key moved on a read to the deployments holding the `github` credential. */
+  onKeyMoved: (tenantId: string) => Promise<void>;
+};
 
 /** The bot account the App acts as, named by the slug GitHub gave for it, stored on the `github` credential. */
 export function githubAppLogin(row: { metadata: unknown }): string {
@@ -76,7 +81,7 @@ export async function storeAppKey(tx: Tx, cipher: CredentialCipher, { tenantId, 
  * App JSON a stock credential write left in the `github` credential moves to the hub-only one, leaving no token; a key
  * stored before it had its own provider is moved onto it. Whether App JSON was moved, so its holders are sent the blank.
  */
-export async function moveAppKey({ db, cipher }: AppKeyDeps, tenantId: string): Promise<boolean> {
+export async function moveAppKey({ db, cipher }: Pick<AppKeyDeps, "db" | "cipher">, tenantId: string): Promise<boolean> {
   return db.transaction(async function move(tx) {
     await lockGithubCredentials(tx, tenantId);
     const key = await lockedCredential(tx, tenantId, GITHUB_APP_KEY_CREDENTIAL);
@@ -120,7 +125,7 @@ export async function githubTenants(db: DB["db"]): Promise<string[]> {
 /** The workspace's App JSON; called only once its `github` credential exists. */
 export async function githubAppKey(deps: AppKeyDeps, tenantId: string): Promise<string> {
   const github = await deps.db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, GITHUB_CREDENTIAL)) });
-  if (github && isGithubAppJson(await decryptSecret(deps.cipher, github))) await moveAppKey(deps, tenantId);
+  if (github && isGithubAppJson(await decryptSecret(deps.cipher, github)) && (await moveAppKey(deps, tenantId))) await deps.onKeyMoved(tenantId);
   const key = await deps.db.query.credential.findFirst({
     where: and(eq(credential.tenantId, tenantId), eq(credential.name, GITHUB_APP_KEY_CREDENTIAL), eq(credential.status, "active")),
   });

@@ -13,6 +13,9 @@ import { POLICY_BRANCH } from "./policy-pull.js";
 import { createMemberOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createTenantGithub, createTenantOpenPrs } from "./tenant-open-heads.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_policy_file";
 const FROM_FILE = "acme/from-file";
@@ -148,17 +151,18 @@ beforeAll(async () => {
   async function authorize(principalId: string, _tenantId: string, resource: string, action: string) {
     return resource === "credential:crd_github" && action === "use" && principalId === "prn_user";
   }
-  const list = createTenantOpenPrs({ db, cipher, githubApiOrigin, tenantBitbucket: async () => undefined });
+  const list = createTenantOpenPrs({ db, cipher, onKeyMoved: noKeyPush, githubApiOrigin, tenantBitbucket: async () => undefined });
   policyFile = createPolicyFile({
     db,
-    openPulls: createMemberOpenPulls({ db, cipher, authorize, list, cache: createOpenPullsCache(() => new Date()) }),
+    openPulls: createMemberOpenPulls({ db, cipher, onKeyMoved: noKeyPush, authorize, list, cache: createOpenPullsCache(() => new Date()) }),
     changed() {},
     settle: settled,
     refusal: refused,
     cipher,
+    onKeyMoved: noKeyPush,
     tenantBitbucket: async () => undefined,
     authorize,
-    tenantGithub: createTenantGithub({ db, cipher, githubApiOrigin }),
+    tenantGithub: createTenantGithub({ db, cipher, onKeyMoved: noKeyPush, githubApiOrigin }),
     log() {},
   });
 }, 120_000);

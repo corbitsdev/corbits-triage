@@ -7,7 +7,7 @@ import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { tokenUser } from "@corbits/bitbucket-datacenter-tool/bitbucket";
 import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { GITHUB_CREDENTIAL, githubAppKey } from "./app-key.js";
+import { GITHUB_CREDENTIAL, githubAppKey, type AppKeyDeps } from "./app-key.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation, type OpenPrsLister } from "./open-pulls.js";
 import { appGithubFetch, heldCredential } from "./portal-credential.js";
@@ -17,7 +17,7 @@ import { sourceOf, type RepoRecord } from "./tenant-config.js";
 export type OpenHeadsReader = (record: RepoRecord) => Promise<OpenPr[]>;
 export type OpenHeadReader = (record: RepoRecord, number: number) => Promise<Pick<OpenPr, "headSha" | "draft"> | undefined>;
 
-export type TenantGithubDeps = { db: DB["db"]; cipher: CredentialCipher; githubApiOrigin: string };
+export type TenantGithubDeps = AppKeyDeps & { githubApiOrigin: string };
 
 type TenantSourcesDeps = TenantGithubDeps & { tenantBitbucket: TenantBitbucket };
 

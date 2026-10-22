@@ -9,6 +9,7 @@ import type { CredentialDelivery } from "@intx/types/credential-delivery";
 import { credentialBindingsFor } from "@corbits/triage-workflows/agents";
 import { createGithubAppConnection } from "./app-connection.js";
 import { withAppLogin } from "./bridge.js";
+import { githubAppCredential } from "./portal-credential.js";
 import { createGithubTokenRenewal } from "./installation-token.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -262,6 +263,14 @@ test("PostgreSQL: App JSON a stock write leaves in the bound credential is taken
     expect(await secretOf("github-app")).toBe(theApp.json);
     expect(await secretOf("github")).toBe("");
     expect(sent.map(({ address }) => address)).toEqual([LISTENER]);
+    expect(JSON.stringify(sent)).not.toContain("PRIVATE KEY");
+
+    // App JSON found by a portal read is moved there, and the holders are sent the blank too.
+    await db.update(schema.credential).set({ secret: await cipher.encrypt(theApp.json, credentialAad("crd_github", "secret")) }).where(eq(schema.credential.id, "crd_github"));
+    const read = await githubAppCredential({ db, cipher, onKeyMoved: renewal.push, authorize: allowAll }, "prn_admin", TENANT, "read");
+    expect(read instanceof Response ? read.status : read.appJson).toBe(theApp.json);
+    expect(await secretOf("github")).toBe("");
+    expect(sent.map(({ address }) => address)).toEqual([LISTENER, LISTENER]);
     expect(JSON.stringify(sent)).not.toContain("PRIVATE KEY");
 
     const key = await buildCredentialDelivery({

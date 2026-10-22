@@ -131,18 +131,20 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     }
   }
 
-  /** Renews the token of the workspace whose credential `tenantId` resolves to, its own or a parent's. */
   /** Moves App JSON a stock write left in the `github` credential to the hub, and takes it back from every sidecar given it. */
   async function secure(tenantId: string): Promise<void> {
     if (await moveAppKey(deps, tenantId)) await push(tenantId);
   }
 
+  const keyDeps = { db: deps.db, cipher: deps.cipher, onKeyMoved: push };
+
+  /** Renews the token of the workspace whose credential `tenantId` resolves to, its own or a parent's. */
   async function renew(tenantId: string): Promise<void> {
     const owner = (await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL))?.tenantId;
     if (owner === undefined) return;
     await recorded(owner, async function renewToken() {
       await secure(owner);
-      await renewWith(owner, await githubAppKey(deps, owner));
+      await renewWith(owner, await githubAppKey(keyDeps, owner));
     });
   }
 
@@ -155,7 +157,7 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     if (owner === undefined) return;
     await recorded(owner, async function ensureToken() {
       await secure(owner);
-      const appJson = await githubAppKey(deps, owner);
+      const appJson = await githubAppKey(keyDeps, owner);
       const github = await heldCredential(deps.db, owner, GITHUB_CREDENTIAL);
       if (github?.status === "active" && github.expiresAt && github.expiresAt.getTime() - Date.now() > MIN_TOKEN_LIFE_MS) return;
       await renewWith(owner, appJson);

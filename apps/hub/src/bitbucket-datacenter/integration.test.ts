@@ -3,6 +3,9 @@ import type { DB } from "@intx/db";
 import type { CredentialCipher } from "@intx/types";
 import { createBitbucketIntegration } from "./integration.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const MEMBER = { tenantId: "tnt_bitbucket", principalId: "prn_user" };
 const BODY = { baseUrl: "http://git.internal:7990", token: "token" };
 const CONNECTED = { config: { corbitsTriage: { bitbucketDatacenter: { baseUrl: "http://git.internal:7990", user: "triage" } } } };
@@ -20,6 +23,7 @@ function integration(address: string, options: { allowlist?: readonly string[]; 
       },
     } as unknown as DB["db"],
     cipher: {} as CredentialCipher,
+    onKeyMoved: noKeyPush,
     async authorize() { return true; },
     stockFetch: () => unreachable("stock"),
     publicOrigin: "https://hub.test",

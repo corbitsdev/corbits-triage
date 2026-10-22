@@ -9,6 +9,9 @@ import { createTenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
 import { activeCredential, githubAppCredential } from "./portal-credential.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const database = `corbits_cred_inherit_${randomBytes(6).toString("hex")}`;
 const admin = createDB(TEST_DB);
@@ -75,7 +78,7 @@ afterAll(async () => {
 
 test("a revoked workspace credential does not fall through to the parent's", async () => {
   expect(await activeCredential(handle.db, "tnt_revoked", "github")).toBeUndefined();
-  const refused = await githubAppCredential({ db: handle.db, cipher, async authorize() { return true; } }, "prn_x", "tnt_revoked", "use");
+  const refused = await githubAppCredential({ db: handle.db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; } }, "prn_x", "tnt_revoked", "use");
   expect(refused instanceof Response && refused.status).toBe(409);
 });
 

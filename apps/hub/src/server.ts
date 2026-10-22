@@ -264,10 +264,24 @@ const composition = await createInterchangeHub({
 const stock = composition.server;
 composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
 
+/** The hub's credentials, and the push that takes back from sidecars an App key a read moved to the hub. */
+const credentialDeps = {
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  /** A failed push fails the read; the next token renewal sends every holder the credential again. */
+  onKeyMoved: async function pushMovedKeyBlank(tenantId: string): Promise<void> {
+    try {
+      await githubToken.push(tenantId);
+    } catch (err) {
+      logJson({ level: "error", msg: "github_app_key_blank_push_failed", tenantId, error: String(err) });
+      throw err;
+    }
+  },
+};
 // App JSON a stock write left where workflows bind it moves to the hub before any sidecar is restored with it.
 const movedAppKeys: string[] = [];
 for (const tenantId of await githubTenants(composition.db)) {
-  if (await moveAppKey({ db: composition.db, cipher: composition.credentialCipher }, tenantId)) movedAppKeys.push(tenantId);
+  if (await moveAppKey(credentialDeps, tenantId)) movedAppKeys.push(tenantId);
 }
 await restoreLocalSidecars(composition.db, local);
 if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
@@ -359,8 +373,7 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
   return result.effect === "allow";
 }
 const githubManifest = createGithubManifestIntegration({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   getSession: composition.getSession,
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
@@ -368,14 +381,13 @@ const githubManifest = createGithubManifestIntegration({
   authorizeCredential: authorizePortal,
   stateSecret: env.BETTER_AUTH_SECRET,
 });
-const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
-const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
+const tenantBitbucket = createTenantBitbucket({ ...credentialDeps, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
+const tenantGithub = createTenantGithub({ ...credentialDeps, githubApiOrigin: githubOrigin });
 const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
 const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: pullRequests.withDiff, log: logJson });
 const repoReads = createRepoReads(now);
 const githubPrActions = createGithubPrActions({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   readCheckPack,
@@ -385,8 +397,7 @@ const githubPrActions = createGithubPrActions({
 });
 const githubPrDetails = createGithubPrDetails({
   reads: repoReads,
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   githubApiOrigin: githubOrigin,
   tenantBitbucket,
   authorize: authorizePortal,
@@ -395,15 +406,14 @@ const githubPrDetails = createGithubPrDetails({
 
 const mergeStates = createMergeStates({
   reads: repoReads,
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   githubApiOrigin: githubOrigin,
   tenantBitbucket,
   authorize: authorizePortal,
   log: logJson,
 });
 
-const hookDeps = { db: composition.db, cipher: composition.credentialCipher };
+const hookDeps = credentialDeps;
 const hookApp = createStockHookApp(
   hookDeps,
   composition.principalKeyStore,
@@ -415,7 +425,7 @@ const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
   await githubDeliverer.to(address, JSON.stringify(await withAppLogin(composition.db, tenantId, payload)), tenantId, undefined);
 }
-const githubToken = createGithubTokenRenewal({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, log: logJson });
+const githubToken = createGithubTokenRenewal({ ...credentialDeps, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, log: logJson });
 for (const tenantId of movedAppKeys) await githubToken.push(tenantId);
 tokenLoop = createReconcileLoop(githubToken.renewAll, { intervalMs: GITHUB_TOKEN_RENEW_MS, retryMs: GITHUB_TOKEN_RETRY_MS, retryMaxMs: GITHUB_TOKEN_RETRY_MAX_MS }, logJson);
 /** A failed renewal is retried by the token loop. */
@@ -504,15 +514,14 @@ const routePrWorkflow = createPrWorkflowRouter({
   readPull: pullRequests.withDiff,
   log: logJson,
 });
-const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
+const tenantSources = { ...credentialDeps, githubApiOrigin: githubOrigin, tenantBitbucket };
 const tenantOpenPrs = keptOpenPrs(createTenantOpenPrs(tenantSources), repoReads);
 const openPullsCache = createOpenPullsCache(now);
-const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, db: composition.db, cipher: composition.credentialCipher, list: tenantOpenPrs, authorize: authorizePortal });
+const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, ...credentialDeps, list: tenantOpenPrs, authorize: authorizePortal });
 const policyFile = createPolicyFile({
-  db: composition.db,
+  ...credentialDeps,
   settle: settleRepoPolicy,
   refusal: chosenFileRefusal,
-  cipher: composition.credentialCipher,
   authorize: authorizePortal,
   tenantGithub,
   tenantBitbucket,
@@ -567,8 +576,7 @@ const tenantOpenHead = createTenantOpenHead(tenantSources);
 const tenantHeadChecks = createTenantHeadChecks(tenantSources);
 const githubOpenPulls = createGithubOpenPulls({
   cache: openPullsCache,
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   list: tenantOpenPrs,
   authorize: authorizePortal,
 });
@@ -695,8 +703,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
 recordLoop = createReconcileLoop(recordAll, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
 const githubPrTriage = createGithubPrTriage({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   authorize: authorizePortal,
   pullHead: async function pullHead(tenantId, record, number) {
     const openHead = await tenantOpenHead(tenantId);
@@ -713,8 +720,7 @@ const githubPrTriage = createGithubPrTriage({
   log: logJson,
 });
 const githubHeldDos = createGithubHeldDos({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   authorize: authorizePortal,
   runReader: composition.runReader,
   verdicts: verdictRecordStore,
@@ -746,8 +752,7 @@ async function onSourcesChanged(tenantId: string): Promise<void> {
   kickTriage();
 }
 const syncInstallations = createInstallationSync({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   onSynced: function installationsSynced(tenantId) {
@@ -871,7 +876,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   authMethods: authMethods(signIn, smtp !== undefined),
   manifest: githubManifest,
   syncInstallations,
-  connectGithubApp: createGithubAppConnection({ db: composition.db, cipher: composition.credentialCipher, authorize: authorizePortal, githubApiOrigin: githubOrigin, renewal: githubToken }),
+  connectGithubApp: createGithubAppConnection({ ...credentialDeps, authorize: authorizePortal, githubApiOrigin: githubOrigin, renewal: githubToken }),
   prActions: githubPrActions,
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
@@ -880,8 +885,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   policyFileExport: policyFile.exportRoute,
   policyUpgrades: policyFile.upgradesRoute,
   backlog: createGithubBacklog({
-    db: composition.db,
-    cipher: composition.credentialCipher,
+    ...credentialDeps,
     authorize: authorizePortal,
     readCheckPack,
     sendMail: sendBacklogMail,
@@ -894,9 +898,8 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     verdicts: verdictRecordStore,
     outcomes: createOutcomeReader({
       ...createHostReads({
-        db: composition.db,
+        ...credentialDeps,
         artifacts: composition.db,
-        cipher: composition.credentialCipher,
         githubApiOrigin: githubOrigin,
         tenantBitbucket,
         authorize: authorizePortal,
@@ -909,8 +912,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   }),
   triageTimeline: createTriageTimeline({ verdicts: verdictRecordStore }),
   triageVerdicts: createTriageVerdicts({
-    db: composition.db,
-    cipher: composition.credentialCipher,
+    ...credentialDeps,
     authorize: authorizePortal,
     verdicts: verdictRecordStore,
     observer: tenantObserver,
@@ -937,8 +939,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview, inPrWorkflow }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({
-    db: composition.db,
-    cipher: composition.credentialCipher,
+    ...credentialDeps,
     authorize: authorizePortal,
     auth: composition.auth,
     stockFetch: async function stockFetch(req) {
@@ -952,8 +953,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     log: logJson,
   }),
   bitbucketDatacenter: createBitbucketIntegration({
-    db: composition.db,
-    cipher: composition.credentialCipher,
+    ...credentialDeps,
     authorize: authorizePortal,
     stockFetch: async function stockFetch(req) {
       return composition.app.fetch(req);

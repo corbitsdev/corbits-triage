@@ -16,6 +16,9 @@ import { createTenantVersions, type TenantObservation } from "./tenant-observer.
 import { createTriageVerdicts } from "./triage-verdicts.js";
 import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_verdicts";
 const OTHER_TENANT = "tnt_verdicts_other";
@@ -127,6 +130,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     const triageVerdicts = createTriageVerdicts({
       db,
       cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
+      onKeyMoved: noKeyPush,
       authorize: async () => true,
       verdicts,
       observer: { last: () => OBSERVATION },
@@ -219,6 +223,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
     const triageVerdicts = createTriageVerdicts({
       db,
       cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
+      onKeyMoved: noKeyPush,
       authorize: async () => true,
       verdicts,
       observer: { last: () => undefined },
@@ -261,6 +266,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
     const deps = {
       db,
       cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
+      onKeyMoved: noKeyPush,
       async authorize(_principalId: string, _tenantId: string, resource: string) {
         return resource !== "credential:crd_bitbucket";
       },

@@ -5,13 +5,11 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
 import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
-import { GITHUB_CREDENTIAL, githubAppKey, githubAppLogin } from "./app-key.js";
+import { GITHUB_CREDENTIAL, githubAppKey, githubAppLogin, type AppKeyDeps } from "./app-key.js";
 import { githubUsage } from "./github-usage.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
-export type PortalCredentialDeps = {
-  db: DB["db"];
-  cipher: CredentialCipher;
+export type PortalCredentialDeps = AppKeyDeps & {
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
 };
 

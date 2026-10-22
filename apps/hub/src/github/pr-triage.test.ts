@@ -5,6 +5,9 @@ import { createGithubPrTriage, type GithubPrTriageDeps } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
 import { TriageStateConflictError, type TriageStateVersion } from "./triage-state-store.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const TENANT_ID = "tenant-1";
 const MEMBER = { tenantId: TENANT_ID, principalId: "member-1" };
 const REPO = "acme/widgets";
@@ -62,6 +65,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
   return createGithubPrTriage({
     db: stubDb(repo),
     cipher: { async decrypt() { return "{}"; } } as never,
+    onKeyMoved: noKeyPush,
     authorize: async (...args) => {
       s.authorized.push(args);
       return true;
