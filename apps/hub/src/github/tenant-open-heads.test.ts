@@ -17,7 +17,7 @@ function bitbucketAnswering(applicationProperties: () => Response) {
 }
 
 function listingOver(bitbucket: ReturnType<typeof bitbucketAnswering>) {
-  return createTenantOpenPrs({ db: undefined as never, cipher: undefined as never, githubApiOrigin: "", tenantBitbucket: async () => bitbucket })("tnt");
+  return createTenantOpenPrs({ db: undefined as never, cipher: undefined as never, onKeyMoved: undefined as never, githubApiOrigin: "", tenantBitbucket: async () => bitbucket })("tnt");
 }
 
 const repo = (name: string) => ({ name, source: "bitbucket-datacenter" as const, connected: true, enabled: true });
