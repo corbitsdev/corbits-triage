@@ -5,21 +5,14 @@ import { errorText } from "@corbits/common";
 import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, VERDICTS, type ActionKind, type CheckPack, type MergeRisk, type RepoSource } from "@corbits/triage-contracts";
 import { findTriageRole } from "../../lib/automation-grid.ts";
 import { checkPackQuery } from "../../lib/check-packs.ts";
-import { DO_NAMES } from "../../lib/pack-prose.ts";
+import { doName, postingKinds } from "../../lib/policy-view.ts";
 import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
 import { useAllowed, useRoles } from "../../lib/tenant-entities.ts";
 
-/** The verdict is always posted: as a comment, and as labels where the host has them. */
-const POSTING: readonly ActionKind[] = ["comment", "labels"];
-
-/** A host without labels shows the verdict as a build status, written with the comment. */
-function doName(source: RepoSource, kind: ActionKind): string {
-  return kind === "comment" && !hostKinds(source).includes("labels") ? "Comment and build status" : DO_NAMES[kind];
-}
 
 function policyKinds(pack: CheckPack, decide: readonly ActionKind[], source: RepoSource): ActionKind[] {
   const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].flatMap((step) => (step.do === "nothing" || alwaysHeld(verdict, step.do) ? [] : [step.do])));
-  const used = new Set<string>([...POSTING, ...decide, ...steps]);
+  const used = new Set<string>([...postingKinds(source), ...decide, ...steps]);
   return hostKinds(source).filter((kind) => used.has(kind));
 }
 

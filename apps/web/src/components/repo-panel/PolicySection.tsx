@@ -34,7 +34,7 @@ export default function PolicySection({ repo, source, pack, disabled, onSettled 
     if (policyFile.isError) {
       return <p role="alert" className="error">Could not read <code>{POLICY_FILE_PATH}</code>: {errorText(policyFile.error)} <button type="button" className="linkish quiet" onClick={() => void policyFile.refetch()}>Try again</button></p>;
     }
-    if (file === undefined || policy.isPending) return null;
+    if (file === undefined || policy.isLoading) return null;
     if (file === null) return <p className="help">No policy file yet. Add <code>{POLICY_FILE_PATH}</code> to the default branch to set this repository's rules and actions.</p>;
     if (file.problem) {
       return (

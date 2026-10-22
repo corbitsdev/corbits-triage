@@ -1,5 +1,5 @@
-import { CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, hostKinds, onFailText, people, VERDICT_NAMES, VERDICTS, type CatalogId, type ActionKind, type CheckPack, type CustomCheck, type RepoSource, type Step, type VerdictWord } from "@corbits/triage-contracts";
-import { FOR_NAMES, forChoice, stepFor } from "../../lib/policy-view.ts";
+import { alwaysHeld, CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, onFailText, people, VERDICT_NAMES, VERDICTS, type CatalogId, type ActionKind, type CheckPack, type CustomCheck, type RepoSource, type Step, type VerdictWord } from "@corbits/triage-contracts";
+import { doName, FOR_NAMES, forChoice, postingKinds, stepFor } from "../../lib/policy-view.ts";
 
 function doText(step: Step): string {
   switch (step.do) {
@@ -40,10 +40,19 @@ function customText(row: CustomCheck): string {
   return row.kind === "model" && row.shape === "is-true" ? row.claim : customSentence(row);
 }
 
-/** The verdict Triage posts before any step: its comment, and the verdict's label, or on a host without labels its build status. */
-function posting(pack: CheckPack, source: RepoSource, verdict: VerdictWord): Array<{ kind: ActionKind; text: string }> {
-  if (!hostKinds(source).includes("labels")) return [{ kind: "comment", text: "Comment with the verdict and build status" }];
-  return [{ kind: "comment", text: "Comment with the verdict" }, { kind: "labels", text: `Label “${pack.labels[verdict]}”` }];
+const WAITS = " (waits for you in the Inbox)";
+
+/**
+ * One line of the verdict Triage posts before any step. Posting it from the Inbox writes only the comment and its
+ * labels, so a label waits there only beside a waiting comment, and a build status never does.
+ */
+function postText(pack: CheckPack, source: RepoSource, verdict: VerdictWord, kind: ActionKind, allowed: (kind: ActionKind) => boolean): string {
+  if (kind === "labels") {
+    const label = `Label “${pack.labels[verdict]}”`;
+    if (allowed("labels")) return label;
+    return allowed("comment") ? `${label} (not added until you allow labels)` : `${label}${WAITS}`;
+  }
+  return allowed("comment") ? `${doName(source, "comment")} with the verdict` : `Comment with the verdict${WAITS}`;
 }
 
 /**
@@ -51,6 +60,14 @@ function posting(pack: CheckPack, source: RepoSource, verdict: VerdictWord): Arr
  * Triage may do on its own, whatever else waits for a person says so; a preview of a file not yet merged leaves it out.
  */
 export default function PolicyRules({ pack, source, automatic }: { pack: CheckPack; source: RepoSource; automatic?: readonly ActionKind[] }) {
+  function allowed(kind: ActionKind): boolean {
+    return automatic === undefined || automatic.includes(kind);
+  }
+
+  function stepWaits(verdict: VerdictWord, step: Step): boolean {
+    return step.do !== "nothing" && automatic !== undefined && (!automatic.includes(step.do) || alwaysHeld(verdict, step.do));
+  }
+
   const rules = [
     ...CATALOG_IDS.flatMap(function shown(id) {
       const text = catalogText(pack, id);
@@ -73,8 +90,8 @@ export default function PolicyRules({ pack, source, automatic }: { pack: CheckPa
           <div key={verdict} className="then">
             <b>{VERDICT_NAMES[verdict]}</b>
             <div className="steps">
-              {posting(pack, source, verdict).map((post) => <span key={post.kind}>{post.text}{automatic && !automatic.includes(post.kind) ? " (waits for you in the Inbox)" : ""}</span>)}
-              {pack.actions[verdict].filter((step) => step.do !== "nothing").map((step, at) => <span key={`${verdict}-${at}`}>{doText(step)}{forText(step)}</span>)}
+              {postingKinds(source).map((kind) => <span key={kind}>{postText(pack, source, verdict, kind, allowed)}</span>)}
+              {pack.actions[verdict].filter((step) => step.do !== "nothing").map((step, at) => <span key={`${verdict}-${at}`}>{doText(step)}{forText(step)}{stepWaits(verdict, step) ? WAITS : ""}</span>)}
             </div>
           </div>
         ))}
