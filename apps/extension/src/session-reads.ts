@@ -27,8 +27,36 @@ function base64(bytes: Uint8Array): string {
   return btoa(text);
 }
 
-/** Each commit's whole message by sha, from a pull request's `.patch`, as `git format-patch` writes it. */
-export function patchMessages(patch: string): Map<string, string> {
+const ENCODED_WORD = /=\?([^?]+)\?([bq])\?([^?]*)\?=/gi;
+// After the message, `git format-patch` writes `---` and the diffstat: one line a file, then the summary.
+const DIFFSTAT = /^ (?:.+ \| |\d+ files? changed)/;
+
+function wordBytes(encoding: string, text: string): Uint8Array {
+  if (encoding.toLowerCase() === "b") return Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
+  const bytes: number[] = [];
+  const spaced = text.replaceAll("_", " ");
+  for (let at = 0; at < spaced.length; at++) {
+    const hex = /^=([0-9a-f]{2})/i.exec(spaced.slice(at));
+    if (hex) {
+      bytes.push(parseInt(hex[1]!, 16));
+      at += 2;
+    } else bytes.push(spaced.charCodeAt(at));
+  }
+  return Uint8Array.from(bytes);
+}
+
+/** A header with its RFC 2047 encoded words decoded; the space between two of them is folding, not text. */
+function decodedHeader(text: string): string {
+  return text.replace(/\?=\s+=\?/g, "?==?").replace(ENCODED_WORD, function decode(_word, charset: string, encoding: string, data: string) {
+    return new TextDecoder(charset as ConstructorParameters<typeof TextDecoder>[0]).decode(wordBytes(encoding, data));
+  });
+}
+
+/**
+ * Each commit's whole message by sha, from a pull request's `.patch`, as `git format-patch` writes it. A `---` line in a
+ * message cannot be told from the one that ends it unless the diffstat follows, so a message that seems cut short throws.
+ */
+function patchMessages(patch: string): Map<string, string> {
   const messages = new Map<string, string>();
   const lines = patch.split("\n");
   for (let at = 0; at < lines.length; at++) {
@@ -37,11 +65,13 @@ export function patchMessages(patch: string): Map<string, string> {
     let subject = "";
     for (at++; at < lines.length && lines[at] !== ""; at++) {
       const line = lines[at]!;
-      if (line.startsWith("Subject: ")) subject = line.slice("Subject: ".length).replace(/^\[PATCH[^\]]*\] /, "");
+      if (line.startsWith("Subject: ")) subject = line.slice("Subject: ".length);
       else if (line.startsWith(" ") && subject) subject += line;
     }
+    subject = decodedHeader(subject).replace(/^\[PATCH[^\]]*\] /, "");
     const body: string[] = [];
     for (at++; at < lines.length && lines[at] !== "---" && !PATCH_START.test(lines[at]!); at++) body.push(lines[at]!);
+    if (lines[at] === "---" && !DIFFSTAT.test(lines[at + 1] ?? "")) throw new Error(`the .patch message of ${sha} may be cut short at a --- line`);
     if (PATCH_START.test(lines[at] ?? "")) at--;
     const text = body.join("\n").trim();
     messages.set(sha, text ? `${subject}\n\n${text}` : subject);
@@ -121,7 +151,7 @@ export function sessionGithub(session: Session, fallback: GithubFetch | null): G
     const body = await session.page(path);
     if (body === null) return null;
     // The page gives the description as written, not GitHub's rendering of it, which hidden-content reads.
-    if (PULL.test(pathname) && !("body_html" in JSON.parse(body))) throw new Error(`github.com gives no rendered description for ${path}`);
+    if (PULL.test(pathname) && typeof JSON.parse(body).body_html !== "string") throw new Error(`github.com gives no rendered description for ${path}`);
     return new Response(body, { headers: { "content-type": "application/json" } });
   }
 

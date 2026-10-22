@@ -84,8 +84,8 @@ function customRule(row: CustomCheck, unexpressed: string[]): Record<string, unk
 }
 
 /** Author kinds a built-in group stands for, and a file group, written as the group, so the file reads as people wrote it. */
-function authorGroups(author: readonly AuthorMatch[]): unknown[] {
-  const out: unknown[] = [];
+function authorGroups(author: readonly AuthorMatch[]): Array<string | AuthorMatch> {
+  const out: Array<string | AuthorMatch> = [];
   for (let at = 0; at < author.length; ) {
     const match = author[at]!;
     const group = Object.entries(AUTHOR_GROUPS).find(([, kinds]) => kinds.every((kind, i) => author[at + i] === kind));
@@ -327,11 +327,11 @@ function targetWords(step: Step): string {
 }
 
 /** An author group as words: its name, or the people or team it names. */
-function authorWords(group: unknown): string {
+function authorWords(group: string | AuthorMatch): string {
   if (typeof group === "string") return group;
-  const named = group as { users?: string[]; team?: string };
-  if (named.users) return named.users.map((user) => `@${user}`).join(", ");
-  return `@${named.team}`;
+  if ("users" in group) return group.users.map((user) => `@${user}`).join(", ");
+  if ("team" in group) return `@${group.team}`;
+  return group.group;
 }
 
 /** A step as its words: the action, what it acts on, and whom it is for. */

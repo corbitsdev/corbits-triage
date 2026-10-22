@@ -91,11 +91,11 @@ export function pageReads(): PageReads {
     };
   }
 
-  /** The description as written, in markdown, as the API gives it. */
-  async function body(repo: string, number: number): Promise<string> {
-    const { body: text } = await json(`/${repo}/pull/${number}/page_data/description`) as { body?: unknown };
-    if (typeof text !== "string") throw new Error(`github.com has no description for ${repo}#${number}`);
-    return text;
+  /** The description as written, in markdown, and GitHub's rendering of it, as the API's full media type gives them. */
+  async function description(repo: string, number: number): Promise<{ body: string; bodyHtml: string }> {
+    const { body, bodyHtml } = await json(`/${repo}/pull/${number}/page_data/description`) as { body?: unknown; bodyHtml?: unknown };
+    if (typeof body !== "string" || typeof bodyHtml !== "string") throw new Error(`github.com has no description for ${repo}#${number}`);
+    return { body, bodyHtml };
   }
 
   async function association(repo: string, number: number): Promise<string> {
@@ -119,7 +119,7 @@ export function pageReads(): PageReads {
     const [{ pullRequest: pr }, side, text, assoc, stat, counts] = await Promise.all([
       json(`${base}/page_data/header`),
       sidebar(repo, number),
-      body(repo, number),
+      description(repo, number),
       association(repo, number),
       json(`${base}/page_data/diffstat`),
       json(`${base}/page_data/tab_counts`),
@@ -131,7 +131,8 @@ export function pageReads(): PageReads {
     return {
       number,
       title: pr.title,
-      body: text,
+      body: text.body,
+      body_html: text.bodyHtml,
       state: open ? "open" : "closed",
       merged: pr.state === "MERGED",
       draft: pr.state === "DRAFT",

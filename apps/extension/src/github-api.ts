@@ -5,7 +5,7 @@ export const GITHUB_API = "https://api.github.com";
 
 class GithubRateLimitError extends Error {
   constructor(resetAt: string) {
-    super(`GitHub's hourly limit for its API is used up. It resets at ${clock(resetAt)}.`);
+    super(`Your GitHub token's hourly limit is used up. It resets at ${clock(resetAt)}.`);
     this.name = "GithubRateLimitError";
   }
 }
@@ -22,18 +22,16 @@ function exhaustedUntil(headers: Headers): string | undefined {
 }
 
 /**
- * GitHub's REST API for one run, read-only, with the person's token, else without one, within GitHub's shared limit for public reads. The files and docs pagers read the same page once
+ * GitHub's REST API for one run, read-only, with the person's token. The files and docs pagers read the same page once
  * per slice, so each GET is sent once and replayed. The browser's cache revalidates GitHub's answers by ETag; `no-cache`
  * revalidates even those under a minute old, when a person asks for a fresh read.
  */
-export function githubApi(token: string | null, cache: RequestInit["cache"]): GithubApi {
+export function githubApi(token: string, cache: RequestInit["cache"]): GithubApi {
   const sent = new Map<string, Promise<Recorded>>();
 
   async function send(path: string, init?: RequestInit): Promise<Recorded> {
     const headers = new Headers(init?.headers);
-    // The run's credential stands in its own placeholder; only the person's token, if any, goes to GitHub.
-    headers.delete("authorization");
-    if (token) headers.set("authorization", `Bearer ${token}`);
+    headers.set("authorization", `Bearer ${token}`);
     const res = await fetch(`${GITHUB_API}${path}`, { ...init, headers, cache: init?.cache ?? cache });
     const resetAt = exhaustedUntil(res.headers);
     if ((res.status === 403 || res.status === 429) && resetAt) throw new GithubRateLimitError(resetAt);

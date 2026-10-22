@@ -23,7 +23,7 @@ export type TriageView = {
   paused?: string;
   checks: ViewCheck[];
   notes: FileNote[];
-  /** Absent when the run could not reach one. */
+  /** Absent when the policy's judgement rules, which are not run here, could still change it. */
   verdict?: ViewVerdict;
   plans: VerdictPlan[];
   /** The newest code review the App sent to the pull request, read from GitHub, or why it could not be read. */
@@ -49,7 +49,9 @@ const TONES: Record<VerdictWord, Tone> = { pass: "ready", unsure: "waiting", fai
 export function stateName(view: TriageView): string {
   if (!view.policy) return "No policy";
   if (view.paused !== undefined) return "Paused";
-  return view.verdict ? VERDICT_NAMES[view.verdict.verdict] : "No verdict";
+  if (view.verdict) return VERDICT_NAMES[view.verdict.verdict];
+  const passed = view.checks.filter((check) => check.result === "pass").length;
+  return passed === view.checks.length ? "Checks passed" : `${passed}/${view.checks.length} checks passed`;
 }
 
 export function toneOf(view: TriageView): Tone {
@@ -59,5 +61,5 @@ export function toneOf(view: TriageView): Tone {
 export function nextStep(view: TriageView): string {
   if (!view.policy) return "This repository has no policy file, so there is nothing to check.";
   if (view.paused !== undefined) return `This pull request has the ${view.paused} label, so Triage leaves it alone.`;
-  return view.verdict?.nextAction ?? "The checks below are what ran here.";
+  return view.verdict?.nextAction ?? "Triage decides the verdict.";
 }

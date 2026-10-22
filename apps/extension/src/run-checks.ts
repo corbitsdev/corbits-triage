@@ -1,5 +1,5 @@
 import type { GithubFetch } from "@corbits/github-reads";
-import { checkName, isModelCheck, QUALITY_CHECK_IDS, STEP_WORDS, stepWords, VERDICT_RULES, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, classificationSources, isModelCheck, QUALITY_CHECK_IDS, STEP_WORDS, stepWords, VERDICT_RULES, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-workflows/actions/index";
 import type { RulesOutput } from "@corbits/triage-workflows/actions/rules";
 import { credentialBindings } from "@corbits/triage-workflows/agents";
@@ -80,5 +80,8 @@ export async function runChecks(pr: PrRef, gh: GithubFetch, policyPack: CheckPac
   const checks = [...item.det.checks, ...(item.det.labelled?.checks ?? [])];
   const named = checks.map((check) => ({ ...check, name: checkName(pack, check.check) }));
   const evaluated = outputs["evaluateRules"] as Verdict | undefined;
-  return { headSha: item.facts.headSha, checks: named, notes: fileNotes(named), ...(evaluated ? { verdict: verdictOf(evaluated) } : {}) };
+  // Left out here, the policy's judgement rules could still fail or unsettle it, so only a Fail the rules reach stands.
+  const { quality, custom } = classificationSources(policyPack);
+  const decided = evaluated && (quality.length + custom.length === 0 || evaluated.verdict === "fail");
+  return { headSha: item.facts.headSha, checks: named, notes: fileNotes(named), ...(decided ? { verdict: verdictOf(evaluated) } : {}) };
 }

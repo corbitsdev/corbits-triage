@@ -30,12 +30,20 @@ test("the definition settles the checks without the model and writes nothing", a
   expect(writes).toEqual([]);
 });
 
-test("model checks are left out, so passing rules reach a verdict from the rules alone", async () => {
+test("with a judgement rule in the policy, passing rules give no verdict", async () => {
   const writes: string[] = [];
   const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 30 }, docs: { enabled: true } } };
   const { checks, verdict } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
   expect(checks.filter((check) => check.kind === "machine").every((check) => check.result === "pass")).toBe(true);
   expect(checks.find((check) => check.check === "docs")).toBeUndefined();
+  expect(verdict).toBeUndefined();
+  expect(writes).toEqual([]);
+});
+
+test("with only rules in the policy, passing rules reach the verdict and what it would do", async () => {
+  const writes: string[] = [];
+  const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 30 } } };
+  const { verdict } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
   expect(verdict?.verdict).toBe("pass");
   expect(writes).toEqual([]);
 });

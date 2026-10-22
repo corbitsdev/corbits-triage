@@ -37,7 +37,9 @@ verdict and next step, the checks to look at and what the policy's verdict would
 actions); it links the policy file. A chip beside the title repeats the score and, on hover, the failing checks. The
 side panel shows the score card, the checks grouped Failing, Unsure and Passed with their evidence, and what the policy
 does on each verdict. The Files tab marks the files and lines a failing check cites. Only the policy's rules run here;
-its judgement rules are left out of the list, the score and the verdict.
+its judgement rules are left out of the list and the score. When the policy has judgement rules, only a Fail the rules
+reach is shown as a verdict; otherwise the block says how many checks passed and that Triage decides the verdict, and
+shows nothing the verdict would do.
 
 When the repository has no policy file, the block says so and links to how to write one. When the pull request carries
 the policy's `pauseLabel`, the block says it is paused and checks nothing, as the hub would not triage it.
