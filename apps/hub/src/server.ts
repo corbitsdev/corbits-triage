@@ -12,11 +12,11 @@
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
-import { createGrantStore, createWorkflowRunLaunchSpecStore, schema } from "@intx/db";
+import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
 import { and, eq } from "drizzle-orm";
-import { createMailTriggeredRunGrantsMaterializer, createRequireGrant } from "@intx/hub-api";
+import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import {
   createRunTriggerDeliverer,
   createTenantSystemSender,
@@ -75,7 +75,7 @@ import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
@@ -335,13 +335,25 @@ const systemSender = createTenantSystemSender({
   db: composition.db,
   principalKeyStore: composition.principalKeyStore,
 });
+/** The tenant system sender a run trigger is signed as, resolved to the coordinates Interchange's sender gate admits. */
+async function systemSenderOf(senderLocalPart: string, agentAddress: string) {
+  const run = await composition.db.query.workflowRun.findFirst({ where: eq(schema.workflowRun.address, agentAddress), columns: { tenantId: true } });
+  if (!run) return null;
+  const domain = await tenantDomain(run.tenantId);
+  await systemSender.resolve({ tenantId: run.tenantId, domain, localPart: senderLocalPart });
+  return resolveSenderPrincipal(composition.db, composition.principalKeyStore, `${senderLocalPart}@${domain}`);
+}
 function runTriggerDeliverer(senderLocalPart: string) {
+  const materialize = createMailTriggeredRunGrantsMaterializer({
+    db: composition.db,
+    principalKeyStore: composition.principalKeyStore,
+    grantStore: createGrantStore(composition.db),
+    registry: HUB_CONDITION_REGISTRY,
+  });
   return createRunTriggerDeliverer({
     router: composition.sidecarRouter,
-    materialize: readyMaterializer(createMailTriggeredRunGrantsMaterializer({
-      db: composition.db,
-      principalKeyStore: composition.principalKeyStore,
-      grantStore: createGrantStore(composition.db),
+    materialize: readyMaterializer(systemSenderMaterializer(materialize, function senderOf(agentAddress) {
+      return systemSenderOf(senderLocalPart, agentAddress);
     })),
     tenantDomain,
     senderLocalPart,
