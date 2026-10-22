@@ -8,6 +8,7 @@ import { runStates, views, type RunState } from "../storage.ts";
 import type { TriageView } from "../view.ts";
 import { verdictChip } from "./chip.ts";
 import { fileMarker, markLines, noteAnchor, onFilesTab, type FileMarker } from "./file-notes.ts";
+import { answerSessionReads } from "./session-answers.ts";
 import { triageBlock } from "./triage-block.ts";
 
 // After the number in the new pull request page's header (not its sticky copy), then in the classic one's. GitHub's
@@ -32,6 +33,7 @@ function notesByPath(view: TriageView | undefined): Map<string, FileNote[]> {
 }
 
 export async function startContentScript(ctx: ContentScriptContext): Promise<void> {
+  answerSessionReads(ctx);
   let current: PrRef | undefined;
   let allViews: Record<string, TriageView> = {};
   let allStates: Record<string, RunState> = {};

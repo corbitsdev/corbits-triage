@@ -1,8 +1,8 @@
 # @corbits/extension
 
 A browser extension (WXT, Manifest V3, Chrome and Firefox) that checks the GitHub pull request you are viewing against
-its repository's `.corbits-triage.yml` and shows the result on the pull request page. It reads GitHub with your own
-token and runs pr-triage's own definition in the browser with Interchange's local runner, granted no action, so it
+its repository's `.corbits-triage.yml` and shows the result on the pull request page. It reads GitHub as the person
+signed in to github.com in this browser, public and private repositories alike, and runs pr-triage's own definition in the browser with Interchange's local runner, granted no action, so it
 writes nothing. Model checks are not run: the run stops at the first agent step.
 
 ## Install
@@ -22,9 +22,9 @@ bun run build:firefox   # Firefox: .output/firefox-mv3
 bun run dev             # Chrome with hot reload; dev:firefox for Firefox
 ```
 
-Load `.output/chrome-mv3` in Chrome, or `.output/firefox-mv3/manifest.json` as a temporary add-on in Firefox. Click
-the toolbar button to open the side panel (the sidebar in Firefox), save a GitHub token, and open any
-`https://github.com/<owner>/<repo>/pull/<number>` page.
+Load `.output/chrome-mv3` in Chrome, or `.output/firefox-mv3/manifest.json` as a temporary add-on in Firefox. Sign in to
+github.com and open any `https://github.com/<owner>/<repo>/pull/<number>` page. The toolbar button opens the side panel
+(the sidebar in Firefox), where a GitHub token can be saved as a fallback.
 
 ## What it shows
 
@@ -46,8 +46,14 @@ by a GitHub App's bot account, which the account name shows.
 
 ### Limits
 
-- Every read needs a GitHub token. A fine-grained token with read-only access to public repositories is enough;
-  private repositories need read access to their contents and pull requests.
+- Reads go through a github.com tab's own requests (the pull request's details, reviews, comments, commits and check
+  runs), its `.diff` (files), `.patch` (whole commit messages) and raw files (the policy file, CODEOWNERS). These are
+  github.com's page data, not a published API, so a read GitHub changes or cuts short (a long timeline, say) is not
+  guessed at: it goes to the REST API when a token is saved, and otherwise the block says what could not be read and
+  checks nothing.
+- A saved token is optional. A fine-grained token with read-only access to public repositories is enough; private
+  repositories need read access to their contents and pull requests. Cookies and the token never leave the browser:
+  the session reads go only to github.com and the token only to api.github.com.
 - The token is kept in the extension's `storage.local`. Only the background reads it, and changing or removing it
   clears every saved check and policy file.
 - A policy file that extends a shared policy is not checked; only the hub holds the shared policy.

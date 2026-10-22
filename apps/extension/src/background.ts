@@ -4,6 +4,7 @@ import { GITHUB_API, githubApi } from "./github-api.ts";
 import type { Reply, Request } from "./messages.ts";
 import { policyFor } from "./policy-source.ts";
 import { prKey } from "./pr.ts";
+import { browserSession, sessionGithub } from "./session-reads.ts";
 import { openPanelOnActionClick, openSidePanel } from "./side-panel.ts";
 import { clearRunning, githubToken, policyFiles, runStates, saveView, setRunState, tokenSaved, views } from "./storage.ts";
 import { FRESH_MS, type TriageView } from "./view.ts";
@@ -35,8 +36,8 @@ async function triage({ pr, mode }: Triage): Promise<null> {
   await setRunState(pr, { running: true });
   try {
     const token = await githubToken.getValue();
-    if (!token) throw new Error("Add a GitHub token in the side panel to check pull requests.");
-    const api = githubApi(token, mode === "refetch" ? "no-cache" : "default");
+    const cache = mode === "refetch" ? "no-cache" : "default";
+    const api = { gh: sessionGithub(await browserSession(pr, cache), token ? githubApi(token, cache).gh : null) };
     const pull = await pullOf(api, pr);
     if (!(mode === "if-stale" && isFresh(saved) && pull.headSha === saved.headSha)) {
       await saveView(await checkPr(api, pr, pull, await policyFor(api, pr.repo, mode === "refetch")));
