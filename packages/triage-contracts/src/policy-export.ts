@@ -326,11 +326,19 @@ function targetWords(step: Step): string {
   }
 }
 
+/** An author group as words: its name, or the people or team it names. */
+function authorWords(group: unknown): string {
+  if (typeof group === "string") return group;
+  const named = group as { users?: string[]; team?: string };
+  if (named.users) return named.users.map((user) => `@${user}`).join(", ");
+  return `@${named.team}`;
+}
+
 /** A step as its words: the action, what it acts on, and whom it is for. */
 export function stepWords(step: Step): string {
   const author = step.when?.author;
   const words = `${STEP_WORDS[step.do]}${targetWords(step)}`;
-  return author?.length ? `${words} for ${authorGroups(author).join(", ")}` : words;
+  return author?.length ? `${words} for ${authorGroups(author).map(authorWords).join(", ")}` : words;
 }
 
 function actionDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[] {
