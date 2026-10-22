@@ -300,3 +300,45 @@ test("PostgreSQL: an early retry after one workspace fails renews only that work
     expect(github.minted()).toBe(1);
   });
 }, 120_000);
+
+test("PostgreSQL: a blank push a sidecar did not take is sent again on the next pass, with no installation", async () => {
+  const theApp = app("1", []);
+  await withWorkspace([theApp], async function noInstall({ db, cipher, origin }) {
+    await db.insert(schema.credential).values({
+      id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
+      secret: await cipher.encrypt(theApp.json, credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "app-1" },
+    });
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_triage", tenantId: TENANT, name: "pr-triage-github" });
+    await db.insert(schema.workflowRun).values({
+      id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed", address: LISTENER,
+      credentialRefs: { credentialIds: ["crd_github"], bindings: [{ handle: "github", credentialId: "crd_github", consumer: "action:facts" }] },
+    });
+    let fail = true;
+    const sent: string[] = [];
+    const router = { async sendCredentialsUpdate(address: string) { if (fail) throw new Error("sidecar timeout"); sent.push(address); } };
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    await renewal.secure(TENANT);
+    fail = false;
+    await renewal.renewAll();
+    expect(sent).toEqual([LISTENER]);
+  });
+}, 120_000);
+
+test("PostgreSQL: a github-app provider given an origin loses it before the key is stored on it", async () => {
+  const theApp = app("1", [7]);
+  await withWorkspace([theApp], async function provider({ db, cipher, origin }) {
+    await db.insert(schema.provider).values({ id: "prv_app_key", tenantId: TENANT, name: "github-app", plugin: "http", apiBaseUrl: "https://elsewhere.test" });
+    await db.insert(schema.credential).values({
+      id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
+      secret: await cipher.encrypt(theApp.json, credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "app-1" },
+    });
+    const { router } = deliveries();
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    await renewal.renewAll();
+    const key = await buildCredentialDelivery({
+      db, tenantId: TENANT, creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher,
+      bindings: [{ action: "facts", handle: "github-app", provider: "github-app", name: "github-app", locator: "tenant" }],
+    });
+    expect(key.ok ? "delivered" : key.reason.code).toBe("no_origin");
+  });
+}, 120_000);

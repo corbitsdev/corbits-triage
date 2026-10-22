@@ -66,7 +66,7 @@ import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettin
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
 import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
-import { appKeyWriteRefusal, githubTenants, moveAppKey } from "./github/app-key.js";
+import { appKeyProviderWriteRefusal, appKeyWriteRefusal, githubTenants, moveAppKey } from "./github/app-key.js";
 import { createGithubAppConnection } from "./github/app-connection.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
 import { createProviderHookHandler } from "./provider-hooks/intake.js";
@@ -268,14 +268,8 @@ composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connect
 const credentialDeps = {
   db: composition.db,
   cipher: composition.credentialCipher,
-  /** A failed push fails the read; the next token renewal sends every holder the credential again. */
-  onKeyMoved: async function pushMovedKeyBlank(tenantId: string): Promise<void> {
-    try {
-      await githubToken.push(tenantId);
-    } catch (err) {
-      logJson({ level: "error", msg: "github_app_key_blank_push_failed", tenantId, error: String(err) });
-      throw err;
-    }
+  onKeyMoved: function pushMovedKeyBlank(tenantId: string): Promise<void> {
+    return githubToken.push(tenantId);
   },
 };
 // App JSON a stock write left where workflows bind it moves to the hub before any sidecar is restored with it.
@@ -978,6 +972,7 @@ const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandl
 
 /** A stock credential write: App JSON it leaves in `github` is moved to the hub and taken back from sidecars at once. */
 const CREDENTIAL_WRITE = /^\/api\/tenants\/([^/]+)\/credentials(?:\/([^/]+))?$/;
+const PROVIDER_WRITE = /^\/api\/tenants\/([^/]+)\/providers(?:\/([^/]+))?$/;
 
 function decodedSegment(segment: string): string | undefined {
   try {
@@ -1037,6 +1032,12 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       if (prepared instanceof Response) return prepared;
       return stock.fetch(prepared, server);
     }
+  }
+  const providerWritten = req.method === "POST" || req.method === "PATCH" ? PROVIDER_WRITE.exec(url.pathname) : null;
+  const providerTenant = providerWritten ? decodedSegment(providerWritten[1]!) : undefined;
+  if (providerTenant !== undefined) {
+    const refusedProvider = await appKeyProviderWriteRefusal(composition.db, providerTenant, providerWritten?.[2] === undefined ? undefined : decodedSegment(providerWritten[2]), req);
+    if (refusedProvider) return refusedProvider;
   }
   const written = req.method === "POST" || req.method === "PATCH" ? CREDENTIAL_WRITE.exec(url.pathname) : null;
   const writtenTenant = written ? decodedSegment(written[1]!) : undefined;

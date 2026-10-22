@@ -62,6 +62,7 @@ function parseAppCredential(raw: string): AppCredential {
 }
 
 export function isGithubAppJson(raw: string): boolean {
+  if (raw.includes("PRIVATE KEY")) return true;
   try {
     const value = JSON.parse(raw) as unknown;
     return value !== null && typeof value === "object" && ("appId" in value || "privateKey" in value);

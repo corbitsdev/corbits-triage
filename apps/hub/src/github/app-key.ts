@@ -54,8 +54,9 @@ export async function lockedCredential(tx: Tx, tenantId: string, name: string) {
 
 async function keyProviderId(tx: Tx, tenantId: string): Promise<string> {
   await tx.insert(provider).values({ id: generateId("provider"), tenantId, name: GITHUB_APP_KEY_PROVIDER, plugin: "http", apiBaseUrl: null }).onConflictDoNothing();
-  const [row] = await tx.select({ id: provider.id }).from(provider).where(and(eq(provider.tenantId, tenantId), eq(provider.name, GITHUB_APP_KEY_PROVIDER)));
+  const [row] = await tx.select({ id: provider.id, apiBaseUrl: provider.apiBaseUrl }).from(provider).where(and(eq(provider.tenantId, tenantId), eq(provider.name, GITHUB_APP_KEY_PROVIDER))).for("update");
   if (!row) throw new Error("the GitHub App key provider is missing");
+  if (row.apiBaseUrl !== null) await tx.update(provider).set({ apiBaseUrl: null, updatedAt: new Date() }).where(eq(provider.id, row.id));
   return row.id;
 }
 
@@ -114,6 +115,23 @@ export async function appKeyWriteRefusal(db: DB["db"], tenantId: string, credent
   const name = typeof fields?.["name"] === "string" ? fields["name"] : existing?.name;
   if (name !== GITHUB_CREDENTIAL) return undefined;
   return Response.json({ error: { code: "github_app_key_write", message: APP_KEY_WRITE_REFUSED } }, { status: 400 });
+}
+
+const APP_KEY_PROVIDER_REFUSED = "The GitHub App key's provider has no API origin, so no sidecar is ever given the key.";
+
+/** A stock provider write (`providerId` absent for a new one) that would give the App key's provider an API origin. */
+export async function appKeyProviderWriteRefusal(db: DB["db"], tenantId: string, providerId: string | undefined, req: Request): Promise<Response | undefined> {
+  let fields: Record<string, unknown> | undefined;
+  try {
+    fields = asRecord(await req.clone().json());
+  } catch {
+    return undefined;
+  }
+  const existing = providerId === undefined ? undefined : await db.query.provider.findFirst({ where: and(eq(provider.id, providerId), eq(provider.tenantId, tenantId)) });
+  const name = typeof fields?.["name"] === "string" ? fields["name"] : existing?.name;
+  const apiBaseUrl = fields?.["apiBaseUrl"] === undefined ? existing?.apiBaseUrl : fields["apiBaseUrl"];
+  if (name !== GITHUB_APP_KEY_PROVIDER || apiBaseUrl === null || apiBaseUrl === undefined) return undefined;
+  return Response.json({ error: { code: "github_app_key_provider_write", message: APP_KEY_PROVIDER_REFUSED } }, { status: 400 });
 }
 
 /** Every workspace holding a GitHub credential or App key, so each is checked before any sidecar is restored. */

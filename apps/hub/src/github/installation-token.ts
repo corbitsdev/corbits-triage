@@ -131,9 +131,14 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     }
   }
 
-  /** Moves App JSON a stock write left in the `github` credential to the hub, and takes it back from every sidecar given it. */
+  /**
+   * Moves App JSON a stock write left in the `github` credential to the hub, and takes it back from every sidecar given it.
+   * Stock drops a push a sidecar did not take, so a credential left without a live token is pushed again on every pass.
+   */
   async function secure(tenantId: string): Promise<void> {
-    if (await moveAppKey(deps, tenantId)) await push(tenantId);
+    const moved = await moveAppKey(deps, tenantId);
+    const github = await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL);
+    if (moved || (github?.expiresAt?.getTime() ?? Infinity) <= Date.now()) await push(tenantId);
   }
 
   const keyDeps = { db: deps.db, cipher: deps.cipher, onKeyMoved: push };
