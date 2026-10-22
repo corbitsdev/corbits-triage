@@ -950,7 +950,7 @@ describe("triage reconciler", () => {
   test("a copy that finished deploying after another deployment landed is released", async () => {
     const logs: Logs = { [repoKey(LIVE.runId)]: settled(1, 19) };
     const portal = deployment("run_portal_v2", NOW);
-    const { reconcile, deployments, delivered, released, records } = harness(logs, [head(20)], {
+    const { reconcile, deployments, released, records } = harness(logs, [head(20)], {
       rotateAfterRuns: 15,
       whileRedeploying: (live) => live.unshift({ ...portal }),
     });

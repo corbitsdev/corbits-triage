@@ -46,7 +46,7 @@ import type { WorkflowKind } from "./workflow-packages.ts";
 import { reconcileModelCatalog, removeModelKey, saveInference } from "./model-catalog.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
-import { checkPackName, type RepoSource } from "@corbits/triage-contracts";
+import { checkPackName } from "@corbits/triage-contracts";
 
 /** `now` confirms the write with a toast; `held` writes were announced by the inbox's Undo toast; `leaving` ones are held writes sent as the page goes away, so they must outlive it. */
 type GithubDelivery = "now" | "held" | "leaving";
