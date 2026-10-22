@@ -1,27 +1,32 @@
+import { errorText } from "@corbits/common";
 import type { PostedCodeReview } from "@corbits/github-reads";
 import { CORBITS_MARK_PATH } from "@corbits/react-ui";
 import { findingTitle, POLICY_FILE_PATH } from "@corbits/triage-contracts";
 import { clock } from "../clock.ts";
 import type { RunState } from "../storage.ts";
-import type { RuleState, TriageView, ViewRule } from "../view.ts";
-import { summaryOf } from "./chip.ts";
+import { checkReason, shownChecks, summaryMarkdown } from "../summary.ts";
+import { nextStep, readinessOf, stateName, toneOf, type TriageView } from "../view.ts";
 
 const POLICY_GUIDE_URL = "https://github.com/corbitsdev/corbits-triage/blob/main/docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#writing-the-file";
+const RING_RADIUS = 13;
+const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
 
-const STATE_NAMES: Record<RuleState, string> = { pass: "Pass", fail: "Fail", waiting: "Waiting", "not-run": "Not run here" };
-const ORDER: Record<RuleState, number> = { fail: 0, waiting: 1, "not-run": 2, pass: 3 };
+const ICONS = {
+  fail: '<path d="M5 5l6 6M11 5l-6 6"/>',
+  unsure: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5.5v3M8 10.5v.5"/>',
+  panel: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M9.5 3v10"/>',
+};
+
+function icon(name: keyof typeof ICONS): SVGSVGElement {
+  const template = document.createElement("template");
+  template.innerHTML = `<svg class="tb-icon" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
+  return template.content.firstElementChild as SVGSVGElement;
+}
 
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
   const made = document.createElement(tag);
   made.className = className;
   if (text !== undefined) made.textContent = text;
-  return made;
-}
-
-function button(text: string, onClick: () => void): HTMLButtonElement {
-  const made = node("button", "tb-link", text);
-  made.type = "button";
-  made.addEventListener("click", onClick);
   return made;
 }
 
@@ -31,104 +36,178 @@ function link(text: string, href: string): HTMLAnchorElement {
   return made;
 }
 
-function noPolicyGuide(): HTMLElement {
-  const guide = node("p", "tb-meta", `This repository has no ${POLICY_FILE_PATH} on its default branch, so there is nothing to check. `);
-  guide.append(link("How to write one", POLICY_GUIDE_URL), ".");
-  return guide;
-}
-
-function policyLine(policy: TriageView["policy"]): HTMLElement {
-  if (!policy) return noPolicyGuide();
-  const line = node("p", "tb-meta", "Policy: ");
-  line.append(link(policy.path, policy.url), " on the default branch");
-  return line;
-}
-
-function ruleReason(rule: ViewRule): string {
-  const reason = rule.reason.startsWith(`${rule.name}: `) ? rule.reason.slice(rule.name.length + 2) : rule.reason;
-  return rule.evidence.length ? `${reason}: ${rule.evidence.join(", ")}` : reason;
-}
-
-function rulesList(view: TriageView): HTMLElement {
-  const list = node("ul", "tb-rules");
-  list.setAttribute("aria-label", "Checks");
-  for (const rule of [...view.rules].sort((a, b) => ORDER[a.state] - ORDER[b.state])) {
-    const item = node("li", "tb-rule");
-    item.dataset.state = rule.state;
-    const reason = ruleReason(rule);
-    item.title = reason;
-    item.append(node("span", "tb-state", STATE_NAMES[rule.state]), node("b", "", rule.name), node("span", "tb-reason", reason));
-    list.append(item);
-  }
-  return list;
-}
-
-function findingLink(comment: PostedCodeReview["comments"][number]): HTMLElement {
-  const item = node("li", "tb-finding");
-  item.append(link(findingTitle(comment), comment.url), node("span", "tb-meta", comment.line === null ? `${comment.path} · outdated` : `${comment.path}:${comment.line}`));
-  return item;
-}
-
-function codeReviewPart(read: TriageView["codeReview"]): HTMLElement[] {
-  if ("error" in read) return [node("h3", "tb-subhead", "Code review"), node("p", "tb-warn", `Couldn't read the code review: ${read.error}`)];
-  const { review } = read;
-  if (!review) return [];
-  const head = node("h3", "tb-subhead");
-  head.append(link("Code review", review.url), ` by ${review.author}`);
-  const parts: HTMLElement[] = [head];
-  if (review.earlier) parts.push(node("p", "tb-meta", "For an earlier commit."));
-  if (review.comments.length) {
-    const list = node("ul", "tb-findings");
-    list.setAttribute("aria-label", "Code review comments");
-    list.append(...review.comments.map(findingLink));
-    parts.push(list);
-  }
-  return parts;
-}
+export type BlockHandlers = { openPanel(): void; rerun(): void };
 
 export type TriageBlock = { element: HTMLElement; render(view: TriageView | undefined, run: RunState | undefined): void };
 
 /**
- * Triage's section atop GitHub's pull request sidebar: the policy file, the score of the checks run here and each
- * check's result with its evidence.
+ * Triage's section atop GitHub's pull request sidebar, on every pull request: the score and state, the next step, the
+ * checks to look at in a line each, the policy file and what its verdict would do here.
  */
-export function triageBlock(handlers: { rerun(): void; openPanel(): void }): TriageBlock {
+export function triageBlock(handlers: BlockHandlers): TriageBlock {
   const element = node("section", "tb");
   element.setAttribute("aria-label", "Corbits Triage");
-  element.tabIndex = -1;
+  let shownPr: string | undefined;
+  // One live region for the block's whole life, so screen readers announce what is written into it.
+  const status = node("p", "tb-status");
+  status.setAttribute("role", "status");
+  const body = node("div", "tb-body");
+  element.append(body, status);
 
-  function head(view: TriageView | undefined, run: RunState | undefined): HTMLElement {
+  function head(): HTMLElement {
     const bar = node("div", "tb-head");
+    const open = node("button", "tb-icon-button");
+    open.type = "button";
+    open.setAttribute("aria-label", "Open Triage's side panel");
+    open.title = "Open the side panel";
+    open.append(icon("panel"));
+    open.addEventListener("click", handlers.openPanel);
     const title = node("h2", "tb-title");
     title.innerHTML = `<svg viewBox="32 115 437 270" aria-hidden="true"><path fill="currentColor" d="${CORBITS_MARK_PATH}"/></svg>`;
     title.append("Corbits Triage");
-    const { text, tone } = summaryOf(view, run);
-    const verdict = node("span", "tb-verdict", text);
-    verdict.dataset.tone = tone;
-    bar.append(title, verdict);
+    bar.append(title, open);
     return bar;
+  }
+
+  function score(view: TriageView | undefined, run: RunState | undefined): HTMLElement {
+    const box = node("div", "tb-score");
+    box.dataset.tone = view ? toneOf(view) : "unknown";
+    box.dataset.busy = String(run?.running === true);
+    const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    ring.setAttribute("viewBox", "0 0 32 32");
+    ring.setAttribute("class", "tb-ring");
+    ring.setAttribute("aria-hidden", "true");
+    const readiness = view ? readinessOf(view) : null;
+    const filled = readiness === null ? 0 : (RING_LENGTH * readiness) / 100;
+    ring.innerHTML = `<circle class="tb-ring-track" cx="16" cy="16" r="${RING_RADIUS}"/><circle class="tb-ring-fill" cx="16" cy="16" r="${RING_RADIUS}" transform="rotate(-90 16 16)" stroke-dasharray="${filled} ${RING_LENGTH}"/>`;
+    const number = node("span", "tb-number", readiness?.toString() ?? (run?.running ? "…" : "–"));
+    const dial = node("span", "tb-dial");
+    dial.append(ring, number);
+    const text = node("div", "tb-score-text");
+    const state = run?.running && !view ? "Running triage" : view ? stateName(view) : run?.error ? "Could not run" : "Not triaged yet";
+    text.append(node("b", "tb-state", state));
+    if (view) {
+      const next = node("p", "tb-next", nextStep(view));
+      next.title = nextStep(view);
+      text.append(next);
+    }
+    box.append(dial, text);
+    return box;
+  }
+
+  function warning(view: TriageView | undefined, run: RunState | undefined): HTMLElement[] {
+    if (run?.running && view) return [node("p", "tb-meta", "Running triage again…")];
+    if (!run?.error) return [];
+    return [node("p", "tb-warn", view ? `${run.error} Showing the run from ${clock(view.ranAt)}.` : run.error)];
+  }
+
+  function checks(view: TriageView): HTMLElement[] {
+    const shown = shownChecks(view);
+    const open = shown.filter((check) => check.result === "fail" || check.result === "unconfirmed");
+    const notRun = shown.filter((check) => check.result === "needs-judge").length;
+    const list = node("ul", "tb-checks");
+    list.setAttribute("aria-label", "Checks to look at");
+    for (const check of open) {
+      const item = node("li", "tb-check");
+      item.dataset.result = check.result;
+      const mark = node("span", "tb-mark");
+      mark.setAttribute("role", "img");
+      mark.setAttribute("aria-label", check.result === "fail" ? "Failed" : "Not settled");
+      mark.append(icon(check.result === "fail" ? "fail" : "unsure"));
+      const reason = checkReason(check);
+      const text = node("span", "tb-check-text");
+      text.title = `${check.name}: ${reason}`;
+      text.append(node("b", "", check.name), document.createTextNode(` ${reason}`));
+      item.append(mark, text);
+      list.append(item);
+    }
+    const passed = shown.filter((check) => check.result === "pass").length;
+    const parts: HTMLElement[] = open.length ? [list] : [];
+    if (passed) parts.push(node("p", "tb-meta", open.length ? `${passed} passed` : `All ${passed} checks passed`));
+    if (notRun) parts.push(node("p", "tb-meta", `${notRun} need the decision model, not run here`));
+    return parts;
+  }
+
+  function policyLine(view: TriageView): HTMLElement {
+    if (!view.policy) {
+      const guide = node("p", "tb-meta", `This repository has no ${POLICY_FILE_PATH} on its default branch, so there is nothing to check. `);
+      guide.append(link("How to write one", POLICY_GUIDE_URL), ".");
+      return guide;
+    }
+    const line = node("p", "tb-meta", "Policy: ");
+    line.append(link(view.policy.path, view.policy.url), " on the default branch");
+    return line;
+  }
+
+  /** What the policy's verdict would post and do here; Triage itself writes nothing from the extension. */
+  function verdictPart(view: TriageView): HTMLElement[] {
+    const { verdict } = view;
+    if (!verdict) return [];
+    const list = node("ul", "tb-does");
+    list.setAttribute("aria-label", "What the verdict would do");
+    if (verdict.labels.length) list.append(node("li", "", `Label ${verdict.labels.join(", ")}`));
+    if (verdict.comment) list.append(node("li", "", "Comment with the reasons"));
+    for (const action of verdict.actions) list.append(node("li", "", `${action.charAt(0).toUpperCase()}${action.slice(1)}`));
+    if (!list.childElementCount) list.append(node("li", "", "Nothing"));
+    return [node("h3", "tb-subhead", "The policy would"), list];
+  }
+
+  function findingLink(comment: PostedCodeReview["comments"][number]): HTMLElement {
+    const item = node("li", "tb-finding");
+    item.append(link(findingTitle(comment), comment.url), node("span", "tb-meta", comment.line === null ? `${comment.path} · outdated` : `${comment.path}:${comment.line}`));
+    return item;
+  }
+
+  function codeReviewPart(read: TriageView["codeReview"]): HTMLElement[] {
+    if ("error" in read) return [node("h3", "tb-subhead", "Code review"), node("p", "tb-warn", `Couldn't read the code review: ${read.error}`)];
+    const { review } = read;
+    if (!review) return [];
+    const head = node("h3", "tb-subhead");
+    head.append(link("Code review", review.url), ` by ${review.author}`);
+    const parts: HTMLElement[] = [head];
+    if (review.earlier) parts.push(node("p", "tb-meta", "For an earlier commit."));
+    if (review.comments.length) {
+      const list = node("ul", "tb-findings");
+      list.setAttribute("aria-label", "Code review comments");
+      list.append(...review.comments.map(findingLink));
+      parts.push(list);
+    }
+    return parts;
   }
 
   function foot(view: TriageView | undefined, run: RunState | undefined): HTMLElement {
     const row = node("div", "tb-foot");
-    const rerun = button(run?.running ? "Checking…" : "Check again", handlers.rerun);
+    const rerun = node("button", "tb-link", run?.running ? "Running…" : "Run again");
+    rerun.type = "button";
     rerun.disabled = run?.running === true;
-    row.append(rerun, button("Settings", handlers.openPanel));
-    if (view) row.append(node("span", "tb-meta", `Checked ${clock(view.ranAt)}`));
+    rerun.addEventListener("click", handlers.rerun);
+    row.append(rerun);
+    if (view) {
+      const copy = node("button", "tb-link", "Copy summary");
+      copy.type = "button";
+      copy.addEventListener("click", async function copySummary() {
+        try {
+          await navigator.clipboard.writeText(summaryMarkdown(view));
+          status.textContent = "Summary copied as Markdown.";
+        } catch (cause) {
+          status.textContent = errorText(cause);
+        }
+      });
+      row.append(copy);
+    }
     return row;
   }
 
   function render(view: TriageView | undefined, run: RunState | undefined) {
-    const parts: HTMLElement[] = [head(view, run)];
-    if (run?.error) parts.push(node("p", "tb-warn", view ? `${run.error} Showing the check from ${clock(view.ranAt)}.` : run.error));
-    if (view) {
-      parts.push(policyLine(view.policy));
-      if (view.paused !== undefined) parts.push(node("p", "tb-meta", `Paused: this pull request has the ${view.paused} label, so Triage leaves it alone.`));
-      else if (view.policy) parts.push(rulesList(view));
-      parts.push(...codeReviewPart(view.codeReview));
-    }
-    parts.push(foot(view, run));
-    element.replaceChildren(...parts);
+    const key = view && `${view.pr.repo}#${view.pr.number}`;
+    if (key !== shownPr) status.textContent = "";
+    shownPr = key;
+    const focused = (element.getRootNode() as Document | ShadowRoot).activeElement;
+    const refocus = focused instanceof HTMLElement && element.contains(focused) ? [...element.querySelectorAll("button, a")].indexOf(focused) : -1;
+    const checked = view?.policy && view.paused === undefined;
+    const details = view ? [policyLine(view), ...(checked ? [...checks(view), ...verdictPart(view)] : []), ...codeReviewPart(view.codeReview)] : [];
+    body.replaceChildren(head(), score(view, run), ...warning(view, run), ...details, foot(view, run));
+    if (refocus >= 0) element.querySelectorAll<HTMLElement>("button, a")[refocus]?.focus();
   }
 
   return { element, render };

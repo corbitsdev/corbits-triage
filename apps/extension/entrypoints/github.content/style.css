@@ -1,12 +1,14 @@
 /*
  * The parts Triage adds to GitHub's page follow GitHub's own theme: its colour variables reach into the shadow roots,
  * so light, dark and dimmed come for free, and its system font, since the Corbits fonts load only on extension pages.
- * The brand shows in the orange marks.
+ * The brand shows in the orange score ring and the tone marks.
  */
 :host {
   --triage-orange: #E98428;
   --triage-green: #7B9974;
   --triage-blue: #607C9A;
+  /* A merged pull request's dot: GitHub marks merged in purple; this is a quiet one beside the brand's colours. */
+  --triage-merged: #7D6F8F;
   --triage-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
   --triage-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --triage-focus: var(--focus-outlineColor, #0969da);
@@ -21,11 +23,18 @@ button {
   font-family: var(--triage-font);
 }
 
-:is(button, a[href], summary):not(:disabled) {
+/* Everything Triage adds that acts on a click shows it, once for every part; a control that cannot act says so. */
+:is(button,
+a[href],
+summary,
+[role="button"]):not(:disabled,
+[aria-disabled="true"]) {
   cursor: pointer;
 }
 
-button:disabled {
+:is(button,
+[role="button"]):is(:disabled,
+[aria-disabled="true"]) {
   cursor: not-allowed;
 }
 
@@ -34,59 +43,259 @@ button:disabled {
   outline-offset: 2px;
 }
 
-/* The tone dot, shared by the chip and the block's verdict. */
-:is(.chip, .tb-verdict)::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--fgColor-muted, #59636e);
-}
-
-:is(.chip, .tb-verdict)[data-tone="pass"]::before {
-  background: var(--triage-green);
-}
-
-:is(.chip, .tb-verdict)[data-tone="fail"]::before,
-:is(.chip, .tb-verdict)[data-tone="error"]::before {
-  background: var(--triage-orange);
-}
-
-:is(.chip, .tb-verdict)[data-tone="unsure"]::before {
-  background: var(--triage-blue);
-}
-
-:is(.chip, .tb-verdict)[data-tone="busy"]::before {
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
 /* Chip */
+
+.chip-wrap {
+  display: inline-block;
+  margin-inline-start: 12px;
+  vertical-align: middle;
+}
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 28px;
-  margin-inline-start: 12px;
-  padding: 0 12px 0 10px;
+  padding: 0 12px 0 8px;
   border: 1px solid var(--borderColor-default, #d1d9e0);
   border-radius: 999px;
   background: var(--bgColor-default, #ffffff);
   color: var(--fgColor-default, #1f2328);
   font: 500 13px/1 var(--triage-font);
-  vertical-align: middle;
+  transition: border-color 150ms ease-out;
 }
 
 .chip:hover {
   border-color: var(--triage-orange);
 }
 
-/* The sidebar block */
+.ring {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.ring-track {
+  stroke: var(--borderColor-default, #d1d9e0);
+}
+
+.ring-fill {
+  stroke: var(--triage-orange);
+  stroke-linecap: round;
+  stroke-dasharray: 0 40;
+  transition: stroke-dasharray 300ms ease-out;
+}
+
+.chip[data-busy="true"] .ring {
+  animation: spin 1.2s linear infinite;
+}
+
+.score {
+  min-width: 2ch;
+  font: 600 13px/1 var(--triage-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.state {
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  background: var(--fgColor-muted, #59636e);
+  vertical-align: 2px;
+}
+
+.chip[data-tone="ready"] .state::before {
+  background: var(--triage-green);
+}
+
+.chip[data-tone="merged"] .state::before,
+.tb-score[data-tone="merged"] .tb-state::before {
+  background: var(--triage-merged);
+}
+
+.chip[data-tone="closed"] .state::before,
+.tb-score[data-tone="closed"] .tb-state::before {
+  background: var(--fgColor-muted, #59636e);
+}
+
+.chip[data-tone="waiting"] .state::before {
+  background: var(--triage-blue);
+}
+
+.chip[data-tone="attention"] .state::before {
+  background: var(--fgColor-default, #1f2328);
+}
+
+.chip[data-stale="true"] .state {
+  color: var(--fgColor-muted, #59636e);
+}
+
+.chip[data-stale="true"] .state::before {
+  background: var(--fgColor-muted, #59636e);
+}
+
+/* Hover card: a popover in the top layer, placed under the chip by the script. */
+
+.card {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--borderColor-default, #d1d9e0);
+  border-radius: 12px;
+  background: var(--overlay-bgColor, var(--bgColor-default, #ffffff));
+  color: var(--fgColor-default, #1f2328);
+  box-shadow: var(--shadow-floating-small, 0 1px 3px rgb(31 35 40 / 0.12), 0 8px 24px rgb(66 74 83 / 0.12));
+  font: 400 13px/1.45 var(--triage-font);
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.card-score {
+  font: 700 20px/1 var(--triage-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-state {
+  font-weight: 600;
+}
+
+.card p,
+.card ul {
+  margin: 8px 0 0;
+}
+
+.card-next {
+  font-weight: 500;
+}
+
+.card-warn {
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bgColor-attention-muted, #fff8c5);
+  color: var(--fgColor-default, #1f2328);
+}
+
+.card-checks {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.card-checks li {
+  position: relative;
+  padding-inline-start: 14px;
+  overflow-wrap: anywhere;
+}
+
+.card-checks li::before {
+  content: "";
+  position: absolute;
+  top: 0.55em;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fgColor-default, #1f2328);
+}
+
+.card-checks b {
+  font-weight: 600;
+}
+
+.card-checks .card-more {
+  color: var(--fgColor-muted, #59636e);
+}
+
+.card-checks .card-more::before {
+  display: none;
+}
+
+.card-status {
+  color: var(--fgColor-muted, #59636e);
+  font-size: 12px;
+}
+
+.card-status:empty {
+  display: none;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--borderColor-muted, #d1d9e0b3);
+}
+
+.card-action {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--borderColor-default, #d1d9e0);
+  border-radius: 6px;
+  background: var(--button-default-bgColor-rest, var(--bgColor-muted, #f6f8fa));
+  color: var(--fgColor-default, #1f2328);
+  font: 500 12px/1 var(--triage-font);
+}
+
+.card-action:hover {
+  background: var(--button-default-bgColor-hover, var(--bgColor-neutral-muted, #eff2f5));
+}
+
+/* The chip's ring is the orange on GitHub's page, so the card's main action leads by weight. */
+.card-action[data-primary="true"] {
+  font-weight: 600;
+}
+
+.card-action:disabled {
+  opacity: 0.6;
+}
+
+/* The Corbits mark and name, as the sidebar block's header carries them. */
+.tb-title {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--fgColor-muted, #59636e);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tb-title svg {
+  width: 20px;
+  height: auto;
+  color: var(--fgColor-default, #1f2328);
+}
+
+/* The Triage block atop GitHub's pull request sidebar, laid out like GitHub's own sidebar sections. */
 
 .tb {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 16px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--borderColor-muted, #d1d9e0b3);
@@ -94,45 +303,192 @@ button:disabled {
   font: 400 12px/1.5 var(--triage-font);
 }
 
-.tb:focus {
-  outline: none;
+.tb-body {
+  display: grid;
+  gap: 12px;
 }
 
 .tb p,
 .tb h2,
 .tb h3,
-.tb ul,
-.tb pre {
+.tb ul {
   margin: 0;
 }
 
 .tb-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 4px 8px;
+  min-height: 24px;
 }
 
-.tb-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.tb-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tb-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-inline-end: -6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--fgColor-muted, #59636e);
-  font-size: 12px;
+}
+
+.tb-icon-button:hover {
+  background: var(--bgColor-neutral-muted, #eff2f5);
+  color: var(--fgColor-default, #1f2328);
+}
+
+.tb-score {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tb-dial {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+}
+
+.tb-ring {
+  position: absolute;
+  inset: 0;
+  width: 40px;
+  height: 40px;
+}
+
+.tb-ring circle {
+  fill: none;
+  stroke-width: 3;
+}
+
+.tb-ring-track {
+  stroke: var(--borderColor-default, #d1d9e0);
+}
+
+.tb-ring-fill {
+  stroke: var(--triage-orange);
+  stroke-linecap: round;
+  transition: stroke-dasharray 300ms ease-out;
+}
+
+.tb-score[data-busy="true"] .tb-ring {
+  animation: spin 1.2s linear infinite;
+}
+
+.tb-number {
+  font: 700 14px/1 var(--triage-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tb-score-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.tb-state {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tb-state::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  background: var(--fgColor-muted, #59636e);
+  vertical-align: 1px;
+}
+
+.tb-score[data-tone="ready"] .tb-state::before {
+  background: var(--triage-green);
+}
+
+.tb-score[data-tone="waiting"] .tb-state::before {
+  background: var(--triage-blue);
+}
+
+.tb-score[data-tone="attention"] .tb-state::before {
+  background: var(--fgColor-default, #1f2328);
+}
+
+.tb-next {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.tb-checks {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.tb-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.tb-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 18px;
+  flex: none;
+  color: var(--fgColor-muted, #59636e);
+}
+
+.tb-check[data-result="fail"] .tb-mark {
+  color: var(--fgColor-default, #1f2328);
+}
+
+.tb-check[data-result="fail"] .tb-icon {
+  stroke-width: 2;
+}
+
+.tb-check-text {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fgColor-muted, #59636e);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.tb-check-text b {
+  color: var(--fgColor-default, #1f2328);
   font-weight: 600;
 }
 
-.tb-title svg {
-  width: 16px;
-  height: 10px;
-  color: var(--triage-orange);
-}
-
-.tb-verdict {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.tb-subhead {
+  margin-top: 4px;
+  color: var(--fgColor-muted, #59636e);
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -140,82 +496,15 @@ button:disabled {
   color: var(--fgColor-muted, #59636e);
 }
 
-.tb a {
-  color: var(--fgColor-accent, #0969da);
-}
-
-.tb-rules {
-  display: grid;
-  gap: 6px;
-  padding: 0;
-  list-style: none;
-}
-
-.tb-rule {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0 8px;
-}
-
-.tb-rule b {
-  font-weight: 600;
-}
-
-.tb-reason {
-  grid-column: 2;
-  color: var(--fgColor-muted, #59636e);
-  overflow-wrap: anywhere;
-}
-
-.tb-state {
-  grid-row: span 2;
-  min-width: 56px;
-  color: var(--fgColor-muted, #59636e);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.tb-rule[data-state="pass"] .tb-state {
-  color: var(--fgColor-success, #1a7f37);
-}
-
-.tb-rule[data-state="fail"] .tb-state {
-  color: var(--fgColor-danger, #d1242f);
-}
-
-.tb-rule[data-state="waiting"] .tb-state {
-  color: var(--fgColor-attention, #9a6700);
-}
-
-.tb-findings {
-  display: grid;
-  gap: 6px;
-  padding: 0;
-  list-style: none;
-}
-
-.tb-finding {
-  display: grid;
-  overflow-wrap: anywhere;
-}
-
-.tb-subhead {
-  color: var(--fgColor-muted, #59636e);
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .tb-warn {
   padding: 8px;
   border-radius: 6px;
   background: var(--bgColor-attention-muted, #fff8c5);
-  overflow-wrap: anywhere;
 }
 
 .tb-foot {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
   gap: 4px 16px;
 }
 
@@ -234,6 +523,31 @@ button:disabled {
 .tb-link:disabled {
   color: var(--fgColor-muted, #59636e);
   text-decoration: none;
+}
+
+.tb-status:empty {
+  display: none;
+}
+
+.tb-status {
+  color: var(--fgColor-muted, #59636e);
+}
+
+.tb a {
+  color: var(--fgColor-accent, #0969da);
+}
+
+.tb-findings,
+.tb-does {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.tb-finding {
+  display: grid;
+  overflow-wrap: anywhere;
 }
 
 /* A file's marker in the Files tab's header. */
@@ -261,12 +575,19 @@ button:disabled {
   font-family: var(--triage-mono);
 }
 
-@keyframes pulse {
-  50% { opacity: 0.3; }
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :is(.chip, .tb-verdict)[data-tone="busy"]::before {
+  .chip[data-busy="true"] .ring,
+  .tb-score[data-busy="true"] .tb-ring {
     animation: none;
+  }
+
+  .ring-fill,
+  .tb-ring-fill,
+  .chip {
+    transition: none;
   }
 }

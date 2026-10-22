@@ -22,18 +22,21 @@ function readOnly(writes: string[]) {
 test("the definition settles the checks without the model and writes nothing", async () => {
   const writes: string[] = [];
   const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 1 }, focused: { enabled: true } } };
-  const { rules } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
-  const byId = Object.fromEntries(rules.map((rule) => [rule.check, rule]));
-  expect(byId["max-files-changed"]).toMatchObject({ kind: "machine", state: "fail", evidence: ["2 files (max 1)"] });
-  expect(byId["focused"]).toMatchObject({ kind: "model", state: "not-run" });
+  const { checks, verdict } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
+  const byId = Object.fromEntries(checks.map((check) => [check.check, check]));
+  expect(byId["max-files-changed"]).toMatchObject({ kind: "machine", result: "fail", evidence: ["2 files (max 1)"] });
+  expect(byId["focused"]).toMatchObject({ kind: "model", result: "needs-judge" });
+  // A failed rule decides Fail without the model.
+  expect(verdict?.verdict).toBe("fail");
   expect(writes).toEqual([]);
 });
 
 test("a policy whose checks all pass still reaches the judge's branch and fails closed there", async () => {
   const writes: string[] = [];
   const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 30 }, docs: { enabled: true } } };
-  const { rules } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
-  expect(rules.filter((rule) => rule.kind === "machine").every((rule) => rule.state === "pass")).toBe(true);
-  expect(rules.find((rule) => rule.check === "docs")?.state).toBe("not-run");
+  const { checks, verdict } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
+  expect(checks.filter((check) => check.kind === "machine").every((check) => check.result === "pass")).toBe(true);
+  expect(checks.find((check) => check.check === "docs")?.result).toBe("needs-judge");
+  expect(verdict).toBeUndefined();
   expect(writes).toEqual([]);
 });

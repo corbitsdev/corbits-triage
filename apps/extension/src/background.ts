@@ -37,7 +37,7 @@ async function triage({ pr, mode }: Triage): Promise<null> {
   try {
     const token = await githubToken.getValue();
     const cache = mode === "refetch" ? "no-cache" : "default";
-    const api = { gh: sessionGithub(await browserSession(pr, cache), token ? githubApi(token, cache).gh : null) };
+    const api = { gh: sessionGithub(await browserSession(pr, cache), githubApi(token, cache).gh) };
     const pull = await pullOf(api, pr);
     if (!(mode === "if-stale" && isFresh(saved) && pull.headSha === saved.headSha)) {
       await saveView(await checkPr(api, pr, pull, await policyFor(api, pr.repo, mode === "refetch")));

@@ -177,7 +177,7 @@ function stepRuns(step: Step): string {
   return canonical({ ...step, when: { ...step.when, author: sorted(step.when.author), ci: sorted(step.when.ci) } });
 }
 
-const STEP_WORDS: Record<Step["do"], string> = {
+export const STEP_WORDS: Record<Step["do"], string> = {
   approve: "approve",
   merge: "merge",
   close: "close",
@@ -294,7 +294,7 @@ function customDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[
   });
 }
 
-const VERDICT_RULES: Record<VerdictWord, string> = { pass: "When it passes", fail: "When it fails", unsure: "When Triage is unsure" };
+export const VERDICT_RULES: Record<VerdictWord, string> = { pass: "When it passes", fail: "When it fails", unsure: "When Triage is unsure" };
 
 /** Whom a review request or assignment goes to, in words. */
 export function people(target: PeopleTarget): string {
@@ -327,7 +327,7 @@ function targetWords(step: Step): string {
 }
 
 /** A step as its words: the action, what it acts on, and whom it is for. */
-function stepWords(step: Step): string {
+export function stepWords(step: Step): string {
   const author = step.when?.author;
   const words = `${STEP_WORDS[step.do]}${targetWords(step)}`;
   return author?.length ? `${words} for ${authorGroups(author).join(", ")}` : words;

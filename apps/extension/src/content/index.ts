@@ -6,7 +6,7 @@ import type { FileNote } from "../notes.ts";
 import { prFromUrl, prKey, type PrRef } from "../pr.ts";
 import { runStates, views, type RunState } from "../storage.ts";
 import type { TriageView } from "../view.ts";
-import { verdictChip } from "./chip.ts";
+import { scoreChip } from "./chip.ts";
 import { fileMarker, markLines, noteAnchor, onFilesTab, type FileMarker } from "./file-notes.ts";
 import { answerSessionReads } from "./session-answers.ts";
 import { triageBlock } from "./triage-block.ts";
@@ -46,10 +46,7 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
       send({ type: "open-panel" });
     },
   });
-  const chip = verdictChip(function showBlock() {
-    block.element.scrollIntoView({ block: "nearest" });
-    block.element.focus({ preventScroll: true });
-  });
+  const chip = scoreChip();
 
   async function shadow(name: string, anchor: () => Element | null, append: "after" | "first", content: HTMLElement, className?: string) {
     return createShadowRootUi(ctx, {
@@ -125,7 +122,7 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
   function render() {
     if (!current) return;
     const key = prKey(current);
-    chip.render(view(), allStates[key]);
+    chip.render(current, view(), allStates[key]);
     block.render(view(), allStates[key]);
     keepMounted();
   }

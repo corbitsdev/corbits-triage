@@ -38,10 +38,10 @@ function signedIn(unreadable: RegExp | null): Session {
 const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 1 }, "hidden-content": { enabled: true }, "ci-green": { enabled: true } } };
 
 test("a private pull request is checked through the session with no token, whole commit messages included", async () => {
-  const { rules } = await runChecks({ repo: PR.repo, number: PR.number }, sessionGithub(signedIn(null), null), pack);
-  const byId = Object.fromEntries(rules.map((rule) => [rule.check, rule]));
-  expect(byId["max-files-changed"]).toMatchObject({ state: "fail", evidence: ["2 files (max 1)"] });
-  expect(byId["hidden-content"]?.state).toBe("fail");
+  const { checks } = await runChecks({ repo: PR.repo, number: PR.number }, sessionGithub(signedIn(null), null), pack);
+  const byId = Object.fromEntries(checks.map((check) => [check.check, check]));
+  expect(byId["max-files-changed"]).toMatchObject({ result: "fail", evidence: ["2 files (max 1)"] });
+  expect(byId["hidden-content"]?.result).toBe("fail");
 });
 
 test("a fact the session cannot read, with no token, leaves the pull request unchecked rather than passed", async () => {
