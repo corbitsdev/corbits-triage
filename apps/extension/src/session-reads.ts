@@ -12,6 +12,7 @@ import { parseDiff, type DiffFile } from "./session/diff.ts";
 export type Session = { page(path: string): Promise<string | null>; site(url: string): Promise<Response> };
 
 const FILES = /^\/repos\/([\w.-]+\/[\w.-]+)\/pulls\/(\d+)\/files$/;
+const PULL = /^\/repos\/[\w.-]+\/[\w.-]+\/pulls\/\d+$/;
 const COMMITS = /^\/repos\/([\w.-]+\/[\w.-]+)\/pulls\/(\d+)\/commits$/;
 const CONTENTS = /^\/repos\/([\w.-]+\/[\w.-]+)\/contents\/(.+)$/;
 const ROOT = /^\/repos\/([\w.-]+\/[\w.-]+)\/contents$/;
@@ -118,7 +119,10 @@ export function sessionGithub(session: Session, fallback: GithubFetch | null): G
     if (file) return contents(path, file[1]!, file[2]!, searchParams.get("ref"));
     if (ROOT.test(pathname)) return folder(path);
     const body = await session.page(path);
-    return body === null ? null : new Response(body, { headers: { "content-type": "application/json" } });
+    if (body === null) return null;
+    // The page gives the description as written, not GitHub's rendering of it, which hidden-content reads.
+    if (PULL.test(pathname) && !("body_html" in JSON.parse(body))) throw new Error(`github.com gives no rendered description for ${path}`);
+    return new Response(body, { headers: { "content-type": "application/json" } });
   }
 
   async function record(path: string): Promise<Recorded | null> {

@@ -1,5 +1,5 @@
 import type { GithubFetch } from "@corbits/github-reads";
-import { checkName, classificationSources, STEP_WORDS, stepWords, VERDICT_RULES, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, isModelCheck, QUALITY_CHECK_IDS, STEP_WORDS, stepWords, VERDICT_RULES, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-workflows/actions/index";
 import type { RulesOutput } from "@corbits/triage-workflows/actions/rules";
 import { credentialBindings } from "@corbits/triage-workflows/agents";
@@ -30,8 +30,12 @@ function servedBy(gh: GithubFetch) {
   };
 }
 
-function notRun(pack: CheckPack, id: string): ViewCheck {
-  return { check: id, name: checkName(pack, id), kind: "model", result: "needs-judge", reason: "Needs the decision model, which is not run here.", evidence: [], output: { kind: "could-not-check", reason: "not run here" } };
+const QUALITY = new Set<string>(QUALITY_CHECK_IDS);
+
+/** Only the rules run here: the checks a model answers are left out, so the verdict comes from the rules alone. */
+function rulesOnly(pack: CheckPack): CheckPack {
+  const checks = Object.fromEntries(Object.entries(pack.checks).map(([id, row]) => [id, QUALITY.has(id) ? { ...row, enabled: false } : row]));
+  return { ...pack, checks, custom: pack.custom.filter((check) => !isModelCheck(check)) };
 }
 
 function verdictOf({ verdict, state, reason, nextAction, labels, request, actions }: Verdict): ViewVerdict {
@@ -47,18 +51,17 @@ export function plansOf(pack: CheckPack): VerdictPlan[] {
 export type CheckRun = { headSha: string; checks: ViewCheck[]; notes: FileNote[]; verdict?: ViewVerdict };
 
 /**
- * pr-triage's definition on one pull request, run by Interchange's local runner over read-only GitHub reads. Its rules
- * step settles every check that needs no model; the model checks are listed as not run here. With none, the run goes
- * on to the verdict and what the policy would do on it, writing nothing.
+ * pr-triage's definition on one pull request, run by Interchange's local runner over read-only GitHub reads, with the
+ * policy's rules only: the run settles them, then the verdict and what the policy would do on it, writing nothing.
  */
-export async function runChecks(pr: PrRef, gh: GithubFetch, pack: CheckPack): Promise<CheckRun> {
+export async function runChecks(pr: PrRef, gh: GithubFetch, policyPack: CheckPack): Promise<CheckRun> {
+  const pack = rulesOnly(policyPack);
   const body = (workflow.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the pr-triage body is not inline");
   let run: WorkflowRun | undefined;
-  // An agent step comes only after the rules step has settled every other check, so the run stops there, failing
-  // closed rather than answering without the model, and is not left to retry it.
+  // With the model checks left out no agent step is reached; should one be, the run stops rather than answer without it.
   const noAgents: StepInvoker = async function noAgents(req) {
-    await run?.cancel("self", "model checks are not run in the extension");
+    await run?.cancel("self", "agent steps are not run in the extension");
     throw new Error(`${req.agent.id} is not run in the extension`);
   };
   run = runLocal(body.inline, {
@@ -75,9 +78,7 @@ export async function runChecks(pr: PrRef, gh: GithubFetch, pack: CheckPack): Pr
   if (!item) throw new Error("Triage could not read this pull request.");
   if (item.error !== undefined) throw new Error(item.error);
   const checks = [...item.det.checks, ...(item.det.labelled?.checks ?? [])];
-  const { quality, custom } = classificationSources(pack);
-  const models = [...quality.map((check) => check.id), ...custom.map((check) => check.id)];
   const named = checks.map((check) => ({ ...check, name: checkName(pack, check.check) }));
   const evaluated = outputs["evaluateRules"] as Verdict | undefined;
-  return { headSha: item.facts.headSha, checks: [...named, ...models.map((id) => notRun(pack, id))], notes: fileNotes(named), ...(evaluated ? { verdict: verdictOf(evaluated) } : {}) };
+  return { headSha: item.facts.headSha, checks: named, notes: fileNotes(named), ...(evaluated ? { verdict: verdictOf(evaluated) } : {}) };
 }

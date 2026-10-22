@@ -5,8 +5,7 @@ import type { Verdict } from "@corbits/triage-workflows/logic/render";
 import type { FileNote } from "./notes.ts";
 import type { PrRef } from "./pr.ts";
 
-/** `needs-judge` is a model check, which is not run here. */
-export type ViewCheck = Omit<CheckResult, "result"> & { name: string; result: CheckResult["result"] | "needs-judge" };
+export type ViewCheck = CheckResult & { name: string };
 
 /** What the policy's verdict would do on this pull request: the labels and comment it posts and the actions it takes. */
 export type ViewVerdict = Pick<Verdict, "verdict" | "state" | "reason" | "nextAction" | "labels"> & { comment: string; actions: string[] };
@@ -24,7 +23,7 @@ export type TriageView = {
   paused?: string;
   checks: ViewCheck[];
   notes: FileNote[];
-  /** Decided only when no check needs the decision model, which is not run here. */
+  /** Absent when the run could not reach one. */
   verdict?: ViewVerdict;
   plans: VerdictPlan[];
   /** The newest code review the App sent to the pull request, read from GitHub, or why it could not be read. */
@@ -34,13 +33,12 @@ export type TriageView = {
 /** A pull request opened again within this long reuses its last run. */
 export const FRESH_MS = 10 * 60 * 1000;
 
-const READINESS: Record<ViewCheck["result"], number> = { pass: 1, unconfirmed: 0.5, "needs-judge": 0.5, fail: 0 };
+const READINESS: Record<ViewCheck["result"], number> = { pass: 1, unconfirmed: 0.5, fail: 0 };
 
 /** The hub's readiness over the checks run here: pass counts 1, unconfirmed half and fail 0; null with none. */
 export function readinessOf(view: TriageView): number | null {
-  const run = view.checks.filter((check) => check.result !== "needs-judge");
-  if (!run.length) return null;
-  return Math.round((run.reduce((sum, check) => sum + READINESS[check.result], 0) / run.length) * 100);
+  if (!view.checks.length) return null;
+  return Math.round((view.checks.reduce((sum, check) => sum + READINESS[check.result], 0) / view.checks.length) * 100);
 }
 
 export type Tone = "ready" | "waiting" | "attention" | "unknown";
@@ -51,7 +49,7 @@ const TONES: Record<VerdictWord, Tone> = { pass: "ready", unsure: "waiting", fai
 export function stateName(view: TriageView): string {
   if (!view.policy) return "No policy";
   if (view.paused !== undefined) return "Paused";
-  return view.verdict ? VERDICT_NAMES[view.verdict.verdict] : "Needs the model";
+  return view.verdict ? VERDICT_NAMES[view.verdict.verdict] : "No verdict";
 }
 
 export function toneOf(view: TriageView): Tone {
@@ -61,5 +59,5 @@ export function toneOf(view: TriageView): Tone {
 export function nextStep(view: TriageView): string {
   if (!view.policy) return "This repository has no policy file, so there is nothing to check.";
   if (view.paused !== undefined) return `This pull request has the ${view.paused} label, so Triage leaves it alone.`;
-  return view.verdict?.nextAction ?? "Some checks need the decision model, which is not run here, so no verdict is given.";
+  return view.verdict?.nextAction ?? "The checks below are what ran here.";
 }

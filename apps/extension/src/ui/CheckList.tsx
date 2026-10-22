@@ -1,10 +1,10 @@
 import { citationOf, citationUrl } from "@corbits/triage-contracts";
-import { Check, ChevronRight, CircleHelp, Minus, X } from "lucide-react";
+import { Check, ChevronRight, CircleHelp, X } from "lucide-react";
 import { useState } from "react";
 import { checkReason, RESULT_NAMES, shownChecks } from "../summary.ts";
 import type { TriageView, ViewCheck } from "../view.ts";
 
-const MARKS: Record<ViewCheck["result"], typeof Check> = { pass: Check, fail: X, unconfirmed: CircleHelp, "needs-judge": Minus };
+const MARKS: Record<ViewCheck["result"], typeof Check> = { pass: Check, fail: X, unconfirmed: CircleHelp };
 
 // Past this many, a check's evidence shows its first few and how many more.
 const EVIDENCE_SHOWN = 6;
@@ -36,7 +36,6 @@ function CheckRow({ check, view, expanded }: CheckListProps & { check: ViewCheck
         <span className="check-name">{check.name}</span>
         <span className="check-reason">{checkReason(check)}</span>
       </span>
-      <span className="kind" title={check.kind === "model" ? "Needs the decision model" : "Computed from GitHub data"}>{check.kind === "model" ? "model" : "rule"}</span>
     </>
   );
 
@@ -60,14 +59,13 @@ function CheckRow({ check, view, expanded }: CheckListProps & { check: ViewCheck
   );
 }
 
-type Group = { id: "fail" | "unsure" | "not-run" | "pass"; title: string; checks: ViewCheck[] };
+type Group = { id: "fail" | "unsure" | "pass"; title: string; checks: ViewCheck[] };
 
 function groupsOf(view: TriageView): Group[] {
   const shown = shownChecks(view);
   const groups: Group[] = [
     { id: "fail", title: "Failing", checks: shown.filter((check) => check.result === "fail") },
     { id: "unsure", title: "Unsure", checks: shown.filter((check) => check.result === "unconfirmed") },
-    { id: "not-run", title: "Not run here", checks: shown.filter((check) => check.result === "needs-judge") },
     { id: "pass", title: "Passed", checks: shown.filter((check) => check.result === "pass") },
   ];
   return groups.filter((group) => group.checks.length > 0);
@@ -93,7 +91,7 @@ function CheckGroup({ group, view, expanded }: CheckListProps & { group: Group }
   );
 }
 
-/** The run's checks grouped failing, unsure, not run here and passed; each opens to its evidence. */
+/** The run's checks grouped failing, unsure and passed; each opens to its evidence. */
 export function CheckList({ view, expanded }: CheckListProps) {
   const groups = groupsOf(view);
   if (!groups.length) return <p className="hint">The policy turns on no checks.</p>;

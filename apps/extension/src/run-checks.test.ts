@@ -25,18 +25,17 @@ test("the definition settles the checks without the model and writes nothing", a
   const { checks, verdict } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
   const byId = Object.fromEntries(checks.map((check) => [check.check, check]));
   expect(byId["max-files-changed"]).toMatchObject({ kind: "machine", result: "fail", evidence: ["2 files (max 1)"] });
-  expect(byId["focused"]).toMatchObject({ kind: "model", result: "needs-judge" });
-  // A failed rule decides Fail without the model.
+  expect(byId["focused"]).toBeUndefined();
   expect(verdict?.verdict).toBe("fail");
   expect(writes).toEqual([]);
 });
 
-test("a policy whose checks all pass still reaches the judge's branch and fails closed there", async () => {
+test("model checks are left out, so passing rules reach a verdict from the rules alone", async () => {
   const writes: string[] = [];
   const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 30 }, docs: { enabled: true } } };
   const { checks, verdict } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
   expect(checks.filter((check) => check.kind === "machine").every((check) => check.result === "pass")).toBe(true);
-  expect(checks.find((check) => check.check === "docs")?.result).toBe("needs-judge");
-  expect(verdict).toBeUndefined();
+  expect(checks.find((check) => check.check === "docs")).toBeUndefined();
+  expect(verdict?.verdict).toBe("pass");
   expect(writes).toEqual([]);
 });

@@ -103,8 +103,7 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
 
   function checks(view: TriageView): HTMLElement[] {
     const shown = shownChecks(view);
-    const open = shown.filter((check) => check.result === "fail" || check.result === "unconfirmed");
-    const notRun = shown.filter((check) => check.result === "needs-judge").length;
+    const open = shown.filter((check) => check.result !== "pass");
     const list = node("ul", "tb-checks");
     list.setAttribute("aria-label", "Checks to look at");
     for (const check of open) {
@@ -124,7 +123,6 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
     const passed = shown.filter((check) => check.result === "pass").length;
     const parts: HTMLElement[] = open.length ? [list] : [];
     if (passed) parts.push(node("p", "tb-meta", open.length ? `${passed} passed` : `All ${passed} checks passed`));
-    if (notRun) parts.push(node("p", "tb-meta", `${notRun} need the decision model, not run here`));
     return parts;
   }
 
