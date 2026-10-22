@@ -32,12 +32,12 @@ The policy is `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the reposit
 request's own head is never read for it, so a pull request cannot change the rules it is checked by. The file is kept
 for 10 minutes, then revalidated by ETag; files over 64 KB are refused.
 
-The block at the top of GitHub's sidebar shows a score dial (the hub's readiness over the checks run here), Pass when
-every check run here passed or Fail when any failed (whatever the rule's `onFail`), Checks running while CI is
-pending, with how many passed or failed, the checks to look at and a
-link to the policy file. A chip beside the title repeats the score and, on hover, the failing checks. The side panel
-shows the score card, the checks grouped Failing, Not settled and Passed with their evidence, and, for reference, what the
-policy does on each verdict. The Files tab marks the files and lines a failing check cites. Only the policy's rules
+A status beside the title shows a ring that spins while Triage runs, then turns green with Pass when every check run
+here passed or red with Fail when any failed, whatever the rule's `onFail`. While only CI is still running it says
+Checks running; anything else not settled yet, such as mergeability GitHub has not worked out, is Not settled. The
+block at the top of GitHub's sidebar shows the reasons: each failed check with its reason, or how many passed, and
+Triage again. The side panel shows the score, the checks grouped Failing, Not settled and Passed with their evidence,
+and a link to the policy file. The Files tab marks the files and lines a failing check cites. Only the policy's rules
 run here; its judgement rules are not run.
 
 When the repository has no policy file, the block says so and links to how to write one. When the pull request carries
@@ -54,6 +54,8 @@ by a GitHub App's bot account, which the account name shows.
   github.com's page data, not a published API, so a read GitHub changes or cuts short (a long timeline, say) is not
   guessed at: it goes to the REST API when a token is saved, and otherwise the block says what could not be read and
   checks nothing.
+- Without a token, a pull request with a merge commit is not checked: a merge commit is left out of its `.patch`, so its
+  message cannot be read; the block says so, and saving a token fixes it.
 - A saved token is optional. A fine-grained token with read-only access to public repositories is enough; private
   repositories need read access to their contents and pull requests. Cookies and the token never leave the browser:
   the session reads go only to github.com and the token only to api.github.com.

@@ -1,5 +1,5 @@
 import type { GithubFetch } from "@corbits/github-reads";
-import { checkName, isModelCheck, QUALITY_CHECK_IDS, stepWords, VERDICT_RULES, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, isModelCheck, QUALITY_CHECK_IDS, type CheckPack } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-workflows/actions/index";
 import type { RulesOutput } from "@corbits/triage-workflows/actions/rules";
 import { credentialBindings } from "@corbits/triage-workflows/agents";
@@ -8,7 +8,7 @@ import { workflow } from "@corbits/triage-workflows/pr-triage-github";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker, type WorkflowAuthorizeFn, type WorkflowRun } from "@intx/workflow";
 import { fileNotes, type FileNote } from "./notes.ts";
 import type { PrRef } from "./pr.ts";
-import type { VerdictPlan, ViewCheck } from "./view.ts";
+import type { ViewCheck } from "./view.ts";
 
 /** The trigger grants no action and every GitHub request but a read is refused, so the run can only read. */
 const allow: WorkflowAuthorizeFn = async function allow() {
@@ -35,11 +35,6 @@ const QUALITY = new Set<string>(QUALITY_CHECK_IDS);
 function rulesOnly(pack: CheckPack): CheckPack {
   const checks = Object.fromEntries(Object.entries(pack.checks).map(([id, row]) => [id, QUALITY.has(id) ? { ...row, enabled: false } : row]));
   return { ...pack, checks, custom: pack.custom.filter((check) => !isModelCheck(check)) };
-}
-
-/** The policy's steps on each verdict, in words. */
-export function plansOf(pack: CheckPack): VerdictPlan[] {
-  return VERDICTS.map((verdict) => ({ verdict, when: VERDICT_RULES[verdict], steps: pack.actions[verdict].map(stepWords) }));
 }
 
 export type CheckRun = { headSha: string; checks: ViewCheck[]; notes: FileNote[] };

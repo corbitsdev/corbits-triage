@@ -63,7 +63,6 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
   }
 
   function warning(view: TriageView | undefined, run: RunState | undefined): HTMLElement[] {
-    if (run?.running) return [node("p", "tb-meta", "Triaging…")];
     if (!run?.error) return [];
     return [node("p", "tb-warn", view ? `${run.error} Showing the run from ${clock(view.ranAt)}.` : run.error)];
   }

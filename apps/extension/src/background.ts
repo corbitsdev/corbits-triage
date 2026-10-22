@@ -4,7 +4,7 @@ import { GITHUB_API, githubApi } from "./github-api.ts";
 import type { Reply, Request } from "./messages.ts";
 import { policyFor } from "./policy-source.ts";
 import { prKey } from "./pr.ts";
-import { browserSession, sessionGithub } from "./session-reads.ts";
+import { browserSession, sessionGithub, type SessionReads } from "./session-reads.ts";
 import { openPanelOnActionClick, openSidePanel } from "./side-panel.ts";
 import { clearRunning, githubToken, policyFiles, runStates, saveView, setRunState, tokenSaved, views } from "./storage.ts";
 import { FRESH_MS, type TriageView } from "./view.ts";
@@ -34,17 +34,20 @@ function isFresh(view: TriageView | undefined): view is TriageView {
 async function triage({ pr, mode }: Triage): Promise<null> {
   const saved = (await views.getValue())[prKey(pr)];
   await setRunState(pr, { running: true });
+  let reads: SessionReads | undefined;
   try {
     const token = await githubToken.getValue();
     const cache = mode === "refetch" ? "no-cache" : "default";
-    const api = { gh: sessionGithub(await browserSession(pr, cache), token ? githubApi(token, cache).gh : null) };
+    reads = sessionGithub(await browserSession(pr, cache), token ? githubApi(token, cache).gh : null);
+    const api = { gh: reads.gh };
     const pull = await pullOf(api, pr);
     if (!(mode === "if-stale" && isFresh(saved) && pull.headSha === saved.headSha)) {
       await saveView(await checkPr(api, pr, pull, await policyFor(api, pr.repo, mode === "refetch")));
     }
     await setRunState(pr, { running: false });
   } catch (cause) {
-    await setRunState(pr, { running: false, error: errorText(cause) });
+    // The workflow names only which read failed; the session knows why.
+    await setRunState(pr, { running: false, error: reads?.missed()[0] ?? errorText(cause) });
   }
   return null;
 }

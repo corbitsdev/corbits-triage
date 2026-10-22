@@ -1,13 +1,9 @@
 import type { PostedCodeReview } from "@corbits/github-reads";
-import type { VerdictWord } from "@corbits/triage-contracts";
 import type { CheckResult } from "@corbits/triage-workflows/logic/checks";
 import type { FileNote } from "./notes.ts";
 import type { PrRef } from "./pr.ts";
 
 export type ViewCheck = CheckResult & { name: string };
-
-/** What the policy does on each verdict, as its steps in words. */
-export type VerdictPlan = { verdict: VerdictWord; when: string; steps: string[] };
 
 export type TriageView = {
   pr: PrRef;
@@ -19,7 +15,6 @@ export type TriageView = {
   paused?: string;
   checks: ViewCheck[];
   notes: FileNote[];
-  plans: VerdictPlan[];
   /** The newest code review the App sent to the pull request, read from GitHub, or why it could not be read. */
   codeReview: { review: PostedCodeReview | null } | { error: string };
 };
@@ -37,17 +32,22 @@ export function readinessOf(view: TriageView): number | null {
 
 export type Tone = "ready" | "waiting" | "attention" | "unknown";
 
-/** Strictly from the checks run here: any failed is Fail, all passed is Pass, and one not settled yet (CI) is running. */
-export type Outcome = "pass" | "fail" | "running" | "none";
+/**
+ * Strictly from the checks run here: any failed is Fail and all passed is Pass. Otherwise CI still running is running,
+ * and anything else not settled yet, such as mergeability GitHub has not worked out, is unsettled; neither is a Pass.
+ */
+export type Outcome = "pass" | "fail" | "running" | "unsettled" | "none";
 
 export function outcomeOf(checks: readonly ViewCheck[]): Outcome {
   if (!checks.length) return "none";
   if (checks.some((check) => check.result === "fail")) return "fail";
-  return checks.some((check) => check.result === "unconfirmed") ? "running" : "pass";
+  const open = checks.filter((check) => check.result === "unconfirmed");
+  if (!open.length) return "pass";
+  return open.every((check) => check.check === "ci-green") ? "running" : "unsettled";
 }
 
-const OUTCOME_NAMES: Record<Outcome, string> = { pass: "Pass", fail: "Fail", running: "Checks running", none: "Not checked" };
-const TONES: Record<Outcome, Tone> = { pass: "ready", fail: "attention", running: "waiting", none: "unknown" };
+const OUTCOME_NAMES: Record<Outcome, string> = { pass: "Pass", fail: "Fail", running: "Checks running", unsettled: "Not settled", none: "Not checked" };
+const TONES: Record<Outcome, Tone> = { pass: "ready", fail: "attention", running: "waiting", unsettled: "unknown", none: "unknown" };
 
 export function stateName(view: TriageView): string {
   if (!view.policy) return "No policy";
@@ -73,7 +73,9 @@ export function nextStep(view: TriageView): string {
     case "fail":
       return `${countOf(checks, "fail")} of ${checks.length} checks failed`;
     case "running":
-      return `${countOf(checks, "unconfirmed")} of ${checks.length} checks still running`;
+      return "CI is still running";
+    case "unsettled":
+      return `${countOf(checks, "unconfirmed")} of ${checks.length} checks not settled yet`;
     case "none":
       return "There is nothing to check on this pull request.";
   }

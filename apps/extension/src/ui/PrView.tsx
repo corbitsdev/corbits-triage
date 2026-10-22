@@ -36,16 +36,12 @@ function RunFailed({ view, state }: { view: TriageView | undefined; state: RunSt
   );
 }
 
-/** The policy file and what it does on each verdict. */
 function PolicyPart({ view }: { view: TriageView }) {
   if (!view.policy) return <p className="hint">This repository has no policy file on its default branch, so there is nothing to check.</p>;
   return (
     <section className="part" aria-labelledby="policy-head">
       <h2 id="policy-head">Policy</h2>
       <p className="hint"><a href={view.policy.url} target="_blank" rel="noreferrer">{view.policy.path}</a> on the default branch</p>
-      <dl className="facts">
-        {view.plans.map((plan) => <div key={plan.verdict}><dt>{plan.when}</dt><dd>{plan.steps.length ? plan.steps.join(", then ") : "do nothing"}</dd></div>)}
-      </dl>
     </section>
   );
 }

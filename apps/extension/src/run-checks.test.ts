@@ -5,7 +5,7 @@ import { emptyPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub } from "@corbits/triage-workflows/evals/serve";
 import { runChecks } from "./run-checks.ts";
-import { outcomeOf } from "./view.ts";
+import { outcomeOf, type ViewCheck } from "./view.ts";
 
 const PR = JSON.parse(readFileSync(join(import.meta.dir, "../../../packages/pr-workflow-anthropic/fixtures/godotenv-262.json"), "utf8")) as Snapshot;
 
@@ -47,4 +47,12 @@ test("a failed rule set to ask a maintainer is still a Fail here", async () => {
   const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 1, onFail: "ask" as const } } };
   const { checks } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
   expect(outcomeOf(checks)).toBe("fail");
+});
+
+test("only CI still running reads as running; anything else not settled is never a Pass", () => {
+  function check(id: string, result: ViewCheck["result"]): ViewCheck {
+    return { check: id, name: id, kind: "machine", result, reason: "", evidence: [], output: { kind: "values", values: {} } };
+  }
+  expect(outcomeOf([check("max-files-changed", "pass"), check("ci-green", "unconfirmed")])).toBe("running");
+  expect(outcomeOf([check("ci-green", "unconfirmed"), check("no-merge-conflicts", "unconfirmed")])).toBe("unsettled");
 });

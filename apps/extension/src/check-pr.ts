@@ -3,7 +3,7 @@ import { getPostedCodeReview, type GithubFetch } from "@corbits/github-reads";
 import type { GithubApi } from "./github-api.ts";
 import type { PolicyRead } from "./policy-source.ts";
 import { prKey, type PrRef } from "./pr.ts";
-import { plansOf, runChecks } from "./run-checks.ts";
+import { runChecks } from "./run-checks.ts";
 import type { TriageView } from "./view.ts";
 
 export type Pull = { headSha: string; labels: string[] };
@@ -26,12 +26,11 @@ async function readCodeReview(gh: GithubFetch, { repo, number }: PrRef): Promise
 
 /** The pull request against its policy; one carrying the policy's pause label is not checked, as the hub would not triage it. */
 export async function checkPr(api: GithubApi, pr: PrRef, pull: Pull, policy: PolicyRead | null): Promise<TriageView> {
-  const base = { pr, headSha: pull.headSha, ranAt: new Date().toISOString(), checks: [], notes: [], plans: [] };
+  const base = { pr, headSha: pull.headSha, ranAt: new Date().toISOString(), checks: [], notes: [] };
   if (!policy) return { ...base, policy: null, codeReview: { review: null } };
   const file = { path: policy.path, url: policy.url };
-  const plans = plansOf(policy.pack);
   const { pauseLabel } = policy.workflow;
-  if (pauseLabel !== undefined && pull.labels.includes(pauseLabel)) return { ...base, policy: file, paused: pauseLabel, plans, codeReview: { review: null } };
+  if (pauseLabel !== undefined && pull.labels.includes(pauseLabel)) return { ...base, policy: file, paused: pauseLabel, codeReview: { review: null } };
   const [checked, codeReview] = await Promise.all([runChecks(pr, api.gh, policy.pack), readCodeReview(api.gh, pr)]);
-  return { ...base, ...checked, policy: file, plans, codeReview };
+  return { ...base, ...checked, policy: file, codeReview };
 }

@@ -52,6 +52,11 @@ function decodedHeader(text: string): string {
   });
 }
 
+/** git's `-- ` line and version that close each patch, which an empty commit, with no `---`, runs into. */
+function isSignature(lines: string[], at: number): boolean {
+  return lines[at] === "-- " && /^\d+\.\d+/.test(lines[at + 1] ?? "");
+}
+
 /**
  * Each commit's whole message by sha, from a pull request's `.patch`, as `git format-patch` writes it. A `---` line in a
  * message cannot be told from the one that ends it unless the diffstat follows, so a message that seems cut short throws.
@@ -70,7 +75,7 @@ function patchMessages(patch: string): Map<string, string> {
     }
     subject = decodedHeader(subject).replace(/^\[PATCH[^\]]*\] /, "");
     const body: string[] = [];
-    for (at++; at < lines.length && lines[at] !== "---" && !PATCH_START.test(lines[at]!); at++) body.push(lines[at]!);
+    for (at++; at < lines.length && lines[at] !== "---" && !PATCH_START.test(lines[at]!) && !isSignature(lines, at); at++) body.push(lines[at]!);
     if (lines[at] === "---" && !DIFFSTAT.test(lines[at + 1] ?? "")) throw new Error(`the .patch message of ${sha} may be cut short at a --- line`);
     if (PATCH_START.test(lines[at] ?? "")) at--;
     const text = body.join("\n").trim();
@@ -79,12 +84,19 @@ function patchMessages(patch: string): Map<string, string> {
   return messages;
 }
 
+const TOKEN_HINT = "Save a GitHub token in the side panel to read it through GitHub's API.";
+
+/** `missed` says why reads the session could not make failed, with no token saved to make them instead; the known causes first. */
+export type SessionReads = { gh: GithubFetch; missed(): string[] };
+
 /**
  * The REST reads of one run, made through github.com as the person signed in, so a private repository is read with no
  * token. A path the session cannot answer goes to `fallback` (the API with a saved token); with none, the read fails,
  * and the workflow names what it could not read rather than checking without it.
  */
-export function sessionGithub(session: Session, fallback: GithubFetch | null): GithubFetch {
+export function sessionGithub(session: Session, fallback: GithubFetch | null): SessionReads {
+  const failed: string[] = [];
+  const unanswered: string[] = [];
   const answers = new Map<string, Promise<Recorded | null>>();
   const diffs = new Map<string, Promise<DiffFile[]>>();
 
@@ -116,7 +128,8 @@ export function sessionGithub(session: Session, fallback: GithubFetch | null): G
     const rows = JSON.parse(listed) as Array<{ sha: string; commit: { message: string } }>;
     return Response.json(rows.map(function withMessage(row) {
       const message = messages.get(row.sha);
-      if (message === undefined) throw new Error(`github.com's .patch of ${repo}#${number} has no commit ${row.sha}`);
+      // A merge commit is left out of the .patch.
+      if (message === undefined) throw new Error(`${repo}#${number} has a merge commit, which can't be read without a GitHub token.`);
       return { ...row, commit: { ...row.commit, message } };
     }));
   }
@@ -151,7 +164,7 @@ export function sessionGithub(session: Session, fallback: GithubFetch | null): G
     const body = await session.page(path);
     if (body === null) return null;
     // The page gives the description as written, not GitHub's rendering of it, which hidden-content reads.
-    if (PULL.test(pathname) && typeof JSON.parse(body).body_html !== "string") throw new Error(`github.com gives no rendered description for ${path}`);
+    if (PULL.test(pathname) && typeof JSON.parse(body).body_html !== "string") throw new Error("github.com did not give the pull request's rendered description, which can't be read without a GitHub token.");
     return new Response(body, { headers: { "content-type": "application/json" } });
   }
 
@@ -172,19 +185,27 @@ export function sessionGithub(session: Session, fallback: GithubFetch | null): G
       const { status, body } = recorded;
       return new Response(status === 404 ? null : body.slice(0), { status, headers: { "content-type": "application/json" } });
     } catch (cause) {
-      if (!fallback) throw cause;
+      if (!fallback) {
+        failed.push(`${errorText(cause)} ${TOKEN_HINT}`);
+        throw cause;
+      }
       console.warn(`github.com did not answer ${path} for the person signed in: ${errorText(cause)}`);
       return null;
     }
   }
 
-  return async function sessionFirst(path, init) {
+  const gh: GithubFetch = async function sessionFirst(path, init) {
     if ((init?.method ?? "GET") !== "GET") throw new Error("The extension only reads from GitHub.");
     const response = await answered(path);
     if (response) return response;
-    if (!fallback) throw new Error(`github.com cannot answer ${path} for the person signed in, and no GitHub token is saved to ask its API.`);
+    if (!fallback) {
+      unanswered.push(`github.com does not show ${path} to the extension. ${TOKEN_HINT}`);
+      throw new Error(`github.com cannot answer ${path} for the person signed in, and no GitHub token is saved to ask its API.`);
+    }
     return fallback(path, init);
   };
+
+  return { gh, missed: () => [...new Set([...failed, ...unanswered])] };
 }
 
 // A tab still loading has no content script to answer yet; it is asked again for about this long.
