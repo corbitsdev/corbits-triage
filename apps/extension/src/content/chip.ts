@@ -1,40 +1,26 @@
+import { send } from "../messages.ts";
+import type { PrRef } from "../pr.ts";
 import type { RunState } from "../storage.ts";
-import { scoreOf, type TriageView } from "../view.ts";
+import { statusOf, type TriageView } from "../view.ts";
 
-type Tone = "pass" | "fail" | "unsure" | "open" | "busy" | "error";
+export type Chip = { element: HTMLElement; render(pr: PrRef, view: TriageView | undefined, state: RunState | undefined): void };
 
-function scoreTone(view: TriageView): Tone {
-  if (view.rules.some((rule) => rule.state === "fail")) return "fail";
-  if (view.rules.some((rule) => rule.state === "waiting")) return "unsure";
-  return "pass";
-}
+/** The status beside the pull request's title: a ring that spins while Triage runs, then turns green on Pass or red on Fail. A click opens the side panel. */
+export function scoreChip(): Chip {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "chip";
+  button.innerHTML = '<svg class="ring" viewBox="0 0 16 16" aria-hidden="true"><circle class="ring-track" cx="8" cy="8" r="6"/><circle class="ring-fill" cx="8" cy="8" r="6" transform="rotate(-90 8 8)"/></svg><span class="state"></span>';
+  button.addEventListener("click", function openPanel() {
+    send({ type: "open-panel" });
+  });
 
-export function summaryOf(view: TriageView | undefined, run: RunState | undefined): { text: string; tone: Tone } {
-  if (run?.running) return { text: "Checking", tone: "busy" };
-  if (run?.error) return { text: "Could not check", tone: "error" };
-  if (!view) return { text: "Not checked yet", tone: "open" };
-  if (!view.policy) return { text: "No policy", tone: "open" };
-  if (view.paused !== undefined) return { text: "Paused", tone: "open" };
-  const { passed, run: ran } = scoreOf(view);
-  if (ran === 0) return { text: "Nothing to check here", tone: "open" };
-  return { text: `${passed}/${ran} passed`, tone: scoreTone(view) };
-}
-
-export type Chip = { element: HTMLElement; render(view: TriageView | undefined, run: RunState | undefined): void };
-
-/** The score beside the pull request's title; a click brings Triage's block in the sidebar into view. */
-export function verdictChip(onClick: () => void): Chip {
-  const element = document.createElement("button");
-  element.type = "button";
-  element.className = "chip";
-  element.addEventListener("click", onClick);
-
-  function render(view: TriageView | undefined, run: RunState | undefined) {
-    const { text, tone } = summaryOf(view, run);
-    element.dataset.tone = tone;
-    element.textContent = `Triage: ${text}`;
-    element.setAttribute("aria-label", `Corbits Triage: ${text}. Show the checks.`);
+  function render(pr: PrRef, view: TriageView | undefined, state: RunState | undefined) {
+    const { text, tone } = statusOf(view, state);
+    button.dataset.tone = tone;
+    button.querySelector(".state")!.textContent = text;
+    button.setAttribute("aria-label", `Corbits Triage for #${pr.number}: ${text}. Open the side panel.`);
   }
 
-  return { element, render };
+  return { element: button, render };
 }

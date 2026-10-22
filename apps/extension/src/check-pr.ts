@@ -26,7 +26,7 @@ async function readCodeReview(gh: GithubFetch, { repo, number }: PrRef): Promise
 
 /** The pull request against its policy; one carrying the policy's pause label is not checked, as the hub would not triage it. */
 export async function checkPr(api: GithubApi, pr: PrRef, pull: Pull, policy: PolicyRead | null): Promise<TriageView> {
-  const base = { pr, headSha: pull.headSha, ranAt: new Date().toISOString(), rules: [], notes: [] };
+  const base = { pr, headSha: pull.headSha, ranAt: new Date().toISOString(), checks: [], notes: [] };
   if (!policy) return { ...base, policy: null, codeReview: { review: null } };
   const file = { path: policy.path, url: policy.url };
   const { pauseLabel } = policy.workflow;

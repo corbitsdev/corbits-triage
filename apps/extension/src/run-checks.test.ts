@@ -5,6 +5,7 @@ import { emptyPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub } from "@corbits/triage-workflows/evals/serve";
 import { runChecks } from "./run-checks.ts";
+import { outcomeOf, type ViewCheck } from "./view.ts";
 
 const PR = JSON.parse(readFileSync(join(import.meta.dir, "../../../packages/pr-workflow-anthropic/fixtures/godotenv-262.json"), "utf8")) as Snapshot;
 
@@ -22,18 +23,36 @@ function readOnly(writes: string[]) {
 test("the definition settles the checks without the model and writes nothing", async () => {
   const writes: string[] = [];
   const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 1 }, focused: { enabled: true } } };
-  const { rules } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
-  const byId = Object.fromEntries(rules.map((rule) => [rule.check, rule]));
-  expect(byId["max-files-changed"]).toMatchObject({ kind: "machine", state: "fail", evidence: ["2 files (max 1)"] });
-  expect(byId["focused"]).toMatchObject({ kind: "model", state: "not-run" });
+  const { checks } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
+  const byId = Object.fromEntries(checks.map((check) => [check.check, check]));
+  expect(byId["max-files-changed"]).toMatchObject({ kind: "machine", result: "fail", evidence: ["2 files (max 1)"] });
+  expect(byId["focused"]).toBeUndefined();
+  expect(outcomeOf(checks)).toBe("fail");
   expect(writes).toEqual([]);
 });
 
-test("a policy whose checks all pass still reaches the judge's branch and fails closed there", async () => {
+test("judgement rules are not run, so passing rules are a Pass", async () => {
   const writes: string[] = [];
   const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 30 }, docs: { enabled: true } } };
-  const { rules } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
-  expect(rules.filter((rule) => rule.kind === "machine").every((rule) => rule.state === "pass")).toBe(true);
-  expect(rules.find((rule) => rule.check === "docs")?.state).toBe("not-run");
+  const { checks } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
+  expect(checks.filter((check) => check.kind === "machine").every((check) => check.result === "pass")).toBe(true);
+  expect(checks.find((check) => check.check === "docs")).toBeUndefined();
+  expect(outcomeOf(checks)).toBe("pass");
   expect(writes).toEqual([]);
+});
+
+
+test("a failed rule set to ask a maintainer is still a Fail here", async () => {
+  const writes: string[] = [];
+  const pack = { ...emptyPack(PR.repo), checks: { "max-files-changed": { enabled: true, maxFiles: 1, onFail: "ask" as const } } };
+  const { checks } = await runChecks({ repo: PR.repo, number: PR.number }, readOnly(writes), pack);
+  expect(outcomeOf(checks)).toBe("fail");
+});
+
+test("only CI still running reads as running; anything else not settled is never a Pass", () => {
+  function check(id: string, result: ViewCheck["result"]): ViewCheck {
+    return { check: id, name: id, kind: "machine", result, reason: "", evidence: [], output: { kind: "values", values: {} } };
+  }
+  expect(outcomeOf([check("max-files-changed", "pass"), check("ci-green", "unconfirmed")])).toBe("running");
+  expect(outcomeOf([check("ci-green", "unconfirmed"), check("no-merge-conflicts", "unconfirmed")])).toBe("unsettled");
 });

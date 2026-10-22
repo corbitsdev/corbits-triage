@@ -9,8 +9,9 @@ export default defineConfig({
     name: "Corbits Triage",
     description: "Checks the GitHub pull request you are viewing against its repository's .corbits-triage.yml, read-only.",
     permissions: ["storage", ...(browser === "firefox" ? [] : ["sidePanel"])],
-    // Every read goes through GitHub's REST API; the content script's github.com match comes from its own entrypoint.
-    host_permissions: ["https://api.github.com/*"],
+    // Reads go through github.com as the person signed in, whose `.diff`, `.patch` and raw files redirect to GitHub's
+    // other origins; the REST API serves what the session cannot when a token is saved.
+    host_permissions: ["https://github.com/*", "https://patch-diff.githubusercontent.com/*", "https://raw.githubusercontent.com/*", "https://api.github.com/*"],
     action: { default_title: "Corbits Triage" },
     ...(browser === "firefox" ? { browser_specific_settings: { gecko: { id: "triage@corbits.dev", strict_min_version: "128.0" } } } : {}),
   }),

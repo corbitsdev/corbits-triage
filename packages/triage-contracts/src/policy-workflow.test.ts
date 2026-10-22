@@ -278,6 +278,12 @@ describe("author groups", () => {
     ]);
   });
 
+  test("a step for named people names them", () => {
+    const pack = readCheckPack(readPolicyFile(RULES, REPO), REPO);
+    const named = { ...pack, actions: { ...pack.actions, pass: [{ do: "approve" as const, when: { author: [{ users: ["octocat"] }, { team: "core" }] } }] } };
+    expect(policyDifferences(pack, named).find((difference) => difference.rule === "When it passes")?.instead).toBe("When it passes, Triage will approve for @octocat, @core.");
+  });
+
   test("a step for a group holds by the author's groups, everyone always, and is not known without them", () => {
     const subject = { linkedIssue: false, ci: "passing" as const, files: 1, lines: 1 };
     const known = { ...author({}), groups: authorGroupsOf(groups, author({})) };

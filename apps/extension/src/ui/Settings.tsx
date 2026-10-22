@@ -22,7 +22,7 @@ function TokenSection() {
   const token = useStorageItem(tokenSaved);
   if (token === undefined) return null;
   return (
-    <SettingSection id="setting-github" title="GitHub token" status={token ? <Badge tone="success">Saved</Badge> : null} description="Required. Every read is made with it, read-only.">
+    <SettingSection id="setting-github" title="GitHub token" status={token ? <Badge tone="success">Saved</Badge> : null} description="Optional. Used read-only for what github.com does not show the extension while you are signed in.">
       <GithubTokenForm />
     </SettingSection>
   );
