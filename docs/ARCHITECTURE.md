@@ -87,10 +87,13 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     pull request. Each job runs in a worker deployment of its own, copied from
     the host's live deployment, which only seeds workers, and released once
     its run ends. How many run at once is the provisioner's call: a placement
-    it declines for want of room, a job with no live deployment to copy
-    yet, or a job whose worker the sender gate refused (a copy of a
-    deployment made before its workflow declared who may mail it; the worker
-    is released) waits and is retried with backoff. The queue, like the coalescer's
+    it declines for want of room, or a job with no live deployment to copy
+    yet, waits and is retried with backoff. A worker the sender gate refuses
+    (a copy of a deployment made before its workflow declared who may mail
+    it) is released and its job retried the same way five times, enough for
+    the portal reload after a hub deploy; then the head fails with "this
+    repository's Triage deployment is out of date; open the portal to
+    redeploy it", and the reconciler queues it again after the redeploy. The queue, like the coalescer's
     windows, lives in memory, so the hub runs as one replica. A restart loses
     only queue order: the hub releases orphaned workers on start and the
     reconciler queues their heads again.

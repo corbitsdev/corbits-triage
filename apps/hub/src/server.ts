@@ -430,7 +430,6 @@ const mergeStates = createMergeStates({
   log: logJson,
 });
 
-const hookDeps = credentialDeps;
 
 const GITHUB_SENDER = TRIAGE_MAIL_SENDER;
 const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
@@ -816,8 +815,8 @@ function sendBacklogMail(tenantId: string, payload: unknown) {
 }
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
-  db: hookDeps.db,
-  cipher: hookDeps.cipher,
+  db: credentialDeps.db,
+  cipher: credentialDeps.cipher,
   cache: deliveryCache,
   coalescer,
   codeReview: codeReviewFeed,
@@ -830,8 +829,8 @@ const bridge = createBridgeHandler({
   repoChanged: repoReads.changed,
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
-  db: hookDeps.db,
-  cipher: hookDeps.cipher,
+  db: credentialDeps.db,
+  cipher: credentialDeps.cipher,
   cache: deliveryCache,
   coalescer,
   codeReview: codeReviewFeed,

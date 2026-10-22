@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCoordinator, WorkerDeferredError, type TriageJob } from "./coordinator.js";
+import { createCoordinator, OUTDATED_REASON, WorkerDeferredError, WorkerOutdatedError, type TriageJob } from "./coordinator.js";
 
 const START = new Date("2026-10-14T12:00:00Z").getTime();
 
@@ -157,6 +157,21 @@ test("a spawn refused for capacity is retried with backoff, not failed", async (
   await clock.advance(3_000);
   expect(fake.spawned.map((j) => j.number)).toEqual([1]);
   expect(failed).toEqual([]);
+});
+
+test("a worker the sender gate keeps refusing is retried five times, then its head fails and no further worker is provisioned", async () => {
+  const { clock, fake, failed, coordinator } = setup();
+  let refusals = 0;
+  fake.spawner.spawn = async function outdated(): Promise<string> {
+    refusals += 1;
+    throw new WorkerOutdatedError("Workflow run does not admit mail from this sender");
+  };
+  coordinator.enqueue(job("t1", 1));
+  await clock.advance(0);
+  for (let retry = 0; retry < 10; retry += 1) await clock.advance(3_000);
+  await Bun.sleep(0);
+  expect(refusals).toBe(6);
+  expect(failed).toEqual([`1:${OUTDATED_REASON}`]);
 });
 
 test("a job from another source for a running pull request waits for its worker", async () => {

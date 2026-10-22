@@ -9,7 +9,7 @@ import { and, eq, ne, notInArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { WorkflowProvisioningError, type WorkflowLifecycleService } from "@intx/hub-sessions";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
-import { WorkerDeferredError, type WorkerSpawner, type TriageJob } from "./coordinator.js";
+import { WorkerDeferredError, WorkerOutdatedError, type WorkerSpawner, type TriageJob } from "./coordinator.js";
 import { DeploymentNotReadyError, liveWorkers, SenderRefusedError, resolveLiveDeployment, resolveLiveDeployments, WORKER_MARKER, type Redeployed } from "./deployment.js";
 
 const WORKER_RELEASE_REASON = "Triage worker finished its run";
@@ -61,7 +61,7 @@ export function createWorkerSpawner(deps: WorkerSpawnDeps): WorkerSpawner {
       await fire(job, copy.runId);
     } catch (err) {
       await deps.lifecycle.requestCancellation(job.tenantId, copy.runId, `Triage worker could not be fired: ${String(err)}`);
-      if (err instanceof SenderRefusedError) throw new WorkerDeferredError(err.message);
+      if (err instanceof SenderRefusedError) throw new WorkerOutdatedError(err.message);
       throw err;
     }
     return copy.runId;
