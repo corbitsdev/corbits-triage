@@ -36,22 +36,6 @@ function RunFailed({ view, state }: { view: TriageView | undefined; state: RunSt
   );
 }
 
-/** What the policy's verdict would post and do on this pull request; the extension itself writes nothing. */
-function VerdictEffects({ view }: { view: TriageView }) {
-  const { verdict } = view;
-  if (!verdict) return null;
-  return (
-    <section className="part" aria-labelledby="effects-head">
-      <h2 id="effects-head">The policy would</h2>
-      <ul className="facts-list">
-        {verdict.labels.length ? <li>Label {verdict.labels.join(", ")}</li> : null}
-        {verdict.actions.map((action, index) => <li key={index}>{action.charAt(0).toUpperCase()}{action.slice(1)}</li>)}
-      </ul>
-      {verdict.comment ? <pre className="comment">{verdict.comment}</pre> : null}
-    </section>
-  );
-}
-
 /** The policy file and what it does on each verdict. */
 function PolicyPart({ view }: { view: TriageView }) {
   if (!view.policy) return <p className="hint">This repository has no policy file on its default branch, so there is nothing to check.</p>;
@@ -88,7 +72,6 @@ export function PrView({ pr, title, view, state }: PrViewProps) {
               <CheckList view={view} />
             </section>
           ) : null}
-          <VerdictEffects view={view} />
           <PolicyPart view={view} />
         </>
       ) : null}

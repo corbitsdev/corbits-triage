@@ -596,23 +596,6 @@ input.mono {
   text-align: right;
 }
 
-.facts-list {
-  display: grid;
-  gap: var(--space-1);
-  font-size: 13px;
-}
-
-.comment {
-  margin: 0;
-  padding: var(--space-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md, 8px);
-  background: var(--muted);
-  font: 12px/1.5 "Space Mono", ui-monospace, monospace;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .facts dt {
   color: var(--muted-foreground);
 }

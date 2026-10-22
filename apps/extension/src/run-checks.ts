@@ -1,5 +1,5 @@
 import type { GithubFetch } from "@corbits/github-reads";
-import { checkName, classificationSources, isModelCheck, QUALITY_CHECK_IDS, STEP_WORDS, stepWords, VERDICT_RULES, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, isModelCheck, QUALITY_CHECK_IDS, stepWords, VERDICT_RULES, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-workflows/actions/index";
 import type { RulesOutput } from "@corbits/triage-workflows/actions/rules";
 import { credentialBindings } from "@corbits/triage-workflows/agents";
@@ -38,9 +38,8 @@ function rulesOnly(pack: CheckPack): CheckPack {
   return { ...pack, checks, custom: pack.custom.filter((check) => !isModelCheck(check)) };
 }
 
-function verdictOf({ verdict, state, reason, nextAction, labels, request, actions }: Verdict): ViewVerdict {
-  const done = actions.filter((action) => !("skipped" in action)).map((action) => STEP_WORDS[action.kind]);
-  return { verdict, state, reason, nextAction, labels, comment: request.comment, actions: done };
+function verdictOf({ verdict, state, reason, nextAction }: Verdict): ViewVerdict {
+  return { verdict, state, reason, nextAction };
 }
 
 /** The policy's steps on each verdict, in words. */
@@ -52,7 +51,7 @@ export type CheckRun = { headSha: string; checks: ViewCheck[]; notes: FileNote[]
 
 /**
  * pr-triage's definition on one pull request, run by Interchange's local runner over read-only GitHub reads, with the
- * policy's rules only: the run settles them, then the verdict and what the policy would do on it, writing nothing.
+ * policy's rules only: the run settles them and gives the verdict they reach, writing nothing.
  */
 export async function runChecks(pr: PrRef, gh: GithubFetch, policyPack: CheckPack): Promise<CheckRun> {
   const pack = rulesOnly(policyPack);
@@ -80,8 +79,5 @@ export async function runChecks(pr: PrRef, gh: GithubFetch, policyPack: CheckPac
   const checks = [...item.det.checks, ...(item.det.labelled?.checks ?? [])];
   const named = checks.map((check) => ({ ...check, name: checkName(pack, check.check) }));
   const evaluated = outputs["evaluateRules"] as Verdict | undefined;
-  // Left out here, the policy's judgement rules could still fail or unsettle it, so only a Fail the rules reach stands.
-  const { quality, custom } = classificationSources(policyPack);
-  const decided = evaluated && (quality.length + custom.length === 0 || evaluated.verdict === "fail");
-  return { headSha: item.facts.headSha, checks: named, notes: fileNotes(named), ...(decided ? { verdict: verdictOf(evaluated) } : {}) };
+  return { headSha: item.facts.headSha, checks: named, notes: fileNotes(named), ...(evaluated ? { verdict: verdictOf(evaluated) } : {}) };
 }

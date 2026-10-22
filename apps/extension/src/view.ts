@@ -7,8 +7,8 @@ import type { PrRef } from "./pr.ts";
 
 export type ViewCheck = CheckResult & { name: string };
 
-/** What the policy's verdict would do on this pull request: the labels and comment it posts and the actions it takes. */
-export type ViewVerdict = Pick<Verdict, "verdict" | "state" | "reason" | "nextAction" | "labels"> & { comment: string; actions: string[] };
+/** The verdict the checks run here reach. */
+export type ViewVerdict = Pick<Verdict, "verdict" | "state" | "reason" | "nextAction">;
 
 /** What the policy does on each verdict, as its steps in words. */
 export type VerdictPlan = { verdict: VerdictWord; when: string; steps: string[] };
@@ -23,7 +23,7 @@ export type TriageView = {
   paused?: string;
   checks: ViewCheck[];
   notes: FileNote[];
-  /** Absent when the policy's judgement rules, which are not run here, could still change it. */
+  /** Absent when the run reached none, as on a closed pull request. */
   verdict?: ViewVerdict;
   plans: VerdictPlan[];
   /** The newest code review the App sent to the pull request, read from GitHub, or why it could not be read. */
@@ -49,9 +49,7 @@ const TONES: Record<VerdictWord, Tone> = { pass: "ready", unsure: "waiting", fai
 export function stateName(view: TriageView): string {
   if (!view.policy) return "No policy";
   if (view.paused !== undefined) return "Paused";
-  if (view.verdict) return VERDICT_NAMES[view.verdict.verdict];
-  const passed = view.checks.filter((check) => check.result === "pass").length;
-  return passed === view.checks.length ? "Checks passed" : `${passed}/${view.checks.length} checks passed`;
+  return view.verdict ? VERDICT_NAMES[view.verdict.verdict] : "Not checked";
 }
 
 export function toneOf(view: TriageView): Tone {
@@ -61,5 +59,5 @@ export function toneOf(view: TriageView): Tone {
 export function nextStep(view: TriageView): string {
   if (!view.policy) return "This repository has no policy file, so there is nothing to check.";
   if (view.paused !== undefined) return `This pull request has the ${view.paused} label, so Triage leaves it alone.`;
-  return view.verdict?.nextAction ?? "Triage decides the verdict.";
+  return view.verdict?.nextAction ?? "There is nothing to check on this pull request.";
 }

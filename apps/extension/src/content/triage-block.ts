@@ -42,7 +42,7 @@ export type TriageBlock = { element: HTMLElement; render(view: TriageView | unde
 
 /**
  * Triage's section atop GitHub's pull request sidebar, on every pull request: the score and state, the next step, the
- * checks to look at in a line each, the policy file and what its verdict would do here.
+ * checks to look at in a line each and the policy file.
  */
 export function triageBlock(handlers: BlockHandlers): TriageBlock {
   const element = node("section", "tb");
@@ -137,19 +137,6 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
     return line;
   }
 
-  /** What the policy's verdict would post and do here; Triage itself writes nothing from the extension. */
-  function verdictPart(view: TriageView): HTMLElement[] {
-    const { verdict } = view;
-    if (!verdict) return [];
-    const list = node("ul", "tb-does");
-    list.setAttribute("aria-label", "What the verdict would do");
-    if (verdict.labels.length) list.append(node("li", "", `Label ${verdict.labels.join(", ")}`));
-    if (verdict.comment) list.append(node("li", "", "Comment with the reasons"));
-    for (const action of verdict.actions) list.append(node("li", "", `${action.charAt(0).toUpperCase()}${action.slice(1)}`));
-    if (!list.childElementCount) list.append(node("li", "", "Nothing"));
-    return [node("h3", "tb-subhead", "The policy would"), list];
-  }
-
   function findingLink(comment: PostedCodeReview["comments"][number]): HTMLElement {
     const item = node("li", "tb-finding");
     item.append(link(findingTitle(comment), comment.url), node("span", "tb-meta", comment.line === null ? `${comment.path} · outdated` : `${comment.path}:${comment.line}`));
@@ -203,7 +190,7 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
     const focused = (element.getRootNode() as Document | ShadowRoot).activeElement;
     const refocus = focused instanceof HTMLElement && element.contains(focused) ? [...element.querySelectorAll("button, a")].indexOf(focused) : -1;
     const checked = view?.policy && view.paused === undefined;
-    const details = view ? [policyLine(view), ...(checked ? [...checks(view), ...verdictPart(view)] : []), ...codeReviewPart(view.codeReview)] : [];
+    const details = view ? [policyLine(view), ...(checked ? checks(view) : []), ...codeReviewPart(view.codeReview)] : [];
     body.replaceChildren(head(), score(view, run), ...warning(view, run), ...details, foot(view, run));
     if (refocus >= 0) element.querySelectorAll<HTMLElement>("button, a")[refocus]?.focus();
   }

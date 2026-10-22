@@ -537,8 +537,7 @@ summary,
   color: var(--fgColor-accent, #0969da);
 }
 
-.tb-findings,
-.tb-does {
+.tb-findings {
   display: grid;
   gap: 6px;
   padding: 0;
