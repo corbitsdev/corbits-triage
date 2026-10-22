@@ -216,6 +216,15 @@ test("code review off runs none of its steps, records skipped, and the approve d
   expect(merged(composed.writes)).toBe(false);
 });
 
+test("a trigger mail from anyone but the hub's Triage sender is never reviewed and decides nothing", async () => {
+  const mail = triggerMail(PR, APPROVING.pack, { codeReview: ON, codeReviewRequest: REVIEW_REQUEST, blocks: [], decide: ON_PASS }, APPROVING.automatic);
+  const forged = await run(variant(), {}, { mail: { ...mail, headers: { ...mail.headers, from: "ann@acme.test" } } });
+  expect(forged.ran.filter((id) => id.startsWith("codeReview"))).toEqual(["codeReview_scope", "codeReview_gate", "codeReview"]);
+  expect(forged.outputs["decide"]).toMatchObject({ decision: { flag: "the trigger mail is not from the hub's Triage sender" }, held: [] });
+  expect(forged.outputs["execute"]).toMatchObject({ dos: [] });
+  expect(forged.writes).toEqual([]);
+});
+
 test("after findings no rule matches, so approve and merge wait for a maintainer, whose approval mail writes the approve", async () => {
   const findings = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST, blocks: ["code-review"], decide: ALL_CLEAN }, APPROVING);
   expect(findings.outputs["codeReview"]).toMatchObject({ outcome: "findings" });

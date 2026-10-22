@@ -154,3 +154,9 @@ test("a group is placed at a member that was read when its representative was no
   expect(comments[0]).toMatchObject({ path: "src/total.ts", start: 40, end: 40 });
   expect(comments[0]).not.toHaveProperty("unverified");
 });
+
+test("a trigger mail from anyone but the hub's Triage sender is never reviewed", async () => {
+  const mail = stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout });
+  const forged = { ...mail, headers: { ...mail.headers, from: "ann@acme.test" } };
+  await expect(reviewInputFor({ efforts })(forged)).rejects.toThrow("not from the hub's Triage sender");
+});

@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { isRecord } from "@corbits/common";
-import { authorGroupsOf, BLOCK_KINDS, decide, POLICY_EVENTS, policyWorkflowSchema, SEVERITIES, triggerRequestOf, type BlockKind, type BlockResult, type Decision, type DecideRule, type PolicyEvent, type Step } from "@corbits/triage-contracts";
+import { authorGroupsOf, BLOCK_KINDS, decide, isFromTriageSender, POLICY_EVENTS, policyWorkflowSchema, SEVERITIES, triggerRequestOf, type BlockKind, type BlockResult, type Decision, type DecideRule, type PolicyEvent, type Step } from "@corbits/triage-contracts";
 import { suggestedDos } from "@corbits/triage-workflows/actions/evaluate";
 import type { SuggestedAction } from "@corbits/triage-workflows/logic/actions";
 import type { Item } from "@corbits/triage-workflows/logic/item";
@@ -67,10 +67,13 @@ function unattended(verdict: Verdict) {
  * `held` for a maintainer with the reason, so one a schema 3 file's actions approve or merge with waits in Needs you. A
  * host action's input must be JSON, so execute reads this one output rather than the whole steps record.
  */
+const NOT_FROM_TRIAGE = "the trigger mail is not from the hub's Triage sender";
+
 function decided(trigger: unknown, steps: Steps) {
   const verdict = verdictOutput(steps) as Verdict | undefined;
   const item = itemOf(steps);
   if (!isRecord(verdict) || !item) throw new Error("decide: triage gave no verdict");
+  if (!isFromTriageSender(trigger)) return { decision: { flag: NOT_FROM_TRIAGE }, verdict: { ...verdict, actions: [] }, held: [] };
   const parsed = Trigger(triggerRequestOf(trigger));
   const review = codeReviewResult(steps);
   const decision = parsed instanceof type.errors ? { flag: `the trigger's decide rules are invalid: ${parsed.summary}` } : decisionOf(parsed, item, verdict, review);
