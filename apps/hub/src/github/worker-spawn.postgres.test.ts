@@ -12,7 +12,7 @@ import type { ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { interchangeSettings, type HubEnv } from "../env.js";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { createCoordinator, type TriageJob } from "./coordinator.js";
-import { DeploymentNotReadyError } from "./deployment.js";
+import { DeploymentNotReadyError, SenderRefusedError } from "./deployment.js";
 import { createWorkerSpawner } from "./worker-spawn.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -50,11 +50,11 @@ async function withDatabase(body: (db: DB["db"]) => Promise<void>): Promise<void
   }
 }
 
-async function deployWorker(db: DB["db"], content: Record<string, unknown>, lifecyclePolicy?: ResolvedWorkflowLifecyclePolicy): Promise<void> {
-  await db.insert(schema.workflowRun).values({ id: "run_worker", anchorRunId: "run_worker", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed", lifecyclePolicy });
+async function deployWorker(db: DB["db"], runId: string, content: Record<string, unknown>, lifecyclePolicy?: ResolvedWorkflowLifecyclePolicy): Promise<void> {
+  await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wfd_triage", tenantId: TENANT, status: "deployed", lifecyclePolicy });
   await createWorkflowRunLaunchSpecStore(db).create({
-    anchorRunId: "run_worker",
-    sessionId: "ses_worker",
+    anchorRunId: runId,
+    sessionId: `ses_${runId}`,
     deploymentDomain: DOMAIN,
     sourceAuthorityPrincipalId: "prn_deployer",
     frozenApprovalBundle: BUNDLE,
@@ -86,7 +86,7 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
         beforeDeploy: nothingToReady,
         async redeploy(_tenantId, _seed, content) {
           if (refusals-- > 0) throw new WorkflowProvisioningError(CAPACITY_UNAVAILABLE, "424 MiB free, 512 MiB needed");
-          await deployWorker(db, content);
+          await deployWorker(db, "run_worker", content);
           return { status: "deployed", runId: "run_worker" };
         },
         async deliver(_tenantId, address) {
@@ -136,6 +136,69 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
   });
 }, 120_000);
 
+test("PostgreSQL: a worker whose first mail the sender gate refuses is released and its job deferred, and the next worker takes the mail", async () => {
+  await withDatabase(async function refusedThenFired(db) {
+    let clock = 0;
+    const timer = Promise.withResolvers<() => Promise<void>>();
+    const released: string[] = [];
+    const delivered: string[] = [];
+    const failed: string[] = [];
+    let spawned = 0;
+    await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed" });
+    const fired = Promise.withResolvers<void>();
+    const coordinator = createCoordinator({
+      spawner: createWorkerSpawner({
+        db,
+        beforeDeploy: nothingToReady,
+        async redeploy(_tenantId, _seed, content) {
+          const runId = `run_worker_${++spawned}`;
+          await deployWorker(db, runId, content);
+          return { status: "deployed", runId };
+        },
+        async deliver(_tenantId, address) {
+          if (spawned === 1) throw new SenderRefusedError("Workflow run does not admit mail from this sender");
+          delivered.push(address);
+          fired.resolve();
+        },
+        lifecycle: {
+          async requestCancellation(_tenantId, runId) {
+            released.push(runId);
+            return "pending";
+          },
+          getStatus: async () => null,
+        },
+        sleep: () => Bun.sleep(1),
+        fireTimeoutMs: 60_000,
+        pollMs: 1,
+      }),
+      retry: { minMs: 1, maxMs: 1 },
+      async failed(job, error) {
+        failed.push(`${job.number}: ${error}`);
+      },
+      setTimer(fire, ms) {
+        timer.resolve(async function elapse() {
+          clock += ms;
+          await fire();
+        });
+        return () => {};
+      },
+      now: () => new Date(clock),
+      log: () => {},
+    });
+
+    coordinator.enqueue(JOB);
+    const refused = await timer.promise;
+    expect(released).toEqual(["run_worker_1"]);
+    expect(failed).toEqual([]);
+
+    await refused();
+    await fired.promise;
+    expect(delivered).toEqual([`run_worker_2@${DOMAIN}`]);
+    expect(failed).toEqual([]);
+    coordinator.stop();
+  });
+}, 120_000);
+
 test("PostgreSQL: under the hub's lifecycle policy, a worker's sidecar is released as soon as its run ends", async () => {
   await withDatabase(async function releaseOnEnd(db) {
     const { defaultLifecyclePolicy } = interchangeSettings({ PORT: "0", HUB_DATA_DIR: "unused", PRINCIPAL_KEY_ENCRYPTION_KEY: "0".repeat(64) } as HubEnv);
@@ -165,7 +228,7 @@ test("PostgreSQL: under the hub's lifecycle policy, a worker's sidecar is releas
         db,
         beforeDeploy: nothingToReady,
         async redeploy(_tenantId, _seed, content) {
-          await deployWorker(db, content, defaultLifecyclePolicy);
+          await deployWorker(db, "run_worker", content, defaultLifecyclePolicy);
           await db.insert(schema.sidecarAllocation).values({
             id: "alc_worker",
             anchorRunId: "run_worker",

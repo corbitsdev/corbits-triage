@@ -1,7 +1,7 @@
 import { and, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { schema, type DB, type ResolvedSenderPrincipal, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
-import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
+import { MAIL_ADMISSION_DENIED_CODE, type WorkflowAllocationService, type WorkflowLifecycleService } from "@intx/hub-sessions";
 import type { RunTriggerMaterialize } from "@corbits/webhooks";
 import type { ToolPackageManifest } from "@intx/types/tool-packages";
 import type { FrozenApprovalBundle } from "@intx/types/sidecar";
@@ -20,6 +20,11 @@ export class DeploymentNotReadyError extends Error {
   }
 }
 
+/** Interchange's sender gate refused the mail; a worker copied from a listener deployed before the gate keeps refusing until the listener is redeployed. */
+export class SenderRefusedError extends Error {
+  readonly code = MAIL_ADMISSION_DENIED_CODE;
+}
+
 /** @corbits/webhooks 0.3.0 ignores `notReady` and routes the mail without grants; this fails it so the caller retries. Drop once the package handles it. */
 export function readyMaterializer(materialize: RunTriggerMaterialize): RunTriggerMaterialize {
   return async function materializeReady(args) {
@@ -30,10 +35,11 @@ export function readyMaterializer(materialize: RunTriggerMaterialize): RunTrigge
 }
 
 /** @corbits/webhooks 0.3.1 materializes without its sender, which Interchange's sender gate refuses; this names the system sender the mail is signed as. Drop once the package passes it. */
-export function systemSenderMaterializer(materialize: RunTriggerMaterialize, sender: (agentAddress: string) => Promise<ResolvedSenderPrincipal | null>) {
+export function systemSenderMaterializer(materialize: RunTriggerMaterialize, sender: ResolvedSenderPrincipal) {
   return async function materializeAsSender({ agentAddress, runId }: { agentAddress: string; runId: string }) {
-    const resolved = await sender(agentAddress);
-    return materialize({ agentAddress, runId, senderPrincipalId: resolved?.principalId ?? null, senderCoordinates: resolved?.coordinates ?? null });
+    const grants = await materialize({ agentAddress, runId, senderPrincipalId: sender.principalId, senderCoordinates: sender.coordinates });
+    if (grants.outcome === "rejected" && grants.code === MAIL_ADMISSION_DENIED_CODE) throw new SenderRefusedError(grants.message);
+    return grants;
   };
 }
 

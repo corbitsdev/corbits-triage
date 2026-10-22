@@ -12,14 +12,15 @@
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
-import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema } from "@intx/db";
+import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import {
   createRunTriggerDeliverer,
   createTenantSystemSender,
+  type MailDeliverer,
 } from "@corbits/webhooks";
 import {
   createArtifactRoutes,
@@ -335,30 +336,40 @@ const systemSender = createTenantSystemSender({
   db: composition.db,
   principalKeyStore: composition.principalKeyStore,
 });
-/** The tenant system sender a run trigger is signed as, resolved to the coordinates Interchange's sender gate admits. */
-async function systemSenderOf(senderLocalPart: string, agentAddress: string) {
-  const run = await composition.db.query.workflowRun.findFirst({ where: eq(schema.workflowRun.address, agentAddress), columns: { tenantId: true } });
-  if (!run) return null;
-  const domain = await tenantDomain(run.tenantId);
-  await systemSender.resolve({ tenantId: run.tenantId, domain, localPart: senderLocalPart });
-  return resolveSenderPrincipal(composition.db, composition.principalKeyStore, `${senderLocalPart}@${domain}`);
+// A tenant's system principal never changes once minted.
+const systemSenders = new Map<string, ResolvedSenderPrincipal>();
+/** The tenant system sender a run trigger is signed as, minted once, with the coordinates Interchange's sender gate admits. */
+async function systemSenderOf(senderLocalPart: string, tenantId: string): Promise<ResolvedSenderPrincipal> {
+  const key = `${senderLocalPart}@${tenantId}`;
+  const cached = systemSenders.get(key);
+  if (cached !== undefined) return cached;
+  const domain = await tenantDomain(tenantId);
+  await systemSender.resolve({ tenantId, domain, localPart: senderLocalPart });
+  const resolved = await resolveSenderPrincipal(composition.db, composition.principalKeyStore, `${senderLocalPart}@${domain}`);
+  if (!resolved) throw new Error(`no ${senderLocalPart} system principal in tenant ${tenantId}`);
+  systemSenders.set(key, resolved);
+  return resolved;
 }
-function runTriggerDeliverer(senderLocalPart: string) {
+function runTriggerDeliverer(senderLocalPart: string): MailDeliverer {
   const materialize = createMailTriggeredRunGrantsMaterializer({
     db: composition.db,
     principalKeyStore: composition.principalKeyStore,
     grantStore: createGrantStore(composition.db),
     registry: HUB_CONDITION_REGISTRY,
   });
-  return createRunTriggerDeliverer({
-    router: composition.sidecarRouter,
-    materialize: readyMaterializer(systemSenderMaterializer(materialize, function senderOf(agentAddress) {
-      return systemSenderOf(senderLocalPart, agentAddress);
-    })),
-    tenantDomain,
-    senderLocalPart,
-    systemSender,
-  });
+  return {
+    async to(address, content, tenantId, subject) {
+      const sender = await systemSenderOf(senderLocalPart, tenantId);
+      const deliverer = createRunTriggerDeliverer({
+        router: composition.sidecarRouter,
+        materialize: readyMaterializer(systemSenderMaterializer(materialize, sender)),
+        tenantDomain,
+        senderLocalPart,
+        systemSender,
+      });
+      await deliverer.to(address, content, tenantId, subject);
+    },
+  };
 }
 cronTicker = createCronTicker({
   db: composition.db,
@@ -549,18 +560,8 @@ async function refreshPolicyFile(tenantId: string, repo: string, source: RepoSou
   if (state) await settleRepoPolicy(tenantId, repo, source);
   return state;
 }
-// A tenant's system principal never changes once minted.
-const githubSenderPrincipals = new Map<string, string>();
 async function githubSenderPrincipal(tenantId: string): Promise<string> {
-  const cached = githubSenderPrincipals.get(tenantId);
-  if (cached !== undefined) return cached;
-  await systemSender.resolve({ tenantId, domain: await tenantDomain(tenantId), localPart: GITHUB_SENDER });
-  const row = await composition.db.query.principal.findFirst({
-    where: and(eq(schema.principal.tenantId, tenantId), eq(schema.principal.kind, "user"), eq(schema.principal.refId, GITHUB_SENDER)),
-  });
-  if (!row) throw new Error(`no ${GITHUB_SENDER} system principal in tenant ${tenantId}`);
-  githubSenderPrincipals.set(tenantId, row.id);
-  return row.id;
+  return (await systemSenderOf(GITHUB_SENDER, tenantId)).principalId;
 }
 function now(): Date {
   return new Date();

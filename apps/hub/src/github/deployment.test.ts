@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
-import { createDeploymentRotation, pinOf, resolveLiveDeployments, systemSenderMaterializer } from "./deployment.js";
+import { createDeploymentRotation, pinOf, resolveLiveDeployments } from "./deployment.js";
 
 const TENANT_ID = "tnt_acme";
 const SOURCE = { kind: "asset", assetId: "ast_triage", package: { format: "source", commitSha: "c0ffee", packageName: "@corbits/pr-triage-workflow" } };
@@ -158,22 +158,4 @@ describe("pinOf", () => {
     expect(pinOf(closurePinning({ name: "@corbits/pr-triage-workflow", version: "0.1.0-a" }))).toBe("@corbits/pr-triage-workflow@0.1.0-a");
     expect(() => pinOf(closurePinning())).toThrow("frozen closure has 0 top-level packages, expected one");
   });
-});
-
-test("a run trigger names its system sender to the sender gate, and an unresolved one as no sender", async () => {
-  const seen: unknown[] = [];
-  const materialize = systemSenderMaterializer(async function record(args) {
-    seen.push(args);
-    return { outcome: "skip" };
-  }, async function senderOf(agentAddress) {
-    return agentAddress === "run_live@acme.test" ? { principalId: "prn_github", tenantId: TENANT_ID, coordinates: [{ coordType: "principal", id: "prn_github" }, { coordType: "tenant", id: TENANT_ID }] } : null;
-  });
-
-  await materialize({ agentAddress: "run_live@acme.test", runId: "run_live" });
-  await materialize({ agentAddress: "run_gone@acme.test", runId: "run_gone" });
-
-  expect(seen).toEqual([
-    { agentAddress: "run_live@acme.test", runId: "run_live", senderPrincipalId: "prn_github", senderCoordinates: [{ coordType: "principal", id: "prn_github" }, { coordType: "tenant", id: TENANT_ID }] },
-    { agentAddress: "run_gone@acme.test", runId: "run_gone", senderPrincipalId: null, senderCoordinates: null },
-  ]);
 });
