@@ -20,7 +20,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database, auth, credential cipher and Interchange settings injected. |
 | `src/auth.ts`, `src/sessions.ts` | better-auth config (Google sign-in, email allowlist, device authorization, `PORTAL_ORIGIN`) and the caller's own sessions. |
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
-| `src/hooks.ts`, `src/provider-hooks/` | `@corbits/webhooks` mount; webhook intake for hosts other than GitHub. |
+| `src/hooks.ts`, `src/provider-hooks/` | `@corbits/webhooks` migrations and mount path; webhook intake for hosts other than GitHub. |
 | `src/integrations/app.ts` | The `/api/integrations/*` routes and their OpenAPI descriptions. |
 | `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role. |
 | `src/audit-log.ts` | The audit list, read from what the workspace already recorded. |
