@@ -6,6 +6,9 @@ const PACK = { ...emptyPack("octocat/hello"), checks: { "no-merge-conflicts": { 
 import { createGithubBacklog } from "./backlog-triage.js";
 import { NoLiveDeploymentError } from "./deployment.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const REPO = "acme/widgets";
 const MEMBER = { tenantId: "tenant-1", principalId: "member-1" };
 const SOURCE = { repo: { id: "art_pack", version: 2 } };
@@ -21,6 +24,7 @@ function backlog(repo: Record<string, unknown>, sent: unknown[], sendMail = asyn
       },
     } as never,
     cipher: { async decrypt() { return "{}"; } } as never,
+    onKeyMoved: noKeyPush,
     async authorize() {
       return true;
     },

@@ -4,9 +4,7 @@ import { stockTriggerMail } from "@corbits/triage-contracts";
 import {
   createGrant,
   ensureWorkspace,
-  configureGithubApp,
   ensureHookCredential,
-  githubAppSecret,
   GITHUB_HOOK_CREDENTIAL_NAME,
   portalConnected,
   projectQueue,
@@ -242,35 +240,7 @@ describe("workspace resolution", () => {
 });
 
 describe("workspace GitHub App and repository lifecycle", () => {
-  test("stores one repo-free workspace credential and completes App setup without repositories", async () => {
-    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
-    const transport: Transport = {
-      fetch: async (method, path, body) => {
-        calls.push({ method, path, body });
-        if (method === "GET" && path.includes("/providers")) {
-          return { data: [{ id: "provider", name: "github", plugin: "http", apiBaseUrl: "https://api.github.com" }], nextCursor: null } as never;
-        }
-        if (method === "POST" && path.endsWith("/credentials")) return { id: "credential" } as never;
-        if (method === "DELETE" && path.endsWith("/credentials/legacy-api")) return undefined as never;
-        throw new Error(`unexpected ${method} ${path}`);
-      },
-      subscribe: () => () => {},
-    };
-    const secret = githubAppSecret({ appId: "123", privateKey: "pem" });
-
-    await configureGithubApp(transport, "tenant", secret, ["legacy-api"]);
-
-    expect(JSON.parse(secret)).toEqual({ appId: "123", privateKey: "pem" });
-    expect(calls.find((call) => call.method === "POST" && call.path.endsWith("/credentials"))).toMatchObject({
-      method: "POST",
-      path: "/api/tenants/tenant/credentials",
-      body: { name: "github", secret },
-    });
-    expect(calls.at(-1)).toEqual({
-      method: "DELETE",
-      path: "/api/tenants/tenant/credentials/legacy-api",
-      body: undefined,
-    });
+  test("a workspace with the GitHub App credential is connected before any repository", () => {
     const configured = snapshot();
     configured.credentials = [{ id: "credential", tenantId: "tenant", name: "github", type: "other", status: "active", providerId: "provider", createdAt: "2026-03-10T00:00:00.000Z", updatedAt: "2026-03-10T00:00:00.000Z" }];
     expect(portalConnected(configured)).toBe(true);

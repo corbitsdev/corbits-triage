@@ -7,6 +7,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { generateId } from "@intx/hub-common";
 import { grantAdminGithub } from "./admin-github-grant.js";
+import { storeAppKey } from "./app-key.js";
 import { ensureTriageRole } from "./automation.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 
@@ -209,13 +210,15 @@ export async function prepareCanonicalManifestWrite(
   }
   const appCredentialId = app?.id ?? state.appCredentialId;
   const hookCredentialId = hook?.id ?? state.hookCredentialId;
-  const appSecret = JSON.stringify({ appId: String(conversion.id), privateKey: conversion.pem.trim() });
-  const encryptedApp = await cipher.encrypt(appSecret, credentialAad(appCredentialId, "secret"));
+  const appJson = JSON.stringify({ appId: String(conversion.id), privateKey: conversion.pem.trim() });
+  // The App is not installed yet, so the credential workflows bind holds no token; the key goes to the hub-only one.
+  const noToken = await cipher.encrypt("", credentialAad(appCredentialId, "secret"));
   const encryptedHook = await cipher.encrypt(conversion.webhook_secret, credentialAad(hookCredentialId, "secret"));
   return {
     replacement: state.replacement,
+    appJson,
     values: [
-      { id: appCredentialId, name: "github", secret: encryptedApp, metadata: { appSlug: conversion.slug } },
+      { id: appCredentialId, name: "github", secret: noToken, metadata: { appSlug: conversion.slug } },
       { id: hookCredentialId, name: "github-hook", secret: encryptedHook, metadata: xHubHookMetadata(triageWorkflowFor("github").id, GITHUB_HOOK_HEADERS) },
     ] as const,
   };
@@ -276,7 +279,7 @@ export function createGithubManifestIntegration({
       const stamp = now();
       for (const value of prepared.values) {
         if (prepared.replacement) {
-          await tx.update(credential).set({ secret: value.secret, providerId: state.providerId, status: "active", metadata: value.metadata, updatedAt: stamp })
+          await tx.update(credential).set({ secret: value.secret, providerId: state.providerId, status: "active", metadata: value.metadata, expiresAt: null, updatedAt: stamp })
             .where(and(eq(credential.id, value.id), eq(credential.tenantId, state.tenantId), eq(credential.name, value.name)));
         } else {
           await tx.insert(credential).values({
@@ -287,6 +290,7 @@ export function createGithubManifestIntegration({
           });
         }
       }
+      await storeAppKey(tx, cipher, { tenantId: state.tenantId, appJson: prepared.appJson });
       await grantAdminGithub(tx, state.tenantId, state.appCredentialId, stamp);
       await ensureTriageRole(tx, state.tenantId, stamp);
     });

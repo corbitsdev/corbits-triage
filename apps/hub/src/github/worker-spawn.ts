@@ -17,6 +17,8 @@ const RESTART_RELEASE_REASON = "Triage worker orphaned by a hub restart";
 
 export type WorkerSpawnDeps = {
   db: DB["db"];
+  /** Readies what the worker's credentials hold: a worker is deployed with them as they are. */
+  beforeDeploy: (job: TriageJob) => Promise<void>;
   redeploy: (tenantId: string, seedAnchorRunId: string, content: Record<string, unknown>) => Promise<Redeployed>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   lifecycle: Pick<WorkflowLifecycleService, "requestCancellation" | "getStatus">;
@@ -46,6 +48,7 @@ export function createWorkerSpawner(deps: WorkerSpawnDeps): WorkerSpawner {
     const seed = await resolveLiveDeployment(deps.db, job.tenantId, job.workflow);
     // The listener is being deployed or healed; the reconciler sees to it.
     if (!seed) throw new WorkerDeferredError(`no live ${job.workflow} listener to copy`);
+    await deps.beforeDeploy(job);
     let copy: Redeployed;
     try {
       copy = await deps.redeploy(job.tenantId, seed.runId, { [WORKER_MARKER]: true });

@@ -7,14 +7,19 @@ import { DeniedNotice } from "../../lib/denied.tsx";
 import { githubAppPickerUrl, githubWebhookUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../../lib/github-return-sync.ts";
 import { useGithubManageAccess } from "../../lib/github-sync.ts";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
+import { GITHUB_APP_KEY_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, githubAppSlugFromCredentials, hasActiveGithubCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CopyField } from "../CopyField.tsx";
 import { CredentialRow } from "./CredentialRow.tsx";
+import { GithubAppRow } from "./GithubAppRow.tsx";
+
+function notReadyText(lapsed: boolean): string {
+  return lapsed ? "Triage's access to GitHub has expired, so it cannot triage until it is renewed." : "The GitHub App is not connected.";
+}
 
 export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
-  const { syncFromGithub } = usePortal();
+  const { syncFromGithub, revoke } = usePortal();
   const [error, setError] = useState("");
   const canManage = useGithubManageAccess().data === true;
   const { credentials } = snapshot;
@@ -23,6 +28,15 @@ export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
   const others = namedSecrets(otherSecrets(credentials));
   const installed = snapshot.repos.filter((repo) => repo.source !== "bitbucket-datacenter" && repo.connected).length;
   const slug = githubAppSlugFromCredentials(credentials);
+  const appKey = credentials.find((credential) => credential.name === GITHUB_APP_KEY_CREDENTIAL_NAME);
+  // Connected, but Triage's access to GitHub ran out; the GitHub App row below says why.
+  const lapsed = !ready && credentials.some((credential) => credential.name === GITHUB_CREDENTIAL_NAME && credential.status.toLowerCase() === "expired");
+
+  /** The App's key goes with it. */
+  async function removeGithubApp(credentialId: string) {
+    await revoke(credentialId);
+    if (appKey) await revoke(appKey.id);
+  }
 
   async function syncAfterGithub() {
     try {
@@ -69,12 +83,14 @@ export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
         <div className="sentences">
           <div className="sentence">
             <span className="txt">
-              {ready ? <>The GitHub App{slug && <> <b>{slug}</b></>} is connected and installed on {counted(installed, "repository", "repositories")}.</> : "The GitHub App is not connected."}
+              {ready ? <>The GitHub App{slug && <> <b>{slug}</b></>} is connected and installed on {counted(installed, "repository", "repositories")}.</> : notReadyText(lapsed)}
             </span>
-            {!ready && <Link className="linkish" to="/connect">Connect it</Link>}
+            {!ready && !lapsed && <Link className="linkish" to="/connect">Connect it</Link>}
             {ready && canManage && <Button type="button" variant="outline" size="sm" onClick={chooseOnGithub}>Choose repositories on GitHub</Button>}
           </div>
-          {secrets.map(({ credential, name }) => <CredentialRow key={credential.id} credential={credential} name={name} replaceable />)}
+          {secrets.map(({ credential, name }) => (credential.name === GITHUB_CREDENTIAL_NAME
+            ? <GithubAppRow key={credential.id} credential={credential} name={name} tenantId={snapshot.workspace.tenantId} replaceable={canManage} remove={removeGithubApp} />
+            : <CredentialRow key={credential.id} credential={credential} name={name} replaceable />))}
         </div>
         {others.length > 0 && (
           <div>

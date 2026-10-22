@@ -23,7 +23,6 @@ async function placesOf(dockerHost: string, publicHubWebSocketUrl: string) {
   const docker = await connectDockerSidecars({
     docker: { dockerHost, home: "/nonexistent", publicHubWebSocketUrl },
     database: { host: "127.0.0.1", port: 1, user: "unused", password: "unused", database: "unused" },
-    root: "/nonexistent",
     adapterManifest: [],
   });
   return dockerPlaces(docker).map((place) => ({ id: place.guide.id, found: place.found }));

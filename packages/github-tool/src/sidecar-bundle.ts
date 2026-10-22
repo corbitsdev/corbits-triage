@@ -3,7 +3,6 @@ import type { ToolDefinition } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 
 import {
-  appLogin,
   authorTeams,
   codeownersForPr,
   getChecks,
@@ -19,7 +18,6 @@ import {
   readPrTemplates,
   readRepoDocsPage,
   readStack,
-  type AppLogin,
   type GithubFetch,
 } from "@corbits/github-reads";
 import {
@@ -47,6 +45,8 @@ function obj(properties: Record<string, unknown>, required = Object.keys(propert
     required,
   };
 }
+
+const APP_LOGIN = { type: "string", description: "The App's bot account, whose comments and reviews are triage's own" };
 
 const READ_DEFINITIONS: ToolDefinition[] = [
   {
@@ -76,8 +76,8 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "github_get_reviews",
-    description: "Get reviews for a pull request, marking this App's own request-changes Do reviews as triageRequest.",
-    inputSchema: obj({ repo, number: { type: "integer" } }),
+    description: "Get reviews for a pull request, marking appLogin's own request-changes Do reviews as triageRequest.",
+    inputSchema: obj({ repo, number: { type: "integer" }, appLogin: APP_LOGIN }, ["repo", "number"]),
   },
   {
     name: "github_list_pr_commits",
@@ -128,7 +128,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
 
 const ARTIFACT_REF = obj({ id: str, version: { type: "number" } });
 
-const MIRROR_INPUT = obj({
+const MIRROR_FIELDS = {
   repo,
   number: { type: "integer" },
   labels: { type: "array", items: str },
@@ -146,7 +146,9 @@ const MIRROR_INPUT = obj({
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
-}, ["repo", "number", "labels"]);
+};
+const MIRROR_REQUIRED = ["repo", "number", "labels"];
+const MIRROR_INPUT = obj({ ...MIRROR_FIELDS, appLogin: APP_LOGIN }, [...MIRROR_REQUIRED, "appLogin"]);
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
@@ -165,7 +167,7 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
     name: "github_execute_do_auto",
     description:
       "Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels (removing the ones it names in unlabel) or assignees, request reviews, post a comment, approve, request changes, close, or merge. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close, merge, comment or review is refused once the pull request has moved past headSha; a review is pinned to headSha and satisfied when this App already made it there, and a merge merges headSha only. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Merges only for a merge Do.",
-    inputSchema: obj({ request: MIRROR_INPUT, step: obj({ effectId: str, headSha: str, kind: str, target: { type: "object" } }) }),
+    inputSchema: obj({ request: obj(MIRROR_FIELDS, MIRROR_REQUIRED), step: obj({ effectId: str, headSha: str, kind: str, target: { type: "object" } }), appLogin: APP_LOGIN }),
   },
   {
     name: "github_create_review",
@@ -209,7 +211,7 @@ interface Env extends BaseEnv {
 type ToolCallInput = { id: string; name: string; arguments: Record<string, any> };
 
 /** A Do that cannot run is reported, not failed, so the run goes on. */
-async function runDo(gh: GithubFetch, args: unknown, login: AppLogin) {
+async function runDo(gh: GithubFetch, args: unknown, login: string) {
   try {
     const { status } = await executeDo(gh, parseDoInput(args), login);
     return { status };
@@ -238,7 +240,14 @@ function checkArgs(a: Record<string, any>): void {
   if ("number" in a && !(Number.isSafeInteger(a.number) && a.number > 0)) throw new Error(`number must be a positive integer, got ${a.number}`);
 }
 
-async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, fileAt: FileAt): Promise<unknown> {
+/** The App's bot account a write names, as triage reads back and takes back only what it wrote itself. */
+function appLoginOf(call: ToolCallInput): string {
+  const login = call.arguments.appLogin;
+  if (typeof login !== "string" || login === "") throw new Error(`${call.name} names no appLogin`);
+  return login;
+}
+
+async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): Promise<unknown> {
   const a = call.arguments;
   if (REPO_TOOLS.has(call.name)) checkArgs(a);
   switch (call.name) {
@@ -253,7 +262,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, f
     case "github_get_checks":
       return { checks: await getChecks(gh, a.repo, a.sha) };
     case "github_get_reviews":
-      return { reviews: await getReviews(gh, a.repo, a.number, login) };
+      return { reviews: await getReviews(gh, a.repo, a.number, typeof a.appLogin === "string" ? a.appLogin : undefined) };
     case "github_list_pr_commits":
       return { commits: await listPrCommits(gh, a.repo, a.number) };
     case "github_list_pr_files":
@@ -274,6 +283,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, f
       return readWindow(fileAt, a);
     case "github_mirror":
     case "github_mirror_auto": {
+      const login = appLoginOf(call);
       const mirrored = await mirror(gh, {
         repo: a.repo,
         number: a.number,
@@ -287,7 +297,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, f
       }, login);
       if ("skipped" in mirrored) return mirrored;
       if (a.notReadyHead !== mirrored.sha && a.fixedHead !== mirrored.sha) return mirrored;
-      const target = { repo: a.repo, number: a.number, login: await login() };
+      const target = { repo: a.repo, number: a.number, login };
       const dismissed = a.notReadyHead === mirrored.sha ? await dismissDoApprovals(gh, target) : [];
       if (a.fixedHead !== mirrored.sha) return { ...mirrored, dismissed };
       // A repository may restrict who dismisses reviews; the comment and labels still stand, and the reason is kept.
@@ -298,7 +308,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, f
       }
     }
     case "github_execute_do_auto":
-      return runDo(gh, a, login);
+      return runDo(gh, a, appLoginOf(call));
     case "github_create_review":
       return createReview(gh, { repo: a.repo, number: a.number, body: a.body ?? "", event: a.event });
     case "github_create_issue_comment":
@@ -314,21 +324,16 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, f
   }
 }
 
-/** The App's login and each file read are asked of GitHub once per tool instance, so once per step of a run. */
+/** Each file read is asked of GitHub once per tool instance, so once per step of a run. */
 function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>) {
-  let known: string | undefined;
   const files = cachedLoads<string | undefined>();
   async function run(call: ToolCallInput) {
     try {
       const gh = await getFetch();
-      async function login() {
-        known ??= await appLogin(gh);
-        return known;
-      }
       function fileAt(repo: string, sha: string, path: string) {
         return files(`${repo}@${sha}:${path}`, () => readFileAt(gh, repo, sha, path));
       }
-      const content = await dispatch(gh, call, login, fileAt);
+      const content = await dispatch(gh, call, fileAt);
       return { callId: call.id, content: content as Record<string, unknown> };
     } catch (err) {
       return {

@@ -94,12 +94,6 @@ export type GithubInstallation = {
   suspended: boolean;
 };
 
-async function getApp(gh: GithubFetch): Promise<{ slug: string }> {
-  const app = await json(gh, "/app") as { slug?: unknown };
-  if (typeof app.slug !== "string" || !app.slug) throw new Error("github returned an invalid App slug");
-  return { slug: app.slug };
-}
-
 export async function listInstallations(gh: GithubFetch): Promise<GithubInstallation[]> {
   const rows = Installation.array().assert(await jsonAll(gh, "/app/installations?per_page=100"));
   return rows.map((row) => ({
@@ -392,11 +386,9 @@ function carries(review: any, marker: string): boolean {
   return typeof review.body === "string" && review.body.includes(marker);
 }
 
-/** `login` names the App, asked only when a review carries one of triage's markers, as only the App's marked reviews are triage's own. */
-export async function getReviews(gh: GithubFetch, repo: string, number: number, appLogin?: AppLogin): Promise<Review[]> {
+/** `login` names the App's bot account, as only the App's marked reviews are triage's own. */
+export async function getReviews(gh: GithubFetch, repo: string, number: number, login?: string): Promise<Review[]> {
   const reviews = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
-  const marked = reviews.some((v: any) => carries(v, REQUEST_CHANGES_DO_MARKER) || carries(v, CODE_REVIEW_MARKER));
-  const login = marked && appLogin ? await appLogin() : undefined;
   function reviewOf(v: any): Review {
     const own = login !== undefined && v.user?.login === login;
     return {
@@ -853,13 +845,6 @@ export function missingFrom(have: string[] | undefined, wanted: string[]): strin
   const held = new Set((have ?? []).map(lowercase));
   return wanted.filter((name) => !held.has(lowercase(name)));
 }
-
-export async function appLogin(gh: GithubFetch): Promise<string> {
-  return `${(await getApp(gh)).slug}[bot]`;
-}
-
-/** Asked of GitHub once however often it is needed. */
-export type AppLogin = () => Promise<string>;
 
 /** Marks the changes the request-changes Do requested, so a repeat on the same head finds them. */
 export const REQUEST_CHANGES_DO_MARKER = "<!-- corbits-request-changes -->";

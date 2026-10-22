@@ -16,6 +16,8 @@ const GITHUB_PROVIDER = "github";
 const GITHUB_PROVIDER_PLUGIN = "http";
 export const GITHUB_CREDENTIAL_NAME = "github";
 export const GITHUB_HOOK_CREDENTIAL_NAME = "github-hook";
+/** The App's private key: the hub moves it here off the GitHub App credential, which then holds an installation token. */
+export const GITHUB_APP_KEY_CREDENTIAL_NAME = "github-app";
 export const INFERENCE_PROVIDER = "corbits-system-one";
 const INFERENCE_PROVIDER_PLUGIN = "corbits-system-one";
 export const INFERENCE_CREDENTIAL_NAME = "corbits-system-one";
@@ -177,14 +179,6 @@ export function validateRepo(repo: string): string {
   const clean = asRepo(repo);
   if (!clean) throw new Error("Repository must be owner/name.");
   return clean;
-}
-
-export function githubAppSecret(app: { appId: string; privateKey: string }): string {
-  const { appId, privateKey } = app;
-  if (!appId.trim() || !privateKey.trim()) {
-    throw new Error("App ID and private key are required.");
-  }
-  return JSON.stringify({ appId: appId.trim(), privateKey: privateKey.trim() });
 }
 
 function requireSecret(secret: string): string {
@@ -590,10 +584,6 @@ export function legacyHookCredentials(credentials: HubCredential[]): HubCredenti
   return credentials.filter((row) => row.name.startsWith(`${GITHUB_HOOK_CREDENTIAL_NAME}:`));
 }
 
-export function legacyGithubCredentials(credentials: HubCredential[]): HubCredential[] {
-  return credentials.filter((row) => row.name.startsWith(`${GITHUB_CREDENTIAL_NAME}:`));
-}
-
 function credentialIdempotencyKey(providerId: string, name: string): string {
   return `${providerId}:${name}`;
 }
@@ -635,67 +625,6 @@ export async function ensureGitHubProvider(transport: Transport, tenantId: strin
 }
 
 const REACTIVATABLE_CREDENTIAL_STATUSES = new Set(["expired", "inactive"]);
-
-async function writeGitHubCredential(
-  transport: Transport,
-  tenantId: string,
-  secret: string,
-  metadata?: Record<string, unknown>,
-): Promise<string> {
-  const tid = enc(requireTenantId(tenantId));
-  const providerId = await ensureGitHubProvider(transport, tenantId);
-  const name = GITHUB_CREDENTIAL_NAME;
-  try {
-    const created = await transport.fetch<HubCredential>("POST", `/api/tenants/${tid}/credentials`, {
-      providerId,
-      name,
-      type: "api_key",
-      secret,
-      ...(metadata ? { metadata } : {}),
-      idempotencyKey: credentialIdempotencyKey(providerId, name),
-    });
-    return created.id;
-  } catch (cause) {
-    if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
-    const existing = await transport.fetch<HubCredential>(
-      "GET",
-      `/api/tenants/${tid}/credentials/resolve/${enc(name)}`,
-    );
-    const current = await transport.fetch<HubCredential>(
-      "GET",
-      `/api/tenants/${tid}/credentials/${enc(existing.id)}`,
-    );
-    const status = typeof current.status === "string" ? current.status.toLowerCase() : "";
-    if (status !== "active" && !REACTIVATABLE_CREDENTIAL_STATUSES.has(status)) {
-      const label = typeof current.status === "string" && current.status.length > 0 ? current.status : "unknown";
-      throw new Error(`The credential ${name} is ${label} — re-authorize the GitHub App.`);
-    }
-    const body: Record<string, unknown> = { secret };
-    if (metadata) body.metadata = metadata;
-    if (REACTIVATABLE_CREDENTIAL_STATUSES.has(status)) body.status = "active";
-    await transport.fetch("PATCH", `/api/tenants/${tid}/credentials/${enc(existing.id)}`, body);
-    return existing.id;
-  }
-}
-
-export async function configureGithubApp(
-  transport: Transport,
-  tenantId: string,
-  secret: string,
-  legacyCredentialIds: string[] = [],
-  appSlug?: string,
-): Promise<void> {
-  const slug = appSlug?.trim();
-  const id = await writeGitHubCredential(
-    transport,
-    tenantId,
-    requireSecret(secret),
-    slug ? { appSlug: slug } : undefined,
-  );
-  await Promise.all(legacyCredentialIds.filter((legacyId) => legacyId !== id).map((legacyId) =>
-    revokeCredential(transport, tenantId, legacyId)
-  ));
-}
 
 /**
  * Converges the app-level hook credential GitHub posts to. The secret is the

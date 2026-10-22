@@ -11,6 +11,9 @@ import { WEBHOOK_EVENTS } from "./client.js";
 import { createBitbucketIntegration } from "./integration.js";
 import { HOOK_CREDENTIAL, TOKEN_CREDENTIAL } from "./records.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_bitbucket_enable";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
@@ -70,7 +73,7 @@ async function withDatabase(run: (db: ReturnType<typeof createDB>["db"], cipher:
 test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enabled kind the host has, and registers its webhook", async () => {
   await withDatabase(async function enableGrants(db, cipher) {
     const integration = createBitbucketIntegration({
-      db, cipher, async authorize() { return true; },
+      db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
       async stockFetch() { return new Response(null, { status: 500 }); },
       publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201), lookup: lookupBitbucket,
       onEnabled() {}, async onConnectionChanged() {}, now: () => new Date(), log() {},
@@ -90,7 +93,7 @@ test("PostgreSQL: a hand-made webhook needs use on the hook credential, its setu
     let hookUse = false;
     let enabledCalls = 0;
     const integration = createBitbucketIntegration({
-      db, cipher,
+      db, cipher, onKeyMoved: noKeyPush,
       async authorize(_principal, _tenant, resource) { return resource !== `credential:${HOOK_ID}` || hookUse; },
       async stockFetch() { return new Response(null, { status: 500 }); },
       publicOrigin: "https://hub.test", fetchImpl: instanceFetch(403), lookup: lookupBitbucket,

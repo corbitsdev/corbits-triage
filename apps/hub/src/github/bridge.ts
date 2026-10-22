@@ -19,7 +19,9 @@ import { asRecord, errorText, isRecord } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
 import { credentialAad, type CredentialCipher } from "@intx/types";
+import { GITHUB_CREDENTIAL, githubAppLogin } from "./app-key.js";
 import type { DeliveryCache } from "./dedupe.js";
+import { heldCredential } from "./portal-credential.js";
 import { baseMoveOf, normalize, policyPushOf, type BaseMove, type GithubPolicyPush } from "./normalize.js";
 import type { BacklogStart } from "./backlog-triage.js";
 import type { PolicyFileState } from "./policy-file.js";
@@ -132,12 +134,17 @@ export async function loadBridgeHook(
   return { credentialId: row.id, credentialName: row.name, tenantId: row.tenantId, secret, workflow };
 }
 
+/** The App's bot account, named by the `github` credential the workspace resolves to: its own or a parent's. */
 async function appBotLogin(db: DB["db"], tenantId: string): Promise<string> {
-  const { credential } = schema;
-  const row = await db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, "github")) });
-  const slug = asRecord(row?.metadata)?.["appSlug"];
-  if (typeof slug !== "string" || slug === "") throw new Error("github app credential has no appSlug");
-  return `${slug}[bot]`;
+  const github = await heldCredential(db, tenantId, GITHUB_CREDENTIAL);
+  if (!github) throw new Error("github app credential is missing");
+  return githubAppLogin(github);
+}
+
+/** A mail in a workspace with GitHub names the App's bot account, whose comments and reviews the workflow takes as triage's own. */
+export async function withAppLogin(db: DB["db"], tenantId: string, payload: unknown): Promise<unknown> {
+  if (!isRecord(payload) || payload["repoSource"] !== undefined) return payload;
+  return { ...payload, appLogin: await appBotLogin(db, tenantId) };
 }
 
 function isSentBy(payload: unknown, login: string): boolean {
@@ -262,6 +269,11 @@ export function applyInstallationListing(ns: CorbitsTriageNs, listings: readonly
   return next;
 }
 
+/** One installation token serves the workspace, so another account's repositories are not added. */
+function fromAnotherInstallation(ns: CorbitsTriageNs, installationId: number): boolean {
+  return repoRecords(ns).some((record) => sourceOf(record) === "github" && record.installationId !== undefined && record.installationId !== installationId);
+}
+
 function applyInstallAction(
   event: string,
   action: string,
@@ -269,6 +281,7 @@ function applyInstallAction(
   fields: InstallationFields,
   ns: CorbitsTriageNs,
 ): InstallPatch | undefined {
+  if ((action === "created" || action === "added") && fromAnotherInstallation(ns, fields.installationId)) return undefined;
   if (event === "installation" && action === "created") {
     return applyCreatedOrAdded(ns, listedRepos(payload["repositories"], payload["repositories_truncated"]), fields);
   }

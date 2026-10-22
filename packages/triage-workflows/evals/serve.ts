@@ -26,7 +26,6 @@ export function fixtureGithub(pr: Snapshot, templates: Readonly<Record<string, r
   };
   return async function fetchFixture(url: URL): Promise<Response> {
     const path = url.pathname;
-    if (path === "/app") return Response.json({ slug: "triage-eval" });
     if (path === repo) return Response.json({ default_branch: "main", owner: { login: pr.repo.split("/")[0], type: "Organization" } });
     if (path === `${repo}/pulls`) return Response.json([pull]);
     if (path === `${repo}/pulls/${pr.number}`) return Response.json(pull);
@@ -58,6 +57,6 @@ export function triggerMail(pr: Pick<Snapshot, "repo" | "number">, pack: CheckPa
   return {
     headers: { from: `${TRIAGE_MAIL_SENDER}@${DOMAIN}`, to: [`${PR_TRIAGE_ADDRESS}@${DOMAIN}`] },
     rawHeaders: {},
-    parts: [{ contentType: "text/plain", ref: "part-0", text: JSON.stringify(request) }],
+    parts: [{ contentType: "text/plain", ref: "part-0", text: JSON.stringify({ ...request, appLogin: "triage-eval[bot]" }) }],
   };
 }

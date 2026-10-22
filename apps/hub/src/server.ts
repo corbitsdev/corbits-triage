@@ -46,7 +46,7 @@ import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
-import { buildSidecarAdapterManifest } from "./sidecar-config.js";
+import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
@@ -64,7 +64,10 @@ import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
-import { createBridgeHandler, logJson } from "./github/bridge.js";
+import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
+import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
+import { appKeyProviderWriteRefusal, appKeyWriteRefusal, githubTenants, moveAppKey } from "./github/app-key.js";
+import { createGithubAppConnection } from "./github/app-connection.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
 import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
@@ -155,13 +158,15 @@ const WORKER_POLL_MS = 2_000;
 const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
 /** How often E2B sandboxes are swept and extended; well inside their one-hour timeout. */
 const E2B_TEND_MS = 10 * 60_000;
+/** A GitHub token that could not be renewed is tried again within its remaining quarter hour. */
+const GITHUB_TOKEN_RETRY_MS = 60_000;
+const GITHUB_TOKEN_RETRY_MAX_MS = 5 * 60_000;
 
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
 const database = databaseConfig(env);
 const githubOrigin = githubApiOrigin(env);
-const sidecarAdapterManifest = buildSidecarAdapterManifest(env.HUB_DATA_DIR, githubOrigin);
 
 await Bun.$`bunx drizzle-kit migrate`.cwd(`${V}/packages/db`).env({ ...childProcessEnv(env), ...migrationEnv(database) }).quiet();
 logJson({ level: "info", msg: "migrations_applied" });
@@ -190,17 +195,17 @@ const local = createLocalProcessSidecarProvisioner({
     log: logJson,
   }),
   capacity: createHostCapacity({ cgroupRoot: "/sys/fs/cgroup", meminfo: "/proc/meminfo" }),
-  adapterManifest: sidecarAdapterManifest,
+  adapterManifest: SIDECAR_ADAPTER_MANIFEST,
   log: logJson,
 });
-const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
 const dockerUp = "provisioner" in docker ? docker : undefined;
 if ("reason" in docker) logJson({ level: "info", msg: "docker_sidecars_off", reason: docker.reason });
 const e2bConfig = e2bSettings(env);
-const e2b = e2bConfig === undefined ? undefined : await connectE2bSidecars({ e2b: e2bConfig, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+const e2b = e2bConfig === undefined ? undefined : await connectE2bSidecars({ e2b: e2bConfig, database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
 if (typeof e2b === "string") logJson({ level: "info", msg: "e2b_sidecars_off", reason: e2b });
 const railwaySettings = railwaySandboxSettings(env);
-const railway = railwaySettings === undefined ? undefined : await connectRailwaySidecars({ railway: railwaySettings, database, root: ROOT, adapterManifest: sidecarAdapterManifest });
+const railway = railwaySettings === undefined ? undefined : await connectRailwaySidecars({ railway: railwaySettings, database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
 if (typeof railway === "string") logJson({ level: "info", msg: "railway_sidecars_off", reason: railway });
 // First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, then Railway, the rest on the hub host.
 const workloadProvisioners = [dockerUp, e2b, railway].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
@@ -210,6 +215,7 @@ let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
 let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
+let tokenLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
 let coordinator: Coordinator | undefined;
 let e2bTender: ReturnType<typeof setInterval> | undefined;
@@ -224,6 +230,7 @@ async function shutdown(): Promise<void> {
   cronTicker?.stop();
   triageLoop?.stop();
   recordLoop?.stop();
+  tokenLoop?.stop();
   coalescer?.stop();
   coordinator?.stop();
   clearInterval(e2bTender);
@@ -249,7 +256,7 @@ const composition = await createInterchangeHub({
   settings: interchangeSettings(env),
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { email: { resetPassword: smtp.passwordReset, verifyEmail: smtp.verifyEmail } }) },
   credentialCipher,
-  adapterManifest: sidecarAdapterManifest,
+  adapterManifest: SIDECAR_ADAPTER_MANIFEST,
   sidecarProvisioners,
   probeSidecarProvisioners: sidecarProvisioners,
   probeSidecarCapabilityRules: workloadProvisioners.length > 0 ? [{ capability: "isolation:workload", effect: "require" }] : [],
@@ -257,6 +264,19 @@ const composition = await createInterchangeHub({
 const stock = composition.server;
 composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
 
+/** The hub's credentials, and the push that takes back from sidecars an App key a read moved to the hub. */
+const credentialDeps = {
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  onKeyMoved: function pushMovedKeyBlank(tenantId: string): Promise<void> {
+    return githubToken.push(tenantId);
+  },
+};
+// App JSON a stock write left where workflows bind it moves to the hub before any sidecar is restored with it.
+const movedAppKeys: string[] = [];
+for (const tenantId of await githubTenants(composition.db)) {
+  if (await moveAppKey(credentialDeps, tenantId)) movedAppKeys.push(tenantId);
+}
 await restoreLocalSidecars(composition.db, local);
 if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
 async function tendE2b(sidecars: E2bSidecarProvisioner): Promise<void> {
@@ -347,8 +367,7 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
   return result.effect === "allow";
 }
 const githubManifest = createGithubManifestIntegration({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   getSession: composition.getSession,
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
@@ -356,14 +375,13 @@ const githubManifest = createGithubManifestIntegration({
   authorizeCredential: authorizePortal,
   stateSecret: env.BETTER_AUTH_SECRET,
 });
-const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
-const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
+const tenantBitbucket = createTenantBitbucket({ ...credentialDeps, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
+const tenantGithub = createTenantGithub({ ...credentialDeps, githubApiOrigin: githubOrigin });
 const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
 const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: pullRequests.withDiff, log: logJson });
 const repoReads = createRepoReads(now);
 const githubPrActions = createGithubPrActions({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   readCheckPack,
@@ -373,8 +391,7 @@ const githubPrActions = createGithubPrActions({
 });
 const githubPrDetails = createGithubPrDetails({
   reads: repoReads,
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   githubApiOrigin: githubOrigin,
   tenantBitbucket,
   authorize: authorizePortal,
@@ -383,15 +400,14 @@ const githubPrDetails = createGithubPrDetails({
 
 const mergeStates = createMergeStates({
   reads: repoReads,
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   githubApiOrigin: githubOrigin,
   tenantBitbucket,
   authorize: authorizePortal,
   log: logJson,
 });
 
-const hookDeps = { db: composition.db, cipher: composition.credentialCipher };
+const hookDeps = credentialDeps;
 const hookApp = createStockHookApp(
   hookDeps,
   composition.principalKeyStore,
@@ -401,7 +417,32 @@ const hookApp = createStockHookApp(
 const GITHUB_SENDER = TRIAGE_MAIL_SENDER;
 const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
-  await githubDeliverer.to(address, JSON.stringify(payload), tenantId, undefined);
+  await githubDeliverer.to(address, JSON.stringify(await withAppLogin(composition.db, tenantId, payload)), tenantId, undefined);
+}
+const githubToken = createGithubTokenRenewal({ ...credentialDeps, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, log: logJson });
+for (const tenantId of movedAppKeys) await githubToken.push(tenantId);
+tokenLoop = createReconcileLoop(githubToken.renewAll, { intervalMs: GITHUB_TOKEN_RENEW_MS, retryMs: GITHUB_TOKEN_RETRY_MS, retryMaxMs: GITHUB_TOKEN_RETRY_MAX_MS }, logJson);
+/** A failed renewal is retried by the token loop. */
+async function renewGithubToken(tenantId: string): Promise<void> {
+  try {
+    await githubToken.renew(tenantId);
+  } catch (err) {
+    logJson({ level: "error", msg: "github_token_renew_failed", tenantId, error: String(err) });
+  }
+}
+const GITHUB_JOB_WORKFLOWS = new Set([
+  triageWorkflowFor("github").id,
+  codeReviewWorkflowFor("github").id,
+  ...PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === "github").map((variant) => variant.id),
+]);
+/** A token that could not be renewed may still have time left, so the worker goes ahead and the token loop retries. */
+async function readyWorkerCredentials(job: TriageJob): Promise<void> {
+  if (!GITHUB_JOB_WORKFLOWS.has(job.workflow)) return;
+  try {
+    await githubToken.ensure(job.tenantId);
+  } catch (err) {
+    logJson({ level: "error", msg: "github_token_renew_failed", tenantId: job.tenantId, error: String(err) });
+  }
 }
 /** A hook credential written before hosts names `pr-triage`; its mail goes to the GitHub workflow that replaced it. */
 async function sendBridgeMail(tenantId: string, workflow: string, payload: unknown): Promise<void> {
@@ -467,15 +508,14 @@ const routePrWorkflow = createPrWorkflowRouter({
   readPull: pullRequests.withDiff,
   log: logJson,
 });
-const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
+const tenantSources = { ...credentialDeps, githubApiOrigin: githubOrigin, tenantBitbucket };
 const tenantOpenPrs = keptOpenPrs(createTenantOpenPrs(tenantSources), repoReads);
 const openPullsCache = createOpenPullsCache(now);
-const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, db: composition.db, cipher: composition.credentialCipher, list: tenantOpenPrs, authorize: authorizePortal });
+const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, ...credentialDeps, list: tenantOpenPrs, authorize: authorizePortal });
 const policyFile = createPolicyFile({
-  db: composition.db,
+  ...credentialDeps,
   settle: settleRepoPolicy,
   refusal: chosenFileRefusal,
-  cipher: composition.credentialCipher,
   authorize: authorizePortal,
   tenantGithub,
   tenantBitbucket,
@@ -530,8 +570,7 @@ const tenantOpenHead = createTenantOpenHead(tenantSources);
 const tenantHeadChecks = createTenantHeadChecks(tenantSources);
 const githubOpenPulls = createGithubOpenPulls({
   cache: openPullsCache,
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   list: tenantOpenPrs,
   authorize: authorizePortal,
 });
@@ -658,8 +697,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
 recordLoop = createReconcileLoop(recordAll, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
 const githubPrTriage = createGithubPrTriage({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   authorize: authorizePortal,
   pullHead: async function pullHead(tenantId, record, number) {
     const openHead = await tenantOpenHead(tenantId);
@@ -676,8 +714,7 @@ const githubPrTriage = createGithubPrTriage({
   log: logJson,
 });
 const githubHeldDos = createGithubHeldDos({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   authorize: authorizePortal,
   runReader: composition.runReader,
   verdicts: verdictRecordStore,
@@ -709,11 +746,11 @@ async function onSourcesChanged(tenantId: string): Promise<void> {
   kickTriage();
 }
 const syncInstallations = createInstallationSync({
-  db: composition.db,
-  cipher: composition.credentialCipher,
+  ...credentialDeps,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   onSynced: function installationsSynced(tenantId) {
+    void renewGithubToken(tenantId);
     void onSourcesChanged(tenantId);
   },
 });
@@ -736,6 +773,7 @@ await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleServic
 coordinator = createCoordinator({
   spawner: checkedBitbucketSpawner(createWorkerSpawner({
     db: composition.db,
+    beforeDeploy: readyWorkerCredentials,
     redeploy: github.rotation.redeploy,
     deliver: deliverToDeployment,
     lifecycle: composition.workflowLifecycleService,
@@ -832,6 +870,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   authMethods: authMethods(signIn, smtp !== undefined),
   manifest: githubManifest,
   syncInstallations,
+  connectGithubApp: createGithubAppConnection({ ...credentialDeps, authorize: authorizePortal, githubApiOrigin: githubOrigin, renewal: githubToken }),
   prActions: githubPrActions,
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
@@ -840,8 +879,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   policyFileExport: policyFile.exportRoute,
   policyUpgrades: policyFile.upgradesRoute,
   backlog: createGithubBacklog({
-    db: composition.db,
-    cipher: composition.credentialCipher,
+    ...credentialDeps,
     authorize: authorizePortal,
     readCheckPack,
     sendMail: sendBacklogMail,
@@ -854,9 +892,8 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     verdicts: verdictRecordStore,
     outcomes: createOutcomeReader({
       ...createHostReads({
-        db: composition.db,
+        ...credentialDeps,
         artifacts: composition.db,
-        cipher: composition.credentialCipher,
         githubApiOrigin: githubOrigin,
         tenantBitbucket,
         authorize: authorizePortal,
@@ -869,8 +906,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   }),
   triageTimeline: createTriageTimeline({ verdicts: verdictRecordStore }),
   triageVerdicts: createTriageVerdicts({
-    db: composition.db,
-    cipher: composition.credentialCipher,
+    ...credentialDeps,
     authorize: authorizePortal,
     verdicts: verdictRecordStore,
     observer: tenantObserver,
@@ -897,8 +933,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview, inPrWorkflow }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({
-    db: composition.db,
-    cipher: composition.credentialCipher,
+    ...credentialDeps,
     authorize: authorizePortal,
     auth: composition.auth,
     stockFetch: async function stockFetch(req) {
@@ -912,8 +947,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     log: logJson,
   }),
   bitbucketDatacenter: createBitbucketIntegration({
-    db: composition.db,
-    cipher: composition.credentialCipher,
+    ...credentialDeps,
     authorize: authorizePortal,
     stockFetch: async function stockFetch(req) {
       return composition.app.fetch(req);
@@ -935,6 +969,18 @@ composition.app.route("/", providerHooks);
 
 const refuseUnverified = createVerifiedGate({ isHubOwner, getSession: composition.getSession, allowedEmails: signIn.allowedEmails });
 const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
+
+/** A stock credential write: App JSON it leaves in `github` is moved to the hub and taken back from sidecars at once. */
+const CREDENTIAL_WRITE = /^\/api\/tenants\/([^/]+)\/credentials(?:\/([^/]+))?$/;
+const PROVIDER_WRITE = /^\/api\/tenants\/([^/]+)\/providers(?:\/([^/]+))?$/;
+
+function decodedSegment(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
 
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
   if (servePortal && isPortalRequest(req)) return servePortal(req);
@@ -987,11 +1033,26 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       return stock.fetch(prepared, server);
     }
   }
-  return stock.fetch(req, server);
+  const providerWritten = req.method === "POST" || req.method === "PATCH" ? PROVIDER_WRITE.exec(url.pathname) : null;
+  const providerTenant = providerWritten ? decodedSegment(providerWritten[1]!) : undefined;
+  if (providerTenant !== undefined) {
+    const refusedProvider = await appKeyProviderWriteRefusal(composition.db, providerTenant, providerWritten?.[2] === undefined ? undefined : decodedSegment(providerWritten[2]), req);
+    if (refusedProvider) return refusedProvider;
+  }
+  const written = req.method === "POST" || req.method === "PATCH" ? CREDENTIAL_WRITE.exec(url.pathname) : null;
+  const writtenTenant = written ? decodedSegment(written[1]!) : undefined;
+  if (writtenTenant === undefined) return stock.fetch(req, server);
+  const refused = await appKeyWriteRefusal(composition.db, writtenTenant, written?.[2] === undefined ? undefined : decodedSegment(written[2]), req);
+  if (refused) return refused;
+  const response = await stock.fetch(req, server);
+  // A backstop for App JSON a write still leaves in `github`.
+  if (response.ok) await githubToken.secure(writtenTenant);
+  return response;
 }
 
 triageLoop.start();
 recordLoop.start();
+tokenLoop.start();
 
 logJson({
   level: "info",

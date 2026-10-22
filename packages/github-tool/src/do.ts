@@ -14,7 +14,6 @@ import {
   REQUEST_CHANGES_DO_MARKER,
   reviewedOnHead,
   summarizeChecks,
-  type AppLogin,
   type GithubFetch,
 } from "@corbits/github-reads";
 import {
@@ -102,8 +101,8 @@ function closedOutcome(kind: ActionKind, merged: boolean): DoOutcome {
   throw new DoNotRunnableError(NOT_OPEN);
 }
 
-/** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's own reviews and comments. */
-export async function executeDo(gh: GithubFetch, { request, step }: DoInput, login: AppLogin): Promise<DoOutcome> {
+/** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's bot account, whose reviews are triage's own. */
+export async function executeDo(gh: GithubFetch, { request, step }: DoInput, login: string): Promise<DoOutcome> {
   const { repo, number } = request;
   const { target } = step;
   const pr = await readPr(gh, repo, number);
@@ -132,14 +131,14 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
     }
     case "approve": {
       onHead(pr.sha, request, step);
-      const reviewId = await approvalOnHead(gh, { repo, number, sha: step.headSha, login: await login() });
+      const reviewId = await approvalOnHead(gh, { repo, number, sha: step.headSha, login });
       if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
       return { status: "done", result: await createReview(gh, { repo, number, body: APPROVE_DO_MARKER, event: "APPROVE", commitId: step.headSha }) };
     }
     case "request-changes": {
       if (!("body" in target)) throw new Error("this request-changes Do has no body");
       onHead(pr.sha, request, step);
-      const reviewId = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login: await login() });
+      const reviewId = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login });
       if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
       const body = `${REQUEST_CHANGES_DO_MARKER}\n${target.body}`;
       return { status: "done", result: await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha }) };
@@ -155,8 +154,7 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (!("body" in target)) throw new Error("this comment Do has no body");
       onHead(pr.sha, request, step);
       const marker = doMarker(step.effectId);
-      const app = await login();
-      const posted = (await listIssueComments(gh, repo, number)).find((c) => c.author === app && c.body.includes(marker));
+      const posted = (await listIssueComments(gh, repo, number)).find((c) => c.author === login && c.body.includes(marker));
       if (posted) return { status: "satisfied", result: { commentId: posted.id } };
       return { status: "done", result: await createIssueComment(gh, { repo, number, body: `${marker}\n${target.body}` }) };
     }
@@ -170,7 +168,7 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
       // Execute runs before the mirror, and a protected branch refuses the merge while triage's own request on this head stands; one on an earlier head is the mirror's to take back.
       const ownRequest = reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha);
-      const kept = ownRequest ? await takeBackOwnRequest(gh, { repo, number, login: await login(), sha: step.headSha }) : undefined;
+      const kept = ownRequest ? await takeBackOwnRequest(gh, { repo, number, login, sha: step.headSha }) : undefined;
       return { status: "done", result: { ...(await mergePr(gh, { repo, number, sha: step.headSha })), ...(kept && { changeRequestsKept: kept }) } };
     }
     default:

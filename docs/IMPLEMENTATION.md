@@ -28,7 +28,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
 | `src/code-review.ts`, `src/code-review-feed.ts`, `src/code-review-runs.ts` | The code review switch; `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; the feed that mails each new head; the latest review, read from run logs, and whether a head takes it over. |
 | `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and Docker registration (`docker.ts`). |
-| `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
+| `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider). |
 | `src/bitbucket-datacenter/` | Bitbucket Data Center connection, repository and webhook routes, payload normalizing. |
 | `src/github/bridge.ts` | GitHub webhook verification and routing; `logJson`, the hub's one JSON-line logger, passed down as `log`. |
 | `src/github/tenant-config.ts` | Reads and writes `corbitsTriage` in tenant config; checks the stock tenant patch. |
@@ -43,12 +43,9 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/backlog-triage.ts` | Mails `pr-triage-historical` to triage a repository's open pull requests. |
 | `src/github/manifest.ts` | GitHub App Manifest flow; setup state is an HMAC token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes. |
 | `src/github/pr-*.ts`, `held-dos.ts` | Pull request actions, details and single-PR triage; approving a held action. |
-| `src/github/github-app-*` | Credential adapter: App JWT to installation token, cached per installation. |
+| `src/github/github-app-credential-adapter.ts` | The hub's GitHub fetch: App JWT to installation token, cached per installation. |
+| `src/github/app-key.ts`, `installation-token.ts`, `app-connection.ts` | The hub-only App key; the `github` credential's installation token, minted and renewed on the hub and pushed to running deployments; connecting an existing App. |
 | `src/github/source-fetch.ts` | A repository's host fetch, as the GitHub App or the Bitbucket token. |
-
-Workflow children start with a fresh environment, so a non-default
-`GITHUB_API_ORIGIN` cannot reach the adapter at runtime: `sidecar-config.ts`
-writes a generated adapter module into `HUB_DATA_DIR` with the origin baked in.
 
 ## Portal (`apps/web`)
 

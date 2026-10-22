@@ -1,22 +1,22 @@
 // Pull request heads for a tenant's repositories, read as the tenant's GitHub
 // App or Bitbucket Data Center token by each record's source, for hub-side work.
 import type { DB } from "@intx/db";
-import type { CredentialCipher } from "@intx/types";
 import { asRecord } from "@corbits/common";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { tokenUser } from "@corbits/bitbucket-datacenter-tool/bitbucket";
 import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
+import { GITHUB_CREDENTIAL, githubAppKey, type AppKeyDeps } from "./app-key.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation, type OpenPrsLister } from "./open-pulls.js";
-import { activeCredential, activeSecret, appGithubFetch } from "./portal-credential.js";
+import { appGithubFetch, heldCredential } from "./portal-credential.js";
 import type { OpenPr } from "./reconcile-plan.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
 export type OpenHeadsReader = (record: RepoRecord) => Promise<OpenPr[]>;
 export type OpenHeadReader = (record: RepoRecord, number: number) => Promise<Pick<OpenPr, "headSha" | "draft"> | undefined>;
 
-export type TenantGithubDeps = { db: DB["db"]; cipher: CredentialCipher; githubApiOrigin: string };
+export type TenantGithubDeps = AppKeyDeps & { githubApiOrigin: string };
 
 type TenantSourcesDeps = TenantGithubDeps & { tenantBitbucket: TenantBitbucket };
 
@@ -65,16 +65,16 @@ function createTenantSources(deps: TenantSourcesDeps) {
 export function createTenantGithub(deps: TenantGithubDeps) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
   return async function tenantGithub(tenantId: string): Promise<GithubFetch | undefined> {
-    const appJson = await activeSecret(deps, tenantId, "github");
-    if (appJson === undefined) return undefined;
-    return appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+    const credential = await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL);
+    if (!credential) return undefined;
+    return appGithubFetch(appFetch, deps.githubApiOrigin, await githubAppKey(deps, credential.tenantId));
   };
 }
 
 /** The login the workspace's GitHub App writes as, read from its credential without asking GitHub; undefined when it has no slug or can't be read, since the listing must not fail over it. */
 async function appBotLogin(db: DB["db"], tenantId: string): Promise<string | undefined> {
   try {
-    const slug = asRecord((await activeCredential(db, tenantId, "github"))?.metadata)?.["appSlug"];
+    const slug = asRecord((await heldCredential(db, tenantId, GITHUB_CREDENTIAL))?.metadata)?.["appSlug"];
     return typeof slug === "string" && slug !== "" ? `${slug}[bot]` : undefined;
   } catch {
     return undefined;

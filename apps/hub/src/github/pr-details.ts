@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
-import { appLogin, getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readMergeStates, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
+import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readMergeStates, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
 import { shownBody, visibleText } from "@corbits/triage-contracts";
 import { githubLimited } from "./github-refusal.js";
@@ -39,7 +39,7 @@ async function reviewDecisionOf(gh: GithubFetch, repo: string, number: number, l
   }
 }
 
-async function githubDetails(gh: GithubFetch, repo: string, number: number, log: Log) {
+async function githubDetails(gh: GithubFetch, login: string, repo: string, number: number, log: Log) {
   const [pr, files, commits, comments] = await Promise.all([
     getPr(gh, repo, number),
     listPrFiles(gh, repo, number),
@@ -53,9 +53,7 @@ async function githubDetails(gh: GithubFetch, repo: string, number: number, log:
   const [issues, checks, reviews, reviewDecision] = await Promise.all([
     listReferencedIssues(gh, repo, number, text),
     getChecks(gh, repo, pr.sha),
-    getReviews(gh, repo, number, function login() {
-      return appLogin(gh);
-    }),
+    getReviews(gh, repo, number, login),
     pr.mergeableState === "blocked" ? reviewDecisionOf(gh, repo, number, log) : null,
   ]);
   return { pr: { ...pr, shownBody: body, reviewDecision }, files, commits, comments, issues, checks, reviews };
@@ -90,9 +88,9 @@ export function createGithubPrDetails(deps: SourceFetchDeps & { reads: RepoReads
     const source = await sourceFetch(tenantId, principalId, record);
     if (!source) throw new Error(`no readable ${sourceOf(record)} credential`);
     if ("bb" in source) return bitbucketDetails(source.bb, record.name, number);
-    const { gh } = source;
+    const { gh, login } = source;
     return deps.reads.read({ scope: "all", tenantId, repo: record.name, key: `details:${number}`, usable: mergeabilityKnown }, function readNow() {
-      return githubDetails(gh, record.name, number, deps.log);
+      return githubDetails(gh, login, record.name, number, deps.log);
     });
   }
 

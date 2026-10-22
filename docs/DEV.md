@@ -52,7 +52,7 @@ The App's webhook URL is built from the hub origin that starts the manifest flow
 1. Start the stack against it: `GITHUB_API_ORIGIN=http://localhost:4000 VITE_GITHUB_API_ORIGIN=http://localhost:4000 bun run dev`.
 2. Create an account and copy the webhook URL shown under Connect → **Connect an existing GitHub App instead**.
 3. Uncomment `webhook_url` in `emulate.config.yaml` with that URL, then start the emulator: `npx emulate start --service github --generated-secrets-file .emulate-secrets.json`.
-4. In Connect, enter App ID `12345`, slug `corbits-triage`, the PEM from `.emulate-secrets.json`, and webhook secret `emulate-webhook-secret`. Then add a decision model (**Add my own provider**, any HTTPS endpoint).
+4. In Connect, enter App ID `12345`, the PEM from `.emulate-secrets.json`, and webhook secret `emulate-webhook-secret`. Then add a decision model (**Add my own provider**, any HTTPS endpoint).
 5. Register the repository by sending the installation event GitHub would send:
 
    ```sh

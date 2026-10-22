@@ -90,7 +90,6 @@ function fakeGithub({ missing = false, unreadFiles = false, files = [FLAG], labe
     }
     const edited = comments.find((comment) => method === "PATCH" && path === `/repos/${REPO}/issues/comments/${comment.id}`);
     if (edited) return Response.json(Object.assign(edited, { body: JSON.parse(String(init?.body)).body, updated_at: `2026-10-13T00:00:${requests.length}Z` }));
-    if (path === "/app") return Response.json({ slug: "corbits-triage" });
     if (path.startsWith(`/repos/${REPO}/pulls/8/reviews?`)) return Response.json(reviews);
     if (method === "POST" && path === `/repos/${REPO}/pulls/8/reviews`) {
       const { commit_id, body, event } = JSON.parse(String(init?.body));
@@ -201,8 +200,9 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
   return { path: { hostSteps: hostSteps(outputs), judgeCalls: judged.length }, mirrored: mirrors.map((id) => outputs[id]), requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: executed.dos };
 }
 
+/** The hub names the App's bot account in every GitHub mail. */
 function hubMail(request: Record<string, unknown>, from: string) {
-  return { headers: { from, to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
+  return { headers: { from, to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify({ ...request, appLogin: APP.login }) }] };
 }
 
 /** The parsed headers, and the text part alone as `content`. */
@@ -640,16 +640,11 @@ describe("pr-triage body", () => {
     return { github, pack: { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true } }, actions: APPROVE } };
   }
 
-  function appReads(github: ReturnType<typeof fakeGithub>): number {
-    return github.requests.filter((r) => r.path === "/app").length;
-  }
-
-  test("every check passing with CI green approves the head once, pinned to it, asking for the App once a step", async () => {
+  test("every check passing with CI green approves the head once, pinned to it", async () => {
     const { github, pack } = approving();
     const first = await triage(pack, { github });
     const effectId = ((first.verdict as Verdict).actions[0] as SuggestedDo).effectId;
     expect(first.dos).toEqual([{ effectId, status: "done" }]);
-    expect(appReads(github)).toBe(2);
     expect((await triage(pack, { github })).dos).toEqual([{ effectId, status: "satisfied" }]);
     expect(github.reviews).toEqual([expect.objectContaining({ state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" })]);
   });
@@ -763,13 +758,6 @@ describe("pr-triage body", () => {
     await triage({ ...pack, checks: { "no-merge-conflicts": { enabled: true } } }, { github });
     expect(github.reviews).toEqual([expect.objectContaining({ id: 7, state: "APPROVED" })]);
     expect(github.requests.filter((r) => r.method === "PUT")).toEqual([]);
-  });
-
-  test("a pack without an approve Do never asks for the App", async () => {
-    const github = fakeGithub();
-    github.pr.draft = true;
-    await triage({ ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true } } }, { github });
-    expect(appReads(github)).toBe(0);
   });
 
   test("a Do GitHub refuses is reported failed with its error and stays suggested on the verdict", async () => {

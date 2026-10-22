@@ -46,7 +46,7 @@ type Row = {
 
 type StubDb = BridgeDeps["db"] & { tenantConfig(): unknown };
 
-const APP_ROW = { id: "crd_app", tenantId: TENANT_ID, name: "github", metadata: { appSlug: "corbits-triage" } };
+const APP_ROW = { id: "crd_app", tenantId: TENANT_ID, principalId: null, name: "github", status: "active", metadata: { appSlug: "corbits-triage" } };
 
 function asksForName(node: unknown, name: string): boolean {
   if (node === name) return true;

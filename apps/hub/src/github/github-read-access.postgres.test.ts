@@ -21,6 +21,9 @@ import { createTriageVerdicts } from "./triage-verdicts.js";
 import type { VerdictRecord } from "./verdict-record-store.js";
 import type { CompletedReview } from "../code-review-runs.js";
 
+/** No deployment holds the credential in these tests. */
+async function noKeyPush(): Promise<void> {}
+
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_read_access";
 const REPO = "acme/widgets";
@@ -74,7 +77,6 @@ async function github(req: Request): Promise<Response> {
   if (pathname === "/app/installations/1/access_tokens") return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
   if (req.method === "GET" && pathname in READS) return Response.json(READS[pathname]);
   if (pathname === `/repos/${REPO}/installation`) return Response.json({ id: 1 });
-  if (pathname === "/app") return Response.json({ slug: "triage" });
   if (req.method === "POST" && pathname === "/graphql") return Response.json({ data: { repository: null } });
   if (req.method === "GET" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
     return Response.json(sentReviews.map((review, index) => ({ id: 100 + index, user: { login: "triage[bot]" }, state: "COMMENTED", commit_id: review.commit_id, body: review.body })));
@@ -102,7 +104,7 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
   return (await authorize(grants, principalId, tenantId, resource, action)).effect === "allow";
 }
 
-const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigin };
+const deps = { db: handle.db, cipher, onKeyMoved: noKeyPush, authorize: authorizePortal, githubApiOrigin };
 const list = createTenantOpenPrs({ ...deps, tenantBitbucket: async () => undefined });
 const openPulls = createGithubOpenPulls({ ...deps, list, cache: createOpenPullsCache(() => new Date()) });
 const reads = createRepoReads(() => new Date());

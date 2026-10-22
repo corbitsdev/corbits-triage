@@ -51,9 +51,7 @@ const APP = "corbits-triage[bot]";
 /** So only the App's own marked review is triage's. */
 async function reviewFacts(rows: unknown[]): Promise<Partial<PrFacts>> {
   const gh: GithubFetch = async () => Response.json(rows);
-  const reviews = await getReviews(gh, "acme/widgets", 8, async function login() {
-    return APP;
-  });
+  const reviews = await getReviews(gh, "acme/widgets", 8, APP);
   const { changesRequested, reviewAnswered, triageRequested } = buildFacts("acme/widgets", 8, { author: "octocat", branch: "a", sha: "def" }, [], reviews, [], DEFAULT_REPO_POLICY);
   return { changesRequested, reviewAnswered, triageRequested };
 }

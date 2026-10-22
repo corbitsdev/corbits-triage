@@ -82,7 +82,6 @@ With the variables set, the place says **Failing** with one of these reasons, al
 | --- | --- |
 | `A Railway sandbox is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address and leave `HUB_SIDECAR_WEBSOCKET_URL` unset. |
 | `A Railway sandbox is on another machine, which cannot reach Triage at its own address` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
-| `Code review cannot run in Railway sandboxes while GITHUB_API_ORIGIN is set` | Unset `GITHUB_API_ORIGIN`: the module it generates under `HUB_DATA_DIR` is not in the repository. |
 | `Triage cannot read its database's identity` | Postgres refused the hub id query; the error says why. |
 
 Without the variables the place says **Not set up**. The hub does not start when `RAILWAY_SANDBOX_TOKEN` and `RAILWAY_SANDBOX_ENVIRONMENT_ID` are not set together, or when the `RAILWAY_GIT_*` variables are missing.

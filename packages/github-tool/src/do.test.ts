@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appLogin, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
+import { REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
 import { APPROVE_DO_MARKER } from "./github";
 import { doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from "./do";
 
@@ -21,7 +21,6 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
       if (method === "PATCH") pr.state = body.state;
       return Response.json(pr);
     }
-    if (path === "/app") return Response.json({ slug: "corbits-triage" });
     if (path.endsWith("/pulls/8/reviews")) {
       reviews.push({ id: reviews.length + 100, user: APP, state: body.event === "APPROVE" ? "APPROVED" : "CHANGES_REQUESTED", commit_id: body.commit_id, body: body.body });
       return Response.json(reviews.at(-1));
@@ -73,9 +72,7 @@ function step(kind: DoStep["kind"], target: ResolvedTarget): DoStep {
 const REQUEST = { repo: "acme/widgets", number: 8, labels: ["triage:blocked"], owned: ["triage:blocked"], comment: "Blocked" };
 
 function run(gh: GithubFetch, task: DoStep) {
-  return executeDo(gh, { request: REQUEST, step: task }, function login() {
-    return appLogin(gh);
-  });
+  return executeDo(gh, { request: REQUEST, step: task }, APP.login);
 }
 
 describe("executeDo", () => {

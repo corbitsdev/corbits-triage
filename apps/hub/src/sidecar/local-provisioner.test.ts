@@ -12,7 +12,7 @@ const HUB_ADAPTERS: AdapterManifest = [
   { provider: "corbits-system-one", specifier: "@corbits/system-one", export: "createSystemOneAdapterFactory" },
 ];
 
-const RECORD_WITHOUT_ADAPTERS: LocalSidecarManifest = {
+const RECORD: LocalSidecarManifest = {
   allocationId: "alloc_1",
   generation: 1,
   sidecarId: "sc_1",
@@ -23,7 +23,13 @@ const RECORD_WITHOUT_ADAPTERS: LocalSidecarManifest = {
   token: "token",
 };
 
-test("restore launches a record without adapterManifest with the hub's adapters", async () => {
+// Written by a hub that loaded a GitHub adapter module it no longer ships.
+const STALE_RECORD = {
+  ...RECORD,
+  adapterManifest: [...HUB_ADAPTERS, { provider: "corbits-github-app-credential", specifier: "file:///app/apps/hub/src/github/github-app-adapter-module.ts", export: "installGithubAppCredentialAdapter" }],
+};
+
+test("restore launches a record with the hub's adapters, not the ones it was written with", async () => {
   const spawned: EnsureSidecarRequest[] = [];
   const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "local-provisioner-"));
   const local = createLocalProcessSidecarProvisioner({
@@ -35,7 +41,7 @@ test("restore launches a record without adapterManifest with the hub's adapters"
       return { pid: 1, exited: new Promise<number>(function never() {}), kill() {} };
     },
     manifests: {
-      readAll: async () => [RECORD_WITHOUT_ADAPTERS],
+      readAll: async () => [STALE_RECORD],
       write: async () => {},
       readDataDir: async () => null,
       remove: async () => {},
@@ -83,7 +89,7 @@ test("restore removes a data dir no manifest names and keeps the ones that are n
 });
 
 function request(allocationId: string): EnsureSidecarRequest {
-  return { ...RECORD_WITHOUT_ADAPTERS, allocationId, sidecarId: `sc_${allocationId}` };
+  return { ...RECORD, allocationId, sidecarId: `sc_${allocationId}` };
 }
 
 test("ensures side by side count each other's sidecars until each connects or exits, and a decline spawns nothing", async () => {

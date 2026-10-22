@@ -41,7 +41,6 @@ With `E2B_API_KEY` set, the place says **Failing** with one of these reasons, al
 | `An E2B sandbox is on another machine, which reaches Triage only over TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address, or `HUB_SIDECAR_WEBSOCKET_URL` to a `wss://` one. |
 | `An E2B sandbox is on another machine, which cannot reach Triage at its own address` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
 | `E2B refused E2B_API_KEY or did not answer` | Check the key in the E2B dashboard. |
-| `Code review cannot run in E2B while GITHUB_API_ORIGIN is set` | Unset `GITHUB_API_ORIGIN`: the module it generates under `HUB_DATA_DIR` is not in the template. |
 | `Triage cannot read its database's identity` | Postgres refused the hub id query; the error says why. |
 
 A missing template is not checked at boot: the first sidecar fails with E2B's error, and the deployment with it.

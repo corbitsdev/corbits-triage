@@ -1,10 +1,8 @@
 import { type } from "arktype";
 import {
-  configureGithubApp,
   configureGithubHook,
   ensureGitHubProvider,
   githubAppInstallUrl,
-  githubAppSecret,
   GITHUB_CREDENTIAL_NAME,
   GITHUB_HOOK_CREDENTIAL_NAME,
   type HubCredential,
@@ -73,7 +71,6 @@ export async function saveExistingGithubApp(input: {
   appId: string;
   privateKey: string;
   webhookSecret: string;
-  appSlug?: string;
   replace: boolean;
   credentials: HubCredential[];
 }, transport: Transport = createHubTransport()): Promise<void> {
@@ -81,14 +78,22 @@ export async function saveExistingGithubApp(input: {
     row.name === GITHUB_CREDENTIAL_NAME || row.name === GITHUB_HOOK_CREDENTIAL_NAME,
   );
   if (exists && !input.replace) throw new ManifestStartError("replacement_confirmation_required");
-  await configureGithubApp(
-    transport,
-    input.tenantId,
-    githubAppSecret({ appId: input.appId, privateKey: input.privateKey }),
-    [],
-    input.appSlug,
-  );
+  await ensureGitHubProvider(transport, input.tenantId);
+  await connectGithubApp(input.tenantId, { appId: input.appId.trim(), privateKey: input.privateKey });
   await configureGithubHook(transport, input.tenantId, input.webhookSecret);
+}
+
+/** The hub checks the App with GitHub and keeps its key out of the credential triage's workflows use. */
+export async function connectGithubApp(tenantId: string, app: { appId: string; privateKey: string }): Promise<void> {
+  const response = await fetch(`${requestOrigin()}/api/integrations/github-app/${encodeURIComponent(tenantId)}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(app),
+  });
+  if (response.ok) return;
+  const body = await response.json() as { error?: { message?: unknown } };
+  throw new Error(typeof body.error?.message === "string" ? body.error.message : `HTTP ${response.status}`);
 }
 
 const SyncResult = type({ repos: "string[]" });

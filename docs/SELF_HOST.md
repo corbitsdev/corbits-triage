@@ -148,12 +148,13 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
 1. **Sign up.** The first sign-in creates your workspace.
 2. **Create the GitHub App** with **Create GitHub App** and confirm the
    prefilled form on GitHub. The private key goes to the hub's vault and never
-   reaches the browser. The App's webhook URL is built from the address that
-   started the flow, so start it from the public URL.
+   reaches the browser or the workflows. The App's webhook URL is built from the
+   address that started the flow, so start it from the public URL.
 
    To reuse an App, expand **Connect an existing GitHub App instead**, enter its
-   App ID, slug, private key and webhook secret, and set its webhook URL to the
-   one shown. It needs:
+   App ID, private key and webhook secret, and set its webhook URL to the one
+   shown. GitHub must accept the App ID and key. A workspace uses the App on one
+   account; install it on one account only. It needs:
 
    - Permissions: Pull requests, Issues and Contents: write; Checks, Members
      and Metadata: read.
@@ -353,6 +354,16 @@ then shows **Docker on this machine** ready. Or set `DOCKER_HOST` in `.env` to
 
 Pull the new version, rebuild the image and redeploy. The hub runs its
 migrations on every start.
+
+- **Open the portal as an owner right after upgrading to the build that keeps
+  the GitHub App key on the server.** Opening it deploys the new workflows.
+  Until then Triage's runs cannot read or write GitHub, because the workflows
+  deployed earlier ask GitHub for the App with a credential that can no longer
+  do that.
+- A workspace whose GitHub App is installed on more than one account must
+  sync its repositories after upgrading and keep the App on one account: one
+  installation token serves the workspace, so the other accounts' repositories
+  are left out.
 
 - A GitHub App created by an earlier build may lack permissions or events
   added since. Accept new permissions (Contents: write, Members: read) when

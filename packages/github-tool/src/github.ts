@@ -1,5 +1,5 @@
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
-import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type AppLogin, type GithubFetch } from "@corbits/github-reads";
+import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
 import { findingHeadline, HTML_MARKERS, UNVERIFIED_FINDING, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
@@ -45,8 +45,8 @@ export async function syncLabels(gh: GithubFetch, input: { repo: string; number:
 export const NOT_OPEN = "the pull request is not open";
 const HEAD_MOVED = "the pull request has moved past the head";
 
-/** `login` names the App, whose comments alone are read back. */
-export async function mirror(gh: GithubFetch, i: MirrorInput, login: AppLogin) {
+/** `login` names the App's bot account, whose comments alone are read back. */
+export async function mirror(gh: GithubFetch, i: MirrorInput, login: string) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   // A closed or merged pull request is history; a close Do reads it open before it comes here.
@@ -134,11 +134,10 @@ async function changesSince(gh: GithubFetch, repo: string, branch: string | unde
 }
 
 /** Only the App's own comments are read, so a copied marker never decides what Triage writes. */
-async function writeTriageComment(gh: GithubFetch, input: TriageCommentInput & { header?: TriageHeader; branch: string | undefined }, login: AppLogin): Promise<WrittenComment> {
+async function writeTriageComment(gh: GithubFetch, input: TriageCommentInput & { header?: TriageHeader; branch: string | undefined }, login: string): Promise<WrittenComment> {
   const { repo, number, header, branch } = input;
   if (!header) return upsertTriageComment(gh, input);
-  const app = await login();
-  const own = marked(await issueComments(gh, repo, number)).filter((c) => c.user?.login === app).map(markedComment);
+  const own = marked(await issueComments(gh, repo, number)).filter((c) => c.user?.login === login).map(markedComment);
   const host = { ...issueCommentHost(gh, repo, number), changesSince: (from: string, to: string) => changesSince(gh, repo, branch, from, to) };
   return writeHeadedComment(host, HTML_MARKERS, own, header, input.body);
 }
@@ -301,10 +300,10 @@ function reviewBody(summary: string, sections: readonly string[]): string {
  * the review's body. The App's review carries a marker, so sending it again, on `sha` or on the head it was carried over
  * from, whose unchanged lines still hold it, writes nothing.
  */
-export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput, login: AppLogin) {
+export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput, login: string) {
   const { repo, number, sha, reviewed } = input;
   const heads = [sha, ...(reviewed === undefined ? [] : [reviewed])];
-  const sent = (await reviewsBy(gh, repo, number, await login())).find((review) => heads.some((head) => head === review.commit_id) && review.body?.includes(CODE_REVIEW_MARKER));
+  const sent = (await reviewsBy(gh, repo, number, login)).find((review) => heads.some((head) => head === review.commit_id) && review.body?.includes(CODE_REVIEW_MARKER));
   if (sent) return { reviewId: sent.id, sent: false };
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   if (pr.head.sha !== sha) return { reviewId: null, sent: false, skipped: HEAD_MOVED };

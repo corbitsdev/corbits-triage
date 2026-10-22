@@ -14,6 +14,7 @@ import { AUTH_METHODS_PATH } from "../auth.js";
 import { CODE_REVIEW_PATH, CodeReviewBody, CodeReviewQueued, CodeReviewRunBody, CodeReviewSet } from "../code-review.js";
 import { CodeReviewFound, CodeReviewQuery } from "../code-review-runs.js";
 import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
+import { AppBody, AppConnected, GITHUB_APP_PATH } from "../github/app-connection.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody, validManifestMutationRequest } from "../github/manifest.js";
 import { MERGE_STATES_PATH } from "../github/merge-states.js";
@@ -64,6 +65,7 @@ export type IntegrationHandlers = {
   authMethods: { google: boolean; emailPassword: boolean; passwordReset: boolean; verificationEmail: boolean };
   manifest: { start: (req: Request, tenantId: string) => Promise<Response>; callback: (req: Request) => Promise<Response> };
   syncInstallations: (member: Member) => Promise<Response>;
+  connectGithubApp: BodyHandler<typeof AppBody.infer>;
   prActions: BodyHandler<typeof ActionBody.infer>;
   heldDos: BodyHandler<typeof HeldDoBody.infer>;
   prTriage: BodyHandler<typeof TriageBody.infer>;
@@ -305,12 +307,29 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_INSTALLATIONS_PATH}/:tenantId/sync`,
     describeRoute({
       summary: "Sync the GitHub App's installations and repositories",
+      description: "Needs `manage` on the `github` credential. A workspace uses one installation: the one its repositories came from, else the oldest. When the App has others, their repositories are left out and the answer is 409 `github_second_installation` naming them.",
       tags: TAGS,
       responses: { 200: json("Installations and repositories found", InstallationsSynced), ...failures, ...githubFailed },
     }),
     member,
     function syncInstallations(c) {
       return handlers.syncInstallations(memberOf(c));
+    },
+  );
+
+  app.put(
+    `${GITHUB_APP_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Connect an existing GitHub App",
+      description: "Needs `manage` on the `github` credential, or `create` on `credential:*` when there is none, and the workspace's `github` provider. GitHub must accept the App ID and private key (`GET /app`), which also gives the App's slug. The key is stored in the hub-only `github-app` credential and never returned; the `github` credential holds an installation token once the App is installed. The webhook secret is the stock `github-hook` credential.",
+      tags: TAGS,
+      requestBody: { required: true, content: { "application/json": { schema: resolver(AppBody) } } },
+      responses: { 200: json("Connected; the slug GitHub gave", AppConnected), 400: json("Invalid request, or GitHub did not accept the App", Failure), ...failures },
+    }),
+    member,
+    body(AppBody),
+    function connectGithubApp(c) {
+      return handlers.connectGithubApp(c.req.valid("json"), memberOf(c));
     },
   );
 

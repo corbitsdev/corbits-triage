@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { type } from "arktype";
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { count, eq, sql } from "drizzle-orm";
+import { and, count, eq, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
@@ -254,6 +254,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-manifest/{tenantId}/start": ["post"],
     "/api/integrations/github-manifest/callback": ["get"],
     "/api/integrations/github-installations/{tenantId}/sync": ["post"],
+    "/api/integrations/github-app/{tenantId}": ["put"],
     "/api/integrations/github-actions/{tenantId}": ["post"],
     "/api/integrations/github-held-dos/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}": ["post"],
@@ -341,6 +342,8 @@ function fakeGithub() {
     const { pathname } = new URL(req.url);
     if (pathname.startsWith("/repos/")) repoRequests.push(`${req.method} ${pathname}`);
     if (pathname === `/repos/${REPO}/installation`) return Response.json({ id: 1 });
+    if (pathname === "/app") return Response.json({ slug: "corbits" });
+    if (pathname === "/app/installations") return Response.json([{ id: 1, account: { login: "acme" }, html_url: "https://github.com/settings/installations/1", repository_selection: "all", suspended_at: null }]);
     if (pathname === "/app/installations/1/access_tokens") return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
     if (pathname === `/repos/${REPO}/pulls/8`) {
       return Response.json({
@@ -377,12 +380,16 @@ async function connectGithub(db: Db, origin: string, headers: Record<string, str
   expect(provider.status).toBe(201);
   const providerId = type({ id: "string" }).assert(await provider.json()).id;
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-  const credential = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
+  // App JSON written as the stock `github` credential would reach sidecars, so it is refused; the hub's route keeps it on the hub.
+  const stockWrite = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
     method: "POST",
     headers,
     body: JSON.stringify({ providerId, name: "github", type: "api_key", secret: JSON.stringify({ appId: "1", privateKey }), metadata: { appSlug: "corbits" } }),
   });
-  expect(credential.status).toBe(201);
+  expect(stockWrite.status).toBe(400);
+  expect(await db.query.credential.findFirst({ where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.name, "github")) })).toBeUndefined();
+  const connected = await fetch(`${origin}/api/integrations/github-app/${tenantId}`, { method: "PUT", headers, body: JSON.stringify({ appId: "1", privateKey }) });
+  expect(connected.status).toBe(200);
   const installed = await patchCorbitsTriage(db, tenantId, function install(ns) {
     return upsertConnectedRepos(ns, [REPO], { installationId: 1 });
   });

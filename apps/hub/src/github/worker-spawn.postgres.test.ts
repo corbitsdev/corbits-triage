@@ -68,6 +68,8 @@ function notReached(): never {
   throw new Error("only reached with pending history or a live sidecar");
 }
 
+async function nothingToReady(): Promise<void> {}
+
 test("PostgreSQL: a job with no listener to copy, then refused for capacity, is deferred both times and its worker is fired once it starts", async () => {
   await withDatabase(async function deferThenFire(db) {
     // The clock moves only when a timer fires, so a deferred job always waits for its timer.
@@ -81,6 +83,7 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
     const coordinator = createCoordinator({
       spawner: createWorkerSpawner({
         db,
+        beforeDeploy: nothingToReady,
         async redeploy(_tenantId, _seed, content) {
           if (refusals-- > 0) throw new WorkflowProvisioningError(CAPACITY_UNAVAILABLE, "424 MiB free, 512 MiB needed");
           await deployWorker(db, content);
@@ -160,6 +163,7 @@ test("PostgreSQL: under the hub's lifecycle policy, a worker's sidecar is releas
     const coordinator = createCoordinator({
       spawner: createWorkerSpawner({
         db,
+        beforeDeploy: nothingToReady,
         async redeploy(_tenantId, _seed, content) {
           await deployWorker(db, content, defaultLifecyclePolicy);
           await db.insert(schema.sidecarAllocation).values({
