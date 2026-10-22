@@ -1,17 +1,28 @@
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { POLICY_FILE_PATH, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { POLICY_FILE_PATH, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import type { CheckPackArtifact } from "../../lib/hub-api.ts";
+import { checkPackQuery } from "../../lib/check-packs.ts";
 import { usePolicyFile } from "../../lib/policy-file.ts";
+import { usePortal } from "../../lib/portal.tsx";
 import { usePolicyUpgrade, useSettled } from "../../lib/policy-upgrades.ts";
 import { CheckIcon, ExternalIcon } from "../inbox-icons.tsx";
 import PolicyMove, { HOST_NAME } from "./PolicyMove.tsx";
 import PolicyRules from "./PolicyRules.tsx";
 
+/** What Triage may do on its own; nothing when the policy could not be read, as PolicyGrants says. */
+function automaticOf(read: CheckPackArtifact | null | undefined): readonly ActionKind[] {
+  return read?.kind === "file" || read?.kind === "pack" ? read.automatic ?? [] : [];
+}
+
 type PolicySectionProps = { repo: string; source: RepoSource; pack: CheckPack; disabled: boolean; onSettled: () => void };
 
 /** The repository's policy file read back as sentences, or the steps that start one or move its saved rules into one. */
 export default function PolicySection({ repo, source, pack, disabled, onSettled }: PolicySectionProps) {
+  const { snapshot } = usePortal();
   const policyFile = usePolicyFile(repo);
+  const policy = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo));
   const row = usePolicyUpgrade(repo);
   const settled = useSettled(repo);
   const file = policyFile.data;
@@ -23,7 +34,7 @@ export default function PolicySection({ repo, source, pack, disabled, onSettled 
     if (policyFile.isError) {
       return <p role="alert" className="error">Could not read <code>{POLICY_FILE_PATH}</code>: {errorText(policyFile.error)} <button type="button" className="linkish quiet" onClick={() => void policyFile.refetch()}>Try again</button></p>;
     }
-    if (file === undefined) return null;
+    if (file === undefined || policy.isLoading) return null;
     if (file === null) return <p className="help">No policy file yet. Add <code>{POLICY_FILE_PATH}</code> to the default branch to set this repository's rules and actions.</p>;
     if (file.problem) {
       return (
@@ -38,7 +49,7 @@ export default function PolicySection({ repo, source, pack, disabled, onSettled 
     return (
       <>
         {settled ? <p className="moved"><span className="mk ok"><CheckIcon /></span><span>Done. Your rules now come from <code>{file.path}</code>.</span></p> : null}
-        <PolicyRules pack={pack} />
+        <PolicyRules pack={pack} source={source} automatic={automaticOf(policy.data)} />
       </>
     );
   }

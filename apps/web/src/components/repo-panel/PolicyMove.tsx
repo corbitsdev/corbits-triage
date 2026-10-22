@@ -79,7 +79,7 @@ export default function PolicyMove({ row, upgrade, source, disabled, onSettled }
       return (
         <>
           <p className="lead">The pull request adds these rules. You can change them there before you merge.</p>
-          <PolicyRules pack={starterPack(row.repo)} />
+          <PolicyRules pack={starterPack(row.repo)} source={source} />
         </>
       );
     }

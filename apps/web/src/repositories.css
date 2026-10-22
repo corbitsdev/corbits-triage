@@ -73,7 +73,6 @@
 .repos .then { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 12px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
 .repos .then:last-child { border-bottom: 0; }
 .repos .steps { display: grid; gap: 4px; min-width: 0; }
-.repos .none { color: var(--ink-mute); }
 .repos .moved { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; font-size: 14px; }
 .repos .moved .mk .ic { width: 11px; height: 11px; stroke-width: 2.4; }
 
