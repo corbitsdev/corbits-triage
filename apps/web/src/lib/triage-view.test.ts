@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { CheckOutput } from "@corbits/triage-contracts";
 import type { HubApproval, PrItem } from "./hub-api.ts";
-import { approvalHeadline, checkValueText, findPrItem, verdictText } from "./triage-view.ts";
+import { approvalHeadline, findPrItem, verdictText } from "./triage-view.ts";
 
 function approval(): HubApproval {
   return {

@@ -1,3 +1,11 @@
 {
-  "ignorePatterns": ["vendor/**", "**/dist/**", "**/generated/**"]
+  "ignorePatterns": ["vendor/**", "**/dist/**", "**/generated/**"],
+  "rules": {
+    "no-nested-ternary": "error",
+    "no-unneeded-ternary": "error",
+    "no-empty": "error",
+    "no-useless-catch": "error",
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "ignoreRestSiblings": true }],
+    "max-depth": ["error", { "max": 5 }]
+  }
 }

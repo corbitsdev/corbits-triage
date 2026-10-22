@@ -15,7 +15,7 @@ function toFacts(pr: PRRecord): PrFacts {
     headSha: pr.revision,
     state: pr.state,
     draft: pr.draft,
-    mergeable: pr.conflicts ? false : true,
+    mergeable: !pr.conflicts,
     checks: pr.checks ? "success" : "failure",
     approvals: 0,
   };

@@ -111,7 +111,9 @@ export function pageReads(): PageReads {
 
   async function mergeable(repo: string, base: string, head: string): Promise<boolean | null> {
     const { state } = await json(`/${repo}/branches/pre_mergeable/${encodeURIComponent(base)}...${head}`) as { state?: string };
-    return state === "clean" ? true : state === "dirty" ? false : null;
+    if (state === "clean") return true;
+    if (state === "dirty") return false;
+    return null;
   }
 
   async function pull(repo: string, number: number) {

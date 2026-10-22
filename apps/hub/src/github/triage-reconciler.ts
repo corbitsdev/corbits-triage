@@ -303,25 +303,6 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
   }
 
-  /** A save refused because someone else wrote first is retried once on their rows, keeping the newer row of each head; refused again, it waits for the next pass. */
-  async function saveRows(tenantId: string, repo: string, stored: LoadedTriageState, rows: PrTriageRow[]): Promise<void> {
-    if (JSON.stringify(rows) === JSON.stringify(stored.rows)) return;
-    try {
-      await deps.store.save(tenantId, repo, rows, stored.version);
-      return;
-    } catch (err) {
-      if (!(err instanceof TriageStateConflictError)) throw err;
-    }
-    const fresh = await deps.store.load(tenantId, repo);
-    try {
-      await deps.store.save(tenantId, repo, mergeRows(fresh.rows, rows), fresh.version);
-      deps.log({ level: "info", msg: "triage_state_merged", tenantId, repo });
-    } catch (err) {
-      if (!(err instanceof TriageStateConflictError)) throw err;
-      deps.log({ level: "warn", msg: "triage_state_conflict", tenantId, repo });
-    }
-  }
-
   /**
    * Keeps a recorded rotation, or drops it, and returns the deployment to
    * mail: the copy while the rotation stands. The replaced deployment gets no

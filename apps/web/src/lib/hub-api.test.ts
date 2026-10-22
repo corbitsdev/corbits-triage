@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
-import { stockTriggerMail } from "@corbits/triage-contracts";
 import {
   createGrant,
   ensureWorkspace,
@@ -19,14 +18,7 @@ import {
   type PortalSnapshot,
   type PullTriage,
   type PullVerdict,
-  type RunLog,
 } from "./hub-api.ts";
-
-const decidedLog: RunLog = {
-  runId: "run-triage",
-  anchorRunId: "run-triage",
-  events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } }],
-};
 
 function verdict(runId: string, state: string, detail: Record<string, unknown> | null, fields: Partial<PullVerdict> = {}): PullVerdict {
   return {

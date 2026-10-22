@@ -625,7 +625,7 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
   const row = asRecord(raw);
   if (!row) return undefined;
   const where = CHECK_CATALOG[id].name;
-  const check: CatalogCheck = { enabled: row.enabled === false ? false : true, ...parseNote(row, where), ...parseOnFail(row, id, where) };
+  const check: CatalogCheck = { enabled: row.enabled !== false, ...parseNote(row, where), ...parseOnFail(row, id, where) };
   if (isSizeRule(id)) {
     const max = finiteNumber(row[SIZE_RULES[id]]);
     if (max !== undefined) check[SIZE_RULES[id]] = max;

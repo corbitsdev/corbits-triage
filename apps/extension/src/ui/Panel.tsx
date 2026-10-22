@@ -25,7 +25,7 @@ function Header({ settings, onBack, onSettings }: { settings: boolean; onBack: (
 function Footer({ view, running, onRerun }: { view: TriageView | undefined; running: boolean; onRerun: () => void }) {
   return (
     <footer className="panel-footer">
-      <p className="footer-meta">{running ? "Triaging…" : view ? `Updated ${formatRelativeTime(view.ranAt)}` : null}</p>
+      <p className="footer-meta">{running ? "Triaging…" : view && `Updated ${formatRelativeTime(view.ranAt)}`}</p>
       <Button size="sm" variant="outline" disabled={running} onClick={onRerun}><RotateCw aria-hidden="true" className={running ? "spin" : undefined} />Triage again</Button>
     </footer>
   );
