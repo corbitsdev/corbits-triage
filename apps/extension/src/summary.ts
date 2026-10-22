@@ -1,4 +1,4 @@
-import { nextStep, readinessOf, stateName, type TriageView, type ViewCheck } from "./view.ts";
+import type { TriageView, ViewCheck } from "./view.ts";
 
 const ORDER: Record<ViewCheck["result"], number> = { fail: 0, unconfirmed: 1, pass: 2 };
 
@@ -16,15 +16,4 @@ export function checkReason(check: ViewCheck): string {
 /** Failures first, then what is not settled, then passes. */
 export function shownChecks(view: TriageView): ViewCheck[] {
   return [...view.checks].sort((a, b) => ORDER[a.result] - ORDER[b.result]);
-}
-
-/** The run as Markdown, for pasting into a review, a chat or an issue. */
-export function summaryMarkdown(view: TriageView): string {
-  const lines = [
-    `**${view.pr.repo}#${view.pr.number}**: ${readinessOf(view) ?? "–"}/100, ${stateName(view)}`,
-    `Next: ${nextStep(view)}`,
-    "",
-    ...shownChecks(view).map((check) => `- ${RESULT_NAMES[check.result]}: **${check.name}**, ${checkReason(check)}`),
-  ];
-  return lines.join("\n");
 }
