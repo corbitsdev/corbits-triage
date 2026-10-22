@@ -169,7 +169,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
 
 Each is an `onTrigger` mail listener: each mail spawns a child run that
 executes and ends. The bridge and the reconciler find the target by workflow
-name per tenant; no deployment ids are configured anywhere.
+name per tenant; no deployment ids are configured anywhere. Each declares
+`mailAccept: { tenant: true }`, so Interchange's sender gate admits the hub's
+`github` sender (a principal in the deployment's tenant) and refuses mail from
+any other tenant or an unknown sender.
 
 - `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
   pull request and triages it. Both are built by `prTriage({ sources })` in

@@ -1,4 +1,5 @@
 import { action, defineWorkflow, onTrigger } from "@intx/workflow";
+import { TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
 import { credentialBindings } from "./agents.js";
 import { hostAction } from "./triage-steps.js";
 
@@ -21,6 +22,7 @@ const perScan = defineWorkflow({
 export const workflow = defineWorkflow({
   id: REPO_SCAN_ADDRESS,
   credentialBindings: credentialBindings.filter((binding) => binding.action === "facts"),
+  mailAccept: TRIAGE_MAIL_ACCEPT,
   steps: {
     events: onTrigger({ on: { type: "mail", to: REPO_SCAN_ADDRESS }, body: perScan, onBodyFailure: "tolerate" }),
   },

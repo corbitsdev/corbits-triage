@@ -1,4 +1,5 @@
 import { defineWorkflow, onTrigger } from "@intx/workflow";
+import { TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
 import { credentialBindingsFor, type Sources } from "./agents.js";
 import { triageSteps } from "./triage-steps.js";
 
@@ -21,6 +22,7 @@ export function prTriage({ id = PR_TRIAGE_ADDRESS, sources }: { id?: string; sou
   return defineWorkflow({
     id,
     credentialBindings: credentialBindingsFor(sources),
+    mailAccept: TRIAGE_MAIL_ACCEPT,
     steps: {
       events: onTrigger({ on: { type: "mail", to: id }, body: perPr, onBodyFailure: "tolerate" }),
     },
