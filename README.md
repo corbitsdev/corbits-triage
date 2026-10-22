@@ -14,7 +14,8 @@ triage on and its policy has a rule.
 
 1. **Run the hub.** On a server with a public HTTPS domain, follow
    [docs/SELF_HOST.md](docs/SELF_HOST.md); on Railway, its
-   [Railway steps](docs/SELF_HOST.md#railway). To try it on your machine:
+   [Railway steps](docs/SELF_HOST.md#railway); on a plain VPS, its
+   [Plain VPS steps](docs/SELF_HOST.md#plain-vps). To try it on your machine:
 
    ```sh
    cp .env.example .env   # paste a different `openssl rand -hex 32` into each of the four secrets at its top
