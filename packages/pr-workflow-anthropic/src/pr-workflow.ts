@@ -1,4 +1,5 @@
 import { action, defineWorkflow, gate, onTrigger, type Primitive } from "@intx/workflow";
+import { TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
 import { credentialBindingsFor as codeReviewBindings, type CodeReviewAgents } from "@corbits/pr-code-review/agents";
 import { CODE_REVIEW_PLACEMENT, codeReviewSteps } from "@corbits/pr-code-review/pr-code-review";
 import { agents } from "@corbits/pr-code-review-anthropic/agents";
@@ -54,6 +55,7 @@ export function prWorkflowOf(agents: CodeReviewAgents) {
     return defineWorkflow({
       id,
       credentialBindings: credentialBindingsFor(sources),
+      mailAccept: TRIAGE_MAIL_ACCEPT,
       sidecarPlacement: CODE_REVIEW_PLACEMENT,
       steps: { events: onTrigger({ on: { type: "mail", to: id }, body: perPr, onBodyFailure: "tolerate" }) },
     });

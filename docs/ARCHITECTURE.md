@@ -16,7 +16,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
 
 - **Hub** (`apps/hub`): the stock Interchange hub plus one composition
   block: `@corbits/webhooks` at `/api/hooks`, `@corbits/artifacts`,
-  `@corbits/cron`. In the image it also serves the built portal, so one
+  `@corbits/cron`. Its generic hook route answers 404 `unknown_hook`:
+  `@corbits/webhooks` 0.3.1 fires a run without naming its sender, which the
+  sender gate refuses. In the image it also serves the built portal, so one
   origin carries the portal, the API and the webhooks. Triage adds:
   - **GitHub bridge**: verifies GitHub's HMAC on `/api/hooks/*`, updates the
     tenant's repository list from installation events, and hands pull
@@ -86,7 +88,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     the host's live deployment, which only seeds workers, and released once
     its run ends. How many run at once is the provisioner's call: a placement
     it declines for want of room, or a job with no live deployment to copy
-    yet, waits and is retried with backoff. The queue, like the coalescer's
+    yet, waits and is retried with backoff. A worker the sender gate refuses
+    (a copy of a deployment made before its workflow declared who may mail
+    it) is released and its job retried the same way five times, enough for
+    the portal reload after a hub deploy; then the head fails with "this
+    repository's Triage deployment is out of date; open the portal to
+    redeploy it", and the reconciler queues it again after the redeploy. The queue, like the coalescer's
     windows, lives in memory, so the hub runs as one replica. A restart loses
     only queue order: the hub releases orphaned workers on start and the
     reconciler queues their heads again.
@@ -169,7 +176,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
 
 Each is an `onTrigger` mail listener: each mail spawns a child run that
 executes and ends. The bridge and the reconciler find the target by workflow
-name per tenant; no deployment ids are configured anywhere.
+name per tenant; no deployment ids are configured anywhere. Each declares
+`mailAccept: { tenant: true }`, so Interchange's sender gate admits the hub's
+`github` sender (a principal in the deployment's tenant) and refuses mail from
+any other tenant or an unknown sender.
 
 - `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
   pull request and triages it. Both are built by `prTriage({ sources })` in

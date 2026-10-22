@@ -1,4 +1,5 @@
 import { action, defineWorkflow, map, onTrigger, step, type Primitive, type Selector } from "@intx/workflow";
+import { TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
 import { READ_REPOSITORY } from "./actions/checkout.js";
 import { credentialBindingsFor, type CodeReviewAgents, type Sources } from "./agents.js";
 import { MODEL_ATTEMPTS } from "./failures.js";
@@ -85,6 +86,7 @@ export function codeReviewWorkflow(agents: CodeReviewAgents) {
     return defineWorkflow({
       id,
       credentialBindings: credentialBindingsFor(sources),
+      mailAccept: TRIAGE_MAIL_ACCEPT,
       sidecarPlacement: CODE_REVIEW_PLACEMENT,
       steps: { events: onTrigger({ on: { type: "mail", to: id }, body, onBodyFailure: "tolerate" }) },
     });

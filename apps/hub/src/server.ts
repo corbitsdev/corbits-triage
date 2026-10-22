@@ -12,14 +12,15 @@
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
-import { createGrantStore, createWorkflowRunLaunchSpecStore, schema } from "@intx/db";
+import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
-import { and, eq } from "drizzle-orm";
-import { createMailTriggeredRunGrantsMaterializer, createRequireGrant } from "@intx/hub-api";
+import { eq } from "drizzle-orm";
+import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import {
   createRunTriggerDeliverer,
   createTenantSystemSender,
+  type MailDeliverer,
 } from "@corbits/webhooks";
 import {
   createArtifactRoutes,
@@ -63,7 +64,7 @@ import { createCodeReviewFeed, createPullRequestReader } from "./code-review-fee
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
-import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
+import { HOOK_MOUNT_PATH, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
 import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
 import { appKeyProviderWriteRefusal, appKeyWriteRefusal, githubTenants, moveAppKey } from "./github/app-key.js";
@@ -75,7 +76,7 @@ import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
@@ -335,18 +336,40 @@ const systemSender = createTenantSystemSender({
   db: composition.db,
   principalKeyStore: composition.principalKeyStore,
 });
-function runTriggerDeliverer(senderLocalPart: string) {
-  return createRunTriggerDeliverer({
-    router: composition.sidecarRouter,
-    materialize: readyMaterializer(createMailTriggeredRunGrantsMaterializer({
-      db: composition.db,
-      principalKeyStore: composition.principalKeyStore,
-      grantStore: createGrantStore(composition.db),
-    })),
-    tenantDomain,
-    senderLocalPart,
-    systemSender,
+// A tenant's system principal never changes once minted.
+const systemSenders = new Map<string, ResolvedSenderPrincipal>();
+/** The tenant system sender a run trigger is signed as, minted once, with the coordinates Interchange's sender gate admits. */
+async function systemSenderOf(senderLocalPart: string, tenantId: string): Promise<ResolvedSenderPrincipal> {
+  const key = `${senderLocalPart}@${tenantId}`;
+  const cached = systemSenders.get(key);
+  if (cached !== undefined) return cached;
+  const domain = await tenantDomain(tenantId);
+  await systemSender.resolve({ tenantId, domain, localPart: senderLocalPart });
+  const resolved = await resolveSenderPrincipal(composition.db, composition.principalKeyStore, `${senderLocalPart}@${domain}`);
+  if (!resolved) throw new Error(`no ${senderLocalPart} system principal in tenant ${tenantId}`);
+  systemSenders.set(key, resolved);
+  return resolved;
+}
+function runTriggerDeliverer(senderLocalPart: string): MailDeliverer {
+  const materialize = createMailTriggeredRunGrantsMaterializer({
+    db: composition.db,
+    principalKeyStore: composition.principalKeyStore,
+    grantStore: createGrantStore(composition.db),
+    registry: HUB_CONDITION_REGISTRY,
   });
+  return {
+    async to(address, content, tenantId, subject) {
+      const sender = await systemSenderOf(senderLocalPart, tenantId);
+      const deliverer = createRunTriggerDeliverer({
+        router: composition.sidecarRouter,
+        materialize: readyMaterializer(systemSenderMaterializer(materialize, sender)),
+        tenantDomain,
+        senderLocalPart,
+        systemSender,
+      });
+      await deliverer.to(address, content, tenantId, subject);
+    },
+  };
 }
 cronTicker = createCronTicker({
   db: composition.db,
@@ -407,12 +430,6 @@ const mergeStates = createMergeStates({
   log: logJson,
 });
 
-const hookDeps = credentialDeps;
-const hookApp = createStockHookApp(
-  hookDeps,
-  composition.principalKeyStore,
-  composition.sidecarRouter,
-);
 
 const GITHUB_SENDER = TRIAGE_MAIL_SENDER;
 const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
@@ -542,18 +559,8 @@ async function refreshPolicyFile(tenantId: string, repo: string, source: RepoSou
   if (state) await settleRepoPolicy(tenantId, repo, source);
   return state;
 }
-// A tenant's system principal never changes once minted.
-const githubSenderPrincipals = new Map<string, string>();
 async function githubSenderPrincipal(tenantId: string): Promise<string> {
-  const cached = githubSenderPrincipals.get(tenantId);
-  if (cached !== undefined) return cached;
-  await systemSender.resolve({ tenantId, domain: await tenantDomain(tenantId), localPart: GITHUB_SENDER });
-  const row = await composition.db.query.principal.findFirst({
-    where: and(eq(schema.principal.tenantId, tenantId), eq(schema.principal.kind, "user"), eq(schema.principal.refId, GITHUB_SENDER)),
-  });
-  if (!row) throw new Error(`no ${GITHUB_SENDER} system principal in tenant ${tenantId}`);
-  githubSenderPrincipals.set(tenantId, row.id);
-  return row.id;
+  return (await systemSenderOf(GITHUB_SENDER, tenantId)).principalId;
 }
 function now(): Date {
   return new Date();
@@ -808,8 +815,8 @@ function sendBacklogMail(tenantId: string, payload: unknown) {
 }
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
-  db: hookDeps.db,
-  cipher: hookDeps.cipher,
+  db: credentialDeps.db,
+  cipher: credentialDeps.cipher,
   cache: deliveryCache,
   coalescer,
   codeReview: codeReviewFeed,
@@ -822,8 +829,8 @@ const bridge = createBridgeHandler({
   repoChanged: repoReads.changed,
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
-  db: hookDeps.db,
-  cipher: hookDeps.cipher,
+  db: credentialDeps.db,
+  cipher: credentialDeps.cipher,
   cache: deliveryCache,
   coalescer,
   codeReview: codeReviewFeed,
@@ -1000,11 +1007,8 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       if (!target) return Response.json({ error: "unknown_hook" }, { status: 404 });
       return bridge(req, target);
     }
-    const rest = url.pathname.slice(HOOK_MOUNT_PATH.length);
-    if (decodeSegments(rest) === null) return Response.json({ error: "unknown_hook" }, { status: 404 });
-    const target = new URL(req.url);
-    target.pathname = rest === "" || rest === "/" ? "/" : rest;
-    return hookApp.fetch(new Request(target.href, req));
+    // @corbits/webhooks 0.3.1 fires a run without naming its sender, which Interchange's sender gate refuses.
+    return Response.json({ error: "unknown_hook" }, { status: 404 });
   }
   const unverified = await refuseUnverified(req);
   if (unverified) return unverified;

@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { isRecord } from "@corbits/common";
-import { AUTHOR_KINDS, authorGroupsOf, blockCleanSchema, EVERYONE, fileGroupSchema, SEVERITIES, triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, authorGroupsOf, blockCleanSchema, EVERYONE, fileGroupSchema, isFromTriageSender, SEVERITIES, triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 
 /** The code review block's outcome step; every other step of the block has its id under `CODE_REVIEW_PREFIX`. */
@@ -91,6 +91,7 @@ function incomplete(reason: string): Closed {
  * files. In doubt it never opens: whatever it cannot read leaves the review incomplete.
  */
 export function scopeOf(trigger: unknown, steps: Steps): Scope {
+  if (!isFromTriageSender(trigger)) return incomplete("the trigger mail is not from the hub's Triage sender");
   const parsed = Trigger(triggerRequestOf(trigger));
   if (parsed instanceof type.errors) return incomplete(`the trigger's code review part is invalid: ${parsed.summary}`);
   const { codeReview, codeReviewRequest, pack } = parsed;

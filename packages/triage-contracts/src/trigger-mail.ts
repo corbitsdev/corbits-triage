@@ -4,6 +4,12 @@ import type { RepoSource } from "./repo-source.js";
 
 export const TRIAGE_MAIL_SENDER = "github";
 
+/**
+ * Who may mail a triage deployment: the hub's sender is a principal in the deployment's own tenant, so the tenant rule
+ * admits it and refuses every other tenant; the steps then act only on mail from {@link isFromTriageSender}.
+ */
+export const TRIAGE_MAIL_ACCEPT = { tenant: true };
+
 const BARE_ADDRESS = /^([^\s@<>",()]+)@([^\s@<>",()]+)$/;
 
 function bareAddress(value: unknown): { local: string; domain: string } | undefined {

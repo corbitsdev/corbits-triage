@@ -29,6 +29,14 @@ export type TriageJob = {
 /** A spawn that cannot happen yet: the host has no room, or no listener to copy is live. The job is retried, not failed. */
 export class WorkerDeferredError extends Error {}
 
+/** A worker the sender gate refused: copied from a deployment made before its workflow declared who may mail it, which the portal redeploys. */
+export class WorkerOutdatedError extends WorkerDeferredError {}
+
+/** Enough deferrals to cover a portal reload after a hub deploy; then the head fails and the reconciler queues it after the redeploy. */
+const OUTDATED_ATTEMPTS = 5;
+
+export const OUTDATED_REASON = "this repository's Triage deployment is out of date; open the portal to redeploy it";
+
 export type WorkerSpawner = {
   /** Deploys a fresh worker and fires it with the job's mail; resolves with the worker's anchor run id. */
   spawn: (job: TriageJob) => Promise<string>;
@@ -67,6 +75,8 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
   let slots = 0;
   /** Deferred jobs: how often, and when they may spawn again. */
   const refused = new Map<string, { attempts: number; notBefore: number }>();
+  /** How often each job's worker was refused as outdated. */
+  const outdated = new Map<string, number>();
   let cancelTimer: (() => void) | undefined;
   let pumping = false;
   let stopped = false;
@@ -124,10 +134,19 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
       runId = await deps.spawner.spawn(job);
     } catch (err) {
       running.delete(slot);
+      const key = keyOf(job);
+      const outdatedAttempts = err instanceof WorkerOutdatedError ? (outdated.get(key) ?? 0) + 1 : 0;
       if (err instanceof WorkerDeferredError && superseded(job)) {
-        refused.delete(keyOf(job));
+        refused.delete(key);
+        outdated.delete(key);
         deps.log({ level: "info", msg: "worker_job_superseded", ...entry, headSha: job.headSha });
+      } else if (outdatedAttempts > OUTDATED_ATTEMPTS) {
+        refused.delete(key);
+        outdated.delete(key);
+        deps.log({ level: "error", msg: "worker_outdated", ...entry, error: String(err) });
+        await failJob(job, OUTDATED_REASON, entry);
       } else if (err instanceof WorkerDeferredError) {
+        if (outdatedAttempts > 0) outdated.set(key, outdatedAttempts);
         deps.log({ level: "warn", msg: "worker_spawn_deferred", ...entry, error: String(err), retryMs: defer(job) });
       } else {
         deps.log({ level: "error", msg: "worker_spawn_failed", ...entry, error: String(err) });
@@ -137,6 +156,7 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
       return;
     }
     refused.delete(keyOf(job));
+    outdated.delete(keyOf(job));
     deps.log({ level: "info", msg: "worker_spawned", ...entry, runId });
     try {
       await deps.spawner.ended(job.tenantId, runId);

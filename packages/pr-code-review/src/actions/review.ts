@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { triggerRequestOf } from "@corbits/triage-contracts";
+import { isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
 import { changedFiles, parseFindings, quotedLine, samePath, type Finding, type Site } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
@@ -134,9 +134,19 @@ function pullRequest(request: ReviewRequest): string {
   return `${aboutPullRequest(request)}\n\n<diff>\n${promptText(request.diff)}\n</diff>${cut}`;
 }
 
-/** The reviewInput action: the request from the trigger mail, the plan's user message and every role's per-call options; a role's effort is the request's, else the profile's. */
+/** A request the PR workflow's scope step handed over, rather than a trigger mail. */
+function handedOver(input: unknown): boolean {
+  return typeof input === "object" && input !== null && "kind" in input && input.kind === "code-review";
+}
+
+/**
+ * The reviewInput action: the request from the trigger mail, the plan's user message and every role's per-call options;
+ * a role's effort is the request's, else the profile's. Only the hub's trigger mail is reviewed; the PR workflow hands
+ * over the request its scope step took from the hub's mail.
+ */
 export function reviewInputFor({ efforts }: Pick<CodeReviewProfile, "efforts">) {
   return async function reviewInput(input: unknown): Promise<ReviewInput> {
+    if (!handedOver(input) && !isFromTriageSender(input)) throw new Error("reviewInput: the trigger mail is not from the hub's Triage sender");
     const request = ReviewRequest(triggerRequestOf(input));
     if (request instanceof type.errors) throw new Error(`reviewInput: invalid request: ${request.summary}`);
     const inference = Object.fromEntries(ROLES.map((role) => [role, { effort: request.efforts?.[role] ?? efforts[role], maxTokens: MAX_OUTPUT_TOKENS }])) as Record<Role, StepInference>;
