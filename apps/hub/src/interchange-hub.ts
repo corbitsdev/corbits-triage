@@ -20,6 +20,7 @@ import {
   createWorkflowRunLaunchSpecStore,
   resolveFrameSenderKey,
   resolveSenderKey,
+  resolveSenderPrincipal,
   withExecutableWorkflowRun,
 } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
@@ -29,7 +30,9 @@ import {
   type SidecarCapabilityRule,
 } from "@intx/types";
 import {
+  HUB_CONDITION_REGISTRY,
   createApp,
+  createCorrespondentGrantMinter,
   createMailTriggeredRunGrantsMaterializer,
 } from "@intx/hub-api";
 import {
@@ -191,6 +194,9 @@ export async function createInterchangeHub({
         db,
         principalKeyStore,
         grantStore: createGrantStore(db),
+        // The registry createHubApp uses, so a conditioned operator
+        // mail.accept deny is evaluated, not skipped, by the admission gate.
+        registry: HUB_CONDITION_REGISTRY,
       },
     ),
     resolveSenderKey: (address) =>
@@ -202,6 +208,21 @@ export async function createInterchangeHub({
     resolveSenderKeyStrict: async (address) =>
       (await resolveSenderKey(db, principalKeyStore, address))?.publicKey ??
       null,
+    // The strict, coordinate-carrying resolution the mail-triggered run's
+    // invoker binding needs. It keeps the widened resolution rather than
+    // unwrapping to the key, so the sender's principal, tenant, and admission
+    // coordinates carry through; a principal-less run and the strict resolver's
+    // throw both fail the binding closed (see `resolveSenderPrincipal`).
+    resolveSenderPrincipal: (address) =>
+      resolveSenderPrincipal(db, principalKeyStore, address),
+    // Records a correspondent at the send seam: when a live run mails a party,
+    // the sending run gains a `mail.accept:principal:<recipient>` grant so that
+    // party's reply is admitted. Gated on the sending definition having
+    // authored the `correspondent` relation; best-effort, never breaks a send.
+    mintCorrespondentGrant: createCorrespondentGrantMinter({
+      db,
+      principalKeyStore,
+    }),
   };
 
   const sidecarCredentials = createSidecarCredentialResolver({ db });
