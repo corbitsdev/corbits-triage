@@ -308,6 +308,16 @@ describe("judge on a blocked pull request", () => {
     expect(heldForCi(verdict)).toBe(true);
   });
 
+  test("cancelled checks are Unsure, never Pass, and ask for a re-run instead of waiting", async () => {
+    const cancelled = [{ name: "build", status: "completed", conclusion: "cancelled" }];
+    const { verdict } = await judgeAndEvaluate(await facts(cancelled, true, false, {}, code), undefined, []);
+    expect(verdict).toMatchObject({ verdict: "unsure", nextAction: "Re-run the cancelled checks" });
+    expect(verdict.waiting).toBeUndefined();
+    expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "unconfirmed", reason: "checks were cancelled and need a re-run", evidence: ["build"] });
+    expect(verdict.feedback).toContain("Waiting on:\n- checks were cancelled and need a re-run: `build`");
+    expect(heldForCi(verdict)).toBe(false);
+  });
+
   test("a head with no check runs passes CI green as no checks configured", async () => {
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, {}, code), undefined, []);
     expect(verdict.verdict).toBe("pass");

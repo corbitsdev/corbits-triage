@@ -1,4 +1,4 @@
-import { checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
+import { checkCancelled, checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
 import { authorAssociation, authorKindOf, catalogCheckEnabled, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { hiddenIn, hiddenMarkup, nothingRemoved } from "./hidden-content.js";
@@ -77,6 +77,7 @@ export function buildFacts(
     checks: summarizeChecks(checks),
     failingChecks: checkNames(checks.filter(checkFailed)),
     pendingChecks: checkNames(checks.filter(checkPending)),
+    cancelledChecks: checkNames(checks.filter(checkCancelled)),
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,

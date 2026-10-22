@@ -337,23 +337,28 @@ export async function getChecks(gh: GithubFetch, repo: string, sha: string): Pro
 }
 
 const FAILED = new Set(["failure", "timed_out", "action_required"]);
-// A cancelled or stale run ended without a result, so it has not finished rather than failed.
-const UNFINISHED = new Set(["cancelled", "stale"]);
+// A cancelled or stale run ended without a result: neither failed nor still running, it waits on a re-run.
+const CANCELLED = new Set(["cancelled", "stale"]);
 
 export function checkFailed(run: CheckRun): boolean {
   return run.conclusion !== undefined && run.conclusion !== null && FAILED.has(run.conclusion);
 }
 
 export function checkPending(run: CheckRun): boolean {
-  return run.status !== "completed" || UNFINISHED.has(run.conclusion ?? "");
+  return run.status !== "completed";
 }
 
-export type CiState = "success" | "failure" | "pending" | "none";
+export function checkCancelled(run: CheckRun): boolean {
+  return run.status === "completed" && CANCELLED.has(run.conclusion ?? "");
+}
+
+export type CiState = "success" | "failure" | "pending" | "cancelled" | "none";
 
 export function summarizeChecks(runs: CheckRun[]): CiState {
   if (!runs.length) return "none";
   if (runs.some(checkFailed)) return "failure";
   if (runs.some(checkPending)) return "pending";
+  if (runs.some(checkCancelled)) return "cancelled";
   return "success";
 }
 
@@ -366,6 +371,7 @@ const CI_TEXT: Record<CiState, string> = {
   success: "CI passed on this head",
   failure: "CI has failed on this head",
   pending: "CI has not finished on this head",
+  cancelled: "CI was cancelled on this head",
   none: "There is no CI on this head",
 };
 

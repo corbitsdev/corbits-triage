@@ -164,7 +164,8 @@ function sentence(text: string): string {
   return `${text[0]!.toUpperCase()}${text.slice(1)}.`;
 }
 
-const CI: Record<PrFacts["checks"], CiState> = { success: "passing", failure: "failing", pending: "pending", none: "none" };
+// Cancelled CI waits on a re-run, so a step reads it as not finished.
+const CI: Record<PrFacts["checks"], CiState> = { success: "passing", failure: "failing", pending: "pending", cancelled: "pending", none: "none" };
 
 /** A linked issue is one from either tracker, whatever the linked issue rule asks for. */
 function stepSubject(facts: PrFacts, pack: CheckPack): StepSubject {

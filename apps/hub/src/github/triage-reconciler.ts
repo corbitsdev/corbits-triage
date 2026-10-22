@@ -4,7 +4,7 @@
 // stored state, then queues what the plan says, each head to a worker of its own.
 // A head waiting for CI is released here once its CI finished or its wait ran
 // out, on hosts and pull requests whose CI results send no webhook.
-import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
 import { WorkflowProvisioningError } from "@intx/hub-sessions";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { mailPayload, waitingPayload } from "./bridge.js";
@@ -118,6 +118,14 @@ function waitsOnCi(verdict: { checks: ReadonlyArray<{ check: string; result: str
   return verdict.checks.some((check) => check.check === "ci-green" && (check.result === "unconfirmed" || check.result === "fail"));
 }
 
+/** The verdict read its CI as cancelled, which stays so until a check is re-run; one without its rule's detail is taken as cancelled, so it is not run again and again. */
+function readCancelled(verdict: { detail?: VerdictDetail | null }): boolean {
+  const ciGreen = verdict.detail?.checks?.find((check) => check.check === "ci-green");
+  if (ciGreen === undefined) return true;
+  const values = ciGreen.output?.["values"];
+  return typeof values === "object" && values !== null && "status" in values && values.status === "cancelled";
+}
+
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
   /** Heads whose builds were read since their verdict; lost on restart, when the verdict's own time starts the interval again. */
   const buildPolls = new Map<string, BuildPoll>();
@@ -185,6 +193,11 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         continue;
       }
       const decided = verdict.checks.find((check) => check.check === "ci-green")!.result;
+      // Cancelled CI waits on a person re-running it, however late, so its reads are not counted toward giving up.
+      if (readCancelled(verdict) && ci === "cancelled") {
+        buildPolls.set(key, { polls: poll.polls, at: now });
+        continue;
+      }
       // Pending stays pending and failed stays failed until a build changes; a red build turning green is the change worth a run.
       if (ci === "pending" || (decided === "fail" && ci === "failure")) {
         buildPolls.set(key, { polls: poll.polls + 1, at: now });

@@ -53,9 +53,10 @@ export interface PrFacts {
   state: "open" | "closed";
   draft: boolean;
   mergeable: boolean | null;
-  checks: "success" | "failure" | "pending" | "none";
+  checks: "success" | "failure" | "pending" | "cancelled" | "none";
   failingChecks: string[];
   pendingChecks: string[];
+  cancelledChecks: string[];
   reviewers: string[];
   approvals: number;
   changesRequested: string[];
@@ -130,6 +131,7 @@ const CI_RULE: Record<PrFacts["checks"], CiRule> = {
   success: { status: "passing", reason: "required checks are passing", failed: false, names: () => [] },
   failure: { status: "failing", reason: "required checks are failing", failed: true, names: (facts) => facts.failingChecks },
   pending: { status: "pending", reason: "checks are still running", failed: null, names: (facts) => facts.pendingChecks },
+  cancelled: { status: "cancelled", reason: "checks were cancelled and need a re-run", failed: null, names: (facts) => facts.cancelledChecks },
   none: { status: "none", reason: "no checks configured", failed: false, names: () => [] },
 };
 
@@ -377,7 +379,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       result: resultOf(failed),
       reason,
       evidence,
-      output: failed === null ? { kind: "could-not-check", reason } : output,
+      output,
     });
   }
   const on = rules.enabled;
@@ -389,7 +391,9 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       const ci = CI_RULE[facts.checks];
       if (ci.failed === true) add("ci-green", "blocked", ci.reason);
       if (ci.failed === null) add("ci-green", "awaiting-review", ci.reason);
-      result("ci-green", ci.failed, ci.reason, ci.names(facts), { kind: "values", values: { status: ci.status } });
+      // Cancelled checks are settled until re-run, so only running ones could not be checked yet.
+      const output: CheckOutput = facts.checks === "pending" ? { kind: "could-not-check", reason: ci.reason } : { kind: "values", values: { status: ci.status } };
+      result("ci-green", ci.failed, ci.reason, ci.names(facts), output);
     }
     if (on("no-merge-conflicts") && facts.mergeable === false) add("no-merge-conflicts", "blocked", "merge conflicts with base");
     const requested = facts.changesRequested;
@@ -402,9 +406,10 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
     if (on("no-merge-conflicts") && !findings.length && facts.mergeable === null) add("no-merge-conflicts", "stale-unknown", "mergeability not yet computed");
     if (on("no-merge-conflicts")) {
       const conflicted = facts.mergeable === null ? null : !facts.mergeable;
-      result("no-merge-conflicts", conflicted, conflictReason(conflicted), [], {
+      const reason = conflictReason(conflicted);
+      result("no-merge-conflicts", conflicted, reason, [], conflicted === null ? { kind: "could-not-check", reason } : {
         kind: "values",
-        values: { hasConflicts: conflicted === true },
+        values: { hasConflicts: conflicted },
       });
     }
     for (const size of sizeResults(facts, rules.sizes).filter((size) => on(size.id))) {

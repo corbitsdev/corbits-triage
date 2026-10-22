@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkFailed, checkPending, latestDecisive, reviewedOnHead } from "@corbits/github-reads";
+import { checkCancelled, checkFailed, checkPending, latestDecisive, reviewedOnHead } from "@corbits/github-reads";
 import { authorTeams, getChecks, getPr, getReviews, isTriageComment, jsonAll, listIssueComments, listPrTimeline, readRepoFile, readStack, type BitbucketFetch } from "./index.js";
 import activities from "./fixtures/activities.json";
 import buildStatus from "./fixtures/build-status.json";
@@ -45,11 +45,12 @@ describe("getPr", () => {
 });
 
 test("getChecks: build statuses on the head become check runs, leaving out triage's own", async () => {
-  const builds = page([...buildStatus.values, { state: "FAILED", key: "corbits-triage" }]);
+  const builds = page([...buildStatus.values, { state: "CANCELLED", key: "lint" }, { state: "FAILED", key: "corbits-triage" }]);
   const runs = await getChecks(instance([[`/rest/build-status/1.0/commits/${HEAD}`, builds]]), HEAD);
   expect(runs.filter(checkFailed).map((run) => run.name)).toEqual(["test"]);
   expect(runs.filter(checkPending).map((run) => run.name)).toEqual(["e2e"]);
-  expect(runs).toHaveLength(3);
+  expect(runs.filter(checkCancelled).map((run) => run.name)).toEqual(["lint"]);
+  expect(runs).toHaveLength(4);
 });
 
 describe("getReviews", () => {
