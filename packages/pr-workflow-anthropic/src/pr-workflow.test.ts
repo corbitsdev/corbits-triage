@@ -204,7 +204,7 @@ function held(dos: unknown, error: string) {
 /** The hub's approval mail for the Do `effectId` the run's verdict named. */
 function approvalMail(verdict: Verdict, effectId: string) {
   const step = verdict.actions.find((action) => "effectId" in action && action.effectId === effectId) as SuggestedDo;
-  const request = { kind: APPROVE_DO_KIND, runId: "run_1", principalId: "prn_ann", list: step.list, index: step.index, request: verdict.request, step: { effectId, headSha: verdict.headSha, kind: step.kind, target: step.target } };
+  const request = { kind: APPROVE_DO_KIND, runId: "run_1", principalId: "prn_ann", appLogin: "triage-eval[bot]", list: step.list, index: step.index, request: verdict.request, step: { effectId, headSha: verdict.headSha, kind: step.kind, target: step.target } };
   return { ...triggerMail(PR, PACK), parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
 }
 
