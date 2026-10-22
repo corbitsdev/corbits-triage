@@ -71,10 +71,14 @@ export function createTenantGithub(deps: TenantGithubDeps) {
   };
 }
 
-/** The login the workspace's GitHub App writes as, read from its credential without asking GitHub; undefined when it has no slug. */
+/** The login the workspace's GitHub App writes as, read from its credential without asking GitHub; undefined when it has no slug or can't be read, since the listing must not fail over it. */
 async function appBotLogin(db: DB["db"], tenantId: string): Promise<string | undefined> {
-  const slug = asRecord((await activeCredential(db, tenantId, "github"))?.metadata)?.["appSlug"];
-  return typeof slug === "string" && slug !== "" ? `${slug}[bot]` : undefined;
+  try {
+    const slug = asRecord((await activeCredential(db, tenantId, "github"))?.metadata)?.["appSlug"];
+    return typeof slug === "string" && slug !== "" ? `${slug}[bot]` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The user Triage's Bitbucket token acts as; undefined when Bitbucket can't say, since the listing must not fail over it. */
