@@ -1,8 +1,9 @@
 // A repository's policy kept in `.corbits-triage.yml` (or `.yaml`) on its default branch. When the file is there, triage
 // reads it as the policy unless the repository's saved rules run differently (see check-pack-store.ts), and a file it
 // refuses stops triage until it is fixed rather than falling back. Each read is kept in memory until a push to the
-// default branch touches the file, or for a minute where no push is heard. Saved rules, or a starter policy when there
-// are none, or a file chosen for a repository without one, are written to the file through a pull request (policy-pull.ts).
+// default branch touches the file, or for a minute while its webhook is not heard. Saved rules, or a starter policy when
+// there are none, or a file chosen for a repository without one, are written to the file through a pull request
+// (policy-pull.ts).
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
@@ -18,6 +19,7 @@ import type { PolicySettled } from "./check-pack-store.js";
 import { forInstallation, type MemberOpenPulls, type OpenPullsRead } from "./open-pulls.js";
 import * as github from "./policy-pull.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
+import type { RepoActivity } from "./repo-activity.js";
 import type { RepoReads } from "./repo-reads.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 import { bitbucketFailed, githubFailed } from "./github-refusal.js";
@@ -73,6 +75,8 @@ export type PolicyFileDeps = PortalCredentialDeps & {
   openPulls: MemberOpenPulls;
   changed: RepoReads["changed"];
   log: (entry: Record<string, unknown>) => void;
+  /** Whether the repository's webhook (the App's, on GitHub) has been silent long enough that a push may go unheard. */
+  quiet: RepoActivity["quiet"];
 };
 
 /** The policy file on the default branch as triage takes it: none, refused with why, or the policy it holds. */
@@ -92,19 +96,20 @@ function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
   return { status: "ok", file, policy: checked.policy, workflow: checked.workflow };
 }
 
-/** How long a read of a repository the hub hears no push from is kept. */
+/** How long a read of a repository whose webhook the hub has not heard lately is kept. */
 const UNHEARD_MAX_AGE_MS = 60_000;
-
-/**
- * A read is kept until a push re-reads it, except where none is heard: any GitHub repository in the App's installations
- * is, a Bitbucket one only through the webhook triage registers while it is enabled.
- */
-function maxAgeOf(record: RepoRecord): number {
-  return sourceOf(record) === "bitbucket-datacenter" && record.enabled !== true ? UNHEARD_MAX_AGE_MS : Infinity;
-}
 
 export function createPolicyFile(deps: PolicyFileDeps) {
   const cache = new Map<string, { read: Promise<PolicyFileState>; at: number }>();
+
+  /**
+   * A read is kept until a push re-reads it while the repository's webhook is heard; where it is not (a hub the host
+   * cannot reach, a broken webhook, a restart before any delivery, a Bitbucket repository not yet enabled) a merged file
+   * would otherwise never be seen.
+   */
+  function maxAgeOf(tenantId: string, record: RepoRecord): number {
+    return deps.quiet(tenantId, sourceOf(record), record.name) ? UNHEARD_MAX_AGE_MS : Infinity;
+  }
 
   /** A Bitbucket repository the token sees has no record until it is enabled, so rules can be written for it first, as for GitHub. */
   async function visibleBitbucketRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
@@ -176,7 +181,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   /** The repository's policy file as triage takes it; absent when the repository is not connected. */
   async function current(tenantId: string, repo: string, source: RepoSource | undefined): Promise<PolicyFileState> {
     const record = await connectedRecord(tenantId, repo, source);
-    return record ? cached(tenantId, record, maxAgeOf(record)) : { status: "absent" };
+    return record ? cached(tenantId, record, maxAgeOf(tenantId, record)) : { status: "absent" };
   }
 
   /** A push to the default branch that touched the file reads it again; undefined when the repository is not connected. */
@@ -202,7 +207,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     if (record instanceof Response) return record;
     let state: PolicyFileState;
     try {
-      state = await cached(member.tenantId, record, maxAgeOf(record));
+      state = await cached(member.tenantId, record, maxAgeOf(member.tenantId, record));
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_file_status_failed", tenantId: member.tenantId, repo, error: errorText(err) });
       return githubFailed(`read ${POLICY_FILE_PATH} from`, err);

@@ -1,5 +1,5 @@
 // Requires PostgreSQL at TEST_DB.
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setSystemTime, test } from "bun:test";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
@@ -11,6 +11,7 @@ import { fileRefusal, settlePolicy } from "./check-pack-store.js";
 import { createPolicyFile, listedPolicyPull } from "./policy-file.js";
 import { POLICY_BRANCH } from "./policy-pull.js";
 import { createMemberOpenPulls, createOpenPullsCache } from "./open-pulls.js";
+import { createRepoActivity } from "./repo-activity.js";
 import { createTenantGithub, createTenantOpenPrs } from "./tenant-open-heads.js";
 
 /** No deployment holds the credential in these tests. */
@@ -29,6 +30,8 @@ const CHOSEN = "acme/chosen";
 const CHOSEN_SAVED = "acme/chosen-saved";
 const CHOSEN_RACED = "acme/chosen-raced";
 const BOTH = "acme/both";
+const UNHEARD = "acme/unheard";
+const BITBUCKET_UNHEARD = "PROJ/unheard";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 const FILE = `rules:
   - check: ci-green
@@ -121,6 +124,20 @@ async function github(req: Request): Promise<Response> {
   return new Response(null, { status: 404 });
 }
 
+/** Bitbucket Data Center over the same files, its head always `head`. */
+async function bitbucket(path: string): Promise<Response> {
+  const url = new URL(path, "https://bitbucket.example");
+  const [, , , , , project, , slug, kind, ...rest] = url.pathname.split("/");
+  const repo = `${project}/${slug}`;
+  const file = files.get(`${repo}@main/${decodeURIComponent(rest.join("/")) || url.searchParams.get("path")}`);
+  if (kind === undefined) return Response.json({ links: { self: [{ href: `https://bitbucket.example/projects/${project}/repos/${slug}/browse` }] } });
+  if (kind === "branches") return Response.json({ latestCommit: "head" });
+  if (!file) return new Response(null, { status: 404 });
+  if (kind === "browse") return Response.json({ type: "FILE" });
+  if (kind === "raw") return new Response(file.text);
+  return Response.json({ values: [{ id: file.sha }] });
+}
+
 const server = Bun.serve({ port: 0, fetch: github });
 const githubApiOrigin = `http://127.0.0.1:${server.port}`;
 const database = `corbits_policy_file_${randomBytes(6).toString("hex")}`;
@@ -128,6 +145,7 @@ const config = { ...TEST_DB, database };
 const admin = createDB(TEST_DB);
 let handle: ReturnType<typeof createDB>;
 let policyFile: ReturnType<typeof createPolicyFile>;
+const activity = createRepoActivity(() => new Date(), { quietMs: 30 * 60_000, graceMs: 60_000 });
 
 beforeAll(async () => {
   await admin.db.execute(sql.raw(`create database ${database}`));
@@ -136,7 +154,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_SAVED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }];
+  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_SAVED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -160,10 +178,11 @@ beforeAll(async () => {
     refusal: refused,
     cipher,
     onKeyMoved: noKeyPush,
-    tenantBitbucket: async () => undefined,
+    tenantBitbucket: async () => bitbucket,
     authorize,
     tenantGithub: createTenantGithub({ db, cipher, onKeyMoved: noKeyPush, githubApiOrigin }),
     log() {},
+    quiet: activity.quiet,
   });
 }, 120_000);
 
@@ -427,6 +446,33 @@ test("PostgreSQL: a name both hosts hold is read only for the host asked, and a 
   expect(await readPack(BOTH)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "both1" } } });
   expect((await settled(TENANT, BOTH, undefined)).read).toEqual({ status: "missing" });
   expect((await policyFile.fileRoute({ repo: BOTH }, MEMBER)).status).toBe(409);
+});
+
+test("PostgreSQL: where no webhook is heard a merged policy file is read within a minute without a push, and kept while the webhook is heard", async () => {
+  const start = Date.now();
+  function after(ms: number): void {
+    setSystemTime(new Date(start + ms));
+  }
+  async function readOf(repo: string, source: RepoSource) {
+    return (await settled(TENANT, repo, source)).read;
+  }
+  try {
+    for (const [repo, source] of [[UNHEARD, "github"], [BITBUCKET_UNHEARD, "bitbucket-datacenter"]] as const) {
+      after(0);
+      expect(await readOf(repo, source)).toEqual({ status: "missing" });
+      onMain(repo, YML, FILE, `${source}1`);
+      after(61_000);
+      expect(await readOf(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}1` } } });
+      activity.heard(TENANT, source, repo);
+      onMain(repo, YML, FILE, `${source}2`);
+      after(122_000);
+      expect(await readOf(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}1` } } });
+      after(61_000 + 30 * 60_000);
+      expect(await readOf(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}2` } } });
+    }
+  } finally {
+    setSystemTime();
+  }
 });
 
 test("a Bitbucket policy pull request carries no head, so it is merged on Bitbucket", () => {

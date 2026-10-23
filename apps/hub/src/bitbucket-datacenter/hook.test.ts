@@ -95,13 +95,15 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
 
 describe("POST /api/hooks/bitbucket-datacenter/:tenantId", () => {
   test("a signed pull request event is queued once for the Bitbucket repository record; a bad signature is 401 and an unrecorded repository 404", async () => {
-    const h = harness();
+    const heard: string[] = [];
+    const h = harness({ heard: (_tenant, _source, repo) => heard.push(repo) });
     const body = prEvent("pr:opened");
     expect((await h.send(hookRequest(body, "pr:opened", { signature: "sha256=00" }))).status).toBe(401);
     expect((await h.send(hookRequest(prEvent("pr:opened", "gadgets"), "pr:opened", { delivery: "req-2" }))).status).toBe(404);
     expect(await (await h.send(hookRequest(body, "pr:opened"))).json()).toEqual({ status: "queued" });
     expect(await (await h.send(hookRequest(body, "pr:opened"))).json()).toEqual({ status: "duplicate" });
     expect(h.accepted).toHaveLength(1);
+    expect(heard).toEqual(["TRI/widgets"]);
     expect(h.accepted[0]).toMatchObject({ workflow: "pr-triage", number: 1, headSha: "3e1552b0", event: "opened", record: { name: "TRI/widgets", source: "bitbucket-datacenter" } });
   });
 

@@ -136,7 +136,7 @@ A repository's policy is the file `.corbits-triage.yml` (`.corbits-triage.yaml` 
 
   ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge and Done, the four starter rules with Comment with the verdict and its label on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
 
-- When a change to the file reaches the default branch, the next triage uses it.
+- When a change to the file reaches the default branch, the next triage uses it. Where GitHub or Bitbucket cannot reach Triage to tell it about the change, Triage notices it within a minute.
 - If the file has a mistake, Triage runs nothing on the repository until it is fixed. The section says so and lists each problem, and the Inbox names the repository. A repository that still has rules saved in Triage keeps running on them instead, and its card below says **Triage can't read** the file and why.
 
 #### Moving saved rules into the file

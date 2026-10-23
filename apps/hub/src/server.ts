@@ -546,6 +546,7 @@ const tenantSources = { ...credentialDeps, githubApiOrigin: githubOrigin, tenant
 const tenantOpenPrs = keptOpenPrs(createTenantOpenPrs(tenantSources), repoReads);
 const openPullsCache = createOpenPullsCache(now);
 const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, ...credentialDeps, list: tenantOpenPrs, authorize: authorizePortal });
+const repoActivity = createRepoActivity(now, { quietMs: TRIAGE_RELIST_QUIET_MS, graceMs: TRIAGE_RELIST_GRACE_MS });
 const policyFile = createPolicyFile({
   ...credentialDeps,
   settle: settleRepoPolicy,
@@ -556,6 +557,7 @@ const policyFile = createPolicyFile({
   openPulls: memberOpenPulls,
   changed: repoReads.changed,
   log: logJson,
+  quiet: repoActivity.quiet,
 });
 const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
 function readStoredCheckPack(tenantId: string, repo: string) {
@@ -606,7 +608,6 @@ const observeTriageRuns = createTriageRuns({
 });
 const tenantVersions = createTenantVersions();
 const reconcilePolicy = triageReconcilePolicy(env);
-const repoActivity = createRepoActivity(now, { quietMs: TRIAGE_RELIST_QUIET_MS, graceMs: TRIAGE_RELIST_GRACE_MS });
 const runRecorder = createRunRecorder({ verdicts: verdictRecordStore, log: logJson });
 
 /**

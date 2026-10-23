@@ -171,13 +171,13 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       return json(500, { error: "tenant_config_unavailable" });
     }
     const repo = repoOf(intake);
-    d.heard(hook.tenantId, provider.source, repo);
     const ns = triageNs(tenantConfig);
     const record = repoRecords(ns).find((row) => sourceOf(row) === provider.source && row.name === repo && row.connected);
     if (!record) {
       log({ level: "info", msg: "unknown_repo", delivery, event, repo, hook: hook.credentialId });
       return json(404, { error: "unknown_repo" });
     }
+    d.heard(hook.tenantId, provider.source, repo);
     const at = { hook, delivery, event, record, ns };
     if (intake.kind === "policy-push") {
       if (intake.branches && (record.defaultBranch === undefined || !intake.branches.includes(record.defaultBranch))) return ignored(at, "not_default_branch", { branches: intake.branches });
