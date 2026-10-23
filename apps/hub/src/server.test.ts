@@ -322,6 +322,29 @@ test("workflow deploy refuses a package registry that is not the workspace's own
   expect(await deploy(otherRegistry, "Not A Pin@")).toMatchObject({ status: 400, body: { error: { code: "invalid_request" } } });
 }, 40_000);
 
+test("guards see the path the router matches, so an encoded path is refused as the plain one", async () => {
+  const origin = await startHub();
+  const headers = await signedIn(origin);
+  const tenantId = await createTenant(origin, headers);
+  async function send(method: string, path: string, body: unknown) {
+    const res = await fetch(`${origin}${path}`, { method, headers, body: JSON.stringify(body) });
+    return { status: res.status, body: await res.json() };
+  }
+  const appKeyProvider = { name: "github-app", plugin: "github", apiBaseUrl: "https://attacker.example" };
+  const appKeyCredential = { providerId: "prv_none", name: "github", type: "api_key", secret: JSON.stringify({ appId: 1, privateKey: "k" }) };
+  const staleConfig = { config: { corbitsTriage: { rev: 99 } } };
+  for (const [method, plain, encoded, body] of [
+    ["POST", `/api/tenants/${tenantId}/providers`, `/api/tenants/${tenantId}/provider%73`, appKeyProvider],
+    ["POST", `/api/tenants/${tenantId}/credentials`, `/api/tenants/${tenantId}/%63redentials`, appKeyCredential],
+    ["PATCH", `/api/tenants/${tenantId}`, `/api/tenant%73/${tenantId}`, staleConfig],
+  ] as const) {
+    const refused = await send(method, plain, body);
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+    expect(await send(method, encoded, body)).toEqual(refused);
+  }
+  expect(await send("GET", "/api/%E0%A4%A", undefined)).toEqual({ status: 400, body: { error: "bad_path" } });
+}, 40_000);
+
 const REPO = "acme/widgets";
 const HEAD = "abc0000000000000000000000000000000000000";
 const APP_BOT = { login: "corbits[bot]", type: "Bot" };
@@ -916,6 +939,7 @@ test("an unverified account reaches only sign-in and verification until it follo
     const annSession = await signedIn(origin, ann, false);
     expect(await status(origin, annSession, "GET", "/api/me")).toEqual(refused);
     expect(await status(origin, annSession, "POST", "/api/tenants", { name: "Ann", slug: `ann-${crypto.randomUUID().slice(0, 8)}` })).toEqual(refused);
+    expect(await status(origin, annSession, "GET", "/%61pi/me")).toEqual(refused);
     expect(await status(origin, annSession, "GET", "/api/integrations/sessions")).toEqual(refused);
     expect(await status(origin, annSession, "GET", "/api/auth/get-session")).toMatchObject({ status: 200, body: { user: { email: ann, emailVerified: false } } });
     expect(await status(origin, annSession, "GET", "/api/integrations/auth-methods")).toMatchObject({ status: 200, body: { verificationEmail: true } });

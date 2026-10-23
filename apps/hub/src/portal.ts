@@ -4,9 +4,8 @@ import { securityHeaders } from "../../web/src/security-headers.js";
 
 const HUB_PATHS = ["/api/", "/status", "/openapi.json"];
 
-export function isPortalRequest(req: Request): boolean {
-  const { pathname } = new URL(req.url);
-  return (req.method === "GET" || req.method === "HEAD") && !HUB_PATHS.some((path) => pathname.startsWith(path));
+export function isPortalRequest(req: Request, path: string): boolean {
+  return (req.method === "GET" || req.method === "HEAD") && !HUB_PATHS.some((hubPath) => path.startsWith(hubPath));
 }
 
 export function createPortalHandler(dir: string): (req: Request) => Promise<Response> {
