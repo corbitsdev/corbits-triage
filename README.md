@@ -10,6 +10,32 @@ identity, grants, credentials, runs and audit.
 Nothing runs by default: a repository is triaged only once someone turns
 triage on and its policy has a rule.
 
+## Get started
+
+Add the Corbits Triage skills to your coding agent, for every repository:
+
+```sh
+npx skills add corbitsdev/corbits-triage -g
+```
+
+Have ready: Docker with Compose, or Bun and Postgres; a GitHub account that
+can create a GitHub App; an API key for the
+[decision model](docs/DECISION_MODEL.md) the portal asks for.
+
+**Setup Prompt**
+
+```text
+Use the corbits-triage-install skill to get Corbits Triage running on this machine. Prefer Docker Compose if I have Docker; otherwise use a Postgres I choose and bun run dev. Do everything you can yourself and tell me exactly what to do when it needs me.
+```
+
+**Configure Prompt**
+
+```text
+Use the corbits-triage-setup skill to write .corbits-triage.yml for this repository. Look at the repository first, suggest rules, and check the file before you finish. Ask me what Triage should do on Pass, Fail and Unsure.
+```
+
+Run it inside the repository you want triaged.
+
 ## Set up through the portal
 
 1. **Run the hub.** On a server with a public HTTPS domain, follow
@@ -31,8 +57,12 @@ triage on and its policy has a rule.
    gives the hub control of that Docker, which on Linux is root on the
    machine: whoever takes over the hub takes over the machine. GitHub cannot deliver webhooks to
    localhost, so pull requests are picked up every five minutes
-   and a policy file change is read after a restart. To work on the code
-   instead, see [docs/DEV.md](docs/DEV.md).
+   and a policy file change is read after a restart.
+
+   Without Docker, `bun run dev` against your own Postgres applies the
+   database migrations and starts the portal at http://localhost:5173
+   ([docs/DEV.md](docs/DEV.md)). To try it without a GitHub App, run it
+   against the [GitHub emulator](docs/DEV.md#github-emulator-no-github-account).
 2. **Connect GitHub.** Sign up, press **Create GitHub App**, choose
    repositories, and save a decision model key
    ([Set up in the portal](docs/SELF_HOST.md#set-up-in-the-portal)).
@@ -47,10 +77,6 @@ triage on and its policy has a rule.
 
 ## Other setup paths
 
-- **Setup skill.** [skills/corbits-triage-setup](skills/corbits-triage-setup/SKILL.md)
-  lets a coding agent write and check `.corbits-triage.yml`. Copy the folder
-  into your agent's skills folder (such as `.claude/skills/` or
-  `.agents/skills/`) and ask it to set up Corbits Triage.
 - **Policy check Action.** [packages/policy-check-action](packages/policy-check-action/action.yml)
   checks the policy file and runs its rules that need no model on every pull
   request, with no hub or secrets ([workflow to copy](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#checking-the-file-in-pull-requests)).
