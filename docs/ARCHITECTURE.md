@@ -340,7 +340,7 @@ GitHub show as "Not checked against the file".
 Beside the model steps, two steps read what tools already say, as structured
 findings (source, rule, path, line, message, severity, fix when the tool gives
 one) for a fix workflow to take later; nothing is sent on yet. `lint` runs the
-native oxlint binary the sidecar image pins (never through bun or node) over the changed files with the repository's own
+native oxlint binary every image that runs sidecars pins (never through bun or node) over the changed files with the repository's own
 `.oxlintrc.json`, nested configs off, and keeps hits on added lines. Only data
 keys pass (rules, categories, built-in plugins, env, globals, settings,
 ignorePatterns, overrides of the same); a config with any other key (`extends`,
