@@ -1,6 +1,6 @@
 // Builds the sidecar template through E2B from the repository, as docs/provisioners/e2b.md says, with E2B_API_KEY set.
 // E2B builds single-stage Dockerfiles only, so this is the root Dockerfile's base stage, which holds all the sidecar stage
-// does, with the sidecar stage's oxlint on PATH for the code review's lint step.
+// does, oxlint for the code review's lint step included.
 import path from "node:path";
 import { Template, defaultBuildLogger } from "e2b";
 import { E2B_SIDECAR_TEMPLATE } from "./src/index.js";
