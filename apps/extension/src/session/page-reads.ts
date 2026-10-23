@@ -153,12 +153,19 @@ export function pageReads(): PageReads {
     };
   }
 
+  /** The pull request's timeline, refused when cut at its first items, since what is past the cut cannot be told. */
+  async function timelineItems(repo: string, number: number): Promise<any[]> {
+    const items = (await json(`/${repo}/pull/${number}/page_data/timeline`)).items as any[];
+    if (items.length >= TIMELINE_ITEMS) throw new Error(`github.com's timeline shows only the first ${TIMELINE_ITEMS} items of ${repo}#${number}`);
+    return items;
+  }
+
   async function reviews(repo: string, number: number) {
-    const [timeline, side] = await Promise.all([json(`/${repo}/pull/${number}/page_data/timeline`), sidebar(repo, number)]);
-    const rows = (timeline.items as any[]).filter((item) => item.type === "TIMELINE_ITEM_TYPE_PULL_REQUEST_REVIEW");
+    const rows = (await timelineItems(repo, number)).filter((item) => item.type === "TIMELINE_ITEM_TYPE_PULL_REQUEST_REVIEW");
+    const side = await sidebar(repo, number);
     const latest = new Map<string, number>();
     rows.forEach((item, index) => latest.set(item.user.slug ?? item.user.displayLogin, index));
-    // The timeline holds only its first items, so a long pull request's later reviews are missing from it.
+    // The sidebar and timeline are separate reads, so a review left between them is on one and not the other.
     const missing = [...side.reviewedAt.keys()].filter((login) => !latest.has(login));
     if (missing.length) throw new Error(`github.com's timeline does not show ${missing.join(", ")}'s review of ${repo}#${number}`);
     return rows.map(function review(item, index) {
@@ -175,11 +182,9 @@ export function pageReads(): PageReads {
     });
   }
 
-  /** Only the fields triage reads: who commented and when; a timeline cut at its first items may be missing some. */
+  /** Only the fields triage reads: who commented and when. */
   async function issueComments(repo: string, number: number) {
-    const items = (await json(`/${repo}/pull/${number}/page_data/timeline`)).items as any[];
-    if (items.length >= TIMELINE_ITEMS) throw new Error(`github.com's timeline shows only the first ${TIMELINE_ITEMS} items of ${repo}#${number}`);
-    return items.filter((item) => item.type === "TIMELINE_ITEM_TYPE_ISSUE_COMMENT").map((item) => ({
+    return (await timelineItems(repo, number)).filter((item) => item.type === "TIMELINE_ITEM_TYPE_ISSUE_COMMENT").map((item) => ({
       id: Number(item.additionalInfo.issueComment.commentId),
       user: { login: loginOf(item.user), type: item.user.slug ? "Bot" : "User" },
       body: "",
