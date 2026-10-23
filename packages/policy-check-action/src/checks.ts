@@ -1,5 +1,4 @@
-import { BUILT_IN_CHECK_NAMES, CATALOG_IDS, catalogCheckEnabled, classificationSources, isCatalogId, DEFAULT_REPO_POLICY, isModelCheck, parseCheckPack, stockTriggerMail, type CheckPack } from "@corbits/triage-contracts";
-import { hardFailures } from "@corbits/triage-workflows/logic/checks";
+import { BUILT_IN_CHECK_NAMES, CATALOG_IDS, catalogCheckEnabled, classificationSources, isCatalogId, DEFAULT_REPO_POLICY, hardFailures, isModelCheck, parseCheckPack, stockTriggerMail, type CheckPack } from "@corbits/triage-contracts";
 import type { Verdict } from "@corbits/triage-workflows/logic/render";
 import { PR_TRIAGE, recordingGithub, runLocalWorkflow, type Write } from "@corbits/triage-workflows/run-local";
 import type { WorkflowAuthorizeFn } from "@intx/workflow";

@@ -2,7 +2,7 @@
 
 The PR workflow with code review on Anthropic's models: one mail names one pull request, triage runs as
 [pr-triage](../triage-workflows/README.md) does, then [code review](../pr-code-review-anthropic/README.md) runs behind a
-gate, and `decide` applies the policy's rules once to choose what execute runs. The hub mails it a pull request whose
+gate, by default only once triage's rules that need no model and CI have passed, and `decide` applies the policy's rules once to choose what execute runs. The hub mails it a pull request whose
 policy file turns code review on, while the workspace stores the Anthropic key.
 
 ## Use

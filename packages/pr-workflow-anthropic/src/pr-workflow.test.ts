@@ -40,6 +40,8 @@ const REVIEW_REQUEST = { kind: "code-review", number: PR.number, title: PR.title
 let dir: string;
 let tarball: Uint8Array;
 let model: ReturnType<typeof Bun.serve>;
+/** Requests to the code review models since the server started. */
+let reviewCalls = 0;
 
 const allow: WorkflowAuthorizeFn = async function allow() {
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
@@ -83,6 +85,7 @@ beforeAll(function serve() {
     async fetch(req) {
       const body = (await req.json()) as { model: string; questions: Record<string, Question>; system: unknown; messages: unknown[] };
       if (new URL(req.url).pathname === "/systemone") return Response.json(systemOne(body.questions));
+      reviewCalls += 1;
       const usage = { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
       return Response.json({ id: "msg", type: "message", role: "assistant", model: body.model, content: anthropic(body), stop_reason: "end_turn", stop_sequence: null, usage });
     },
@@ -94,13 +97,17 @@ afterAll(function stop() {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** The fixture's reads, its head's tarball and files for code review, and every write recorded and answered. */
-function host(writes: Write[]) {
+type CheckRun = { name: string; status: string; conclusion: string | null };
+
+const GREEN: CheckRun = { name: "build", status: "completed", conclusion: "success" };
+
+/** The fixture's reads with `ci` as its head's check runs, its head's tarball and files for code review, and every write recorded and answered. */
+function host(writes: Write[], ci: CheckRun) {
   const served = fixtureGithub(PR, {});
   const repo = `/repos/${PR.repo}`;
   async function read(url: URL): Promise<Response> {
     if (url.pathname === `${repo}/tarball/${HEAD}`) return new Response(tarball);
-    if (url.pathname.startsWith(`${repo}/commits/`)) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: "success" }] });
+    if (url.pathname.startsWith(`${repo}/commits/`)) return Response.json({ check_runs: [ci] });
     const file = FILES[url.pathname.slice(`${repo}/contents/`.length)];
     return file === undefined ? served(url) : new Response(file);
   }
@@ -117,19 +124,19 @@ function sourceFor(req: StepInvokeRequest) {
 
 type Write = { method: string; path: string; body: unknown };
 
-type RunOptions = { pack?: CheckPack; automatic?: ActionKind[]; actions?: Record<string, unknown>; mail?: unknown };
+type RunOptions = { pack?: CheckPack; automatic?: ActionKind[]; actions?: Record<string, unknown>; mail?: unknown; ci?: CheckRun };
 
 /**
  * Runs one definition on the fixture's opened mail with `extra` beside its request, `automatic` the kinds it may run
- * unattended and `actions` in place of its own, or on `mail`; checkouts go under the test's folder.
+ * unattended, `actions` in place of its own and `ci` as its head's checks, or on `mail`; checkouts go under the test's folder.
  */
-async function run(definition: typeof PR_TRIAGE, extra: Record<string, unknown> = {}, { pack = PACK, automatic = [], actions: overrides = {}, mail }: RunOptions = {}) {
+async function run(definition: typeof PR_TRIAGE, extra: Record<string, unknown> = {}, { pack = PACK, automatic = [], actions: overrides = {}, mail, ci = GREEN }: RunOptions = {}) {
   const writes: Write[] = [];
   const result = await runLocalWorkflow({
     ...definition,
     actions: { ...definition.actions, checkout: checkoutUnder(() => join(dir, "data")), ...overrides },
     authorize: allow,
-    github: host(writes),
+    github: host(writes, ci),
     inference: { credentialId: "inference", origin: `http://localhost:${model.port}`, apiKey: "local" },
     sourceFor,
     triggerPayload: mail ?? triggerMail(PR, pack, extra, automatic),
@@ -150,7 +157,7 @@ function variant() {
 const REVIEW_STEPS = ["reviewInput", "plan", "checkout", "findersInput", "findDiff", "findRepo", "candidates", "consolidate", "checks", "check", "writeInput", "write", "review"].map((id) => `codeReview_${id}`);
 
 /** Code review as the hub fills it from the policy, for everyone on any verdict. */
-const ON = { on: true, for: ["everyone"], triage: [...VERDICTS] };
+const ON = { on: true, for: ["everyone"], triage: [...VERDICTS], rules: "pass" };
 
 function triageOf(ran: readonly string[]) {
   return ran.filter((id) => !id.startsWith("codeReview") && id !== "decide");
@@ -312,7 +319,7 @@ function scope(codeReview: unknown, steps: Record<string, { output: unknown }>) 
 type ChangedFile = { path: string; previousPath?: string };
 
 function judged(author: Record<string, unknown>, files: ChangedFile[] = [{ path: "parser.go" }]) {
-  return { evaluate: { output: { verdict: "pass" } }, facts: { output: { items: [{ facts: { changedFiles: files.length, files, authorTeams: [], authorTeamsUnknown: [], ...author } }] } } };
+  return { evaluate: { output: { verdict: "pass", checks: [] } }, facts: { output: { items: [{ facts: { changedFiles: files.length, files, authorTeams: [], authorTeamsUnknown: [], ...author } }] } } };
 }
 
 const MEMBER = { author: "octocat", authorKind: "MEMBER" };
@@ -334,9 +341,43 @@ test("the scope runs for any group the author is in, on the verdicts and paths t
 test("in doubt the scope never opens: what it cannot read leaves the review incomplete", () => {
   expect(scope({ ...ON, triage: "pass" }, JUDGED)).toMatchObject({ open: false, outcome: "incomplete" });
   expect(scope({ ...ON, for: ["core"] }, judged({ author: "octocat" }))).toEqual({ open: false, outcome: "incomplete", reason: "triage could not tell the author's groups" });
-  const degraded = { evaluate: { output: { verdict: "unsure" } }, facts: { output: { items: [{ error: "not found" }] } } };
+  const degraded = { evaluate: { output: { verdict: "unsure", checks: [] } }, facts: { output: { items: [{ error: "not found" }] } } };
   const truncated = judged({ ...MEMBER, changedFiles: 3001 }, [{ path: "README.md" }]);
   expect(scope({ ...ON, paths: ["!*.md"] }, truncated)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
   expect(scope({ ...ON, paths: ["!*.md"] }, degraded)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
   expect(scope({ ...ON, paths: ["*.go"] }, degraded)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
+});
+
+/** The fixture's pack with CI required to pass. */
+const CI_PACK = { ...PACK, checks: { ...PACK.checks, "ci-green": { enabled: true } } };
+
+test.each([
+  ["red CI", { name: "build", status: "completed", conclusion: "failure" }, { outcome: "skipped", reason: "rules failed: ci-green" }],
+  ["CI still running", { name: "build", status: "in_progress", conclusion: null }, { outcome: "incomplete", reason: "rules not settled yet: ci-green" }],
+])("%s runs none of code review's steps and asks no review model", async (_, ci, expected) => {
+  const before = reviewCalls;
+  const composed = await run(variant(), { codeReview: ON, codeReviewRequest: REVIEW_REQUEST, blocks: ["code-review"], decide: ON_PASS }, { ...APPROVING, pack: { ...APPROVING.pack, ...CI_PACK }, ci });
+  expect(composed.ran.filter((id) => id.startsWith("codeReview"))).toEqual(["codeReview_scope", "codeReview_gate", "codeReview"]);
+  expect(composed.outputs["codeReview"]).toEqual(expected);
+  expect(reviewCalls).toBe(before);
+});
+
+test("with `when.rules: any` code review runs whatever triage's rules say", async () => {
+  const composed = await run(variant(), { codeReview: { ...ON, rules: "any" }, codeReviewRequest: REVIEW_REQUEST, blocks: ["code-review"], decide: ON_PASS }, { pack: CI_PACK, ci: { name: "build", status: "completed", conclusion: "failure" } });
+  expect((composed.outputs["evaluateRules"] as Verdict).verdict).toBe("fail");
+  expect(composed.outputs["codeReview"]).toMatchObject({ outcome: "findings" });
+});
+
+test("the scope opens only once every policy rule read without a model whose failure fails the pull request has passed; built-in rules never shut it", () => {
+  function verdict(checks: unknown) {
+    return { ...JUDGED, evaluate: { output: { verdict: "pass", checks } } };
+  }
+  const machine = (check: string, result: string, onFail?: string) => ({ check, kind: "machine", result, ...(onFail && { onFail }) });
+  expect(scope(ON, verdict([machine("ci-green", "pass"), machine("focused", "fail", "ask"), { check: "docs", kind: "model", result: "fail" }]))).toMatchObject({ open: true });
+  expect(scope(ON, verdict([machine("ci-green", "pass"), machine("no-merge-conflicts", "fail")]))).toEqual({ open: false, outcome: "skipped", reason: "rules failed: no-merge-conflicts" });
+  expect(scope(ON, verdict([machine("ci-green", "pass"), machine("no-changes-requested", "fail")]))).toMatchObject({ open: true });
+  expect(scope(ON, verdict([machine("ci-green", "pass"), machine("not-a-draft", "fail")]))).toMatchObject({ open: true });
+  expect(scope(ON, verdict(undefined))).toEqual({ open: false, outcome: "incomplete", reason: "triage gave no rule results" });
+  expect(scope({ ...ON, rules: "any" }, verdict(undefined))).toMatchObject({ open: true });
+  expect(scope({ ...ON, rules: undefined }, JUDGED)).toMatchObject({ open: false, outcome: "incomplete" });
 });

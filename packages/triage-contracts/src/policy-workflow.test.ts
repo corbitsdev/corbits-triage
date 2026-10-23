@@ -147,6 +147,7 @@ describe("policy file v4", () => {
   test.each([
     [`${RULES}security: { on: true, when: { triage: maybe } }\n`, "`security.when.triage` must be pass, fail or unsure, or a list of them.", 6],
     [`${RULES}security:\n  on: true\n  when:\n    paths: [src/**]\n    triage: [pass, maybe]\n`, "`security.when.triage` must be pass, fail or unsure, or a list of them.", 10],
+    [`${RULES}security: { on: true, when: { rules: any } }\n`, "`security.when.rules` is not a key; use triage or paths.", 6],
     [`${RULES}security: { on: true, when: { paths: [] } }\n`, "`security.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}code-review: { on: true, when: { paths: ["src/**", "  !*.md"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}code-review: { on: true, when: { paths: ["src/**", "! *.md"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
