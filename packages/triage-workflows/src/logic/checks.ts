@@ -89,8 +89,8 @@ export interface PrFacts {
   stack?: Stack;
   /** What the title, description, commits and paths hid, as `where: what`, never the hidden text. */
   hidden: string[];
-  /** Set only when regression risk is on: the fix or revert commits on each changed file's recent history, by path. */
-  fixes?: Record<string, number>;
+  /** Set only when regression risk is on: the fix commits in each changed file's recent history, by path, or null when that history could not be read in full. */
+  fixes?: Record<string, number | null>;
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
@@ -423,16 +423,18 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       });
     }
     if (on("regression-risk")) {
-      if (facts.fixes === undefined) {
-        const reason = "recent history was not read";
+      const read = Object.entries(facts.fixes ?? {}).filter((entry): entry is [string, number] => entry[1] !== null);
+      const unread = facts.fixes === undefined ? ["every file"] : Object.keys(facts.fixes).filter((path) => facts.fixes![path] === null);
+      const evidence = [...hotFiles(new Map(read), rules.risk.hotFileFixes), ...migrationPaths(facts.paths, rules.risk.migrationGlobs).map((path) => `${path}: migration`)];
+      if (evidence.length) {
+        const reason = "changes code that regressed recently or a migration";
+        add("regression-risk", "needs-decision", reason);
+        result("regression-risk", true, reason, evidence, { kind: "values", values: { risky: true } });
+      } else if (unread.length) {
+        const reason = "could not read the recent history of some changed files";
         add("regression-risk", "stale-unknown", reason);
-        result("regression-risk", null, reason, [], { kind: "could-not-check", reason });
-      } else {
-        const evidence = [...hotFiles(new Map(Object.entries(facts.fixes)), rules.risk.hotFileFixes), ...migrationPaths(facts.paths, rules.risk.migrationGlobs).map((path) => `${path}: migration`)];
-        const reason = evidence.length ? "changes code that regressed recently or a migration" : "no recently fixed files or migrations changed";
-        if (evidence.length) add("regression-risk", "needs-decision", reason);
-        result("regression-risk", evidence.length > 0, reason, evidence, { kind: "values", values: { risky: evidence.length > 0 } });
-      }
+        result("regression-risk", null, reason, unread, { kind: "could-not-check", reason });
+      } else result("regression-risk", false, "no recently fixed files or migrations changed", [], { kind: "values", values: { risky: false } });
     }
     if (on("linked-issue") && rules.tracker !== "off") {
       const ref = issueReference(facts, rules.tracker);

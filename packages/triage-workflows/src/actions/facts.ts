@@ -119,7 +119,7 @@ interface FetchContext {
 /** A scan reads paths and sizes, not patches. */
 const HISTORY_FILES_PAGE: FilesCursor = { offset: 0, patches: false };
 
-/** Pull requests read at once, so the host sees a bounded number of concurrent requests. */
+/** Pull requests, or file histories, read at once, so the host sees a bounded number of concurrent requests. */
 const HISTORY_CHUNK = 10;
 
 const HISTORY_LIMIT = 200;
@@ -207,18 +207,20 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     return [...new Set(numbers.flatMap(historyPathsOf))].map((path) => call(tool("list_path_commits"), { repo, path, since }, `history:${path}`));
   }
 
-  const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...teamsCalls(), ...historyCalls()]);
+  const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...teamsCalls()]);
+  const history = historyCalls();
+  for (let start = 0; start < history.length; start += HISTORY_CHUNK) {
+    for (const [id, result] of await runAll(host, history.slice(start, start + HISTORY_CHUNK))) r2.set(id, result);
+  }
 
-  /** A file whose history could not be read could hide a risky change, so it leaves the pull request unread. */
+  /** A history that failed or holds more than one page counts as unread (null), which leaves only the risk rule unconfirmed. */
   function fixesOf(n: number): PullData["fixes"] {
     if (!risk) return undefined;
-    const fixes: Record<string, number> = {};
-    for (const path of historyPathsOf(n)) {
-      const commits = data<{ commits: Array<{ message?: string }> }>(r2.get(`history:${path}`))?.commits;
-      if (!Array.isArray(commits)) return `could not read the history of ${path} for #${n}`;
-      fixes[path] = fixCount(commits.map((commit) => commit.message ?? ""));
-    }
-    return fixes;
+    return Object.fromEntries(historyPathsOf(n).map(function fixesFor(path) {
+      const read = data<{ commits?: Array<{ message?: string }>; truncated?: boolean }>(r2.get(`history:${path}`));
+      if (!Array.isArray(read?.commits) || read.truncated !== false) return [path, null];
+      return [path, fixCount(read.commits.map((commit) => commit.message ?? ""))];
+    }));
   }
 
   function unreadParts(n: number): ListPart[] {

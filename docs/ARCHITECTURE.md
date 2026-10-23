@@ -234,9 +234,11 @@ label off that head, so it never stands on a head not yet triaged.
    in the same repository counts too, as GitHub renders it `#<number>`.
    With the regression-risk rule on, it also lists each changed file's
    default-branch commits from the last 30 days (`github_list_path_commits`,
-   `bitbucket_datacenter_list_path_commits`, one page each; tests, docs and
-   lockfiles skipped) and keeps how many fix or revert one (`fixes`); a file
-   whose history it can't read leaves the pull request unread.
+   `bitbucket_datacenter_list_path_commits`, one page each, ten files at a
+   time; tests, docs and lockfiles skipped) and keeps how many have a subject
+   typed fix, bugfix, hotfix or revert (`fixes`); a history that fails or
+   runs past one page is kept as unread, which leaves only that rule
+   unconfirmed.
 2. **rules**: runs the hard rules (built-in rules over host data and text
    rules) and, unless one failed or the pull request is a draft or closed,
    builds the judged rules' questions, or the verdict question when there are

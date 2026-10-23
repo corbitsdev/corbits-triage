@@ -87,7 +87,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "github_list_path_commits",
-    description: "List the default branch's commits that changed a path since an ISO time, newest first, up to 100.",
+    description: "List the default branch's commits that changed a path since an ISO time, newest first, up to 100, and whether the window holds more (truncated).",
     inputSchema: obj({ repo, path: str, since: str }),
   },
   {
@@ -272,7 +272,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
     case "github_list_pr_commits":
       return { commits: await listPrCommits(gh, a.repo, a.number) };
     case "github_list_path_commits":
-      return { commits: await listPathCommits(gh, a.repo, a.path, a.since) };
+      return listPathCommits(gh, a.repo, a.path, a.since);
     case "github_list_pr_files":
       return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patchOffset: a.patchOffset, patches: a.patches !== false });
     case "github_read_repo_docs":

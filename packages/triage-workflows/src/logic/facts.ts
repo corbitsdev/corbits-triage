@@ -200,8 +200,8 @@ export interface PullData {
   authorTeams: { teams?: unknown; unknown?: unknown } | null;
   /** Unread when the pack does not ask focused. */
   stack?: { includes?: unknown; onto?: unknown } | null;
-  /** Read only when regression risk is on; why it could not be, when it could not. */
-  fixes?: Record<string, number> | string;
+  /** Read only when regression risk is on. */
+  fixes?: PrFacts["fixes"];
 }
 
 /** Maps the read's slugs back to every spelling the steps use; a team the read did not answer, or another org's team, is unknown. */
@@ -278,7 +278,6 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   if (typeof data.files === "string") return { error: data.files };
   if (typeof docs === "string") return { error: docs };
   if (typeof templates === "string") return { error: templates };
-  if (typeof data.fixes === "string") return { error: data.fixes };
   const hidden: string[] = [];
   const title = shownText(pr.title ?? "", hidden, () => "title");
   const body = shownDescription(pr, source, templates, hidden);

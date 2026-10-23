@@ -113,7 +113,7 @@ export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/*
  * The regression-risk rule's defaults, set from its backtest (packages/triage-workflows/evals/RISK.md): a changed file
  * with at least `hotFileFixes` fix or revert commits in the last `hotFileDays`, or a changed path matching a migration glob.
  */
-export const DEFAULT_RISK = { hotFileFixes: 5, hotFileDays: 30, migrationGlobs: ["**/migrations/**", "**/*.sql"] } as const;
+export const DEFAULT_RISK = { hotFileFixes: 4, hotFileDays: 30, migrationGlobs: ["**/migrations/**", "**/*.sql"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
 export const CONVENTIONAL_TYPES = ["feat", "fix", "refactor", "perf", "docs", "test", "chore", "ci", "build", "style", "revert"] as const;
 export const CONVENTIONAL_FIELDS = ["title", "commits"] as const;

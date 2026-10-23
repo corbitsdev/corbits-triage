@@ -520,10 +520,13 @@ export async function listPrCommits(gh: GithubFetch, repo: string, number: numbe
   return rows.map(prCommit);
 }
 
-/** The default branch's commits that changed `path` since `since`, newest first: one page, which a recent window fills only on the busiest file. */
-export async function listPathCommits(gh: GithubFetch, repo: string, path: string, since: string): Promise<PrCommit[]> {
-  const rows: any[] = await json(gh, `/repos/${repo}/commits?path=${encodeURIComponent(path)}&since=${encodeURIComponent(since)}&per_page=100`);
-  return rows.map(prCommit);
+export type PathCommits = { commits: PrCommit[]; truncated: boolean };
+
+/** The default branch's commits that changed `path` since `since`, newest first: one page, `truncated` when the window holds more. */
+export async function listPathCommits(gh: GithubFetch, repo: string, path: string, since: string): Promise<PathCommits> {
+  const res = await request(gh, `/repos/${repo}/commits?path=${encodeURIComponent(path)}&since=${encodeURIComponent(since)}&per_page=100`);
+  const rows = (await res.json()) as any[];
+  return { commits: rows.map(prCommit), truncated: NEXT_LINK.test(res.headers.get("link") ?? "") };
 }
 
 function prFile(row: any): PrFile {

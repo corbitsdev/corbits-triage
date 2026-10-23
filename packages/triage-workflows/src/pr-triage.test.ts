@@ -319,16 +319,16 @@ describe("pr-triage body", () => {
     expect((await triage(askPack, { github: pending })).verdict).toMatchObject({ waiting: true, actions: [] });
   });
 
-  test("regression risk labels a change to a file fixed often lately or a migration without changing its verdict; history it could not read leaves the pull request unread", async () => {
+  test("regression risk labels a change to a file with recent fix commits or a migration without changing its verdict; history it could not read leaves only the rule unconfirmed", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "regression-risk": { enabled: true, onFail: "label" } } };
-    const fixes = ["fix: a", "fix: b", "Revert \"c\"", "hotfix d", "fixed e", "feat: f"];
+    const fixes = ["fix: a", "fix(api)!: b", "Revert \"c\"", "hotfix d", "bugfix: e", "fix lint", "chore: fix f", "Merge pull request #2 from acme/fix-g", "feat: h\n\nfix: in the body"];
     const hot = await triage(pack, { history: fixes });
     expect(hot.verdict).toMatchObject({ verdict: "pass", labelled: [{ check: "regression-risk", result: "fail", evidence: ["src/flag.ts: 5 recent fixes"] }], actions: [{ kind: "labels", target: { labels: ["regression-risk: check"] } }] });
     expect(hot.requests).toContainEqual({ method: "GET", path: expect.stringMatching(/^\/repos\/acme\/widgets\/commits\?path=src%2Fflag\.ts&since=/) });
-    expect((await triage(pack, { history: fixes.slice(1) })).verdict).toMatchObject({ labelled: [{ check: "regression-risk", result: "pass" }], actions: [] });
+    expect((await triage(pack, { history: fixes.slice(2) })).verdict).toMatchObject({ labelled: [{ check: "regression-risk", result: "pass" }], actions: [] });
     const migration: FileRow = { filename: "db/migrations/0002.sql", status: "added", additions: 1, deletions: 0 };
     expect((await triage(pack, { files: [FLAG, migration] })).verdict).toMatchObject({ labelled: [{ check: "regression-risk", result: "fail", evidence: ["db/migrations/0002.sql: migration"] }] });
-    expect((await triage(pack, { history: "unread" })).verdict).toMatchObject({ degraded: "error", actions: [] });
+    expect((await triage(pack, { history: "unread" })).verdict).toMatchObject({ verdict: "pass", labelled: [{ check: "regression-risk", result: "unconfirmed", evidence: ["src/flag.ts"] }] });
   });
 
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {

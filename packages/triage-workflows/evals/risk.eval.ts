@@ -1,12 +1,13 @@
 // Risk backtest: walks each repository's first-parent history at a pinned commit and asks, for every change, whether
-// the regression-risk signals (read only from history before it) flag it, and whether it regressed: a fix or revert
-// within 14 days rewrote one of its lines (blame on the fix's parent). Prints each signal's lift over the base rate at
-// several thresholds. Fan-in (files outside the change referencing an export it changes) needs a checkout, so it is
+// the regression-risk signals flag it, reading each file's history before it as the host tools do (every commit on the
+// branch that touched it, merges and feature-branch commits included), and whether it regressed: a change titled as a fix
+// or revert within 14 days rewrote one of its lines (blame on the fix's parent). Prints each signal's lift over the base
+// rate at several thresholds, on the earlier half of the history and held out on the later half. Fan-in (files outside the change referencing an export it changes) needs a checkout, so it is
 // measured here for code review and not read by the rule. Reads public git history only; no model is asked.
 //
 //   bun run eval:risk   (in packages/triage-workflows)
 import { existsSync } from "node:fs";
-import { FIX_MESSAGE, fixCount, historyPaths, migrationPaths } from "../src/logic/risk.js";
+import { fixCount, historyPaths, isFix, migrationPaths } from "../src/logic/risk.js";
 import { DEFAULT_RISK } from "../../triage-contracts/src/check-pack.js";
 
 const REPOS: Record<string, string> = {
@@ -69,12 +70,18 @@ function rewritten(dir: string, sha: string): Map<string, string[]> {
   return ranges;
 }
 
+/** A merged pull request's title, which its merge commit carries after its subject; any other commit's subject. */
+function title(message: string): string {
+  const lines = message.split("\n").filter((line) => line.trim());
+  return /^Merge pull request /.test(lines[0] ?? "") ? lines[1] ?? "" : lines[0] ?? "";
+}
+
 /** Changes a fix within the window rewrote a line of. */
 function regressed(dir: string, all: Change[]): Set<string> {
   const byFirstParent = new Map(all.map((c) => [c.sha, c]));
   const hit = new Set<string>();
   for (const fix of all) {
-    if (!FIX_MESSAGE.test(fix.message)) continue;
+    if (!isFix(title(fix.message))) continue;
     for (const [path, ranges] of rewritten(dir, fix.sha)) {
       const args = ["blame", "--first-parent", "-s", "-l", ...ranges.flatMap((r) => ["-L", r]), `${fix.sha}^1`, "--", path];
       for (const line of git(dir, args).split("\n")) {
@@ -86,10 +93,13 @@ function regressed(dir: string, all: Change[]): Set<string> {
   return hit;
 }
 
-/** The most fixes on one changed file in the window before the change, as the rule reads them from the host. */
-function hottest(change: Change, earlier: Change[]): number {
-  const recent = earlier.filter((c) => change.time - c.time <= DEFAULT_RISK.hotFileDays * 24 * 60 * 60);
-  const counts = historyPaths(change.paths).map((path) => fixCount(recent.filter((c) => c.paths.includes(path)).map((c) => c.message)));
+/** The most fixes on one changed file in the window before the change, counted over its branch's commits as the host lists them. */
+function hottest(dir: string, change: Change): number {
+  const since = `@${change.time - DEFAULT_RISK.hotFileDays * 24 * 60 * 60}`;
+  const counts = historyPaths(change.paths).map(function fixesOn(path) {
+    const subjects = git(dir, ["log", "--format=%s", `--since=${since}`, `${change.sha}^1`, "--", path]).split("\n").filter(Boolean);
+    return fixCount(subjects);
+  });
   return Math.max(0, ...counts);
 }
 
@@ -135,20 +145,22 @@ for (const [repo, head] of Object.entries(REPOS)) {
   const hit = regressed(dir, all);
   const settled = all.filter((c) => all.at(-1)!.time - c.time > WINDOW_SECONDS).slice(1);
   const rows: Row[] = settled.map(function row(change) {
-    const earlier = all.slice(0, all.indexOf(change));
     return {
-      hot: hottest(change, earlier),
+      hot: hottest(dir, change),
       fanIn: fanIn(dir, change),
       migration: migrationPaths(change.paths, DEFAULT_RISK.migrationGlobs).length > 0,
       regressed: hit.has(change.sha),
     };
   });
-  const base = rows.filter((r) => r.regressed).length;
-  console.log(`\n${repo} at ${head.slice(0, 8)}: ${rows.length} changes, ${base} regressed within 14 days (base rate ${Math.round((base / rows.length) * 100)}%)`);
-  console.table({
-    ...Object.fromEntries([2, 3, 4, 5, 8].map((t) => [`hot file ≥ ${t} fixes`, lift(rows, (r) => r.hot >= t)])),
-    ...Object.fromEntries([1, 3, 5, 10, 20].map((t) => [`fan-in ≥ ${t} files`, lift(rows, (r) => r.fanIn >= t)])),
-    migration: lift(rows, (r) => r.migration),
-    "rule defaults": lift(rows, (r) => r.hot >= DEFAULT_RISK.hotFileFixes || r.migration),
-  });
+  const half = Math.floor(rows.length / 2);
+  for (const [period, part] of [["earlier half", rows.slice(0, half)], ["later half (held out)", rows.slice(half)]] as const) {
+    const base = part.filter((r) => r.regressed).length;
+    console.log(`\n${repo} at ${head.slice(0, 8)}, ${period}: ${part.length} changes, ${base} regressed within 14 days (base rate ${Math.round((base / part.length) * 100)}%)`);
+    console.table({
+      ...Object.fromEntries([1, 2, 3, 4, 5, 8].map((t) => [`hot file ≥ ${t} fixes`, lift(part, (r) => r.hot >= t)])),
+      ...Object.fromEntries([1, 3, 5, 10, 20].map((t) => [`fan-in ≥ ${t} files`, lift(part, (r) => r.fanIn >= t)])),
+      migration: lift(part, (r) => r.migration),
+      "rule defaults": lift(part, (r) => r.hot >= DEFAULT_RISK.hotFileFixes || r.migration),
+    });
+  }
 }

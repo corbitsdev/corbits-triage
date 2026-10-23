@@ -79,7 +79,7 @@ not exactly as a pull request template has it (the repository's, else its
 organisation's `.github` repository's), that speaks to a model or
 holds those characters; it names what it found and where, never the text, and
 misses paraphrased, look-alike-letter, entity-encoded or split instructions),
-Regression risk (a changed file with five or more fix or revert commits on the
+Regression risk (a changed file with four or more commits titled as a fix or revert on the
 default branch in the last 30 days, or a migration; labels by default). Two always run:
 Not a draft, and No changes requested (a requested change fails and waits on
 the author, then on the reviewer once the author pushes or replies). The
