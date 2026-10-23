@@ -13,6 +13,7 @@ describe("custom check rendering", () => {
       ],
     };
     const verdict = renderVerdict({
+      repoSource: "github",
       author: "octocat",
       repo: "acme/widgets",
       headSha: "abc123",
@@ -30,6 +31,20 @@ describe("custom check rendering", () => {
     expect(verdict.checks).toEqual([
       { check: "custom-2", kind: "model", result: "fail", reason: 'does not meet "Ticket"', evidence: [], output: { kind: "score", score: 10, passAt: 70, items: [] } },
     ]);
+  });
+});
+
+describe("cited evidence", () => {
+  test("links to the GitHub head commit, and is never a github.com link on Bitbucket", () => {
+    const citation = { path: "src/a.ts", added: { start: 3, end: 3 } };
+    const failing = { check: "custom-1", kind: "machine", result: "fail", reason: "breaks the rule", evidence: ["src/a.ts:3"], output: { kind: "score", score: 0, passAt: 70, items: [citation] } } as const;
+    const det: DeterministicResult = { state: "needs-author-update", reason: "a rule failed", findings: [], checks: [failing], needsJudgment: false, sources: classificationSources(emptyPack("acme/widgets")) };
+    function feedback(repoSource: "github" | "bitbucket-datacenter"): string {
+      return renderVerdict({ repoSource, author: "octocat", repo: "acme/widgets", headSha: "abc123", det }).feedback;
+    }
+    expect(feedback("github")).toContain("[`src/a.ts:3`](https://github.com/acme/widgets/blob/abc123/src/a.ts?plain=1#L3)");
+    expect(feedback("bitbucket-datacenter")).toContain("breaks the rule: `src/a.ts:3`");
+    expect(feedback("bitbucket-datacenter")).not.toContain("github.com");
   });
 });
 
@@ -70,6 +85,7 @@ const CHOICE = {
 
 function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).focused, choice: Record<"pass" | "fail" | "cant_tell", number> = CHOICE.pass) {
   return renderVerdict({
+    repoSource: "github",
     author: "octocat",
     repo: "acme/widgets",
     headSha: "abc123",
@@ -134,7 +150,7 @@ describe("focused rendering", () => {
   });
 
   test("does not apply with no lines to read", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, plan: {}, choice: CHOICE.pass });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, plan: {}, choice: CHOICE.pass });
     expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "does not apply", evidence: [], output: { kind: "not-applicable" } }]);
     expect(verdict.degraded).toBeNull();
   });
@@ -150,7 +166,7 @@ describe("focused rendering", () => {
   test("an unsure comment names every rule it could not confirm, running checks included, and the verdict keeps the decision model's probability", () => {
     const running = { check: "ci-green", kind: "machine" as const, result: "unconfirmed" as const, reason: "checks are still running", evidence: ["build"], output: { kind: "could-not-check" as const, reason: "checks are still running" } };
     const det = { ...FOCUSED_DET, checks: [running] };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(`${focusedAnswer(0.5, 0.4)}${NOT_INSTRUCTED}`), focused: focusedPlan({}).focused, choice: CHOICE.pass });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(`${focusedAnswer(0.5, 0.4)}${NOT_INSTRUCTED}`), focused: focusedPlan({}).focused, choice: CHOICE.pass });
     expect(verdict).toMatchObject({ verdict: "unsure", score: 0.8 });
     expect(verdict.waiting).toBeUndefined();
     expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}\n\nWaiting on:\n- checks are still running: \`build\``);
@@ -165,11 +181,11 @@ describe("focused rendering", () => {
   });
 
   test("the judge budget and a judge outage both still post", () => {
-    const limited = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}, {}).focused, judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true });
+    const limited = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}, {}).focused, judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true });
     expect(limited).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: `${UNSURE}${UNSURE_FOCUSED}` });
     expect(limited.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: QUALITY_EVALUATION_LIMIT_ERROR, evidence: [], output: { kind: "could-not-check", reason: QUALITY_EVALUATION_LIMIT_ERROR } }]);
     expect(limited.reason).toBe(QUALITY_EVALUATION_LIMIT_ERROR);
-    const outage = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}).focused, judgeError: "upstream 503" });
+    const outage = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}).focused, judgeError: "upstream 503" });
     expect(outage).toMatchObject({ verdict: "unsure", mirror: true, humanGated: false, degraded: "inference-outage", feedback: `${UNSURE}${OUTAGE_NOTE}` });
   });
 
@@ -191,16 +207,16 @@ describe("focused rendering", () => {
     const plan: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] } };
     function results(docs: number, custom: number) {
       const answers = noul({ "docs-file-001": docs, "custom-1": custom });
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan }).checks.map(({ check, result, evidence }) => [check, result, evidence]);
+      return renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan }).checks.map(({ check, result, evidence }) => [check, result, evidence]);
     }
     expect(results(0.9, 0.2)).toEqual([["docs", "fail", ["src/a.ts"]], ["custom-1", "fail", []]]);
     expect(results(0.5, 0.5)).toEqual([["docs", "unconfirmed", []], ["custom-1", "unconfirmed", []]]);
     expect(results(0.2, 0.9)).toEqual([["docs", "pass", []], ["custom-1", "pass", []]]);
 
     const duplicate = parseAnswers('{"id":"custom-1","type":"noul","noul":0.9}{"id":"custom-1","type":"noul","noul":0.9}');
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: duplicate, plan })).toMatchObject({ mirror: true, degraded: "inference-outage" });
+    expect(renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: duplicate, plan })).toMatchObject({ mirror: true, degraded: "inference-outage" });
     const unknown = parseAnswers('{"id":"docs","type":"noul","noul":0.9}');
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: unknown, plan })).toMatchObject({ mirror: true, degraded: "inference-outage" });
+    expect(renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: unknown, plan })).toMatchObject({ mirror: true, degraded: "inference-outage" });
   });
 
   test("a model check scores how likely it is fine, unsure answers included, and a file it could not read is a state", () => {
@@ -216,7 +232,7 @@ describe("focused rendering", () => {
     function outputs(unread: string[]) {
       const plan: QualityPlan = { docs: { changed: [], asked, unread } };
       const answers = noul({ "docs-file-001": 0.2, "docs-file-002": 0.41, "custom-1": 0.55 });
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan }).checks.map(({ result, output }) => [result, output]);
+      return renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan }).checks.map(({ result, output }) => [result, output]);
     }
     expect(outputs([])).toEqual([
       ["unconfirmed", { kind: "score", score: expect.closeTo(59), passAt: 70, items: ["src/b.ts"] }],
@@ -236,7 +252,7 @@ describe("focused rendering", () => {
     };
     const plan: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] } };
     function modelChecks(answer: number) {
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": answer, "custom-1": answer }), plan }).checks;
+      return renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": answer, "custom-1": answer }), plan }).checks;
     }
     function focusedCheck(one: number) {
       return focusedVerdict(focusedAnswer(one, 0.2)).checks;
@@ -252,7 +268,7 @@ describe("focused rendering", () => {
   test("an over-long comment is cut at line boundaries and still posts", () => {
     const custom = Array.from({ length: 200 }, (_, index) => ({ id: `custom-${index + 1}`, name: `${"N".repeat(500)}-${index}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
     const det: DeterministicResult = { ...FOCUSED_DET, sources: { quality: [], custom, rules: [] } };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul(Object.fromEntries(custom.map((row) => [row.id, 0.1]))), choice: CHOICE.fail });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul(Object.fromEntries(custom.map((row) => [row.id, 0.1]))), choice: CHOICE.fail });
     const lines = verdict.feedback.split("\n").slice(3);
     expect(new TextEncoder().encode(verdict.feedback).byteLength).toBeLessThanOrEqual(MAX_MIRROR_COMMENT_BYTES);
     expect(lines[0]).toContain(custom[0]!.name);
@@ -267,6 +283,7 @@ describe("focused rendering", () => {
       { check: "no-forbidden-paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/generated.ts"], output: { kind: "values" as const, values: {} } },
     ];
     const verdict = renderVerdict({
+      repoSource: "github",
       author: "octocat",
       repo: "acme/widgets",
       headSha: "abc123",
@@ -284,7 +301,7 @@ describe("focused rendering", () => {
       { check: "max-lines-changed", kind: "machine" as const, result: "fail" as const, reason: "pull request is over the lines limit", evidence: ["4000 lines changed (max 3000)"] },
     ];
     const det = { state: "needs-author-update" as const, reason: "too large", findings: [], checks, needsJudgment: false };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det });
     expect(verdict.nextAction).toBe("Consider splitting it (40 files, 4000 lines changed)");
   });
 });
@@ -305,20 +322,20 @@ describe("verdict", () => {
     ["fail at 0.7", { pass: 0.2, fail: 0.7, cant_tell: 0.1 }, "fail", "needs-author-update"],
     ["unsure below both", { pass: 0.65, fail: 0.3, cant_tell: 0.05 }, "unsure", "awaiting-review"],
   ])("the verdict question decides %s, and its pass probability is the score", (_, choice, verdict, state) => {
-    const rendered = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.2 }), plan: PLAN, choice });
+    const rendered = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.2 }), plan: PLAN, choice });
     expect(rendered).toMatchObject({ verdict, state, score: choice.pass, degraded: null, mirror: true, reasons: [] });
   });
 
   test("a failed hard rule decides Fail without the verdict question, failed hard rules first among the reasons", () => {
     const checks = [{ check: "no-forbidden-paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/a.ts"], output: { kind: "values" as const, values: {} } }];
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, state: "needs-author-update", reason: "touches forbidden paths", checks, needsJudgment: false } });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, state: "needs-author-update", reason: "touches forbidden paths", checks, needsJudgment: false } });
     expect(verdict).toMatchObject({ verdict: "fail", state: "needs-author-update", score: null, degraded: null, reasons: ["touches forbidden paths: vendor/a.ts"] });
     expect(verdict.checks.at(-1)).toMatchObject({ check: "docs", result: "unconfirmed", reason: "not asked" });
   });
 
   test("a failed chunk degrades the verdict to unsure and keeps the answered checks", () => {
     const det: DeterministicResult = { ...MODEL_DET, sources: { ...MODEL_DET.sources!, custom: [{ id: "custom-1", name: "Ticket", group: "pull-request", kind: "model", shape: "is-true", claim: "Names a ticket." }] } };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": 0.8 }), plan: PLAN, judgeError: "upstream 503" });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": 0.8 }), plan: PLAN, judgeError: "upstream 503" });
     expect(verdict.checks.map(({ check, result }) => [check, result])).toEqual([["docs", "fail"], ["custom-1", "unconfirmed"]]);
     expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, degraded: "inference-outage", reasons: ["documentation is not updated: src/a.ts"] });
     expect(verdict.feedback).toBe(`${UNSURE}@octocat, please address the following:\n- documentation is not updated for \`src/a.ts\`\n\n${OUTAGE_NOTE}`);
@@ -326,7 +343,7 @@ describe("verdict", () => {
 
   test("a closed pull request is not decided and gets no comment", () => {
     const findings = [{ check: "state", state: "ready-monitoring" as const, reason: "pull request is closed" }];
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, findings, checks: [], needsJudgment: false } });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, findings, checks: [], needsJudgment: false } });
     expect(verdict).toMatchObject({ verdict: "unsure", mirror: true, feedback: "" });
   });
 });
@@ -351,7 +368,7 @@ describe("score and choose rules", () => {
   test("a score rule records its level, never fails without failBelow, and fails when the level is likely below it", () => {
     const kind = JSON.stringify({ id: "kind", type: "choice", choice: "chore", probabilities: { fix: 0.1, feature: 0.1, chore: 0.8 }, confidence: 0.9 });
     const answers = parseAnswers([score("style", [0.9, 0.1, 0, 0]), score("care", [0.5, 0.3, 0.2, 0]), kind].join("\n"));
-    const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
+    const checks = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
     expect(checks.map((c) => [c.check, c.result, c.evidence])).toEqual([["style", "pass", ["poor"]], ["care", "fail", ["poor"]], ["kind", "fail", ["chore"]]]);
     expect(checks[1]!.output).toEqual({ kind: "level", level: "poor", levels, failBelow: "good" });
   });
@@ -360,14 +377,14 @@ describe("score and choose rules", () => {
     const style = JSON.stringify({ id: "style", type: "score", score: 1, legend: { 0: "bad", 1: "fair", 2: "good", 3: "great" }, probabilities: { 0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4 }, confidence: 0.5 });
     const care = JSON.stringify({ id: "care", type: "score", score: 1, legend: { 0: "poor", 1: "fair", 2: "good", 3: "great" }, probabilities: { 0: 0.9, 1: 0.9, 2: 0.9, 3: 0.9 }, confidence: 0.5 });
     const answers = parseAnswers([style, care, JSON.stringify({ id: "kind", type: "choice", choice: "fix", probabilities: { fix: 0.9, feature: 0.9, chore: 0.9 }, confidence: 1 })].join("\n"));
-    const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
+    const checks = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
     expect(checks.map((c) => c.result)).toEqual(["unconfirmed", "unconfirmed", "unconfirmed"]);
   });
 
   test("Jev's own score and choice reply reads by the levels its legend names", () => {
     // Recorded from OpenCode Zen jev-1.13 on 2026-10-13 for these two questions about a one-hunk fix.
     const reply = '{"id":"care","type":"score","score":1.9,"legend":{"0":"poor","1":"fair","2":"good","3":"great"},"probabilities":{"0":0.06,"1":0.24,"2":0.45,"3":0.25},"confidence":0.39}\n{"id":"kind","type":"choice","choice":"fix","probabilities":{"fix":1,"feature":0,"chore":0},"confidence":1}';
-    const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers: parseAnswers(reply) }).checks;
+    const checks = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers: parseAnswers(reply) }).checks;
     expect(checks.map((c) => [c.check, c.result, c.evidence])).toEqual([["style", "unconfirmed", []], ["care", "pass", ["good"]], ["kind", "pass", ["fix"]]]);
   });
 });
@@ -377,8 +394,8 @@ describe("a policy without a decision-model rule", () => {
   const ci = (result: "pass" | "unconfirmed") => ({ check: "ci-green", kind: "machine" as const, result, reason: "checks", evidence: [], output: result === "pass" ? { kind: "values" as const, values: {} } : { kind: "could-not-check" as const, reason: "checks" } });
 
   test("passes without the model when every rule passes, and waits while CI is pending", () => {
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("pass")]) })).toMatchObject({ verdict: "pass", score: null, reason: "every rule passed, and the policy has no decision-model rule" });
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("unconfirmed")]) })).toMatchObject({ waiting: true, degraded: null, reason: "checks", labels: ["Triage: Waiting for CI"], feedback: "" });
+    expect(renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("pass")]) })).toMatchObject({ verdict: "pass", score: null, reason: "every rule passed, and the policy has no decision-model rule" });
+    expect(renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("unconfirmed")]) })).toMatchObject({ waiting: true, degraded: null, reason: "checks", labels: ["Triage: Waiting for CI"], feedback: "" });
   });
 });
 
@@ -396,6 +413,7 @@ describe("author text in the comment", () => {
       { check: "focused", kind: "model" as const, result: "fail" as const, reason: "unrelated changes", evidence: hostile },
     ];
     const verdict = renderVerdict({
+      repoSource: "github",
       author: "octocat",
       repo: "acme/widgets",
       headSha: "abc123",
@@ -425,18 +443,18 @@ describe("requested changes rendering", () => {
   };
 
   test("posts nothing when the maintainer's review is the only reason, and still waits on the author", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det });
     expect(verdict).toMatchObject({ state: "needs-author-update", actor: "author", nextAction: "Address requested changes from @maya", feedback: "" });
   });
 
   test("hands an answered review back to the maintainer without a comment", () => {
     const answered = { ...review, reason: REVIEW_ANSWERED_REASON };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, state: "awaiting-review", checks: [answered] } });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, state: "awaiting-review", checks: [answered] } });
     expect(verdict).toMatchObject({ verdict: "fail", state: "awaiting-review", actor: "maintainer", nextAction: "Re-review: the author responded to changes requested by @maya", feedback: "" });
   });
 
   test("leaves the review out of a comment that has other reasons", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, checks: [review, conflicts] } });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, checks: [review, conflicts] } });
     expect(verdict.feedback).toBe("**Triage: Fail**\n\n@octocat, please address the following:\n- merge conflicts with base");
   });
 });

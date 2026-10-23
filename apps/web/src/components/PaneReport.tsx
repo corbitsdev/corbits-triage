@@ -36,7 +36,7 @@ export function StatusLine({ status }: { status: PaneStatus }) {
   );
 }
 
-function ProblemRow({ problem, pack, repo, sha }: { problem: Problem; pack: CheckPack | null; repo: string; sha: string | null }) {
+function ProblemRow({ problem, pack, item }: { problem: Problem; pack: CheckPack | null; item: PrItem }) {
   const { check, severity, cited, notes } = problem;
   const mark = MARK[severity];
   const text = problem.text ?? checkLabel(pack, check.check) ?? check.check;
@@ -46,7 +46,7 @@ function ProblemRow({ problem, pack, repo, sha }: { problem: Problem; pack: Chec
       <div>
         <p className="pb-w">{severity === "unsure" ? <b>{mark.label}: </b> : <span className="sr-only">{mark.label}: </span>}{text}</p>
         {cited.length > 0 ? (
-          <p className="pb-c">{cited.map((evidence) => <span key={evidence} className="mono"><CitedEvidence text={evidence} output={check.output} repo={repo} sha={sha} /></span>)}</p>
+          <p className="pb-c">{cited.map((evidence) => <span key={evidence} className="mono"><CitedEvidence text={evidence} output={check.output} source={item.source} repo={item.repo} sha={item.verdictSha} /></span>)}</p>
         ) : null}
         {notes.length > 0 ? <p className="pb-n">{notes.join("; ")}</p> : null}
       </div>
@@ -56,7 +56,7 @@ function ProblemRow({ problem, pack, repo, sha }: { problem: Problem; pack: Chec
 
 export function Problems({ problems, pack, item }: { problems: Problem[]; pack: CheckPack | null; item: PrItem }) {
   if (problems.length === 0) return null;
-  return <ol className="pbs">{problems.map((problem) => <ProblemRow key={problem.check.check} problem={problem} pack={pack} repo={item.repo} sha={item.verdictSha} />)}</ol>;
+  return <ol className="pbs">{problems.map((problem) => <ProblemRow key={problem.check.check} problem={problem} pack={pack} item={item} />)}</ol>;
 }
 
 function Disclosure({ label, children }: { label: ReactNode; children: ReactNode }) {

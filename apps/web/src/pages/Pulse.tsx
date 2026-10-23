@@ -26,12 +26,13 @@ function OpenLine({ item, note }: { item: PrItem; note?: string }) {
   );
 }
 
-function ResolvedLine({ pull }: { pull: ResolvedPull }) {
-  const url = pull.url ?? `https://github.com/${pull.repo}/pull/${pull.number}`;
+export function ResolvedLine({ pull }: { pull: ResolvedPull }) {
+  const label = <span><b>{titleText(pull.title)}</b><span className="mono">{pull.repo} #{pull.number}</span></span>;
+  if (!pull.url) return <li>{label}</li>;
   return (
     <li>
-      <a href={url} target="_blank" rel="noreferrer">
-        <span><b>{titleText(pull.title)}</b><span className="mono">{pull.repo} #{pull.number}</span></span>
+      <a href={pull.url} target="_blank" rel="noreferrer">
+        {label}
         <ExternalIcon />
       </a>
     </li>
