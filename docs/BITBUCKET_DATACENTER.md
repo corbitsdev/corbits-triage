@@ -37,7 +37,7 @@ pull request (`triage_skipped_no_rules` in the hub log), on either host.
 
 ## Token
 
-An HTTP access token, sent as `Authorization: Bearer`. It needs:
+An HTTP access token, sent as `Authorization: Bearer`. A fresh Data Center 10.5 instance turns off password Basic auth for the REST API, so a token is the only way in. It needs:
 
 | Permission | For |
 | --- | --- |

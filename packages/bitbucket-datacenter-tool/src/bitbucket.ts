@@ -1,5 +1,6 @@
-import { changesSince, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { createHash } from "node:crypto";
+import { changesSince, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
+import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
 
@@ -226,4 +227,65 @@ export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: Bitbucket
   const build = i.build ? await setVerdictBuild(bb, pr.sha, i.build, pr.url) : undefined;
   if (i.close) await declinePr(bb, { repo, number, version: pr.version });
   return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }), ...(build && { build: build.build, buildWritten: build.written }) };
+}
+
+const CODE_REVIEW_MARKER = "[corbits-code-review]: #";
+
+/** The first line of each comment a code review posts: the head it was sent on, and for an inline one, which finding. */
+function codeReviewMarker(sha: string, finding?: CodeReviewComment): string {
+  if (finding === undefined) return `${CODE_REVIEW_MARKER}${sha}`;
+  const key = createHash("sha256").update(JSON.stringify([finding.path, finding.start, finding.end, finding.title, finding.body])).digest("hex").slice(0, 12);
+  return `${CODE_REVIEW_MARKER}${sha}/${key}`;
+}
+
+type DiffSegment = { type: "ADDED" | "REMOVED" | "CONTEXT"; lines: Array<{ destination: number }> };
+type FileDiff = { fromHash: string; toHash: string; diffs: Array<{ hunks?: Array<{ segments: DiffSegment[] }> }> };
+
+type Anchor = { path: string; line: number; lineType: "ADDED" | "CONTEXT"; fileType: "TO"; diffType: "EFFECTIVE"; fromHash: string; toHash: string };
+
+/**
+ * The first line of the finding the pull request's diff shows on the new side, with the type the diff gives it. Data
+ * Center accepts any anchor, even a line the diff does not show, so only one taken from the diff is ever sent.
+ */
+function anchorOf(finding: CodeReviewComment, file: FileDiff): Anchor | undefined {
+  for (const segment of file.diffs.flatMap((diff) => diff.hunks ?? []).flatMap((hunk) => hunk.segments)) {
+    if (segment.type === "REMOVED") continue;
+    const line = segment.lines.find((l) => l.destination >= finding.start && l.destination <= finding.end);
+    if (line) return { path: finding.path, line: line.destination, lineType: segment.type, fileType: "TO", diffType: "EFFECTIVE", fromHash: file.fromHash, toHash: file.toHash };
+  }
+  return undefined;
+}
+
+/**
+ * Sends a code review on `sha` as an inline comment per finding the diff shows and one summary comment holding the
+ * rest, posted last. Each comment names the head and finding it is for, so a repeat posts only what is missing, and
+ * nothing once the summary stands on `sha` or on the head the review was carried over from.
+ */
+export async function sendCodeReview(bb: BitbucketFetch, input: SendCodeReviewInput, user: BitbucketUser) {
+  const { repo, number, sha, reviewed } = input;
+  const me = await user();
+  const own = new Map((await listComments(bb, repo, number)).filter((c) => c.author.id === me.id).map((c) => [c.text.split("\n", 1)[0], c.id]));
+  const heads = [sha, ...(reviewed === undefined ? [] : [reviewed])];
+  const summaryId = heads.map((head) => own.get(codeReviewMarker(head))).find((id) => id !== undefined);
+  if (summaryId !== undefined) return { commentId: summaryId, sent: false };
+  if ((await readPr(bb, repo, number)).sha !== sha) return { commentId: null, sent: false, skipped: HEAD_MOVED };
+  const diffs = new Map<string, FileDiff>();
+  for (const path of new Set(input.comments.map((finding) => finding.path))) {
+    const file = await json(bb, `${prPath(repo, number)}/diff/${filePath(path)}?withComments=false`) as FileDiff;
+    if (file.toHash !== sha) return { commentId: null, sent: false, skipped: HEAD_MOVED };
+    diffs.set(path, file);
+  }
+  const outside: string[] = [];
+  for (const finding of input.comments) {
+    const anchor = anchorOf(finding, diffs.get(finding.path)!);
+    if (!anchor) {
+      outside.push(findingSection(finding));
+      continue;
+    }
+    if (heads.some((head) => own.has(codeReviewMarker(head, finding)))) continue;
+    const text = [codeReviewMarker(sha, finding), inlineFindingText(finding, { start: anchor.line, end: anchor.line })].join("\n");
+    await json(bb, `${prPath(repo, number)}/comments`, send("POST", { text, anchor }));
+  }
+  const text = [codeReviewMarker(sha), [input.summary, ...outside].filter((part) => part !== "").join("\n\n")].join("\n");
+  return { commentId: (await createComment(bb, { repo, number, text })).commentId, sent: true };
 }

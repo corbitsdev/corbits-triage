@@ -1698,6 +1698,11 @@ export async function loadBitbucketDatacenterWebhook(transport: Transport, tenan
   return bitbucketDatacenter<BitbucketDatacenterWebhook>(transport, "GET", tenantId, `${bitbucketDatacenterRepoPath(repo)}/webhook`);
 }
 
+/** Sends the pull request's code review of `headSha`; `sent` is false when it was already there. */
+export async function sendBitbucketDatacenterCodeReview(transport: Transport, tenantId: string, repo: string, number: number, headSha: string): Promise<{ commentId: number; sent: boolean }> {
+  return bitbucketDatacenter<{ commentId: number; sent: boolean }>(transport, "POST", tenantId, "/code-review", { repo: validateRepo(repo), number, headSha });
+}
+
 /** `webhookLeft` is true when the webhook triage created could not be removed. */
 export async function disableBitbucketDatacenterRepository(transport: Transport, tenantId: string, repo: string): Promise<{ webhookLeft: boolean }> {
   return bitbucketDatacenter<{ webhookLeft: boolean }>(transport, "POST", tenantId, `${bitbucketDatacenterRepoPath(repo)}/disable`, {});

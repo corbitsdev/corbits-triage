@@ -40,3 +40,38 @@ export function parseFindingHeadline(body: string): Pick<CodeReviewComment, "tit
   if (!match) return { title: first };
   return match[1] === undefined ? { title: match[2]! } : { title: match[2]!, priority: Number(match[1]) };
 }
+
+/** The lines of a finding a host's inline comment sits on. */
+export type FindingLines = { start: number; end: number };
+
+function lineRange({ start, end }: FindingLines): string {
+  return end > start ? `${start}–${end}` : `${start}`;
+}
+
+/** The finding's lines outside the comment's, named so none are lost when its range runs past what the comment covers. */
+function alsoCovers(finding: CodeReviewComment, at: FindingLines): string[] {
+  const before = at.start > finding.start ? [lineRange({ start: finding.start, end: at.start - 1 })] : [];
+  const after = finding.end > at.end ? [lineRange({ start: at.end + 1, end: finding.end })] : [];
+  const ranges = [...before, ...after];
+  return ranges.length ? [`Also lines ${ranges.join(" and ")}.`] : [];
+}
+
+function unverifiedNote(finding: CodeReviewComment): string[] {
+  return finding.unverified ? [`_${UNVERIFIED_FINDING}._`] : [];
+}
+
+/** An inline comment's text for a finding shown at `at`. */
+export function inlineFindingText(finding: CodeReviewComment, at: FindingLines): string {
+  return [findingHeadline(finding), finding.body, ...alsoCovers(finding, at), ...unverifiedNote(finding)].join("\n\n");
+}
+
+/** A finding the diff does not show, as a section of the review's summary. */
+export function findingSection(finding: CodeReviewComment): string {
+  return [`${findingHeadline(finding)} · \`${finding.path}:${lineRange(finding)}\``, finding.body, ...unverifiedNote(finding)].join("\n\n");
+}
+
+/**
+ * A code review to send to a pull request. `sha` is the head the review read; it is sent once, and not at all once the
+ * pull request has moved past it. `reviewed` is the head the review was made for when it was carried over to `sha`.
+ */
+export type SendCodeReviewInput = { repo: string; number: number; sha: string; reviewed?: string; summary: string; comments: CodeReviewComment[] };

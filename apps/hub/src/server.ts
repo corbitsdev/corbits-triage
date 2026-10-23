@@ -52,6 +52,7 @@ import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.j
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
+import { createBitbucketCodeReviewSend } from "./bitbucket-datacenter/code-review-send.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { checkedBitbucketSpawner, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { createPrWorkflowRouter, PR_WORKFLOW_VARIANTS, prWorkflowVariantOf } from "./github/pr-workflow.js";
@@ -879,6 +880,14 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   syncInstallations,
   connectGithubApp: createGithubAppConnection({ ...credentialDeps, authorize: authorizePortal, githubApiOrigin: githubOrigin, renewal: githubToken }),
   prActions: githubPrActions,
+  bitbucketCodeReviewSend: createBitbucketCodeReviewSend({
+    ...credentialDeps,
+    authorize: authorizePortal,
+    tenantBitbucket,
+    codeReviews: codeReviewRuns,
+    changed: repoReads.changed,
+    log: logJson,
+  }),
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),

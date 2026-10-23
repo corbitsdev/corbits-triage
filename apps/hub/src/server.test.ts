@@ -282,6 +282,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/invite-accept": ["post"],
     "/api/integrations/sessions": ["get"],
     "/api/integrations/sessions/{sessionId}": ["delete"],
+    "/api/integrations/bitbucket-datacenter/{tenantId}/code-review": ["post"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/connection": ["put", "get", "delete"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/repositories": ["get"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/repositories/{project}/{slug}/enable": ["post"],

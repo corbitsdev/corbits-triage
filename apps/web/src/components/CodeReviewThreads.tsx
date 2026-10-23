@@ -5,6 +5,7 @@ import { useGithubPull } from "../lib/github-pull.ts";
 import { relativeTime } from "../lib/duration.ts";
 import type { CodeReviewComment, CodeReviewRun, CodeReviews, PrItem } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { hostName } from "../lib/pull-link.ts";
 import { Markdown } from "./Markdown.tsx";
 
 type Reviewed = Pick<PrItem, "repo" | "source" | "headSha"> & { number: number };
@@ -64,7 +65,7 @@ function Thread({ comment, review }: { comment: CodeReviewComment; review: CodeR
 
 /**
  * "Send to GitHub" for the finished review, at the head it was carried over to if any, or that it was sent: a review sent
- * before it was carried over stays on the unchanged lines, so it is not sent again. GitHub pull requests only.
+ * before it was carried over stays on the unchanged lines, so it is not sent again.
  */
 function SendToGithub({ item, completed, carriedTo, send }: { item: Reviewed; completed: CodeReviewRun; carriedTo: string | null; send: ReturnType<typeof useSendCodeReview> }) {
   const { readOnly } = usePortal();
@@ -73,6 +74,18 @@ function SendToGithub({ item, completed, carriedTo, send }: { item: Reviewed; co
   const sent = pull.data?.reviews.some((review) => review.codeReview === true && heads.includes(review.commitId)) === true;
   if (sent) return <span className="hint">Sent to GitHub</span>;
   return <button type="button" className="linkish" disabled={readOnly || pull.isPending || send.isPending} onClick={() => send.mutate(carriedTo ?? completed.headSha)}>Send to GitHub</button>;
+}
+
+/** "Send to Bitbucket": sending it again posts only what is missing, so the button stays until a send answers. */
+function SendToBitbucket({ completed, carriedTo, send }: { completed: CodeReviewRun; carriedTo: string | null; send: ReturnType<typeof useSendCodeReview> }) {
+  const { readOnly } = usePortal();
+  if (send.isSuccess) return <span className="hint">Sent to Bitbucket</span>;
+  return <button type="button" className="linkish" disabled={readOnly || send.isPending} onClick={() => send.mutate(carriedTo ?? completed.headSha)}>Send to Bitbucket</button>;
+}
+
+function SendReview({ item, completed, carriedTo, send }: { item: Reviewed; completed: CodeReviewRun; carriedTo: string | null; send: ReturnType<typeof useSendCodeReview> }) {
+  if (item.source === "bitbucket-datacenter") return <SendToBitbucket completed={completed} carriedTo={carriedTo} send={send} />;
+  return <SendToGithub item={item} completed={completed} carriedTo={carriedTo} send={send} />;
 }
 
 /** A list of more unread files than this starts collapsed. */
@@ -109,11 +122,11 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       <h3 className="lbl-h">
         Code review<span className="hint">{hint(reviews)}</span>
         <span className="sp" />
-        {completed && item.source === "github" ? <SendToGithub item={item} completed={completed} carriedTo={carriedTo} send={send} /> : null}
+        {completed ? <SendReview item={item} completed={completed} carriedTo={carriedTo} send={send} /> : null}
         {on && snapshot?.codeReviewPlace ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}
       </h3>
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
-      {send.error ? <p role="alert" className="error">Could not send to GitHub. {errorText(send.error)}</p> : null}
+      {send.error ? <p role="alert" className="error">Could not send to {hostName(item.source)}. {errorText(send.error)}</p> : null}
       {reviews.review?.status === "failed" && reviews.review.reason ? <p className="note">{reviews.review.reason}</p> : null}
       {completed && carriedTo ? <p className="note">Carried over from {shortSha(completed.headSha)}: the new commits leave the diff as it was reviewed.</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}

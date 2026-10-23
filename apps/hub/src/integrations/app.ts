@@ -30,6 +30,7 @@ import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
+import { CodeReviewSendBody } from "../bitbucket-datacenter/code-review-send.js";
 import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, RepoWebhook, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
 import { SESSIONS_PATH } from "../sessions.js";
@@ -67,6 +68,7 @@ export type IntegrationHandlers = {
   syncInstallations: (member: Member) => Promise<Response>;
   connectGithubApp: BodyHandler<typeof AppBody.infer>;
   prActions: BodyHandler<typeof ActionBody.infer>;
+  bitbucketCodeReviewSend: BodyHandler<typeof CodeReviewSendBody.infer>;
   heldDos: BodyHandler<typeof HeldDoBody.infer>;
   prTriage: BodyHandler<typeof TriageBody.infer>;
   policyRead: BodyHandler<typeof PolicyQuery.infer>;
@@ -163,13 +165,13 @@ const failures = {
 };
 const invalid = { 400: json("Invalid request", Failure) };
 const policyBodyLimit = bodyLimit({ maxSize: 4 * POLICY_FILE_MAX_BYTES, onError: function tooLarge() { return failure(413, "too_large", "The policy file is too large."); } });
-const CODE_REVIEW_SEND_REFUSALS = [
-  "GitHub, the workspace or the repository is not ready. For code-review:",
+const CODE_REVIEW_REFUSALS = [
   "`no_code_review`: no finished review;",
   "`code_review_outdated`: a newer review finished than `headSha`'s;",
   "`code_review_empty`: no summary and no findings;",
   "`head_moved`: the pull request has moved past `headSha`.",
 ].join(" ");
+const CODE_REVIEW_SEND_REFUSALS = `GitHub, the workspace or the repository is not ready. For code-review: ${CODE_REVIEW_REFUSALS}`;
 const githubLimited = { 503: json("`github_rate_limited`: GitHub's rate limit is reached; `Retry-After` and `resetAt` say when it lifts", Failure) };
 const githubFailed = { 502: json("GitHub failed", Failure), ...githubLimited };
 
@@ -988,6 +990,29 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     member,
     function bitbucketRepoWebhook(c) {
       return handlers.bitbucketDatacenter.webhook(memberOf(c), c.req.param("project"), c.req.param("slug"));
+    },
+  );
+
+  app.post(
+    `${BITBUCKET_PATH}/:tenantId/code-review`,
+    describeRoute({
+      summary: "Send a code review to a Bitbucket pull request",
+      description: "Needs `use` on the `bitbucket-datacenter` credential and `invoke` on `triage-do:comment:<PROJECT/slug>`. Sends the pull request's newest finished code review, which must be of `headSha`, as the token user: each finding the diff shows is an inline comment on its first shown line (one whose lines run past it names the rest, and one marked `unverified` says it was not checked against the file), the others are in one summary comment, posted last. It is sent once per head; sending it again posts only what is missing, and once the summary stands answers `sent: false`.",
+      tags: TAGS,
+      requestBody: { required: true, content: { "application/json": { schema: resolver(CodeReviewSendBody) } } },
+      responses: {
+        200: json("Sent, or already sent", type({ commentId: "number", sent: "boolean" })),
+        ...invalid,
+        401: failures[401],
+        403: failures[403],
+        409: json(`Bitbucket or the repository is not connected. ${CODE_REVIEW_REFUSALS}`, Failure),
+        502: json("Bitbucket failed", Failure),
+      },
+    }),
+    member,
+    body(CodeReviewSendBody),
+    function sendBitbucketCodeReview(c) {
+      return handlers.bitbucketCodeReviewSend(c.req.valid("json"), memberOf(c));
     },
   );
 

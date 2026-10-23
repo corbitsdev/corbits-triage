@@ -374,6 +374,13 @@ The review is then sent to GitHub at that head, unless it was sent on its own,
 whose comments stay on the same lines. A diff that can't be read and `…/run`
 review the head instead.
 
+Bitbucket Data Center anchors a comment to one line, so its send
+(`POST …/bitbucket-datacenter/{tenantId}/code-review`) posts one comment per
+finding the effective diff shows, on its first shown line, then a summary
+comment with the rest. Each comment's first line is a link-reference marker
+naming the head (and the finding's index), so a send that failed part-way posts
+only what is missing, and none once the summary stands on either head.
+
 A pull request's reviews are read from the run logs. A failed run's reason is
 a fixed sentence for why its first step that failed for good did
 (`failureReason` in `pr-code-review`); the run log keeps the error itself.

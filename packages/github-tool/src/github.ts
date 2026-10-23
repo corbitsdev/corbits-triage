@@ -1,6 +1,6 @@
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
-import { findingHeadline, HTML_MARKERS, UNVERIFIED_FINDING, upsertMarked, type CodeReviewComment, writeHeadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, HTML_MARKERS, inlineFindingText, upsertMarked, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, writeHeadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -232,18 +232,13 @@ export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: st
   return standing.map((review) => review.id);
 }
 
-/** `sha` is the head the review read; it is sent once, and not at all once the pull request has moved past it. */
-/** `reviewed` is the head the review was made for when it was carried over to `sha`. */
-export type SendCodeReviewInput = { repo: string; number: number; sha: string; reviewed?: string; summary: string; comments: CodeReviewComment[] };
-
-type Lines = { start: number; end: number };
 type ReviewComment = { path: string; line: number; side: "RIGHT"; start_line?: number; start_side?: "RIGHT"; body: string };
 
 /** GitHub refuses a review body longer than this. */
 const REVIEW_BODY_LIMIT = 65_536;
 
 /** The finding's lines that the first hunk of its file to show any of them shows on the new side, which a hunk numbers without gaps. */
-function anchor(finding: Lines, hunks: readonly DiffHunk[]): Lines | undefined {
+function anchor(finding: FindingLines, hunks: readonly DiffHunk[]): FindingLines | undefined {
   for (const hunk of hunks) {
     const shown = hunk.lines.flatMap((line) => (line.newNo === null ? [] : [line.newNo]));
     const first = shown[0];
@@ -254,30 +249,10 @@ function anchor(finding: Lines, hunks: readonly DiffHunk[]): Lines | undefined {
   return undefined;
 }
 
-function lineRange({ start, end }: Lines): string {
-  return end > start ? `${start}–${end}` : `${start}`;
-}
-
-/** The finding's lines outside the comment's, named so none are lost when its range runs past the hunk. */
-function alsoCovers(finding: CodeReviewComment, at: Lines): string[] {
-  const before = at.start > finding.start ? [lineRange({ start: finding.start, end: at.start - 1 })] : [];
-  const after = finding.end > at.end ? [lineRange({ start: at.end + 1, end: finding.end })] : [];
-  const ranges = [...before, ...after];
-  return ranges.length ? [`Also lines ${ranges.join(" and ")}.`] : [];
-}
-
-function unverifiedNote(finding: CodeReviewComment): string[] {
-  return finding.unverified ? [`_${UNVERIFIED_FINDING}._`] : [];
-}
-
-function inlineComment(finding: CodeReviewComment, at: Lines): ReviewComment {
-  const body = [findingHeadline(finding), finding.body, ...alsoCovers(finding, at), ...unverifiedNote(finding)].join("\n\n");
+function inlineComment(finding: CodeReviewComment, at: FindingLines): ReviewComment {
+  const body = inlineFindingText(finding, at);
   if (at.start === at.end) return { path: finding.path, line: at.end, side: "RIGHT", body };
   return { path: finding.path, start_line: at.start, start_side: "RIGHT", line: at.end, side: "RIGHT", body };
-}
-
-function bodySection(finding: CodeReviewComment): string {
-  return [`${findingHeadline(finding)} · \`${finding.path}:${lineRange(finding)}\``, finding.body, ...unverifiedNote(finding)].join("\n\n");
 }
 
 /** The summary and as many sections as fit under GitHub's limit, then how many more the portal holds. */
@@ -313,7 +288,7 @@ export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput
   for (const finding of input.comments) {
     const at = anchor(finding, patches.get(finding.path) ?? []);
     if (at) comments.push(inlineComment(finding, at));
-    else outside.push(bodySection(finding));
+    else outside.push(findingSection(finding));
   }
   const body = reviewBody(input.summary, outside);
   const posted = await json(gh, `/repos/${repo}/pulls/${number}/reviews`, send("POST", { commit_id: sha, event: "COMMENT", body, comments }));

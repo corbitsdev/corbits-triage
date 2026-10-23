@@ -386,7 +386,9 @@ set each up ([provisioners](provisioners/README.md)), in place of the switch.
 Findings show in the reading pane. On GitHub,
 **Send to GitHub** posts the newest review as one review from the Triage App,
 inline where the diff shows the lines, once per commit and never on its own.
-Sending needs only a finished review, so it works without an isolated place.
+On Bitbucket Data Center, **Send to Bitbucket** posts each finding the diff
+shows as a comment on its first shown line and one summary comment with the
+rest, once per commit. Sending needs only a finished review, so it works without an isolated place.
 
 ## Triage over time
 
