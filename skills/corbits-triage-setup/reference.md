@@ -1,12 +1,12 @@
 # .corbits-triage.yml reference
 
-The file holds `rules` (required), and optionally `actions` or `decide`, `labels`, `extends`, `groups`, the blocks `code-review`, `security` and `deslop`, `pace` and `pauseLabel`. Any other key is refused, with the key it was likely meant to be. Every refusal names its line and what the value must be. YAML only, at most 64 KB; YAML aliases (`*name`) and the keys `__proto__`, `constructor` and `prototype` are refused. Triage reads `.corbits-triage.yml` and ignores `.corbits-triage.yaml` when both exist, so keep one.
+The file holds `rules` (required), and optionally `onFail`, `actions` or `decide`, `labels`, `extends`, `groups`, the blocks `code-review`, `security` and `deslop`, `pace` and `pauseLabel`. Any other key is refused, with the key it was likely meant to be. Every refusal names its line and what the value must be. YAML only, at most 64 KB; YAML aliases (`*name`) and the keys `__proto__`, `constructor` and `prototype` are refused.
 
 ## Rules
 
 Every rule has:
 
-- `check`: a built-in rule's id, `model` or `text`.
+- `check`: a built-in rule's id, `model`, `text` or `code-patterns`.
 - `text`: one sentence saying what the rule asks (at most 500 characters).
 - `reason`: one line on why the rule exists.
 - `evidence`: a list of `maintainer-stated`, pull request references (`"#44"`, `"owner/name#44"`) or `https://` links. Quote `#` references.
@@ -15,7 +15,7 @@ Every rule has:
 
 The five `max-` rules are the size rules. Lockfiles are left out of their counts (on Bitbucket Data Center, out of the file count only).
 
-A built-in rule is named only by `check`, never `id`, and each built-in may appear once. A `model` or `text` rule also needs its own `id`.
+A built-in rule is named only by `check`, never `id`, and each built-in may appear once. A rule of your own also needs its own `id`.
 
 ### Built-in rules
 
@@ -31,22 +31,25 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | `linked-issue` | `tracker:` `github`, `linear` or `either` (optional, default `either`) | no | Fails unless the title, description, a commit or the branch name references an issue. `github` reads `#123`, GitHub issue links and branches like `123-title`; `linear` reads any key like `ABC-123` (so Jira keys match too), Linear links and branches like `abc-123-title` in any case. |
 | `no-forbidden-paths` | `paths:` list of 1–50 globs (required) | no | Fails when any changed file matches; for every author, maintainers too. `*` stays within a folder, `**` crosses folders, and `**/` also matches no folder. |
 | `conventional-commits` | `types:` list of words (optional, default `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `ci`, `build`, `style`, `revert`); `fields:` `title`, `commits` or both (optional, default both) | no | Fails unless the title and each commit's first line (first 100 commits) start `type: `, `type(scope): ` or `type!: ` with a listed type, in any case. Merges and `Revert "…"` commits are skipped. |
-| `hidden-content` | none | no | Fails when the title, description, a commit message or a changed path hides text: two or more invisible characters together, Unicode tag characters other than the England, Scotland and Wales flags, variation selectors that change nothing shown (a lone emoji-style one is allowed), bidi overrides or isolates (not the embeddings and marks RTL text uses), or a link with no visible content. On GitHub it also fails when a comment, `[//]: #` definition or other hidden markup the author added to the description speaks to a model, such as "ignore previous instructions", or holds those characters; a comment exactly as the repository's pull request templates (or, with none, its organisation's `.github` repository's) have it is skipped. Bitbucket Data Center checks the characters only. Names what it found and where, never the text. Misses paraphrased, look-alike-letter, entity-encoded or split instructions. |
-| `regression-risk` | `hotFileFixes:` whole number ≥ 1 (optional, default 4); `migrations:` list of 1–50 globs (optional, default `**/migrations/**`, `**/*.sql`) | no | Fails when a changed file (not a test, Markdown doc or lockfile) has at least `hotFileFixes` commits in the last 30 days whose subject starts with a `fix`, `bugfix`, `hotfix` or `revert` type (`fix:`, `fix(scope):`, `Revert "…"`); merges and body text don't count. A history that can't be read in full leaves the rule unconfirmed, or a changed file matches `migrations`. Default `onFail` is `label`. |
+| `hidden-content` | none | no | Fails when the title, description, a commit message or a changed path hides text: invisible, tag or bidi override characters, or a link with no visible content. On GitHub, also hidden markup in the description that speaks to a model, other than the repository's pull request template. |
+| `regression-risk` | `hotFileFixes:` whole number ≥ 1 (optional, default 4); `migrations:` list of 1–50 globs (optional, default `**/migrations/**`, `**/*.sql`) | no | Fails when a changed file (not a test, Markdown doc or lockfile) has at least `hotFileFixes` commits in the last 30 days whose subject starts with a `fix`, `bugfix`, `hotfix` or `revert` type (`fix:`, `fix(scope):`, `Revert "…"`); merges and body text don't count. Also fails when a changed file matches `migrations`. A history that can't be read in full leaves the rule unconfirmed. Default `onFail` is `label`. |
 | `focused` | none | yes | The decision model checks the change is focused on one thing. |
 | `docs` | none | yes | The decision model checks docs are updated when behaviour changes. |
 
 ### Rules of your own
 
-At most 8 in total. `id` is lowercase letters, digits and single hyphens, at most 64 characters; it must not be a built-in id, start with `docs-` or `focused-`, or end in `-file`, `-hunk` or `-slice` followed by numbers.
+At most 8 in total. `id` is lowercase letters, digits and single hyphens, at most 64 characters; it must not be a rule id Triage uses (the check names a clash), start with `docs-` or `focused-`, or end in `-file`, `-hunk` or `-slice` followed by numbers.
 
 - `check: model` (needs a model): `text` is a statement the decision model answers yes or no about the whole pull request; the rule fails on no. Example `text`: `The title says what changed.`
 - `check: text` (no model): fails on a phrase match, case ignored. A phrase matches anywhere in the field; there is no prefix or pattern match.
   - `fields`: any of `title`, `description`, `commits` (each commit message; first 100 commits).
   - `failWhen`: `contains` (fail when any field has any phrase) or `not-contains` (fail when a field has none of them).
   - `phrases`: 1–50 strings.
+- `check: code-patterns` (no model): fails when a line the pull request adds to a TypeScript or JavaScript file matches; vendored and built files are skipped. On Bitbucket Data Center, which sends no patches, it is unconfirmed whenever such a file changes.
+  - `presets: [convention]` (TypeScript only): invented `?? 0`/`?? []` fallbacks outside tests, nested ternaries, immediately invoked functions, `.then`/`.catch`/`.finally` chains, empty `catch` blocks, suppression comments.
+  - `patterns`: ast-grep rules with `id`, `language` (`typescript` or `javascript`), `message`, `rule` (an ast-grep rule object), and optional `files` (only these paths) and `ignores` (not these). Globs are strings from the repository root, by ast-grep's rules: `*` crosses folders; write `[^a]`, never `[!a]`. A pattern replaces a preset's with the same `id`.
 
-A model rule costs one model request per pull request and needs a decision model set up in Corbits Triage (Settings → Triage → Decision model). Rules without a model always give the same answer for the same pull request and cost nothing.
+A model rule costs one model request per pull request and needs a decision model set up in Corbits Triage (Settings → Triage → Decision model).
 
 ### When to add
 
@@ -59,6 +62,7 @@ Start from the four starter rules (SKILL.md step 3). Add an extra only when the 
 | Commits mostly follow conventional commits | `conventional-commits`; add `types` only when the history uses a type outside the default list, and `fields: [title]` when pull requests are squash-merged |
 | The user wants to hear when a pull request hides text from reviewers | `hidden-content` with `onFail: ask` |
 | The user bars tool attribution | `no-tool-attribution` below. Add the user's tool trailers to its phrases; never a bare `Co-Authored-By:`, which also fails human co-authors. |
+| The user names TypeScript or JavaScript code conventions | `code-patterns`: `presets: [convention]` for TypeScript, plus patterns for what the preset lacks or for JavaScript |
 | A decision model is set up and pull requests often mix changes | `focused` |
 | A decision model is set up and the repository keeps user docs beside its code | `docs` |
 
@@ -68,7 +72,7 @@ When the user wants a rule to flag pull requests without failing them, such as a
 
 ## Actions
 
-Optional. Without `actions`, Triage only sets its verdict label. Each verdict has an ordered list of at most 20 steps; a verdict left out has none.
+Optional. Without `actions`, Triage only posts its comment and verdict label (a build status on Bitbucket Data Center). Each verdict has an ordered list of at most 20 steps; a verdict left out has none.
 
 ```yaml
 actions:
@@ -88,16 +92,14 @@ actions:
 | `request-review` | `{ to: codeowners }`, `{ to: users, users: [login, …] }` or `{ to: teams, teams: [org/team, …] }` |
 | `assign` | as `request-review`, or `{ to: author }` |
 
-A step may add `when`, and every condition in it must hold. An empty `when` is refused.
+A step may add `when`, and every condition in it must hold.
 
 - `author`: list of `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE`, `MANNEQUIN`, `BOT`, the groups `maintainers`, `external`, `first-timers`, `bots`, `{ team: org/team }` or `{ users: [login, …] }`.
 - `linkedIssue`: `true` or `false`.
 - `ci`: list of `passing`, `failing`, `pending`, `none`.
 - `files` / `lines`: `{ over: N, atMost: M }`, either or both, `atMost` more than `over`.
 
-Never write `for:` on a step; who it is for goes in `when.author`.
-
-Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person in the Inbox. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. An advisory rule's label is added the same way, as an Add labels action. On Bitbucket Data Center, `labels` and `assign` have no effect (an advisory rule only adds its note), `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
+Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person in the Inbox. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. An `onFail: label` rule's label is added the same way, as an Add labels action. On Bitbucket Data Center, `labels` and `assign` have no effect (an `onFail: label` rule only adds its note), `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
 
 ## Labels
 
@@ -114,7 +116,7 @@ labels:
 
 Write these only when the user asks. A file holds `decide` or `actions`, never both.
 
-A file with a block on, or its own `decide`, runs the PR workflow: triage, then code review, then `decide` once. The file then decides code review for the repository, whatever its Code review switch says. It needs the workspace's Anthropic key and a place for code review to run; without them triage runs alone and approve and merge wait for a person. Only `code-review` with provider `anthropic` runs today; with `security` or `deslop` on, approve and merge also wait for a person. On GitHub, a pull request carrying the `pauseLabel` label starts no run until the label comes off, and one that can't be read is retried, never run unpaused. `pace` doesn't act yet.
+A file with a block on, or its own `decide`, runs the PR workflow: triage, then code review, then `decide` once. The file then decides code review for the repository, whatever its Code review switch says. It needs the workspace's Anthropic key and a place for code review to run; without them triage runs alone and approve and merge wait for a person. Only `code-review` with provider `anthropic` runs today; another provider, or `security` or `deslop` on, runs triage alone and approve and merge wait for a person. On GitHub, a pull request carrying the `pauseLabel` label starts no run until the label comes off, and one that can't be read is retried, never run unpaused. `pace` doesn't act yet.
 
 ```yaml
 groups:
@@ -125,7 +127,6 @@ code-review:
   when: { paths: ["!**/*.md", "!**/*.lock", "!**/package-lock.json", "!**/pnpm-lock.yaml"] }
   clean: { below: medium }
   provider: anthropic
-pace: { debounce: 30s, maxWait: 2m, perHead: 1, cap: { runs: 5, per: 24h }, backoff: { pushes: 5, within: 10m, pause: 30m } }
 pauseLabel: "corbits: pause"
 decide:
   - { if: { triage: fail }, do: [request-changes, { do: comment, target: { body: "Please fix the failed rules." } }] }
@@ -133,18 +134,18 @@ decide:
   - { if: { code-review: findings }, do: [{ do: request-review, target: { to: codeowners } }] }
 ```
 
-- `groups`: each named in lowercase words joined by hyphens, starting with a letter, at most 64 characters, with any of `association` (the author kinds under Actions), `teams` (`org/team`) and `users` (logins). The first group an author matches, in the order written, is theirs; they are in at most one. The built-in groups `maintainers`, `external`, `first-timers` and `bots` exist without being defined and match by author kind alongside it; defining one with that name replaces it. `everyone` is built in and always matches. A group or `everyone` can be named in `for`, `if.author` and a step's `when.author`. A built-in group is author kinds, so it still matches when teams can't be read, and is not known only when the author kind is. Whether the author is in a group the file defines is not known when the author kind is unknown, or when teams Triage can't read would decide which defined group is theirs. A step for a group that is not known doesn't run; `everyone` always matches. Never let `approve` or `merge` rest on `everyone` alone.
+- `groups`: each named in lowercase words joined by hyphens, starting with a letter, at most 64 characters, with any of `association` (the author kinds under Actions), `teams` (`org/team`) and `users` (logins). The first group an author matches, in the order written, is theirs; they are in at most one. The built-in groups `maintainers`, `external`, `first-timers` and `bots` exist without being defined and match by author kind alongside it; defining one with that name replaces it. `everyone` is built in and always matches. A group or `everyone` can be named in `for`, `if.author` and a step's `when.author`. A step for a group Triage can't confirm the author is in doesn't run. Never let `approve` or `merge` rest on `everyone` alone.
 - A block (`code-review`, `security`, `deslop`) takes only:
   - `on`: `true` or `false` (required).
   - `for`: list of groups; default everyone.
-  - `when`: `triage` (`pass`, `fail`, `unsure` or a list of them), `rules` (`code-review` only) and `paths` (globs; any changed file matching is enough). A glob starting with `!` leaves out the files it matches; with only `!` globs, every other file matches. A renamed file counts under its old and new path. When Triage can't read every changed file, the block is recorded as unfinished (`incomplete`), never skipped. When the user asks to turn on `code-review`, suggest skipping pull requests that change only Markdown docs or lockfiles (`*.lock`, which covers `bun.lock`, plus `package-lock.json` and `pnpm-lock.yaml`), as in the example. `rules` (`code-review` only): `pass` (the default) runs the review only once every rule in the file with `onFail: fail` that needs no model has passed, CI only when `ci-green` is one of them, and Triage's built-in checks (draft, changes requested) never hold it back; a failed one skips it, and while CI is still running it waits. `any` runs it whatever those rules say.
+  - `when`: `triage` (`pass`, `fail`, `unsure` or a list of them), `rules` (`code-review` only) and `paths` (globs; any changed file matching is enough). A glob starting with `!` leaves out the files it matches; with only `!` globs, every other file matches. When the user asks to turn on `code-review`, suggest skipping pull requests that change only Markdown docs or lockfiles (`*.lock`, which covers `bun.lock`, plus `package-lock.json` and `pnpm-lock.yaml`), as in the example. `rules` (`code-review` only): `pass` (the default) runs the review only once every rule in the file with `onFail: fail` that needs no model has passed, CI only when `ci-green` is one of them, and Triage's built-in checks (draft, changes requested) never hold it back; a failed one skips it, and while CI is still running it waits. `any` runs it whatever those rules say.
   - `clean`: `below` (`low`, `medium`, `high` or `critical`); findings below it don't count. `minConfidence` and `coverage` are refused.
   - `provider`: `anthropic`, `openai`, `xai`, `google`, `opencode` or `custom`. Every block that is on and names one must name the same.
 - `pace`: `debounce`, `maxWait` (durations of at least 1, such as `30s`, `2m`, `24h`, `7d`), `perHead` (whole number ≥ 1), `cap: { runs, per }`, `backoff: { pushes, within, pause }`.
 - `pauseLabel`: a label of at most 50 characters.
 - `decide`: rules `{ if, do }`, in order. `if` sets at least one of `all: clean`, `triage`, `event` (a list of `opened`, `updated`, `checks`, `ready`), `author` (groups) and the outcome of a block that is on (`clean`, `findings`, `incomplete`, `skipped`, a list of them, or `{ findings: <severity> }`). `do` is `approve`, `merge`, `close`, `request-changes`, `nothing`, or a list of those and steps written as under Actions (`comment`, `labels`, `request-review` and `assign` need their `target`). `nothing` stands alone. `{ all: clean }` holds when at least one block ran and every block that ran is clean; skipped blocks never count, so it doesn't hold when every block was skipped or none is on. A rule that approves or merges without `triage` matches only Pass. Incomplete is never clean: a rule that approves or merges can't name `incomplete`, and only matches when nothing that ran is incomplete.
 
-A file with `actions` reads as `decide`: each verdict's steps become one rule on `triage: <verdict>` (and `event: <actions.on>` when `on` lists fewer than every event), a Pass or Fail with none becomes `do: nothing`, and an Unsure with none becomes no rule. With a block on, a verdict whose steps approve or merge becomes two rules: all its steps under `all: clean`, then the same steps with approve and merge left out. A file that uses `extends` can't hold `groups`, blocks, `pace`, `pauseLabel` or `decide`.
+A file that uses `extends` can't hold `groups`, blocks, `pace`, `pauseLabel` or `decide`.
 
 ## extends
 
@@ -205,6 +206,18 @@ rules:
     text: The title says what changed.
     reason: Reviewers pick pull requests from their titles.
     evidence: [maintainer-stated]
+  - id: conventions
+    check: code-patterns
+    text: Added code follows our conventions.
+    presets: [convention]
+    patterns:
+      - id: no-console
+        language: typescript
+        message: Remove console logging.
+        ignores: ["scripts/**"]
+        rule: { pattern: "console.log($$$ARGS)" }
+    reason: Review time goes to design, not style.
+    evidence: [maintainer-stated]
 ```
 
 ## Pull request check (GitHub)
@@ -217,7 +230,9 @@ on:
   pull_request:
     paths: [".corbits-triage.yml", ".corbits-triage.yaml"]
 permissions:
+  checks: read
   contents: read
+  pull-requests: read
 jobs:
   check:
     runs-on: ubuntu-latest

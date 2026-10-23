@@ -16,10 +16,11 @@ function yamlUnder(heading: string): string {
   return block;
 }
 
-test("the setup skill's starter file is the starter policy, and its extras and blocks are valid with it", () => {
+test("the setup skill's starter file is the starter policy, and every other example is valid with it", () => {
   const starter = yamlUnder("Starter file");
   const exported = checkPolicyFile(exportPolicyFile(starterPack(REPO), false).text, REPO);
   expect(checkPolicyFile(starter, REPO)).toEqual(exported);
-  expect(checkPolicyFile(`${starter}${yamlUnder("Extras, written out")}`, REPO)).toMatchObject({ ok: true });
-  expect(checkPolicyFile(`${starter}${yamlUnder("Blocks and decide")}`, REPO)).toMatchObject({ ok: true });
+  for (const heading of ["Extras, written out", "Actions", "Labels", "Blocks and decide"]) {
+    expect(checkPolicyFile(`${starter}${yamlUnder(heading)}`, REPO)).toMatchObject({ ok: true });
+  }
 });
