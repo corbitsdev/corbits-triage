@@ -427,8 +427,9 @@ woke the run, the author's groups
 (`authorGroupsOf` over the pack's `groups`) and code review's outcome, whose
 findings' priorities read as severities (0 critical, 1 high, 2 medium, 3 low;
 any other, or none, critical), as does a worst it cannot read. Rules run in order and the first that matches
-wins; skipped blocks never count, so `{ all: clean }` holds when every block
-that ran is clean. Every block with an outcome counts, whatever
+wins; skipped blocks never count, so `{ all: clean }` holds when at least one
+block ran and every block that ran is clean, and a rule that approves or merges
+without naming `triage` matches only Pass. Every block with an outcome counts, whatever
 `blocks` says, and one that is on, or that a rule names, with no outcome reads
 as `incomplete`: this variant runs only code review, so `security` or
 `deslop` on is incomplete here. It flags for a maintainer when nothing

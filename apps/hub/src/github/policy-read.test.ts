@@ -26,6 +26,10 @@ test("a decide merge for no author in particular admits first-time contributors"
   expect(await risks({ decide: [{ if: { triage: "pass" }, do: "merge" }], automatic: ["merge"] })).toEqual(["first-timers"]);
 });
 
+test("a decide approve that names no verdict lands only on Pass, so a CI change a rule fails stays out", async () => {
+  expect(await risks({ decide: [{ if: { all: "clean", author: ["maintainers"] }, do: "approve" }], automatic: ["approve"] })).toEqual([]);
+});
+
 test("an approve on Fail lets a CI change through when no rule stops it", async () => {
   expect(await risks({ globs: [], fail: [{ do: "approve", when: maintainers }], automatic: ["approve"] })).toEqual(["ci-config"]);
 });
