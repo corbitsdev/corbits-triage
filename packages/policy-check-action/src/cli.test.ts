@@ -130,6 +130,7 @@ const EVERY_MACHINE_RULE = `rules:
   - { check: no-forbidden-paths, text: T., paths: ["vendor/**"], ${EVIDENCE} }
   - { check: conventional-commits, text: T., ${EVIDENCE} }
   - { check: hidden-content, text: T., ${EVIDENCE} }
+  - { check: regression-risk, text: T., ${EVIDENCE} }
 `;
 
 test("every rule whose result turns on the title or description is skipped locally", () => {

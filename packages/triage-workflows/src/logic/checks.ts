@@ -5,6 +5,7 @@ import {
   classificationSources,
   CONVENTIONAL_FIELDS,
   CONVENTIONAL_TYPES,
+  DEFAULT_RISK,
   customCheckEnabled,
   hardFailures,
   ISSUE_LINKS,
@@ -31,6 +32,7 @@ import {
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { globMatch } from "./glob.js";
+import { hotFiles, migrationPaths } from "./risk.js";
 
 export interface PrFileFacts {
   path: string;
@@ -87,6 +89,8 @@ export interface PrFacts {
   stack?: Stack;
   /** What the title, description, commits and paths hid, as `where: what`, never the hidden text. */
   hidden: string[];
+  /** Set only when regression risk is on: the fix commits in each changed file's recent history, by path, or null when that history could not be read in full. */
+  fixes?: Record<string, number | null>;
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
@@ -347,6 +351,7 @@ interface CheckRules {
   forbiddenGlobs: string[];
   tracker: IssueTracker;
   conventional?: ConventionalRule;
+  risk: { hotFileFixes: number; migrationGlobs: readonly string[] };
 }
 
 function resultOf(failed: boolean | null): CheckResult["result"] {
@@ -417,6 +422,20 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
         values: { touchesForbiddenPaths: matched.length > 0 },
       });
     }
+    if (on("regression-risk")) {
+      const read = Object.entries(facts.fixes ?? {}).filter((entry): entry is [string, number] => entry[1] !== null);
+      const unread = facts.fixes === undefined ? ["every file"] : Object.keys(facts.fixes).filter((path) => facts.fixes![path] === null);
+      const evidence = [...hotFiles(new Map(read), rules.risk.hotFileFixes), ...migrationPaths(facts.paths, rules.risk.migrationGlobs).map((path) => `${path}: migration`)];
+      if (evidence.length) {
+        const reason = "changes code that regressed recently or a migration";
+        add("regression-risk", "needs-decision", reason);
+        result("regression-risk", true, reason, evidence, { kind: "values", values: { risky: true } });
+      } else if (unread.length) {
+        const reason = "could not read the recent history of some changed files";
+        add("regression-risk", "stale-unknown", reason);
+        result("regression-risk", null, reason, unread, { kind: "could-not-check", reason });
+      } else result("regression-risk", false, "no recently fixed files or migrations changed", [], { kind: "values", values: { risky: false } });
+    }
     if (on("linked-issue") && rules.tracker !== "off") {
       const ref = issueReference(facts, rules.tracker);
       if (!ref) add("linked-issue", "needs-author-update", "pull request does not reference an issue");
@@ -453,6 +472,7 @@ function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
     forbiddenGlobs: pack.checks["no-forbidden-paths"]?.forbiddenGlobs ?? [],
     tracker: pack.checks["linked-issue"]?.tracker ?? "either",
     conventional: { types: pack.checks["conventional-commits"]?.types ?? CONVENTIONAL_TYPES, fields: pack.checks["conventional-commits"]?.fields ?? CONVENTIONAL_FIELDS },
+    risk: { hotFileFixes: pack.checks["regression-risk"]?.hotFileFixes ?? DEFAULT_RISK.hotFileFixes, migrationGlobs: pack.checks["regression-risk"]?.migrationGlobs ?? DEFAULT_RISK.migrationGlobs },
   }, pack);
 }
 
@@ -472,5 +492,6 @@ export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack |
     sizes: {},
     forbiddenGlobs: [],
     tracker: "off",
+    risk: DEFAULT_RISK,
   });
 }

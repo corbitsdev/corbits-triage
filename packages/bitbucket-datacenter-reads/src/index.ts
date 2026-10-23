@@ -1,7 +1,7 @@
 export { getPrTimes, listClosedPrsBefore, listPrTimeline } from "./activities.js";
 export { filePath, jsonAll, repoParts, repoPath, type BitbucketFetch } from "./client.js";
 export { getChecks, TRIAGE_BUILD_KEY } from "./builds.js";
-export { changesSince, listPrCommits, listPrFiles, listPrFilesPage } from "./changes.js";
+export { changesSince, listPathCommits, listPrCommits, listPrFiles, listPrFilesPage } from "./changes.js";
 export { isTriageComment, listIssueComments } from "./comments.js";
 export { createDocsReader, readRepoDocsPage } from "./docs.js";
 export { getCodeInsightsAnnotations, type CodeInsightsAnnotation } from "./insights.js";

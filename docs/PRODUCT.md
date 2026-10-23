@@ -78,7 +78,9 @@ reference definition, processing instruction, CDATA section or declaration
 not exactly as a pull request template has it (the repository's, else its
 organisation's `.github` repository's), that speaks to a model or
 holds those characters; it names what it found and where, never the text, and
-misses paraphrased, look-alike-letter, entity-encoded or split instructions). Two always run:
+misses paraphrased, look-alike-letter, entity-encoded or split instructions),
+Regression risk (a changed file with four or more commits titled as a fix or revert on the
+default branch in the last 30 days, or a migration; labels by default). Two always run:
 Not a draft, and No changes requested (a requested change fails and waits on
 the author, then on the reviewer once the author pushes or replies). The
 recommended forbidden paths are `vendor/**`, `node_modules/**` and

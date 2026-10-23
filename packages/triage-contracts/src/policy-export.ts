@@ -52,6 +52,8 @@ function catalogParams(id: CatalogId, row: CatalogCheck): Record<string, unknown
       return row.tracker === undefined ? {} : { tracker: row.tracker };
     case "no-forbidden-paths":
       return row.forbiddenGlobs?.length ? { paths: row.forbiddenGlobs } : undefined;
+    case "regression-risk":
+      return { ...(row.hotFileFixes !== undefined && { hotFileFixes: row.hotFileFixes }), ...(row.migrationGlobs && { migrations: row.migrationGlobs }) };
     case "conventional-commits":
       return { ...(row.types && { types: row.types }), ...(row.fields && { fields: row.fields }) };
     default:
@@ -150,7 +152,7 @@ function catalogChecks(pack: CheckPack, id: CatalogId): string | undefined {
   if (id === "ci-green" && row?.enabled === false) return CI_SKIPPED;
   if (!row?.enabled) return undefined;
   const conventional = id === "conventional-commits" && { types: sorted(row.types ?? CONVENTIONAL_TYPES), fields: row.fields ?? CONVENTIONAL_FIELDS };
-  return canonical({ max: isSizeRule(id) ? row[SIZE_RULES[id]] : undefined, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), onFail: onFailText(pack, id), ...conventional });
+  return canonical({ max: isSizeRule(id) ? row[SIZE_RULES[id]] : undefined, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), hotFileFixes: row.hotFileFixes, migrations: sorted(row.migrationGlobs), onFail: onFailText(pack, id), ...conventional });
 }
 
 function modelAsks(row: ModelCustomCheck): Record<string, unknown> {
@@ -232,6 +234,7 @@ function catalogLimits(pack: CheckPack, id: CatalogId): string[] {
     case "no-forbidden-paths":
       return row.forbiddenGlobs ?? [];
     case "conventional-commits":
+    case "regression-risk":
       return [catalogSentence(id, pack)];
     default:
       return ["on"];

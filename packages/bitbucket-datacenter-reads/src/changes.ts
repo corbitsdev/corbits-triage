@@ -1,7 +1,7 @@
 import { type } from "arktype";
-import { PR_FILES_PAGE_CHARS, type PrCommit, type PrFilesPage } from "@corbits/github-reads";
+import { PR_FILES_PAGE_CHARS, type PathCommits, type PrCommit, type PrFilesPage } from "@corbits/github-reads";
 import type { HeadChange } from "@corbits/triage-contracts";
-import { isoTime, jsonAll, PAGE_LIMIT, repoPath, type BitbucketFetch } from "./client.js";
+import { isoTime, json, jsonAll, Page, PAGE_LIMIT, repoPath, type BitbucketFetch } from "./client.js";
 
 /** Line counts per file would cost a diff read per file, so only the pull request's totals carry them. */
 export type PrChange = { path: string; previousPath?: string; status: string };
@@ -50,6 +50,16 @@ function prCommit(row: unknown): PrCommit {
 
 export async function listPrCommits(bb: BitbucketFetch, repo: string, number: number): Promise<PrCommit[]> {
   return (await jsonAll(bb, `${repoPath(repo)}/pull-requests/${number}/commits`)).map(prCommit);
+}
+
+/** The default branch's commits that changed `path` since `since`, newest first: one page, `truncated` when the window holds more. */
+export async function listPathCommits(bb: BitbucketFetch, repo: string, path: string, since: string): Promise<PathCommits> {
+  const after = Date.parse(since);
+  if (Number.isNaN(after)) throw new Error(`invalid since ${since}`);
+  const page = Page.assert(await json(bb, `${repoPath(repo)}/commits?path=${encodeURIComponent(path)}&limit=${PAGE_LIMIT}&start=0`));
+  const listed = page.values.map(prCommit);
+  const commits = listed.filter((commit) => Date.parse(commit.committedAt) >= after);
+  return { commits, truncated: !page.isLastPage && commits.length === listed.length };
 }
 
 const MergedPr = type({ id: "number", "properties?": { "mergeCommit?": { id: "string" } } });

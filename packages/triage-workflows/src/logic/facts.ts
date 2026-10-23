@@ -200,6 +200,8 @@ export interface PullData {
   authorTeams: { teams?: unknown; unknown?: unknown } | null;
   /** Unread when the pack does not ask focused. */
   stack?: { includes?: unknown; onto?: unknown } | null;
+  /** Read only when regression risk is on. */
+  fixes?: PrFacts["fixes"];
 }
 
 /** Maps the read's slugs back to every spelling the steps use; a team the read did not answer, or another org's team, is unknown. */
@@ -224,7 +226,7 @@ function stackOf(read: PullData["stack"]): Pick<PrFacts, "stack"> {
   return { stack: onto === undefined ? { includes } : { includes, onto } };
 }
 
-type ItemFacts = Pick<PrFacts, "paths" | "files" | "commits" | "commitMessages" | "events" | "docs" | "rules" | "authorTeams" | "authorTeamsUnknown" | "stack" | "hidden">;
+type ItemFacts = Pick<PrFacts, "paths" | "files" | "commits" | "commitMessages" | "events" | "docs" | "rules" | "authorTeams" | "authorTeamsUnknown" | "stack" | "hidden" | "fixes">;
 
 export interface ItemContext {
   repo: string;
@@ -286,6 +288,6 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   const commits = messages.map(firstLine);
   const commitMessages = messages.slice(0, COMMIT_MESSAGES_MAX);
   const shown = { ...pr, title, body };
-  const facts: PrFacts = { ...buildFacts(repo, number, shown, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, hidden, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack) };
+  const facts: PrFacts = { ...buildFacts(repo, number, shown, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, hidden, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack), ...(data.fixes && { fixes: data.fixes }) };
   return { facts, pack };
 }

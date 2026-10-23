@@ -52,9 +52,10 @@ const RUNS: Record<Ci, unknown[]> = {
   failure: [{ name: "build", status: "completed", conclusion: "failure" }],
 };
 /** `stacked` is corbitsdev/corbits-code#1520's shape, with #9 to #13 merged into its branch and #14 closed unmerged; the branch is based on open #7's. */
-type GithubSeed = { missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[] };
+/** `history` is the commit messages each changed file's recent history holds, or `unread` when GitHub fails to list them. */
+type GithubSeed = { history?: string[] | "unread"; missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[] };
 
-function fakeGithub({ missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [] }: GithubSeed = {}) {
+function fakeGithub({ history = [], missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [] }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
@@ -73,6 +74,10 @@ function fakeGithub({ missing = false, unreadFiles = false, files = [FLAG], labe
       return Response.json({ number: 8, title, body, body_html: bodyHtml, state: pr.state, draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
     }
     if (path.startsWith(`/repos/${REPO}/pulls/8/commits?`)) return Response.json(commits.map((message, index) => ({ sha: `c${index}`, commit: { message } })));
+    if (path.startsWith(`/repos/${REPO}/commits?path=`)) {
+      if (history === "unread") return Response.json({ message: "Server Error" }, { status: 500 });
+      return Response.json(history.map((message, index) => ({ sha: `h${index}`, commit: { message } })));
+    }
     if (path.includes("/check-runs")) return Response.json({ check_runs: RUNS[pr.ci] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
     if (path.startsWith(`/repos/${REPO}/git/trees/`)) return Response.json({ sha: "tree", tree: DOCS.map(([doc, text], index) => ({ path: doc, type: "blob", sha: `blob${index}`, size: bytes(text) })) });
@@ -312,6 +317,18 @@ describe("pr-triage body", () => {
     const pending = fakeGithub();
     pending.pr.ci = "pending";
     expect((await triage(askPack, { github: pending })).verdict).toMatchObject({ waiting: true, actions: [] });
+  });
+
+  test("regression risk labels a change to a file with recent fix commits or a migration without changing its verdict; history it could not read leaves only the rule unconfirmed", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "regression-risk": { enabled: true, onFail: "label" } } };
+    const fixes = ["fix: a", "fix(api)!: b", "Revert \"c\"", "hotfix d", "bugfix: e", "fix lint", "chore: fix f", "Merge pull request #2 from acme/fix-g", "feat: h\n\nfix: in the body"];
+    const hot = await triage(pack, { history: fixes });
+    expect(hot.verdict).toMatchObject({ verdict: "pass", labelled: [{ check: "regression-risk", result: "fail", evidence: ["src/flag.ts: 5 recent fixes"] }], actions: [{ kind: "labels", target: { labels: ["regression-risk: check"] } }] });
+    expect(hot.requests).toContainEqual({ method: "GET", path: expect.stringMatching(/^\/repos\/acme\/widgets\/commits\?path=src%2Fflag\.ts&since=/) });
+    expect((await triage(pack, { history: fixes.slice(2) })).verdict).toMatchObject({ labelled: [{ check: "regression-risk", result: "pass" }], actions: [] });
+    const migration: FileRow = { filename: "db/migrations/0002.sql", status: "added", additions: 1, deletions: 0 };
+    expect((await triage(pack, { files: [FLAG, migration] })).verdict).toMatchObject({ labelled: [{ check: "regression-risk", result: "fail", evidence: ["db/migrations/0002.sql: migration"] }] });
+    expect((await triage(pack, { history: "unread" })).verdict).toMatchObject({ verdict: "pass", labelled: [{ check: "regression-risk", result: "unconfirmed", evidence: ["src/flag.ts"] }] });
   });
 
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {

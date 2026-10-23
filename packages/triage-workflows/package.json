@@ -21,7 +21,8 @@
   "scripts": {
     "eval": "bun --conditions=intx-src evals/judge.eval.ts",
     "eval:scan": "bun --conditions=intx-src evals/scan.eval.ts",
-    "eval:hidden-content": "bun --conditions=intx-src evals/hidden-content.eval.ts"
+    "eval:hidden-content": "bun --conditions=intx-src evals/hidden-content.eval.ts",
+    "eval:risk": "bun evals/risk.eval.ts"
   },
   "dependencies": {
     "@corbits/common": "workspace:*",

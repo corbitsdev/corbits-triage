@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkCancelled, checkFailed, checkPending, latestDecisive, reviewedOnHead } from "@corbits/github-reads";
-import { authorTeams, getChecks, getPr, getReviews, isTriageComment, jsonAll, listIssueComments, listPrTimeline, readRepoFile, readStack, type BitbucketFetch } from "./index.js";
+import { authorTeams, getChecks, getPr, getReviews, isTriageComment, jsonAll, listIssueComments, listPathCommits, listPrTimeline, readRepoFile, readStack, type BitbucketFetch } from "./index.js";
 import activities from "./fixtures/activities.json";
 import buildStatus from "./fixtures/build-status.json";
 import pullRequest from "./fixtures/pull-request.json";
@@ -148,6 +148,15 @@ describe("authorTeams", () => {
   test("a malformed row makes the group unknown, even after a match", async () => {
     expect(await authorTeams(instance([[members, page([{ slug: "alice" }, { name: "alicia" }])]]), input)).toEqual(unknown);
   });
+});
+
+test("listPathCommits: the path's commits since the window opened, truncated when a full page is all inside it", async () => {
+  const commit = (id: string, at: string) => ({ id, message: `fix: ${id}`, author: { name: "Ann" }, committerTimestamp: Date.parse(at) });
+  const at = `${REPO}/commits?path=src%2Fa.ts&limit=100&start=0`;
+  const recent = commit("new", "2026-10-20T00:00:00Z");
+  const read = await listPathCommits(instance([[at, { values: [recent, commit("old", "2026-09-01T00:00:00Z")], isLastPage: false, nextPageStart: 2 }]]), "TRI/widgets", "src/a.ts", "2026-10-01T00:00:00Z");
+  expect({ shas: read.commits.map((c) => c.sha), truncated: read.truncated }).toEqual({ shas: ["new"], truncated: false });
+  expect((await listPathCommits(instance([[at, { values: [recent], isLastPage: false, nextPageStart: 1 }]]), "TRI/widgets", "src/a.ts", "2026-10-01T00:00:00Z")).truncated).toBe(true);
 });
 
 test("jsonAll: a page that does not move past its start throws, rather than looping", async () => {

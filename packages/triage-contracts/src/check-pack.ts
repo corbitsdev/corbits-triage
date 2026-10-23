@@ -25,6 +25,7 @@ export const CATALOG_IDS = [
   "no-forbidden-paths",
   "conventional-commits",
   "hidden-content",
+  "regression-risk",
 ] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
@@ -50,6 +51,7 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   "no-forbidden-paths": { name: "No forbidden paths", group: "code-vs-ci", kind: "machine" },
   "conventional-commits": { name: "Conventional commits", group: "pull-request", kind: "machine" },
   "hidden-content": { name: "Hidden content", group: "pull-request", kind: "machine" },
+  "regression-risk": { name: "Regression risk", group: "pull-request", kind: "machine" },
 };
 
 export const NOT_A_DRAFT = "not-a-draft";
@@ -107,6 +109,11 @@ export const CLOSED_FINDING = "state";
 export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
 // An author who edits `.github/**` can change which checks run and turn CI green.
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**", ".github/**"] } as const;
+/**
+ * The regression-risk rule's defaults, set from its backtest (packages/triage-workflows/evals/RISK.md): a changed file
+ * with at least `hotFileFixes` fix or revert commits in the last `hotFileDays`, or a changed path matching a migration glob.
+ */
+export const DEFAULT_RISK = { hotFileFixes: 4, hotFileDays: 30, migrationGlobs: ["**/migrations/**", "**/*.sql"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
 export const CONVENTIONAL_TYPES = ["feat", "fix", "refactor", "perf", "docs", "test", "chore", "ci", "build", "style", "revert"] as const;
 export const CONVENTIONAL_FIELDS = ["title", "commits"] as const;
@@ -152,6 +159,9 @@ export type CatalogCheck = RuleNote & OnFail & {
   /** Conventional commits: the types allowed, and whether the title, the commits or both are read; absent is every default type, and both. */
   types?: string[];
   fields?: ConventionalField[];
+  /** Regression risk: fixes on one changed file in recent history that make it risky, and the paths that are migrations; absent is `DEFAULT_RISK`'s. */
+  hotFileFixes?: number;
+  migrationGlobs?: string[];
 };
 
 /** Each size rule and the field its limit is stored in. */
@@ -168,9 +178,9 @@ export function isSizeRule(id: string): id is SizeRuleId {
   return Object.hasOwn(SIZE_RULES, id);
 }
 
-/** What a policy file's rule does on failure when the file does not say: features and refactors cross size limits, so those only label. */
+/** What a policy file's rule does on failure when the file does not say: features and refactors cross size limits and touch risky code, so those only label. */
 export function defaultOnFail(id: string): (typeof ON_FAILS)[number] {
-  return isSizeRule(id) ? "label" : "fail";
+  return isSizeRule(id) || id === "regression-risk" ? "label" : "fail";
 }
 
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
@@ -458,6 +468,8 @@ const CatalogCheckSchema = type({
   "forbiddenGlobs?": "string[]",
   "types?": "string[]",
   "fields?": type.enumerated(...CONVENTIONAL_FIELDS).array(),
+  "hotFileFixes?": "number",
+  "migrationGlobs?": "string[]",
 });
 
 export const CustomId = type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX);
@@ -636,6 +648,12 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
   if (id === "no-forbidden-paths") {
     const globs = parseGlobs(row.forbiddenGlobs, "No forbidden paths globs");
     if (globs) check.forbiddenGlobs = globs;
+  }
+  if (id === "regression-risk") {
+    const fixes = finiteNumber(row.hotFileFixes);
+    if (fixes !== undefined) check.hotFileFixes = fixes;
+    const globs = parseGlobs(row.migrationGlobs, "Regression risk migration globs");
+    if (globs) check.migrationGlobs = globs;
   }
   if (id === "conventional-commits") {
     if (row.types !== undefined) check.types = commitTypes(row.types);

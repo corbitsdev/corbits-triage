@@ -505,17 +505,28 @@ function firstString(...values: unknown[]): string {
   return "";
 }
 
+function prCommit(row: any): PrCommit {
+  const commit = row.commit ?? {};
+  return {
+    sha: typeof row.sha === "string" ? row.sha : "",
+    message: typeof commit.message === "string" ? commit.message : "",
+    author: firstString(row.author?.login, commit.author?.name),
+    committedAt: firstString(commit.committer?.date, commit.author?.date),
+  };
+}
+
 export async function listPrCommits(gh: GithubFetch, repo: string, number: number): Promise<PrCommit[]> {
   const rows = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/commits?per_page=100`);
-  return rows.map((row) => {
-    const commit = row.commit ?? {};
-    return {
-      sha: typeof row.sha === "string" ? row.sha : "",
-      message: typeof commit.message === "string" ? commit.message : "",
-      author: firstString(row.author?.login, commit.author?.name),
-      committedAt: firstString(commit.committer?.date, commit.author?.date),
-    };
-  });
+  return rows.map(prCommit);
+}
+
+export type PathCommits = { commits: PrCommit[]; truncated: boolean };
+
+/** The default branch's commits that changed `path` since `since`, newest first: one page, `truncated` when the window holds more. */
+export async function listPathCommits(gh: GithubFetch, repo: string, path: string, since: string): Promise<PathCommits> {
+  const res = await request(gh, `/repos/${repo}/commits?path=${encodeURIComponent(path)}&since=${encodeURIComponent(since)}&per_page=100`);
+  const rows = (await res.json()) as any[];
+  return { commits: rows.map(prCommit), truncated: NEXT_LINK.test(res.headers.get("link") ?? "") };
 }
 
 function prFile(row: any): PrFile {
