@@ -25,7 +25,7 @@ Find out, without asking:
 
 Ask in one message together with the proposal from step 3, giving your suggested answer for each. Ask:
 
-- What should Triage do on Pass, Fail and Unsure beyond its verdict label (a build status on Bitbucket Data Center)? Suggest nothing, or asking code owners to review on Unsure when the repository has CODEOWNERS or is on Bitbucket Data Center (where code owners are its default reviewers).
+- What should Triage do on Pass, Fail and Unsure beyond its comment and verdict label (a build status on Bitbucket Data Center)? Suggest nothing, or asking code owners to review on Unsure when the repository has CODEOWNERS or is on Bitbucket Data Center (where code owners are its default reviewers).
 - Should every pull request link an issue? Only when step 1 found issue references; suggest yes, with the tracker from "When to add".
 - Should pull requests never change these paths, even from maintainers? Only when step 1 found vendored or generated code; suggest yes.
 - Is a decision model set up in Corbits Triage (Settings → Triage → Decision model)? Only before adding `focused`, `docs` or a `model` rule.
@@ -36,17 +36,13 @@ If the user says to go ahead with defaults, use the suggested answers.
 
 ## 3. Propose the rules
 
-Start from the four starter rules, which hold for any repository and need no model:
-
-- `max-files-changed` (max 30) and `max-lines-changed` (max 3000): large pull requests are hard to review. Keep these limits unless the user names others. They label large pull requests rather than fail them; if the user wants them to block, give both `onFail: fail`.
-- `no-merge-conflicts`: a pull request with conflicts can't be merged as it is.
-- `ci-green`: a change is not ready until CI passes. With no CI it passes on every pull request until CI is added, so keep it and say so.
+Start from the four rules in reference.md's "Starter file", which hold for any repository and need no model. The size limits label large pull requests rather than fail them; keep 30 files and 3,000 lines unless the user names others. With no CI, `ci-green` passes until CI is added; keep it and say so.
 
 Then add only the extras that fit, from "When to add" in [reference.md](reference.md), each with a one-line reason. Show the rules and actions as one line each and ask for a yes or changes before writing. Once the user agrees, each rule is `maintainer-stated`.
 
 ## 4. Write the file
 
-Write `.corbits-triage.yml` at the repository root in the shape of [reference.md](reference.md). Every rule needs `check`, `text`, `reason` and `evidence`. Use `evidence: [maintainer-stated]` unless the user gives pull request numbers or links. Keep `text` and `reason` to one plain sentence each, and update `text` when you change a setting such as `max`. Copy phrase blocks from reference.md exactly. Leave out `actions` when there are none, and leave out a verdict that has no steps.
+Write `.corbits-triage.yml` at the repository root in the shape of [reference.md](reference.md). Every rule needs `check`, `text`, `reason` and `evidence`. Use `evidence: [maintainer-stated]` unless the user gives pull request numbers or links. Keep `text` and `reason` to one plain sentence each, and update `text` when you change a setting such as `max`. Copy rule blocks from reference.md's "Starter file" and "Extras, written out". Leave out `actions` when there are none, and leave out a verdict that has no steps.
 
 ## 5. Validate and fix
 
@@ -69,13 +65,13 @@ If `<checkout>/node_modules` is missing, install what the check needs:
 Then:
 
 ```sh
-bun <checkout>/packages/policy-check-action/src/main.ts <repository root> <name from step 1>
+bun --conditions=intx-src <checkout>/packages/policy-check-action/src/main.ts <repository root> <name from step 1>
 ```
 
 Run it as its own command. With no remote, any `owner/name` such as `local/<folder>` works; the check only needs one. It prints one of:
 
 - `.corbits-triage.yml is valid.`: done.
-- `::error file=…,line=N::message`, one per problem: fix each and run it again.
+- `::error file=…[,line=N[,col=M]]::message`, one per problem: fix each and run it again.
 - `No .corbits-triage.yml or .corbits-triage.yaml to check.`: the file was not written where you think; write it at the repository root and run it again.
 
 Never report the file as done before it prints valid. With `extends`, valid does not prove the repository or workspace policy it names can be read; tell the user to confirm it.
