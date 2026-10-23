@@ -18,7 +18,7 @@ const GRAMMARS: Record<string, Grammar> = {
   jsx: JAVASCRIPT,
 };
 
-export type PatternsResult = { matches: string[] } | { unread: string };
+export type PatternsResult = { matches: string[]; skipped: string[]; checked: number } | { unread: string };
 
 function presetRules(id: string): readonly PatternRule[] {
   const rules = PATTERN_PRESETS[id];
@@ -36,9 +36,13 @@ function grammarOf(path: string): Grammar | undefined {
   return GRAMMARS[path.slice(path.lastIndexOf(".") + 1)];
 }
 
+function checkable(file: PrFileFacts): boolean {
+  return grammarOf(file.path) !== undefined && file.status !== "removed";
+}
+
 /** A changed TypeScript or JavaScript file the repository writes itself. */
 function inScope(file: PrFileFacts): boolean {
-  return grammarOf(file.path) !== undefined && file.status !== "removed" && !isForeignPath(file.path);
+  return checkable(file) && !isForeignPath(file.path);
 }
 
 function wholePatch(file: PrFileFacts): string | undefined {
@@ -85,5 +89,8 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
   } catch (error) {
     return { unread: error instanceof Error ? error.message : String(error) };
   }
-  return { matches };
+  const skipped = files
+    .filter((file) => checkable(file) && isForeignPath(file.path))
+    .map((file) => `${file.path}: skipped as vendored, built or installed code`);
+  return { matches, skipped, checked: files.filter(inScope).length };
 }

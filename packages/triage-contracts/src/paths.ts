@@ -1,6 +1,9 @@
 // What a changed path is, as triage reads it: tests, the repository's own docs, and generated files.
 
-const FOREIGN_PATH = /(^|\/)(vendor|node_modules|dist|build|generated)\//;
+// Docs under such a folder at any depth are not the repository's own; code is skipped only from root folders and
+// node_modules, since a nested `build/` or `vendor/` is usually the repository's own code and must be checked.
+const NOT_OWN_DOCS = /(^|\/)(vendor|node_modules|dist|build|generated)\//;
+const NOT_OWN_CODE = /^(vendor|dist|build|generated)\/|(^|\/)node_modules\//;
 const LEGAL_DOC = /(^|\/)(LICENSE|COPYING|CLA|SECURITY|CODE_OF_CONDUCT)[^/]*$|exception[^/]*$/i;
 const GENERATED_PATH = /(^|\/)(bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|Gemfile\.lock|composer\.lock)$/;
 
@@ -20,7 +23,7 @@ export function isTestPath(path: string): boolean {
 }
 
 export function isDocPath(path: string): boolean {
-  return /\.mdx?$/i.test(path) && !FOREIGN_PATH.test(path) && !LEGAL_DOC.test(path);
+  return /\.mdx?$/i.test(path) && !NOT_OWN_DOCS.test(path) && !LEGAL_DOC.test(path);
 }
 
 // Contribution rules that apply to every pull request: the root's, then `.github/`'s, then `docs/`'s. An AGENTS.md or
@@ -36,9 +39,9 @@ export function contributionRuleRank(path: string): number | undefined {
   return rank === -1 ? undefined : rank;
 }
 
-/** Code the repository carries but does not write: vendored, installed or built. */
+/** Code the repository carries but does not write: vendored, built or generated at its root, or installed anywhere. */
 export function isForeignPath(path: string): boolean {
-  return FOREIGN_PATH.test(path);
+  return NOT_OWN_CODE.test(path);
 }
 
 export function isGeneratedPath(path: string): boolean {

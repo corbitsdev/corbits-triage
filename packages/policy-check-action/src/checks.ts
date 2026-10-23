@@ -1,4 +1,5 @@
 import { BUILT_IN_CHECK_NAMES, CATALOG_IDS, catalogCheckEnabled, classificationSources, isCatalogId, DEFAULT_REPO_POLICY, hardFailures, isModelCheck, parseCheckPack, stockTriggerMail, type CheckPack } from "@corbits/triage-contracts";
+import type { CheckResult } from "@corbits/triage-workflows/logic/checks";
 import type { Verdict } from "@corbits/triage-workflows/logic/render";
 import { PR_TRIAGE, recordingGithub, runLocalWorkflow, type Write } from "@corbits/triage-workflows/run-local";
 import type { WorkflowAuthorizeFn } from "@intx/workflow";
@@ -69,6 +70,10 @@ export function workflowCommand({ title, error, text }: Failure): string {
 }
 
 /** One table cell: on one line, with no `|` ending it early. */
+function matchesOf(check: CheckResult): string[] {
+  return check.evidence.filter((line) => !check.skipped?.includes(line));
+}
+
 function cell(value: string): string {
   return value.replaceAll(/\s+/g, " ").replaceAll("|", "\\|");
 }
@@ -101,7 +106,7 @@ export async function runChecks(policy: Record<string, unknown>, pr: PullRequest
   const hard = hardFailures(verdict.checks);
   const passed = checks.filter((check) => check.result === "pass").length;
   return {
-    failures: checks.filter((check) => check.result === "fail").map((check) => ({ title: check.check, error: hard.includes(check), text: [check.reason, ...check.evidence].join("\n") })),
+    failures: checks.filter((check) => check.result === "fail").map((check) => ({ title: check.check, error: hard.includes(check), text: [check.reason, ...matchesOf(check)].join("\n") })),
     summary: [
       "## Corbits Triage checks",
       "",

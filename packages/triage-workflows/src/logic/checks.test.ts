@@ -272,8 +272,19 @@ rules:
     expect(result.checks.find((check) => check.check === "no-ternaries")?.onFail).toBeUndefined();
   });
 
-  test("vendored and built code is not checked", () => {
-    expect(patterns([{ ...file, path: "vendor/lib/a.ts" }, { ...file, path: "dist/a.js" }], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass" });
+  test("only root vendored and built code is skipped, and named as skipped; the same folders nested are checked", () => {
+    const skipped = ["vendor/lib/a.ts: skipped as vendored, built or installed code", "dist/a.js: skipped as vendored, built or installed code"];
+    const rootOnly = patterns([{ ...file, path: "vendor/lib/a.ts" }, { ...file, path: "dist/a.js" }], {});
+    expect(rootOnly.checks.find((check) => check.check === "conventions")).toMatchObject({
+      result: "pass",
+      reason: "nothing checked: every changed file is vendored, built or installed code",
+      evidence: skipped,
+      skipped,
+    });
+    for (const path of ["src/build/a.ts", "scripts/build/deploy.ts", "src/vendor/a.ts", "apps/web/src/generated/x.ts"]) {
+      const nested = patterns([{ ...file, path }], { [path]: content });
+      expect(nested.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail" });
+    }
   });
 
   test("a file without its patch, as on Bitbucket Data Center, an unread content or a broken rule never passes", () => {
@@ -281,6 +292,8 @@ rules:
     expect(filesToRead([unpatched])).toEqual({ unread: "src/a.ts: its patch was not read in full" });
     expect(patterns([unpatched], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check" } });
     expect(patterns([file], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
+    const nested = patterns([{ ...file, path: "src/build/a.ts" }], {});
+    expect(nested.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
     expect(deriveState({ ...open, files: [file] }, undefined, readCheckPack(readPolicyFile(FILE, "acme/widgets"))).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
     const broken = readCheckPack({ ...emptyPack("acme/widgets"), custom: [{ id: "broken", name: "Broken", group: "pull-request", kind: "code-patterns", presets: [], patterns: [{ id: "bad", language: "typescript", message: "Bad.", rule: { kind: "no_such_kind" } }] }] });
     expect(patterns([file], { "src/a.ts": content }, broken).checks.find((check) => check.check === "broken")).toMatchObject({ result: "unconfirmed" });

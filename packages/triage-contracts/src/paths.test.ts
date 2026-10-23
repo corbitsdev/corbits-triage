@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isTestPath } from "./paths.ts";
+import { isForeignPath, isTestPath } from "./paths.ts";
 
 const TESTS = [
   "src/app.test.ts",
@@ -68,4 +68,11 @@ test.each(TESTS)("%s is a test", (path) => {
 
 test.each(NOT_TESTS)("%s is not a test", (path) => {
   expect(isTestPath(path)).toBe(false);
+});
+
+test("only root vendored, built or generated folders and installed code anywhere are foreign", () => {
+  const foreign = ["vendor/a.ts", "dist/a.js", "build/a.js", "generated/a.ts", "node_modules/x/a.js", "packages/web/node_modules/x/a.js"];
+  const own = ["src/build/a.ts", "scripts/build/deploy.ts", "src/vendor/a.ts", "apps/web/src/generated/x.ts", "builds/a.ts"];
+  expect(foreign.filter(isForeignPath)).toEqual(foreign);
+  expect(own.filter(isForeignPath)).toEqual([]);
 });

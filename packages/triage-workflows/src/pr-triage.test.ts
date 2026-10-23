@@ -298,12 +298,14 @@ describe("pr-triage body", () => {
   });
 
   test("a code-pattern rule reads the head's content and flags only what the pull request adds", async () => {
-    const files = [{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@\n const a = x ?? 0;\n+const b = y ?? 0;" }];
-    const contents = { "src/a.ts": `const a = x ?? 0;\nconst b = y ?? 0;\n${"\n".repeat(450)}` };
+    const patch = "@@ -1 +1,2 @@\n const a = x ?? 0;\n+const b = y ?? 0;";
+    const body = `const a = x ?? 0;\nconst b = y ?? 0;\n${"\n".repeat(450)}`;
+    const files = [{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch }, { filename: "src/build/b.ts", status: "modified", additions: 1, deletions: 0, patch }];
+    const contents = { "src/a.ts": body, "src/build/b.ts": body };
     const pack: CheckPack = { ...emptyPack(REPO), custom: [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }] };
     const { path, verdict } = await triage(pack, { files, contents });
     expect(path).toEqual(RULES_PATH);
-    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead."] });
+    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.", "src/build/b.ts:2 Invented fallback `?? 0`; handle the missing value instead."] });
     const unread = await triage(pack, { files });
     expect((unread.verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
   });
