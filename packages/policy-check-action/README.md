@@ -29,6 +29,23 @@ jobs:
 `github-token` defaults to the job's token. Locally, from here: `bun --conditions=intx-src src/main.ts <repository root> <owner/name>`;
 with `GITHUB_EVENT_NAME=pull_request`, `GITHUB_EVENT_PATH`, `GITHUB_API_URL`, `GITHUB_TOKEN` and `GITHUB_STEP_SUMMARY` set it also runs the rules.
 
+## Check locally
+
+```sh
+packages/policy-check-action/src/cli.ts check [--base <ref>]
+```
+
+Run inside any clone. It reads the policy from `<ref>` (default: origin's HEAD) and runs its rules that need no model
+through the pr-triage definition twice: on the commits since the merge base (**Committed**, what triage sees once
+pushed), then on those plus staged, unstaged and untracked changes (**Working tree**), unless there are none.
+Host reads are answered from local git, writes fail the run and are never sent, and no model is called. Skipped, besides
+model rules: ci-green, no-merge-conflicts, linked-issue, hidden-content, conventional-commits when its fields include the
+title, and text rules reading the title or description, which need the pull request on its host. Rules do not depend on
+the host, so it serves Bitbucket Data Center repositories as well.
+
+Exit codes follow **Committed**; a failure only in the working tree prints a warning. 1 when a rule whose failure means Fail fails, 2 when the policy cannot be read, extends another, or the change
+cannot be read, 0 otherwise.
+
 ## Test
 
 ```sh
