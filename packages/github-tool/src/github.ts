@@ -53,7 +53,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput, login: string) {
   if (pr.state !== "open") return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: NOT_OPEN };
   if (i.onHead !== undefined && i.onHead !== pr.head.sha) return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: HEAD_MOVED };
   // An empty comment means nothing is asked of the author, so an earlier one would be stale instructions.
-  if (i.comment === "") await deleteTriageComments(gh, repo, number);
+  if (i.comment === "") await deleteTriageComments(gh, repo, number, login);
   const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined }, login) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   const kept = new Set((i.keep ?? []).map(lowercase));
@@ -75,32 +75,33 @@ async function issueComments(gh: GithubFetch, repo: string, number: number): Pro
   return jsonAll<IssueCommentRow>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
 }
 
-function marked(comments: IssueCommentRow[]): MarkedRow[] {
-  return comments.filter((c): c is MarkedRow => c.user?.type === "Bot" && typeof c.body === "string" && isTriageComment(c.body));
+/** Only the App's own comments count, so a copied marker never decides what Triage edits or deletes. */
+function marked(comments: IssueCommentRow[], login: string): MarkedRow[] {
+  return comments.filter((c): c is MarkedRow => c.user?.login === login && typeof c.body === "string" && isTriageComment(c.body));
 }
 
 function markedComment(row: MarkedRow): MarkedComment {
   return { id: row.id, body: row.body, ...(row.updated_at && { updatedAt: row.updated_at }) };
 }
 
-async function deleteTriageComments(gh: GithubFetch, repo: string, number: number) {
-  for (const candidate of marked(await issueComments(gh, repo, number))) {
+async function deleteTriageComments(gh: GithubFetch, repo: string, number: number, login: string) {
+  for (const candidate of marked(await issueComments(gh, repo, number), login)) {
     const path = `/repos/${repo}/issues/comments/${candidate.id}`;
     const res = await gh(path, { method: "DELETE", headers: { accept: "application/vnd.github+json" } });
-    // Another App's marked comment is not ours to delete.
-    if (res.status === 403 || res.status === 404) continue;
+    // Already deleted.
+    if (res.status === 404) continue;
     if (!res.ok) throw new Error(`github DELETE ${path} -> ${res.status}`);
   }
 }
 
-/** An installation token can edit only its own App's comments, so a refused edit reads as undefined. */
+/** An edit of a comment already deleted reads as undefined. */
 function issueCommentHost(gh: GithubFetch, repo: string, number: number): CommentHost {
   return {
     async edit(id, body) {
       const path = `/repos/${repo}/issues/comments/${id}`;
       const edit = send("PATCH", { body });
       const res = await gh(path, { ...edit, headers: { accept: "application/vnd.github+json", ...edit.headers } });
-      if (res.status === 403 || res.status === 404) return undefined;
+      if (res.status === 404) return undefined;
       if (!res.ok) throw new Error(`github PATCH ${path} -> ${res.status}`);
       return (await res.json() as { id: number }).id;
     },
@@ -110,8 +111,9 @@ function issueCommentHost(gh: GithubFetch, repo: string, number: number): Commen
   };
 }
 
-export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput): Promise<WrittenComment> {
-  const current = marked(await issueComments(gh, input.repo, input.number)).filter((c) => !HTML_MARKERS.isSuperseded(c.body)).map(markedComment);
+/** `login` names the App's bot account, whose comments alone are edited. */
+export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput, login: string): Promise<WrittenComment> {
+  const current = marked(await issueComments(gh, input.repo, input.number), login).filter((c) => !HTML_MARKERS.isSuperseded(c.body)).map(markedComment);
   return upsertMarked(issueCommentHost(gh, input.repo, input.number), `${TRIAGE_COMMENT_MARKER}\n${input.body}`, current);
 }
 
@@ -133,11 +135,10 @@ async function changesSince(gh: GithubFetch, repo: string, branch: string | unde
   return { commits: compare.ahead_by, merged: merged.map((pr) => pr.number).sort((a, b) => a - b) };
 }
 
-/** Only the App's own comments are read, so a copied marker never decides what Triage writes. */
 async function writeTriageComment(gh: GithubFetch, input: TriageCommentInput & { header?: TriageHeader; branch: string | undefined }, login: string): Promise<WrittenComment> {
   const { repo, number, header, branch } = input;
-  if (!header) return upsertTriageComment(gh, input);
-  const own = marked(await issueComments(gh, repo, number)).filter((c) => c.user?.login === login).map(markedComment);
+  if (!header) return upsertTriageComment(gh, input, login);
+  const own = marked(await issueComments(gh, repo, number), login).map(markedComment);
   const host = { ...issueCommentHost(gh, repo, number), changesSince: (from: string, to: string) => changesSince(gh, repo, branch, from, to) };
   return writeHeadedComment(host, HTML_MARKERS, own, header, input.body);
 }

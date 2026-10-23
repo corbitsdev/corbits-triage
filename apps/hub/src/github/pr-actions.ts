@@ -99,7 +99,7 @@ async function runAction(gh: GithubFetch, login: string, body: Exclude<typeof Ac
     case "comment":
       return createIssueComment(gh, { repo, number, body: body.body });
     case "reply":
-      return upsertTriageComment(gh, { repo, number, body: body.body });
+      return upsertTriageComment(gh, { repo, number, body: body.body }, login);
     case "labels":
       return addLabels(gh, { repo, number, labels: body.labels });
     case "assign":
