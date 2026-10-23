@@ -323,7 +323,8 @@ test("workflow deploy refuses a package registry that is not the workspace's own
 }, 40_000);
 
 test("guards see the path the router matches, so an encoded path is refused as the plain one", async () => {
-  const origin = await startHub();
+  const output: string[] = [];
+  const origin = await startHub({}, temporaryDirectory(), output);
   const headers = await signedIn(origin);
   const tenantId = await createTenant(origin, headers);
   async function send(method: string, path: string, body: unknown) {
@@ -343,6 +344,7 @@ test("guards see the path the router matches, so an encoded path is refused as t
     expect(await send(method, encoded, body)).toEqual(refused);
   }
   expect(await send("GET", "/api/%E0%A4%A", undefined)).toEqual({ status: 400, body: { error: "bad_path" } });
+  expect(output.filter((line) => line.includes("/api/%E0%A4%A"))).toEqual([expect.stringContaining("400")]);
 }, 40_000);
 
 const REPO = "acme/widgets";

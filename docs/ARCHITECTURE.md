@@ -140,6 +140,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     the reset; earlier passes make no calls to that installation. A webhook
     whose pull request or CI cannot be read for the limit is not mailed; its
     head is left for the reconciler.
+  - **Request log**: the `/api/integrations/` routes, and requests the hub
+    refuses before routing (an undecodable path, an unverified account), log
+    method, path and status on the stock `hub.requests` category. The query
+    is never logged: the manifest callback's carries GitHub's one-time code.
+    A refused workflow deploy also logs `workflow_deploy_refused` with its
+    code and reason.
 - **Sidecars**: one per live deployment, started by the hub's
   `SidecarProvisioner`s. The local-process provisioner runs child processes
   on the hub's machine, restores them on boot and declines a placement while

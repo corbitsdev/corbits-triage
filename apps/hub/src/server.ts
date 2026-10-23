@@ -52,7 +52,7 @@ import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
-import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
+import { createIntegrationsApp, INTEGRATIONS_PREFIX, logRefusal } from "./integrations/app.js";
 import { createBitbucketCodeReviewSend } from "./bitbucket-datacenter/code-review-send.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { checkedBitbucketSpawner, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
@@ -943,7 +943,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     authorize: authorizePortal,
     workflows: [...TRIAGE_WORKFLOWS, ...PR_WORKFLOW_VARIANTS].map((workflow) => workflow.id),
   }),
-  workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
+  workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged, log: logJson }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview, inPrWorkflow }),
   codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, prWorkflowSources, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
@@ -980,7 +980,8 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   sessions: createSessions(composition.db),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them
-// through routeRequest before the stock logger.
+// through routeRequest, past the stock logger, which would log the callback's
+// one-time GitHub code in its query.
 composition.app.route("/", integrations);
 composition.app.route("/", providerHooks);
 
@@ -1004,7 +1005,7 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
   try {
     decodeURI(new URL(req.url).pathname);
   } catch {
-    return Response.json({ error: "bad_path" }, { status: 400 });
+    return logRefusal(req, Response.json({ error: "bad_path" }, { status: 400 }));
   }
   const path = getPath(req);
   if (servePortal && isPortalRequest(req, path)) return servePortal(req);
@@ -1027,9 +1028,9 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     return Response.json({ error: "unknown_hook" }, { status: 404 });
   }
   const unverified = await refuseUnverified(req, path);
-  if (unverified) return unverified;
-  // Intercept before the stock Hono logger: callback query values include the
-  // one-time GitHub code and must never enter request/access logs.
+  if (unverified) return logRefusal(req, unverified);
+  // The integrations app logs its requests by path alone: the callback's query
+  // carries the one-time GitHub code.
   if (path.startsWith(INTEGRATIONS_PREFIX)) return integrations.fetch(req);
   if (req.method === "PATCH") {
     const tenantMatch = /^\/api\/tenants\/([^/]+)$/.exec(path);

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrepareProvisionedWorkflowDeploymentArgs } from "@intx/hub-sessions";
+import { WorkflowProvisioningError } from "@intx/hub-sessions";
 import { createInMemoryGrantStore } from "@intx/authz";
 import { guardedApp } from "./integrations/test-app.js";
 import { createWorkflowDeploy, type WorkflowDeployDeps } from "./workflow-deploy.js";
@@ -32,6 +33,7 @@ function handler(calls: Calls, overrides: Partial<WorkflowDeployDeps> = {}) {
   return createWorkflowDeploy({
     db,
     onDeployed: async () => {},
+    log() {},
     allocation: {
       async prepareProvisionedDeployment(args) {
         calls.prepared.push(args);
@@ -60,6 +62,17 @@ describe("createWorkflowDeploy", () => {
       expect(res.status).toBe(status);
       expect(c.prepared).toHaveLength(prepared);
     }
+  });
+
+  test("logs why a deployment was refused", async () => {
+    const logged: Record<string, unknown>[] = [];
+    const refuse = handler(calls(), {
+      log: (line) => logged.push(line),
+      allocation: { async prepareProvisionedDeployment() { throw new WorkflowProvisioningError("no_capacity", "No sidecar can take this workflow."); } },
+    });
+    const res = await refuse(BODY, MEMBER);
+    expect(res.status).toBe(409);
+    expect(logged).toEqual([{ level: "warn", msg: "workflow_deploy_refused", tenantId: TENANT_ID, entry: BODY.entry, code: "no_capacity", reason: "No sidecar can take this workflow." }]);
   });
 
   test("deploys the registry tarball under the pin with the separate definition asset as the member", async () => {
