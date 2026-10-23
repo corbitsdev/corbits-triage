@@ -42,7 +42,15 @@ export type WorkflowDeployDeps = {
   allocation: Pick<WorkflowAllocationService, "prepareProvisionedDeployment">;
   /** After a deployment: the hub releases what the new one supersedes, such as the pre-host `pr-triage` deployment, and keeps the host deployments to the connected hosts. */
   onDeployed: (tenantId: string) => Promise<void>;
+  log: (entry: Record<string, unknown>) => void;
 };
+
+function refusal(err: unknown) {
+  if (err instanceof WorkflowDefinitionInvalidError) return { status: 409, code: "invalid_workflow", reason: err.message } as const;
+  if (err instanceof TenantConfigInvalidError) return { status: 409, code: "invalid_tenant_config", reason: "The tenant or an ancestor has invalid configuration" } as const;
+  if (err instanceof WorkflowProvisioningError) return { status: 409, code: err.code, reason: err.message } as const;
+  return { status: 502, code: "sidecar_unavailable", reason: err instanceof Error ? err.message : "Failed to deploy workflow" } as const;
+}
 
 export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
   function tenantAsset(tenantId: string, assetId: string, kind: "workflow" | "package-registry") {
@@ -80,10 +88,9 @@ export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
         deployContent: { systemPrompt: "" },
       });
     } catch (err) {
-      if (err instanceof WorkflowDefinitionInvalidError) return failure(409, "invalid_workflow", err.message);
-      if (err instanceof TenantConfigInvalidError) return failure(409, "invalid_tenant_config", "The tenant or an ancestor has invalid configuration");
-      if (err instanceof WorkflowProvisioningError) return failure(409, err.code, err.message);
-      return failure(502, "sidecar_unavailable", err instanceof Error ? err.message : "Failed to deploy workflow");
+      const refused = refusal(err);
+      deps.log({ level: "warn", msg: "workflow_deploy_refused", tenantId, entry: body.entry, code: refused.code, reason: refused.reason });
+      return failure(refused.status, refused.code, refused.reason);
     }
 
     const run = await deps.db.query.workflowRun.findFirst({

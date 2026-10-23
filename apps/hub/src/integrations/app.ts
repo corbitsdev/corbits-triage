@@ -6,6 +6,8 @@ import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import type { DB } from "@intx/db";
+import { getLogger } from "@intx/log";
+import { honoLogger, type HonoContext } from "@intx/log/hono";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
 import { AuditLog, AUTHOR_KINDS, BacklogStarted, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
@@ -204,8 +206,25 @@ function callerOf(c: Context<TenantEnv>): Caller {
   return { user: c.get("user")!, session: c.get("session")! };
 }
 
+const REQUEST_LOG = ["hub", "requests"];
+
+// The path alone: a query, such as the manifest callback's one-time GitHub code, never reaches the log.
+function requestLine(req: Request, status: number) {
+  return { method: req.method, url: new URL(req.url).pathname, status };
+}
+
+function respondedLine(c: HonoContext, responseTime: number) {
+  return { ...requestLine(c.req.raw, c.res.status), responseTime };
+}
+
+export function logRefusal(req: Request, res: Response): Response {
+  getLogger(REQUEST_LOG).info("{method} {url} {status}", requestLine(req, res.status));
+  return res;
+}
+
 export function createIntegrationsApp(guards: IntegrationGuards, handlers: IntegrationHandlers) {
   const app = new Hono<TenantEnv>();
+  app.use(honoLogger({ category: REQUEST_LOG, format: respondedLine }));
   const portalOnly = createMiddleware(async function portalOnly(c, next) {
     if (!fromPortal(c.req.raw, guards.trustedPortalOrigins)) return failure(403, "forbidden", "This request did not come from the portal.");
     await next();
