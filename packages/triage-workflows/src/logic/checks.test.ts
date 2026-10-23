@@ -231,6 +231,59 @@ describe("text rules", () => {
   });
 });
 
+describe("code patterns", () => {
+  const open: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success" };
+  const content = "const a = x ?? 0;\nconst b = y ?? 0;\nconst c = p ? 1 : q ? 2 : 3;\n";
+  const patch = "@@ -1,2 +1,3 @@\n const a = x ?? 0;\n-const b = 1;\n+const b = y ?? 0;\n+const c = p ? 1 : q ? 2 : 3;\n";
+  const file = { path: "src/a.ts", status: "modified", additions: 2, deletions: 1, patch };
+  const FILE = `onFail: ask
+rules:
+  - id: conventions
+    check: code-patterns
+    text: Follow our conventions.
+    reason: Review time.
+    evidence: [maintainer-stated]
+    presets: [convention]
+  - id: no-ternaries
+    check: code-patterns
+    text: No nested ternaries.
+    reason: Readability.
+    evidence: [maintainer-stated]
+    onFail: fail
+    presets: [convention]
+    patterns:
+      - id: nested-ternary
+        language: typescript
+        message: Our own nested ternary rule.
+        rule: { kind: ternary_expression, has: { field: alternative, kind: ternary_expression } }
+`;
+
+  function patterns(facts: Partial<PrFacts>) {
+    return deriveState({ ...open, files: [file], contents: { "src/a.ts": content }, ...facts }, undefined, readCheckPack(readPolicyFile(FILE, "acme/widgets")));
+  }
+
+  test("matches on added lines only, and a rule's own pattern wins over the preset's on a shared id", () => {
+    const result = patterns({});
+    expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({
+      result: "fail",
+      onFail: "ask",
+      evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.", "src/a.ts:3 Nested ternary; use if statements or a lookup."],
+    });
+    expect(result.checks.find((check) => check.check === "no-ternaries")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.", "src/a.ts:3 Our own nested ternary rule."] });
+    expect(result.checks.find((check) => check.check === "no-ternaries")?.onFail).toBeUndefined();
+  });
+
+  test("an unread file content or a broken rule never passes", () => {
+    expect(patterns({ contents: {} }).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check" } });
+    const broken = readCheckPack({ ...emptyPack("acme/widgets"), custom: [{ id: "broken", name: "Broken", group: "pull-request", kind: "code-patterns", presets: [], patterns: [{ id: "bad", language: "typescript", message: "Bad.", rule: { kind: "no_such_kind" } }] }] });
+    expect(deriveState({ ...open, files: [file], contents: { "src/a.ts": content } }, undefined, broken).checks.find((check) => check.check === "broken")).toMatchObject({ result: "unconfirmed" });
+  });
+
+  test("an unknown preset is refused", () => {
+    expect(() => readPolicyFile(FILE.replace("[convention]", "[nope]"), "acme/widgets")).toThrow();
+  });
+});
+
 describe("conventional commits", () => {
   const open: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success" };
   const RULE = "rules:\n  - check: conventional-commits\n    text: Conventional.\n    reason: History.\n    evidence: [maintainer-stated]\n";

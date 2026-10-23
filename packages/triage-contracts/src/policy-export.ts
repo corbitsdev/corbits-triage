@@ -78,6 +78,9 @@ function customRule(row: CustomCheck, unexpressed: string[]): Record<string, unk
   if (row.kind === "text") {
     return [written(row, row.id, { id: row.id, check: "text" }, row.text ?? row.name, { fields: row.fields, failWhen: row.failWhen, phrases: row.phrases })];
   }
+  if (row.kind === "code-patterns") {
+    return [written(row, row.id, { id: row.id, check: "code-patterns" }, row.text ?? row.name, { ...(row.presets.length > 0 && { presets: row.presets }), ...(row.patterns.length > 0 && { patterns: row.patterns }) })];
+  }
   if (row.shape === "is-true" && row.when === undefined && (row.scope ?? "pull-request") === "pull-request") {
     return [written(row, row.id, { id: row.id, check: "model" }, row.claim, {})];
   }
@@ -170,6 +173,7 @@ function customChecks(pack: CheckPack, row: CustomCheck | undefined): string | u
   if (!row || row.enabled === false) return undefined;
   const onFail = onFailText(pack, row.id);
   if (row.kind === "text") return canonical({ kind: row.kind, fields: row.fields, failWhen: row.failWhen, phrases: sorted(row.phrases), onFail });
+  if (row.kind === "code-patterns") return canonical({ kind: row.kind, presets: sorted(row.presets), patterns: row.patterns, onFail });
   return canonical({ kind: row.kind, shape: row.shape, ...modelAsks(row), onFail });
 }
 
