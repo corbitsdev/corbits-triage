@@ -8,6 +8,6 @@
     "typeRoots": ["../../node_modules/@types"],
     "customConditions": ["intx-src"]
   },
-  "include": ["entrypoints/background.ts", "src/**/*.test.ts", ".wxt/wxt.d.ts"],
+  "include": ["entrypoints/background.ts", "src/*.test.ts", ".wxt/wxt.d.ts"],
   "exclude": []
 }
