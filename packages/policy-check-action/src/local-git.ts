@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { CONVENTIONAL_FIELDS, NO_CHANGES_REQUESTED, NOT_A_DRAFT, POLICY_FILE_PATHS, type CheckPack } from "@corbits/triage-contracts";
 import type { Skipped } from "./checks.js";
 
@@ -21,6 +23,9 @@ export interface LocalChange {
   headSha: string;
   commits: string[];
   files: ChangedFile[];
+  /** Where each changed file's text is read: the working tree, or the head commit. */
+  root: string;
+  workingTree: boolean;
 }
 
 function run(root: string, args: string[], ok: readonly number[] = [0]): string {
@@ -120,7 +125,19 @@ export function readChange(root: string, base: string, workingTree: boolean): Lo
     headSha: run(root, ["rev-parse", "HEAD"]).trim(),
     commits: run(root, ["log", "--reverse", "--format=%B%x00", `${mergeBase}..HEAD`]).split("\0").map((message) => message.trim()).filter(Boolean),
     files: [...tracked, ...fresh],
+    root,
+    workingTree,
   };
+}
+
+/** A changed file's text as the change has it, or undefined when it has none. */
+function changedText(change: LocalChange, path: string): string | undefined {
+  if (!change.files.some((file) => file.filename === path && file.status !== "removed")) return undefined;
+  if (change.workingTree) {
+    const file = join(change.root, path);
+    return existsSync(file) ? readFileSync(file, "utf8") : undefined;
+  }
+  return run(change.root, ["show", `HEAD:${path}`]);
 }
 
 /** GitHub's reads for the local change, served as GitHub would answer them for a pull request from it. */
@@ -155,6 +172,11 @@ export function localGithub(change: LocalChange): (url: URL) => Promise<Response
       const perPage = Number(url.searchParams.get("per_page") ?? 30);
       const page = Number(url.searchParams.get("page") ?? 1);
       return Response.json(change.files.slice((page - 1) * perPage, page * perPage));
+    }
+    const contents = `${repo}/contents/`;
+    if (path.startsWith(contents) && url.searchParams.get("ref") === change.headSha) {
+      const text = changedText(change, path.slice(contents.length).split("/").map(decodeURIComponent).join("/"));
+      if (text !== undefined) return new Response(text);
     }
     return new Response(null, { status: 404 });
   };
