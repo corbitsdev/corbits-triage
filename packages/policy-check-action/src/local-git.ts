@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import { CONVENTIONAL_FIELDS, NO_CHANGES_REQUESTED, NOT_A_DRAFT, POLICY_FILE_PATHS, type CheckPack } from "@corbits/triage-contracts";
 import type { Skipped } from "./checks.js";
@@ -130,12 +130,14 @@ export function readChange(root: string, base: string, workingTree: boolean): Lo
   };
 }
 
-/** A changed file's text as the change has it, or undefined when it has none. */
+/** A changed file's text as the change has it, or undefined when it has none; a symlink's text is its target, as git keeps it. */
 function changedText(change: LocalChange, path: string): string | undefined {
   if (!change.files.some((file) => file.filename === path && file.status !== "removed")) return undefined;
   if (change.workingTree) {
     const file = join(change.root, path);
-    return existsSync(file) ? readFileSync(file, "utf8") : undefined;
+    const stat = lstatSync(file, { throwIfNoEntry: false });
+    if (!stat) return undefined;
+    return stat.isSymbolicLink() ? readlinkSync(file) : readFileSync(file, "utf8");
   }
   return run(change.root, ["show", `HEAD:${path}`]);
 }
