@@ -80,6 +80,10 @@ Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` a
 
 Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
+## Check a change locally
+
+`packages/policy-check-action/src/cli.ts check [--base <ref>]`, run inside any clone, runs the base branch's rules that need no model on the working tree's change through the pr-triage definition, reading only local git ([README](../packages/policy-check-action/README.md#check-locally)).
+
 ## Troubleshooting
 
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.

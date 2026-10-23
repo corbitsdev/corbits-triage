@@ -1,7 +1,7 @@
 import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { checkPolicyFile, notAFileReason, POLICY_FILE_PATHS, policyFileReason, type PolicyFileProblem } from "@corbits/triage-contracts";
-import { escapeData, escapeProperty, runChecks } from "./checks.js";
+import { escapeData, escapeProperty, runChecks, workflowCommand, type Skipped } from "./checks.js";
 
 function annotation(path: string, problem: PolicyFileProblem): string {
   const where = [`file=${escapeProperty(path)}`];
@@ -66,6 +66,11 @@ async function basePolicy(read: Read, repo: string, base: string): Promise<{ pat
   return undefined;
 }
 
+/** The job running the Action keeps its own check pending, so ci-green cannot be answered from inside it. */
+function ciPending(): Skipped[] {
+  return [{ id: "ci-green", why: "cannot be confirmed from inside CI" }];
+}
+
 type PullRequestEvent = { pull_request: { number: number; head: { sha: string }; base: { sha: string } } };
 
 async function checkPullRequest(repo: string): Promise<void> {
@@ -85,8 +90,8 @@ async function checkPullRequest(repo: string): Promise<void> {
     console.log(`${file.path} on the base branch extends another policy, which this Action does not read, so no rules ran.`);
     return;
   }
-  const report = await runChecks(checked.policy, { repo, number: pull.number, headSha: pull.head.sha }, read);
-  for (const line of report.annotations) console.log(line);
+  const report = await runChecks(checked.policy, { repo, number: pull.number, headSha: pull.head.sha }, read, ciPending);
+  for (const failure of report.failures) console.log(workflowCommand(failure));
   appendFileSync(env("GITHUB_STEP_SUMMARY"), `${report.summary.join("\n")}\n`);
   if (report.failed) process.exitCode = 1;
 }
