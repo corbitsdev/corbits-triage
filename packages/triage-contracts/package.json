@@ -16,9 +16,11 @@
     "@corbits/common": "workspace:*",
     "arktype": "catalog:",
     "htmlparser2": "10.1.0",
+    "picomatch": "4.0.7",
     "yaml": "2.9.1"
   },
   "devDependencies": {
-    "@intx/mime": "workspace:*"
+    "@intx/mime": "workspace:*",
+    "@types/picomatch": "4.0.3"
   }
 }

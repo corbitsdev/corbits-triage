@@ -287,6 +287,36 @@ rules:
     }
   });
 
+  test("a rule's files and ignores scope it as in ast-grep; the shipped fallbacks ignore test files", () => {
+    const testPath = "src/a.test.ts";
+    const inTest = patterns([{ ...file, path: testPath }], { [testPath]: content });
+    expect(inTest.checks.find((check) => check.check === "conventions")?.evidence).toEqual([`${testPath}:3 Nested ternary; use if statements or a lookup.`]);
+    function scoped(scope: string) {
+      return readPolicyFile(`rules:
+  - id: no-ternaries
+    check: code-patterns
+    text: No nested ternaries.
+    reason: Readability.
+    evidence: [maintainer-stated]
+    patterns:
+      - id: nested-ternary
+        language: typescript
+        message: Our own nested ternary rule.
+        ${scope}
+        rule: { kind: ternary_expression, has: { field: alternative, kind: ternary_expression } }
+`, "acme/widgets");
+    }
+    function result(scope: string, path: string) {
+      return patterns([{ ...file, path }], { [path]: content }, readCheckPack(scoped(scope))).checks.find((check) => check.check === "no-ternaries")?.result;
+    }
+    expect(result('files: ["src/*.ts"]', "src/deep/a.ts")).toBe("fail");
+    expect(result('files: ["src/*.ts"]', "lib/a.ts")).toBe("pass");
+    expect(result('ignores: ["*.test.ts"]', "src/a.test.ts")).toBe("pass");
+    expect(result('ignores: ["*.test.ts"]', "src/a.ts")).toBe("fail");
+    expect(() => scoped('ignores: ["src/[a"]')).toThrow('"src/[a"');
+    expect(() => scoped('ignores: ["src/[!a].ts"]')).toThrow('"src/[!a].ts": write a negated class as [^…]');
+  });
+
   test("a file without its patch, as on Bitbucket Data Center, an unread content or a broken rule never passes", () => {
     const unpatched = { path: "src/a.ts", status: "modified", additions: 0, deletions: 0 };
     expect(filesToRead([unpatched])).toEqual({ unread: "src/a.ts: its patch was not read in full" });

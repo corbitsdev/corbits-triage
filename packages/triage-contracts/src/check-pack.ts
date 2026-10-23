@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { asRecord, asRepo } from "@corbits/common";
 import { AUTHOR_ASSOCIATIONS, type AuthorAssociation } from "./repo-policy.js";
-import { PATTERN_LANGUAGES, PATTERN_PRESETS, type PatternRule } from "./code-patterns.js";
+import { compileGlob, PATTERN_LANGUAGES, PATTERN_PRESETS, type PatternRule } from "./code-patterns.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
 /** Version 2 holds steps, model-only custom rules and verdict labels; version 1 is read only when it held no actions. */
@@ -477,7 +477,7 @@ const CatalogCheckSchema = type({
 });
 
 export const CustomId = type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX);
-export const PatternRuleSchema = type({ "+": "reject", id: CustomId, language: type.enumerated(...PATTERN_LANGUAGES), message: Text, rule: "Record<string, unknown>" });
+export const PatternRuleSchema = type({ "+": "reject", id: CustomId, language: type.enumerated(...PATTERN_LANGUAGES), message: Text, rule: "Record<string, unknown>", "files?": "string[]", "ignores?": "string[]" });
 const CUSTOM_BASE = { ...NOTE, ...ON_FAIL_FIELDS, id: CustomId, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
 const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
@@ -830,12 +830,26 @@ function parseText(row: Record<string, unknown>, where: string): TextCheck {
   return { fields: TEXT_FIELDS.filter((field) => fields.has(field)), failWhen: oneOf(row.failWhen, TEXT_MATCHES, `${where} failWhen`), phrases: texts(row.phrases, `${where} phrases`) };
 }
 
+/** Refuses a glob ast-grep would refuse; kept out of the schema, which is published as JSON Schema. */
+function checkGlobs(globs: string[] | undefined, where: string): void {
+  if (globs === undefined) return;
+  for (const glob of globs) {
+    try {
+      compileGlob(glob);
+    } catch (error) {
+      throw new Error(`${where} glob ${JSON.stringify(glob)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 function parsePatterns(row: Record<string, unknown>, where: string): PatternsCheck {
   if (!Array.isArray(row.presets) || !Array.isArray(row.patterns)) throw new Error(`${where} presets and patterns must be lists.`);
   const presets = [...new Set(row.presets.map((id) => oneOf(id, Object.keys(PATTERN_PRESETS), `${where} presets`)))];
   const patterns = row.patterns.map(function pattern(raw: unknown, at: number): PatternRule {
     const parsed = PatternRuleSchema(raw);
     if (parsed instanceof type.errors) throw new Error(`${where} pattern ${at + 1}: ${parsed.summary}`);
+    checkGlobs(parsed.files, `${where} pattern ${at + 1}`);
+    checkGlobs(parsed.ignores, `${where} pattern ${at + 1}`);
     return parsed;
   });
   if (presets.length === 0 && patterns.length === 0) throw new Error(`${where} must list presets or patterns.`);
