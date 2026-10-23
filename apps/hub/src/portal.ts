@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { securityHeaders } from "../../web/src/security-headers.js";
+import { securityHeaders } from "@corbits/common/security-headers";
 
 const HUB_PATHS = ["/api/", "/status", "/openapi.json"];
 

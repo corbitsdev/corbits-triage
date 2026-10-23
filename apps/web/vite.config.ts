@@ -1,6 +1,6 @@
 import react from "@vitejs/plugin-react";
 import { defaultClientConditions, defineConfig } from "vite";
-import { contentSecurityPolicy, securityHeaders } from "./src/security-headers.ts";
+import { contentSecurityPolicy, securityHeaders } from "@corbits/common/security-headers";
 
 export default defineConfig(({ command }) => ({
   plugins: [

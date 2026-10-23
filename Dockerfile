@@ -36,7 +36,6 @@ CMD ["bun", "--conditions=intx-src", "apps/sidecar/src/index.ts"]
 
 # The hub runs local sidecars in this container, so it needs the code review's linter too.
 FROM app
-COPY --from=runtime /app/apps/web/src/security-headers.ts apps/web/src/security-headers.ts
 COPY --from=portal /app/apps/web/dist apps/web/dist
 RUN /usr/local/bin/oxlint --version
 ENV PORTAL_DIR=/app/apps/web/dist

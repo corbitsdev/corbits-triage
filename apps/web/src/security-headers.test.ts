@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
-import { SONNER_STYLE_HASHES } from "./security-headers.ts";
+import { SONNER_STYLE_HASHES } from "@corbits/common/security-headers";
 
 function styleHash(css: string): string {
   return `'sha256-${createHash("sha256").update(css).digest("base64")}'`;
