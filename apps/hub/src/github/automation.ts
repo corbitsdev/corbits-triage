@@ -1,14 +1,12 @@
 // Which Do kinds triage writes unattended on a repository is decided by the grants of the tenant's pr-triage system
 // role, evaluated by stock authz.
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { asRecord } from "@corbits/common";
+import { and, eq, sql } from "drizzle-orm";
 import { evaluateGrants } from "@intx/authz";
 import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { GrantRule } from "@intx/types/authz";
 import { ACTION_KINDS, DO_GRANT_ACTION, doResource, hostKinds, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { allowRole, type Tx } from "./admin-github-grant.js";
-import { patchCorbitsTriage, repoRecords, sourceOf, triageNs, type CorbitsTriageNs, type RepoRecord } from "./tenant-config.js";
 
 export type AutomationDeps = { db: DB["db"]; now: () => Date };
 
@@ -36,18 +34,6 @@ export async function grantEnabledKinds(tx: Tx, tenantId: string, repo: string, 
   for (const kind of hostKinds(source).filter((held) => ENABLED_KINDS.includes(held))) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);
 }
 
-function postingMode(record: Record<string, unknown>): unknown {
-  return record.cleanupMode ?? asRecord(record.policy)?.cleanupMode;
-}
-
-function stripPostingMode(record: Record<string, unknown>): Record<string, unknown> {
-  const { cleanupMode: _cleanupMode, ...rest } = record;
-  const policy = asRecord(rest.policy);
-  if (!policy) return rest;
-  const { cleanupMode: _nested, ...nested } = policy;
-  return { ...rest, policy: nested };
-}
-
 export function createAutomation(deps: AutomationDeps) {
   async function automaticKinds(tenantId: string, repo: string): Promise<ActionKind[]> {
     const roleId = (await findRole(deps.db, tenantId)) ?? (await deps.db.transaction((tx) => ensureTriageRole(tx, tenantId, deps.now())));
@@ -60,45 +46,5 @@ export function createAutomation(deps: AutomationDeps) {
     return kinds;
   }
 
-  /**
-   * Creates the role, and turns each repository's stored posting mode into grants: an automated one's role is granted
-   * the enabled kinds its host can write. The mode is then dropped from the record, in the same transaction, so this runs once.
-   */
-  function carryPostingMode(tenantId: string) {
-    return async function carry(ns: CorbitsTriageNs, tx: Tx): Promise<CorbitsTriageNs | undefined> {
-      await ensureTriageRole(tx, tenantId, deps.now());
-      const records = repoRecords(ns) as Array<RepoRecord & Record<string, unknown>>;
-      if (records.every((record) => postingMode(record) === undefined)) return undefined;
-      for (const record of records) {
-        if (postingMode(record) === "automated") await grantEnabledKinds(tx, tenantId, record.name, sourceOf(record), deps.now());
-      }
-      return { ...ns, repos: ns.repos?.map((row) => (records.includes(row) ? (stripPostingMode(row) as RepoRecord) : row)) };
-    };
-  }
-
-  /** Bitbucket repositories enabled before their host's kinds were known hold labels grants; a GitHub repository of the same name keeps its own. */
-  async function dropHostlessGrants(tenantId: string, roleId: string, records: RepoRecord[]): Promise<void> {
-    const github = new Set(records.filter((record) => sourceOf(record) === "github").map((record) => record.name.toLowerCase()));
-    const resources = records
-      .filter((record) => sourceOf(record) !== "github" && !github.has(record.name.toLowerCase()))
-      .flatMap((record) => ACTION_KINDS.filter((kind) => !hostKinds(sourceOf(record)).includes(kind)).map((kind) => doResource(kind, record.name)));
-    if (resources.length === 0) return;
-    const { grant } = schema;
-    await deps.db.delete(grant).where(and(eq(grant.tenantId, tenantId), eq(grant.roleId, roleId), inArray(grant.resource, resources)));
-  }
-
-  /** Locks only the tenants with something to carry; locking every workspace made a start grow with their number. A role created here holds only its host's kinds, so it has nothing to drop. */
-  async function startUp(): Promise<void> {
-    const { role, tenant } = schema;
-    const tenants = await deps.db.select({ id: tenant.id, config: tenant.config, roleId: role.id })
-      .from(tenant)
-      .leftJoin(role, and(eq(role.tenantId, tenant.id), eq(role.name, TRIAGE_ROLE), eq(role.isSystem, true)));
-    for (const { id, config, roleId } of tenants) {
-      const records = repoRecords(triageNs(config)) as Array<RepoRecord & Record<string, unknown>>;
-      if (roleId === null || records.some((record) => postingMode(record) !== undefined)) await patchCorbitsTriage(deps.db, id, carryPostingMode(id));
-      if (roleId !== null) await dropHostlessGrants(id, roleId, records);
-    }
-  }
-
-  return { automaticKinds, startUp };
+  return { automaticKinds };
 }

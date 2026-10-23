@@ -12,10 +12,10 @@
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
-import { createDB, createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
+import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getPath } from "hono/utils/url";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import {
@@ -26,7 +26,6 @@ import {
 import {
   createArtifactRoutes,
   InlineContentStore,
-  runArtifactMigrations,
 } from "@corbits/artifacts";
 import {
   createCronRoutes,
@@ -34,11 +33,10 @@ import {
   createRunTriggerCronDeliver,
   type CronTicker,
 } from "@corbits/cron";
-import { runCronMigrations } from "@corbits/cron/migrations";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
-import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
+import { createArtifactGrants } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
@@ -66,7 +64,8 @@ import { createCodeReviewFeed, createPullRequestReader } from "./code-review-fee
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
-import { HOOK_MOUNT_PATH, migrateWebhooks } from "./hooks.js";
+import { HOOK_MOUNT_PATH } from "./hooks.js";
+import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
 import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
 import { appKeyProviderWriteRefusal, appKeyWriteRefusal, githubTenants, moveAppKey } from "./github/app-key.js";
@@ -87,7 +86,6 @@ import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { createSessions } from "./sessions.js";
 import { createVerifiedGate } from "./verified-gate.js";
 import { createHubOwner } from "./hub-owner.js";
-import { migrateTriageTables } from "./triage-db.js";
 import { createTriageStats } from "./github/triage-stats.js";
 import { createHostReads, createOutcomeReader } from "./github/pr-outcomes.js";
 import { createTriageTimeline } from "./github/triage-timeline.js";
@@ -112,7 +110,7 @@ import { createSettledStatusReader, createTriageRuns } from "./github/triage-run
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { failHead, markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs, type RepoRecord } from "./github/tenant-config.js";
+import { prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead } from "@corbits/github-tool";
@@ -172,30 +170,7 @@ const env = loadHubEnv(process.env);
 const database = databaseConfig(env);
 const githubOrigin = githubApiOrigin(env);
 
-async function appliedMigrations(): Promise<number> {
-  const { db, close } = createDB(database);
-  try {
-    const [{ table }] = await db.execute<{ table: string | null }>(sql`select to_regclass('drizzle.__drizzle_migrations')::text as table`);
-    if (table === null) return 0;
-    const [{ applied }] = await db.execute<{ applied: number }>(sql`select count(*)::int as applied from drizzle.__drizzle_migrations`);
-    return applied;
-  } finally {
-    await close();
-  }
-}
-
-const { entries: migrations } = await Bun.file(`${V}/packages/db/migrations/meta/_journal.json`).json();
-if ((await appliedMigrations()) < migrations.length) {
-  throw new Error("Database is not migrated: run `bun run db:migrate` before starting the hub.");
-}
-await migrateWebhooks(database, logJson);
-{
-  const { schema = "public", statementTimeoutMs: _, ...connection } = database;
-  await runArtifactMigrations(connection, { schema });
-  logJson({ level: "info", msg: "artifact_migrations_applied" });
-  await runCronMigrations(connection, { schema });
-  logJson({ level: "info", msg: "cron_migrations_applied" });
-}
+await assertMigrated(database);
 
 const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
@@ -394,11 +369,7 @@ cronTicker = createCronTicker({
   onDeliveryError: function logCronDeliveryError(error, schedule) { logJson({ level: "warn", msg: "cron_delivery_failed", scheduleId: schedule.id, tenantId: schedule.tenantId, error: String(error) }); },
 });
 cronTicker.start();
-await migrateRepoEnabledFlag(composition.db);
-await migrateTriageTables(composition.db, database.schema ?? "public");
 const automation = createAutomation({ db: composition.db, now });
-await automation.startUp();
-await grantAdminsPolicyWrites(composition.db, now, logJson);
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
