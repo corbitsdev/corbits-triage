@@ -341,11 +341,13 @@ test("the scope runs for any group the author is in, on the verdicts and paths t
 test("in doubt the scope never opens: what it cannot read leaves the review incomplete", () => {
   expect(scope({ ...ON, triage: "pass" }, JUDGED)).toMatchObject({ open: false, outcome: "incomplete" });
   expect(scope({ ...ON, for: ["core"] }, judged({ author: "octocat" }))).toEqual({ open: false, outcome: "incomplete", reason: "triage could not tell the author's groups" });
-  const degraded = { evaluate: { output: { verdict: "unsure", checks: [] } }, facts: { output: { items: [{ error: "not found" }] } } };
+  const degraded = { evaluate: { output: { verdict: "unsure", degraded: "error", checks: [] } }, facts: { output: { items: [{ error: "not found" }] } } };
   const truncated = judged({ ...MEMBER, changedFiles: 3001 }, [{ path: "README.md" }]);
   expect(scope({ ...ON, paths: ["!*.md"] }, truncated)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
-  expect(scope({ ...ON, paths: ["!*.md"] }, degraded)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
-  expect(scope({ ...ON, paths: ["*.go"] }, degraded)).toEqual({ open: false, outcome: "incomplete", reason: "triage could not read the changed files" });
+  const unread = { open: false, outcome: "incomplete", reason: "triage could not read the pull request" } as const;
+  expect(scope({ ...ON, triage: ["unsure"] }, degraded)).toEqual(unread);
+  expect(scope({ ...ON, triage: ["unsure"], rules: "any" }, degraded)).toEqual(unread);
+  expect(scope({ ...ON, for: ["core"] }, { ...judged({ author: "SAY-5", authorKind: "FIRST_TIME_CONTRIBUTOR" }), evaluate: degraded.evaluate })).toEqual(unread);
 });
 
 /** The fixture's pack with CI required to pass. */

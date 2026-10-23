@@ -401,9 +401,10 @@ Once triage has decided, `codeReview_scope` reads the trigger request's
 folders, and the block's optional `clean`) and `codeReviewRequest`, triage's
 verdict, the changed files and, unless `for` holds `everyone`, the author's
 groups from the pack's `groups` and triage's facts. Whatever the scope cannot
-read leaves the review incomplete. Under `rules: pass`, the hub's default
-unless the block's `when.rules` is `any`, `rulesGate` in `triage-contracts`
-keeps the review shut unless every policy rule in the verdict's `checks` read
+read leaves the review incomplete, as does a degraded verdict. Under
+`rules: pass`, the hub's default unless the block's `when.rules` is `any`,
+`rulesGate` in `triage-contracts` keeps the review shut unless every policy rule
+in the verdict's `checks` read
 without a model whose failure fails the pull request passed (`hardFailures`,
 shared with triage), CI only through `ci-green` and never the built-in
 `not-a-draft` or `no-changes-requested`:

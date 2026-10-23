@@ -54,6 +54,11 @@ function checksOf(steps: Steps): unknown {
   return isRecord(verdict) ? verdict.checks : undefined;
 }
 
+function degradedOf(steps: Steps): boolean {
+  const verdict = verdictOutput(steps);
+  return isRecord(verdict) && verdict.degraded !== undefined && verdict.degraded !== null;
+}
+
 /** The one pull request's facts; undefined when facts could not read it. */
 function factsOf(steps: Steps): Record<string, unknown> | undefined {
   const facts = settled(steps, "facts");
@@ -102,6 +107,7 @@ export function scopeOf(trigger: unknown, steps: Steps): Scope {
   const { codeReview, codeReviewRequest, pack } = parsed;
   if (!codeReview.on) return skipped("code review is off");
   if (!codeReviewRequest) return incomplete("code review is on but the trigger carries no review request");
+  if (degradedOf(steps)) return incomplete("triage could not read the pull request");
   if (!codeReview.for.includes(EVERYONE)) {
     const groups = authorGroups(steps, pack.groups ?? {});
     if (groups === undefined) return incomplete("triage could not tell the author's groups");
