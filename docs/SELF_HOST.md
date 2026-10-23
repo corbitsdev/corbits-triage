@@ -34,9 +34,19 @@ process of its own (about 1 GiB at peak).
 
 ## Run it
 
+### Migrations
+
+The image has two commands: `bun run db:migrate`, which applies the database
+migrations to `DATABASE_URL`, and the hub's normal start. The hub never
+migrates on start and refuses to start until the database is migrated, so
+run `bun run db:migrate` once before starting or
+upgrading the hub: as the host's pre-deploy or release step, or as a one-off
+run of the same image with the same `DATABASE_URL`.
+
 ### Docker Compose
 
-`compose.yml` runs Postgres and the hub at `http://localhost:3000`. In `.env`
+`compose.yml` runs Postgres, a `migrate` service for the
+[migrations](#migrations), and then the hub at `http://localhost:3000`. In `.env`
 set only the four secrets; compose sets `DATABASE_URL`, `HUB_DATA_DIR`, `PORT`
 and `BETTER_AUTH_BASE_URL`, and applies the [database role](#database-role)
 setting.
@@ -72,6 +82,8 @@ them from a public repository: this one or your public fork. With the
 
 3. Add the hub service from GitHub. It builds the root `Dockerfile` and
    deploys at once; that first deploy fails until step 5 sets the variables.
+   Run the [migrations](#migrations) as its Pre-deploy Command
+   (Settings → Deploy): `bun run db:migrate`.
 
    ```sh
    railway add --service hub --repo <owner>/corbits-triage --branch main
@@ -113,7 +125,8 @@ The hub is ready when its deploy logs show `Started server`.
 
 A Postgres instance and one Docker web service from this repository, with a
 disk at `/data`. Variables as on Railway, without
-`RAILWAY_DEPLOYMENT_DRAINING_SECONDS`. Render sets no `RAILWAY_GIT_*`, so
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS`, and the [migrations](#migrations) as
+the pre-deploy command. Render sets no `RAILWAY_GIT_*`, so
 Railway Sandboxes need them set by hand.
 
 ### Any other host
@@ -121,10 +134,11 @@ Railway Sandboxes need them set by hand.
 1. Provision Postgres. Add `?sslmode=require` to its URL when it is reached
    over the public internet.
 2. Set the [required variables](#required) and any optional ones.
-3. Give the platform a drain time longer than `HUB_SIDECAR_STOP_TIMEOUT_MS`
+3. Run the [migrations](#migrations) before each start or upgrade.
+4. Give the platform a drain time longer than `HUB_SIDECAR_STOP_TIMEOUT_MS`
    (default 25 seconds); sidecars stop in parallel, so shutdown takes about
    one timeout.
-4. Terminate TLS in front of the hub.
+5. Terminate TLS in front of the hub.
 
 ### Database role
 
@@ -352,8 +366,8 @@ then shows **Docker on this machine** ready. Or set `DOCKER_HOST` in `.env` to
 
 ## Upgrading
 
-Pull the new version, rebuild the image and redeploy. The hub runs its
-migrations on every start.
+Pull the new version, rebuild the image, run the [migrations](#migrations)
+and redeploy; the hub does not start until they have run.
 
 - **Open the portal as an owner right after upgrading to the build that keeps
   the GitHub App key on the server.** Opening it deploys the new workflows.

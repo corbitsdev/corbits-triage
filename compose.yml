@@ -11,8 +11,16 @@ services:
       test: ["CMD", "pg_isready", "-U", "interchange"]
       interval: 2s
     restart: unless-stopped
+  migrate:
+    build: .
+    image: corbits-triage-hub
+    environment:
+      DATABASE_URL: postgres://interchange:interchange@postgres:5432/interchange
+    command: ["bun", "run", "db:migrate"]
+    depends_on: { postgres: { condition: service_healthy } }
   hub:
     build: .
+    image: corbits-triage-hub
     env_file: .env
     environment:
       DATABASE_URL: postgres://interchange:interchange@postgres:5432/interchange
@@ -21,7 +29,7 @@ services:
       BETTER_AUTH_BASE_URL: http://localhost:3000
     volumes: [hub-data:/data]
     ports: ["3000:3000"]
-    depends_on: { postgres: { condition: service_healthy } }
+    depends_on: { migrate: { condition: service_completed_successfully } }
     restart: unless-stopped
 volumes:
   postgres:

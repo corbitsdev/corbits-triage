@@ -627,6 +627,11 @@ read it, and passes the rest of the request to stock.
   file and its blob. A push or merge to the shared repository refreshes its
   cache entry, so no dependent is tracked. A Bitbucket repository that is not
   enabled has no triage webhook, so its file is kept for a minute instead.
+- Interchange's tables are migrated by stock `drizzle-kit migrate`, run by
+  `bun run db:migrate` (`apps/hub/src/migrate.ts`) as its own step before the
+  hub starts: `bun run dev`, Compose's `migrate` service, or whatever the
+  operator runs as a pre-deploy step. The hub refuses to start while fewer
+  migrations are applied than the vendored journal lists.
 - Triage's tables, in the `corbits_triage` schema: `verdict` (verdicts per
   head, with the outcomes of the actions their run executed) and
   `device_code` (better-auth's device authorization, for agents a signed-in

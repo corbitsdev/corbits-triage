@@ -103,8 +103,9 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 
 | Command | Does |
 | --- | --- |
-| `bun run dev` | Hub and portal with prefixed logs (`tooling/dev.ts`). |
-| `bun run hub` | Hub only. |
+| `bun run dev` | Database migrations, then hub and portal with prefixed logs (`tooling/dev.ts`). |
+| `bun run db:migrate` | Apply Interchange's database migrations to `DATABASE_URL`; run before the hub starts. |
+| `bun run hub` | Hub only; does not migrate. |
 | `bun run check` | Typecheck tooling, portal, extension, hub, packages and `e2e/`, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run lint` | oxlint. |

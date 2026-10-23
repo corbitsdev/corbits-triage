@@ -14,12 +14,16 @@ bun install
 
 ## 2. Database
 
-Create an empty database; the hub migrates it on boot.
+Create an empty database whose role has a password: the migration tool refuses a `DATABASE_URL` without one (`Please provide required params for Postgres driver: [x] password: ''`).
 
 ```sh
+docker run -d --name corbits-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=interchange -p 5432:5432 pgvector/pgvector:pg16
+# or, on a Homebrew Postgres:
 createdb interchange
-# or: docker run -d --name corbits-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=interchange -p 5432:5432 pgvector/pgvector:pg16
+psql -d interchange -c "create role postgres login superuser password 'postgres'"
 ```
+
+Either gives the `DATABASE_URL` in `.env.example`, `postgres://postgres:postgres@localhost:5432/interchange`, which the hub tests also use.
 
 ## 3. Environment
 
@@ -34,6 +38,8 @@ Set the four secrets to different `openssl rand -hex 32` values and set `DATABAS
 ```sh
 bun run dev
 ```
+
+It first applies the database migrations (`bun run db:migrate`), then starts both services; the hub itself never migrates.
 
 Hub on http://localhost:3000, portal on http://localhost:5173 (it proxies `/api` to the hub and bundles the workflows on start). Restart after changing `apps/hub` or `packages/`; only the portal hot-reloads.
 

@@ -87,6 +87,10 @@ beforeAll(async () => {
   } finally {
     await admin.close();
   }
+  await Bun.$`${process.execPath} --conditions=intx-src apps/hub/src/migrate.ts`
+    .cwd(ROOT)
+    .env({ PATH: CHILD_PATH, HOME: homedir(), DATABASE_URL: TEST_DATABASE_URL })
+    .quiet();
 });
 
 afterAll(async () => {
@@ -210,6 +214,36 @@ async function createAsset(origin: string, headers: Record<string, string>, tena
   expect(asset.status).toBe(201);
   return type({ id: "string" }).assert(await asset.json()).id;
 }
+
+test("a hub refuses to start on a database that is not migrated", async () => {
+  const unmigrated = `corbits_unmigrated_${randomBytes(6).toString("hex")}`;
+  const admin = createDB(TEST_DB);
+  try {
+    await admin.db.execute(sql.raw(`create database ${unmigrated}`));
+    const child = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
+      cwd: ROOT,
+      env: {
+        PATH: CHILD_PATH,
+        HOME: homedir(),
+        ...TEST_SECRETS,
+        DATABASE_URL: `postgres://postgres:postgres@localhost:5432/${unmigrated}`,
+        HUB_DATA_DIR: temporaryDirectory(),
+        PORT: String(reservePort()),
+        BETTER_AUTH_BASE_URL: "http://127.0.0.1:3000",
+      },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    processes.push(child);
+    const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Database is not migrated: run `bun run db:migrate` before starting the hub.");
+  } finally {
+    await admin.db.execute(sql.raw(`drop database if exists ${unmigrated} with (force)`));
+    await admin.close();
+  }
+}, 40_000);
 
 test("composed hub upgrades the sidecar websocket", async () => {
   const origin = await startHub();

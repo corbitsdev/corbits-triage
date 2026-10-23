@@ -25,7 +25,8 @@
     "tar": "7.5.22"
   },
   "scripts": {
-    "dev": "bun --conditions=intx-src tooling/dev.ts",
+    "dev": "bun run db:migrate && bun --conditions=intx-src tooling/dev.ts",
+    "db:migrate": "bun --conditions=intx-src apps/hub/src/migrate.ts",
     "test": "bun --conditions=intx-src test --path-ignore-patterns='**/*.dom.test.tsx' ./apps/ ./packages/ ./tooling/ && bun --conditions=intx-src test --preload ./apps/web/src/lib/dom-preload.ts .dom.test",
     "check": "bun tooling/exact-deps-check.ts && tsc --noEmit -p tooling && tsc -b apps/web && tsc --noEmit -p apps/extension && tsc --noEmit -p apps/extension/tsconfig.background.json && tsc --noEmit -p apps/extension/e2e && tsc --noEmit -p apps/hub && tsc --noEmit -p packages/triage-workflows && tsc --noEmit -p packages/pr-code-review && tsc --noEmit -p packages/pr-code-review-anthropic && tsc --noEmit -p packages/pr-workflow-anthropic && tsc --noEmit -p packages/provisioner-test && tsc --noEmit -p packages/provisioner-template && tsc --noEmit -p packages/provisioner-docker && tsc --noEmit -p packages/provisioner-e2b && tsc --noEmit -p packages/provisioner-railway && tsc --noEmit -p packages/policy-check-action && tsc --noEmit -p e2e && bun build --conditions=intx-src --external @ast-grep/napi apps/hub/src/server.ts --target bun --outfile /dev/null",
     "lint": "oxlint",

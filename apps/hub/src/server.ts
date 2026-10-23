@@ -12,10 +12,10 @@
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
-import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
+import { createDB, createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getPath } from "hono/utils/url";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import {
@@ -65,7 +65,7 @@ import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, 
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
 import { createGithubTokenRenewal, GITHUB_TOKEN_RENEW_MS } from "./github/installation-token.js";
@@ -172,8 +172,22 @@ const env = loadHubEnv(process.env);
 const database = databaseConfig(env);
 const githubOrigin = githubApiOrigin(env);
 
-await Bun.$`bunx drizzle-kit migrate`.cwd(`${V}/packages/db`).env({ ...childProcessEnv(env), ...migrationEnv(database) }).quiet();
-logJson({ level: "info", msg: "migrations_applied" });
+async function appliedMigrations(): Promise<number> {
+  const { db, close } = createDB(database);
+  try {
+    const [{ table }] = await db.execute<{ table: string | null }>(sql`select to_regclass('drizzle.__drizzle_migrations')::text as table`);
+    if (table === null) return 0;
+    const [{ applied }] = await db.execute<{ applied: number }>(sql`select count(*)::int as applied from drizzle.__drizzle_migrations`);
+    return applied;
+  } finally {
+    await close();
+  }
+}
+
+const { entries: migrations } = await Bun.file(`${V}/packages/db/migrations/meta/_journal.json`).json();
+if ((await appliedMigrations()) < migrations.length) {
+  throw new Error("Database is not migrated: run `bun run db:migrate` before starting the hub.");
+}
 await migrateWebhooks(database, logJson);
 {
   const { schema = "public", statementTimeoutMs: _, ...connection } = database;
