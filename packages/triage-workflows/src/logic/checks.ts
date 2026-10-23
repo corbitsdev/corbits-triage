@@ -24,6 +24,7 @@ import {
   type CheckPack,
   type ConventionalField,
   type IssueTracker,
+  type RepoSource,
   type SizeRuleId,
   type TextCustomCheck,
   type TriageEvent,
@@ -95,7 +96,12 @@ export interface PrFacts {
   fixes?: Record<string, number | null>;
   /** Each code-patterns rule's matches on the added lines, by rule id; matched where the files were read. */
   patterns?: Record<string, PatternsResult>;
+  /** Read only when the ticket-goals rule is on: the linked issue's goals, or why it can't be read. */
+  ticket?: Ticket;
 }
+
+export type TicketIssue = { issue: string; title: string; goals: string[] };
+export type Ticket = TicketIssue | { problem: string };
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
 export const REVIEW_ANSWERED_REASON = "a reviewer requested changes; the author has responded";
@@ -211,6 +217,26 @@ export function issueReference(facts: Pick<PrFacts, "title" | "body" | "commits"
     if (inBranch) return inBranch[1].toUpperCase();
   }
   return null;
+}
+
+// GitHub's closing keywords, before `#N`, `owner/repo#N` or an issue link.
+const CLOSING_REF = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+(?:([\w.-]+\/[\w.-]+)#|https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/|#)(\d+)\b/gi;
+/** The most references read looking for the linked issue. */
+const MAX_TICKET_REFS = 5;
+
+export type TicketTarget = { numbers: number[] } | { problem: string };
+
+/**
+ * The numbers the ticket-goals rule reads, in order, looking for the issue the pull request closes: only references after
+ * Closes, Fixes or Resolves, in this repository.
+ */
+export function ticketTarget(facts: Pick<PrFacts, "repo" | "title" | "body" | "commits">, source: RepoSource): TicketTarget {
+  if (source !== "github") return { problem: "linked issues can't be read on Bitbucket Data Center" };
+  const refs = [...[facts.title, facts.body, ...facts.commits].join("\n").matchAll(CLOSING_REF)].map((match) => ({ repo: match[1] ?? match[2] ?? facts.repo, number: Number(match[3]) }));
+  const numbers = [...new Set(refs.filter((ref) => ref.repo.toLowerCase() === facts.repo.toLowerCase()).map((ref) => ref.number))].slice(0, MAX_TICKET_REFS);
+  if (numbers.length > 0) return { numbers };
+  if (refs[0]) return { problem: `linked issue ${refs[0].repo}#${refs[0].number} is in another repository` };
+  return { problem: "pull request does not close an issue" };
 }
 
 const EXCERPT_MAX = 120;

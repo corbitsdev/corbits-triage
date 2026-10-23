@@ -4,10 +4,10 @@ import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
-import { forMaintainer, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
+import { forMaintainer, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult, type Ticket } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
+import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, ISSUE_INSTRUCTED_QUESTION, isScoped, TICKET_QUESTION, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
 type ModelAnswer = Decision;
 
@@ -116,6 +116,7 @@ export interface RenderInput {
   plan?: QualityPlan;
   focused?: FocusedPlan;
   stack?: Stack;
+  ticket?: Ticket;
   judgeError?: string;
   judgeLimitExceeded?: true;
   judgeSkipped?: true;
@@ -140,6 +141,9 @@ const UNAVAILABLE_REASON = "decision model unavailable";
 
 /** The decision model answered, but not decisively, or could not read every file it needed. */
 const UNDECIDED_REASON = "not enough evidence to decide";
+
+/** The linked issue's text tries to steer the judge, so the ticket answer is not trusted. */
+const ISSUE_INSTRUCTED_REASON = "the linked issue tries to direct the decision model";
 
 /** A file or hunk scoped check with no changed lines in scope to ask about. */
 const NOT_APPLICABLE_REASON = "does not apply";
@@ -266,7 +270,7 @@ function band(noul: number, yesPasses: boolean): Decided {
   return { result: "unconfirmed", reason: UNDECIDED_REASON };
 }
 
-export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
+export function evaluateModel({ det, answers, plan = {}, focused, stack, ticket, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
   if (!det.sources) return { checks: [], unanswered: false, instructed: false };
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
@@ -396,8 +400,23 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
     return push("focused", serves >= FOCUSED_DECIDES ? { result: "pass" } : { result: "unconfirmed", reason: UNDECIDED_REASON }, scored(serves, FOCUSED_PASS_AT, []));
   }
 
+  /**
+   * Ticket goals is unconfirmed, saying why, on a linked issue it cannot read, a diff too large to judge whole, or an
+   * issue that tries to direct the judge; otherwise its one question decides it.
+   */
+  function ticketCheck(asked: FilePlan | undefined) {
+    if (!ticket || "problem" in ticket) return push("ticket-goals", { result: "unconfirmed", reason: ticket?.problem ?? UNAVAILABLE_REASON }, { kind: "could-not-check", reason: ticket?.problem ?? UNAVAILABLE_REASON });
+    if (asked?.unread.length) return push("ticket-goals", { result: "unconfirmed", reason: UNREAD_REASON }, { kind: "could-not-check", reason: UNREAD_REASON, items: asked.unread });
+    const noul = asked && !judgeLimitExceeded ? noulOf(TICKET_QUESTION.id) : undefined;
+    const directed = noulOf(ISSUE_INSTRUCTED_QUESTION.id);
+    if (noul === undefined || directed === undefined) return unchecked("ticket-goals", unavailable);
+    if (directed >= YES) return push("ticket-goals", { result: "unconfirmed", reason: ISSUE_INSTRUCTED_REASON }, { kind: "could-not-check", reason: ISSUE_INSTRUCTED_REASON });
+    return push("ticket-goals", band(noul, true), scored(noul, PASS_AT, []), noul <= NO ? [`does not match ${ticket.issue}`] : []);
+  }
+
   for (const source of sources.quality) {
     if (source.id === "focused") focusedCheck(focused);
+    else if (source.id === "ticket-goals") ticketCheck(plan["ticket-goals"]);
     else fileCheck(source.id, plan[source.id], false);
   }
   for (const row of sources.custom) {

@@ -53,9 +53,9 @@ const RUNS: Record<Ci, unknown[]> = {
 };
 /** `stacked` is corbitsdev/corbits-code#1520's shape, with #9 to #13 merged into its branch and #14 closed unmerged; the branch is based on open #7's. */
 /** `history` is the commit messages each changed file's recent history holds, or `unread` when GitHub fails to list them. */
-type GithubSeed = { history?: string[] | "unread"; missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[]; contents?: Record<string, string> };
+type GithubSeed = { history?: string[] | "unread"; missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[]; issue?: string; contents?: Record<string, string> };
 
-function fakeGithub({ history = [], missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [], contents = {} }: GithubSeed = {}) {
+function fakeGithub({ history = [], missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [], contents = {}, issue }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
@@ -81,6 +81,7 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
       if (history === "unread") return Response.json({ message: "Server Error" }, { status: 500 });
       return Response.json(history.map((message, index) => ({ sha: `h${index}`, commit: { message } })));
     }
+    if (path === `/repos/${REPO}/issues/3`) return issue === undefined ? Response.json({ message: "Not Found" }, { status: 404 }) : Response.json({ number: 3, title: "Add a flag", body: issue });
     if (path.includes("/check-runs")) return Response.json({ check_runs: RUNS[pr.ci] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
     if (path.startsWith(`/repos/${REPO}/git/trees/`)) return Response.json({ sha: "tree", tree: DOCS.map(([doc, text], index) => ({ path: doc, type: "blob", sha: `blob${index}`, size: bytes(text) })) });
@@ -129,7 +130,7 @@ function judgeText({ questions, state }: SystemOne) {
       const failed = state.policy!.rules.some((rule) => rule.result === "fail");
       return { id, type: "choice", choice: failed ? "fail" : "pass", probabilities: { pass: failed ? 0.1 : 0.85, fail: failed ? 0.85 : 0.1, cant_tell: 0.05 }, confidence: 0.9 };
     }
-    if (id.startsWith("custom-") || id === "instructed") return { id, type: "noul", noul: 0.1 };
+    if (id.startsWith("custom-") || id.endsWith("instructed")) return { id, type: "noul", noul: 0.1 };
     if (/^focused-slice-\d+$/.test(id)) return { id, type: "choice", choice: "separate_change", probabilities: { serves_purpose: 0.2, separate_change: 0.7, cant_tell: 0.1 }, confidence: 0.9 };
     if (id !== "focused") return { id, type: "noul", noul: 0.9 };
     return { id, type: "choice", choice: "more_than_one_thing", probabilities: { one_thing: 0.2, more_than_one_thing: 0.7, cant_tell: 0.1 }, confidence: 0.9 };
@@ -263,6 +264,21 @@ describe("pr-triage body", () => {
     expect(path).toEqual(RULES_PATH);
     expect(verdict).toMatchObject({ verdict: "fail", reasons: [reason] });
     expect((verdict as Verdict).request.comment).toStartWith(`**Triage: Fail**\n\n@octocat, please address the following:\n- ${reason}`);
+  });
+
+  test("ticket goals reads the linked issue and asks the judge one question about it", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ticket-goals": { enabled: true } } };
+    const { judged, verdict, requests } = await triage(pack, { title: "Add a flag, follow-up to #2 (closes #3)", issue: "- [ ] I searched existing issues\n## Outcome\n- [ ] Add the flag\n- [x] `bun run check` passes\n```\n- [ ] not a goal\n```" });
+    expect(requests).toContainEqual({ method: "GET", path: `/repos/${REPO}/issues/3` });
+    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["ticket-goals", "issue_instructed", "instructed"], ["verdict"]]);
+    expect(judged[0]!.state).toMatchObject({ issue: { title: "Add a flag", goals: ["Add the flag", "`bun run check` passes"] } });
+    expect((verdict as Verdict).checks.find((c) => c.check === "ticket-goals")).toMatchObject({ result: "pass" });
+  });
+
+  test("ticket goals is unconfirmed when the linked issue can't be read", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ticket-goals": { enabled: true } } };
+    const { verdict } = await triage(pack);
+    expect((verdict as Verdict).checks.find((c) => c.check === "ticket-goals")).toMatchObject({ result: "unconfirmed", reason: "linked issue #3 could not be read" });
   });
 
   test("text hidden in the title, body and commits reaches no rule, judge or comment", async () => {

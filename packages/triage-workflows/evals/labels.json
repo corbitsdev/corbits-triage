@@ -388,5 +388,103 @@
       },
       "instructs": false
     }
-  ]
+  ],
+  "tickets": {
+    "corbitsdev/corbits-solution-builder#861": {
+      "note": "Merged with a closing reference to #859; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "dd269fd2d55351fd1a5a0fff16e688d05a5ddc82",
+      "headSha": "995601b1d3ad86594c6e067ba676508ba2176c80",
+      "issue": 859
+    },
+    "corbitsdev/corbits-solution-builder#181": {
+      "note": "Merged with a closing reference to #158; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "129c51423454bd848d315ef7b00bbaef9035e2f5",
+      "headSha": "546d3b93932e54d357dfff72b368cb9036983696",
+      "issue": 158
+    },
+    "corbitsdev/corbits-solution-builder#176": {
+      "note": "Merged with a closing reference to #157; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "c72483bf36b9a90b00247bf7d0a2cf7038f56231",
+      "headSha": "4a43864aac2adbe6d807ff0cf0b7d621be9cf2bf",
+      "issue": 157
+    },
+    "corbitsdev/corbits-solution-builder#172": {
+      "note": "Body: deletes print-page.ts and deck-theme.ts and their exports, drops jszip, rewrites print.tsx's header; diff matches.",
+      "baseSha": "66f360bb062cc56d57adc75394a89bac0337b453",
+      "headSha": "acdeffec49f6345d23c98442375b3f06b2dc18a1",
+      "issue": 38
+    },
+    "corbitsdev/corbits-solution-builder#171": {
+      "note": "Merged with a closing reference to #160; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "67b2bfa47d8a34abb6c7fdadb89521236be36b0f",
+      "headSha": "49a358de7ee7d5b238007322756a9b416a3202bf",
+      "issue": 160
+    },
+    "corbitsdev/corbits-solution-builder#170": {
+      "note": "Merged with a closing reference to #37; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "ccbc97b831aec5a98817257d9e0e6075ca70b956",
+      "headSha": "d62dee31bdd18e33fb92fe7340421abb92ee50a3",
+      "issue": 37
+    },
+    "corbitsdev/corbits-solution-builder#155": {
+      "note": "Merged with a closing reference to #153; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "6b67091155c2912af232ffb9da762bef8e5b44ab",
+      "headSha": "e7a7458b0e56cf9f182333c9035d1c090b961bf4",
+      "issue": 153
+    },
+    "corbitsdev/corbits-solution-builder#136": {
+      "note": "Body: deletes the barrel, deck-on-template.ts and template.ts and the \".\" export; diff matches.",
+      "baseSha": "3371635a3904a45ea16a62562cac6ec1e0547437",
+      "headSha": "0365ee8fec36b92cc7a6454cd447d4e8a514bb50",
+      "issue": 40
+    },
+    "corbitsdev/corbits-solution-builder#133": {
+      "note": "Body: digest check, redeploy with replay and refusal notice, as the issue asks; it says the old deployment is not ended and the live check was not done. Matches the issue's work, not every goal.",
+      "baseSha": "603f002c5021706f5c17ab3bdbae897070c249b5",
+      "headSha": "5ba13fd43dcd7a66033fd798e6d02dbe4450728d",
+      "issue": 51
+    },
+    "corbitsdev/corbits-solution-builder#132": {
+      "note": "Merged with a closing reference to #30; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "4ce5e8b81c692d308b97b8ceab15487d6368beed",
+      "headSha": "6281206ecfdff38e606f70daf0aa14f04c696465",
+      "issue": 30
+    },
+    "corbitsdev/corbits-solution-builder#128": {
+      "note": "Merged with a closing reference to #31; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "603f002c5021706f5c17ab3bdbae897070c249b5",
+      "headSha": "5190157ce1b35c21e9ae23231e7d33c5b7264d56",
+      "issue": 31
+    },
+    "corbitsdev/corbits-solution-builder#125": {
+      "note": "Body: non-empty origin at every deploy call, empty origin refused, rows repaired, tests added; diff matches. Live check not done.",
+      "baseSha": "603f002c5021706f5c17ab3bdbae897070c249b5",
+      "headSha": "fdaa366c14587eca04853d43b3489c639145b86d",
+      "issue": 44
+    },
+    "corbitsdev/corbits-solution-builder#124": {
+      "note": "Body: registry versions for the two names and a guard with tests; diff matches. Live deploy not done.",
+      "baseSha": "603f002c5021706f5c17ab3bdbae897070c249b5",
+      "headSha": "4658a0202765f703bee4033140e2a17f896154ee",
+      "issue": 27
+    },
+    "corbitsdev/corbits-solution-builder#54": {
+      "note": "Merged with a closing reference to #33; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "5949c78de1aca67ae8d19b2bfdd784190f17e722",
+      "headSha": "d32a69b0cdd256433f5df4f1e14f96ee0760ed5d",
+      "issue": 33
+    },
+    "corbitsdev/corbits-solution-builder#53": {
+      "note": "Merged with a closing reference to #34; label rests on that merge closing the issue, not on a read of the diff.",
+      "baseSha": "5949c78de1aca67ae8d19b2bfdd784190f17e722",
+      "headSha": "d9d146cdb92ea650ee085b63de81ccd653f4d713",
+      "issue": 34
+    },
+    "corbitsdev/corbits-solution-builder#52": {
+      "note": "Body: deletes guard.ts and adds the audience refusals with tests; diff matches. Leaves the AGENTS.md update to another pull request.",
+      "baseSha": "5949c78de1aca67ae8d19b2bfdd784190f17e722",
+      "headSha": "a77dcba051cfce376b7df23e3b0d67d1978624c6",
+      "issue": 35
+    }
+  }
 }

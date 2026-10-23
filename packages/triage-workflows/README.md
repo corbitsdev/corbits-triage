@@ -25,6 +25,8 @@ that needs it is null), each case's verdict and rule answers, and each check's t
 or when any case's repository is not public. The writer (`evals/baseline.ts`) and price table (`evals/prices.ts`) are
 shared with the code review eval. The committed file is the baseline for the commit it names; rerun and commit it when a
 change moves the numbers.
+The judge eval's ticket cases serve each labelled pull request its own issue, expecting a match, and the next one's, expecting a mismatch. The mismatches are easy negatives: unrelated issues, not near misses, so they show the rule catches the wrong work, not a goal left undone.
+
 `evals/judge.eval.ts` exports the eval, which runs any definition that triages; pr-workflow-anthropic runs it through its own.
 
 ## Test

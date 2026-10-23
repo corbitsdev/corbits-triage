@@ -3,7 +3,7 @@
 // mapping it onto the stored policy's shape, so the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, PatternRuleSchema, POLICY_EVENTS, SIZE_RULES, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
+import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, PatternRuleSchema, POLICY_EVENTS, SIZE_RULES, stepListSchema, storedOnFail, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
 import { PATTERN_PRESETS } from "./code-patterns.js";
 import { fileProblems } from "./policy-file-problems.js";
 import { withAuthors, WORKFLOW_KEYS, WORKFLOW_PROPS, workflowProblems, type PathProblem, type PolicyWorkflow } from "./policy-workflow.js";
@@ -72,9 +72,9 @@ export function ruleNameOf(id: string): string {
   return `${words[0]!.toUpperCase()}${words.slice(1)}`;
 }
 
-/** The stored policy keeps `onFail` only where it is not `fail`. */
+/** The stored policy keeps `onFail` only where it is not the rule's stored default. */
 function onFailOf(rule: PolicyRule, onFail: OnFailWord): Record<string, unknown> {
-  if (onFail === "fail") return {};
+  if (onFail === storedOnFail(ruleId(rule))) return {};
   return { onFail, ...(rule.label !== undefined && { label: rule.label }) };
 }
 

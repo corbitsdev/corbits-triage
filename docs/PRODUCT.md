@@ -58,7 +58,7 @@ A rule answers one question about a pull request: pass, fail, or unconfirmed.
 | Kind | Evaluates | Cost | Use it for |
 | --- | --- | --- | --- |
 | Rule | Host data only: files, size, linked issue, mergeability, reviews, CI, text. No inference. | Host API calls. | Anything the host already knows. |
-| Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs. |
+| Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs, does it match its linked issue. |
 
 ### Rules over host data
 

@@ -850,6 +850,14 @@ export type LinkedIssue = {
   url: string;
 };
 
+export type Issue = { title: string; body: string; pullRequest: boolean };
+
+/** The issue's markdown as written; GitHub numbers pull requests as issues, so `pullRequest` says which it is. */
+export async function getIssue(gh: GithubFetch, repo: string, number: number): Promise<Issue> {
+  const row = await json(gh, `/repos/${repo}/issues/${number}`);
+  return { title: typeof row.title === "string" ? row.title : "", body: typeof row.body === "string" ? row.body : "", pullRequest: row.pull_request !== undefined };
+}
+
 const ISSUE_REF = /(?:^|[\s(])#(\d+)\b/g;
 
 /** References GitHub resolves to issues, not pull requests. */

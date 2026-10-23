@@ -35,6 +35,7 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | `regression-risk` | `hotFileFixes:` whole number ≥ 1 (optional, default 4); `migrations:` list of 1–50 globs (optional, default `**/migrations/**`, `**/*.sql`) | no | Fails when a changed file (not a test, Markdown doc or lockfile) has at least `hotFileFixes` commits in the last 30 days whose subject starts with a `fix`, `bugfix`, `hotfix` or `revert` type (`fix:`, `fix(scope):`, `Revert "…"`); merges and body text don't count. A history that can't be read in full leaves the rule unconfirmed, or a changed file matches `migrations`. Default `onFail` is `label`. |
 | `focused` | none | yes | The decision model checks the change is focused on one thing. |
 | `docs` | none | yes | The decision model checks docs are updated when behaviour changes. |
+| `ticket-goals` | none | yes | The decision model checks the change does the work of the same repository's GitHub issue it closes (Closes, Fixes or Resolves), from the issue's title and goals (the list items under an `Acceptance criteria` or `Outcome` heading, at most 10). Unconfirmed, saying why, when no such issue can be read or the diff is too large. `onFail` defaults to `ask`. |
 
 ### Rules of your own
 
@@ -61,6 +62,7 @@ Start from the four starter rules (SKILL.md step 3). Add an extra only when the 
 | The user bars tool attribution | `no-tool-attribution` below. Add the user's tool trailers to its phrases; never a bare `Co-Authored-By:`, which also fails human co-authors. |
 | A decision model is set up and pull requests often mix changes | `focused` |
 | A decision model is set up and the repository keeps user docs beside its code | `docs` |
+| A decision model is set up and pull requests close GitHub issues with Closes, Fixes or Resolves | `ticket-goals` |
 
 `no-forbidden-paths` fails maintainers too, so never list `.github/**` or another path the team edits on purpose unless the user asks.
 

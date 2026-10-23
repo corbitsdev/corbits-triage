@@ -14,7 +14,7 @@ import type { InferenceEvent } from "@intx/types/inference-events";
 import { emptyPack, type CheckPack } from "../../triage-contracts/src/index.js";
 import { startBaseline, writeBaseline, type Stamp } from "./baseline.js";
 import { MODEL_CHECKS, SCORED, variant, type CaseInput, type Expected, type JudgeCase, type ModelCheck, type Scored } from "./cases.js";
-import { fixture, pullOf } from "./fixtures.js";
+import { fixture, issueOf, pullOf } from "./fixtures.js";
 import { addCost, costOf, priceKey, priceOf } from "./prices.js";
 import { INSTRUCTED_REASON } from "../src/logic/render.js";
 import { PR_TRIAGE, type Definition } from "../src/run-local.js";
@@ -68,14 +68,17 @@ function caseRepos(): string[] {
   return cases.flatMap(({ input }) => [input.pull, ...(input.mix === undefined ? [] : [input.mix])]).map((key) => pullOf(key)[0]);
 }
 
-function pack(repo: string): CheckPack {
-  return { ...emptyPack(repo), checks: { focused: { enabled: true }, docs: { enabled: true } } };
+/** Ticket cases judge only ticket goals; no other case turns it on. */
+function pack(repo: string, input: CaseInput): CheckPack {
+  const checks = input.issue === undefined ? { focused: { enabled: true }, docs: { enabled: true } } : { "ticket-goals": { enabled: true } };
+  return { ...emptyPack(repo), checks };
 }
 
 function judgeWith(definition: Definition, apiKey: string, extra: Record<string, unknown>) {
   return async function judge(input: CaseInput): Promise<Outcomes> {
     const pr = variant(fixture(input.pull), input, input.mix === undefined ? undefined : fixture(input.mix));
-    const { verdict } = await runDefinition({ definition, fetch: fixtureGithub(pr, {}), apiKey, endpoint: ENDPOINT, triggerPayload: triggerMail(pr, pack(pr.repo), extra), onEvent, onStepDone });
+    const issue = input.issue === undefined ? undefined : { ...issueOf(input.issue), number: issueOf(input.pull).number };
+    const { verdict } = await runDefinition({ definition, fetch: fixtureGithub(pr, {}, issue), apiKey, endpoint: ENDPOINT, triggerPayload: triggerMail(pr, pack(pr.repo, input), extra), onEvent, onStepDone });
     function answer(check: ModelCheck): [ModelCheck, Outcomes[ModelCheck]] {
       const result = verdict.checks.find((row) => row.check === check)?.result;
       return [check, result === "pass" || result === "fail" ? result : "unsure"];
@@ -141,7 +144,8 @@ export async function judgeEval(definition: Definition, workflow: string, extra:
       checks: Object.fromEntries(SCORED.map((check) => [check, answered(check)])),
       // Focused decided every case in each measured run; two misses leave room for answers near the band edge. Docs missed 5
       // of the 49 cases, all unsure, in the first run after the tests check was removed. The verdict missed 2, none unsure, in its first run.
-      allow: { docs: 7, focused: 2, verdict: 4 },
+      // Ticket goals may miss 3 of its 32 cases, 10%; those cases do not score the verdict.
+      allow: { docs: 7, focused: 2, "ticket-goals": 3, verdict: 4 },
       about: { model: ENDPOINT.model, workflow },
       concurrency: 2,
       timeout: "10m",

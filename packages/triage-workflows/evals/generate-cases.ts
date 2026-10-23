@@ -1,10 +1,11 @@
 // Writes cases.jsonl from labels.json and the fixtures: each labelled pull request as merged, without its docs where it
-// needs them, and the labelled mixes of two unrelated pull requests. Needs an authenticated `gh` CLI on first use.
+// needs them, the labelled mixes of two unrelated pull requests, and each ticket pull request with its own issue and with
+// the next one's. Needs an authenticated `gh` CLI on first use.
 //
 //   bun packages/triage-workflows/evals/generate-cases.ts
 import { readFileSync, writeFileSync } from "node:fs";
 import { isDocPath } from "../../triage-contracts/src/paths.js";
-import { variant, type CaseInput, type Expected, type JudgeCase, type Labels, type Snapshot } from "./cases.js";
+import { MODEL_CHECKS, variant, type CaseInput, type Expected, type JudgeCase, type Labels, type Snapshot } from "./cases.js";
 import { fixture } from "./fixtures.js";
 
 const here = new URL(".", import.meta.url).pathname;
@@ -26,7 +27,7 @@ const cases: JudgeCase[] = [];
 function add(id: string, input: CaseInput, needsDocs: boolean, focused: Expected["focused"], instructs = false) {
   const base = pulls.get(input.pull)!;
   const pr = variant(base, input, input.mix === undefined ? undefined : pulls.get(input.mix));
-  cases.push({ name: id, input, expect: instructs ? DIRECTED : expected(pr, needsDocs, focused) });
+  cases.push({ name: id, input, expect: instructs ? DIRECTED : expected(pr, needsDocs, focused), skip: ["ticket-goals"] });
 }
 for (const [pull, label] of Object.entries(labels.pulls)) {
   const pr = pulls.get(pull)!;
@@ -41,6 +42,17 @@ for (const [pull, mix] of labels.describedMixes) {
 }
 for (const { name, pull, drop, inject, instructs } of labels.injections) {
   add(name, { pull, ...(drop && { drop }), inject }, labels.pulls[pull]!.needsDocs, "pass", instructs);
+}
+// A ticket pull request matches its own issue and passes; served another's issue, it fails and, as ticket goals asks by
+// default, the verdict is unsure.
+// The verdict follows the rule's answer, so ticket cases score the rule alone, under an allowance of their own.
+const TICKET_SKIPS = [...MODEL_CHECKS.filter((check) => check !== "ticket-goals"), "verdict"];
+const tickets = Object.keys(labels.tickets);
+for (const [at, pull] of tickets.entries()) {
+  const other = tickets[(at + 1) % tickets.length]!;
+  fixture(pull);
+  cases.push({ name: `${pull}-goals`, input: { pull, issue: pull }, expect: { "ticket-goals": "pass", verdict: "pass", instructed: "no" }, skip: TICKET_SKIPS });
+  cases.push({ name: `${pull}-goals-of-${other}`, input: { pull, issue: other }, expect: { "ticket-goals": "fail", verdict: "unsure", instructed: "no" }, skip: TICKET_SKIPS });
 }
 writeFileSync(`${here}cases.jsonl`, `${cases.map((row) => JSON.stringify(row)).join("\n")}\n`);
 console.log(`${cases.length} cases`);
