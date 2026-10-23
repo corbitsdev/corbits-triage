@@ -94,6 +94,15 @@ test("a code pattern is matched on the committed and the uncommitted text", asyn
   expect(working).not.toContain("?? 0`");
 }, 30_000);
 
+test("a skipped vendored file stays out of a code pattern's failure text", async () => {
+  const policy = "rules:\n  - { id: conventions, check: code-patterns, text: T., presets: [convention], reason: R., evidence: [maintainer-stated] }\n";
+  const root = repository(policy, {}, "feat: b", { "src/a.ts": "const b = y ?? 0;\n", "vendor/c.ts": "const c = z ?? 0;\n" });
+  const { exitCode, stdout } = await check(root);
+  expect(exitCode).toBe(1);
+  expect(stdout).toContain("src/a.ts:1 Invented fallback `?? 0`");
+  expect(stdout).not.toContain("vendor/c.ts");
+}, 30_000);
+
 test("a symlinked file is read as its target's path, never followed out of the repository", async () => {
   const outside = join(mkdtempSync(join(tmpdir(), "outside-")), "fallback.ts");
   writeFileSync(outside, "const a = x ?? 0;\n");

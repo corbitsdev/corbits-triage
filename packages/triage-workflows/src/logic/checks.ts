@@ -115,6 +115,8 @@ export interface CheckResult {
   output: CheckOutput;
   /** Set on a rule whose failure is asked of a maintainer, leaving the verdict Unsure instead of Fail. */
   onFail?: "ask";
+  /** The evidence lines naming files the rule skipped rather than checked. */
+  skipped?: string[];
 }
 
 export interface DeterministicResult {
@@ -473,13 +475,27 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
         continue;
       }
       const failed = found.matches.length > 0;
-      const reason = failed ? "added code matches a code pattern" : "no code pattern matched";
+      const reason = patternsReason(failed, found);
       if (failed) add(rule.id, "needs-author-update", reason);
-      checks.push({ check: rule.id, kind: "machine", result: failed ? "fail" : "pass", reason, evidence: found.matches, output: { kind: "values", values: { matched: found.matches.length } } });
+      checks.push({
+        check: rule.id,
+        kind: "machine",
+        result: failed ? "fail" : "pass",
+        reason,
+        evidence: [...found.matches, ...found.skipped],
+        output: { kind: "values", values: { matched: found.matches.length } },
+        ...(found.skipped.length > 0 && { skipped: found.skipped }),
+      });
     }
   }
 
   return finish(findings, checks, facts, pack);
+}
+
+function patternsReason(failed: boolean, found: { skipped: string[]; checked: number }): string {
+  if (failed) return "added code matches a code pattern";
+  if (found.checked === 0 && found.skipped.length > 0) return "nothing checked: every changed file is vendored, built or installed code";
+  return "no code pattern matched";
 }
 
 function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
