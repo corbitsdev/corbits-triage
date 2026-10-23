@@ -1,6 +1,6 @@
 # Local development
 
-Runs the hub (`apps/hub`, :3000) and portal (`apps/web`, :5173) against a local Postgres. With [Docker Compose](../README.md#set-up-through-the-portal) the portal is at http://localhost:3000 instead. The portal sets everything else up after you sign in. Running it for real is in [SELF_HOST.md](SELF_HOST.md).
+Runs the hub (`apps/hub`, :3000) and portal (`apps/web`, :5173) against a local Postgres. The other way to run it is in the [README](../README.md#get-started). The portal sets everything else up after you sign in. Running it for real is in [SELF_HOST.md](SELF_HOST.md).
 
 ## 1. Prerequisites
 
@@ -31,7 +31,7 @@ Either gives the `DATABASE_URL` in `.env.example`, `postgres://postgres:postgres
 cp .env.example .env
 ```
 
-Set the four secrets to different `openssl rand -hex 32` values and set `DATABASE_URL` to your database. Nothing else is required. Run everything from the repo root so both services inherit the root `.env`.
+Set the four secrets to different `openssl rand -hex 32` values and set `DATABASE_URL` to the database from step 2; leave the rest as it is. Run everything from the repo root so both services inherit the root `.env`.
 
 ## 4. Run
 
@@ -41,11 +41,11 @@ bun run dev
 
 It first applies the database migrations (`bun run db:migrate`), then starts both services; the hub itself never migrates.
 
-Hub on http://localhost:3000, portal on http://localhost:5173 (it proxies `/api` to the hub and bundles the workflows on start). Restart after changing `apps/hub` or `packages/`; only the portal hot-reloads.
+Hub on http://localhost:3000 (API only), portal on http://localhost:5173 (it proxies `/api` to the hub and bundles the workflows on start). Restart after changing `apps/hub` or `packages/`; only the portal hot-reloads.
 
 ## 5. Set up in the portal
 
-Follow [Set up in the portal](SELF_HOST.md#set-up-in-the-portal) against http://localhost:5173, using a sandbox repository. GitHub App credentials and the model key go to the hub vault, not `.env`.
+Sign up at http://localhost:5173; the portal shows **Set up Triage** with three steps: Connect a source, Repositories, Decision model. Follow [Set up in the portal](SELF_HOST.md#set-up-in-the-portal), using a sandbox repository. GitHub App credentials and the model key go to the hub vault, not `.env`.
 
 ### Webhooks on localhost (unverified)
 

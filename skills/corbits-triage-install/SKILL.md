@@ -25,12 +25,7 @@ Run every command from the checkout's root.
 
 ## 1. Choose a path
 
-Ask, suggesting the first that fits (`docs/SELF_HOST.md`, "What you need"):
-
-| Path | Needs | Portal |
-| --- | --- | --- |
-| Docker Compose (preferred) | Docker with Compose, and about 3 GB free Docker disk for the first build | http://localhost:3000 |
-| Their own Postgres | Bun 1.4+ and Postgres 15+ | http://localhost:5173 |
+Ask, suggesting Docker Compose if `docker info` succeeds, otherwise their own Postgres with `bun run dev`. Each path's requirements and portal address are in the table under "Get started" in `README.md`.
 
 Either way, GitHub cannot reach localhost, so pull requests are picked up every five minutes.
 
