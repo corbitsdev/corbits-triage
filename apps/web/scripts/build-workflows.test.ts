@@ -7,6 +7,7 @@ import * as tar from "tar";
 
 import bitbucketTool from "../../../packages/bitbucket-datacenter-tool/package.json";
 import githubTool from "../../../packages/github-tool/package.json";
+import triageWorkflows from "../../../packages/triage-workflows/package.json";
 import { packWorkflows } from "./build-workflows.ts";
 import { WORKFLOW_PACKAGES } from "../src/lib/workflow-packages.ts";
 
@@ -36,7 +37,8 @@ test("packs each workflow deterministically, importing the host tools instead of
     await mkdir(extracted, { recursive: true });
     await tar.x({ file: path.join(scratch, "a", packed.filename), cwd: extracted });
     const manifest = JSON.parse(await readFile(path.join(extracted, "package/package.json"), "utf8"));
-    expect(manifest.dependencies).toEqual(Object.fromEntries(tools.map((tool) => [tool.name, tool.version])));
+    const native = workflow.kind === "code-review" ? {} : { "@ast-grep/napi": triageWorkflows.dependencies["@ast-grep/napi"] };
+    expect(manifest.dependencies).toEqual({ ...Object.fromEntries(tools.map((tool) => [tool.name, tool.version])), ...native });
     // The sidecar deploys only a package's own workflow entry.
     expect(manifest.interchange.workflow).toBe(workflow.entry);
     const imports = await importsOf(path.join(extracted, "package", workflow.entry));
@@ -67,6 +69,11 @@ test("every packed workflow entry loads under Node beside the packed tools", asy
     await tar.x({ file: path.join(scratch, "load", entry.filename), cwd: dir, strip: 1 });
     for (const [name, toolDir] of tools) await symlink(toolDir, path.join(dir, "node_modules", name));
     const manifest = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    // The sidecar installs the native module the manifest names from npm; the workspace's install stands in for it.
+    if (manifest.dependencies["@ast-grep/napi"]) {
+      await mkdir(path.join(dir, "node_modules/@ast-grep"), { recursive: true });
+      await symlink(path.dirname(require.resolve("@ast-grep/napi/package.json", { paths: [path.resolve(import.meta.dir, "../../../packages/triage-workflows")] })), path.join(dir, "node_modules/@ast-grep/napi"));
+    }
     for (const rel of [manifest.interchange.workflow, manifest.interchange.directors, manifest.interchange.actions]) {
       const program = `await import(${JSON.stringify(pathToFileURL(path.join(dir, rel)).href)});`;
       const proc = Bun.spawn(["node", "--input-type=module", "-e", program], { cwd: dir, stdout: "pipe", stderr: "pipe" });
