@@ -330,6 +330,20 @@ the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file".
 
+Beside the model steps, two steps read what tools already say, as structured
+findings (source, rule, path, line, message, severity, fix when the tool gives
+one) for a fix workflow to take later; nothing is sent on yet. `lint` runs the
+oxlint the sidecar image pins over the changed files with the repository's own
+`.oxlintrc.json`, nested configs off, and keeps hits on added lines. Only data
+keys pass (rules, categories, built-in plugins, env, globals, settings,
+ignorePatterns, overrides of the same); a config with any other key (`extends`,
+`jsPlugins`, `options` among them) or one that is code (`oxlint.config.*`) is
+refused unrun. The kept keys are written to a config outside the checkout, and
+the files follow `--`. A repository with no config is not linted. `ciAnnotations` reads
+the head's GitHub check-run annotations or Bitbucket Data Center Code Insights
+annotations through the host credential, under the checkout's effect
+capability. A lint or a read that fails is `incomplete`, never an empty list.
+
 Each request carries `diffHash`, a SHA-256 of the full diff, `index` lines
 included, so a base change to a file the diff touches, or a binary change,
 changes it. A diff with no `index` line, as GitHub's rebuilt from the file

@@ -4,6 +4,7 @@ export { getChecks, TRIAGE_BUILD_KEY } from "./builds.js";
 export { changesSince, listPrCommits, listPrFiles, listPrFilesPage } from "./changes.js";
 export { isTriageComment, listIssueComments } from "./comments.js";
 export { createDocsReader, readRepoDocsPage } from "./docs.js";
+export { getCodeInsightsAnnotations, type CodeInsightsAnnotation } from "./insights.js";
 export { authorTeams, defaultReviewers } from "./people.js";
 export { getPr, listOpenPrs, readMergeability, readPrDiff, readStack } from "./pull-request.js";
 export { readFileAt, readRepoFile } from "./repo-file.js";

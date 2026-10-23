@@ -135,3 +135,19 @@ export function changedFiles(diff: string): string[] {
 export function samePath(a: string, b: string): boolean {
   return a !== "" && b !== "" && (a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`));
 }
+
+/** A finding a linter or a CI tool reported, as a fix workflow takes it. */
+export interface ToolFinding {
+  /** The linter, check run or Code Insights report that reported it. */
+  source: string;
+  rule?: string;
+  path: string;
+  /** Absent when it is about the whole file. */
+  line?: number;
+  message: string;
+  severity: "error" | "warning" | "notice";
+  fix?: string;
+}
+
+/** A tool's findings, or why it has none to give: `skipped` read nothing, `incomplete` failed and found nothing it can vouch for. */
+export type ToolFindings = { status: "complete"; findings: ToolFinding[] } | { status: "skipped"; reason: string } | { status: "incomplete"; reason: string };

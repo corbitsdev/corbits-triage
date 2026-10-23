@@ -51,6 +51,8 @@ async function host(input: string | URL | Request): Promise<Response> {
   fetched.push(pathname);
   if (pathname === `/repos/${REPO}/tarball/${SHA}`) return new Response(tarball);
   if (pathname === `/repos/${REPO}/contents/src/a.ts`) return new Response(FILE);
+  if (pathname === `/repos/${REPO}/commits/${SHA}/check-runs`) return Response.json({ check_runs: [{ id: 7, name: "lint", status: "completed", conclusion: "failure", started_at: null, output: { annotations_count: 1 } }] });
+  if (pathname === `/repos/${REPO}/check-runs/7/annotations`) return Response.json([{ path: "src/a.ts", start_line: 2, annotation_level: "warning", message: "subtracts" }]);
   return new Response("not found", { status: 404 });
 }
 
@@ -157,10 +159,12 @@ async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { 
   return { run, results, attempts };
 }
 
-test("the repository finder reads the head the checkout action put on the sidecar, confined to it, and a second review of the head reuses it", async () => {
+test("the repository finder reads the head the checkout action put on the sidecar, confined to it, the head's CI annotations come through the bound credential, and a second review of the head reuses it", async () => {
   const first = await review(join(dir, "data"));
   expect(first.run.terminalStatus).toBe("completed");
   expect(first.run.outputs["checkout"]).toEqual({ path: join(dir, "data/checkouts/github/acme/widgets", SHA) });
+  expect(first.run.outputs["lint"]).toEqual({ status: "skipped", reason: "no lint config" });
+  expect(first.run.outputs["ciAnnotations"]).toEqual({ status: "complete", findings: [{ source: "lint", path: "src/a.ts", line: 2, message: "subtracts", severity: "warning" }] });
   const results = Object.fromEntries(first.results.map((r) => [r.callId, r]));
   expect(results["read"]).toMatchObject({ content: { path: "src/a.ts", text: "1\texport function add(a: number, b: number) {\n2\t  return a - b;\n3\t}\n4\t" } });
   expect(results["grep"]).toMatchObject({ content: { matches: [{ path: "src/a.ts", line: 1 }] } });

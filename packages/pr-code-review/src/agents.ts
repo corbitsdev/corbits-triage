@@ -37,6 +37,7 @@ export function credentialBindingsFor(sources: Sources) {
   return sources.flatMap((source) => [
     { package: READS[source].id, handle: source, provider: source, name: source, locator: "tenant" } as const,
     { action: "checkout", handle: source, provider: source, name: source, locator: "tenant" } as const,
+    { action: "ciAnnotations", handle: source, provider: source, name: source, locator: "tenant" } as const,
   ]);
 }
 

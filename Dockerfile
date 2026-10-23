@@ -12,6 +12,8 @@ COPY --from=base /app/node_modules node_modules
 COPY --from=base /app/vendor vendor
 COPY --from=base /app/packages packages
 COPY --from=base /app/apps/hub apps/hub
+# The code review's lint step runs the lockfile's oxlint, never one from the repository it reviews.
+RUN printf '#!/bin/sh\nexec bun /app/node_modules/oxlint/bin/oxlint "$@"\n' > /usr/local/bin/oxlint && chmod +x /usr/local/bin/oxlint
 # The image's unprivileged user owns /data, so the volume Docker creates there inherits it.
 RUN mkdir /data && chown bun:bun /data
 USER bun
