@@ -1,7 +1,8 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
-import type { DeterministicResult, PrFacts, PrFileFacts } from "./checks.js";
+import type { DeterministicResult, PrFacts, PrFileFacts, TicketIssue } from "./checks.js";
+import { goalKind } from "./extract.js";
 import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
 import { globMatch } from "./glob.js";
 import type { BooleanQuestion, ChoiceQuestion, ScoreQuestion } from "@corbits/system-one";
@@ -135,16 +136,19 @@ interface FileQuestion {
 const FAILURES: Record<QualityCheckId, string> = {
   focused: "mixes unrelated changes",
   docs: "documentation is not updated",
+  "ticket-goals": "does not match its linked issue",
 };
 
 const ACTIONS: Record<QualityCheckId, string> = {
   focused: "Split out unrelated changes",
   docs: "Update the documentation",
+  "ticket-goals": "Do the linked issue's work",
 };
 
 const PASSES: Record<QualityCheckId, string> = {
   focused: "makes one focused change",
   docs: "documentation is up to date",
+  "ticket-goals": "matches its linked issue",
 };
 
 const MAX_BODY = 4000;
@@ -219,6 +223,8 @@ export type JudgeState = {
   };
   /** `rules` are the contribution rules, given only to requests that ask custom checks, and left out of their `docs`. */
   repository: { docs: Record<string, string>; rules?: Record<string, string> };
+  /** The linked issue's title and code goals, given only to the ticket-goals request. */
+  issue?: { title: string; goals: string[] };
 };
 
 type PathList = Pick<JudgeState["pullRequest"], "paths" | "directories">;
@@ -368,6 +374,9 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
   const files = judgedFiles(facts);
   if (!sources) return { plan: {}, requests: [] };
   const plan: QualityPlan = {};
+  const linked = sources.quality.some((source) => source.id === "ticket-goals") && facts.ticket && "issue" in facts.ticket ? facts.ticket : undefined;
+  const ticket = linked && ticketRequest(facts, linked);
+  if (ticket) plan["ticket-goals"] = { changed: [], asked: { [TICKET_QUESTION.id]: linked.issue }, unread: [] };
   if (sources.quality.some((source) => source.id === "docs")) {
     // Deleting a doc does not cover a change.
     const changed = facts.files.filter((file) => file.status !== "removed" && isDocPath(file.path));
@@ -511,6 +520,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     if (readsAll && fitted.hunks.length < hunks.length) addRest(read, fitted.hunks.length, file.path, position);
   }
   flush();
+  if (ticket) requests.push(ticket);
   if (requests.length > MAX_JUDGE_REQUESTS) return { plan, ...(focused && { focused }), requests: [], judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length} requests)` };
   const ids = Object.keys(focused?.slices ?? {});
   // With no lines to read, such as only generated files changed, focused does not apply.
@@ -530,6 +540,11 @@ export function verdictRequest(facts: PrFacts, rules: PolicyRule[]): { request: 
   const empty: VerdictState = { pullRequest: judgeState(facts, [], false, listed).pullRequest, policy: { rules } };
   const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(empty);
   if (room < MIN_FILE_ROOM) return { judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${Math.ceil(jsonBytes(empty) / 1024)} KB)` };
+  return { request: { state: { ...empty, pullRequest: { ...empty.pullRequest, files: packedFiles(facts, room) } }, questions: [VERDICT_QUESTION] } };
+}
+
+/** As much of the diff as fits `room`, in order, stopping at the first file that does not fit whole. */
+function packedFiles(facts: PrFacts, room: number): StateFile[] {
   const files: StateFile[] = [];
   let used = 0;
   for (const file of judgedFiles(facts)) {
@@ -541,7 +556,28 @@ export function verdictRequest(facts: PrFacts, rules: PolicyRule[]): { request: 
     used += jsonBytes(fitted) + (files.length > 1 ? 1 : 0);
     if (fitted.hunks.length < hunks.length) break;
   }
-  return { request: { state: { ...empty, pullRequest: { ...empty.pullRequest, files } }, questions: [VERDICT_QUESTION] } };
+  return files;
+}
+
+export const TICKET_QUESTION: BooleanQuestion = {
+  id: "ticket-goals",
+  type: "boolean",
+  instructions: "Does the change in `pullRequest.files` do the work `issue` describes: its title and goals?",
+};
+
+/**
+ * Ticket goals asks one question in a request of its own: the linked issue's title and code goals beside the pull
+ * request's title and as much of its diff as fits. The author's body and commits are left out, so they never vouch for
+ * the change.
+ */
+function ticketRequest(facts: PrFacts, issue: TicketIssue): JudgeRequest | undefined {
+  const listed = pathList(facts, true);
+  const base = judgeState(facts, [], false, listed);
+  const empty: JudgeState = { ...base, pullRequest: { ...base.pullRequest, body: "", commits: [] }, repository: { docs: {} }, issue: { title: issue.title.slice(0, MAX_SUBJECT), goals: issue.goals.filter((goal) => goalKind(goal) === "code").map((goal) => goal.slice(0, MAX_SUBJECT)) } };
+  const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(empty);
+  if (room < MIN_FILE_ROOM) return undefined;
+  const files = packedFiles(facts, room);
+  return files.length > 0 ? { state: { ...empty, pullRequest: { ...empty.pullRequest, files } }, questions: [TICKET_QUESTION, INSTRUCTED_QUESTION] } : undefined;
 }
 
 function stateFile(file: PrFileFacts, hunks: string[]): StateFile {

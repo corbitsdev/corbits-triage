@@ -1,16 +1,17 @@
 import { mailPayload } from "../../../apps/hub/src/github/bridge.js";
 import { DEFAULT_REPO_POLICY, TRIAGE_MAIL_SENDER, type ActionKind, type CheckPack } from "../../triage-contracts/src/index.js";
 import { PR_TRIAGE_ADDRESS } from "../src/pr-triage.js";
-import type { Snapshot } from "./cases.js";
+import type { IssueText, Snapshot } from "./cases.js";
 
 const DOMAIN = "triage.test";
 const HEAD = "e0a1e0a1e0a1e0a1e0a1e0a1e0a1e0a1e0a1e0a1";
 
 /**
  * Serves a fixture as GitHub would: the open pull request, its paged file rows, its docs as the default branch's tree
- * and blobs, and each repository's pull request templates, by name, as its `.github/PULL_REQUEST_TEMPLATE/` folder.
+ * and blobs, each repository's pull request templates, by name, as its `.github/PULL_REQUEST_TEMPLATE/` folder, and
+ * `issue` as the issue the pull request closes.
  */
-export function fixtureGithub(pr: Snapshot, templates: Readonly<Record<string, readonly string[]>>) {
+export function fixtureGithub(pr: Snapshot, templates: Readonly<Record<string, readonly string[]>>, issue?: IssueText & { number: number }) {
   const repo = `/repos/${pr.repo}`;
   const folder = ".github/PULL_REQUEST_TEMPLATE";
   const templateFiles = Object.entries(templates).flatMap(([name, texts]) => texts.map((text, index) => ({ repo: name, name: `${index}.md`, path: `${folder}/${index}.md`, type: "file", text })));
@@ -31,6 +32,7 @@ export function fixtureGithub(pr: Snapshot, templates: Readonly<Record<string, r
     if (path === `${repo}/pulls/${pr.number}`) return Response.json(pull);
     if (path === `${repo}/pulls/${pr.number}/commits`) return Response.json(pr.commits.map((message) => ({ commit: { message } })));
     if (path === `${repo}/pulls/${pr.number}/reviews` || path === `${repo}/issues/${pr.number}/comments`) return Response.json([]);
+    if (issue && path === `${repo}/issues/${issue.number}`) return Response.json({ number: issue.number, title: issue.title, body: issue.body });
     if (path.startsWith(`${repo}/commits/`)) return Response.json({ check_runs: [] });
     const listed = Object.keys(templates).find((name) => path === `/repos/${name}/contents/.github`);
     if (listed !== undefined) return Response.json(filesOf(listed).length ? [{ name: "PULL_REQUEST_TEMPLATE", path: folder, type: "dir" }] : []);

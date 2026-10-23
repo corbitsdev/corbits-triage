@@ -34,6 +34,12 @@ const ACTIONS: PolicyActions = {
 };
 
 describe("check pack contract", () => {
+  test("ticket goals asks a maintainer unless the policy says fail", () => {
+    expect(readCheckPack({ ...emptyPack(REPO), checks: { "ticket-goals": { enabled: true } } }).checks["ticket-goals"]).toMatchObject({ onFail: "ask" });
+    expect(readCheckPack({ ...emptyPack(REPO), checks: { "ticket-goals": { enabled: true, onFail: "fail" } } }).checks["ticket-goals"]).toMatchObject({ onFail: "fail" });
+    expect(readCheckPack({ ...emptyPack(REPO), checks: { "linked-issue": { enabled: true, onFail: "fail" } } }).checks["linked-issue"]).not.toHaveProperty("onFail");
+  });
+
   test("add one catalog check; unknown ids ignored; absent keys empty", () => {
     const parsed = parseCheckPack({
       kind: "corbits.triage.check-pack",
