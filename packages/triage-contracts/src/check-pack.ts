@@ -22,6 +22,7 @@ export const CATALOG_IDS = [
   "focused",
   "docs",
   "linked-issue",
+  "ticket-goals",
   "no-merge-conflicts",
   "ci-green",
   "no-forbidden-paths",
@@ -31,7 +32,7 @@ export const CATALOG_IDS = [
 ] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
-export const QUALITY_CHECK_IDS = ["focused", "docs"] as const;
+export const QUALITY_CHECK_IDS = ["focused", "docs", "ticket-goals"] as const;
 export type QualityCheckId = (typeof QUALITY_CHECK_IDS)[number];
 
 export const ISSUE_TRACKERS = ["github", "linear", "either", "off"] as const;
@@ -48,6 +49,7 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   focused: { name: "Focused", group: "pull-request", kind: "quality" },
   docs: { name: "Docs", group: "pull-request", kind: "quality" },
   "linked-issue": { name: "Linked issue", group: "issue", kind: "machine" },
+  "ticket-goals": { name: "Ticket goals", group: "issue", kind: "quality" },
   "no-merge-conflicts": { name: "Merge conflicts", group: "around", kind: "machine" },
   "ci-green": { name: "CI green", group: "code-vs-ci", kind: "machine" },
   "no-forbidden-paths": { name: "Forbidden paths", group: "code-vs-ci", kind: "machine" },
@@ -144,10 +146,10 @@ const MAINTAINER_STATED = "maintainer-stated";
 export const ON_FAILS = ["fail", "ask", "label"] as const;
 
 /**
- * What a rule's failure does, stored only when it is not `fail`: `fail` fails the pull request for its author, `ask`
+ * What a rule's failure does, stored only when it is not the rule's stored default (`fail`, `ask` for ticket goals): `fail` fails the pull request for its author, `ask`
  * leaves it Unsure for a maintainer, and `label` never changes the verdict: Triage adds its `label` and notes it in the comment.
  */
-export type OnFail = { onFail?: Exclude<(typeof ON_FAILS)[number], "fail">; label?: string };
+export type OnFail = { onFail?: (typeof ON_FAILS)[number]; label?: string };
 
 export type CatalogCheck = RuleNote & OnFail & {
   enabled: boolean;
@@ -180,9 +182,17 @@ export function isSizeRule(id: string): id is SizeRuleId {
   return Object.hasOwn(SIZE_RULES, id);
 }
 
-/** What a policy file's rule does on failure when the file does not say: features and refactors cross size limits and touch risky code, so those only label. */
+/** What a stored rule without `onFail` does on failure: only ticket goals asks, since an issue's work can be done another way or dropped. */
+function storedOnFail(id: string): (typeof ON_FAILS)[number] {
+  return id === "ticket-goals" ? "ask" : "fail";
+}
+
+/**
+ * What a policy file's rule does on failure when the file does not say: features and refactors cross size limits and
+ * touch risky code, so those only label; otherwise as when stored.
+ */
 export function defaultOnFail(id: string): (typeof ON_FAILS)[number] {
-  return isSizeRule(id) || id === "regression-risk" ? "label" : "fail";
+  return isSizeRule(id) || id === "regression-risk" ? "label" : storedOnFail(id);
 }
 
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
@@ -784,9 +794,9 @@ function labelOf(id: string, row: OnFail): string {
 
 function parseOnFail(row: Record<string, unknown>, id: string, where: string): OnFail {
   if (row.advisory !== undefined) throw new Error(`${where} advisory is no longer read; write onFail: label instead.`);
-  const onFail = row.onFail === undefined ? "fail" : oneOf(row.onFail, ON_FAILS, `${where} onFail`);
+  const onFail = row.onFail === undefined ? storedOnFail(id) : oneOf(row.onFail, ON_FAILS, `${where} onFail`);
   // Stored issue rules once kept a label of their own, which only a labelling rule reads.
-  if (onFail === "fail") return {};
+  if (onFail === "fail") return onFail === storedOnFail(id) ? {} : { onFail };
   if (onFail === "ask") return { onFail };
   if (row.label !== undefined) return { onFail, label: text(row.label, `${where} label`, LABEL_MAX) };
   if (labelOf(id, {}).length > LABEL_MAX) throw new Error(`${where} needs a label of at most ${LABEL_MAX} characters.`);
@@ -1294,7 +1304,7 @@ export function labelRules(pack: CheckPack): Map<string, string> {
 
 /** Each switched-on rule whose failure is asked of a maintainer. */
 export function askRules(pack: CheckPack): string[] {
-  return enabledRows(pack).filter(([, row]) => row.onFail === "ask").map(([id]) => id);
+  return enabledRows(pack).filter(([id, row]) => (row.onFail ?? storedOnFail(id)) === "ask").map(([id]) => id);
 }
 
 /** Triage takes back its verdict and `rule: …` labels, so a labelling rule adding one would fight it. */

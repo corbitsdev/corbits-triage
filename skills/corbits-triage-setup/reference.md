@@ -35,6 +35,7 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | `regression-risk` | `hotFileFixes:` whole number ≥ 1 (optional, default 4); `migrations:` list of 1–50 globs (optional, default `**/migrations/**`, `**/*.sql`) | no | Fails when a changed file (not a test, Markdown doc or lockfile) has at least `hotFileFixes` commits in the last 30 days whose subject starts with a `fix`, `bugfix`, `hotfix` or `revert` type (`fix:`, `fix(scope):`, `Revert "…"`); merges and body text don't count. Also fails when a changed file matches `migrations`. A history that can't be read in full, or a pull request changing more than 300 such files, leaves the rule unconfirmed. Default `onFail` is `label`. |
 | `focused` | none | yes | The decision model checks the change is focused on one thing. |
 | `docs` | none | yes | The decision model checks docs are updated when behaviour changes. |
+| `ticket-goals` | none | yes | The decision model checks the change does the work of the same repository's GitHub issue it closes or mentions, from the issue's title and goals (the list items under an `Acceptance criteria` or `Outcome` heading, else its checkbox items, at most 10). Lists each goal as covered by CI, a person checks, or for code review. Unconfirmed, saying why, when the issue can't be read. `onFail` defaults to `ask`. |
 
 ### Rules of your own
 
@@ -65,6 +66,7 @@ Start from the four starter rules (SKILL.md step 3). Add an extra only when the 
 | The user names TypeScript or JavaScript code conventions | `code-patterns`: `presets: [convention]`, plus patterns for what the preset lacks |
 | A decision model is set up and pull requests often mix changes | `focused` |
 | A decision model is set up and the repository keeps user docs beside its code | `docs` |
+| A decision model is set up and pull requests link GitHub issues written with acceptance criteria or checkboxes | `ticket-goals` |
 
 `no-forbidden-paths` fails maintainers too, so never list `.github/**` or another path the team edits on purpose unless the user asks.
 

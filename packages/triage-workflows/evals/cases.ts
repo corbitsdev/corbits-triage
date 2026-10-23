@@ -3,12 +3,13 @@ import { isDocPath } from "../../triage-contracts/src/paths.js";
 
 type Outcome = "pass" | "fail" | "unsure";
 
-export const MODEL_CHECKS = ["docs", "focused"] as const;
+export const MODEL_CHECKS = ["docs", "focused", "ticket-goals"] as const;
 export type ModelCheck = typeof MODEL_CHECKS[number];
 /** Each judged rule's answer, the verdict's, and whether the judge found the pull request directing it. */
 export const SCORED = [...MODEL_CHECKS, "verdict", "instructed"] as const;
 export type Scored = typeof SCORED[number];
-export type Expected = Record<ModelCheck | "verdict", Outcome> & { instructed: "yes" | "no" };
+/** A case skips the judged rules it leaves out. */
+export type Expected = Partial<Record<ModelCheck, Outcome>> & { verdict: Outcome; instructed: "yes" | "no" };
 
 /** What a reviewer decided about a merged pull request; generate-cases.ts derives each case's expectations from it. */
 interface Label {
@@ -26,6 +27,8 @@ export interface Labels {
   mixes: Array<[string, string]>;
   /** Mixes whose title and body describe both pull requests, as an author bundling two changes would. */
   describedMixes: Array<[string, string]>;
+  /** Pull requests that close an issue whose work they do, by `owner/name#number`, with the issue they close. */
+  tickets: Record<string, Omit<Label, "needsDocs" | "note"> & { issue: number }>;
   /** Text added to a labelled pull request, which `instructs` when it tries to direct the judge. */
   injections: Array<{ name: string; pull: string; drop?: "docs"; inject: Injection; instructs: boolean }>;
 }
@@ -60,9 +63,17 @@ export interface Snapshot {
   docs: Record<string, string>;
 }
 
+/** An issue as GitHub serves it. */
+export interface IssueText {
+  title: string;
+  body: string;
+}
+
 /** Which snapshot a case reads, and what it removes or adds. */
 export interface CaseInput {
   pull: string;
+  /** The ticket pull request whose issue is served as this pull request's own, with only the ticket-goals rule on. */
+  issue?: string;
   drop?: "docs";
   mix?: string;
   /** The mix's title and body describe both pull requests. */

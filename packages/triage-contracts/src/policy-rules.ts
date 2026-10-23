@@ -74,7 +74,7 @@ export function ruleNameOf(id: string): string {
 
 /** The stored policy keeps `onFail` only where it is not `fail`. */
 function onFailOf(rule: PolicyRule, onFail: OnFailWord): Record<string, unknown> {
-  if (onFail === "fail") return {};
+  if (onFail === "fail" && ruleId(rule) !== "ticket-goals") return {};
   return { onFail, ...(rule.label !== undefined && { label: rule.label }) };
 }
 

@@ -6,6 +6,7 @@ import {
   authorTeams,
   codeownersForPr,
   getChecks,
+  getIssue,
   getPr,
   getReviews,
   listIssueComments,
@@ -69,6 +70,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_get_stack",
     description: "Get the pull requests merged into a pull request's branch, and the open pull request whose branch it is based on.",
+    inputSchema: obj({ repo, number: { type: "integer" } }),
+  },
+  {
+    name: "github_get_issue",
+    description: "Get one issue's title and markdown body, and whether it is a pull request.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
   },
   {
@@ -272,6 +278,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
       return getPr(gh, a.repo, a.number);
     case "github_get_stack":
       return readStack(gh, a.repo, a.number);
+    case "github_get_issue":
+      return getIssue(gh, a.repo, a.number);
     case "github_get_checks":
       return { checks: await getChecks(gh, a.repo, a.sha) };
     case "github_get_reviews":

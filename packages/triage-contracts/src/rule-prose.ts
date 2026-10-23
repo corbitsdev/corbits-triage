@@ -30,6 +30,7 @@ const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => st
   "regression-risk": (row) => `Flag changes to files with ${row?.hotFileFixes ?? DEFAULT_RISK.hotFileFixes}+ fixes in the last ${DEFAULT_RISK.hotFileDays} days, or to migrations`,
   focused: () => "Check the change is focused on one thing",
   docs: () => "Check docs are updated when behavior changes",
+  "ticket-goals": () => "Check the change matches its linked issue",
 };
 
 export function catalogSentence(id: CatalogId, pack: CheckPack): string {

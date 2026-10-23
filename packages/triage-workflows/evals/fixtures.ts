@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { isDocPath } from "../../triage-contracts/src/paths.js";
-import type { FileRow, Labels, Snapshot } from "./cases.js";
+import type { FileRow, IssueText, Labels, Snapshot } from "./cases.js";
 
 const REPO = "corbitsdev/corbits-triage";
 
@@ -73,7 +73,7 @@ export function pullOf(key: string): [string, string] {
 
 /** A labelled pull request at the head and base it was measured at, with the repository's docs at that base, fetched on first use into the gitignored `.cache/`; delete that directory to refetch. */
 export function fixture(key: string): Snapshot {
-  const label = labels.pulls[key];
+  const label = labels.pulls[key] ?? labels.tickets[key];
   if (!label) throw new Error(`${key} is not labelled in labels.json`);
   const { baseSha, headSha } = label;
   const [repo, number] = pullOf(key);
@@ -95,4 +95,16 @@ export function fixture(key: string): Snapshot {
     };
   });
   return { ...snapshot, bodyHtml };
+}
+
+/** The issue a ticket pull request closes, fetched on first use into `.cache/`. */
+export function issueOf(key: string): IssueText & { number: number } {
+  const ticket = labels.tickets[key];
+  if (!ticket) throw new Error(`${key} is not a ticket in labels.json`);
+  const [repo] = pullOf(key);
+  const text = cached(`issues/${repo.replace("/", "-")}-${ticket.issue}.json`, function fetchIssue() {
+    const row = ghJson<any>(`repos/${repo}/issues/${ticket.issue}`);
+    return { title: redacted(row.title), body: redacted(row.body ?? "") };
+  });
+  return { ...text, number: ticket.issue };
 }

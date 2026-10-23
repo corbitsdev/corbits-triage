@@ -1,11 +1,11 @@
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, trustedRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, catalogCheckEnabled, visibleText, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, trustedRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
-import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
-import { asText } from "../logic/extract.js";
+import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, ticketTarget, type PrFacts, type Ticket, type TicketTarget } from "../logic/checks.js";
+import { asText, ticketGoals } from "../logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "../logic/facts.js";
 import type { History } from "../logic/history.js";
 import { filesToRead, patternsResult, type PatternsResult } from "../logic/patterns.js";
@@ -297,12 +297,36 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   }
 
   const items = numbers.map(itemFor);
-  if (!pack.custom.filter(isPatternsCheck).some(customCheckEnabled)) return items;
+  const ticketed = catalogCheckEnabled(pack, "ticket-goals") ? await withTickets(host, stamp.repoSource, repo, items) : items;
+  if (!pack.custom.filter(isPatternsCheck).some(customCheckEnabled)) return ticketed;
   const matched: RulesItem[] = [];
-  for (const item of items) {
+  for (const item of ticketed) {
     matched.push("facts" in item ? { ...item, facts: { ...item.facts, patterns: await patternsOf(host, tool("read_file"), repo, item) } } : item);
   }
   return matched;
+}
+
+/** The first referenced number that is an issue, skipping pull requests; one that cannot be read says why instead. */
+function ticketOf(target: TicketTarget, reads: Map<string, ToolResult>, at: number): Ticket {
+  if ("problem" in target) return target;
+  for (const number of target.numbers) {
+    const issue = data<{ title?: unknown; body?: unknown; pullRequest?: unknown }>(reads.get(`issue:${at}:${number}`));
+    if (!issue || typeof issue.body !== "string") return { problem: `linked issue #${number} could not be read` };
+    if (issue.pullRequest === true) continue;
+    return { issue: `#${number}`, title: typeof issue.title === "string" ? visibleText(issue.title) : "", goals: ticketGoals(visibleText(issue.body)) };
+  }
+  return { problem: `pull request references no issue, only pull requests ${target.numbers.map((number) => `#${number}`).join(", ")}` };
+}
+
+/** Each pull request's linked issue, read for the ticket-goals rule. */
+async function withTickets(host: HostCall, source: RepoSource, repo: string, items: RulesItem[]): Promise<RulesItem[]> {
+  const targets = items.map((item) => ("facts" in item ? ticketTarget(item.facts, source) : undefined));
+  const reads = await runAll(host, targets.flatMap((target, at) => (target && "numbers" in target ? target.numbers.map((number) => call(toolName(source, "get_issue"), { repo, number }, `issue:${at}:${number}`)) : [])));
+  return items.map(function ticketed(item, at) {
+    const target = targets[at];
+    if (!("facts" in item) || target === undefined) return item;
+    return { ...item, facts: { ...item.facts, ticket: ticketOf(target, reads, at) } };
+  });
 }
 
 function docsCall(source: RepoSource, repo: string, offset: number, ref?: string): ToolCall {
