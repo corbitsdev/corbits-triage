@@ -84,7 +84,6 @@ const HubEnvSchema = type({
   "PATH?": "string",
   "HOME?": "string",
   "TMPDIR?": "string",
-  "PG_SCHEMA?": "string",
   "DB_STATEMENT_TIMEOUT_MS?": "string.integer",
 });
 
@@ -117,7 +116,7 @@ export function loadHubEnv(raw: Record<string, string | undefined>): HubEnv {
   return env;
 }
 
-const DatabaseEnvSchema = HubEnvSchema.pick("DATABASE_URL", "PG_SCHEMA", "DB_STATEMENT_TIMEOUT_MS");
+const DatabaseEnvSchema = HubEnvSchema.pick("DATABASE_URL", "DB_STATEMENT_TIMEOUT_MS");
 
 /** The hub's database settings alone, read the same way, for `db:migrate`. */
 export function loadDatabaseEnv(raw: Record<string, string | undefined>): typeof DatabaseEnvSchema.infer {
@@ -224,7 +223,7 @@ export function childProcessEnv(env: Pick<HubEnv, "PATH" | "HOME" | "TMPDIR">): 
 }
 
 /** `sslmode=require` (or stricter) turns on TLS. */
-export function databaseConfig(env: Pick<HubEnv, "DATABASE_URL" | "PG_SCHEMA" | "DB_STATEMENT_TIMEOUT_MS">): DatabaseConfig {
+export function databaseConfig(env: Pick<HubEnv, "DATABASE_URL" | "DB_STATEMENT_TIMEOUT_MS">): DatabaseConfig {
   const url = new URL(env.DATABASE_URL);
   const sslMode = url.searchParams.get("sslmode") ?? "";
   return {
@@ -234,7 +233,6 @@ export function databaseConfig(env: Pick<HubEnv, "DATABASE_URL" | "PG_SCHEMA" | 
     password: decodeURIComponent(url.password),
     database: decodeURIComponent(url.pathname.slice(1)),
     ...(["require", "verify-ca", "verify-full"].includes(sslMode) && { ssl: true }),
-    ...(env.PG_SCHEMA !== undefined && { schema: env.PG_SCHEMA }),
     ...(env.DB_STATEMENT_TIMEOUT_MS !== undefined && { statementTimeoutMs: Number(env.DB_STATEMENT_TIMEOUT_MS) }),
   };
 }
