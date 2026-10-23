@@ -55,25 +55,25 @@ docker compose up --build -d
 
 Compose sets every other variable. The first build takes a few minutes. Run `docker compose logs hub` until it shows `Started server`. A build that stops with `no space left on device` needs more free Docker disk.
 
-**Their own Postgres** (`docs/DEV.md`). Run `bun install`, create an empty database (`createdb interchange`), and set `DATABASE_URL` in `.env`:
+**Their own Postgres** (`docs/DEV.md`). Run `bun install`, then create an empty database whose role has a password, as `docs/DEV.md` "2. Database" shows; the database setup refuses a URL without a password. Set `DATABASE_URL` in `.env`:
 
 ```
 DATABASE_URL=postgres://<user>:<password>@localhost:5432/interchange
 ```
 
-The URL must include a password, even when Postgres needs none: setting up the database refuses a URL without one, and a Postgres that trusts the user ignores the value. Then start `bun run dev` in the background, writing its output to a log file, and read the log until it shows `Started server`. A warning that rate limiting could not determine a client IP is expected.
+Start `bun run dev` in the background, writing its output to a log file. It sets up the database first (`migrations applied successfully!`; the Postgres notices printed before it are expected), then starts the hub. Read the log until it shows `Started server`. A warning that rate limiting could not determine a client IP may appear and is harmless.
 
 If the hub or its database setup stops, its logs (`docker compose logs`, or the dev log file) print why.
 
 ## 4. Connect GitHub
 
-At the portal address, the person does `docs/SELF_HOST.md` "Set up in the portal" steps 1 to 4: sign up (the first account creates the workspace), press **Create GitHub App** and confirm it on GitHub, choose repositories, and save the decision model key. Bitbucket Data Center instead: `docs/BITBUCKET_DATACENTER.md`.
+At the portal address, the person does `docs/SELF_HOST.md` "Set up in the portal" steps 1 to 4: sign up (the first account creates the workspace), press **Create GitHub App** and confirm it on GitHub, choose repositories, and save the decision model key. After signing up the portal shows **Set up Triage** with three steps: Connect a source, Repositories, Decision model. Bitbucket Data Center instead: `docs/BITBUCKET_DATACENTER.md`.
 
 To try it without a GitHub account, use the GitHub emulator on the own-Postgres path instead (`docs/DEV.md`, "GitHub emulator (no GitHub account)"); it still needs a decision model endpoint.
 
 ## 5. Add a policy file
 
-Either the person presses **Start a policy file** on the repository and merges the pull request, or you write one with the corbits-triage-setup skill (`skills/corbits-triage-setup`) in that repository. Once it is merged, restart the hub so it reads it: `docker compose restart hub`, or stop and start `bun run dev` again.
+Either the person presses **Start a policy file** on the repository and merges the pull request, or you write one with the corbits-triage-setup skill (`skills/corbits-triage-setup`) in that repository. Once it is merged, the hub picks it up within a few minutes; no restart is needed.
 
 ## 6. Turn triage on
 
@@ -87,5 +87,5 @@ Code review is optional and needs an isolated place to run: `docs/SELF_HOST.md`,
 - [ ] Secrets set once, never printed; person keeps a copy
 - [ ] Hub logs `Started server`; portal opens
 - [ ] Person signed up, created the GitHub App, chose repositories, saved the model key
-- [ ] Policy file merged; hub restarted
+- [ ] Policy file merged
 - [ ] Triage on; first verdict in the Inbox
