@@ -9,7 +9,7 @@ const SIDECAR_STAGE = `FROM oven/bun:1.4
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile
-RUN printf '#!/bin/sh\\nexec bun /app/node_modules/oxlint/bin/oxlint "$@"\\n' > /usr/local/bin/oxlint && chmod +x /usr/local/bin/oxlint
+RUN bun tooling/install-oxlint.ts /usr/local/bin/oxlint
 WORKDIR /app/vendor/interchange`;
 
 const template = Template({ fileContextPath: path.resolve(import.meta.dir, "../..") }).fromDockerfile(SIDECAR_STAGE);

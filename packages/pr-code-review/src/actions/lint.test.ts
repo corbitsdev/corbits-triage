@@ -9,9 +9,14 @@ const FILE = "var a = 1;\ndebugger;\nif (a == null) {}\n";
 const HUNK = "@@ -1,1 +1,3 @@\n var a = 1;\n+debugger;\n+if (a == null) {}\n";
 const RULES = { rules: { "no-var": "error", "no-debugger": "error", eqeqeq: "warn" } };
 
-const lint = lintWith([process.execPath, join(dirname(Bun.resolveSync("oxlint/package.json", import.meta.dir)), "bin/oxlint")]);
-
 const dirs: string[] = [];
+
+// The sidecar image runs oxlint's native binary; tests run the lockfile's launcher through a shim outside any checkout.
+const shim = join(mkdtempSync(join(tmpdir(), "oxlint-shim-")), "oxlint");
+dirs.push(dirname(shim));
+writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${join(dirname(Bun.resolveSync("oxlint/package.json", import.meta.dir)), "bin/oxlint")}" "$@"\n`);
+chmodSync(shim, 0o755);
+const lint = lintWith(shim);
 
 function checkout(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "lint-"));
@@ -76,6 +81,38 @@ test("a type-aware config is refused before the checkout's tsgolint can run", as
   chmodSync(join(path, "node_modules/.bin/tsgolint"), 0o755);
   expect(await lint({ path, diff })).toEqual({ status: "skipped", reason: "config loads code" });
   expect(existsSync(join(path, "node_modules/.bin/ran"))).toBe(false);
+});
+
+test("nothing in the checkout runs: not a bunfig preload, npm config, package scripts nor a planted oxlint", async () => {
+  const mark = "require('node:fs').writeFileSync(require('node:path').join(__dirname, 'ran'), '');";
+  const path = checkout({
+    "a.js": FILE,
+    ".oxlintrc.json": JSON.stringify({ ...RULES, ignorePatterns: ["generated/"] }),
+    "generated/b.js": FILE,
+    "bunfig.toml": 'preload = ["./preload.cjs"]\n',
+    "preload.cjs": mark,
+    ".npmrc": "node-options=--require=./preload.cjs\n",
+    "package.json": JSON.stringify({ scripts: { preinstall: "touch ran", prelint: "touch ran", lint: "touch ran" } }),
+    "node_modules/.bin/oxlint": "#!/bin/sh\ntouch \"$(dirname \"$0\")/ran\"\n",
+  });
+  chmodSync(join(path, "node_modules/.bin/oxlint"), 0o755);
+  const diff = ["a.js", "generated/b.js"].map((name) => `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${HUNK}`).join("");
+  expect(await lint({ path, diff })).toMatchObject({ status: "complete", findings: [{ path: "a.js", line: 2 }, { path: "a.js", line: 3 }] });
+  expect(existsSync(join(path, "ran"))).toBe(false);
+  expect(existsSync(join(path, "node_modules/.bin/ran"))).toBe(false);
+});
+
+test("ignore files in the checkout never hide a changed file", async () => {
+  const path = checkout({ "a.js": FILE, ".oxlintrc.json": JSON.stringify(RULES), ".gitignore": "a.js\n", ".eslintignore": "a.js\n" });
+  const result = await lint({ path, diff: `diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n${HUNK}` });
+  expect(result).toMatchObject({ status: "complete", findings: [{ path: "a.js", line: 2 }, { path: "a.js", line: 3 }] });
+});
+
+test("a changed path the diff cannot carry exactly is incomplete, never skipped", async () => {
+  const name = "a\nb.js";
+  const path = checkout({ [name]: FILE, ".oxlintrc.json": JSON.stringify(RULES) });
+  const result = await lint({ path, diff: `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${HUNK}` });
+  expect(result).toEqual({ status: "incomplete", reason: 'lint: changed file "a" is not in the checkout' });
 });
 
 test("a changed file named like an oxlint flag is linted as a file", async () => {

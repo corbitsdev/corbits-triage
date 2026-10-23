@@ -230,6 +230,7 @@
         "@intx/types": "workspace:*",
         "@intx/workflow": "workspace:*",
         "arktype": "catalog:",
+        "ignore": "5.3.2",
       },
     },
     "packages/pr-code-review-anthropic": {
