@@ -247,10 +247,12 @@ label off that head, so it never stands on a head not yet triaged.
    win on a shared id) with `@ast-grep/napi` over each changed TypeScript or
    JavaScript file's head content, and keeps matches on lines the patch adds.
    A file whose patch or content was not read, or a rule ast-grep refuses,
-   leaves the rule unconfirmed. With such a rule on, the facts step reads
-   each in-scope file at the head through the host's `read_file`, a window
-   at a time; a file not read whole (a clipped line, an error) is left out.
-   The extension leaves code-pattern rules out and swaps the native module
+   leaves the rule unconfirmed; vendored, installed, built and generated
+   paths are skipped, and a `?? 0` inside arithmetic is a counter's real
+   default. With such a rule on, the facts step reads each file whose patch
+   adds lines at the head through the host's `read_file` (`whole`), runs the
+   rules there and outputs only the matches. Bitbucket Data Center lists no
+   patch, so there the rule is unconfirmed. The extension leaves code-pattern rules out and swaps the native module
    for a stub.
 3. **route**: skips the judge when no question needs asking.
 4. **judge**: one System One call per request of questions that no carried

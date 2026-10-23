@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, readPolicyFile, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
-import { deriveState, REVIEW_ANSWERED_REASON, type PrFacts } from "./checks.ts";
+import { DEFAULT_REPO_POLICY, emptyPack, isPatternsCheck, readCheckPack, readPolicyFile, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
+import { deriveState, REVIEW_ANSWERED_REASON, type PrFacts, type PrFileFacts } from "./checks.ts";
+import { filesToRead, patternsResult } from "./patterns.ts";
 import { NO_FACTS } from "./item.ts";
 
 const noisy: PrFacts = {
@@ -233,9 +234,9 @@ describe("text rules", () => {
 
 describe("code patterns", () => {
   const open: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success" };
-  const content = "const a = x ?? 0;\nconst b = y ?? 0;\nconst c = p ? 1 : q ? 2 : 3;\n";
-  const patch = "@@ -1,2 +1,3 @@\n const a = x ?? 0;\n-const b = 1;\n+const b = y ?? 0;\n+const c = p ? 1 : q ? 2 : 3;\n";
-  const file = { path: "src/a.ts", status: "modified", additions: 2, deletions: 1, patch };
+  const content = "const a = x ?? 0;\nconst b = y ?? 0;\nconst c = p ? 1 : q ? 2 : 3;\nconst d = (n ?? 0) + 1;\n";
+  const patch = "@@ -1,2 +1,4 @@\n const a = x ?? 0;\n-const b = 1;\n+const b = y ?? 0;\n+const c = p ? 1 : q ? 2 : 3;\n+const d = (n ?? 0) + 1;\n";
+  const file = { path: "src/a.ts", status: "modified", additions: 3, deletions: 1, patch };
   const FILE = `onFail: ask
 rules:
   - id: conventions
@@ -258,25 +259,31 @@ rules:
         rule: { kind: ternary_expression, has: { field: alternative, kind: ternary_expression } }
 `;
 
-  function patterns(facts: Partial<PrFacts>) {
-    return deriveState({ ...open, files: [file], contents: { "src/a.ts": content }, ...facts }, undefined, readCheckPack(readPolicyFile(FILE, "acme/widgets")));
+  function patterns(files: PrFileFacts[], contents: Record<string, string>, pack = readCheckPack(readPolicyFile(FILE, "acme/widgets"))) {
+    const matched = Object.fromEntries(pack.custom.filter(isPatternsCheck).map((rule) => [rule.id, patternsResult(rule, files, contents)]));
+    return deriveState({ ...open, files, patterns: matched }, undefined, pack);
   }
 
-  test("matches on added lines only, and a rule's own pattern wins over the preset's on a shared id", () => {
-    const result = patterns({});
-    expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({
-      result: "fail",
-      onFail: "ask",
-      evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.", "src/a.ts:3 Nested ternary; use if statements or a lookup."],
-    });
-    expect(result.checks.find((check) => check.check === "no-ternaries")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.", "src/a.ts:3 Our own nested ternary rule."] });
+  test("matches on added lines only, never a counter's default, and a rule's own pattern wins over the preset's on a shared id", () => {
+    const result = patterns([file], { "src/a.ts": content });
+    const fallback = "src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.";
+    expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", onFail: "ask", evidence: [fallback, "src/a.ts:3 Nested ternary; use if statements or a lookup."] });
+    expect(result.checks.find((check) => check.check === "no-ternaries")).toMatchObject({ result: "fail", evidence: [fallback, "src/a.ts:3 Our own nested ternary rule."] });
     expect(result.checks.find((check) => check.check === "no-ternaries")?.onFail).toBeUndefined();
   });
 
-  test("an unread file content or a broken rule never passes", () => {
-    expect(patterns({ contents: {} }).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check" } });
+  test("vendored and built code is not checked", () => {
+    expect(patterns([{ ...file, path: "vendor/lib/a.ts" }, { ...file, path: "dist/a.js" }], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass" });
+  });
+
+  test("a file without its patch, as on Bitbucket Data Center, an unread content or a broken rule never passes", () => {
+    const unpatched = { path: "src/a.ts", status: "modified", additions: 0, deletions: 0 };
+    expect(filesToRead([unpatched])).toEqual({ unread: "src/a.ts: its patch was not read in full" });
+    expect(patterns([unpatched], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check" } });
+    expect(patterns([file], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
+    expect(deriveState({ ...open, files: [file] }, undefined, readCheckPack(readPolicyFile(FILE, "acme/widgets"))).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
     const broken = readCheckPack({ ...emptyPack("acme/widgets"), custom: [{ id: "broken", name: "Broken", group: "pull-request", kind: "code-patterns", presets: [], patterns: [{ id: "bad", language: "typescript", message: "Bad.", rule: { kind: "no_such_kind" } }] }] });
-    expect(deriveState({ ...open, files: [file], contents: { "src/a.ts": content } }, undefined, broken).checks.find((check) => check.check === "broken")).toMatchObject({ result: "unconfirmed" });
+    expect(patterns([file], { "src/a.ts": content }, broken).checks.find((check) => check.check === "broken")).toMatchObject({ result: "unconfirmed" });
   });
 
   test("an unknown preset is refused", () => {

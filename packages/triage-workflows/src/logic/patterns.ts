@@ -1,5 +1,5 @@
 import { parse } from "@ast-grep/napi";
-import { PATTERN_PRESETS, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
+import { isForeignPath, PATTERN_PRESETS, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
 import type { PrFileFacts } from "./checks.js";
 import { addedLines, MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 
@@ -36,9 +36,21 @@ function grammarOf(path: string): Grammar | undefined {
   return GRAMMARS[path.slice(path.lastIndexOf(".") + 1)];
 }
 
-/** A changed file whose code the rules read: a TypeScript or JavaScript file the pull request adds lines to. */
-export function patternScope(file: PrFileFacts): boolean {
-  return grammarOf(file.path) !== undefined && file.status !== "removed" && file.additions !== 0;
+/** A changed TypeScript or JavaScript file the repository writes itself. */
+function inScope(file: PrFileFacts): boolean {
+  return grammarOf(file.path) !== undefined && file.status !== "removed" && !isForeignPath(file.path);
+}
+
+function wholePatch(file: PrFileFacts): string | undefined {
+  return file.patch === undefined || file.patchTruncated || file.patch.length > MAX_PATCH_INPUT_CHARS ? undefined : file.patch;
+}
+
+/** The files whose content the rules need, or why they cannot be checked: a file in scope without its whole patch. */
+export function filesToRead(files: readonly PrFileFacts[]): string[] | { unread: string } {
+  const scoped = files.filter(inScope);
+  const unpatched = scoped.find((file) => wholePatch(file) === undefined);
+  if (unpatched) return { unread: `${unpatched.path}: its patch was not read in full` };
+  return scoped.filter((file) => addedLines(wholePatch(file)!).size > 0).map((file) => file.path);
 }
 
 function fileMatches(file: PrFileFacts, patch: string, content: string, grammar: Grammar, rules: PatternRule[]): string[] {
@@ -59,17 +71,16 @@ function fileMatches(file: PrFileFacts, patch: string, content: string, grammar:
 }
 
 /** Matches on the lines a pull request adds; a file in scope whose patch or content was not read leaves the rule unchecked. */
-export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>> | undefined): PatternsResult {
+export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>>): PatternsResult {
+  const toRead = filesToRead(files);
+  if (!Array.isArray(toRead)) return toRead;
   const matches: string[] = [];
   try {
     const rules = patternRules(check);
-    for (const file of files) {
-      const grammar = grammarOf(file.path);
-      if (!grammar || !patternScope(file)) continue;
-      const content = contents?.[file.path];
-      if (file.patch === undefined || file.patchTruncated || file.patch.length > MAX_PATCH_INPUT_CHARS) return { unread: `${file.path}: its patch was not read in full` };
+    for (const file of files.filter((candidate) => toRead.includes(candidate.path))) {
+      const content = contents[file.path];
       if (content === undefined) return { unread: `${file.path}: its content was not read` };
-      matches.push(...fileMatches(file, file.patch, content, grammar, rules));
+      matches.push(...fileMatches(file, file.patch!, content, grammarOf(file.path)!, rules));
     }
   } catch (error) {
     return { unread: error instanceof Error ? error.message : String(error) };

@@ -14,7 +14,16 @@ function typescript(id: string, message: string, rule: Record<string, unknown>):
 }
 
 const CONVENTION: PatternRule[] = [
-  typescript("zero-fallback", "Invented fallback `?? 0`; handle the missing value instead.", { pattern: "$X ?? 0" }),
+  // A counter's `?? 0` is a real default, so one inside arithmetic is left alone.
+  typescript("zero-fallback", "Invented fallback `?? 0`; handle the missing value instead.", {
+    pattern: "$X ?? 0",
+    not: {
+      any: [
+        { inside: { kind: "binary_expression", has: { field: "operator", regex: "^[-+*/%]$" }, stopBy: "end" } },
+        { inside: { kind: "augmented_assignment_expression", stopBy: "end" } },
+      ],
+    },
+  }),
   typescript("empty-list-fallback", "Invented fallback `?? []`; handle the missing value instead.", { pattern: "$X ?? []" }),
   typescript("nested-ternary", "Nested ternary; use if statements or a lookup.", {
     kind: "ternary_expression",

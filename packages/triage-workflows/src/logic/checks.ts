@@ -33,8 +33,8 @@ import {
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { globMatch } from "./glob.js";
+import type { PatternsResult } from "./patterns.js";
 import { hotFiles, migrationPaths } from "./risk.js";
-import { patternsResult } from "./patterns.js";
 
 export interface PrFileFacts {
   path: string;
@@ -93,8 +93,8 @@ export interface PrFacts {
   hidden: string[];
   /** Set only when regression risk is on: the fix commits in each changed file's recent history, by path, or null when that history could not be read in full. */
   fixes?: Record<string, number | null>;
-  /** Each changed file's content at the head, by path; read only when a code-patterns rule is on. */
-  contents?: Record<string, string>;
+  /** Each code-patterns rule's matches on the added lines, by rule id; matched where the files were read. */
+  patterns?: Record<string, PatternsResult>;
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
@@ -465,7 +465,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       checks.push({ check: rule.id, kind: "machine", result: failed ? "fail" : "pass", reason, evidence, output: { kind: "values", values: { matched: failed } } });
     }
     for (const rule of pack?.custom.filter(isPatternsCheck).filter(customCheckEnabled) ?? []) {
-      const found = patternsResult(rule, facts.files, facts.contents);
+      const found = facts.patterns?.[rule.id] ?? { unread: "the changed files were not read" };
       if ("unread" in found) {
         const reason = `code patterns could not be checked: ${found.unread}`;
         add(rule.id, "stale-unknown", reason);
