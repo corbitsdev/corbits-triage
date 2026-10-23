@@ -1,3 +1,5 @@
+import { parsePatch } from "./patch.js";
+
 type Prefixes = { old: string; new: string };
 
 const GIT: Prefixes = { old: "a/", new: "b/" };
@@ -77,4 +79,23 @@ export function filesFrom(diff: string, from: number): string[] | undefined {
   const paths = starts.flatMap((start, i) => ((starts[i + 1] ?? diff.length) > from ? [sectionPath(diff.slice(start, starts[i + 1]))] : []));
   const known = paths.filter((path) => path !== undefined);
   return paths.length > 0 && known.length === paths.length ? known : undefined;
+}
+
+function sections(diff: string): string[] {
+  const starts = [...diff.matchAll(/^diff --git /gm)].map((match) => match.index);
+  return starts.map((start, i) => diff.slice(start, starts[i + 1]));
+}
+
+/** The head-side lines the diff adds, by each file's head-side path; throws when a file's path cannot be read. */
+export function addedLines(diff: string): Map<string, Set<number>> {
+  const added = new Map<string, Set<number>>();
+  for (const section of sections(diff)) {
+    const path = sectionPath(section);
+    if (path === undefined) throw new Error(`unreadable diff header: ${section.split("\n")[0]}`);
+    const hunks = section.search(/^@@/m);
+    if (hunks < 0) continue;
+    const lines = parsePatch(section.slice(hunks)).flatMap((hunk) => hunk.lines.flatMap((line) => (line.kind === "add" ? [line.newNo!] : [])));
+    if (lines.length > 0) added.set(path, new Set(lines));
+  }
+  return added;
 }

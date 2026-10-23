@@ -7,9 +7,9 @@ profile (`src/profile.ts`); the hub imports its workflow addresses and placement
 ## Use
 
 Every file under `src/` is a subpath export (`@corbits/pr-code-review/pr-code-review`, `/agents`, `/directors`,
-`/findings`, `/profile`, `/actions/review`, `/actions/checkout`). `codeReviewSteps(agents, sources, { prefix, request,
-after })` places the same steps in another definition, every id under `prefix`, as
-[pr-workflow-anthropic](../pr-workflow-anthropic/README.md) does.
+`/findings`, `/profile`, `/actions/review`, `/actions/checkout`, `/actions/lint`, `/actions/ci-annotations`).
+`codeReviewSteps(agents, sources, { prefix, request, after })` places the same steps in another definition, every id
+under `prefix`, as [pr-workflow-anthropic](../pr-workflow-anthropic/README.md) does.
 
 The request is `{ kind: "code-review", title, description, diff, checkout }`. The title and description are as the host
 shows them, without hidden text. Optional fields are `number` (the pull request's), `efforts` per step,
@@ -21,6 +21,12 @@ naming the files it cut part-way or left out; the review carries it and never pu
 1. **plan** names the risky changed areas and the code outside the diff they depend on; meanwhile **checkout** puts the
    head in a folder on the sidecar. Each review runs in a worker deployment of its own; releasing it when the run ends,
    failed or not, removes the sidecar and the checkout with it.
+   **lint** then runs the sidecar's pinned oxlint with the repository's `.oxlintrc.json` over the changed files and
+   keeps hits on added lines; only its data keys are kept, a config with any other key is refused unrun, and with none
+   it is `skipped`.
+   **ciAnnotations** reads the head's check-run annotations (GitHub) or Code Insights annotations (Bitbucket Data
+   Center) through the host credential. Both answer `complete` with findings (`ToolFinding` in `src/findings.ts`),
+   `skipped` or `incomplete`; a failure is never an empty list. Nothing reads them yet.
 2. **findDiff** reads the diff; **findRepo** reads that folder within a token budget. They run in parallel. An answer
    with no findings list fails the finder's step; a repository finder that spent its budget before answering found
    nothing and the review says it stopped early.
@@ -52,7 +58,8 @@ package of its own, `packages/pr-code-review-<provider>`, shaped like
 2. Build the directors once with `codeReviewDirectors(profile, sidecarDataDir)` and the agents once with
    `codeReviewAgents(profile, directors, sidecarDataDir)`. `src/directors.ts` exports the directors' factories and
    nothing else; `src/actions/index.ts` re-exports the actions of `@corbits/pr-code-review/actions/review` with
-   `reviewInput = reviewInputFor(profile)`, and `checkout` from `@corbits/pr-code-review/actions/checkout`.
+   `reviewInput = reviewInputFor(profile)`, `checkout` from `@corbits/pr-code-review/actions/checkout`, `lint` and
+   `ciAnnotations` from their own subpaths.
 3. `src/pr-code-review.ts` is `codeReviewWorkflow(agents)`, and one entry per host builds it under
    `PR_CODE_REVIEW_GITHUB_ADDRESS` or `PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS`, so the hub mails it whichever
    provider runs it.
@@ -64,10 +71,10 @@ package of its own, `packages/pr-code-review-<provider>`, shaped like
 
 ## Test
 
-No tests of its own; a provider package's tests and eval run it:
+The lint and CI annotation steps have tests of their own; a provider package's tests and eval run the rest:
 
 ```sh
-bun --conditions=intx-src test packages/pr-code-review-anthropic
+bun --conditions=intx-src test packages/pr-code-review packages/pr-code-review-anthropic
 ```
 
 ## Docs

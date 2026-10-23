@@ -6,7 +6,7 @@ import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readPr, readPrDiff, type GithubFetch } from "@corbits/github-reads";
 import { shownBody, visibleText, type RepoSource } from "@corbits/triage-contracts";
 import type { TenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { filesFrom } from "./diff-files.js";
+import { filesFrom } from "@corbits/common/diff-files";
 import type { TriageJob } from "./github/coordinator.js";
 import type { PrMail } from "./github/normalize.js";
 import { forInstallation } from "./github/open-pulls.js";
