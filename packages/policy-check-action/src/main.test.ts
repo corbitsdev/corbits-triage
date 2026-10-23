@@ -42,15 +42,16 @@ const BASE_POLICY = `rules:
   - { check: focused, text: One change., reason: Reviewable., evidence: [maintainer-stated] }
 `;
 
-/** Runs the Action on `pr`'s pull request event against GitHub served from it, with `policy` on the base branch. */
-async function onPullRequest(pr: typeof PR, policy: string) {
+/** Runs the Action on `pr`'s pull request event against GitHub served from it, with `policy`, if any, on the base branch. */
+async function onPullRequest(pr: typeof PR, policy: string | undefined) {
   const served = fixtureGithub(pr, {});
   const github = Bun.serve({
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
       if (url.pathname !== `/repos/${pr.repo}/contents/.corbits-triage.yml`) return served(url);
-      return url.searchParams.get("ref") === "base" ? new Response(policy) : new Response(null, { status: 404 });
+      if (policy === undefined || url.searchParams.get("ref") !== "base") return new Response(null, { status: 404 });
+      return new Response(policy);
     },
   });
   const root = mkdtempSync(join(tmpdir(), "policy-check-"));
@@ -84,4 +85,16 @@ test("text from the pull request never starts a workflow command of its own", as
   const commands = stdout.split("\n").filter((line) => line.startsWith("::"));
   expect(commands.length).toBeGreaterThan(0);
   expect(commands.every((line) => /^::(error|warning) title=[\w-]+::/.test(line))).toBe(true);
+}, 30_000);
+
+test("an unreadable base policy fails the job, and one that extends another or none passes it", async () => {
+  const unreadable = await onPullRequest(PR, "rules: [\n");
+  expect(unreadable.exitCode).toBe(2);
+  expect(unreadable.stdout).toContain("::error title=base-policy::.corbits-triage.yml on the base branch cannot be read, so no rules ran:");
+  const extending = await onPullRequest(PR, "extends: acme/shared\n");
+  expect(extending.exitCode).toBe(0);
+  expect(extending.stdout).toContain("::notice title=base-policy::.corbits-triage.yml on the base branch extends another policy");
+  const none = await onPullRequest(PR, undefined);
+  expect(none.exitCode).toBe(0);
+  expect(none.stdout).toContain("The base branch has no policy, so no rules ran.");
 }, 30_000);

@@ -83,11 +83,12 @@ async function checkPullRequest(repo: string): Promise<void> {
   }
   const checked = checkPolicyFile(file.text, repo);
   if (!checked.ok) {
-    console.log(`::warning::${escapeData(`${file.path} on the base branch cannot be read, so no rules ran:\n${policyFileReason(checked.problems)}`)}`);
+    console.log(workflowCommand({ title: "base-policy", error: true, text: `${file.path} on the base branch cannot be read, so no rules ran:\n${policyFileReason(checked.problems)}` }));
+    process.exitCode ??= 2;
     return;
   }
   if (checked.policy.extends !== undefined) {
-    console.log(`${file.path} on the base branch extends another policy, which this Action does not read, so no rules ran.`);
+    console.log(`::notice title=base-policy::${escapeData(`${file.path} on the base branch extends another policy, which this Action does not read, so no rules ran here; Triage runs them.`)}`);
     return;
   }
   const report = await runChecks(checked.policy, { repo, number: pull.number, headSha: pull.head.sha }, read, ciPending);
