@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CATALOG_IDS, catalogCheckEnabled, checkPolicyFile, parseCheckPack, QUALITY_CHECK_IDS } from "@corbits/triage-contracts";
@@ -82,6 +82,34 @@ test("a failed rule set to label only warns", async () => {
   expect(stdout).toContain("warning max-lines-changed:");
 }, 30_000);
 
+test("a code pattern is matched on the committed and the uncommitted text", async () => {
+  const policy = "rules:\n  - { id: conventions, check: code-patterns, text: T., presets: [convention], reason: R., evidence: [maintainer-stated] }\n";
+  const root = repository(policy, { "src/a.ts": "const a = x ?? 0;\n" }, "feat: b", { "src/a.ts": "const a = x ?? 0;\nconst b = y ?? 0;\n" });
+  write(root, "src/a.ts", "const a = x ?? 0;\nconst b = y;\nconst c = z ?? [];\n");
+  const { exitCode, stdout } = await check(root);
+  expect(exitCode).toBe(1);
+  const [committed, working] = stdout.split("# Working tree");
+  expect(committed).toContain("src/a.ts:2 Invented fallback `?? 0`");
+  expect(working).toContain("src/a.ts:3 Invented fallback `?? []`");
+  expect(working).not.toContain("?? 0`");
+}, 30_000);
+
+test("a symlinked file is read as its target's path, never followed out of the repository", async () => {
+  const outside = join(mkdtempSync(join(tmpdir(), "outside-")), "fallback.ts");
+  writeFileSync(outside, "const a = x ?? 0;\n");
+  const policy = "rules:\n  - { id: conventions, check: code-patterns, text: T., presets: [convention], reason: R., evidence: [maintainer-stated] }\n";
+  const root = repository(policy, {}, "feat: link", {});
+  symlinkSync(outside, join(root, "src-link.ts"));
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "feat: link");
+  symlinkSync(outside, join(root, "untracked-link.ts"));
+  const { exitCode, stdout } = await check(root);
+  expect(exitCode).toBe(0);
+  const [committed, working] = stdout.split("# Working tree");
+  expect(committed).toContain("| conventions | pass |");
+  expect(working).toContain("| conventions | pass |");
+}, 30_000);
+
 test("a policy that cannot be read is a run error", async () => {
   const { exitCode, stderr } = await check(repository("rules: [\n", {}, "feat: x", { "a.ts": "a\n" }));
   expect(exitCode).toBe(2);
@@ -131,6 +159,7 @@ const EVERY_MACHINE_RULE = `rules:
   - { check: conventional-commits, text: T., ${EVIDENCE} }
   - { check: hidden-content, text: T., ${EVIDENCE} }
   - { check: regression-risk, text: T., ${EVIDENCE} }
+  - { id: conventions, check: code-patterns, text: T., presets: [convention], ${EVIDENCE} }
 `;
 
 test("every rule whose result turns on the title or description is skipped locally", () => {

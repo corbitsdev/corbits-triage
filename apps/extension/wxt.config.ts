@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defaultClientConditions } from "vite";
 import { defineConfig } from "wxt";
 
@@ -20,6 +21,7 @@ export default defineConfig({
     // Interchange's workspace packages export their TypeScript sources under this condition.
     resolve: {
       conditions: ["intx-src", ...defaultClientConditions],
+      alias: { "@ast-grep/napi": fileURLToPath(new URL("src/ast-grep.ts", import.meta.url)) },
     },
   }),
 });
