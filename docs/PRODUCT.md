@@ -262,9 +262,12 @@ reviewed like code. It lists `rules`, `actions` and `labels`, and may
 hold the v4 keys `groups`, `code-review`, `security`, `deslop`, `pace`,
 `pauseLabel` and `decide`, which are checked but not acted on yet, except a
 step's `when.author` naming a group and, on GitHub, `pauseLabel`, whose label
-on a pull request stops new runs; `decide` replaces `actions`, so a file
-holds one or the other, and a file that uses `extends` holds none of them. Any
-other key is refused, naming the key it was likely meant to be.
+on a pull request stops new runs, and while the pull request cannot be read
+it is not triaged but retried, never run unpaused; through a long GitHub
+outage it waits out a bounded number of retries and is triaged on its next
+event; `decide` replaces `actions`, so a file holds one or the other, and a
+file that uses `extends` holds none of them. Any other key is refused, naming
+the key it was likely meant to be.
 
 Each rule is one sentence (`text`), how it is checked (`check`: a built-in
 rule's id, `model` for a yes/no question about the whole pull request, or

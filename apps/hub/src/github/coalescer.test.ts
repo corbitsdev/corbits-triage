@@ -3,7 +3,8 @@ import type { CheckRun } from "@corbits/github-reads";
 import { emptyPack, repoPolicy, triageEventOf, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
 import { createCoalescer, type CoalescedEvent, type CoalescerDeps } from "./coalescer.js";
 import { GithubRateLimited } from "./github-usage.js";
-import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
+import { createPrWorkflowRouter } from "./pr-workflow.js";
+import { DEFAULT_RECONCILE_POLICY, planTenant } from "./reconcile-plan.js";
 import type { PrMail } from "./normalize.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 
@@ -328,6 +329,28 @@ test("a mail that fails at flush leaves the row failed for the reconciler", asyn
   await coalescer.accept(delivery("opened", "sha1"));
   await clock.advance(WINDOW.quietMs);
   expect(state.rows()).toEqual([expect.objectContaining({ status: "failed", error: "delivery failed: Error: no live deployment" })]);
+});
+
+test("a paused-label head whose pull request cannot be read is left failed, and the reconciler queues it again", async () => {
+  const route = createPrWorkflowRouter({
+    credentials: async () => [],
+    live: async () => true,
+    readHead: async () => Promise.reject(new Error("502 Bad Gateway")),
+    readPull: async () => Promise.reject(new Error("502 Bad Gateway")),
+    log() {},
+  });
+  const { clock, state, mails, coalescer } = harness([], {
+    async sendMail(job) {
+      if (await route(job)) mails.push(job.payload as Record<string, unknown>);
+    },
+  });
+  await coalescer.accept({ ...delivery("opened", "sha1"), pauseLabel: "hold" });
+  await clock.advance(WINDOW.quietMs);
+  expect(mails).toEqual([]);
+  expect(state.rows()).toEqual([expect.objectContaining({ status: "failed", error: "delivery failed: Error: 502 Bad Gateway" })]);
+  const pr = { number: 8, headSha: "sha1", updatedAt: new Date(START).toISOString(), draft: false };
+  const plan = planTenant({ repos: [{ name: REPO, prs: [pr], rows: state.rows() }], runs: new Map(), now: new Date(START + DEFAULT_RECONCILE_POLICY.backoffMaxMs), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined });
+  expect(plan.get(REPO)?.enqueue.map((entry) => entry.number)).toEqual([8]);
 });
 
 test("a head already queued still gets a window of its own, since its run may have read facts already", async () => {
