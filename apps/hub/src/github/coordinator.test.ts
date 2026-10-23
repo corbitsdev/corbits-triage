@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { createCoordinator, OUTDATED_REASON, WorkerDeferredError, WorkerOutdatedError, type TriageJob } from "./coordinator.js";
+import { createCoordinator, OUTDATED_REASON, TIMED_OUT_REASON, WorkerDeferredError, WorkerOutdatedError, type TriageJob } from "./coordinator.js";
 
 const START = new Date("2026-10-14T12:00:00Z").getTime();
+const RUN_TIMEOUT_MS = 60 * 60_000;
 
 type Timer = { at: number; fire: () => Promise<void> };
 
@@ -74,6 +75,7 @@ function setup(failed: (j: TriageJob, error: string) => Promise<void> = noFailur
   const coordinator = createCoordinator({
     spawner: fake.spawner,
     retry: { minMs: 1_000, maxMs: 3_000 },
+    runTimeoutMs: RUN_TIMEOUT_MS,
     async failed(j, error) {
       failures.push(`${j.number}:${error}`);
       await failed(j, error);
@@ -230,4 +232,66 @@ test("a deferred job whose head a newer job replaced while it spawned is dropped
   await clock.advance(10_000);
   expect(fake.spawned.map((j) => j.headSha)).toEqual(["sha2"]);
   expect(failed).toEqual([]);
+});
+
+test("a worker that never finishes is cancelled at the deadline and the pull request's next job spawns", async () => {
+  const { clock, fake, failed, coordinator } = setup();
+  coordinator.enqueue(job("t1", 1));
+  await clock.advance(RUN_TIMEOUT_MS - 1);
+  expect(fake.released).toEqual([]);
+  await clock.advance(1);
+  expect(fake.released).toEqual(["run_1"]);
+  expect(failed).toEqual([`1:${TIMED_OUT_REASON}`]);
+  coordinator.enqueue({ ...job("t1", 1), headSha: "sha2" });
+  await clock.advance(0);
+  expect(fake.spawned.map((j) => j.headSha)).toEqual(["sha1", "sha2"]);
+  await fake.end("run_1");
+  expect(fake.released).toEqual(["run_1"]);
+});
+
+test("a worker that ends before the deadline is neither cancelled early nor failed", async () => {
+  const { clock, fake, failed, coordinator } = setup();
+  coordinator.enqueue(job("t1", 1));
+  await clock.advance(RUN_TIMEOUT_MS - 1);
+  await fake.end("run_1");
+  await clock.advance(RUN_TIMEOUT_MS);
+  expect(fake.released).toEqual(["run_1"]);
+  expect(failed).toEqual([]);
+});
+
+test("a spawn that hangs past the deadline frees the slot, and its late worker is released", async () => {
+  const { clock, fake, failed, coordinator } = setup();
+  const spawn = fake.spawner.spawn;
+  let deliver: (() => void) | undefined;
+  fake.spawner.spawn = async function hangFirst(j: TriageJob): Promise<string> {
+    if (j.headSha === "sha1") {
+      await new Promise<void>(function untilDelivered(resolve) {
+        deliver = resolve;
+      });
+    }
+    return spawn(j);
+  };
+  coordinator.enqueue(job("t1", 1));
+  await clock.advance(RUN_TIMEOUT_MS);
+  expect(failed).toEqual([`1:${TIMED_OUT_REASON}`]);
+  coordinator.enqueue({ ...job("t1", 1), headSha: "sha2" });
+  await clock.advance(0);
+  deliver!();
+  await Bun.sleep(0);
+  expect(fake.spawned.map((j) => j.headSha)).toEqual(["sha2", "sha1"]);
+  expect(fake.released).toEqual(["run_2"]);
+  expect(failed).toEqual([`1:${TIMED_OUT_REASON}`]);
+});
+
+test("a worker whose release fails at the deadline still frees the slot", async () => {
+  const { clock, fake, failed, coordinator } = setup();
+  fake.spawner.release = async function unreachable(): Promise<void> {
+    throw new Error("hub unreachable");
+  };
+  coordinator.enqueue(job("t1", 1));
+  await clock.advance(RUN_TIMEOUT_MS);
+  expect(failed).toEqual([`1:${TIMED_OUT_REASON}`]);
+  coordinator.enqueue({ ...job("t1", 1), headSha: "sha2" });
+  await clock.advance(0);
+  expect(fake.spawned.map((j) => j.headSha)).toEqual(["sha1", "sha2"]);
 });
