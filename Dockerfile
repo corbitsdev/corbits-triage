@@ -18,6 +18,7 @@ RUN bun install --frozen-lockfile --production --linker hoisted --filter @corbit
 # What the hub and its sidecars both run: Interchange, the workspace packages, the hub's adapter modules and the code
 # review's linter.
 FROM oven/bun:1.4.2 AS app
+LABEL org.opencontainers.image.source=https://github.com/corbitsdev/corbits-triage
 WORKDIR /app
 COPY --from=runtime /app/package.json /app/tsconfig.json ./
 COPY --from=runtime /app/node_modules node_modules
@@ -38,6 +39,9 @@ CMD ["bun", "--conditions=intx-src", "apps/sidecar/src/index.ts"]
 FROM app
 COPY --from=portal /app/apps/web/dist apps/web/dist
 RUN /usr/local/bin/oxlint --version
+# The published sidecar image, pinned by digest, that CI pushed just before; unset, the hub runs a locally built one.
+ARG SIDECAR_IMAGE
+RUN if [ -n "$SIDECAR_IMAGE" ]; then echo "$SIDECAR_IMAGE" > apps/hub/sidecar-image; fi
 ENV PORTAL_DIR=/app/apps/web/dist
 EXPOSE 3000
 CMD ["bun", "--conditions=intx-src", "apps/hub/src/server.ts"]

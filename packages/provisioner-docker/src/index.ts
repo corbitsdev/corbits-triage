@@ -9,6 +9,7 @@ import type {
 import { sidecarEnv } from "@corbits/provisioner-template";
 import type { AdapterManifest } from "@intx/types";
 import { DockerEngineError, isThisMachine, type DockerEngine } from "./engine.js";
+import { pullDockerImage } from "./images.js";
 
 export {
   connectDocker,
@@ -56,7 +57,7 @@ export type DockerSidecars = {
 export type CreateDockerSidecarProvisionerOpts = DockerSidecars & {
   /** The daemon's own `ID` from `/info`, so repointing the hub at another daemon changes the binding. */
   readonly daemonId: string;
-  /** Runs the stock sidecar as its command. */
+  /** Runs the stock sidecar as its command; one pinned by digest (`repository@sha256:…`) is pulled the first time it is missing. */
   readonly image: string;
   /** The hub's adapter manifest at the paths the image holds its modules. */
   readonly adapterManifest: AdapterManifest;
@@ -164,7 +165,17 @@ export function createDockerSidecarProvisioner({
       },
     };
     const { signal } = request;
-    const { Id } = Created.assert(await engine.request("POST", `/containers/create?name=corbits-${hubId}-${request.sidecarId}`, { body, signal }));
+    const path = `/containers/create?name=corbits-${hubId}-${request.sidecarId}`;
+    let created: unknown;
+    try {
+      created = await engine.request("POST", path, { body, signal });
+    } catch (error) {
+      if (!(error instanceof DockerEngineError) || error.status !== 404 || !image.includes("@")) throw error;
+      // Not cancelled with the placement: a first pull can outlast it, and the retried placement then finds the image.
+      await pullDockerImage(engine, image);
+      created = await engine.request("POST", path, { body, signal });
+    }
+    const { Id } = Created.assert(created);
     try {
       await engine.request("POST", `/containers/${Id}/start`, { signal });
     } catch (error) {
@@ -254,8 +265,7 @@ export function createDockerSidecarProvisioner({
   return {
     id: "docker",
     apiVersion: 2,
-    // The image is a launch setting: containers are found by label whatever image they run.
-    bindingFingerprint: `docker:v1:${daemonId}:${hubId}`,
+    bindingFingerprint: `docker:v1:${daemonId}:${hubId}:${image}`,
     capabilities: [
       { capability: "isolation:workload", state: "available" },
       { capability: "network:outbound", state: "available" },

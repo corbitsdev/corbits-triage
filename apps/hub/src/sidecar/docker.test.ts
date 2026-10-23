@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { connectDocker } from "@corbits/provisioner-docker";
 import { dockerSettings, loadHubEnv } from "../env.js";
-import { connectDockerSidecars, dockerPlaces } from "./docker.js";
+import { connectDockerSidecars, dockerPlaces, sidecarImageOf } from "./docker.js";
 
 const REMOTE = "tcp://203.0.113.10:2376";
 const SECRET = "0".repeat(64);
@@ -41,6 +41,18 @@ test("Docker on another machine is not registered unless its sidecars dial the h
     { id: "docker", found: expect.stringContaining("does not answer") },
     { id: "docker-remote", found: undefined },
   ]);
+});
+
+test("sidecars run the image written into the hub image, or the locally built one when none was", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sidecar-image-"));
+  try {
+    const file = path.join(dir, "sidecar-image");
+    expect(await sidecarImageOf(new URL(`file://${file}`))).toBe("corbits-triage-sidecar");
+    await fs.writeFile(file, "ghcr.io/corbitsdev/corbits-triage-sidecar@sha256:abc\n");
+    expect(await sidecarImageOf(new URL(`file://${file}`))).toBe("ghcr.io/corbitsdev/corbits-triage-sidecar@sha256:abc");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("the hub reaches Docker over mutual TLS with the base64 PEMs in DOCKER_TLS_CA, DOCKER_TLS_CERT and DOCKER_TLS_KEY", async () => {

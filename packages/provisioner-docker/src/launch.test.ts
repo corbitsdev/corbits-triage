@@ -40,3 +40,10 @@ test("a container on another machine dials the hub's public address with no Dock
   expect(await launch("wss://triage.example.com/api/sidecars/ws")).toEqual({ hubUrl: "HUB_WS_URL=wss://triage.example.com/api/sidecars/ws", extraHosts: undefined });
   expect(await launch(undefined)).toEqual({ hubUrl: "HUB_WS_URL=ws://host.docker.internal:3000/api/sidecars/ws", extraHosts: ["host.docker.internal:host-gateway"] });
 });
+
+test("a new image changes the binding, so the hub never reuses sidecars of the old one", () => {
+  function fingerprint(image: string): string {
+    return createDockerSidecarProvisioner({ engine: recordingDaemon([]), hubId: "hub", daemonId: "daemon", image, adapterManifest: [] }).bindingFingerprint;
+  }
+  expect(fingerprint("ghcr.io/corbitsdev/corbits-triage-sidecar@sha256:b")).not.toBe(fingerprint("ghcr.io/corbitsdev/corbits-triage-sidecar@sha256:a"));
+});
