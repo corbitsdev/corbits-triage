@@ -266,7 +266,7 @@ const UNCLEAN_KINDS: readonly string[] = ["approve", "merge"];
  * Schema 3 `actions` as `decide`: each verdict's steps become one rule on that triage outcome, every step kept with its
  * target and conditions, and limited to the events the actions wake on when they wake on fewer than all. A Pass or Fail
  * with no steps did nothing, so it maps to `nothing`; an Unsure with none maps to no rule, which `decide` flags for a
- * maintainer, as the Unsure label did. With a block on, approve and merge run only when every block that ran is clean:
+ * maintainer, as the Unsure label did. With a block on, approve and merge run only when at least one block ran and every block that ran is clean:
  * otherwise a second rule runs the other steps, each in its own place so its effect stays the same.
  */
 export function decideOf(actions: PolicyActions, blocksOn: boolean): DecideRule[] {

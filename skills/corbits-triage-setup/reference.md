@@ -129,7 +129,7 @@ pace: { debounce: 30s, maxWait: 2m, perHead: 1, cap: { runs: 5, per: 24h }, back
 pauseLabel: "corbits: pause"
 decide:
   - { if: { triage: fail }, do: [request-changes, { do: comment, target: { body: "Please fix the failed rules." } }] }
-  - { if: { all: clean }, do: approve }
+  - { if: { triage: pass, all: clean }, do: approve }
   - { if: { code-review: findings }, do: [{ do: request-review, target: { to: codeowners } }] }
 ```
 
@@ -142,7 +142,7 @@ decide:
   - `provider`: `anthropic`, `openai`, `xai`, `google`, `opencode` or `custom`. Every block that is on and names one must name the same.
 - `pace`: `debounce`, `maxWait` (durations of at least 1, such as `30s`, `2m`, `24h`, `7d`), `perHead` (whole number ≥ 1), `cap: { runs, per }`, `backoff: { pushes, within, pause }`.
 - `pauseLabel`: a label of at most 50 characters.
-- `decide`: rules `{ if, do }`, in order. `if` sets at least one of `all: clean`, `triage`, `event` (a list of `opened`, `updated`, `checks`, `ready`), `author` (groups) and the outcome of a block that is on (`clean`, `findings`, `incomplete`, `skipped`, a list of them, or `{ findings: <severity> }`). `do` is `approve`, `merge`, `close`, `request-changes`, `nothing`, or a list of those and steps written as under Actions (`comment`, `labels`, `request-review` and `assign` need their `target`). `nothing` stands alone. `{ all: clean }` holds when every block that actually ran is clean, and holds with none on; skipped blocks never count. Incomplete is never clean: a rule that approves or merges can't name `incomplete`, and only matches when nothing that ran is incomplete.
+- `decide`: rules `{ if, do }`, in order. `if` sets at least one of `all: clean`, `triage`, `event` (a list of `opened`, `updated`, `checks`, `ready`), `author` (groups) and the outcome of a block that is on (`clean`, `findings`, `incomplete`, `skipped`, a list of them, or `{ findings: <severity> }`). `do` is `approve`, `merge`, `close`, `request-changes`, `nothing`, or a list of those and steps written as under Actions (`comment`, `labels`, `request-review` and `assign` need their `target`). `nothing` stands alone. `{ all: clean }` holds when at least one block ran and every block that ran is clean; skipped blocks never count, so it doesn't hold when every block was skipped or none is on. A rule that approves or merges without `triage` matches only Pass. Incomplete is never clean: a rule that approves or merges can't name `incomplete`, and only matches when nothing that ran is incomplete.
 
 A file with `actions` reads as `decide`: each verdict's steps become one rule on `triage: <verdict>` (and `event: <actions.on>` when `on` lists fewer than every event), a Pass or Fail with none becomes `do: nothing`, and an Unsure with none becomes no rule. With a block on, a verdict whose steps approve or merge becomes two rules: all its steps under `all: clean`, then the same steps with approve and merge left out. A file that uses `extends` can't hold `groups`, blocks, `pace`, `pauseLabel` or `decide`.
 

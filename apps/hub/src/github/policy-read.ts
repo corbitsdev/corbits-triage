@@ -1,6 +1,6 @@
 // A repository's policy as triage reads it, so the portal shows and edits the same artifact the hub mails.
 import { type } from "arktype";
-import { ACTION_KINDS, alwaysHeld, AUTHOR_GROUPS, authorGroupsOf, catalogCheckEnabled, kindsOf, VERDICTS, whenHolds, type ActionKind, type AuthorKind, type CheckPack, type DecideRule, type MergeRisk, type StepWhen, type VerdictWord } from "@corbits/triage-contracts";
+import { ACTION_KINDS, alwaysHeld, AUTHOR_GROUPS, authorGroupsOf, catalogCheckEnabled, kindsOf, ruleVerdicts, VERDICTS, whenHolds, type ActionKind, type AuthorKind, type CheckPack, type DecideRule, type MergeRisk, type StepWhen, type VerdictWord } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import type { PolicyReader } from "./check-pack-store.js";
 import type { Member } from "../integrations/app.js";
@@ -26,8 +26,7 @@ function landing(kind: string, verdicts: readonly VerdictWord[], whens: StepWhen
 }
 
 function decideLandings(rule: DecideRule, automatic: readonly ActionKind[]): Landing[] {
-  const triage = rule.if.triage;
-  const verdicts = triage === undefined ? VERDICTS : [triage].flat();
+  const verdicts = ruleVerdicts(rule);
   const whens: StepWhen[] = rule.if.author ? [{ author: rule.if.author.map((group) => ({ group })) }] : [];
   const steps = Array.isArray(rule.do) ? rule.do : [rule.do];
   return steps.flatMap(function stepLandings(step) {

@@ -215,12 +215,12 @@ function approvalMail(verdict: Verdict, effectId: string) {
   return { ...triggerMail(PR, PACK), parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
 }
 
-test("code review off runs none of its steps, records skipped, and the approve decide chose runs", async () => {
+test("code review off runs none of its steps, records skipped, and with no block that ran nothing approves or merges", async () => {
   const composed = await run(variant(), { codeReview: { ...ON, on: false }, codeReviewRequest: REVIEW_REQUEST, blocks: [], decide: ALL_CLEAN }, APPROVING);
   expect(composed.ran.filter((id) => id.startsWith("codeReview"))).toEqual(["codeReview_scope", "codeReview_gate", "codeReview"]);
   expect(composed.outputs["codeReview"]).toMatchObject({ outcome: "skipped", reason: "code review is off" });
-  expect(approved(composed.writes)).toBe(true);
-  expect(merged(composed.writes)).toBe(false);
+  expect(composed.outputs["decide"]).toMatchObject({ decision: { flag: "no rule matched" } });
+  expect(approved(composed.writes) || merged(composed.writes)).toBe(false);
 });
 
 test("a trigger mail from anyone but the hub's Triage sender is never reviewed and decides nothing", async () => {

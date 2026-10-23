@@ -1,4 +1,4 @@
-import type { PolicyEvent, VerdictWord } from "./check-pack.js";
+import { VERDICTS, type PolicyEvent, type VerdictWord } from "./check-pack.js";
 import { BLOCK_KINDS, kindsOf, SEVERITIES, type BlockKind, type DecideRule } from "./policy-workflow.js";
 
 /** A block's outcome; `worst` is its most severe counted finding. */
@@ -45,9 +45,21 @@ function ran(rules: readonly DecideRule[], input: DecideInput): BlockResult[] {
   return [...blocks].map((block) => outcomeOf(input, block)).filter((result) => result.outcome !== "skipped");
 }
 
-function ruleMatches(when: DecideRule["if"], input: DecideInput, results: readonly BlockResult[]): boolean {
-  if (when.all === "clean" && !results.every((result) => result.outcome === "clean")) return false;
-  if (when.triage !== undefined && !(typeof when.triage === "string" ? [when.triage] : when.triage).includes(input.triage)) return false;
+function approves(rule: DecideRule): boolean {
+  const kinds = kindsOf(rule.do);
+  return kinds.includes("approve") || kinds.includes("merge");
+}
+
+/** The triage verdicts a rule matches; one that approves or merges without naming any matches only Pass. */
+export function ruleVerdicts(rule: DecideRule): readonly VerdictWord[] {
+  if (rule.if.triage !== undefined) return [rule.if.triage].flat();
+  return approves(rule) ? ["pass"] : VERDICTS;
+}
+
+function ruleMatches(rule: DecideRule, input: DecideInput, results: readonly BlockResult[]): boolean {
+  const when = rule.if;
+  if (when.all === "clean" && !(results.length > 0 && results.every((result) => result.outcome === "clean"))) return false;
+  if (!ruleVerdicts(rule).includes(input.triage)) return false;
   if (when.event && !when.event.some((event) => input.events.includes(event))) return false;
   if (when.author && !when.author.some((group) => input.author!.includes(group))) return false;
   return conditionsOf(when).every(([block, condition]) => blockMatches(condition, outcomeOf(input, block)));
@@ -60,10 +72,8 @@ function ruleMatches(when: DecideRule["if"], input: DecideInput, results: readon
 export function decide(rules: readonly DecideRule[], input: DecideInput): Decision {
   if (input.author === undefined && rules.some((rule) => rule.if.author)) return { flag: "it is not known which groups the author is in" };
   const results = ran(rules, input);
-  const at = rules.findIndex((rule) => ruleMatches(rule.if, input, results));
+  const at = rules.findIndex((rule) => ruleMatches(rule, input, results));
   if (at === -1) return { flag: "no rule matched" };
-  const kinds = kindsOf(rules[at]!.do);
-  const approving = kinds.includes("approve") || kinds.includes("merge");
-  if (approving && results.some((result) => result.outcome === "incomplete")) return { flag: "a block is incomplete" };
+  if (approves(rules[at]!) && results.some((result) => result.outcome === "incomplete")) return { flag: "a block is incomplete" };
   return { do: rules[at]!.do, rule: at };
 }
