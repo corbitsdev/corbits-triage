@@ -26,5 +26,4 @@ export * from "./code-review-models.js";
 export * from "./code-review.js";
 export * from "./rules-gate.js";
 export * from "./policy-export.js";
-export * from "./code-patterns.js";
 export * from "./visible-text.js";

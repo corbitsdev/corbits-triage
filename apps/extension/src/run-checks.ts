@@ -1,5 +1,5 @@
 import type { GithubFetch } from "@corbits/github-reads";
-import { checkName, isModelCheck, isPatternsCheck, QUALITY_CHECK_IDS, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, isModelCheck, QUALITY_CHECK_IDS, type CheckPack } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-workflows/actions/index";
 import type { RulesOutput } from "@corbits/triage-workflows/actions/rules";
 import { credentialBindings } from "@corbits/triage-workflows/agents";
@@ -31,10 +31,10 @@ function servedBy(gh: GithubFetch) {
 
 const QUALITY = new Set<string>(QUALITY_CHECK_IDS);
 
-/** Only the rules run here: the checks a model answers, and code patterns, are left out. */
+/** Only the rules run here: the checks a model answers are left out. */
 function rulesOnly(pack: CheckPack): CheckPack {
   const checks = Object.fromEntries(Object.entries(pack.checks).map(([id, row]) => [id, QUALITY.has(id) ? { ...row, enabled: false } : row]));
-  return { ...pack, checks, custom: pack.custom.filter((check) => !isModelCheck(check) && !isPatternsCheck(check)) };
+  return { ...pack, checks, custom: pack.custom.filter((check) => !isModelCheck(check)) };
 }
 
 export type CheckRun = { headSha: string; checks: ViewCheck[]; notes: FileNote[] };

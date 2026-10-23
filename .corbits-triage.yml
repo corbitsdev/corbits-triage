@@ -48,15 +48,6 @@ rules:
     reason: Set in the portal before the policy file.
     evidence:
       - maintainer-stated
-  - id: conventions
-    check: code-patterns
-    text: Added code follows the repository's conventions.
-    presets:
-      - convention
-    onFail: label
-    reason: AGENTS.md rules out invented fallbacks, nested ternaries, IIFEs and promise chains.
-    evidence:
-      - maintainer-stated
 actions:
   pass:
     - do: approve

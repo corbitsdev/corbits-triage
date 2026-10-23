@@ -53,9 +53,9 @@ const RUNS: Record<Ci, unknown[]> = {
 };
 /** `stacked` is corbitsdev/corbits-code#1520's shape, with #9 to #13 merged into its branch and #14 closed unmerged; the branch is based on open #7's. */
 /** `history` is the commit messages each changed file's recent history holds, or `unread` when GitHub fails to list them. */
-type GithubSeed = { history?: string[] | "unread"; missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[]; contents?: Record<string, string> };
+type GithubSeed = { history?: string[] | "unread"; missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[] };
 
-function fakeGithub({ history = [], missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [], contents = {} }: GithubSeed = {}) {
+function fakeGithub({ history = [], missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [] }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
@@ -67,9 +67,6 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
     const base = stacked ? { ref: "parent", repo: { id: 1 } } : { ref: "main", repo: { id: 1 } };
     if (stacked && path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix&per_page`)) return Response.json([9, 10, 11, 12, 13, 14].map((number) => ({ number, merged_at: number === 14 ? null : "2026-10-19T00:43:02Z", base: { ref: "fix" } })));
     if (stacked && path.startsWith(`/repos/${REPO}/pulls?state=open&head=acme%3Aparent&`)) return Response.json([{ number: 7, head: { ref: "parent", repo: { id: 1 } } }]);
-    const content = Object.entries(contents).find(([file]) => path === `/repos/${REPO}/contents/${file}?ref=${pr.head}`);
-    if (content) return new Response(content[1]);
-    if (path.startsWith(`/repos/${REPO}/contents/`) && path.endsWith(`?ref=${pr.head}`)) return Response.json({ message: "Not Found" }, { status: 404 });
     if (path.startsWith(`/repos/${REPO}/compare/`)) return Response.json({ ahead_by: 2, commits: [{ sha: "merge1521" }, { sha: pr.head }] });
     if (path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix`)) return Response.json([{ number: 1521, merge_commit_sha: "merge1521", merged_at: "2026-10-19T00:43:02Z" }, { number: 1490, merge_commit_sha: "elsewhere", merged_at: "2026-10-01T00:00:00Z" }]);
     if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title, user: { login: "octocat" }, draft: pr.draft, head: { sha: pr.head } }]);
@@ -295,17 +292,6 @@ describe("pr-triage body", () => {
     expect(JSON.stringify(verdict)).not.toContain("previous instructions");
     const asked = await triage({ ...pack, checks: { "hidden-content": { enabled: true, onFail: "ask" } } }, seed);
     expect(asked.verdict).toMatchObject({ verdict: "unsure", nextAction: "Decide: pull request text hides content" });
-  });
-
-  test("a code-pattern rule reads the head's content and flags only what the pull request adds", async () => {
-    const files = [{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@\n const a = x ?? 0;\n+const b = y ?? 0;" }];
-    const contents = { "src/a.ts": `const a = x ?? 0;\nconst b = y ?? 0;\n${"\n".repeat(450)}` };
-    const pack: CheckPack = { ...emptyPack(REPO), custom: [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }] };
-    const { path, verdict } = await triage(pack, { files, contents });
-    expect(path).toEqual(RULES_PATH);
-    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead."] });
-    const unread = await triage(pack, { files });
-    expect((unread.verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
   });
 
   test("a reference-style link in the body still links the issue", async () => {

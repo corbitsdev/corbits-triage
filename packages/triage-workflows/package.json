@@ -25,7 +25,6 @@
     "eval:risk": "bun evals/risk.eval.ts"
   },
   "dependencies": {
-    "@ast-grep/napi": "0.51.0",
     "@corbits/common": "workspace:*",
     "@corbits/github-reads": "workspace:*",
     "@corbits/bitbucket-datacenter-tool": "workspace:*",

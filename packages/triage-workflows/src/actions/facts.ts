@@ -1,14 +1,13 @@
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, triggerRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, catalogCheckEnabled, classificationSources, DEFAULT_RISK, emptyPack, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, triggerRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
-import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
+import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "../logic/checks.js";
 import { asText } from "../logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "../logic/facts.js";
 import type { History } from "../logic/history.js";
-import { filesToRead, patternsResult, type PatternsResult } from "../logic/patterns.js";
 import { call, data, hostCalls, READ_PULL_REQUEST, runAll, toolName, type HostCall } from "../logic/host.js";
 import type { Judged } from "../logic/item.js";
 import { fixCount, historyPaths } from "../logic/risk.js";
@@ -128,23 +127,6 @@ const HISTORY_LIMIT = 200;
 const NO_DOCS: RepoDocs = { docs: {}, rules: {} };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Each file's text at `sha`; a file that could not be read is left out, so its rule cannot pass. */
-async function readContents(host: HostCall, tool: string, repo: string, sha: string, paths: string[]): Promise<Record<string, string>> {
-  const results = await runAll(host, paths.map((path) => call(tool, { repo, sha, path, whole: true }, `content:${path}`)));
-  return Object.fromEntries(paths.flatMap(function text(path): Array<[string, string]> {
-    const read = data<{ text?: unknown }>(results.get(`content:${path}`))?.text;
-    return typeof read === "string" ? [[path, read]] : [];
-  }));
-}
-
-/** Each code-patterns rule's matches, run where the files are read so their text never leaves this step. */
-async function patternsOf(host: HostCall, tool: string, repo: string, item: { facts: PrFacts; pack: CheckPack }): Promise<Record<string, PatternsResult>> {
-  const rules = item.pack.custom.filter(isPatternsCheck).filter(customCheckEnabled);
-  const toRead = filesToRead(item.facts.files);
-  const contents = Array.isArray(toRead) ? await readContents(host, tool, repo, item.facts.headSha, toRead) : {};
-  return Object.fromEntries(rules.map((rule) => [rule.id, patternsResult(rule, item.facts.files, contents)]));
-}
 
 function fail(reason: string): FactsOutput {
   return { items: [{ error: reason }], batch: false };
@@ -277,13 +259,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     return judged === undefined ? stamped : { ...stamped, judged };
   }
 
-  const items = numbers.map(itemFor);
-  if (!pack.custom.filter(isPatternsCheck).some(customCheckEnabled)) return items;
-  const matched: RulesItem[] = [];
-  for (const item of items) {
-    matched.push("facts" in item ? { ...item, facts: { ...item.facts, patterns: await patternsOf(host, tool("read_file"), repo, item) } } : item);
-  }
-  return matched;
+  return numbers.map(itemFor);
 }
 
 function docsCall(source: RepoSource, repo: string, offset: number, ref?: string): ToolCall {

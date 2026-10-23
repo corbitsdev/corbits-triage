@@ -3,8 +3,7 @@
 // mapping it onto the stored policy's shape, so the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, PatternRuleSchema, POLICY_EVENTS, SIZE_RULES, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
-import { PATTERN_PRESETS } from "./code-patterns.js";
+import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, POLICY_EVENTS, SIZE_RULES, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
 import { fileProblems } from "./policy-file-problems.js";
 import { withAuthors, WORKFLOW_KEYS, WORKFLOW_PROPS, workflowProblems, type PathProblem, type PolicyWorkflow } from "./policy-workflow.js";
 
@@ -28,7 +27,6 @@ const RuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS)
   .or({ ...RULE_BASE, check: "'conventional-commits'", "types?": type(CONVENTIONAL_TYPE).describe("a single word").array().atLeastLength(1).atMostLength(50), "fields?": type.enumerated(...CONVENTIONAL_FIELDS).array().atLeastLength(1) })
   .or({ ...RULE_BASE, check: type.enumerated(...SIMPLE_CHECKS) })
   .or({ ...OWN_RULE, check: "'model'" })
-  .or({ ...OWN_RULE, check: "'code-patterns'", "presets?": type.enumerated(...Object.keys(PATTERN_PRESETS)).array().atLeastLength(1), "patterns?": PatternRuleSchema.array().atLeastLength(1) })
   .or({ ...OWN_RULE, check: "'text'", fields: type.enumerated(...TEXT_FIELDS).array().atLeastLength(1), failWhen: type.enumerated(...TEXT_MATCHES), phrases: Lines });
 
 type PolicyRule = typeof RuleSchema.infer;
@@ -95,11 +93,10 @@ function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>, onFail: Rec
   }
 }
 
-function customRow(rule: Extract<PolicyRule, { check: "model" | "text" | "code-patterns" }>, onFail: Record<string, unknown>): Record<string, unknown> {
+function customRow(rule: Extract<PolicyRule, { check: "model" | "text" }>, onFail: Record<string, unknown>): Record<string, unknown> {
   const { id } = rule;
   const base = { id, name: ruleNameOf(id), group: "pull-request", reason: rule.reason, evidence: rule.evidence, ...(rule.enabled === false && { enabled: false }), ...onFail };
   if (rule.check === "model") return { ...base, kind: "model", shape: "is-true", claim: rule.text };
-  if (rule.check === "code-patterns") return { ...base, text: rule.text, kind: "code-patterns", presets: rule.presets ?? [], patterns: rule.patterns ?? [] };
   return { ...base, text: rule.text, kind: "text", fields: rule.fields, failWhen: rule.failWhen, phrases: rule.phrases };
 }
 

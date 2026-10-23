@@ -1,7 +1,6 @@
 import { type } from "arktype";
 import { asRecord, asRepo } from "@corbits/common";
 import { AUTHOR_ASSOCIATIONS, type AuthorAssociation } from "./repo-policy.js";
-import { PATTERN_LANGUAGES, PATTERN_PRESETS, type PatternRule } from "./code-patterns.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
 /** Version 2 holds steps, model-only custom rules and verdict labels; version 1 is read only when it held no actions. */
@@ -261,10 +260,7 @@ export type TextCheck = { fields: TextField[]; failWhen: TextMatch; phrases: str
 type CustomBase = RuleNote & OnFail & { id: string; name: string; group: CheckPackGroup; enabled?: boolean };
 export type ModelCustomCheck = CustomBase & { kind: "model" } & ModelCheck;
 export type TextCustomCheck = CustomBase & { kind: "text" } & TextCheck;
-/** Fails when an ast-grep rule matches code the pull request adds: the presets' rules and its own, its own winning on an id. */
-export type PatternsCheck = { presets: string[]; patterns: PatternRule[] };
-export type PatternsCustomCheck = CustomBase & { kind: "code-patterns" } & PatternsCheck;
-export type CustomCheck = ModelCustomCheck | TextCustomCheck | PatternsCustomCheck;
+export type CustomCheck = ModelCustomCheck | TextCustomCheck;
 
 const LEVELS_MIN = 2;
 const LEVELS_MAX = 10;
@@ -477,15 +473,13 @@ const CatalogCheckSchema = type({
 });
 
 export const CustomId = type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX);
-export const PatternRuleSchema = type({ "+": "reject", id: CustomId, language: type.enumerated(...PATTERN_LANGUAGES), message: Text, rule: "Record<string, unknown>" });
 const CUSTOM_BASE = { ...NOTE, ...ON_FAIL_FIELDS, id: CustomId, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
 const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
 const CustomCheckSchema = type({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Texts })
   .or({ ...MODEL, shape: "'score'", subject: Text, levels: Text.array().atLeastLength(LEVELS_MIN).atMostLength(LEVELS_MAX), "failBelow?": Text })
   .or({ ...MODEL, shape: "'choose'", options: Text.array().atLeastLength(2), failOn: Texts })
-  .or({ ...CUSTOM_BASE, kind: "'text'", fields: type.enumerated(...TEXT_FIELDS).array().atLeastLength(1), failWhen: type.enumerated(...TEXT_MATCHES), phrases: Texts })
-  .or({ ...CUSTOM_BASE, kind: "'code-patterns'", presets: type.enumerated(...Object.keys(PATTERN_PRESETS)).array(), patterns: PatternRuleSchema.array() });
+  .or({ ...CUSTOM_BASE, kind: "'text'", fields: type.enumerated(...TEXT_FIELDS).array().atLeastLength(1), failWhen: type.enumerated(...TEXT_MATCHES), phrases: Texts });
 
 const CatalogChecksSchema = type(
   Object.fromEntries(CATALOG_IDS.map((id) => [`${id}?`, CatalogCheckSchema])) as Record<`${CatalogId}?`, typeof CatalogCheckSchema>,
@@ -812,18 +806,6 @@ function parseText(row: Record<string, unknown>, where: string): TextCheck {
   return { fields: TEXT_FIELDS.filter((field) => fields.has(field)), failWhen: oneOf(row.failWhen, TEXT_MATCHES, `${where} failWhen`), phrases: texts(row.phrases, `${where} phrases`) };
 }
 
-function parsePatterns(row: Record<string, unknown>, where: string): PatternsCheck {
-  if (!Array.isArray(row.presets) || !Array.isArray(row.patterns)) throw new Error(`${where} presets and patterns must be lists.`);
-  const presets = [...new Set(row.presets.map((id) => oneOf(id, Object.keys(PATTERN_PRESETS), `${where} presets`)))];
-  const patterns = row.patterns.map(function pattern(raw: unknown, at: number): PatternRule {
-    const parsed = PatternRuleSchema(raw);
-    if (parsed instanceof type.errors) throw new Error(`${where} pattern ${at + 1}: ${parsed.summary}`);
-    return parsed;
-  });
-  if (presets.length === 0 && patterns.length === 0) throw new Error(`${where} must list presets or patterns.`);
-  return { presets, patterns };
-}
-
 function parseCustomRow(row: Record<string, unknown>, index: number): CustomCheck {
   const where = `Custom rule ${typeof row.id === "string" ? row.id : index + 1}`;
   if (typeof row.id !== "string") throw new Error(`${where} id must be a string.`);
@@ -831,11 +813,9 @@ function parseCustomRow(row: Record<string, unknown>, index: number): CustomChec
   if (problem) throw new Error(`${where} id ${problem}.`);
   if (row.enabled !== undefined && typeof row.enabled !== "boolean") throw new Error(`${where} enabled must be true or false.`);
   if (row.kind === "rule") throw new Error(`${where} is a ${String(row.rule)} rule over GitHub data, which Triage no longer runs; remove it.`);
-  const kind = oneOf(row.kind, ["model", "text", "code-patterns"] as const, `${where} kind`);
+  const kind = oneOf(row.kind, ["model", "text"] as const, `${where} kind`);
   const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }), ...parseNote(row, where), ...parseOnFail(row, row.id, where) };
-  if (kind === "text") return { ...base, kind, ...parseText(row, where) };
-  if (kind === "code-patterns") return { ...base, kind, ...parsePatterns(row, where) };
-  return { ...base, kind, ...parseModel(row, where) };
+  return kind === "text" ? { ...base, kind, ...parseText(row, where) } : { ...base, kind, ...parseModel(row, where) };
 }
 
 /** The last row of an id wins. */
@@ -1279,10 +1259,6 @@ export function isModelCheck(row: CustomCheck): row is ModelCustomCheck {
 
 export function isTextCheck(row: CustomCheck): row is TextCustomCheck {
   return row.kind === "text";
-}
-
-export function isPatternsCheck(row: CustomCheck): row is PatternsCustomCheck {
-  return row.kind === "code-patterns";
 }
 
 export function classificationSources(pack: CheckPack): { quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>; custom: ModelCustomCheck[] } {
