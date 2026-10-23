@@ -7,6 +7,7 @@ Dependency-free helpers shared across the apps and packages.
 ```ts
 import { asRecord, errorText } from "@corbits/common";
 import { parsePatch } from "@corbits/common/patch";
+import { contentSecurityPolicy, securityHeaders } from "@corbits/common/security-headers";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
 import { xHubHookMetadata, GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
 ```

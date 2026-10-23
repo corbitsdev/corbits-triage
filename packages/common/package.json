@@ -10,6 +10,7 @@
     "./diff-files": "./src/diff-files.ts",
     "./hook-metadata": "./src/hook-metadata.ts",
     "./patch": "./src/patch.ts",
+    "./security-headers": "./src/security-headers.ts",
     "./x-hub-signature": "./src/x-hub-signature.ts"
   },
   "main": "./src/index.ts",

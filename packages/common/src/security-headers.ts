@@ -2,7 +2,7 @@
 // dev/preview headers, and the hub sends the header policy when it serves the built portal.
 
 // sonner appends an empty <style> at import and then fills it with its stylesheet; each step is checked against style-src.
-// These hashes pin sonner's exact CSS, so security-headers.test.ts and the exact sonner pin in package.json go together.
+// These hashes pin sonner's exact CSS, so apps/web/src/security-headers.test.ts and the exact sonner pin in apps/web/package.json go together.
 export const SONNER_STYLE_HASHES = [
   "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='",
   "'sha256-StEaX+se6YS7pqjzrzMIA0KaX9zF/8zAhvQXZAe5epY='",
