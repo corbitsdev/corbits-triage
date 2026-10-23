@@ -5,7 +5,7 @@ import { type } from "arktype";
 import { errorText } from "@corbits/common";
 import { currentRows, parseCheckOutput, TriageStats, type TriageOutcomes } from "@corbits/triage-contracts";
 import { failure } from "./portal-credential.js";
-import type { OutcomeReader } from "./pr-outcomes.js";
+import type { OutcomeReader, Triaged } from "./pr-outcomes.js";
 import { runKey } from "./reconcile-plan.js";
 import type { Member } from "../integrations/app.js";
 import { evidenceOf, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
@@ -74,10 +74,12 @@ function judgedOf(records: readonly VerdictRecord[]): VerdictRecord[] {
   return records.filter((verdict) => verdict.degraded === null && completed(verdict));
 }
 
-/** The pull requests of the newest settled verdicts, whose outcomes are read from the host. */
-function newestTriaged(records: readonly VerdictRecord[]): number[] {
+/** The pull requests of the newest settled verdicts, whose outcomes are read from the host, each with its first settled verdict in the window. */
+function newestTriaged(records: readonly VerdictRecord[]): Triaged[] {
   const settled = judgedOf(records).filter((verdict) => verdict.settled).toSorted((a, b) => b.verdictAt.getTime() - a.verdictAt.getTime());
-  return [...new Set(settled.map((verdict) => verdict.number))].slice(0, MAX_OUTCOMES);
+  // Keys keep the newest verdict's order while each value is overwritten down to the earliest.
+  const first = new Map(settled.map((verdict) => [verdict.number, verdict.verdictAt]));
+  return [...first].slice(0, MAX_OUTCOMES).map(([number, verdictAt]) => ({ number, verdictAt }));
 }
 
 function aggregate(repo: string, days: number, from: Date, since: Date | null, records: readonly VerdictRecord[]): Omit<TriageStats, "outcomes"> {
@@ -145,7 +147,7 @@ function aggregate(repo: string, days: number, from: Date, since: Date | null, r
   };
 }
 
-type Aggregate = { stats: Omit<TriageStats, "outcomes">; triaged: number[] };
+type Aggregate = { stats: Omit<TriageStats, "outcomes">; triaged: Triaged[] };
 
 type Measurement = { answer?: { outcomes: TriageOutcomes | null; at: number }; reading: boolean; failedAt?: number };
 
@@ -158,7 +160,7 @@ export function createTriageStats(deps: TriageStatsDeps) {
   const cache = new Map<string, Aggregate & { at: number }>();
   const measurements = new Map<string, Measurement>();
 
-  async function measure(entry: Measurement, member: Member, repo: string, triaged: readonly number[]): Promise<void> {
+  async function measure(entry: Measurement, member: Member, repo: string, triaged: readonly Triaged[]): Promise<void> {
     entry.reading = true;
     try {
       entry.answer = { outcomes: await deps.outcomes.read(member, repo, triaged), at: deps.now().getTime() };
@@ -171,7 +173,7 @@ export function createTriageStats(deps: TriageStatsDeps) {
     }
   }
 
-  function outcomes(member: Member, repo: string, days: number, triaged: readonly number[], now: number): TriageOutcomes | null {
+  function outcomes(member: Member, repo: string, days: number, triaged: readonly Triaged[], now: number): TriageOutcomes | null {
     const key = `${member.tenantId}\n${repo}\n${days}`;
     let entry = measurements.get(key);
     if (entry === undefined) {

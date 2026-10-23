@@ -1,13 +1,14 @@
 // How pull requests fared, read live from the repository's host for the stats route: time to merge or close, to the
-// first response and approval from someone other than the author, and the longest wait between people's touches. The
-// baseline is the same over pull requests closed before the repository's policy was first saved, when triage began.
+// first response and approval from someone other than the author, the longest wait between people's touches, and the
+// wait from Triage's verdict to a reviewer. The baseline is the same over pull requests closed before the repository's
+// policy was first saved, when triage began.
 import { eq } from "drizzle-orm";
 import { schema } from "@intx/db";
 import type { ArtifactDb } from "@corbits/artifacts";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { getPrTimes, listPrTimeline, searchClosedPrsBefore, type PrTimes, type TimelineEvent } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
-import type { OutcomeMedians, TriageOutcomes } from "@corbits/triage-contracts";
+import type { OutcomeMedians, OutcomeTimes, TriageOutcomes } from "@corbits/triage-contracts";
 import { bitbucketConnection } from "../bitbucket-datacenter/records.js";
 import { repoPolicyRow } from "./check-pack-store.js";
 import { sourceCredentialGrant } from "./portal-credential.js";
@@ -21,6 +22,8 @@ const CACHE_ENTRIES = 1_000;
 const HOST_READS = 8;
 /** Timeline events that are someone acting on the pull request, as opposed to being mentioned, subscribed or labelled. */
 const TOUCHES = new Set(["commented", "reviewed", "merged", "closed"]);
+/** Review states both hosts report; GitHub's plain comment reviews have no Bitbucket Data Center counterpart. */
+const DECISIVE = new Set(["APPROVED", "CHANGES_REQUESTED"]);
 
 /** One repository's pull requests on its host; `botLogins` are accounts that act for a tool without being marked bots. */
 export type Host = {
@@ -44,33 +47,37 @@ export type OutcomeReaderDeps = {
 /** What a member is answered instead of the outcomes: null when the repository is not connected, undefined when they may read it. */
 type Refusal = { state: "no_credential" } | null | undefined;
 
+/** A triaged pull request and when Triage first gave it a verdict. */
+export type Triaged = { number: number; verdictAt: Date };
+
 export type OutcomeReader = {
   refusal: (member: Member, repo: string) => Promise<Refusal>;
-  read: (member: Member, repo: string, triaged: readonly number[]) => Promise<TriageOutcomes | null>;
+  read: (member: Member, repo: string, triaged: readonly Triaged[]) => Promise<TriageOutcomes | null>;
 };
 
-type Outcome = {
-  closed: boolean;
-  mergeOrCloseMs: number | null;
-  firstHumanResponseMs: number | null;
-  firstApprovalMs: number | null;
-  humanTouchGapMs: number | null;
-  humans: string[];
-};
+type Outcome = OutcomeTimes & { closed: boolean; humans: string[] };
 
-function median(values: number[]): number | null {
+const TIMES = ["mergeOrCloseMs", "firstHumanResponseMs", "firstApprovalMs", "humanTouchGapMs", "reviewerWaitMs"] as const satisfies readonly (keyof OutcomeTimes)[];
+
+/** Interpolated between the nearest ranks, so the 50th is the median. */
+function percentile(values: readonly number[], p: number): number | null {
   if (values.length === 0) return null;
   const sorted = values.toSorted((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  const rank = (sorted.length - 1) * p;
+  const below = sorted[Math.floor(rank)]!;
+  return below + (sorted[Math.ceil(rank)]! - below) * (rank - Math.floor(rank));
 }
 
-/** Opening the pull request is the author's first touch. */
-export function outcomeOf(pr: PrTimes, events: readonly TimelineEvent[], { author, botLogins }: { author: string | null; botLogins: readonly string[] }): Outcome {
+/**
+ * Opening the pull request is the author's first touch; a baseline pull request has no verdict and so no reviewer wait.
+ * A review or merge before the verdict settled waited for nothing.
+ */
+export function outcomeOf(pr: PrTimes, events: readonly TimelineEvent[], { author, botLogins, verdictAt }: { author: string | null; botLogins: readonly string[]; verdictAt?: Date }): Outcome {
   const opened = Date.parse(pr.createdAt);
   const people = events.filter((event) => TOUCHES.has(event.kind) && !event.bot && !botLogins.includes(event.actor)).toSorted((a, b) => a.at.localeCompare(b.at));
   const others = people.filter((event) => event.actor !== author);
   const approval = others.find((event) => event.kind === "reviewed" && event.state === "APPROVED");
+  const reviewed = others.find((event) => event.kind === "merged" || (event.kind === "reviewed" && DECISIVE.has(event.state ?? "")));
   const touches = [opened, ...people.map((event) => Date.parse(event.at))];
   const gaps = touches.slice(1).map((at, i) => at - touches[i]!);
   return {
@@ -79,22 +86,21 @@ export function outcomeOf(pr: PrTimes, events: readonly TimelineEvent[], { autho
     firstHumanResponseMs: others[0] ? Date.parse(others[0].at) - opened : null,
     firstApprovalMs: approval ? Date.parse(approval.at) - opened : null,
     humanTouchGapMs: gaps.length === 0 ? null : Math.max(...gaps),
+    reviewerWaitMs: verdictAt && reviewed ? Math.max(0, Date.parse(reviewed.at) - verdictAt.getTime()) : null,
     humans: [...new Set(people.map((event) => event.actor))],
   };
 }
 
-function medianOf(outcomes: readonly Outcome[], field: Exclude<keyof Outcome, "closed" | "humans">): number | null {
-  return median(outcomes.flatMap((outcome) => (outcome[field] === null ? [] : [outcome[field]])));
+function percentiles(outcomes: readonly Outcome[], p: number): OutcomeTimes {
+  return Object.fromEntries(TIMES.map((field) => [field, percentile(outcomes.flatMap((outcome) => (outcome[field] === null ? [] : [outcome[field]])), p)])) as OutcomeTimes;
 }
 
 function medians(outcomes: readonly Outcome[]): OutcomeMedians {
   return {
     prs: outcomes.length,
     closed: outcomes.filter((outcome) => outcome.closed).length,
-    mergeOrCloseMs: medianOf(outcomes, "mergeOrCloseMs"),
-    firstHumanResponseMs: medianOf(outcomes, "firstHumanResponseMs"),
-    firstApprovalMs: medianOf(outcomes, "firstApprovalMs"),
-    humanTouchGapMs: medianOf(outcomes, "humanTouchGapMs"),
+    ...percentiles(outcomes, 0.5),
+    p75: percentiles(outcomes, 0.75),
   };
 }
 
@@ -165,19 +171,19 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
   const prOutcomes = boundedCache<Outcome>();
   const baselines = boundedCache<Baseline>();
 
-  async function outcome(host: Host, pr: PrTimes): Promise<Outcome> {
+  async function outcome(host: Host, pr: PrTimes, verdictAt?: Date): Promise<Outcome> {
     const events = await limited(function readTimeline() {
       return host.timeline(pr.number);
     });
-    return outcomeOf(pr, events, { author: pr.author, botLogins: host.botLogins });
+    return outcomeOf(pr, events, { author: pr.author, botLogins: host.botLogins, verdictAt });
   }
 
-  async function triagedOutcome(host: Host, key: string, number: number, now: number): Promise<Outcome> {
+  async function triagedOutcome(host: Host, key: string, { number, verdictAt }: Triaged, now: number): Promise<Outcome> {
     return prOutcomes(key, now, async function load() {
       const pr = await limited(function readPr() {
         return host.prTimes(number);
       });
-      return outcome(host, pr);
+      return outcome(host, pr, verdictAt);
     }, function prTtl(read) {
       return read.closed ? DAY_MS : OPEN_MS;
     });
@@ -195,7 +201,7 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
     });
   }
 
-  async function read(tenantId: string, principalId: string, repo: string, triaged: readonly number[]): Promise<TriageOutcomes | null> {
+  async function read(tenantId: string, principalId: string, repo: string, triaged: readonly Triaged[]): Promise<TriageOutcomes | null> {
     const source = await deps.host(tenantId, principalId, repo);
     if (source === undefined) return null;
     if ("state" in source) return source;
@@ -204,7 +210,7 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
     const at = now.getTime();
     const enabledAt = await deps.enabledAt(tenantId, repo);
     const [{ outcomes, failed }, [baselineRead]] = await Promise.all([
-      settledOutcomes(triaged.map((number) => triagedOutcome(host, `${tenantId}\n${repo}\n${number}`, number, at))),
+      settledOutcomes(triaged.map((pr) => triagedOutcome(host, `${tenantId}\n${repo}\n${pr.number}\n${pr.verdictAt.toISOString()}`, pr, at))),
       Promise.allSettled(enabledAt === undefined ? [] : [baselineOf(host, `${tenantId}\n${repo}\n${utcDay(now)}\n${enabledAt.toISOString()}`, enabledAt, at)]),
     ]);
     const baseline = baselineRead?.status === "fulfilled" ? baselineRead.value : undefined;
@@ -222,7 +228,7 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
     return undefined;
   }
 
-  async function outcomes({ tenantId, principalId }: Member, repo: string, triaged: readonly number[]): Promise<TriageOutcomes | null> {
+  async function outcomes({ tenantId, principalId }: Member, repo: string, triaged: readonly Triaged[]): Promise<TriageOutcomes | null> {
     try {
       return await read(tenantId, principalId, repo, triaged);
     } catch (error) {

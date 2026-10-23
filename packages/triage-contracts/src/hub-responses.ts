@@ -107,15 +107,21 @@ export type TriageVerdicts = typeof TriageVerdicts.infer;
 const CheckStats = type({ pass: "number", fail: "number", unconfirmed: "number", "levels?": "Record<string, number>" });
 const ActionStats = type({ suggested: "number", executed: "number", failed: "number" });
 
-/** Medians over `prs` pull requests, `closed` of them merged or closed; times are from opening, the gap is the longest wait between two people's touches, the author's included. */
-export const OutcomeMedians = type({
-  prs: "number",
-  closed: "number",
+/**
+ * Times from opening; the gap is the longest wait between two people's touches, the author's included. The reviewer
+ * wait is from Triage's first verdict to the first review or merge by someone other than the author.
+ */
+export const OutcomeTimes = type({
   mergeOrCloseMs: "number | null",
   firstHumanResponseMs: "number | null",
   firstApprovalMs: "number | null",
   humanTouchGapMs: "number | null",
+  reviewerWaitMs: "number | null",
 });
+export type OutcomeTimes = typeof OutcomeTimes.infer;
+
+/** Medians, and the 75th percentile in `p75`, over `prs` pull requests, `closed` of them merged or closed. */
+export const OutcomeMedians = OutcomeTimes.merge({ prs: "number", closed: "number", p75: OutcomeTimes });
 export type OutcomeMedians = typeof OutcomeMedians.infer;
 
 /** Why the baseline is missing: no saved policy marks when triage began, or the host did not answer. */
