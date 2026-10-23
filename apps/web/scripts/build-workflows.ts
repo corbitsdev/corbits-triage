@@ -8,7 +8,6 @@ import * as bitbucketTool from "../../../packages/bitbucket-datacenter-tool/buil
 import bitbucketPkg from "../../../packages/bitbucket-datacenter-tool/package.json";
 import * as githubTool from "../../../packages/github-tool/build.ts";
 import githubPkg from "../../../packages/github-tool/package.json";
-import triageWorkflowsPkg from "../../../packages/triage-workflows/package.json";
 import { contentVersion, packPackage, type PackedTarball } from "../../../tooling/pack-tarball.ts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowPackage } from "../src/lib/workflow-packages.ts";
 
@@ -24,10 +23,6 @@ const TOOLS = [
 ];
 const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 const TOOL_IMPORT = new RegExp(`^(${TOOL_NAMES.join("|")})(/.*)?$`);
-/** Native modules a bundle cannot hold: each is imported at run time and installed from npm for the sidecar's platform. */
-const NATIVE = { "@ast-grep/napi": triageWorkflowsPkg.dependencies["@ast-grep/napi"] };
-const NATIVE_NAMES = Object.keys(NATIVE);
-const RUN_TIME_NAMES = [...TOOL_NAMES, ...NATIVE_NAMES];
 
 function interchangeEntries(workflow: WorkflowPackage) {
   return { workflow: workflow.entry, directors: `./${DIRECTORS}`, actions: `./${ACTIONS}` };
@@ -46,7 +41,6 @@ async function bundle(workflow: WorkflowPackage, outdir: string): Promise<string
     target: "node",
     format: "esm",
     conditions: ["intx-src"],
-    external: NATIVE_NAMES,
     define: { "WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
     // The packed tools export only their roots, which re-export every subpath the workflows import.
     plugins: [{
@@ -67,13 +61,13 @@ async function bundle(workflow: WorkflowPackage, outdir: string): Promise<string
 function assertOnlyToolImports(workflow: WorkflowPackage, file: string, code: string, outputs: string[]): void {
   // A CommonJS require would load a module the import scan cannot see.
   if (/\bcreateRequire\b|\b__require\b/.test(code)) {
-    throw new Error(`${workflow.packageName} bundles a CommonJS require; only ESM imports of ${RUN_TIME_NAMES.join(", ")} are allowed.`);
+    throw new Error(`${workflow.packageName} bundles a CommonJS require; only ESM imports of ${TOOL_NAMES.join(", ")} are allowed.`);
   }
   for (const { path } of new Bun.Transpiler({ loader: "js" }).scanImports(code)) {
     // Bundled dependencies import Node builtins without the node: prefix.
-    if (isBuiltin(path.startsWith("node:") ? path : `node:${path}`) || RUN_TIME_NAMES.includes(path)) continue;
+    if (isBuiltin(path.startsWith("node:") ? path : `node:${path}`) || TOOL_NAMES.includes(path)) continue;
     if (path.startsWith(".") && outputs.includes(join(dirname(file), path))) continue;
-    throw new Error(`${workflow.packageName} imports ${path} at run time; only ${RUN_TIME_NAMES.join(", ")} are installed beside it.`);
+    throw new Error(`${workflow.packageName} imports ${path} at run time; only ${TOOL_NAMES.join(", ")} are published beside it.`);
   }
 }
 
@@ -82,15 +76,13 @@ async function packWorkflow(workflow: WorkflowPackage, tools: PackedTarball[], o
   try {
     const outputs = await bundle(workflow, stage);
     const files = Object.fromEntries(outputs.map((output) => [`./${output}`, join(stage, output)]));
-    const code = await Promise.all(outputs.map((output) => readFile(join(stage, output), "utf8")));
-    const imported = new Set(code.flatMap((source) => new Bun.Transpiler({ loader: "js" }).scanImports(source).map((entry) => entry.path)));
-    const native = Object.entries(NATIVE).filter(([name]) => imported.has(name));
     const manifest = {
       type: "module",
-      dependencies: Object.fromEntries([...tools.map((tool) => [tool.name, tool.version]), ...native]),
+      dependencies: Object.fromEntries(tools.map((tool) => [tool.name, tool.version])),
       interchange: interchangeEntries(workflow),
       files: [...outputs, "package.json"],
     };
+    const code = await Promise.all(outputs.map((output) => readFile(join(stage, output), "utf8")));
     if (!code.some((source) => source.includes(workflow.packageName))) {
       throw new Error(`${workflow.packageName} bundle lacks its package name; the build define was dropped.`);
     }
