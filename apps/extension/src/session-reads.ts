@@ -244,3 +244,17 @@ export async function browserSession(pr: PrRef, cache: RequestInit["cache"]): Pr
 
   return { page, site };
 }
+
+// Any github.com page names who is signed in; this one sends someone signed out to the login page.
+const SIGNED_IN_PAGE = "https://github.com/settings/profile";
+const USER_LOGIN = /<meta\b(?=[^>]*\bname="user-login")[^>]*\bcontent="([^"]+)"/;
+
+/** Who github.com's cookies sign the session's reads in as, read fresh; "" when no one is. */
+export async function sessionLogin(): Promise<string> {
+  const res = await fetch(SIGNED_IN_PAGE, { credentials: "include", cache: "no-store" });
+  if (!res.ok) throw new Error(`github.com ${SIGNED_IN_PAGE} -> ${res.status}`);
+  if (res.redirected && new URL(res.url).pathname === "/login") return "";
+  const login = USER_LOGIN.exec(await res.text())?.[1];
+  if (!login) throw new Error("github.com did not say who is signed in.");
+  return login;
+}

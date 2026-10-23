@@ -62,6 +62,8 @@ by a GitHub App's bot account, which the account name shows.
   the session reads go only to github.com and the token only to api.github.com.
 - The token is kept in the extension's `storage.local`. Only the background reads it, and changing or removing it
   clears every saved check and policy file.
+- Saved checks and policy files are cleared when a different account signs in to github.com, or the account signs
+  out. Until a run has checked who is signed in, the page may briefly show the check saved for the previous account.
 - A policy file that extends a shared policy is not checked; only the hub holds the shared policy.
 
 ## Test
