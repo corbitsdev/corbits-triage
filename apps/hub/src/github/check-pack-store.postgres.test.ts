@@ -76,11 +76,14 @@ test("PostgreSQL: a repository's policy is read by its pinned id, else the newes
 
     const foreignId = await create(db, OTHER, `${WORKSPACE_POLICY_TITLE_PREFIX}base`, JSON.stringify(SHARED));
     await point(override(foreignId));
-    expect(await loadCheckPack(deps, TENANT, REPO)).toEqual({ status: "corrupt", reason: "The workspace policy it extends belongs to another workspace.", repo: { id: repoId, version: 2 } });
+    expect(await loadCheckPack(deps, TENANT, REPO)).toEqual({ status: "corrupt", reason: "The workspace policy it extends belongs to another workspace.", repo: { id: repoId, version: 2 }, automatic: [] });
     await point(override("art_gone"));
     expect(await loadCheckPack(deps, TENANT, REPO)).toMatchObject({ status: "corrupt", reason: "The workspace policy it extends no longer exists." });
     await point(override(newerId));
     expect(await loadCheckPack(deps, TENANT, REPO)).toMatchObject({ status: "corrupt", reason: "It extends an artifact that is not a workspace policy." });
+
+    await point(JSON.stringify({ ...emptyPack(REPO), checks: { "max-size": { enabled: true }, "not-a-draft": { enabled: true }, size: { enabled: true } } }));
+    expect(await loadCheckPack(deps, TENANT, REPO)).toMatchObject({ status: "corrupt", reason: "The policy has unknown checks: max-size." });
 
     const pinnedConfig = await tenantConfig();
     await setArtifactArchived(db, (await getArtifact(db, repoId))!, true);

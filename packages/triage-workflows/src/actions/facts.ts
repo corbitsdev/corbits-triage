@@ -12,6 +12,7 @@ import { filesToRead, patternsResult, type PatternsResult } from "../logic/patte
 import { call, data, hostCalls, READ_PULL_REQUEST, runAll, toolName, type HostCall } from "../logic/host.js";
 import type { Judged } from "../logic/item.js";
 import { fixCount, historyPaths } from "../logic/risk.js";
+import { POLICY_UNREADABLE } from "../logic/settled.js";
 import type { RulesItem } from "./rules.js";
 
 export type FactsOutput = { items: RulesItem[]; batch: boolean } | History;
@@ -148,6 +149,16 @@ async function patternsOf(host: HostCall, tool: string, repo: string, item: { fa
 
 function fail(reason: string): FactsOutput {
   return { items: [{ error: reason }], batch: false };
+}
+
+/** The hub could not read the policy, so nothing is triaged and each head the mail names is marked failed with why. */
+function unreadablePolicy(request: Record<string, unknown>, repo: string, reason: string, appLogin: { appLogin?: string }): FactsOutput {
+  const error = `${POLICY_UNREADABLE}${reason}`;
+  const heads = [...mailHeads(request)];
+  if (heads.length === 0) return fail(error);
+  const repoSource = repoSourceOf(request.repoSource);
+  const marked = { automatic: automaticKinds(true, request), ...(repoSource !== "github" && { repoSource }), ...appLogin };
+  return { items: heads.map(([number, headSha]) => ({ error, pull: { repo, number, headSha }, ...marked })), batch: Array.isArray(request.items) };
 }
 
 async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number[], { policy, pack, events, docs, templates, firstFiles, lists }: FetchContext): Promise<RulesItem[]> {
@@ -359,6 +370,7 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
   const policy = repoPolicy(request?.policy);
   if (!request || typeof repo !== "string") return fail("facts: input has no repo");
   if (!policy.enabled) return fail("Triage is disabled for this repository.");
+  if (trusted && typeof request.policyUnreadable === "string") return unreadablePolicy(request, repo, request.policyUnreadable, appLogin);
   const pack = packFromInput(request.pack ?? request.checkPack);
   if (!pack) return fail(NEEDS_SETUP_REASON);
   const repoSource = repoSourceOf(request.repoSource);

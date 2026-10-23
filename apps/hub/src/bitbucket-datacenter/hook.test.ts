@@ -56,7 +56,7 @@ function hookRequest(body: string, eventKey: string, init: { delivery?: string; 
 
 function harness(overrides: Partial<ProviderHookDeps> = {}) {
   const accepted: CoalescedEvent[] = [];
-  const rechecked: Array<[string, number]> = [];
+  const rechecked: Array<[string, number | null]> = [];
   const synced: string[] = [];
   const deps: ProviderHookDeps = {
     db: {
@@ -105,6 +105,17 @@ describe("POST /api/hooks/bitbucket-datacenter/:tenantId", () => {
     expect(h.accepted[0]).toMatchObject({ workflow: "pr-triage", number: 1, headSha: "3e1552b0", event: "opened", record: { name: "TRI/widgets", source: "bitbucket-datacenter" } });
   });
 
+  test("a policy triage can't read is queued with its reason and no pack, so the run marks the head failed", async () => {
+    const h = harness({
+      async readCheckPack() {
+        return { status: "invalid", reason: "The policy file has unknown checks: max-size.", path: ".corbits-triage.yml", automatic: ["labels"] };
+      },
+    });
+    expect(await (await h.send(hookRequest(prEvent("pr:opened"), "pr:opened"))).json()).toEqual({ status: "queued" });
+    expect(h.accepted[0]).toMatchObject({ policyUnreadable: "The policy file has unknown checks: max-size.", automatic: ["labels"] });
+    expect(h.accepted[0]).not.toHaveProperty("pack");
+  });
+
   test("a failed queue write is 500 and the redelivery is accepted", async () => {
     let fail = true;
     const h = harness({
@@ -121,13 +132,20 @@ describe("POST /api/hooks/bitbucket-datacenter/:tenantId", () => {
     expect(await (await h.send(hookRequest(body, "pr:from_ref_updated"))).json()).toEqual({ status: "queued" });
   });
 
+  test("a default branch update triages every open pull request again, so a broken or fixed policy reaches them", async () => {
+    const h = harness();
+    const refs = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/main", displayId: "main", type: "BRANCH" }, type: "UPDATE" }] });
+    expect((await h.send(hookRequest(refs, "repo:refs_changed"))).status).toBe(202);
+    expect(h.rechecked).toEqual([["bitbucket-datacenter:TRI/widgets", null]]);
+  });
+
   test("a merge rechecks the other open pull requests and a branch update syncs the policy file", async () => {
     const h = harness();
     expect((await h.send(hookRequest(prEvent("pr:merged"), "pr:merged"))).status).toBe(202);
     const refs = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/main", displayId: "main", type: "BRANCH" }, type: "UPDATE" }] });
     expect((await h.send(hookRequest(refs, "repo:refs_changed", { delivery: "req-3" }))).status).toBe(202);
     // The triage state of another host's repository is keyed by its source, so it never shares a GitHub repository's.
-    expect(h.rechecked).toEqual([["bitbucket-datacenter:TRI/widgets", 1]]);
+    expect(h.rechecked).toEqual([["bitbucket-datacenter:TRI/widgets", 1], ["bitbucket-datacenter:TRI/widgets", null]]);
     expect(h.synced).toEqual(["TRI/widgets"]);
     const other = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/feature", displayId: "feature", type: "BRANCH" }, type: "UPDATE" }] });
     expect(await (await h.send(hookRequest(other, "repo:refs_changed", { delivery: "req-4" }))).json()).toEqual({ status: "ignored" });

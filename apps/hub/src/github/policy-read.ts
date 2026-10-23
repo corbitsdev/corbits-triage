@@ -65,7 +65,11 @@ function mergeRisks(pack: CheckPack, decide: readonly DecideRule[], automatic: r
 export function createGithubPolicyRead(deps: { readCheckPack: PolicyReader }) {
   return async function handle({ repo }: typeof PolicyQuery.infer, { tenantId }: Member): Promise<Response> {
     const read = await deps.readCheckPack(tenantId, repo, "github");
-    if (read.status !== "ok") return Response.json(read);
+    if (read.status === "missing") return Response.json(read);
+    if (read.status !== "ok") {
+      const { automatic: _automatic, ...unreadable } = read;
+      return Response.json(unreadable);
+    }
     const rules = read.policyWorkflow?.decide ?? [];
     const decide = rules.flatMap((rule) => kindsOf(rule.do)).filter(isActionKind);
     const risks = mergeRisks(read.pack, rules, read.automatic);

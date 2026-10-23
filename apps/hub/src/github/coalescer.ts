@@ -20,7 +20,7 @@
 // process: the hub runs as one replica.
 import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type PolicySource, type PolicyWorkflow, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import { checkPending, summarizeChecks, type CheckRun } from "@corbits/github-reads";
-import { mailPayload, waitingPayload } from "./bridge.js";
+import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import { GithubRateLimited } from "./github-usage.js";
 import type { PrMail } from "./normalize.js";
@@ -34,17 +34,20 @@ export type CoalesceWindow = { quietMs: number; maxWaitMs: number; burstMs: numb
 
 type SetTimer = (fire: () => Promise<void>, ms: number) => () => void;
 
-export type CoalescedEvent = {
-  tenantId: string;
-  workflow: string;
-  record: RepoRecord;
-  policy: RepoPolicy;
+type ReadPolicy = {
   pack: CheckPack;
   automatic: ActionKind[];
   /** Read with `pack` when the event was accepted, shared policy included, so the mail names the versions it carries. */
   source: PolicySource;
   policyWorkflow?: PolicyWorkflow;
   pauseLabel?: string;
+};
+
+export type CoalescedEvent = (ReadPolicy | PolicyUnreadable) & {
+  tenantId: string;
+  workflow: string;
+  record: RepoRecord;
+  policy: RepoPolicy;
   mail: PrMail;
   number: number;
   headSha: string;
@@ -200,7 +203,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
 
   /** The waiting marker is only shown, so a mail that did not go out is logged and the head still waits. */
   async function markWaiting({ latest, head }: Open, noCi: boolean): Promise<void> {
-    if (!marksWaiting(sourceOf(latest.record), latest.automatic)) return;
+    if (!("pack" in latest) || !marksWaiting(sourceOf(latest.record), latest.automatic)) return;
     try {
       await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", payload: waitingPayload(latest.record, latest.policy, latest, head, noCi) });
     } catch (err) {
@@ -217,7 +220,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     const { latest, head, prior } = open;
     const entry = { tenantId: head.tenantId, repo: latest.record.name, pr: head.number, headSha: head.headSha, events: open.events };
     const checksOnly = open.events.every((event) => event === "checks");
-    const readsCi = dependsOnCi(latest.pack);
+    const readsCi = "pack" in latest && dependsOnCi(latest.pack);
     // A head the reconciler released from waiting after its CI finished already has its one run.
     if (readsCi && checksOnly && prior !== undefined && inFlight(prior) && prior.events !== undefined) return drop(open, entry, "released");
     let unready: string | undefined;
@@ -255,7 +258,8 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     }
     try {
       const noWait = waitedOut(firstSeenAt, deps.now(), deps.ciWait);
-      const payload = mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events, ...(noWait && { noWait }) });
+      const extra = { ...latest.mail, headSha: head.headSha, events, ...(noWait && { noWait }) };
+      const payload = "pack" in latest ? mailPayload(latest.record, latest.policy, latest, extra) : unreadablePayload(latest.record, latest.policy, latest, extra);
       await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", record: latest.record, payload });
     } catch (err) {
       if (err instanceof GithubRateLimited) return drop({ ...open, remembered }, entry, "github_rate_limited");

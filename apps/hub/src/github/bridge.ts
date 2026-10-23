@@ -14,7 +14,7 @@
 // traffic then flows through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATHS, repoPolicy, triageEventOf, WAITING_KIND, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATHS, repoPolicy, triageEventOf, WAITING_KIND, type ActionKind, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, errorText, isRecord } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
@@ -35,6 +35,7 @@ import {
   setConnectedForInstallation,
   sourceOf,
   triageNs,
+  triageStateKey,
   upsertConnectedRepos,
   type CorbitsTriageNs,
   type InstallationFields,
@@ -73,7 +74,7 @@ export interface BridgeDeps {
   readCheckPack: PolicyReader;
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   /** Has the repository's open pull requests but `except` triaged again, by its triage state key; resolves to how many were due. */
-  recheckOpenPulls: (tenantId: string, key: string, except: number) => Promise<number>;
+  recheckOpenPulls: (tenantId: string, key: string, except: number | null) => Promise<number>;
   /** Reads the repository's policy file again; undefined when the repository is not connected. */
   refreshPolicyFile: (tenantId: string, repo: string, source: RepoSource) => Promise<PolicyFileState | undefined>;
   startBacklog: BacklogStart;
@@ -193,14 +194,27 @@ export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, poli
   return { ...mailPayload(record, policy, pack, { prNumber: head.number, headSha: head.headSha, ...(noCi && { noCi }) }), kind: WAITING_KIND };
 }
 
-export async function resolvedPack(
-  readCheckPack: PolicyReader,
-  tenantId: string,
-  repo: string,
-  source: RepoSource,
-): Promise<StoredPack | null> {
+/** A policy triage can't read is mailed in place of a pack, so the run marks the head failed instead of nothing happening. */
+export type PolicyUnreadable = { policyUnreadable: string; automatic: ActionKind[] };
+
+/** What the coalescer is handed for a read policy: its pack, or why it can't be read. Undefined when there is no policy. */
+export async function triagePolicy(readCheckPack: PolicyReader, tenantId: string, repo: string, source: RepoSource): Promise<StoredPack | PolicyUnreadable | undefined> {
   const read = await readCheckPack(tenantId, repo, source);
-  return read.status === "ok" ? read : null;
+  if (read.status === "missing") return undefined;
+  if (read.status !== "ok") return { policyUnreadable: read.reason, automatic: read.automatic };
+  const { status: _status, ...stored } = read;
+  return stored;
+}
+
+/** A push that leaves the policy unreadable has every open head marked again, since none of them would be otherwise. */
+async function recheckIfUnreadable(d: Pick<BridgeDeps, "readCheckPack" | "recheckOpenPulls">, tenantId: string, record: RepoRecord): Promise<void> {
+  const read = await d.readCheckPack(tenantId, record.name, sourceOf(record));
+  if (read.status === "invalid" || read.status === "corrupt") await d.recheckOpenPulls(tenantId, triageStateKey(record), null);
+}
+
+export function unreadablePayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { policyUnreadable, automatic }: PolicyUnreadable, extra: Record<string, unknown>) {
+  const repoSource = sourceOf(record);
+  return { ...extra, kind: "pr", repo: record.name, ...(repoSource !== "github" && { repoSource }), policy, policyUnreadable, automatic };
 }
 
 function installationFields(payload: Record<string, unknown>): InstallationFields | undefined {
@@ -442,6 +456,7 @@ async function handlePolicyPush(
   let read: PolicyFileState | undefined;
   try {
     read = await d.refreshPolicyFile(loaded.tenantId, repo, "github");
+    if (read) await recheckIfUnreadable(d, loaded.tenantId, record);
   } catch (err) {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
     log({ level: "error", msg: "policy_file_read_failed", delivery, event, repo, error: errorText(err) });
@@ -566,9 +581,9 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "not_open" });
       return json(202, { status: "ignored" });
     }
-    let stored: StoredPack | null;
+    let stored: Awaited<ReturnType<typeof triagePolicy>>;
     try {
-      stored = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo, "github");
+      stored = await triagePolicy(d.readCheckPack, loaded.tenantId, mail.repo, "github");
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "policy_read_failed", delivery, event, repo: mail.repo, error: errorText(err) });
@@ -578,17 +593,17 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "needs_setup", delivery, event, repo: mail.repo, hook: loaded.credentialId });
       return json(202, { status: "needs-setup" });
     }
-    if (unpausing && unlabeled !== stored.pauseLabel) {
+    if (unpausing && ("policyUnreadable" in stored || unlabeled !== stored.pauseLabel)) {
       log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "no_triage_event" });
       return json(202, { status: "ignored" });
     }
-    if (!hasEnabledRules(stored.pack)) {
+    if ("pack" in stored && !hasEnabledRules(stored.pack)) {
       log({ level: "info", msg: "triage_skipped_no_rules", delivery, event, repo: mail.repo, pr: mail.prNumber, headSha, hook: loaded.credentialId });
       return json(202, { status: "ignored" });
     }
     let accepted: Accepted;
     try {
-      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, ...(stored.policyWorkflow && { policyWorkflow: stored.policyWorkflow }), ...(stored.pauseLabel && { pauseLabel: stored.pauseLabel }), mail, number: mail.prNumber, headSha, event: triageEvent, ...(draftUnread && { draftUnread: true }) });
+      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, ...stored, mail, number: mail.prNumber, headSha, event: triageEvent, ...(draftUnread && { draftUnread: true }) });
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });

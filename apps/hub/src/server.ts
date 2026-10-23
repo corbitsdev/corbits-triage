@@ -807,7 +807,7 @@ coalescer = createCoalescer({
   now,
   log: logJson,
 });
-async function recheckOpenPulls(tenantId: string, repo: string, except: number): Promise<number> {
+async function recheckOpenPulls(tenantId: string, repo: string, except: number | null): Promise<number> {
   const due = await markBaseMoved(triageStateStore, tenantId, repo, except, now(), reconcilePolicy);
   if (due > 0) kickTriage();
   return due;

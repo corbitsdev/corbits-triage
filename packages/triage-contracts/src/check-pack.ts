@@ -521,6 +521,24 @@ export const policyOverrideSchema = checkPackSchema.omit("checks", "actions").an
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
+
+const LISTED_MAX = 5;
+const NAME_MAX = 80;
+
+/** Names a refusal quotes from a policy, cut short so it never carries much of the policy. */
+export function refusalNames(names: readonly string[]): string {
+  const shown = names.slice(0, LISTED_MAX).map((name) => (name.length > NAME_MAX ? `${name.slice(0, NAME_MAX)}…` : name)).join(", ");
+  return names.length > LISTED_MAX ? `${shown} and ${names.length - LISTED_MAX} more` : shown;
+}
+
+/**
+ * Refuses a saved policy naming a rule id no catalog ever held, which would otherwise be dropped and leave the policy
+ * running less than it says. Only the hub reads saved policies this way, so a run on an older catalog still reads them.
+ */
+export function refuseUnknownChecks(stored: unknown): void {
+  const unknown = Object.keys(asRecord(policyObject(stored).checks) ?? {}).filter((id) => !CATALOG_SET.has(id) && !RENAMED_RULE_IDS.has(id) && !RETIRED_CHECK_IDS.has(id) && !BUILT_IN_CHECK_NAMES.has(id));
+  if (unknown.length > 0) throw new Error(`The policy has unknown checks: ${refusalNames(unknown)}.`);
+}
 const RESERVED_IDS = new Set<string>([...CATALOG_IDS, ...BUILT_IN_CHECK_NAMES.keys(), ...RENAMED_RULE_IDS.keys(), ...RETIRED_CHECK_IDS, "all", "verdict", CLOSED_FINDING]);
 // Judge question ids are built from rule ids (`docs-file-001`, `focused-slice-001`, `<id>-hunk-001-002`), so no custom id may read as one.
 const QUESTION_LIKE = /^(?:docs|focused)-|-(?:file|hunk|slice)(?:-\d+)+$/;

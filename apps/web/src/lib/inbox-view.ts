@@ -167,7 +167,7 @@ export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
   return "nobody";
 }
 
-/** Triage never runs in a repository whose policy cannot run, so its untriaged pull requests wait on its setup instead. */
+/** Triage decides nothing in a repository whose policy cannot run, so its pull requests waiting on Triage wait on its setup instead. */
 export function waitsOnIn(entry: OpenItem, needsSetup: ReadonlySet<string>): WaitsOn {
   const waits = waitsOn(entry.item, entry.handled);
   return waits === "triage" && needsSetup.has(entry.item.repo) ? "setup" : waits;

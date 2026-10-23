@@ -41,7 +41,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     policy and the two run differently (compared rule by rule and step by
     step, never as text), or the file is refused, the stored policy applies;
     once they run the same, the hub archives the stored policy. A refused file
-    with no stored policy is `invalid`: no mail is sent. Routes:
+    with no stored policy is `invalid`, and a stored policy the hub refuses
+    is `corrupt`; for either, a pull request event or the reconciler mails pr-triage
+    `policyUnreadable` with the reason and no pack, so the run marks the head
+    failed instead of triaging it, once per head. A push that leaves the policy
+    unreadable, and on Bitbucket Data Center any default branch push, triages
+    every open pull request again. Routes:
     `GET …/policy/file` (the file and why it is refused),
     `POST /api/integrations/policy/validate` (open, reads only its body),
     `GET …/policy/upgrades` (`start`, `upgrade`, `differs` or `ok` per enabled

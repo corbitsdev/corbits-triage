@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { findArtifactByTitle, getArtifact, setArtifactArchived, type ArtifactDb, type ArtifactRow } from "@corbits/artifacts";
 import { schema, type DB } from "@intx/db";
 import { asRepo } from "@corbits/common";
-import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type PolicyWorkflow, type RepoSource, type SharedFileRef } from "@corbits/triage-contracts";
+import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, refuseUnknownChecks, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type PolicyWorkflow, type RepoSource, type SharedFileRef } from "@corbits/triage-contracts";
 import type { PolicyFileState } from "./policy-file.js";
 import { prWorkflowKeys } from "./pr-workflow.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
@@ -29,8 +29,8 @@ function withPrWorkflowKeys(workflow: PolicyWorkflow, pack: CheckPack): Pick<Sto
 export type CheckPackRead =
   | ({ status: "ok" } & StoredPack)
   | { status: "missing" }
-  | { status: "corrupt"; reason: string; repo: ArtifactRef }
-  | { status: "invalid"; reason: string; path: string };
+  | { status: "corrupt"; reason: string; repo: ArtifactRef; automatic: ActionKind[] }
+  | { status: "invalid"; reason: string; path: string; automatic: ActionKind[] };
 
 /** Saved rules as read: what `loadCheckPack` answers. */
 type SavedRead = ({ status: "ok" } & StoredPack & { source: { repo: ArtifactRef; shared?: ArtifactRef } }) | Extract<CheckPackRead, { status: "missing" | "corrupt" }>;
@@ -69,6 +69,8 @@ export async function repoPolicyRow({ db, artifacts }: Pick<CheckPackStoreDeps, 
 /** `shared` is undefined when the policy extends none. An archived shared policy still applies: archiving hides, it does not revoke. */
 function resolved(tenantId: string, repo: string, content: unknown, shared: ArtifactRow | null | undefined): Pick<StoredPack, "pack"> & { shared?: ArtifactRef } {
   if (shared && shared.tenantId !== tenantId) throw new Error("The workspace policy it extends belongs to another workspace.");
+  refuseUnknownChecks(content);
+  if (shared) refuseUnknownChecks(shared.content);
   return { pack: storedPolicyPack(repo, content, shared && { title: shared.title, content: shared.content }), ...(shared && { shared: refOf(shared) }) };
 }
 
@@ -78,9 +80,9 @@ async function sharedOf(artifacts: ArtifactDb, content: unknown): Promise<Artifa
   return id === undefined ? undefined : getArtifact(artifacts, id);
 }
 
-function corrupt(row: ArtifactRow, error: unknown): SavedRead {
+function corrupt(row: ArtifactRow, error: unknown, automatic: ActionKind[]): SavedRead {
   if (!(error instanceof Error)) throw error;
-  return { status: "corrupt", reason: error.message, repo: refOf(row) };
+  return { status: "corrupt", reason: error.message, repo: refOf(row), automatic };
 }
 
 export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, repo: string): Promise<SavedRead> {
@@ -95,7 +97,7 @@ export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, 
   try {
     read = resolved(tenantId, repo, row.content, await sharedOf(deps.artifacts, row.content));
   } catch (error) {
-    return corrupt(row, error);
+    return corrupt(row, error, await deps.automaticKinds(tenantId, repo));
   }
   const source = { repo: refOf(row), ...(read.shared && { shared: read.shared }) };
   if (source.shared) deps.log({ level: "info", msg: "policy_shared_resolved", tenantId, repo, source });
@@ -136,13 +138,13 @@ export async function fileRefusal(deps: CheckPackStoreDeps & { policyFile: Polic
 }
 
 async function fileRead(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, host: RepoSource | undefined, file: Exclude<PolicyFileState, { status: "absent" }>): Promise<FileRead> {
-  if (file.status === "invalid") return { status: "invalid", reason: file.reason, path: file.path };
+  if (file.status === "invalid") return { status: "invalid", reason: file.reason, path: file.path, automatic: await deps.automaticKinds(tenantId, repo) };
   let read: Awaited<ReturnType<typeof fileResolved>>;
   try {
     read = await fileResolved(deps, tenantId, repo, host, file.policy);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
-    return { status: "invalid", reason: error.message, path: file.file.path };
+    return { status: "invalid", reason: error.message, path: file.file.path, automatic: await deps.automaticKinds(tenantId, repo) };
   }
   const { pack, ...from } = read;
   const source: PolicySource = { file: { path: file.file.path, sha: file.file.sha }, ...from };
