@@ -13,7 +13,7 @@
     "@corbits/common": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "arktype": "catalog:",
-    "minimatch": "^10.2.6"
+    "minimatch": "10.2.6"
   },
   "description": "GitHub REST read helpers and types"
 }

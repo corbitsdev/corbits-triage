@@ -16,7 +16,7 @@
   "dependencies": {
     "@intx/agent": "workspace:*",
     "@intx/types": "workspace:*",
-    "minimatch": "^10.2.6",
+    "minimatch": "10.2.6",
     "re2js": "2.8.6",
     "tar": "catalog:"
   },
