@@ -114,7 +114,7 @@ labels:
 
 Write these only when the user asks. A file holds `decide` or `actions`, never both.
 
-A file with a block on, or its own `decide`, runs the PR workflow: triage, then code review, then `decide` once. The file then decides code review for the repository, whatever its Code review switch says. It needs the workspace's Anthropic key and a place for code review to run; without them triage runs alone and approve and merge wait for a person. Only `code-review` with provider `anthropic` runs today; with `security` or `deslop` on, approve and merge also wait for a person. `pace` and `pauseLabel` don't act yet.
+A file with a block on, or its own `decide`, runs the PR workflow: triage, then code review, then `decide` once. The file then decides code review for the repository, whatever its Code review switch says. It needs the workspace's Anthropic key and a place for code review to run; without them triage runs alone and approve and merge wait for a person. Only `code-review` with provider `anthropic` runs today; with `security` or `deslop` on, approve and merge also wait for a person. On GitHub, a pull request carrying the `pauseLabel` label starts no run until the label comes off, and one that can't be read is retried, never run unpaused. `pace` doesn't act yet.
 
 ```yaml
 groups:

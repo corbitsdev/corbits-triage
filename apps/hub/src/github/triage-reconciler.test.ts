@@ -202,6 +202,8 @@ type HarnessOptions = {
   activity?: RepoActivity;
   /** Thrown by every listing of open pull requests while set. */
   listError?: Error;
+  /** Thrown by the mail of these pull requests. */
+  sendErrors?: Record<number, Error>;
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
@@ -297,7 +299,9 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       if (options.noPack) return { status: "missing" };
       return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: options.automatic ?? [], source: { repo: { id: "art_pack", version: 1 } } };
     },
-    send: async function send({ payload }) {
+    send: async function send({ number, payload }) {
+      const refused = options.sendErrors?.[number];
+      if (refused) throw refused;
       delivered.push({ payload: payload as Record<string, unknown> });
     },
     policy: triageReconcilePolicy({ ...(options.maxInFlight !== undefined && { TRIAGE_MAX_IN_FLIGHT: options.maxInFlight }) }),
@@ -770,6 +774,13 @@ describe("triage reconciler", () => {
     const { reconcile, delivered } = harness({}, heads(1, 3));
     await reconcile();
     expect(delivered.map((entry) => mailedNumbers([entry]))).toEqual([[1], [2], [3]]);
+  });
+
+  test("a mail that fails to send leaves its head failed with the error, and the rest of the batch is still sent", async () => {
+    const { reconcile, delivered, saved } = harness({}, heads(1, 2), { sendErrors: { 1: new Error("502 Bad Gateway") } });
+    await reconcile();
+    expect(delivered.map((entry) => mailedNumbers([entry]))).toEqual([[2]]);
+    expect(saved.get(REPO)?.find((row) => row.number === 1)).toMatchObject({ status: "failed", error: "delivery failed: Error: 502 Bad Gateway" });
   });
 
   test("a batch run's verdicts settle each head it named; a batch degraded before rendering queues every head again", async () => {

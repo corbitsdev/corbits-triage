@@ -12,7 +12,9 @@ const RECORD = { name: "acme/widgets", connected: true } as RepoRecord;
 const PULL: PullRequestToReview = { title: "t", description: "d", headSha: "abc", draft: false, open: true, diff: "", labels: ["bug"] };
 const REVIEW = reviewRequestOf(RECORD, 8, PULL);
 
-function router(keys: string[], { live = true, read = async (): Promise<PullRequestToReview> => PULL } = {}) {
+type Read = () => Promise<PullRequestToReview>;
+
+function router(keys: string[], { live = true, read = async () => PULL, readDiff = read }: { live?: boolean; read?: Read; readDiff?: Read } = {}) {
   const logged: Array<Record<string, unknown>> = [];
   const diffsRead: number[] = [];
   const route = createPrWorkflowRouter({
@@ -24,7 +26,7 @@ function router(keys: string[], { live = true, read = async (): Promise<PullRequ
     },
     readPull(_tenantId, _record, number) {
       diffsRead.push(number);
-      return read();
+      return readDiff();
     },
     log(entry) {
       logged.push(entry);
@@ -85,15 +87,27 @@ test("without the provider's key, its variant running, or a variant that runs ev
   }
 });
 
-test("a pull request carrying the pause label starts no run; one whose labels can't be read runs", async () => {
+test("a pull request carrying the pause label starts no run, nor does one whose labels can't be read", async () => {
   const paused = router(["anthropic"]);
   expect(await paused.route(job(undefined, "pr", "bug"))).toBeUndefined();
   expect(await paused.route(job({ "code-review": { on: true } }, "pr", "bug"))).toBeUndefined();
   expect(paused.logged.map((entry) => entry.msg)).toEqual(["pr_paused", "pr_paused"]);
-  const unread = router(["anthropic"], { read: async () => Promise.reject(new Error("host down")) });
-  const sent = job(undefined, "pr", "bug");
-  expect(await unread.route(sent)).toEqual(sent);
+  const unread = router(["anthropic"], { read: async () => Promise.reject(new Error("502 Bad Gateway")) });
+  await expect(unread.route(job(undefined, "pr", "bug"))).rejects.toThrow("502 Bad Gateway");
+  await expect(unread.route(job({ "code-review": { on: true } }, "pr", "bug"))).rejects.toThrow("502 Bad Gateway");
+  const bitbucket = job(undefined, "pr", "bug");
+  const unlabelled = { ...bitbucket, payload: { ...(bitbucket.payload as object), repoSource: "bitbucket-datacenter" } };
+  expect(await unread.route(unlabelled)).toEqual(unlabelled);
   expect(await router(["anthropic"]).route(job(undefined, "pr", "wip"))).toEqual(job(undefined, "pr", "wip"));
+});
+
+test("with a pause label, a diff that cannot be read still pauses on the head's labels, or is sent without its review", async () => {
+  const { route, logged } = router(["anthropic"], { readDiff: async () => Promise.reject(new Error("502 Bad Gateway")) });
+  expect(await route(job({ "code-review": { on: true } }, "pr", "bug"))).toBeUndefined();
+  const routed = await route(job({ "code-review": { on: true } }, "pr", "wip"));
+  expect(routed?.workflow).toBe("pr-workflow-anthropic-github");
+  expect(routed?.payload).not.toHaveProperty("codeReviewRequest");
+  expect(logged.map((entry) => entry.msg)).toEqual(["pull_request_unread", "pr_paused", "pull_request_unread"]);
 });
 
 test("only code review reads the diff; a pause label alone reads the pull request without it", async () => {

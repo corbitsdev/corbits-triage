@@ -73,16 +73,19 @@ function hasDiff(pull: PullRequestHead): pull is PullRequestToReview {
 }
 
 export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
-  /** Undefined when it cannot be read: the run goes ahead unpaused, and records a review it needed incomplete. */
-  async function pullOf(job: TriageJob, record: RepoRecord, reviewed: boolean): Promise<PullRequestHead | undefined> {
+  /**
+   * Undefined when it cannot be read: the run goes ahead, and records a review it needed incomplete. While a pause can fire,
+   * a diff that cannot be read falls back to the head, whose labels decide the pause, and a head that cannot be read throws.
+   */
+  async function pullOf(job: TriageJob, record: RepoRecord, reviewed: boolean, pausable: boolean): Promise<PullRequestHead | undefined> {
     try {
       if (reviewed) return await deps.readPull(job.tenantId, record, job.number);
       return await deps.readHead(job.tenantId, record, job.number);
     } catch (err) {
-      // While GitHub refuses reads, a paused pull request would read as unpaused: the mail waits instead.
-      if (err instanceof GithubRateLimited) throw err;
+      // An unreadable head cannot be told from a paused one: the mail waits on a rate limit, and otherwise fails to be retried.
+      if (err instanceof GithubRateLimited || (pausable && !reviewed)) throw err;
       deps.log({ level: "warn", msg: "pull_request_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error: errorText(err) });
-      return undefined;
+      return pausable ? await pullOf(job, record, false, true) : undefined;
     }
   }
 
@@ -112,9 +115,11 @@ export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
     if (!request || request["kind"] !== "pr") return job;
     const blocks = request["blocks"];
     const pauseLabel = request["pauseLabel"];
+    // Only GitHub heads carry labels, so only there can a pause fire.
+    const pausable = typeof pauseLabel === "string" && repoSourceOf(request["repoSource"]) === "github";
     const reviewed = Array.isArray(blocks) && asRecord(request["codeReview"])?.["on"] === true;
     if (reviewed && !job.record) deps.log({ level: "warn", msg: "code_review_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, reason: "no_record" });
-    const pull = job.record && (typeof pauseLabel === "string" || reviewed) ? await pullOf(job, job.record, reviewed) : undefined;
+    const pull = job.record && (typeof pauseLabel === "string" || reviewed) ? await pullOf(job, job.record, reviewed, pausable) : undefined;
     if (typeof pauseLabel === "string" && pull?.labels?.includes(pauseLabel)) {
       deps.log({ level: "info", msg: "pr_paused", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, label: pauseLabel });
       return undefined;
