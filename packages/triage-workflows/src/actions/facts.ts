@@ -1,13 +1,14 @@
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, catalogCheckEnabled, classificationSources, DEFAULT_RISK, emptyPack, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, triggerRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, triggerRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "../logic/checks.js";
 import { asText } from "../logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "../logic/facts.js";
 import type { History } from "../logic/history.js";
+import { patternScope } from "../logic/patterns.js";
 import { call, data, hostCalls, READ_PULL_REQUEST, runAll, toolName, type HostCall } from "../logic/host.js";
 import type { Judged } from "../logic/item.js";
 import { fixCount, historyPaths } from "../logic/risk.js";
@@ -128,6 +129,41 @@ const NO_DOCS: RepoDocs = { docs: {}, rules: {} };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** The most lines `read_file` answers at once, and the length past which it clips a line. */
+const READ_WINDOW = 400;
+const CLIPPED_LINE = 501;
+
+/** A window's lines without their numbers, or nothing when it was not read whole. */
+function windowLines(r: ToolResult | undefined): { lines: string[]; end: number; totalLines: number } | undefined {
+  const page = data<{ text?: unknown; end?: unknown; totalLines?: unknown }>(r);
+  if (!page || typeof page.text !== "string" || typeof page.end !== "number" || typeof page.totalLines !== "number") return undefined;
+  const lines = page.text.split("\n").map((line) => line.slice(line.indexOf("\t") + 1));
+  if (lines.some((line) => line.length === CLIPPED_LINE && line.endsWith("…"))) return undefined;
+  return { lines, end: page.end, totalLines: page.totalLines };
+}
+
+/** Each file's content at `sha`, read a window at a time; a file not read whole is left out, so its rule cannot pass. */
+async function readContents(host: HostCall, tool: string, repo: string, sha: string, paths: string[]): Promise<Record<string, string>> {
+  const read = new Map<string, string[]>(paths.map((path) => [path, []]));
+  function windowCall({ path, start }: { path: string; start: number }): ToolCall {
+    return call(tool, { repo, sha, path, start, end: start + READ_WINDOW - 1 }, `content:${path}:${start}`);
+  }
+  let windows = paths.map((path) => ({ path, start: 1 }));
+  while (windows.length > 0) {
+    const results = await runAll(host, windows.map(windowCall));
+    windows = windows.flatMap(function nextWindow({ path, start }) {
+      const page = windowLines(results.get(`content:${path}:${start}`));
+      if (!page) {
+        read.delete(path);
+        return [];
+      }
+      read.get(path)!.push(...page.lines);
+      return page.end < page.totalLines ? [{ path, start: page.end + 1 }] : [];
+    });
+  }
+  return Object.fromEntries([...read].map(([path, lines]) => [path, lines.join("\n")]));
+}
+
 function fail(reason: string): FactsOutput {
   return { items: [{ error: reason }], batch: false };
 }
@@ -223,6 +259,14 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     }));
   }
 
+  const patterns = pack.custom.filter(isPatternsCheck).some(customCheckEnabled);
+  const contents = new Map<number, Record<string, string>>();
+  for (const n of patterns ? numbers : []) {
+    const sha = prs.get(n)?.sha;
+    const paths = (listed.get(n)?.files ?? []).filter(patternScope).map((file) => file.path);
+    if (sha !== undefined) contents.set(n, await readContents(host, tool("read_file"), repo, sha, paths));
+  }
+
   function unreadParts(n: number): ListPart[] {
     const sha = prs.get(n)?.sha;
     return lists.filter(function unread(part) {
@@ -255,7 +299,8 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });
     const judged = stamp.carried.get(n);
     if ("error" in item) return degraded(n, item.error);
-    const stamped = { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
+    const read = contents.get(n);
+    const stamped = { ...item, ...(read && { facts: { ...item.facts, contents: read } }), automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
     return judged === undefined ? stamped : { ...stamped, judged };
   }
 

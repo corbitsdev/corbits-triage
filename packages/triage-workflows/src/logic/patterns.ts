@@ -36,6 +36,11 @@ function grammarOf(path: string): Grammar | undefined {
   return GRAMMARS[path.slice(path.lastIndexOf(".") + 1)];
 }
 
+/** A changed file whose code the rules read: a TypeScript or JavaScript file the pull request adds lines to. */
+export function patternScope(file: PrFileFacts): boolean {
+  return grammarOf(file.path) !== undefined && file.status !== "removed" && file.additions !== 0;
+}
+
 function fileMatches(file: PrFileFacts, patch: string, content: string, grammar: Grammar, rules: PatternRule[]): string[] {
   const added = addedLines(patch);
   const root = parse(grammar.lang, content).root();
@@ -60,7 +65,7 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
     const rules = patternRules(check);
     for (const file of files) {
       const grammar = grammarOf(file.path);
-      if (!grammar || file.status === "removed" || file.additions === 0) continue;
+      if (!grammar || !patternScope(file)) continue;
       const content = contents?.[file.path];
       if (file.patch === undefined || file.patchTruncated || file.patch.length > MAX_PATCH_INPUT_CHARS) return { unread: `${file.path}: its patch was not read in full` };
       if (content === undefined) return { unread: `${file.path}: its content was not read` };

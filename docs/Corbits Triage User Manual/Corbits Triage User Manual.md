@@ -256,6 +256,7 @@ A rule asks one question about a pull request and answers pass, fail or unconfir
   - **Flag pull requests that hide text.** Fails when the title, description, a commit message or a file name hides something from a reviewer: two or more invisible characters together, Unicode tag characters other than those that draw the England, Scotland and Wales flags, variation selectors that change nothing a reader sees (one emoji-style selector on its own is allowed), characters that override or isolate text direction, or a link with nothing to click. Right-to-left text and colour codes in pasted terminal output are allowed. On GitHub it also fails when a comment or other hidden markup the author added to the description speaks to an AI, such as "ignore previous instructions", or holds those characters. A comment exactly as the repository's pull request template has it, or, with no template, its organisation's `.github` repository's, is skipped; one the author shortened or added to is checked. When it fails, Triage says what it found and where, such as `commit 2: bidi controls`, never the hidden text. On Bitbucket Data Center only the characters are checked. It knows only common wording: an instruction that is paraphrased, written with look-alike letters or HTML entities, or split across comments passes, and so does a single invisible character between letters. Give it `onFail: ask` so a maintainer decides rather than the author being failed.
   - **Flag changes to files with N+ fixes in the last 30 days, or to migrations.** Fails when a changed file has had at least N commits in the last 30 days whose title starts with a fix, bugfix, hotfix or revert type, such as `fix(api): …` (4 unless the file sets `hotFileFixes`), or a changed file is a migration (`**/migrations/**` or `**/*.sql` unless the file lists its own `migrations`). Tests, Markdown docs and lockfiles are left out. Its evidence names the hottest three files and how many more, such as `src/router.ts: 6 recent fixes` or `db/migrations/0004.sql: migration`. It only labels and notes the pull request unless the file gives it another `onFail`, so a `decide` rule or a step can hold back an approve or merge on its label. When Triage can't read a file's whole recent history, the rule is unconfirmed rather than passed, and the rest of the pull request is checked as usual. The default of 4 was measured on one open-source repository; check it suits yours.
   - **Fail when …**, a text rule of your own, such as "Fail when any commit message contains "Co-Authored-By:"". It names where to look (the title, the description, any commit message, or several of them), whether the rule fails when the text **contains** or **does not contain** its phrases, and the phrases. Case does not matter. Only the first 100 commits are read. The rule's evidence quotes the line that matched. Text rules count toward the eight rules of your own.
+  - **Fail when added code matches …**, a code-pattern rule of your own, such as one that flags `?? 0`. It checks only the lines the pull request adds to TypeScript and JavaScript files, so code already on the branch never fails it. Turn on the shipped `convention` preset, which flags invented fallbacks (`?? 0`, `?? []`), nested ternaries, functions called where they are written, `.then`/`.catch` chains, empty `catch` blocks and lint or type suppression comments, or write your own patterns in [ast-grep](https://ast-grep.github.io/guide/rule-config.html)'s rule format. Your own pattern replaces a preset's pattern with the same `id`. Each match is listed as evidence, as `path:line` and the pattern's message. When a file can't be read whole or a pattern is not valid ast-grep, the rule is unconfirmed rather than passing. To give some patterns a different `onFail`, put them in a rule of their own. Code-pattern rules count toward the eight rules of your own, and the browser extension leaves them out.
 - **Judgement**, questions the decision model answers from the diff and the documentation:
   - **Check the change is focused on one thing.** On a stacked branch, one another pull request was merged into or one based on another open pull request's branch, this rule is skipped, and the comment says why, such as "stacked branch, includes #1521".
   - **Check docs are updated when behavior changes.**
@@ -277,6 +278,23 @@ To make a size limit block, give it `onFail: fail` or `onFail: ask`:
     max: 500
     onFail: ask
     reason: A very large file change is hard to review line by line.
+    evidence: [maintainer-stated]
+```
+
+A code-pattern rule that labels instead of failing:
+
+```yaml
+  - id: conventions
+    check: code-patterns
+    text: Added code follows our conventions.
+    presets: [convention]
+    patterns:
+      - id: no-console
+        language: typescript # or javascript
+        message: Remove console logging.
+        rule: { pattern: "console.log($$$ARGS)" }
+    onFail: label
+    reason: Review time goes to design, not style.
     evidence: [maintainer-stated]
 ```
 
