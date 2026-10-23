@@ -11,9 +11,15 @@ const STAGE = "package";
 type PackageManifest = { name: string; version: string } & Record<string, unknown>;
 export type PackedTarball = { name: string; version: string; filename: string; path: string; integrity: string };
 
+function byName(a: { name: string }, b: { name: string }): number {
+  if (a.name < b.name) return -1;
+  if (a.name > b.name) return 1;
+  return 0;
+}
+
 async function listSorted(cwd: string, rel: string): Promise<string[]> {
   const entries = await fs.readdir(path.join(cwd, rel), { withFileTypes: true });
-  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  entries.sort(byName);
   const out = [rel];
   for (const entry of entries) {
     const child = path.join(rel, entry.name);
