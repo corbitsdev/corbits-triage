@@ -6,8 +6,8 @@ import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
 import { forMaintainer, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult, type Ticket } from "./checks.js";
 import type { Judged } from "./item.js";
-import { asText, goalKind } from "./extract.js";
-import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, TICKET_QUESTION, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
+import { asText } from "./extract.js";
+import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, ISSUE_INSTRUCTED_QUESTION, isScoped, TICKET_QUESTION, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
 type ModelAnswer = Decision;
 
@@ -142,8 +142,8 @@ const UNAVAILABLE_REASON = "decision model unavailable";
 /** The decision model answered, but not decisively, or could not read every file it needed. */
 const UNDECIDED_REASON = "not enough evidence to decide";
 
-/** Where each sort of goal is checked: CI goals by the ci-green rule, outside ones by a person, the rest by code review. */
-const GOAL_SORT = { ci: "covered by CI", outside: "a person checks", code: "for code review" } as const;
+/** The linked issue's text tries to steer the judge, so the ticket answer is not trusted. */
+const ISSUE_INSTRUCTED_REASON = "the linked issue tries to direct the decision model";
 
 /** A file or hunk scoped check with no changed lines in scope to ask about. */
 const NOT_APPLICABLE_REASON = "does not apply";
@@ -401,15 +401,17 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, ticket,
   }
 
   /**
-   * Ticket goals is unconfirmed, saying why, on a linked issue it cannot read; otherwise the one question decides it.
-   * Either way it lists each goal with where it is checked: by CI, by a person, or by code review.
+   * Ticket goals is unconfirmed, saying why, on a linked issue it cannot read, a diff too large to judge whole, or an
+   * issue that tries to direct the judge; otherwise its one question decides it.
    */
   function ticketCheck(asked: FilePlan | undefined) {
     if (!ticket || "problem" in ticket) return push("ticket-goals", { result: "unconfirmed", reason: ticket?.problem ?? UNAVAILABLE_REASON }, { kind: "could-not-check", reason: ticket?.problem ?? UNAVAILABLE_REASON });
+    if (asked?.unread.length) return push("ticket-goals", { result: "unconfirmed", reason: UNREAD_REASON }, { kind: "could-not-check", reason: UNREAD_REASON, items: asked.unread });
     const noul = asked && !judgeLimitExceeded ? noulOf(TICKET_QUESTION.id) : undefined;
-    if (noul === undefined) return unchecked("ticket-goals", unavailable);
-    const goals = ticket.goals.map((goal) => `${GOAL_SORT[goalKind(goal)]}: ${goal}`);
-    return push("ticket-goals", band(noul, true), scored(noul, PASS_AT, []), noul <= NO ? [`does not match ${ticket.issue}`, ...goals] : goals);
+    const directed = noulOf(ISSUE_INSTRUCTED_QUESTION.id);
+    if (noul === undefined || directed === undefined) return unchecked("ticket-goals", unavailable);
+    if (directed >= YES) return push("ticket-goals", { result: "unconfirmed", reason: ISSUE_INSTRUCTED_REASON }, { kind: "could-not-check", reason: ISSUE_INSTRUCTED_REASON });
+    return push("ticket-goals", band(noul, true), scored(noul, PASS_AT, []), noul <= NO ? [`does not match ${ticket.issue}`] : []);
   }
 
   for (const source of sources.quality) {

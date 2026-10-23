@@ -219,38 +219,24 @@ export function issueReference(facts: Pick<PrFacts, "title" | "body" | "commits"
   return null;
 }
 
-const ISSUE_URL = /github\.com\/([^\s/]+\/[^\s/]+)\/issues\/(\d+)/;
-const REF = /(?:^|[\s(])#(\d+)\b|github\.com\/[^\s/]+\/[^\s/]+\/issues\/\d+/g;
-const CLOSING = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*$/i;
+// GitHub's closing keywords, before `#N`, `owner/repo#N` or an issue link.
+const CLOSING_REF = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+(?:([\w.-]+\/[\w.-]+)#|https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/|#)(\d+)\b/gi;
 /** The most references read looking for the linked issue. */
 const MAX_TICKET_REFS = 5;
 
 export type TicketTarget = { numbers: number[] } | { problem: string };
 
-/** One reference as a number in this repository, or the other repository it names. */
-function refNumber(ref: string, repo: string): number | string {
-  const url = ISSUE_URL.exec(ref);
-  if (!url) return Number(/#(\d+)/.exec(ref)![1]);
-  return url[1]!.toLowerCase() === repo.toLowerCase() ? Number(url[2]) : `${url[1]}#${url[2]}`;
-}
-
 /**
- * The numbers the ticket-goals rule reads, in order, looking for the pull request's linked issue: references after
- * Closes, Fixes or Resolves first, then the rest, then a `123-title` branch. Only this repository's issues are read, so
- * another repository's issue text never reaches the judge.
+ * The numbers the ticket-goals rule reads, in order, looking for the issue the pull request closes: only references after
+ * Closes, Fixes or Resolves, in this repository.
  */
-export function ticketTarget(facts: Pick<PrFacts, "repo" | "title" | "body" | "commits" | "branch">, source: RepoSource): TicketTarget {
+export function ticketTarget(facts: Pick<PrFacts, "repo" | "title" | "body" | "commits">, source: RepoSource): TicketTarget {
   if (source !== "github") return { problem: "linked issues can't be read on Bitbucket Data Center" };
-  const text = [facts.title, facts.body, ...facts.commits].join("\n");
-  const refs = [...text.matchAll(REF)].map((match) => ({ ref: match[0].trim().replace(/^\(/, ""), closing: CLOSING.test(text.slice(0, match.index + match[0].indexOf(match[0].trim()))) }));
-  const ordered = [...refs.filter((ref) => ref.closing), ...refs.filter((ref) => !ref.closing)].map((ref) => refNumber(ref.ref, facts.repo));
-  const branch = GITHUB_BRANCH_REF.exec(facts.branch);
-  const numbers = [...new Set([...ordered, ...(branch ? [Number(branch[1])] : [])].filter((ref): ref is number => typeof ref === "number"))].slice(0, MAX_TICKET_REFS);
+  const refs = [...[facts.title, facts.body, ...facts.commits].join("\n").matchAll(CLOSING_REF)].map((match) => ({ repo: match[1] ?? match[2] ?? facts.repo, number: Number(match[3]) }));
+  const numbers = [...new Set(refs.filter((ref) => ref.repo.toLowerCase() === facts.repo.toLowerCase()).map((ref) => ref.number))].slice(0, MAX_TICKET_REFS);
   if (numbers.length > 0) return { numbers };
-  const elsewhere = ordered.find((ref) => typeof ref === "string");
-  if (elsewhere !== undefined) return { problem: `linked issue ${elsewhere} is in another repository` };
-  const linear = issueReference(facts, "linear");
-  return { problem: linear ? `${linear} is a Linear issue, which can't be read` : "pull request does not reference an issue" };
+  if (refs[0]) return { problem: `linked issue ${refs[0].repo}#${refs[0].number} is in another repository` };
+  return { problem: "pull request does not close an issue" };
 }
 
 const EXCERPT_MAX = 120;

@@ -81,7 +81,6 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
       if (history === "unread") return Response.json({ message: "Server Error" }, { status: 500 });
       return Response.json(history.map((message, index) => ({ sha: `h${index}`, commit: { message } })));
     }
-    if (path === `/repos/${REPO}/issues/2`) return Response.json({ number: 2, title: "Earlier", body: "- [ ] Not this", pull_request: {} });
     if (path === `/repos/${REPO}/issues/3`) return issue === undefined ? Response.json({ message: "Not Found" }, { status: 404 }) : Response.json({ number: 3, title: "Add a flag", body: issue });
     if (path.includes("/check-runs")) return Response.json({ check_runs: RUNS[pr.ci] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
@@ -123,7 +122,7 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
 
 const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrants: [], resolvedBy: null });
 
-type SystemOne = { questions: Array<{ id: string; instructions: string }>; state: { repository: { docs: Record<string, string>; rules?: Record<string, string> }; issue?: { goals: string[] }; policy?: { rules: Array<Record<string, unknown>> } } };
+type SystemOne = { questions: Array<{ id: string; instructions: string }>; state: { repository: { docs: Record<string, string>; rules?: Record<string, string> }; policy?: { rules: Array<Record<string, unknown>> } } };
 
 function judgeText({ questions, state }: SystemOne) {
   function answer({ id }: { id: string }) {
@@ -131,9 +130,7 @@ function judgeText({ questions, state }: SystemOne) {
       const failed = state.policy!.rules.some((rule) => rule.result === "fail");
       return { id, type: "choice", choice: failed ? "fail" : "pass", probabilities: { pass: failed ? 0.1 : 0.85, fail: failed ? 0.85 : 0.1, cant_tell: 0.05 }, confidence: 0.9 };
     }
-    if (id.startsWith("custom-") || id.endsWith("instructed") || id.startsWith("ticket-goals-instructed-")) return { id, type: "noul", noul: 0.1 };
-    const goal = /^ticket-goals-(\d+)-/.exec(id);
-    if (goal) return { id, type: "noul", noul: state.issue!.goals[Number(goal[1]) - 1]!.includes("docs") ? 0.1 : 0.9 };
+    if (id.startsWith("custom-") || id.endsWith("instructed")) return { id, type: "noul", noul: 0.1 };
     if (/^focused-slice-\d+$/.test(id)) return { id, type: "choice", choice: "separate_change", probabilities: { serves_purpose: 0.2, separate_change: 0.7, cant_tell: 0.1 }, confidence: 0.9 };
     if (id !== "focused") return { id, type: "noul", noul: 0.9 };
     return { id, type: "choice", choice: "more_than_one_thing", probabilities: { one_thing: 0.2, more_than_one_thing: 0.7, cant_tell: 0.1 }, confidence: 0.9 };
@@ -273,8 +270,9 @@ describe("pr-triage body", () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ticket-goals": { enabled: true } } };
     const { judged, verdict, requests } = await triage(pack, { title: "Add a flag, follow-up to #2 (closes #3)", issue: "- [ ] I searched existing issues\n## Outcome\n- [ ] Add the flag\n- [x] `bun run check` passes\n```\n- [ ] not a goal\n```" });
     expect(requests).toContainEqual({ method: "GET", path: `/repos/${REPO}/issues/3` });
-    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["ticket-goals", "instructed"], ["verdict"]]);
-    expect((verdict as Verdict).checks.find((c) => c.check === "ticket-goals")).toMatchObject({ evidence: expect.arrayContaining(["for code review: Add the flag", "covered by CI: `bun run check` passes"]) });
+    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["ticket-goals", "issue_instructed", "instructed"], ["verdict"]]);
+    expect(judged[0]!.state).toMatchObject({ issue: { title: "Add a flag", goals: ["Add the flag", "`bun run check` passes"] } });
+    expect((verdict as Verdict).checks.find((c) => c.check === "ticket-goals")).toMatchObject({ result: "pass" });
   });
 
   test("ticket goals is unconfirmed when the linked issue can't be read", async () => {

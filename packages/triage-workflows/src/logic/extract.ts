@@ -16,20 +16,18 @@ export function parseJsonText(text: string, open: "{" | "[" = "{"): unknown {
 
 /** The most goals one issue is judged on. */
 const MAX_GOALS = 10;
-const CHECKBOX = /^\s*[-*+]\s+\[[ xX]\]\s+(.+?)\s*$/;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+?)\s*$/;
-const HEADING = /^\s*#{1,6}\s+(.*?)\s*#*\s*$/;
+// A markdown heading, or a line that is only bold text or ends in a colon.
+const HEADING = /^\s*(?:#{1,6}\s+(.*?)\s*#*|(?:\*\*|__)(.+?):?(?:\*\*|__):?|([^-*+\d\s].*?):)\s*$/;
 const FENCE = /^\s*(?:```|~~~)/;
-const GOALS_HEADING = /^(?:acceptance criteria|outcomes?)$/i;
+const GOALS_HEADING = /^(?:acceptance criteria|outcomes?)\b/i;
 
 /**
- * An issue's goals: the list items under an Acceptance criteria or Outcome heading, or, with no such heading, its
- * checkbox items, so a template's checklist never stands in for the goals. Code blocks hold no goals.
+ * An issue's goals: the list items under an Acceptance criteria or Outcome heading, none without one, so a template's
+ * checklist never stands in for them. Code blocks hold no goals.
  */
 export function ticketGoals(markdown: string): string[] {
-  const listed: string[] = [];
-  const boxes: string[] = [];
-  let headed = false;
+  const goals: string[] = [];
   let under = false;
   let fenced = false;
   for (const line of markdown.replace(/<!--[\s\S]*?(?:-->|$)/g, "").split(/\r?\n/)) {
@@ -37,28 +35,11 @@ export function ticketGoals(markdown: string): string[] {
     if (fenced || FENCE.test(line)) continue;
     const heading = HEADING.exec(line);
     if (heading) {
-      under = GOALS_HEADING.test(heading[1]!);
-      headed ||= under;
+      under = GOALS_HEADING.test((heading[1] ?? heading[2] ?? heading[3])!);
       continue;
     }
     const item = under ? LIST_ITEM.exec(line)?.[1] : undefined;
-    if (item !== undefined) listed.push(item);
-    const box = CHECKBOX.exec(line)?.[1];
-    if (box !== undefined) boxes.push(box);
+    if (item !== undefined) goals.push(item);
   }
-  return (headed ? listed : boxes).slice(0, MAX_GOALS);
-}
-
-const PASSING = /\b(?:pass|passes|passing|green)\b/i;
-const CHECKED_BY = /\b(?:checks?|tests?|ci|build|lint|typecheck)\b|\.test\./i;
-const OUTSIDE_THE_CODE = /\b(?:verified live|live on|throwaway|running app|visual change|announced|manual(?:ly)?|spot-check|is ended|are ended)\b/i;
-
-/**
- * How a goal is checked: one that checks or tests pass is the CI rule's, one only a live, manual or outside step can
- * show is a person's, and the rest are code review's.
- */
-export function goalKind(goal: string): "ci" | "outside" | "code" {
-  if (PASSING.test(goal) && CHECKED_BY.test(goal)) return "ci";
-  if (OUTSIDE_THE_CODE.test(goal)) return "outside";
-  return "code";
+  return goals.slice(0, MAX_GOALS);
 }
