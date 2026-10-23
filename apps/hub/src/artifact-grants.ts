@@ -25,7 +25,7 @@ export function createArtifactGrants(now: () => Date) {
 
 /**
  * Gives the admin role the writes on policies made before these grants existed. One query finds what is missing, which
- * after the first boot is nothing. It reads `artifacts.artifact` directly because `listArtifacts` lists one tenant.
+ * after the first migrate is nothing. It reads `artifacts.artifact` directly because `listArtifacts` lists one tenant.
  */
 export async function grantAdminsPolicyWrites(db: DB["db"], now: () => Date, log: (entry: Record<string, unknown>) => void): Promise<void> {
   const { grant, role } = schema;

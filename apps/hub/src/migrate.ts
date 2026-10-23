@@ -1,9 +1,13 @@
 import { resolve } from "node:path";
-import { childProcessEnv, databaseConfig, migrationEnv } from "./env.js";
+import { childProcessEnv, databaseConfig, loadDatabaseEnv, migrationEnv } from "./env.js";
+import { logJson } from "./github/bridge.js";
+import { migrateDatabase } from "./migrations.js";
 
-const { DATABASE_URL, PATH, HOME, TMPDIR } = process.env;
-if (!DATABASE_URL) throw new Error("DATABASE_URL environment variable is required");
+const { PATH, HOME, TMPDIR } = process.env;
+const database = databaseConfig(loadDatabaseEnv(process.env));
 
 await Bun.$`bunx --no-install drizzle-kit migrate`
   .cwd(resolve(import.meta.dir, "../../../vendor/interchange/packages/db"))
-  .env({ ...childProcessEnv({ PATH, HOME, TMPDIR }), ...migrationEnv(databaseConfig({ DATABASE_URL })) });
+  .env({ ...childProcessEnv({ PATH, HOME, TMPDIR }), ...migrationEnv(database) });
+
+await migrateDatabase(database, logJson);

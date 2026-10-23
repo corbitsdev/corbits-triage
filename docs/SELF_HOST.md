@@ -391,7 +391,7 @@ and redeploy; the hub does not start until they have run.
   repository's rules into a policy file**.
 - Earlier builds left tables the hub no longer uses; drop them if present:
   `DROP TABLE IF EXISTS corbits_triage_tenant_migration, corbits_triage_verdict_backfill, corbits_github_manifest_state;`
-- The hub drops `corbits_triage.invitation` on start; invites still open then
+- `bun run db:migrate` drops `corbits_triage.invitation`; invites still open then
   are gone and need sending again.
 - Triage's tables moved from `public.corbits_triage_*` into the
   `corbits_triage` schema. If an older build runs after that, it recreates

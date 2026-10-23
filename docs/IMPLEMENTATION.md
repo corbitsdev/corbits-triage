@@ -15,8 +15,9 @@ with the `intx-src` export condition, so every hub command runs with
 | Path | Role |
 | --- | --- |
 | `src/env.ts` | The only reader of the environment: arktype schema plus the helpers that turn it into config. |
-| `src/server.ts` | Composition root: loads env, runs migrations, builds every component, injects config, registers the sidecar provisioners. |
-| `migrations/*.sql`, `src/triage-db.ts` | Triage's tables in the `corbits_triage` schema, applied at start in one transaction under an advisory lock. |
+| `src/server.ts` | Composition root: loads env, checks the database is migrated, builds every component, injects config, registers the sidecar provisioners. |
+| `src/migrate.ts`, `src/migrations.ts` | `db:migrate`: every migration and backfill; and the hub's start check. |
+| `migrations/*.sql`, `src/triage-db.ts` | Triage's tables in the `corbits_triage` schema, applied by `db:migrate` in one transaction under an advisory lock. |
 | `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database, auth, credential cipher and Interchange settings injected. |
 | `src/auth.ts`, `src/sessions.ts` | better-auth config (Google sign-in, email allowlist, device authorization, `PORTAL_ORIGIN`) and the caller's own sessions. |
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
@@ -104,7 +105,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | Command | Does |
 | --- | --- |
 | `bun run dev` | Database migrations, then hub and portal with prefixed logs (`tooling/dev.ts`). |
-| `bun run db:migrate` | Apply Interchange's database migrations to `DATABASE_URL`; run before the hub starts. |
+| `bun run db:migrate` | Apply every database migration the hub needs to `DATABASE_URL`; run before the hub starts. |
 | `bun run hub` | Hub only; does not migrate. |
 | `bun run check` | Typecheck tooling, portal, extension, hub, packages and `e2e/`, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |

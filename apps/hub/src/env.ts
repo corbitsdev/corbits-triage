@@ -106,10 +106,22 @@ function describeEnvError(error: ArkError): string {
   return error.code === "required" ? `${name} environment variable is required` : `${name} must be ${error.expected}`;
 }
 
+function presentValues(raw: Record<string, string | undefined>): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(raw).filter(([, value]) => value !== undefined && value.trim() !== ""));
+}
+
 /** Blank values count as missing. Errors never echo values. */
 export function loadHubEnv(raw: Record<string, string | undefined>): HubEnv {
-  const present = Object.fromEntries(Object.entries(raw).filter(([, value]) => value !== undefined && value.trim() !== ""));
-  const env = HubEnvSchema(present);
+  const env = HubEnvSchema(presentValues(raw));
+  if (env instanceof type.errors) throw new Error(env.map(describeEnvError).join("\n"));
+  return env;
+}
+
+const DatabaseEnvSchema = HubEnvSchema.pick("DATABASE_URL", "PG_SCHEMA", "DB_STATEMENT_TIMEOUT_MS");
+
+/** The hub's database settings alone, read the same way, for `db:migrate`. */
+export function loadDatabaseEnv(raw: Record<string, string | undefined>): typeof DatabaseEnvSchema.infer {
+  const env = DatabaseEnvSchema(presentValues(raw));
   if (env instanceof type.errors) throw new Error(env.map(describeEnvError).join("\n"));
   return env;
 }
