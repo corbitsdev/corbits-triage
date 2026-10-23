@@ -144,8 +144,8 @@ export async function judgeEval(definition: Definition, workflow: string, extra:
       checks: Object.fromEntries(SCORED.map((check) => [check, answered(check)])),
       // Focused decided every case in each measured run; two misses leave room for answers near the band edge. Docs missed 5
       // of the 49 cases, all unsure, in the first run after the tests check was removed. The verdict missed 2, none unsure, in its first run.
-      // Ticket goals may miss 3 of its 32 cases, 10%; the verdict allows those three beyond its own.
-      allow: { docs: 7, focused: 2, "ticket-goals": 3, verdict: 7 },
+      // Ticket goals may miss 3 of its 32 cases, 10%; those cases do not score the verdict.
+      allow: { docs: 7, focused: 2, "ticket-goals": 3, verdict: 4 },
       about: { model: ENDPOINT.model, workflow },
       concurrency: 2,
       timeout: "10m",

@@ -183,7 +183,7 @@ export function isSizeRule(id: string): id is SizeRuleId {
 }
 
 /** What a stored rule without `onFail` does on failure: only ticket goals asks, since an issue's work can be done another way or dropped. */
-function storedOnFail(id: string): (typeof ON_FAILS)[number] {
+export function storedOnFail(id: string): (typeof ON_FAILS)[number] {
   return id === "ticket-goals" ? "ask" : "fail";
 }
 

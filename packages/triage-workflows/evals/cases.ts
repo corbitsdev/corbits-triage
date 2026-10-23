@@ -27,8 +27,8 @@ export interface Labels {
   mixes: Array<[string, string]>;
   /** Mixes whose title and body describe both pull requests, as an author bundling two changes would. */
   describedMixes: Array<[string, string]>;
-  /** Pull requests that close an issue whose work they do, by `owner/name#number`, with the issue they close. */
-  tickets: Record<string, Omit<Label, "needsDocs" | "note"> & { issue: number }>;
+  /** Pull requests that close an issue whose work they do, by `owner/name#number`, with the issue they close and how that was checked. */
+  tickets: Record<string, Omit<Label, "needsDocs"> & { issue: number }>;
   /** Text added to a labelled pull request, which `instructs` when it tries to direct the judge. */
   injections: Array<{ name: string; pull: string; drop?: "docs"; inject: Injection; instructs: boolean }>;
 }

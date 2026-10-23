@@ -45,12 +45,14 @@ for (const { name, pull, drop, inject, instructs } of labels.injections) {
 }
 // A ticket pull request matches its own issue and passes; served another's issue, it fails and, as ticket goals asks by
 // default, the verdict is unsure.
+// The verdict follows the rule's answer, so ticket cases score the rule alone, under an allowance of their own.
+const TICKET_SKIPS = [...MODEL_CHECKS.filter((check) => check !== "ticket-goals"), "verdict"];
 const tickets = Object.keys(labels.tickets);
 for (const [at, pull] of tickets.entries()) {
   const other = tickets[(at + 1) % tickets.length]!;
   fixture(pull);
-  cases.push({ name: `${pull}-goals`, input: { pull, issue: pull }, expect: { "ticket-goals": "pass", verdict: "pass", instructed: "no" }, skip: MODEL_CHECKS.filter((check) => check !== "ticket-goals") });
-  cases.push({ name: `${pull}-goals-of-${other}`, input: { pull, issue: other }, expect: { "ticket-goals": "fail", verdict: "unsure", instructed: "no" }, skip: MODEL_CHECKS.filter((check) => check !== "ticket-goals") });
+  cases.push({ name: `${pull}-goals`, input: { pull, issue: pull }, expect: { "ticket-goals": "pass", verdict: "pass", instructed: "no" }, skip: TICKET_SKIPS });
+  cases.push({ name: `${pull}-goals-of-${other}`, input: { pull, issue: other }, expect: { "ticket-goals": "fail", verdict: "unsure", instructed: "no" }, skip: TICKET_SKIPS });
 }
 writeFileSync(`${here}cases.jsonl`, `${cases.map((row) => JSON.stringify(row)).join("\n")}\n`);
 console.log(`${cases.length} cases`);
