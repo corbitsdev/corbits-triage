@@ -32,7 +32,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/bitbucket-datacenter/` | Bitbucket Data Center connection, repository and webhook routes, payload normalizing. |
 | `src/github/bridge.ts` | GitHub webhook verification and routing; `logJson`, the hub's one JSON-line logger, passed down as `log`. |
 | `src/github/tenant-config.ts` | Reads and writes `corbitsTriage` in tenant config; checks the stock tenant patch. |
-| `src/github/policy-file.ts`, `check-pack-store.ts`, `policy-read.ts`, `policy-pull.ts` | The policy file (read again when a push touches it or a pull request merges into the default branch), the stored policy and which applies, the policy route, and the one `corbits-triage/policy` pull request. |
+| `src/github/policy-file.ts`, `check-pack-store.ts`, `policy-read.ts`, `policy-pull.ts` | The policy file (read again when a push touches it or a pull request merges into the default branch, and at most a minute old while the repository's webhook (the App's, on GitHub) has been silent for half an hour), the stored policy and which applies, the policy route, and the one `corbits-triage/policy` pull request. |
 | `src/github/automation.ts` | Which action kinds triage writes unattended, from the `pr-triage` role's grants. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
 | `src/github/coordinator.ts`, `worker-spawn.ts` | The job queue and one worker deployment per job. |
