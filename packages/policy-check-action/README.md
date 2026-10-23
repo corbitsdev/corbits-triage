@@ -4,8 +4,10 @@ A GitHub Action that checks a repository's `.corbits-triage.yml` (or `.yaml`) as
 problem on its line. On a pull request it also runs the rules of the base branch's policy that need no model through
 the pr-triage definition, read-only: each failed rule is an error when its failure means Fail and a warning otherwise,
 and the job summary lists every rule with its result and how many passed. Rules a model answers, and ci-green, which
-the running job keeps pending, are listed as skipped. A base policy that `extends` another is not run, nor one that
-cannot be read, which is a warning. The job fails when a rule whose failure means Fail fails.
+the running job keeps pending, are listed as skipped. A base policy that `extends` another is not run here and gets a
+notice, since Triage runs its rules. One that cannot be read fails the job with exit code 2, so a pull request that fixes
+a broken base policy fails this check until it merges, and a maintainer merges it past the check. The job also fails
+when a rule whose failure means Fail fails.
 It needs no Triage account and no secrets, and works on pull requests from forks.
 
 ## Use
