@@ -21,8 +21,8 @@ function isOpen(pathname: string): boolean {
 
 export function createVerifiedGate({ isHubOwner, getSession, allowedEmails }: VerifiedGateDeps) {
   /** The refusal for a request from an unverified account, or null to let it through. */
-  return async function refuseUnverified(req: Request): Promise<Response | null> {
-    if (isOpen(new URL(req.url).pathname)) return null;
+  return async function refuseUnverified(req: Request, path: string): Promise<Response | null> {
+    if (isOpen(path)) return null;
     const current = await getSession(req.headers);
     if (current === null || current.user.emailVerified || (allowedEmails === undefined && await isHubOwner(current.user.id))) return null;
     return failure(403, "email_unverified", "Verify your email address to use Corbits Triage.");

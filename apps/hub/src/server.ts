@@ -16,6 +16,7 @@ import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrinci
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
 import { eq } from "drizzle-orm";
+import { getPath } from "hono/utils/url";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import {
   createRunTriggerDeliverer,
@@ -999,9 +1000,15 @@ function decodedSegment(segment: string): string | undefined {
 }
 
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
-  if (servePortal && isPortalRequest(req)) return servePortal(req);
-  const url = new URL(req.url);
-  if (url.pathname === HOOK_MOUNT_PATH || url.pathname.startsWith(`${HOOK_MOUNT_PATH}/`)) {
+  // Guards read the path stock Hono routes on; one that does not fully decode is refused rather than matched in part.
+  try {
+    decodeURI(new URL(req.url).pathname);
+  } catch {
+    return Response.json({ error: "bad_path" }, { status: 400 });
+  }
+  const path = getPath(req);
+  if (servePortal && isPortalRequest(req, path)) return servePortal(req);
+  if (path === HOOK_MOUNT_PATH || path.startsWith(`${HOOK_MOUNT_PATH}/`)) {
     // Fail fast on bodies the stock hook app would reject with 413, before
     // hook lookup, decrypt or HMAC work. The bridge re-checks actual bytes
     // while reading (Content-Length may be missing or dishonest).
@@ -1009,9 +1016,9 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     if (declared !== null && Number(declared) > MAX_BODY_BYTES) {
       return Response.json({ error: "payload_too_large" }, { status: 413 });
     }
-    if (isProviderHookPath(url.pathname)) return providerHooks.fetch(req);
+    if (isProviderHookPath(path)) return providerHooks.fetch(req);
     if (req.headers.get("x-hub-signature-256") !== null) {
-      const rest = url.pathname.slice(HOOK_MOUNT_PATH.length);
+      const rest = path.slice(HOOK_MOUNT_PATH.length);
       const target = hookTarget(req, rest);
       if (!target) return Response.json({ error: "unknown_hook" }, { status: 404 });
       return bridge(req, target);
@@ -1019,13 +1026,13 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     // @corbits/webhooks 0.3.1 fires a run without naming its sender, which Interchange's sender gate refuses.
     return Response.json({ error: "unknown_hook" }, { status: 404 });
   }
-  const unverified = await refuseUnverified(req);
+  const unverified = await refuseUnverified(req, path);
   if (unverified) return unverified;
   // Intercept before the stock Hono logger: callback query values include the
   // one-time GitHub code and must never enter request/access logs.
-  if (url.pathname.startsWith(INTEGRATIONS_PREFIX)) return integrations.fetch(req);
+  if (path.startsWith(INTEGRATIONS_PREFIX)) return integrations.fetch(req);
   if (req.method === "PATCH") {
-    const tenantMatch = /^\/api\/tenants\/([^/]+)$/.exec(url.pathname);
+    const tenantMatch = /^\/api\/tenants\/([^/]+)$/.exec(path);
     if (tenantMatch) {
       let tenantId = tenantMatch[1]!;
       try {
@@ -1046,13 +1053,13 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       return stock.fetch(prepared, server);
     }
   }
-  const providerWritten = req.method === "POST" || req.method === "PATCH" ? PROVIDER_WRITE.exec(url.pathname) : null;
+  const providerWritten = req.method === "POST" || req.method === "PATCH" ? PROVIDER_WRITE.exec(path) : null;
   const providerTenant = providerWritten ? decodedSegment(providerWritten[1]!) : undefined;
   if (providerTenant !== undefined) {
     const refusedProvider = await appKeyProviderWriteRefusal(composition.db, providerTenant, providerWritten?.[2] === undefined ? undefined : decodedSegment(providerWritten[2]), req);
     if (refusedProvider) return refusedProvider;
   }
-  const written = req.method === "POST" || req.method === "PATCH" ? CREDENTIAL_WRITE.exec(url.pathname) : null;
+  const written = req.method === "POST" || req.method === "PATCH" ? CREDENTIAL_WRITE.exec(path) : null;
   const writtenTenant = written ? decodedSegment(written[1]!) : undefined;
   if (writtenTenant === undefined) return stock.fetch(req, server);
   const refused = await appKeyWriteRefusal(composition.db, writtenTenant, written?.[2] === undefined ? undefined : decodedSegment(written[2]), req);
