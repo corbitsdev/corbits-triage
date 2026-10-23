@@ -206,13 +206,13 @@ export function railwaySandboxSettings(env: HubEnv): RailwaySandboxSettings | un
 export type ChildProcessEnv = { PATH?: string; HOME?: string; TMPDIR?: string };
 
 /** The variables child processes (drizzle-kit, sidecars) need to find binaries and scratch space. */
-export function childProcessEnv(env: HubEnv): ChildProcessEnv {
+export function childProcessEnv(env: Pick<HubEnv, "PATH" | "HOME" | "TMPDIR">): ChildProcessEnv {
   const { PATH, HOME, TMPDIR } = env;
   return { ...(PATH !== undefined && { PATH }), ...(HOME !== undefined && { HOME }), ...(TMPDIR !== undefined && { TMPDIR }) };
 }
 
 /** `sslmode=require` (or stricter) turns on TLS. */
-export function databaseConfig(env: HubEnv): DatabaseConfig {
+export function databaseConfig(env: Pick<HubEnv, "DATABASE_URL" | "PG_SCHEMA" | "DB_STATEMENT_TIMEOUT_MS">): DatabaseConfig {
   const url = new URL(env.DATABASE_URL);
   const sslMode = url.searchParams.get("sslmode") ?? "";
   return {
