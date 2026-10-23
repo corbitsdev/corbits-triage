@@ -265,7 +265,8 @@ label off that head, so it never stands on a head not yet triaged.
    head's row `waiting` within the 60-minute CI wait, which the coalescer or
    reconciler releases like a head it held itself. A mail with `noWait`
    (past the CI wait, a head's last attempt, or Triage again) is decided
-   instead of waiting.
+   instead of waiting. A CI re-read that queues a head again keeps its
+   attempts, since the head did not fail, and sets `noWait` by the same rule.
 7. **mirror**: writes the verdict label when the `pr-triage` role holds
    Labels, and the marker comment when it holds Comment; on Bitbucket, Comment
    also writes the verdict as the `Corbits Triage` build status. It runs

@@ -205,7 +205,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         continue;
       }
       buildPolls.delete(key);
-      requeue(plan, row, BUILD_STATUS_CHANGED, deps.now());
+      requeue(plan, row, BUILD_STATUS_CHANGED, deps.now(), deps.policy);
     }
   }
 
