@@ -76,7 +76,7 @@ async function syncRegistry(
   for (const { filename } of listed) {
     if (!kept.has(filename)) await deleteTarball(transport, tenantId, registryId, filename);
   }
-  // In index order, so the tool lands before the workflows that depend on it.
+  // In index order, so the tools and native modules land before the workflows that depend on them.
   for (const entry of missing) {
     await putTarball(fetchRaw, tenantId, registryId, entry, await (await portalPackage(fetchRaw, entry.filename)).arrayBuffer());
   }
