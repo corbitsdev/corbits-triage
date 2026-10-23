@@ -10,6 +10,7 @@ import {
   hardFailures,
   ISSUE_LINKS,
   isGeneratedPath,
+  isPatternsCheck,
   isTextCheck,
   labelRules,
   parseCheckPack,
@@ -32,6 +33,7 @@ import {
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { globMatch } from "./glob.js";
+import type { PatternsResult } from "./patterns.js";
 import { hotFiles, migrationPaths } from "./risk.js";
 
 export interface PrFileFacts {
@@ -91,6 +93,8 @@ export interface PrFacts {
   hidden: string[];
   /** Set only when regression risk is on: the fix commits in each changed file's recent history, by path, or null when that history could not be read in full. */
   fixes?: Record<string, number | null>;
+  /** Each code-patterns rule's matches on the added lines, by rule id; matched where the files were read. */
+  patterns?: Record<string, PatternsResult>;
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
@@ -459,6 +463,19 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       const { failed, reason, evidence } = textResult(rule, facts);
       if (failed) add(rule.id, "needs-author-update", reason);
       checks.push({ check: rule.id, kind: "machine", result: failed ? "fail" : "pass", reason, evidence, output: { kind: "values", values: { matched: failed } } });
+    }
+    for (const rule of pack?.custom.filter(isPatternsCheck).filter(customCheckEnabled) ?? []) {
+      const found = facts.patterns?.[rule.id] ?? { unread: "the changed files were not read" };
+      if ("unread" in found) {
+        const reason = `code patterns could not be checked: ${found.unread}`;
+        add(rule.id, "stale-unknown", reason);
+        checks.push({ check: rule.id, kind: "machine", result: "unconfirmed", reason, evidence: [], output: { kind: "could-not-check", reason } });
+        continue;
+      }
+      const failed = found.matches.length > 0;
+      const reason = failed ? "added code matches a code pattern" : "no code pattern matched";
+      if (failed) add(rule.id, "needs-author-update", reason);
+      checks.push({ check: rule.id, kind: "machine", result: failed ? "fail" : "pass", reason, evidence: found.matches, output: { kind: "values", values: { matched: found.matches.length } } });
     }
   }
 

@@ -61,7 +61,7 @@ function range(lines: number[]): { start: number; end: number } | undefined {
   return lines.length > 0 ? { start: lines[0]!, end: lines.at(-1)! } : undefined;
 }
 
-function citation(path: string, previousPath: string, hunk: Hunk): LineCitation {
+function hunkLines(hunk: Hunk): { added: number[]; removed: number[] } {
   const added: number[] = [];
   const removed: number[] = [];
   let oldLine = hunk.oldStart;
@@ -74,6 +74,16 @@ function citation(path: string, previousPath: string, hunk: Hunk): LineCitation 
       newLine++;
     }
   }
+  return { added, removed };
+}
+
+/** The new file's line numbers, from 1, that the patch adds. */
+export function addedLines(patch: string): Set<number> {
+  return new Set(hunksOf(readablePatch(patch)).flatMap((hunk) => hunkLines(hunk).added));
+}
+
+function citation(path: string, previousPath: string, hunk: Hunk): LineCitation {
+  const { added, removed } = hunkLines(hunk);
   const addedRange = range(added);
   const removedRange = range(removed);
   return { path, ...(addedRange ? { added: addedRange } : {}), ...(removedRange ? { removed: { path: previousPath, ...removedRange } } : {}) };

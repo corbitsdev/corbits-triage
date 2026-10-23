@@ -52,6 +52,7 @@ function textSentence(check: TextCheck): string {
 
 export function customSentence(check: CustomCheck): string {
   if (check.kind === "text") return textSentence(check);
+  if (check.kind === "code-patterns") return `Fail when added code matches ${[...check.presets.map((preset) => `the ${preset} preset`), ...check.patterns.map((pattern) => pattern.id)].join(", ")}`;
   switch (check.shape) {
     case "is-true":
       return `Is it true that ${check.claim}?`;

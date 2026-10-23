@@ -58,8 +58,8 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "bitbucket_datacenter_read_file",
-    description: `Read lines start to end (1-based, inclusive) of a file at a commit sha, at most ${MAX_LINES} lines, each prefixed with its line number.`,
-    inputSchema: obj({ repo, sha: str, path: str, start: { type: "integer" }, end: { type: "integer" } }, ["repo", "sha", "path"]),
+    description: `Read lines start to end (1-based, inclusive) of a file at a commit sha, at most ${MAX_LINES} lines, each prefixed with its line number; with whole, the file's text as it is.`,
+    inputSchema: obj({ repo, sha: str, path: str, start: { type: "integer" }, end: { type: "integer" }, whole: { type: "boolean" } }, ["repo", "sha", "path"]),
   },
 ];
 
@@ -135,6 +135,7 @@ async function readWindow(bb: BitbucketFetch, reads: Reads, a: Record<string, an
   checkTarget(a.repo, a.sha, a.path);
   const text = await reads.files(`${a.repo}@${a.sha}:${a.path}`, () => readFileAt(bb, a.repo, a.sha, a.path));
   if (text === undefined) throw new Error(`${a.path} is not in ${a.repo} at ${a.sha}`);
+  if (a.whole === true) return { path: a.path, text };
   return linesOf(a.path, text, a.start, a.end);
 }
 
