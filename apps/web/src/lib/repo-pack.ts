@@ -6,7 +6,7 @@ import { isBitbucketDatacenterRepo, switchBitbucketDatacenterTriage } from "./bi
 import { writeCheckPack } from "./check-pack.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import { loadRepoPolicy } from "./hub-api.ts";
-import { createHubTransport, type Transport } from "./hub-transport.ts";
+import { ApiError, createHubTransport, type Transport } from "./hub-transport.ts";
 import { createAutosave, type Autosave, type AutosaveState, type DraftUpdate } from "./pack-autosave.ts";
 import { fromPack, hasRuleOn, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
@@ -86,6 +86,22 @@ export type RepoPack = {
 
 type SaveInput = { session: PackSession; draft: RepoDraft };
 
+// A transient read failure would otherwise show the policy as unreadable until a manual reload; a refusal won't change on retry.
+function retryOnceIfTransient(failures: number, cause: unknown): boolean {
+  return failures < 1 && !(cause instanceof ApiError && cause.status >= 400 && cause.status < 500);
+}
+
+export function repoPackSessionQuery(store: RepoPackStore | null, repo: string, attempt: number, load: (from: RepoPackStore, fresh: boolean) => Promise<LoadedRepoPack>) {
+  return queryOptions({
+    queryKey: ["repo-pack-session", store?.tenantId, repo, attempt],
+    queryFn: store ? () => load(store, attempt > 0) : skipToken,
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: retryOnceIfTransient,
+    retryDelay: 1000,
+  });
+}
+
 export function useRepoPack(store: RepoPackStore | null, repo: string, source: RepoSource): RepoPack {
   const { refreshNow, runBacklog } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
@@ -103,13 +119,7 @@ export function useRepoPack(store: RepoPackStore | null, repo: string, source: R
     }
   }
 
-  const loaded = useQuery({
-    queryKey: ["repo-pack-session", store?.tenantId, repo, attempt],
-    queryFn: store ? () => loadPack(store, attempt > 0) : skipToken,
-    staleTime: Infinity,
-    gcTime: 0,
-    retry: false,
-  });
+  const loaded = useQuery(repoPackSessionQuery(store, repo, attempt, loadPack));
 
   async function writeDraft({ session, draft }: SaveInput) {
     if (!store) throw new Error("The workspace is not known yet.");
