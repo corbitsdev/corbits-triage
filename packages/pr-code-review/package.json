@@ -18,6 +18,7 @@
     "@intx/log": "workspace:*",
     "@intx/types": "workspace:*",
     "@intx/workflow": "workspace:*",
-    "arktype": "catalog:"
+    "arktype": "catalog:",
+    "ignore": "5.3.2"
   }
 }
