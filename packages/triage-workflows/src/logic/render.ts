@@ -455,6 +455,7 @@ function failedStep(c: CheckResult, sources: Sources): Step {
     case "no-merge-conflicts": return { actor: "author", action: "Resolve merge conflicts" };
     case "no-forbidden-paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
     case "linked-issue": return { actor: "author", action: "Link an issue" };
+    case "regression-risk": return { actor: "maintainer", action: `Review closely: ${c.evidence.join("; ")}` };
     case NO_CHANGES_REQUESTED: {
       const reviewers = c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ");
       return c.reason === REVIEW_ANSWERED_REASON

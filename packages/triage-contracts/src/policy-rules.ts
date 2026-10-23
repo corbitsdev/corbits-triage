@@ -23,6 +23,7 @@ const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green", "hid
 const RuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS), max: Limit })
   .or({ ...RULE_BASE, check: "'linked-issue'", "tracker?": type.enumerated(...ISSUE_TRACKERS.filter((tracker) => tracker !== "off")) })
   .or({ ...RULE_BASE, check: "'no-forbidden-paths'", paths: Lines })
+  .or({ ...RULE_BASE, check: "'regression-risk'", "hotFileFixes?": Limit, "migrations?": Lines })
   .or({ ...RULE_BASE, check: "'conventional-commits'", "types?": type(CONVENTIONAL_TYPE).describe("a single word").array().atLeastLength(1).atMostLength(50), "fields?": type.enumerated(...CONVENTIONAL_FIELDS).array().atLeastLength(1) })
   .or({ ...RULE_BASE, check: type.enumerated(...SIMPLE_CHECKS) })
   .or({ ...OWN_RULE, check: "'model'" })
@@ -83,6 +84,8 @@ function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>, onFail: Rec
       return rule.tracker === undefined ? row : { ...row, tracker: rule.tracker };
     case "no-forbidden-paths":
       return { ...row, forbiddenGlobs: rule.paths };
+    case "regression-risk":
+      return { ...row, ...(rule.hotFileFixes !== undefined && { hotFileFixes: rule.hotFileFixes }), ...(rule.migrations && { migrationGlobs: rule.migrations }) };
     case "conventional-commits":
       return { ...row, ...(rule.types && { types: rule.types }), ...(rule.fields && { fields: rule.fields }) };
     default:

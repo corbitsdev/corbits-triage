@@ -1,5 +1,5 @@
 // Plain-text words for a policy's rules.
-import { CONVENTIONAL_FIELDS, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type TextCheck, type TextField, type TextMatch } from "./check-pack.js";
+import { CONVENTIONAL_FIELDS, DEFAULT_RISK, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type TextCheck, type TextField, type TextMatch } from "./check-pack.js";
 
 export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
 
@@ -27,6 +27,7 @@ const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => st
   "no-forbidden-paths": (row) => `Never accept changes to ${(row?.forbiddenGlobs ?? []).join(", ") || "forbidden paths"}`,
   "conventional-commits": conventionalSentence,
   "hidden-content": () => "Flag pull requests that hide text",
+  "regression-risk": (row) => `Flag changes to files with ${row?.hotFileFixes ?? DEFAULT_RISK.hotFileFixes}+ fixes in the last ${DEFAULT_RISK.hotFileDays} days, or to migrations`,
   focused: () => "Check the change is focused on one thing",
   docs: () => "Check docs are updated when behavior changes",
 };

@@ -12,6 +12,7 @@ import {
   listOrgMembersForRepo,
   listClosedPrsPage,
   listOpenPrs,
+  listPathCommits,
   listPrCommits,
   listPrFilesPage,
   readFileAt,
@@ -83,6 +84,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_list_pr_commits",
     description: "List commits on a pull request.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
+  },
+  {
+    name: "github_list_path_commits",
+    description: "List the default branch's commits that changed a path since an ISO time, newest first, up to 100.",
+    inputSchema: obj({ repo, path: str, since: str }),
   },
   {
     name: "github_list_pr_files",
@@ -265,6 +271,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
       return { reviews: await getReviews(gh, a.repo, a.number, typeof a.appLogin === "string" ? a.appLogin : undefined) };
     case "github_list_pr_commits":
       return { commits: await listPrCommits(gh, a.repo, a.number) };
+    case "github_list_path_commits":
+      return { commits: await listPathCommits(gh, a.repo, a.path, a.since) };
     case "github_list_pr_files":
       return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patchOffset: a.patchOffset, patches: a.patches !== false });
     case "github_read_repo_docs":

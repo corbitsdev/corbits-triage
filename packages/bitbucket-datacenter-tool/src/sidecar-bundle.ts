@@ -10,6 +10,7 @@ import {
   getReviews,
   listIssueComments,
   listOpenPrs,
+  listPathCommits,
   listPrCommits,
   listPrFilesPage,
   readFileAt,
@@ -37,6 +38,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   { name: "bitbucket_datacenter_get_checks", description: "Get build statuses for a commit sha as check runs, without triage's own verdict status.", inputSchema: obj({ repo, sha: str }) },
   { name: "bitbucket_datacenter_get_reviews", description: "Get each reviewer's standing status on a pull request as a review, marking the token user's own needs-work as triageRequest.", inputSchema: obj({ repo, number: { type: "integer" } }) },
   { name: "bitbucket_datacenter_list_pr_commits", description: "List commits on a pull request.", inputSchema: obj({ repo, number: { type: "integer" } }) },
+  { name: "bitbucket_datacenter_list_path_commits", description: "List the default branch's commits that changed a path since an ISO time, newest first, up to 100.", inputSchema: obj({ repo, path: str, since: str }) },
   {
     name: "bitbucket_datacenter_list_pr_files",
     description: "List one page of files changed on a pull request from offset, without patches. Call again with next until next is absent.",
@@ -151,6 +153,8 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return { reviews: await getReviews(bb, a.repo, a.number, (await user()).slug) };
     case "bitbucket_datacenter_list_pr_commits":
       return { commits: await listPrCommits(bb, a.repo, a.number) };
+    case "bitbucket_datacenter_list_path_commits":
+      return { commits: await listPathCommits(bb, a.repo, a.path, a.since) };
     case "bitbucket_datacenter_list_pr_files":
       return listPrFilesPage(bb, a.repo, a.number, a.offset);
     case "bitbucket_datacenter_read_repo_docs":

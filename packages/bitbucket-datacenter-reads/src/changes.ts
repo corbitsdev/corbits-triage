@@ -52,6 +52,14 @@ export async function listPrCommits(bb: BitbucketFetch, repo: string, number: nu
   return (await jsonAll(bb, `${repoPath(repo)}/pull-requests/${number}/commits`)).map(prCommit);
 }
 
+/** The default branch's commits that changed `path` since `since`, newest first: one page, which a recent window fills only on the busiest file. */
+export async function listPathCommits(bb: BitbucketFetch, repo: string, path: string, since: string): Promise<PrCommit[]> {
+  const after = Date.parse(since);
+  if (Number.isNaN(after)) throw new Error(`invalid since ${since}`);
+  const rows = (await jsonAll(bb, `${repoPath(repo)}/commits?path=${encodeURIComponent(path)}`, PAGE_LIMIT, 1)).map(prCommit);
+  return rows.filter((commit) => Date.parse(commit.committedAt) >= after);
+}
+
 const MergedPr = type({ id: "number", "properties?": { "mergeCommit?": { id: "string" } } });
 
 /**

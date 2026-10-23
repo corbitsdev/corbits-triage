@@ -232,6 +232,11 @@ label off that head, so it never stands on a head not yet triaged.
    details (`/api/integrations/github-pull`) find referenced GitHub issues in
    the same cleaned title, body and commit messages; a pasted URL of an issue
    in the same repository counts too, as GitHub renders it `#<number>`.
+   With the regression-risk rule on, it also lists each changed file's
+   default-branch commits from the last 30 days (`github_list_path_commits`,
+   `bitbucket_datacenter_list_path_commits`, one page each; tests, docs and
+   lockfiles skipped) and keeps how many fix or revert one (`fixes`); a file
+   whose history it can't read leaves the pull request unread.
 2. **rules**: runs the hard rules (built-in rules over host data and text
    rules) and, unless one failed or the pull request is a draft or closed,
    builds the judged rules' questions, or the verdict question when there are

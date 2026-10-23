@@ -1,7 +1,7 @@
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, catalogCheckEnabled, classificationSources, emptyPack, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, triggerRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, catalogCheckEnabled, classificationSources, DEFAULT_RISK, emptyPack, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, triggerRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "../logic/checks.js";
@@ -10,6 +10,7 @@ import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount,
 import type { History } from "../logic/history.js";
 import { call, data, hostCalls, READ_PULL_REQUEST, runAll, toolName, type HostCall } from "../logic/host.js";
 import type { Judged } from "../logic/item.js";
+import { fixCount, historyPaths } from "../logic/risk.js";
 import type { RulesItem } from "./rules.js";
 
 export type FactsOutput = { items: RulesItem[]; batch: boolean } | History;
@@ -125,6 +126,8 @@ const HISTORY_LIMIT = 200;
 
 const NO_DOCS: RepoDocs = { docs: {}, rules: {} };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 function fail(reason: string): FactsOutput {
   return { items: [{ error: reason }], batch: false };
 }
@@ -136,6 +139,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   const teams = namedTeams(pack, repo);
   // Focused is skipped on a stacked branch, so only a pack that asks it reads the stack.
   const focused = catalogCheckEnabled(pack, "focused");
+  const risk = catalogCheckEnabled(pack, "regression-risk");
   const listed = new Map<number, ListedFiles>();
   const filesErrors = new Map<number, string>();
 
@@ -193,7 +197,29 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     return [...authors].map((author) => call(tool("author_teams"), { repo, author, teams }, `teams:${author}`));
   }
 
-  const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...teamsCalls()]);
+  function historyPathsOf(n: number): string[] {
+    return historyPaths(listed.get(n)?.files.map((file) => file.path) ?? []);
+  }
+
+  function historyCalls(): ToolCall[] {
+    if (!risk) return [];
+    const since = new Date(Date.now() - DEFAULT_RISK.hotFileDays * DAY_MS).toISOString();
+    return [...new Set(numbers.flatMap(historyPathsOf))].map((path) => call(tool("list_path_commits"), { repo, path, since }, `history:${path}`));
+  }
+
+  const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...teamsCalls(), ...historyCalls()]);
+
+  /** A file whose history could not be read could hide a risky change, so it leaves the pull request unread. */
+  function fixesOf(n: number): PullData["fixes"] {
+    if (!risk) return undefined;
+    const fixes: Record<string, number> = {};
+    for (const path of historyPathsOf(n)) {
+      const commits = data<{ commits: Array<{ message?: string }> }>(r2.get(`history:${path}`))?.commits;
+      if (!Array.isArray(commits)) return `could not read the history of ${path} for #${n}`;
+      fixes[path] = fixCount(commits.map((commit) => commit.message ?? ""));
+    }
+    return fixes;
+  }
 
   function unreadParts(n: number): ListPart[] {
     const sha = prs.get(n)?.sha;
@@ -223,6 +249,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
       stack: data<NonNullable<PullData["stack"]>>(r1.get(`stack:${n}`)),
       files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
       authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
+      fixes: fixesOf(n),
     }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });
     const judged = stamp.carried.get(n);
     if ("error" in item) return degraded(n, item.error);
