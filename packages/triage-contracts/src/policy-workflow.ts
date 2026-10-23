@@ -2,6 +2,7 @@
 // and `decide`. They are read and validated here; nothing acts on them yet, except steps naming a group.
 import { type } from "arktype";
 import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, Glob, GROUP_NAME_MAX, GroupName, Label, POLICY_EVENTS, VERDICTS, type AuthorKind, type AuthorMatch, type FileAuthorMatch, type PolicyActions, type Step, type VerdictWord } from "./check-pack.js";
+import { RULE_GATES } from "./rules-gate.js";
 import { EVERYONE } from "./step-when.js";
 
 export const BLOCK_KINDS = ["code-review", "security", "deslop"] as const;
@@ -25,14 +26,21 @@ const Count = type("number.integer").atLeast(1);
 
 export const blockCleanSchema = type({ "+": "reject", "below?": Severity });
 
-const BlockSchema = type({
+const BLOCK_WHEN = { "+": "reject", "triage?": Verdicts, "paths?": Globs } as const;
+
+const BLOCK_PROPS = {
   "+": "reject",
   on: "boolean",
   "for?": GroupNames,
-  "when?": { "+": "reject", "triage?": Verdicts, "paths?": Globs },
+  "when?": BLOCK_WHEN,
   "clean?": blockCleanSchema,
   "provider?": type.enumerated(...PROVIDERS),
-});
+} as const;
+
+const BlockSchema = type(BLOCK_PROPS);
+
+/** Only code review runs today, so only it takes `when.rules`. */
+const CodeReviewSchema = type({ ...BLOCK_PROPS, "when?": { ...BLOCK_WHEN, "rules?": type.enumerated(...RULE_GATES) } });
 
 const PaceSchema = type({
   "+": "reject",
@@ -63,7 +71,7 @@ const DecideRuleSchema = type({
 
 export const WORKFLOW_PROPS = {
   "groups?": type({ "[string]": fileGroupSchema }),
-  "code-review?": BlockSchema,
+  "code-review?": CodeReviewSchema,
   "security?": BlockSchema,
   "deslop?": BlockSchema,
   "pace?": PaceSchema,

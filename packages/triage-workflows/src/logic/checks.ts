@@ -6,6 +6,7 @@ import {
   CONVENTIONAL_FIELDS,
   CONVENTIONAL_TYPES,
   customCheckEnabled,
+  hardFailures,
   ISSUE_LINKS,
   isGeneratedPath,
   isTextCheck,
@@ -175,14 +176,6 @@ function finish(all: Finding[], results: CheckResult[], facts: PrFacts, pack?: C
 
 export function forMaintainer(c: CheckResult, ask: readonly string[] | undefined): CheckResult {
   return ask?.includes(c.check) ? { ...c, onFail: "ask" } : c;
-}
-
-type RuleOutcome = Pick<CheckResult, "check" | "kind" | "result" | "onFail">;
-
-/** None on a draft, which is not decided at all; a rule whose failure goes to a maintainer is not one. */
-export function hardFailures<T extends RuleOutcome>(checks: readonly T[]): T[] {
-  const failed = checks.filter((c) => c.kind === "machine" && c.result === "fail" && c.onFail === undefined);
-  return failed.some((c) => c.check === NOT_A_DRAFT) ? [] : failed;
 }
 
 export function hasModelChecks(sources: DeterministicResult["sources"]): boolean {

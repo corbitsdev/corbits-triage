@@ -1,6 +1,6 @@
 import { isRecord } from "@corbits/common";
-import { NOT_A_DRAFT } from "@corbits/triage-contracts";
-import { hardFailures, type CheckResult } from "./checks.js";
+import { hardFailures, NOT_A_DRAFT } from "@corbits/triage-contracts";
+import type { CheckResult } from "./checks.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR } from "./quality.js";
 import { NEEDS_JUDGE_REASON, NOT_ASKED_REASON } from "./render.js";
 

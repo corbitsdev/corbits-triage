@@ -3,6 +3,7 @@
 import { asRecord } from "@corbits/common";
 import { AUTHOR_KINDS, CI_STATES, DECIDE_KINDS, GROUP_NAME_MAX, LABEL_MAX, ON_FAILS, POLICY_EVENTS, STEP_KINDS, VERDICTS } from "./check-pack.js";
 import { BLOCK_KINDS, BLOCK_OUTCOMES, closest, pathText, PROVIDERS, SEVERITIES, type PathProblem } from "./policy-workflow.js";
+import { RULE_GATES } from "./rules-gate.js";
 
 const BLOCK = Symbol("block");
 const VERDICT = Symbol("verdict");
@@ -53,6 +54,7 @@ const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact
   [[BLOCK, "for"], GROUPS_TEXT],
   [[BLOCK, "when"], MAPPING],
   [[BLOCK, "when", "triage"], VERDICTS_TEXT],
+  [["code-review", "when", "rules"], words(RULE_GATES)],
   [[BLOCK, "when", "paths"], "a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches"],
   [[BLOCK, "clean"], MAPPING],
   [[BLOCK, "clean", "below"], SEVERITY_TEXT],

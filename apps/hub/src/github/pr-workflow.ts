@@ -30,7 +30,7 @@ export function prWorkflowKeys(workflow: PolicyWorkflow, pack: Pick<CheckPack, "
   return blocksOn || (workflow.decide !== undefined && !isDeepStrictEqual(workflow.decide, decideOf(pack.actions, false))) ? workflow : undefined;
 }
 
-/** The trigger's part for the variant: code review's block as its scope reads it, `decide`, and the blocks that are on. */
+/** The trigger's part for the variant: code review's block as its scope reads it, gated on triage's rules unless it says otherwise, `decide`, and the blocks that are on. */
 export function workflowPart(workflow: PolicyWorkflow | undefined) {
   if (!workflow) return {};
   const block = workflow["code-review"];
@@ -39,6 +39,7 @@ export function workflowPart(workflow: PolicyWorkflow | undefined) {
     on: block?.on === true,
     for: block?.for ?? [EVERYONE],
     triage: triage === undefined ? [...VERDICTS] : [triage].flat(),
+    rules: block?.when?.rules ?? "pass",
     ...(block?.when?.paths && { paths: block.when.paths }),
     ...(block?.clean && { clean: block.clean }),
     ...(block?.provider && { provider: block.provider }),

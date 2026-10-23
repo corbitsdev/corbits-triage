@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { isRecord } from "@corbits/common";
-import { AUTHOR_KINDS, authorGroupsOf, blockCleanSchema, EVERYONE, fileGroupSchema, isFromTriageSender, SEVERITIES, triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, authorGroupsOf, blockCleanSchema, EVERYONE, fileGroupSchema, isFromTriageSender, RULE_GATES, rulesGate, SEVERITIES, triggerRequestOf, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 
 /** The code review block's outcome step; every other step of the block has its id under `CODE_REVIEW_PREFIX`. */
@@ -11,11 +11,11 @@ export const CODE_REVIEW_REVIEW = `${CODE_REVIEW_PREFIX}review`;
 
 /**
  * Code review's part of the PR workflow's trigger, filled from the parsed policy: whether it is on, the groups it is
- * for, the triage verdicts it runs on and, when set, the globs a changed file must match and the block's `clean`. Nothing
- * here is defaulted: a part that does not parse leaves the review incomplete. The author's groups are the pack's, read
- * from triage's facts.
+ * for, the triage verdicts it runs on, whether triage's rules must pass first and, when set, the globs a changed file
+ * must match and the block's `clean`. Nothing here is defaulted: a part that does not parse leaves the review
+ * incomplete. The author's groups are the pack's, read from triage's facts.
  */
-const CodeReviewTrigger = type({ on: "boolean", for: "string[]", triage: type.enumerated(...VERDICTS).array(), "paths?": "string[]", "clean?": blockCleanSchema });
+const CodeReviewTrigger = type({ on: "boolean", for: "string[]", triage: type.enumerated(...VERDICTS).array(), rules: type.enumerated(...RULE_GATES), "paths?": "string[]", "clean?": blockCleanSchema });
 
 const Groups = type({ "[string]": fileGroupSchema });
 
@@ -47,6 +47,11 @@ function verdictOf(steps: Steps): VerdictWord | undefined {
   const verdict = verdictOutput(steps);
   const word = isRecord(verdict) ? verdict.verdict : undefined;
   return VERDICTS.find((known) => known === word);
+}
+
+function checksOf(steps: Steps): unknown {
+  const verdict = verdictOutput(steps);
+  return isRecord(verdict) ? verdict.checks : undefined;
 }
 
 /** The one pull request's facts; undefined when facts could not read it. */
@@ -87,8 +92,8 @@ function incomplete(reason: string): Closed {
 }
 
 /**
- * Whether code review runs on this pull request, from the trigger's code review part, triage's verdict and the changed
- * files. In doubt it never opens: whatever it cannot read leaves the review incomplete.
+ * Whether code review runs on this pull request, from the trigger's code review part, triage's verdict and rules, and
+ * the changed files. In doubt it never opens: whatever it cannot read leaves the review incomplete.
  */
 export function scopeOf(trigger: unknown, steps: Steps): Scope {
   if (!isFromTriageSender(trigger)) return incomplete("the trigger mail is not from the hub's Triage sender");
@@ -104,6 +109,8 @@ export function scopeOf(trigger: unknown, steps: Steps): Scope {
   }
   const verdict = verdictOf(steps);
   if (verdict === undefined) return incomplete("triage gave no verdict");
+  const gate = rulesGate(codeReview.rules, checksOf(steps));
+  if (!gate.open) return gate;
   if (!codeReview.triage.includes(verdict)) return skipped(`triage is ${verdict}, not ${codeReview.triage.join(" or ")}`);
   if (codeReview.paths) {
     const changed = changedPaths(steps);

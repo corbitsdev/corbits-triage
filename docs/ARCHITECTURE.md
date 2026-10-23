@@ -366,12 +366,21 @@ review's (`codeReviewSteps` in `pr-code-review`) under `codeReview_`, whose
 actions read their steps under the `$prefix` their input carries.
 
 Once triage has decided, `codeReview_scope` reads the trigger request's
-`codeReview` (`on`, `for`, the `triage` verdicts it runs on, optional
+`codeReview` (`on`, `for`, the `triage` verdicts it runs on, `rules`, optional
 `paths` globs, where `*` stays within one folder and `**/` matches zero or more
 folders, and the block's optional `clean`) and `codeReviewRequest`, triage's
 verdict, the changed files and, unless `for` holds `everyone`, the author's
 groups from the pack's `groups` and triage's facts. Whatever the scope cannot
-read leaves the review incomplete. A gate runs the review or skips it, and
+read leaves the review incomplete. Under `rules: pass`, the hub's default
+unless the block's `when.rules` is `any`, `rulesGate` in `triage-contracts`
+keeps the review shut unless every policy rule in the verdict's `checks` read
+without a model whose failure fails the pull request passed (`hardFailures`,
+shared with triage), CI only through `ci-green` and never the built-in
+`not-a-draft` or `no-changes-requested`:
+a failed one skips it, and one not known yet, such as CI still running, or no
+checks leaves it incomplete; the hub triages again once CI completes. The gate
+is a plain function so a coordinator that starts code review as its own
+workflow can apply it unchanged. A gate runs the review or skips it, and
 `codeReview` records the outcome: `findings` with the worst that counts,
 `clean`, `skipped` with the reason, or `incomplete` when the scope or a review
 step failed, the review cannot be read, the reader stopped early, the diff was

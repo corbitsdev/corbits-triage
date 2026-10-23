@@ -24,5 +24,6 @@ export { BLOCK_KINDS, blockCleanSchema, decideOf, kindsOf, policyWorkflowSchema,
 export * from "./tarball.js";
 export * from "./code-review-models.js";
 export * from "./code-review.js";
+export * from "./rules-gate.js";
 export * from "./policy-export.js";
 export * from "./visible-text.js";
