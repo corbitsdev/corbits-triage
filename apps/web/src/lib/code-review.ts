@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RepoSource } from "@corbits/triage-contracts";
-import { latestCodeReview, reviewAgain } from "./hub-api.ts";
+import { latestCodeReview, reviewAgain, sendBitbucketDatacenterCodeReview } from "./hub-api.ts";
 import { GITHUB_PULL_QUERY_KEY } from "./github-pull.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { usePortal } from "./portal.tsx";
@@ -27,13 +27,14 @@ export function useCodeReview({ repo, source, number, headSha }: Pull & { headSh
   });
 }
 
-/** Sends the review of `headSha` to the pull request on GitHub, then reads the pull request again so the sent review shows. */
-export function useSendCodeReview({ repo, number }: Pull) {
+/** Sends the review of `headSha` to the pull request on its host, then reads the pull request again so the sent review shows. */
+export function useSendCodeReview({ repo, source, number }: Pull) {
   const { snapshot, writeGithub } = usePortal();
   const queryClient = useQueryClient();
   const tenantId = snapshot?.workspace.tenantId;
   return useMutation({
-    mutationFn: function sendToGithub(headSha: string) {
+    mutationFn: async function sendToHost(headSha: string) {
+      if (source === "bitbucket-datacenter") return sendBitbucketDatacenterCodeReview(createHubTransport(), tenantId as string, repo, number, headSha);
       return writeGithub({ action: "code-review", repo, number, headSha }, "now");
     },
     onSuccess: function readPullAgain() {

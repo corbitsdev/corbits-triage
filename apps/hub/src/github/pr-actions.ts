@@ -16,7 +16,7 @@ import {
   upsertTriageComment,
 } from "@corbits/github-tool/github";
 import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
-import { BUDGET_EXHAUSTED_NOTE, notReviewedNote, ownedLabels, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, notReviewedNote, ownedLabels, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, type ActionKind, type SendCodeReviewInput } from "@corbits/triage-contracts";
 import { inlineCode } from "@corbits/triage-workflows/logic/render";
 import type { CodeReviewRuns, CompletedReview } from "../code-review-runs.js";
 import type { PolicyReader } from "./check-pack-store.js";
@@ -56,6 +56,7 @@ export const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.int
 );
 
 type SendBody = Extract<typeof ActionBody.infer, { action: "code-review" }>;
+type CodeReviewSendBody = { repo: string; number: number; headSha: string };
 
 /** Unread files listed in a posted review; the rest are counted. */
 const POSTED_UNREAD = 20;
@@ -73,17 +74,20 @@ function postedNotes(run: CompletedReview): string[] {
   return [...(run.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...cutNotes(run)];
 }
 
+/** A host's send of a code review; `skipped` means the pull request moved past the head, so nothing was written. */
+export type CodeReviewSender = (input: SendCodeReviewInput) => Promise<{ sent: boolean } | { skipped: string }>;
+
 /**
  * Sends the pull request's newest finished code review at the head the person saw, only when the review is of that head,
  * or was carried over to it, and has something to post; once sent on either head it is not sent again.
  */
-async function sendReview(gh: GithubFetch, login: string, body: SendBody, completed: CompletedReview | null, carriedTo: string | null) {
+export async function sendReview(send: CodeReviewSender, body: CodeReviewSendBody, completed: CompletedReview | null, carriedTo: string | null) {
   const { repo, number, headSha } = body;
   if (!completed) return failure(409, "no_code_review", "This pull request has no finished code review to send.");
   if (completed.headSha !== headSha && carriedTo !== headSha) return failure(409, "code_review_outdated", "A newer code review replaced this one. Reload, then send it.");
   const notes = postedNotes(completed);
   if (!completed.summary && completed.comments.length === 0 && notes.length === 0) return failure(409, "code_review_empty", "This code review has nothing to post.");
-  const sent = await sendCodeReview(gh, { repo, number, sha: headSha, reviewed: completed.headSha, summary: [completed.summary, ...notes].filter(Boolean).join("\n\n"), comments: completed.comments }, login);
+  const sent = await send({ repo, number, sha: headSha, reviewed: completed.headSha, summary: [completed.summary, ...notes].filter(Boolean).join("\n\n"), comments: completed.comments });
   if ("skipped" in sent) return failure(409, "head_moved", "The pull request has new commits since this review. Review again, then send it.");
   return sent;
 }
@@ -152,7 +156,9 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
   async function act(gh: GithubFetch, login: string, tenantId: string, body: typeof ActionBody.infer) {
     if (body.action === "code-review") {
       const { completed, carriedTo } = await deps.codeReviews.latest(tenantId, { repo: body.repo, number: body.number, head: body.headSha });
-      return sendReview(gh, login, body, completed, carriedTo);
+      return sendReview(function sendToGithub(input) {
+        return sendCodeReview(gh, input, login);
+      }, body, completed, carriedTo);
     }
     return runAction(gh, login, body, await ownedBy(tenantId, body));
   }

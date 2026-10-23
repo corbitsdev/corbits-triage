@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { executeAction, type ActionStep } from "./action";
-import { mirror, type BitbucketFetch, type Comment } from "./bitbucket";
+import { mirror, sendCodeReview, type BitbucketFetch, type Comment } from "./bitbucket";
 import { runAction } from "./sidecar-bundle";
 
 const BOT = { id: 7, slug: "triage-bot" };
@@ -9,7 +9,7 @@ const REPO_PATH = "/rest/api/1.0/projects/TRI/repos/widgets";
 const PR_PATH = `${REPO_PATH}/pull-requests/1`;
 
 // Shapes recorded from Bitbucket Data Center 10.5, trimmed to the fields read.
-function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown } = {}) {
+function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number } = {}) {
   const pr = { id: 1, version: 4, state: "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: [] as unknown[] };
   const comments: Comment[] = seed.comments ?? [];
   const builds: Array<Record<string, unknown>> = [];
@@ -28,7 +28,10 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
       const values = comments.map((comment) => ({ action: "COMMENTED", commentAction: "ADDED", comment })).reverse();
       return Response.json({ values: [{ action: "OPENED" }, ...values], isLastPage: true });
     }
+    if (path === `${PR_PATH}/diff/src/app.ts?withComments=false`) return Response.json(APP_DIFF);
+    if (path === `${PR_PATH}/diff/src/untouched.ts?withComments=false`) return Response.json({ fromHash: "base", toHash: "abc", diffs: [] });
     if (method === "POST" && path === `${PR_PATH}/comments`) {
+      if (writes.filter((w) => w.path === path).length === seed.failPost) return Response.json({ errors: [{ message: "unavailable" }] }, { status: 503 });
       comments.push({ id: comments.length + 10, version: 0, text: body.text, author: BOT, updatedDate: 1_791_999_000_000 });
       return Response.json(comments.at(-1));
     }
@@ -49,6 +52,17 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
   }
   return { bb: bb satisfies BitbucketFetch, comments, builds, writes };
 }
+
+// Lines 10-12 changed: 10 is context, 11-12 added.
+const APP_DIFF = {
+  fromHash: "base",
+  toHash: "abc",
+  diffs: [{ hunks: [{ segments: [
+    { type: "CONTEXT", lines: [{ source: 10, destination: 10 }] },
+    { type: "REMOVED", lines: [{ source: 11, destination: 11 }] },
+    { type: "ADDED", lines: [{ source: 12, destination: 11 }, { source: 12, destination: 12 }] },
+  ] }] }],
+};
 
 const REQUEST = { repo: "TRI/widgets", number: 1, labels: ["triage:pass"], owned: ["triage:pass"], comment: "Pass" };
 const HEADER = { head: "abc", policy: null, verdict: "pass" };
@@ -112,5 +126,69 @@ describe("executeAction", () => {
     const clean = fakeBitbucket();
     expect(await executeAction(clean.bb, { request: REQUEST, step: step("merge", {}) }, user)).toEqual({ status: "done", result: { merged: true } });
     expect(clean.writes.map((w) => w.path)).toEqual([`${PR_PATH}/merge?version=4`]);
+  });
+});
+
+describe("sendCodeReview", () => {
+  const FINDINGS = [
+    { path: "src/app.ts", start: 11, end: 14, title: "Off by one", body: "The loop stops early.", priority: 1 },
+    { path: "src/app.ts", start: 40, end: 40, title: "Unused import", body: "Remove it." },
+  ];
+  const REVIEW = { repo: "TRI/widgets", number: 1, sha: "abc", summary: "Two findings.", comments: FINDINGS };
+  const MARKER = /^\[corbits-code-review\]: #abc\/[0-9a-f]{12}$/;
+
+  function firstLines(fake: ReturnType<typeof fakeBitbucket>): string[] {
+    return fake.comments.map((c) => c.text.split("\n", 1)[0]!);
+  }
+
+  test("posts a finding the diff shows inline on its first shown line, the rest in the summary, once per head", async () => {
+    const fake = fakeBitbucket();
+    expect(await sendCodeReview(fake.bb, REVIEW, user)).toEqual({ commentId: 11, sent: true });
+    expect(await sendCodeReview(fake.bb, REVIEW, user)).toEqual({ commentId: 11, sent: false });
+    expect(await sendCodeReview(fake.bb, { ...REVIEW, sha: "d36740c", reviewed: "abc" }, user)).toEqual({ commentId: 11, sent: false });
+    expect(fake.writes.map((w) => w.body)).toEqual([
+      {
+        text: expect.stringMatching(/^\[corbits-code-review\]: #abc\/[0-9a-f]{12}\n\*\*P1 · Off by one\*\*\n\nThe loop stops early\.\n\nAlso lines 12–14\.$/),
+        anchor: { path: "src/app.ts", line: 11, lineType: "ADDED", fileType: "TO", diffType: "EFFECTIVE", fromHash: "base", toHash: "abc" },
+      },
+      { text: "[corbits-code-review]: #abc\nTwo findings.\n\n**Unused import** · `src/app.ts:40`\n\nRemove it." },
+    ]);
+  });
+
+  test("writes nothing once the pull request has moved past the head", async () => {
+    const fake = fakeBitbucket();
+    expect(await sendCodeReview(fake.bb, { ...REVIEW, sha: "d36740c" }, user)).toMatchObject({ sent: false, skipped: expect.any(String) });
+    expect(fake.writes).toEqual([]);
+  });
+
+  test("a send that failed part-way posts only what is missing", async () => {
+    const fake = fakeBitbucket({ failPost: 2 });
+    await expect(sendCodeReview(fake.bb, REVIEW, user)).rejects.toThrow("503");
+    await sendCodeReview(fake.bb, REVIEW, user);
+    const [inline, summary] = firstLines(fake);
+    expect(inline).toMatch(MARKER);
+    expect(summary).toBe("[corbits-code-review]: #abc");
+    expect(fake.comments).toHaveLength(2);
+  });
+
+  test("a review made again on the same head after a part-way send posts its own findings", async () => {
+    const fake = fakeBitbucket({ failPost: 2 });
+    const first = { path: "src/app.ts", start: 11, end: 11, title: "Finding A", body: "a" };
+    const second = { path: "src/app.ts", start: 12, end: 12, title: "Finding B", body: "b" };
+    await expect(sendCodeReview(fake.bb, { ...REVIEW, summary: "S1", comments: [first] }, user)).rejects.toThrow("503");
+    await sendCodeReview(fake.bb, { ...REVIEW, summary: "S2", comments: [second] }, user);
+    expect(fake.comments.map((c) => c.text.split("\n")[1])).toEqual(["**Finding A**", "**Finding B**", "S2"]);
+  });
+
+  test("a finding on a line the diff does not show never posts inline", async () => {
+    const fake = fakeBitbucket();
+    const outside = [
+      { path: "src/app.ts", start: 999, end: 999, title: "Past the end", body: "a" },
+      { path: "src/app.ts", start: 1, end: 9, title: "Before the hunk", body: "b" },
+      { path: "src/untouched.ts", start: 3, end: 3, title: "Not in the change", body: "c" },
+    ];
+    await sendCodeReview(fake.bb, { ...REVIEW, comments: outside }, user);
+    expect(fake.writes.map((w) => w.body.anchor)).toEqual([undefined]);
+    expect(fake.comments).toHaveLength(1);
   });
 });
