@@ -270,9 +270,12 @@ Each rule is one sentence (`text`), how it is checked (`check`: a built-in
 rule's id, `model` for a yes/no question about the whole pull request, or
 `text` for a phrase match) and why it exists: a one-line `reason` and its
 `evidence` (`#44`, `owner/name#44`, links or `maintainer-stated`). All four
-are required. A model or text rule names its own `id`. A built-in rule takes
+are required. A model, text or code-patterns rule names its own `id`. A built-in rule takes
 its setting as `max` (size limits), `tracker` (linked issue), `paths`
-(forbidden paths) or `types` and `fields` (conventional commits);
+(forbidden paths) or `types` and `fields` (conventional commits). A
+code-patterns rule lists shipped `presets` (`convention`) and its own ast-grep
+`patterns`, its own winning on a shared id, and fails on a match in a line the
+pull request adds to a TypeScript or JavaScript file;
 `enabled: false` keeps it written down but off.
 `onFail` says what a failing rule does: `fail` (the default, except `label`
 for the size rules, which features and refactors cross) fails the pull
@@ -304,6 +307,18 @@ rules:
     failWhen: contains # or not-contains
     phrases: ["Co-Authored-By:", "Generated with"]
     reason: Maintainer-stated.
+    evidence: [maintainer-stated]
+  - id: conventions
+    check: code-patterns
+    text: Added code follows our conventions.
+    presets: [convention]
+    patterns: # ast-grep rules; `rule` is an ast-grep rule object
+      - id: no-console
+        language: typescript # or javascript
+        message: Remove console logging.
+        rule: { pattern: "console.log($$$ARGS)" }
+    onFail: label
+    reason: Review time goes to design, not style.
     evidence: [maintainer-stated]
 ```
 
