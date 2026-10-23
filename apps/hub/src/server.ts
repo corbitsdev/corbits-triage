@@ -155,6 +155,7 @@ const TRIAGE_RELIST_GRACE_MS = 60_000;
 /** How often the live logs of tenants with a pr-triage run in flight are read and recorded, and how stale a shared read may be. */
 const TRIAGE_RECORD_MS = 2_000;
 const WORKER_FIRE_TIMEOUT_MS = 120_000;
+const WORKER_RUN_TIMEOUT_MS = 60 * 60_000;
 const GITHUB_CALLS_LOG_MS = 60_000;
 const WORKER_POLL_MS = 2_000;
 /** A tenant whose logs could not be read is left at most this long before the recording loop tries again. */
@@ -792,6 +793,7 @@ coordinator = createCoordinator({
   }), tenantBitbucket),
   retry: { minMs: TRIAGE_RETRY_MS, maxMs: TRIAGE_RETRY_MAX_MS },
   failed: failCoordinatedJob,
+  runTimeoutMs: WORKER_RUN_TIMEOUT_MS,
   setTimer,
   now,
   log: logJson,

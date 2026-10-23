@@ -18,6 +18,7 @@ import { createWorkerSpawner } from "./worker-spawn.js";
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_spawn";
 const DOMAIN = "spawn.test";
+const RUN_TIMEOUT_MS = 60 * 60_000;
 const WORKFLOW = "pr-triage";
 const BUNDLE = {
   source: { kind: "asset", assetId: "ast_triage", package: { format: "source", commitSha: "c0ffee", packageName: "@corbits/pr-triage-workflow" } },
@@ -108,7 +109,9 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
       async failed(job, error) {
         failed.push(`${job.number}: ${error}`);
       },
+      runTimeoutMs: RUN_TIMEOUT_MS,
       setTimer(fire, ms) {
+        if (ms === RUN_TIMEOUT_MS) return () => {};
         timer.resolve(async function elapse() {
           clock += ms;
           await fire();
@@ -175,7 +178,9 @@ test("PostgreSQL: a worker whose first mail the sender gate refuses is released 
       async failed(job, error) {
         failed.push(`${job.number}: ${error}`);
       },
+      runTimeoutMs: RUN_TIMEOUT_MS,
       setTimer(fire, ms) {
+        if (ms === RUN_TIMEOUT_MS) return () => {};
         timer.resolve(async function elapse() {
           clock += ms;
           await fire();
@@ -252,6 +257,7 @@ test("PostgreSQL: under the hub's lifecycle policy, a worker's sidecar is releas
       }),
       retry: { minMs: 1, maxMs: 1 },
       failed: async () => {},
+      runTimeoutMs: RUN_TIMEOUT_MS,
       setTimer: () => () => {},
       now: () => new Date(),
       log: (entry) => entry.level === "error" && errors.push(entry),

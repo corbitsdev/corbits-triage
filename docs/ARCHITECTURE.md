@@ -98,7 +98,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     it) is released and its job retried the same way five times, enough for
     the portal reload after a hub deploy; then the head fails with "this
     repository's Triage deployment is out of date; open the portal to
-    redeploy it", and the reconciler queues it again after the redeploy. The queue, like the coalescer's
+    redeploy it", and the reconciler queues it again after the redeploy. A
+    worker not finished an hour after its spawn began, stuck readying,
+    delivering or running, is cancelled and its slot freed; the reconciler
+    retries its head as a cancelled run. The queue, like the coalescer's
     windows, lives in memory, so the hub runs as one replica. A restart loses
     only queue order: the hub releases orphaned workers on start and the
     reconciler queues their heads again.

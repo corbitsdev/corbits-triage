@@ -37,6 +37,8 @@ const OUTDATED_ATTEMPTS = 5;
 
 export const OUTDATED_REASON = "this repository's Triage deployment is out of date; open the portal to redeploy it";
 
+export const TIMED_OUT_REASON = "worker did not finish in time";
+
 export type WorkerSpawner = {
   /** Deploys a fresh worker and fires it with the job's mail; resolves with the worker's anchor run id. */
   spawn: (job: TriageJob) => Promise<string>;
@@ -50,8 +52,10 @@ export type CoordinatorDeps = {
   spawner: WorkerSpawner;
   /** How long a deferred job waits before its next spawn: doubled each time from `min`, never past `max`. */
   retry: { minMs: number; maxMs: number };
-  /** The job's head is failed here when its worker could not be spawned or fired. */
+  /** The job's head is failed here when its worker could not be spawned or fired, or did not finish in time. */
   failed: (job: TriageJob, error: string) => Promise<void>;
+  /** A worker not finished this long after its spawn began is cancelled; stock `maxLifetime` is per definition, which workers share with the long-lived listener. */
+  runTimeoutMs: number;
   setTimer: (fire: () => Promise<void>, ms: number) => () => void;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
@@ -127,12 +131,33 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
     }
   }
 
+  async function release(job: TriageJob, runId: string, entry: Record<string, unknown>): Promise<void> {
+    try {
+      await deps.spawner.release(job.tenantId, runId);
+    } catch (err) {
+      deps.log({ level: "error", msg: "worker_release_failed", ...entry, runId, error: String(err) });
+    }
+  }
+
   async function spawn(slot: number, job: TriageJob): Promise<void> {
     const entry = { tenantId: job.tenantId, repo: job.repo, pr: job.number, workflow: job.workflow };
-    let runId: string;
+    let runId: string | undefined;
+    let timedOut = false;
+    const cancelDeadline = deps.setTimer(async function onRunTimeout() {
+      timedOut = true;
+      deps.log({ level: "error", msg: "worker_timed_out", ...entry, runId });
+      if (runId !== undefined) await release(job, runId, entry);
+      refused.delete(keyOf(job));
+      outdated.delete(keyOf(job));
+      running.delete(slot);
+      await failJob(job, TIMED_OUT_REASON, entry);
+      void pump();
+    }, deps.runTimeoutMs);
     try {
       runId = await deps.spawner.spawn(job);
     } catch (err) {
+      if (timedOut) return;
+      cancelDeadline();
       running.delete(slot);
       const key = keyOf(job);
       const outdatedAttempts = err instanceof WorkerOutdatedError ? (outdated.get(key) ?? 0) + 1 : 0;
@@ -155,6 +180,10 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
       void pump();
       return;
     }
+    if (timedOut) {
+      await release(job, runId, entry);
+      return;
+    }
     refused.delete(keyOf(job));
     outdated.delete(keyOf(job));
     deps.log({ level: "info", msg: "worker_spawned", ...entry, runId });
@@ -163,11 +192,9 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
     } catch (err) {
       deps.log({ level: "error", msg: "worker_wait_failed", ...entry, runId, error: String(err) });
     }
-    try {
-      await deps.spawner.release(job.tenantId, runId);
-    } catch (err) {
-      deps.log({ level: "error", msg: "worker_release_failed", ...entry, runId, error: String(err) });
-    }
+    if (timedOut) return;
+    cancelDeadline();
+    await release(job, runId, entry);
     running.delete(slot);
     deps.log({ level: "info", msg: "worker_ended", ...entry, runId });
     void pump();
