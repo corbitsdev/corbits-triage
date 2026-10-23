@@ -90,6 +90,28 @@ $3.10 for all 25 cases; the Opus diff finder is $2.78 of it. Findings both
 finders reported caught 33/52 with 11 false alarms. Every stage's totals are in
 the committed file.
 
+## Posting threshold
+
+`bun run eval:review -- --rescore <e2e.json> [--out sweep.json]` replays a saved
+`--e2e` run with no model calls. Each final review comment gets its group's top
+finder confidence, finder agreement and priority from the saved step outputs;
+every cutoff (a confidence for comments one finder reported, one for those both
+did, and a highest priority) is scored as the final review is. A comment
+without a priority passes only a cutoff that allows any priority. The run is
+refused unless keeping every comment scores as the saved run did and every
+comment carries a confidence. It prints the precision and recall frontier and
+the loosest cutoff at a fixed 85% precision bar, with recall by reach, clean
+cases left silent, comments per pull request and pull requests commented on.
+
+On the run behind the 2026-10-21 baseline, the loosest cutoff at 85% posts a
+one-finder comment at confidence 0.75 or more and a both-finder comment at 0.6
+or more: precision 85.3%, 26/52 bugs caught (diff 15/24, repo 11/26, intent
+0/2), 5 false alarms, 3/3 clean cases silent, 1.36 comments per pull request.
+On the run before it, on raw descriptions, the same cutoff scores 82.9% and
+27/52, so the cutoff is tuned on 25 cases and moves between runs. It has not
+been checked on the 42 held-out pull requests: their saved runs carry no finder
+confidence.
+
 ### Held-out numbers (2026-10-16)
 
 On 42 held-out public pull requests with known bugs (none of them among the

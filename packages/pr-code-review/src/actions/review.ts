@@ -27,7 +27,7 @@ const FINDERS = ["diff", "repo"] as const;
 type Finder = (typeof FINDERS)[number];
 
 /** A finding, the finders that reported it and how many of their findings it stands for. */
-interface Candidate extends Finding {
+export interface Candidate extends Finding {
   finders: Finder[];
   reports: number;
 }
@@ -78,7 +78,7 @@ interface Candidates {
   inference: StepInference;
 }
 
-interface Group {
+export interface Group {
   defect: string;
   members: number[];
   representative: number;
@@ -173,7 +173,7 @@ function findingsOf(output: unknown, finder: Finder): Candidate[] {
   return parsed.findings.map((finding) => ({ ...finding, finders: [finder], reports: 1 }));
 }
 
-function sameCode(a: Finding, b: Finding): boolean {
+export function sameCode(a: Finding, b: Finding): boolean {
   const quoted = quotedLine(a);
   return quoted !== undefined && quoted === quotedLine(b) && samePath(a.path, b.path) && a.start <= b.end && a.end >= b.start;
 }
@@ -276,17 +276,28 @@ function checkMessage(request: ReviewRequest, finding: Reported, excerpt: string
   ].join("\n\n");
 }
 
+export interface Consolidated {
+  groups: Group[];
+  sites: Site[];
+  excerpts: string[];
+  unreadFindings: number[];
+}
+
+/** Every consolidated group with its finding and excerpt, in the order the review reports them: by severity, then agreement. */
+export function orderedGroups(kept: readonly Candidate[], { groups, sites, excerpts, unreadFindings }: Consolidated) {
+  function reported(joined: Group) {
+    const group = readRepresentative(joined, unreadFindings);
+    const finding = reportedOf(group, kept, sites);
+    return { group, finding: unreadFindings.includes(group.representative) ? { ...finding, unverified: true as const } : finding, excerpt: excerpts[group.representative]! };
+  }
+  return joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
+}
+
 /** Every consolidated finding, ordered by severity then agreement, and one check of each when the request asks for the check. */
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { kept } = stepOutput(steps, "candidates");
-  const { groups, sites, excerpts, unreadFindings } = jsonReply<{ groups: Group[]; sites: Site[]; excerpts: string[]; unreadFindings: number[] }>(stepOutput(steps, "consolidate"));
-  function reported(joined: Group) {
-    const group = readRepresentative(joined, unreadFindings);
-    const finding = reportedOf(group, kept, sites);
-    return { finding: unreadFindings.includes(group.representative) ? { ...finding, unverified: true as const } : finding, excerpt: excerpts[group.representative]! };
-  }
-  const ordered = joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
+  const ordered = orderedGroups(kept, jsonReply<Consolidated>(stepOutput(steps, "consolidate")));
   function check({ finding, excerpt }: (typeof ordered)[number]) {
     return { text: checkMessage(request, finding, excerpt), inference: inference.check };
   }

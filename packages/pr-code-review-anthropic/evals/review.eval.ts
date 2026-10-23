@@ -7,6 +7,8 @@
 //   --repo checks each case's head out (with `gh auth token`) and lets the finder read it; every tool call is recorded.
 //   --budget <tokens> sets the repository finder's token budget (default the workflow's).
 //   bun run eval:review -- --rescore <results-dir>   re-scores saved results without model calls
+//   bun run eval:review -- --rescore <e2e.json> [--out <file.json>]   sweeps posting cutoffs over a saved --e2e run without
+//   model calls (sweep.ts) and reports the loosest one at 85% precision and the precision/recall frontier.
 //   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--check] [--out <file.json>] [--baseline]
 //   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write; each role defaults to its deployed model;
 //   runs the whole pr-code-review workflow on each case's head and scores the finders' union, the consolidated findings,
@@ -16,7 +18,7 @@
 //
 // Inference is native Anthropic when ANTHROPIC_API_KEY is set, else OpenCode Zen with OPENCODE_API_KEY.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
@@ -37,6 +39,7 @@ import { finderInput } from "./finder-input.js";
 import { prCodeFinder } from "./finder-workflow.js";
 import { headOf, loadCases, loadKeys, pullRequestOf, type Case, type CaseKey, type Reach } from "./cases.js";
 import { bugOf, parseFindings, REACHES, reanchor, scoreCase, type CaseScore, type Finding } from "./score.js";
+import { commentsOf, cutoffs, frontier, KEEP_ALL, loosest, scoreCutoff, type Cutoff, type Replayed, type SavedOutputs, type SweepRow } from "./sweep.js";
 
 // The cases are GitHub pull requests.
 const GITHUB: Sources = ["github"];
@@ -264,7 +267,8 @@ function keyOf(keys: readonly CaseKey[], id: string): CaseKey {
   return key;
 }
 
-function rescore(dir: string) {
+function rescore(dir: string, out: string | undefined) {
+  if (statSync(dir).isFile()) return sweep(dir, out);
   const keys = loadKeys();
   function rescoreFile(name: string) {
     const run = finderRun(join(dir, name));
@@ -412,6 +416,66 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
   return { id: testCase.id, ...(failed && { failed }), budgetExhausted: outputs.candidates?.budgetExhausted === true, wallMs, steps, stages, outputs };
 }
 
+const PRECISION_BAR = 0.85;
+
+/** A saved case's comments with their features; keeping all of them must score as the saved final review did, and each must carry a confidence. */
+function replayedOf(result: E2EResult, key: CaseKey): Replayed {
+  if (result.failed !== undefined || !result.outputs) throw new Error(`${result.id}: the saved run has no complete review to replay`);
+  const comments = commentsOf(result.outputs as unknown as SavedOutputs);
+  const all = scoreCase(key, comments);
+  const saved = result.stages.final;
+  if (!saved || all.falseAlarms !== saved.falseAlarms || all.caught.join() !== saved.caught.join()) throw new Error(`${result.id}: keeping every comment does not score as the saved final review`);
+  const blind = comments.find((c) => c.confidence === undefined);
+  if (blind) throw new Error(`${result.id}: the comment at ${blind.path}:${blind.start} carries no finder confidence`);
+  return { key, comments };
+}
+
+function cutoffLabel({ oneFinder, bothFinders, priority }: Cutoff): string {
+  function least(value: number): string {
+    return value === Number.POSITIVE_INFINITY ? "none" : `>=${value}`;
+  }
+  return `one ${least(oneFinder)}, both ${least(bothFinders)}, p<=${priority === Number.POSITIVE_INFINITY ? "any" : priority}`;
+}
+
+function percent(value: number | null): string {
+  return value === null ? "-" : `${(value * 100).toFixed(1)}%`;
+}
+
+function sweepRow(row: SweepRow) {
+  return {
+    cutoff: cutoffLabel(row.cutoff),
+    precision: percent(row.precision),
+    recall: `${row.caught}/${row.bugs} ${percent(row.recall)}`,
+    ...row.byReach,
+    falseAlarms: row.falseAlarms,
+    cleanSilent: `${row.cleanSilent}/${row.clean}`,
+    perPr: row.commentsPerPr.toFixed(2),
+    prsCommented: `${row.prsCommented}/${row.cases}`,
+  };
+}
+
+function sweep(file: string, out: string | undefined) {
+  const run = JSON.parse(readFileSync(file, "utf8")) as { stages?: unknown; results: E2EResult[] };
+  if (run.stages === undefined) throw new Error(`${file} is not --e2e output`);
+  const keys = loadKeys();
+  const replayed = run.results.map((result) => replayedOf(result, keyOf(keys, result.id)));
+  const rows = cutoffs(replayed).map((cutoff) => scoreCutoff(replayed, cutoff));
+  const all = scoreCutoff(replayed, KEEP_ALL);
+  const baseline = (JSON.parse(readFileSync(BASELINE, "utf8")) as { totals: { final: Record<string, number> } }).totals.final;
+  const matches = all.caught === baseline.caught && all.falseAlarms === baseline.falseAlarms && all.clean - all.cleanSilent === baseline.cleanFlagged;
+  const chosen = loosest(rows, PRECISION_BAR);
+  const best = frontier(rows);
+  console.table([all].map(sweepRow));
+  console.log(`keeping every comment ${matches ? "matches" : "differs from"} the committed baseline's final review`);
+  console.table(best.map(sweepRow));
+  console.log(chosen ? `loosest at ${percent(PRECISION_BAR)} precision: ${cutoffLabel(chosen.cutoff)}` : `no cutoff reaches ${percent(PRECISION_BAR)} precision`);
+  if (chosen) console.table([chosen].map(sweepRow));
+  function labelled(row: SweepRow) {
+    return { label: cutoffLabel(row.cutoff), ...row };
+  }
+  if (out) writeFileSync(out, JSON.stringify({ file, bar: PRECISION_BAR, matchesBaseline: matches, keepAll: labelled(all), chosen: chosen && labelled(chosen), frontier: best.map(labelled), rows: rows.map(labelled) }, null, 2));
+}
+
 function e2eStageRow(stage: Stage, results: readonly E2EResult[], keys: readonly CaseKey[]) {
   const scored = keys.filter((key) => results.some((r) => r.id === key.id));
   const bugs = scored.flatMap((key) => key.bugs.map((bug) => ({ ...bug, caseId: key.id })));
@@ -556,7 +620,7 @@ async function main() {
       ...Object.fromEntries(Object.values(ROLE_FLAGS).flatMap((flag) => [[`${flag}-model`, { type: "string" }], [`${flag}-effort`, { type: "string" }]])),
     },
   });
-  if (values.rescore) return rescore(values.rescore);
+  if (values.rescore) return rescore(values.rescore, values.out);
   if (values.e2e) return e2e(values);
   if (values.baseline) throw new Error("--baseline needs --e2e");
   if (!values.prompt) throw new Error("--prompt <file.txt> is required");
