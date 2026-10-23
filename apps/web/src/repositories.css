@@ -64,6 +64,7 @@
 .repos .outcomes thead th { font-weight: 600; font-size: 12px; }
 .repos .outcomes thead span { display: block; font-weight: 400; color: var(--ink-mute); }
 .repos .outcomes tbody td { font: 700 13px var(--mono); }
+.repos .outcomes tbody td span { font-weight: 400; color: var(--ink-mute); }
 
 /* Policy: the file read back as sentences, then each verdict's steps */
 .repos .rs-h { display: flex; align-items: center; gap: 8px; }

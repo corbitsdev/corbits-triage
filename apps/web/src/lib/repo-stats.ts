@@ -1,5 +1,5 @@
 import { queryOptions, skipToken, useQuery, type Query } from "@tanstack/react-query";
-import type { OutcomeMedians, RepoSource, TriageOutcomes, TriageStats } from "@corbits/triage-contracts";
+import type { OutcomeMedians, OutcomeTimes, RepoSource, TriageOutcomes, TriageStats } from "@corbits/triage-contracts";
 import { hostName } from "./pull-link.ts";
 import type { RepoPackStore } from "./repo-pack-store.ts";
 
@@ -44,13 +44,14 @@ export function medianText(ms: number | null): string {
   return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
 }
 
-export type OutcomeField = Exclude<keyof OutcomeMedians, "prs" | "closed">;
+export type OutcomeField = keyof OutcomeTimes;
 
 export const OUTCOME_NAMES: Record<OutcomeField, string> = {
   mergeOrCloseMs: "Merge or close",
   firstHumanResponseMs: "First response",
   firstApprovalMs: "First approval",
   humanTouchGapMs: "Longest wait",
+  reviewerWaitMs: "Waiting on reviewer",
 };
 
 export type OutcomesView = { missing: string } | { triaged: OutcomeMedians; humans: number; baseline: OutcomeMedians | null; baselineMissing: string | null };

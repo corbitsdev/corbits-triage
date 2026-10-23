@@ -18,12 +18,12 @@ function at(hours: number): string {
 
 function verdict(number: number): VerdictRecord {
   return {
-    runId: `run_${number}`, repo: REPO, number, headSha: `sha${number}`, startedAt: new Date(NOW.getTime() - number * 1000), verdictAt: new Date(NOW.getTime() - number * 1000),
+    runId: `run_${number}`, repo: REPO, number, headSha: `sha${number}`, startedAt: new Date(NOW.getTime() - number * 1000), verdictAt: new Date(at(number / 2)),
     settled: true, state: "ready-monitoring", actor: "author", humanGated: false, degraded: null, checks: [], dos: [], commented: false, runStatus: "completed",
   } as unknown as VerdictRecord;
 }
 
-/** PR n: closed after 10n hours (PR 3 still open), first answered by bob after n hours, approved by carol after n + 2. */
+/** PR n: given a verdict after n/2 hours, closed after 10n (PR 3 still open), first answered by bob after n hours, approved by carol after n + 2. */
 function fakeHost() {
   const reads = { prTimes: 0, timeline: 0, closedBefore: 0, active: 0, peak: 0 };
   async function counted<T>(value: T): Promise<T> {
@@ -74,12 +74,15 @@ async function until(done: () => boolean): Promise<void> {
   while (!done()) await Bun.sleep(1);
 }
 
-test("medians count only people other than the author as responses, and humans count each person once across pull requests, leaving bots and the triage user out", async () => {
+test("medians and 75th percentiles count only people other than the author as responses, and humans count each person once across pull requests, leaving bots and the triage user out", async () => {
   const { host } = fakeHost();
   const stats = await route([1, 2, 3].map(verdict), { host: async () => ({ host }) })();
   expect(stats.outcomes).toEqual({
     state: "measured",
-    triaged: { prs: 3, closed: 2, mergeOrCloseMs: 15 * HOUR, firstHumanResponseMs: 2 * HOUR, firstApprovalMs: 4 * HOUR, humanTouchGapMs: 2 * HOUR },
+    triaged: {
+      prs: 3, closed: 2, mergeOrCloseMs: 15 * HOUR, firstHumanResponseMs: 2 * HOUR, firstApprovalMs: 4 * HOUR, humanTouchGapMs: 2 * HOUR, reviewerWaitMs: 3 * HOUR,
+      p75: { mergeOrCloseMs: 17.5 * HOUR, firstHumanResponseMs: 2.5 * HOUR, firstApprovalMs: 4.5 * HOUR, humanTouchGapMs: 2.125 * HOUR, reviewerWaitMs: 3.25 * HOUR },
+    },
     humans: 3,
     baseline: null,
     baselineBefore: ENABLED.toISOString(),
@@ -95,6 +98,24 @@ test("being mentioned or labelled is not a response", () => {
   ];
   const outcome = outcomeOf({ number: 1, author: "alice", createdAt: at(0), closedAt: null }, events, { author: "alice", botLogins: [] });
   expect(outcome).toMatchObject({ firstHumanResponseMs: 5 * HOUR, humanTouchGapMs: 5 * HOUR });
+});
+
+test("the reviewer wait runs from the verdict to the first approval, change request or merge by someone else", () => {
+  const pr = { number: 1, author: "alice", createdAt: at(0), closedAt: at(9) };
+  const events: TimelineEvent[] = [
+    { kind: "commented", actor: "bob", bot: false, at: at(3) },
+    { kind: "reviewed", actor: "bob", bot: false, at: at(4), state: "COMMENTED" },
+    { kind: "reviewed", actor: "alice", bot: false, at: at(5), state: "APPROVED" },
+    { kind: "merged", actor: "carol", bot: false, at: at(9) },
+  ];
+  expect(outcomeOf(pr, events, { author: "alice", botLogins: [], verdictAt: new Date(at(2)) }).reviewerWaitMs).toBe(7 * HOUR);
+  expect(outcomeOf(pr, events, { author: "alice", botLogins: [] }).reviewerWaitMs).toBeNull();
+});
+
+test("a review between the run's start and its verdict waited for nothing", () => {
+  const pr = { number: 1, author: "alice", createdAt: at(0), closedAt: null };
+  const events: TimelineEvent[] = [{ kind: "reviewed", actor: "carol", bot: false, at: at(1.5), state: "CHANGES_REQUESTED" }];
+  expect(outcomeOf(pr, events, { author: "alice", botLogins: [], verdictAt: new Date(at(2)) }).reviewerWaitMs).toBe(0);
 });
 
 test("only the 50 newest triaged pull requests are read, at most 8 reads at once", async () => {
