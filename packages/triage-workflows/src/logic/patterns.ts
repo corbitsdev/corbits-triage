@@ -1,5 +1,5 @@
 import { parse } from "@ast-grep/napi";
-import { isForeignPath, PATTERN_PRESETS, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
+import { isForeignPath, PATTERN_PRESETS, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
 import type { PrFileFacts } from "./checks.js";
 import { addedLines, MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 
@@ -61,7 +61,7 @@ function fileMatches(file: PrFileFacts, patch: string, content: string, grammar:
   const added = addedLines(patch);
   const root = parse(grammar.lang, content).root();
   const out = new Set<string>();
-  for (const rule of rules.filter((candidate) => candidate.language === grammar.language)) {
+  for (const rule of rules.filter((candidate) => candidate.language === grammar.language && patternRuleApplies(candidate, file.path))) {
     for (const match of root.findAll({ rule: rule.rule })) {
       const { start, end } = match.range();
       for (let line = start.line + 1; line <= end.line + 1; line++) {

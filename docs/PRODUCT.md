@@ -278,7 +278,10 @@ its setting as `max` (size limits), `tracker` (linked issue), `paths`
 (forbidden paths) or `types` and `fields` (conventional commits). A
 code-patterns rule lists shipped `presets` (`convention`) and its own ast-grep
 `patterns`, its own winning on a shared id, and fails on a match in a line the
-pull request adds to a TypeScript or JavaScript file;
+pull request adds to a TypeScript or JavaScript file; a pattern's ast-grep
+`files` and `ignores` lists scope it to paths by ast-grep's glob rules
+(strings only; a negated class is `[^a]`, and `[!a]` or an invalid glob
+refuses the policy), and the preset's fallback patterns ignore test files;
 `enabled: false` keeps it written down but off.
 `onFail` says what a failing rule does: `fail` (the default, except `label`
 for the size rules, which features and refactors cross) fails the pull
@@ -319,6 +322,7 @@ rules:
       - id: no-console
         language: typescript # or javascript
         message: Remove console logging.
+        ignores: ["scripts/**"] # ast-grep globs; `files` checks only the paths it names
         rule: { pattern: "console.log($$$ARGS)" }
     onFail: label
     reason: Review time goes to design, not style.

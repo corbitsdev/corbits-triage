@@ -259,7 +259,9 @@ label off that head, so it never stands on a head not yet triaged.
    none.
    A code-pattern rule runs its presets' ast-grep rules and its own (its own
    win on a shared id) with `@ast-grep/napi` over each changed TypeScript or
-   JavaScript file's head content, and keeps matches on lines the patch adds.
+   JavaScript file's head content its `files` and `ignores` globs admit
+   (ast-grep's glob rules, checked when the policy is read), and keeps
+   matches on lines the patch adds.
    A file whose patch or content was not read, or a rule ast-grep refuses,
    leaves the rule unconfirmed; `vendor/`, `dist/`, `build/` and
    `generated/` at the repository root and `node_modules/` anywhere are
