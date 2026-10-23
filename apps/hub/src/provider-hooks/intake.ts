@@ -6,7 +6,7 @@ import { hasEnabledRules, repoPolicy, triageEventOf, type RepoSource } from "@co
 import { errorText, isRecord } from "@corbits/common";
 import type { HookHeaders } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
-import { loadBridgeHook, logJson, resolvedPack, tenantConfigOf, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
+import { loadBridgeHook, logJson, tenantConfigOf, triagePolicy, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
 import type { Accepted } from "../github/coalescer.js";
 import type { BaseMove, PolicyPush, PrMail } from "../github/normalize.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
@@ -60,6 +60,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     let read: Awaited<ReturnType<ProviderHookDeps["refreshPolicyFile"]>>;
     try {
       read = await d.refreshPolicyFile(at.hook.tenantId, repo, sourceOf(at.record));
+      if (read) await d.recheckOpenPulls(at.hook.tenantId, triageStateKey(at.record), null);
     } catch (err) {
       return failed(at, 500, "policy_file_read_failed", err);
     }
@@ -87,9 +88,9 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     // Its conversion to draft is triaged once, so the verdict stops offering it as ready.
     if (mail.draft === true && mail.action !== "converted_to_draft") return ignored(at, "draft", { pr: mail.prNumber });
     if (mail.headSha === null) return ignored(at, "not_open", { pr: mail.prNumber });
-    let stored: Awaited<ReturnType<typeof resolvedPack>>;
+    let stored: Awaited<ReturnType<typeof triagePolicy>>;
     try {
-      stored = await resolvedPack(d.readCheckPack, at.hook.tenantId, at.record.name, sourceOf(at.record));
+      stored = await triagePolicy(d.readCheckPack, at.hook.tenantId, at.record.name, sourceOf(at.record));
     } catch (err) {
       return failed(at, 500, "policy_read_failed", err);
     }
@@ -97,7 +98,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       log({ level: "info", msg: "needs_setup", delivery: at.delivery, event: at.event, repo: at.record.name, hook: at.hook.credentialId });
       return json(202, { status: "needs-setup" });
     }
-    if (!hasEnabledRules(stored.pack)) {
+    if ("pack" in stored && !hasEnabledRules(stored.pack)) {
       log({ level: "info", msg: "triage_skipped_no_rules", delivery: at.delivery, event: at.event, repo: at.record.name, pr: mail.prNumber, headSha: mail.headSha, hook: at.hook.credentialId });
       return json(202, { status: "ignored" });
     }
@@ -108,9 +109,8 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
         workflow: at.hook.workflow,
         record: at.record,
         policy: repoPolicy(at.record),
-        pack: stored.pack,
-        automatic: stored.automatic,
-        source: stored.source,
+        // Bitbucket Data Center runs no policy workflow or pause label yet.
+        ...("pack" in stored ? { pack: stored.pack, automatic: stored.automatic, source: stored.source } : stored),
         mail,
         number: mail.prNumber,
         headSha: mail.headSha,

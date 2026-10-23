@@ -239,7 +239,7 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
     onMain(FROM_FILE, YML, text === DIRECTORY ? null : text, text === DIRECTORY ? DIRECTORY : `bad${i}`);
     const started = performance.now();
     await policyFile.onPush(TENANT, FROM_FILE, "github");
-    expect(await readPack(FROM_FILE)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(reason) });
+    expect(await readPack(FROM_FILE)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(reason), automatic: [] });
     expect(performance.now() - started).toBeLessThan(2_000);
     if (text === DIRECTORY) {
       expect((await policyFile.fileRoute({ repo: FROM_FILE }, MEMBER)).status).toBe(422);
@@ -403,7 +403,7 @@ async function writePolicy(repo: string, content: string): Promise<void> {
 test("PostgreSQL: a policy file extending another repository runs over that repository's file as last pushed, and is refused while that file cannot be read or extends again", async () => {
   onMain(EXTENDS, YML, `extends: ${SHARED}\nrules:\n  - check: max-files-changed\n    max: 50\n    text: At most 50 files.\n    reason: Reviewable.\n    evidence: [maintainer-stated]\n`, "own1");
   await policyFile.onPush(TENANT, EXTENDS, "github");
-  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: `${SHARED} is not connected to this workspace or has no policy file.` });
+  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: `${SHARED} is not connected to this workspace or has no policy file.`, automatic: [] });
 
   onMain(SHARED, YML, FILE, "shared1");
   await policyFile.onPush(TENANT, SHARED, "github");
@@ -414,11 +414,11 @@ test("PostgreSQL: a policy file extending another repository runs over that repo
   // A push to the shared repository reaches every repository extending it.
   onMain(SHARED, YML, `extends: ${EXTENDS}\n${FILE}`, "shared2");
   await policyFile.onPush(TENANT, SHARED, "github");
-  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: `${SHARED}'s policy extends another, so no policy can extend it.` });
+  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: `${SHARED}'s policy extends another, so no policy can extend it.`, automatic: [] });
 
   onMain(SHARED, YML, "rules: [", "shared3");
   await policyFile.onPush(TENANT, SHARED, "github");
-  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 1: The policy file is not YAML`) });
+  expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 1: The policy file is not YAML`), automatic: [] });
 });
 
 test("PostgreSQL: a name both hosts hold is read only for the host asked, and a caller naming no host reads no policy", async () => {

@@ -3,7 +3,7 @@
 // `repo`). Only YAML is read; another format is another path.
 import { isAlias, isMap, isNode, isPair, isScalar, isSeq, LineCounter, parseDocument, type Document, type Node } from "yaml";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, readCheckPack, readPolicyOverride } from "./check-pack.js";
+import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, readCheckPack, refusalNames, readPolicyOverride } from "./check-pack.js";
 import { isPolicyRulesFile, PolicyFileError, policyRulesSchema, readRulesFile } from "./policy-rules.js";
 import { BLOCK_KINDS, decideOf, type PolicyWorkflow } from "./policy-workflow.js";
 
@@ -85,21 +85,12 @@ function parseYaml(text: string): Parsed {
   return { root: doc.toJS(), doc, lines };
 }
 
-const LISTED_MAX = 5;
-const NAME_MAX = 80;
-
-/** Names from the file, cut short so a refusal never carries much of it. */
-function listed(names: readonly string[]): string {
-  const shown = names.slice(0, LISTED_MAX).map((name) => (name.length > NAME_MAX ? `${name.slice(0, NAME_MAX)}…` : name)).join(", ");
-  return names.length > LISTED_MAX ? `${shown} and ${names.length - LISTED_MAX} more` : shown;
-}
-
 function refuseUnknown(file: Record<string, unknown>, allowed: readonly string[]): void {
   const unknown = Object.keys(file).filter((key) => !allowed.includes(key));
-  if (unknown.length > 0) throw new Error(`The policy file has unknown keys: ${listed(unknown)}.`);
+  if (unknown.length > 0) throw new Error(`The policy file has unknown keys: ${refusalNames(unknown)}.`);
   // The stored policy drops a rule id it does not know, which in a file is a typo that leaves the real rule at its default.
   const checks = Object.keys(asRecord(file.checks) ?? {}).filter((id) => !(CATALOG_IDS as readonly string[]).includes(id));
-  if (checks.length > 0) throw new Error(`The policy file has unknown checks: ${listed(checks)}.`);
+  if (checks.length > 0) throw new Error(`The policy file has unknown checks: ${refusalNames(checks)}.`);
 }
 
 function readFile(file: Record<string, unknown>): { policy: Record<string, unknown>; workflow: PolicyWorkflow } {
@@ -113,7 +104,7 @@ function policyOf(file: Record<string, unknown>, repo: string): { policy: Record
   const { policy: body, workflow } = readFile(file);
   if (body.extends !== undefined) return { policy: { ...header, ...readPolicyOverride({ ...body, ...header, repo }, repo) }, workflow };
   const { dropped, ...pack } = readCheckPack({ ...body, ...header, repo }, repo);
-  if (dropped) throw new Error(`The policy file holds what no longer runs: ${listed(dropped)}.`);
+  if (dropped) throw new Error(`The policy file holds what no longer runs: ${refusalNames(dropped)}.`);
   return { policy: pack, workflow: { ...workflow, decide: workflow.decide ?? decideOf(pack.actions, BLOCK_KINDS.some((kind) => workflow[kind]?.on === true)) } };
 }
 

@@ -12,7 +12,7 @@ import { triageJudgeDirector } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
 import { INSTRUCTED_QUESTION, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { RULES_PASS_REASON, type Verdict } from "./logic/render.js";
-import { decidesDos } from "./logic/settled.js";
+import { decidesDos, unsettledBy } from "./logic/settled.js";
 import { workflow } from "./pr-triage.js";
 import { workflow as historical } from "./pr-triage-historical.js";
 import { workflow as bitbucket } from "./pr-triage-bitbucket-datacenter.js";
@@ -866,6 +866,26 @@ describe("a run that could not read the pull request", () => {
     github.pr.unreadFiles = false;
     await triage(pack, { github });
     expect(github.labels).toEqual(["bug", "Triage: Ready"]);
+  });
+
+  test("a policy the hub can't read marks each head the mail names failed with why on both hosts, once, and only with the grant", async () => {
+    const reason = "The policy file has unknown checks: max-size.";
+    const mail = { kind: "pr", prNumber: 8, policy: { enabled: true }, policyUnreadable: reason, automatic: ACTION_KINDS, events: ["opened"] };
+    const github = fakeGithub({ labels: ["bug", "Triage: Ready"] });
+    const { outputs } = await runTriage(github.gh, [], false, hubMail({ ...mail, repo: REPO, prNumber: undefined, items: [{ prNumber: 8, headSha: github.pr.head }] }, "github@acme.test"));
+    const [marked] = (outputs["evaluateRules"] as { items: Verdict[] }).items;
+    expect(marked).toMatchObject({ degraded: "error", reason: `Policy can't be read: ${reason}`, actions: [] });
+    expect(unsettledBy(marked!, github.pr.head)).toEqual({});
+    expect(github.labels).toEqual(["bug", "Triage: Failed to Run"]);
+    const ungranted = fakeGithub({ labels: ["bug"] });
+    await runTriage(ungranted.gh, [], false, hubMail({ ...mail, repo: REPO, headSha: ungranted.pr.head, automatic: [] }, "github@acme.test"));
+    expect(writes(ungranted.requests)).toEqual([]);
+    const named = [{ headSha: "abc" }, { prNumber: undefined, items: [{ prNumber: 8, headSha: "abc" }] }];
+    for (const heads of named) {
+      const host = fakeBitbucket();
+      await runTriage(host.bb, [], false, hubMail({ ...mail, repo: BB_REPO, repoSource: "bitbucket-datacenter", ...heads }, "github@acme.test"), false, bitbucket, credentialBindingsFor(["bitbucket-datacenter"]));
+      expect(host.builds).toEqual([expect.objectContaining({ state: "FAILED", description: "Triage couldn't run" })]);
+    }
   });
 
   test("Bitbucket Data Center shows Triage's build status failed, once, and writes nothing else; without a known head it writes nothing", async () => {

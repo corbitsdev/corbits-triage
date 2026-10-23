@@ -7,6 +7,9 @@ import { NEEDS_JUDGE_REASON, NOT_ASKED_REASON } from "./render.js";
 /** A verdict whose model checks were all skipped; the hub triages a settled head again for it once, whatever attempts it spent. */
 export const MODEL_NOT_ASKED = "model not asked";
 
+/** Opens the reason of a verdict whose policy the hub could not read; a run again changes nothing until the policy does. */
+export const POLICY_UNREADABLE = "Policy can't be read: ";
+
 /** `unconfirmed` when GitHub had not computed a machine check yet. */
 export type Unsettled = { unsettled?: string; unconfirmed?: true };
 
@@ -34,6 +37,7 @@ export function unsettledBy(verdict: VerdictFields, headSha?: string): Unsettled
   const degraded = verdict.degraded;
   if (degraded !== undefined && degraded !== null) {
     const reason = verdict.reason;
+    if (typeof reason === "string" && reason.startsWith(POLICY_UNREADABLE)) return {};
     return { unsettled: `degraded: ${typeof reason === "string" && reason !== "" ? reason : String(degraded)}` };
   }
   const made = verdict.headSha;

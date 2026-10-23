@@ -193,6 +193,8 @@ type HarnessOptions = {
   pack?: CheckPack;
   automatic?: ActionKind[];
   noPack?: boolean;
+  /** Why the policy can't be read. */
+  unreadable?: string;
   /** Build statuses of every head, for a host whose builds the reconciler polls. */
   headChecks?: CheckRun[];
   /** Stored triage state of the repository before the first pass. */
@@ -297,6 +299,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
       if (options.noPack) return { status: "missing" };
+      if (options.unreadable) return { status: "invalid", reason: options.unreadable, path: ".corbits-triage.yml", automatic: options.automatic ?? [] };
       return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: options.automatic ?? [], source: { repo: { id: "art_pack", version: 1 } } };
     },
     send: async function send({ number, payload }) {
@@ -414,6 +417,13 @@ describe("triage reconciler", () => {
     await unset.reconcile();
     expect(unset.delivered).toHaveLength(0);
     expect(unset.logged.filter((entry) => entry.msg === "triage_skipped_no_policy")).toEqual([expect.objectContaining({ pulls: [1] })]);
+  });
+
+  test("a policy triage can't read mails each open head with why and no pack, so the run marks it failed", async () => {
+    const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { unreadable: "The policy file has unknown checks: max-size.", automatic: ["labels"] });
+    await run.reconcile();
+    expect(run.delivered.map((entry) => entry.payload)).toEqual([expect.objectContaining({ policyUnreadable: "The policy file has unknown checks: max-size.", automatic: ["labels"], items: [{ prNumber: 1, headSha: "sha1" }] })]);
+    expect(run.delivered[0]!.payload).not.toHaveProperty("pack");
   });
 
   test("reads only the live deployment's runs and queues to it", async () => {

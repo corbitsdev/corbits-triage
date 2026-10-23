@@ -143,7 +143,7 @@ function openHeadOf(drafts: number[]): BridgeDeps["openHeadFor"] {
   };
 }
 
-type Recheck = [string, string, number];
+type Recheck = [string, string, number | null];
 
 function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[]; refreshed?: string[] } = {}) {
   const sent = overrides.sent ?? [];
@@ -152,7 +152,7 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
     sent.push(input);
     return "queued" as const;
   }
-  async function recheckOpenPulls(tenantId: string, repo: string, except: number) {
+  async function recheckOpenPulls(tenantId: string, repo: string, except: number | null) {
     rechecks.push([tenantId, repo, except]);
     return 1;
   }
@@ -334,6 +334,17 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
+  test("a push that leaves the policy unreadable has every open pull request marked again", async () => {
+    const rechecks: Recheck[] = [];
+    async function readCheckPack() {
+      return { status: "invalid" as const, reason: "The policy file has unknown checks: max-size.", path: ".corbits-triage.yml", automatic: [] };
+    }
+    const body = JSON.stringify({ ref: "refs/heads/main", forced: false, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [{ modified: [".corbits-triage.yml"] }] });
+    const res = await bridge({ rechecks, readCheckPack })(githubRequest(body, { event: "push", delivery: "broken" }), TARGET);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", null]]);
+  });
+
   test("a push to the default branch that changes or removes either policy file name, or is forced, reads it again", async () => {
     const refreshed: string[] = [];
     const handle = bridge({ refreshed });
@@ -377,7 +388,7 @@ describe("bridge handler", () => {
   test("a base move the triage state refused is 500 and releases the id for retry", async () => {
     let refusals = 1;
     const rechecks: Recheck[] = [];
-    async function recheckOpenPulls(tenantId: string, repo: string, except: number) {
+    async function recheckOpenPulls(tenantId: string, repo: string, except: number | null) {
       if (refusals-- > 0) throw new Error("triage state for octocat/hello changed since it was loaded");
       rechecks.push([tenantId, repo, except]);
       return 1;
@@ -521,6 +532,17 @@ describe("bridge handler", () => {
     const res = await bridge({ sent, readCheckPack: packsFor([]) })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "needs-setup" });
     expect(sent).toHaveLength(0);
+  });
+
+  test("a policy triage can't read is queued with its reason and no pack, so the run marks the head failed", async () => {
+    const sent: Sent[] = [];
+    async function readCheckPack() {
+      return { status: "corrupt" as const, reason: "The policy has unknown checks: max-size.", repo: { id: "art_pack", version: 1 }, automatic: ["labels" as const] };
+    }
+    const res = await bridge({ sent, readCheckPack })(githubRequest(prPayload), TARGET);
+    expect(await res.json()).toEqual({ status: "queued" });
+    expect(sent[0]).toMatchObject({ policyUnreadable: "The policy has unknown checks: max-size.", automatic: ["labels"] });
+    expect(sent[0]).not.toHaveProperty("pack");
   });
 
   test("a policy file read that fails is 500 and releases the id for retry", async () => {

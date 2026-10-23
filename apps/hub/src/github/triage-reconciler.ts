@@ -7,7 +7,7 @@
 import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
 import { WorkflowProvisioningError } from "@intx/hub-sessions";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
-import { mailPayload, waitingPayload } from "./bridge.js";
+import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { triageWorkflowFor } from "./source-workflow.js";
@@ -68,7 +68,7 @@ export type TriageReconcilerDeps = {
 
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
-type LoadedRepo = EnabledRepo & StoredPack & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
+type LoadedRepo = EnabledRepo & (StoredPack | PolicyUnreadable) & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
 
 /**
  * `retry` asks for another pass soon: a repository's pass failed, or a failed deployment is being redeployed.
@@ -240,6 +240,11 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       const ci = dependsOnCi(read.pack) ? await headsCi(pass.tenantId, repo.record, prs, stored.rows) : new Map<string, CiState>();
       return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, ...(read.policyWorkflow && { policyWorkflow: read.policyWorkflow }), ...(read.pauseLabel && { pauseLabel: read.pauseLabel }), prs, stored, ci };
     }
+    // A policy triage can't read is mailed in place of a pack, so every open head is marked failed.
+    if (read.status === "invalid" || read.status === "corrupt") {
+      skippedRepos.delete(key);
+      return { ...repo, policyUnreadable: read.reason, automatic: read.automatic, prs, stored: await deps.store.load(pass.tenantId, triageStateKey(repo.record)), ci: new Map<string, CiState>() };
+    }
     const skipped = read.status === "ok" ? "triage_skipped_no_rules" : "triage_skipped_no_policy";
     // Once per repository, and again only once a policy or rule came and went, so a repository left unset stays quiet.
     if (skippedRepos.get(key) !== skipped) deps.log({ level: "info", msg: skipped, tenantId: pass.tenantId, repo: repo.record.name, pulls: prs.map((pr) => pr.number) });
@@ -279,7 +284,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
 
   /** Mails the heads this pass started holding for CI to be marked waiting. */
   async function markHeld(pass: TenantPass, repo: LoadedRepo, rows: readonly PrTriageRow[]): Promise<void> {
-    if (!marksWaiting(sourceOf(repo.record), repo.automatic)) return;
+    if (!("pack" in repo) || !marksWaiting(sourceOf(repo.record), repo.automatic)) return;
     const waited = new Set(repo.stored.rows.filter((row) => row.status === "waiting").map(headKey));
     for (const row of rows.filter((candidate) => candidate.status === "waiting" && !waited.has(headKey(candidate)))) {
       await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, source: "reconcile", payload: waitingPayload(repo.record, repo.policy, repo, row, false) });
@@ -298,7 +303,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       const extra = queued.events === undefined
         ? { items: [{ prNumber: queued.number, headSha, ...(queued.judged && { judged: queued.judged }) }] }
         : { prNumber: queued.number, headSha, events: queued.events };
-      const payload = mailPayload(repo.record, repo.policy, repo, { ...extra, ...(queued.noWait && { noWait: true }) });
+      const mailed = { ...extra, ...(queued.noWait && { noWait: true }) };
+      const payload = "pack" in repo ? mailPayload(repo.record, repo.policy, repo, mailed) : unreadablePayload(repo.record, repo.policy, repo, mailed);
       try {
         await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, number: queued.number, headSha, source: "reconcile", record: repo.record, payload });
       } catch (err) {
