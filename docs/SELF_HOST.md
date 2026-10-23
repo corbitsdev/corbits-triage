@@ -5,15 +5,11 @@ portal setup, and every setting. Local development is in [DEV.md](DEV.md).
 
 ## What you need
 
-To try it on your machine with [Docker Compose](#docker-compose):
-
-- Docker.
-- A GitHub account or organization that can create a GitHub App.
-- An API key for a System One model (Jev), from TypeSafe, Vercel AI Gateway,
-  OpenCode Zen, or any System One–compatible provider.
+To try it on your machine, the requirements and portal address for each way
+to run it are in the [README](../README.md#get-started).
 
 GitHub cannot deliver webhooks to localhost, so a local hub picks up pull
-requests every five minutes and reads a policy file change after a restart.
+requests every five minutes and a policy file change within a few minutes.
 For live events, forward webhooks with a tunnel
 ([Webhooks on localhost](DEV.md#webhooks-on-localhost-unverified)).
 
@@ -54,10 +50,14 @@ setting.
 ```sh
 cp .env.example .env   # set the four secrets: openssl rand -hex 32 each
 docker compose up --build -d
-docker compose logs -f hub
+docker compose logs hub
 ```
 
-The hub is ready when it logs `Started server: http://localhost:3000`.
+The first build needs about 3 GB of free Docker disk; with less it stops with
+`no space left on device`. The `migrate` service runs to completion before the
+hub starts. The hub is ready when it logs `Started server: http://localhost:3000`;
+the portal is at that address. A `docker_sidecars_off` line is expected:
+triage needs no Docker, only code review does ([Where sidecars run](#where-sidecars-run)).
 
 ### Railway
 
