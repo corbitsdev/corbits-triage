@@ -84,6 +84,11 @@ export function waitedOut(firstSeenAt: string, now: Date, policy: Pick<Reconcile
   return now.getTime() - ms(firstSeenAt) >= policy.ciWaitMaxMs;
 }
 
+/** A run on a head's last attempt is decided too, so the head never ends without a verdict; so is one past the CI wait. `attempts` is the count the queued run leaves on the row. */
+function decideNow(row: PrTriageRow, attempts: number, now: Date, policy: ReconcilePolicy): boolean {
+  return waitedOut(row.firstSeenAt, now, policy) || attempts >= policy.maxAttempts;
+}
+
 type RepoPlanInput = {
   name: string;
   prs: readonly OpenPr[];
@@ -303,14 +308,14 @@ function byWait(a: Due, b: Due): number {
     || a.row.number - b.row.number;
 }
 
-/** Queues a settled head again for `reason`, as a due one is; the row keeps its run so the verdict's answers are carried. */
-export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: Date): void {
+/** Queues a settled head again for `reason`, keeping its attempts since it did not fail; the row keeps its run so the verdict's answers are carried. */
+export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: Date, policy: ReconcilePolicy): void {
   const index = plan.rows.findIndex((candidate) => candidate.number === row.number && candidate.headSha === row.headSha);
   if (index === -1) return;
   const at = now.toISOString();
   const { runId: _run, error: _error, events: _events, ...rest } = row;
-  plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
-  plan.enqueue.push({ number: row.number, reason });
+  plan.rows[index] = { ...rest, status: "queued", queuedAt: at, updatedAt: at };
+  plan.enqueue.push({ number: row.number, reason, ...(decideNow(row, row.attempts, now, policy) && { noWait: true }) });
 }
 
 /** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running. */
@@ -343,8 +348,7 @@ export function planTenant({ repos, runs, now, policy, workflowVersion, offering
     // The events stay on the row while its run is in flight, so a check run finishing meanwhile is known to be covered by it.
     plan.rows[index] = { ...rest, status: "queued", ...(events !== undefined && { events }), attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
     const reason = row.status === "waiting" ? "waited for CI" : row.error ?? "never triaged";
-    // Its last attempt is decided too, so a head never ends without a verdict.
-    const noWait = waitedOut(row.firstSeenAt, now, policy) || row.attempts + 1 >= policy.maxAttempts;
+    const noWait = decideNow(row, row.attempts + 1, now, policy);
     plan.enqueue.push({ number: row.number, reason, ...(Object.keys(judged).length > 0 && { judged }), ...(events !== undefined && { events }), ...(noWait && { noWait }) });
   }
   return plans;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PrTriageRow } from "@corbits/triage-contracts";
 import type { CiState } from "@corbits/github-reads";
-import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr, type RepoPlan } from "./reconcile-plan.js";
+import { DEFAULT_RECONCILE_POLICY, planTenant, requeue, runKey, type ObservedRun, type OpenPr, type RepoPlan } from "./reconcile-plan.js";
 
 const MINUTE = 60_000;
 const T0 = new Date("2026-10-07T00:00:00.000Z");
@@ -358,5 +358,35 @@ describe("a head waiting for CI", () => {
     expect(enqueued(seen("pending"))).toEqual([]);
     expect(status(seen("pending"), 2)?.status).toBe("waiting");
     expect(enqueued(seen("none"))).toEqual([2]);
+  });
+});
+
+describe("a head queued again because its CI changed", () => {
+  function requeued(attempts: number, minute: number): RepoPlan {
+    const result: RepoPlan = { rows: [row(1, { status: "triaged", runId: "run1", attempts, firstSeenAt: at(0).toISOString() })], enqueue: [] };
+    requeue(result, result.rows[0]!, "build_status_changed", at(minute), policy);
+    return result;
+  }
+
+  test("keeps its attempts however often CI changes, so a failed run after them is still retried", () => {
+    let rows: readonly PrTriageRow[] = [row(1, { status: "triaged", runId: "run0", attempts: 1, firstSeenAt: at(0).toISOString() })];
+    for (const minute of [1, 2, 3, 4, 5, 6]) {
+      const result: RepoPlan = { rows: [...rows], enqueue: [] };
+      requeue(result, rows[0]!, "build_status_changed", at(minute), policy);
+      expect(result.enqueue).toEqual([{ number: 1, reason: "build_status_changed" }]);
+      rows = plan([pr(1)], result.rows, at(minute), [[pr(1), [run(`run${minute}`, "completed", minute)]]]).rows;
+    }
+    expect(rows[0]).toMatchObject({ status: "triaged", attempts: 1 });
+    const queued = { ...rows[0]!, status: "queued" as const, queuedAt: at(7).toISOString() };
+    const retried = plan([pr(1)], [queued], at(200), [[pr(1), [run("run7", "failed", 7)]]]);
+    expect(enqueued(retried)).toEqual([1]);
+    expect(status(retried, 1)).toMatchObject({ status: "queued", attempts: 2 });
+  });
+
+  test("is decided without waiting on its last attempt or past the CI wait", () => {
+    expect(requeued(4, 1).enqueue).toEqual([{ number: 1, reason: "build_status_changed" }]);
+    expect(requeued(5, 1).enqueue).toEqual([{ number: 1, reason: "build_status_changed", noWait: true }]);
+    expect(requeued(0, 60).enqueue).toEqual([{ number: 1, reason: "build_status_changed", noWait: true }]);
+    expect(status(requeued(5, 1), 1)).toMatchObject({ status: "queued", attempts: 5 });
   });
 });
