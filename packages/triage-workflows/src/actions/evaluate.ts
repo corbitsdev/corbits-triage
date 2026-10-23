@@ -221,7 +221,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const choiceReply = [...early, ...late][0];
     const answered = asking && choiceReply ? choiceAnswer(asking, choiceReply) : undefined;
     const rendered = renderVerdict({
-      author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, plan, focused, stack: it.facts.stack, judgeError,
+      author: it.facts.author, repo: it.facts.repo, repoSource: repoSourceOf(it.repoSource), headSha: it.facts.headSha, det: it.det, answers, plan, focused, stack: it.facts.stack, judgeError,
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(it.noWait && { noWait: it.noWait }),
     });

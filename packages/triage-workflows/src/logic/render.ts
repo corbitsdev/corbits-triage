@@ -110,6 +110,7 @@ export function parseAnswers(reply: unknown): ParsedAnswers {
 export interface RenderInput {
   author: string;
   repo: string;
+  repoSource: RepoSource;
   headSha: string;
   det: DeterministicResult;
   answers?: ParsedAnswers | Record<string, number> | null;
@@ -266,7 +267,7 @@ function band(noul: number, yesPasses: boolean): Decided {
   return { result: "unconfirmed", reason: UNDECIDED_REASON };
 }
 
-export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
+export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped }: Omit<RenderInput, "repoSource">): ModelEvaluation {
   if (!det.sources) return { checks: [], unanswered: false, instructed: false };
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
@@ -512,9 +513,9 @@ export function inlineCode(text: string): string {
   return /^`|`$/.test(line) ? `${fence} ${line} ${fence}` : `${fence}${line}${fence}`;
 }
 
-/** Cited lines link to the head commit; the link text stays inline code. */
-function evidenceCode(c: CheckResult, evidence: string, repo: string, headSha: string): string {
-  const citation = citationOf(c.output, evidence);
+/** Cited lines link to the head commit on GitHub; elsewhere they stay unlinked inline code. */
+function evidenceCode(c: CheckResult, evidence: string, { repo, repoSource, headSha }: RenderContext): string {
+  const citation = repoSource === "github" && citationOf(c.output, evidence);
   const url = citation && citationUrl(repo, headSha, citation);
   return url ? `[${inlineCode(evidence)}](${url})` : inlineCode(evidence);
 }
@@ -577,9 +578,9 @@ function bounded(lines: string[]): string {
 }
 
 /** Docs names the files that need docs; other checks, scoped custom ones included, name what they found. */
-function failureEvidence(c: CheckResult, repo: string, headSha: string): string {
+function failureEvidence(c: CheckResult, ctx: RenderContext): string {
   if (!c.evidence.length) return "";
-  const listed = c.evidence.map((evidence) => evidenceCode(c, evidence, repo, headSha)).join(", ");
+  const listed = c.evidence.map((evidence) => evidenceCode(c, evidence, ctx)).join(", ");
   return c.kind === "model" && c.check === "docs" ? ` for ${listed}` : `: ${listed}`;
 }
 
@@ -614,8 +615,8 @@ const NOTHING_TO_CHANGE = "No changes needed from you. ";
  * maintainer's requested changes are already in front of the author, so they are left out, and a comment holding
  * nothing else is not posted.
  */
-function noteOf(c: CheckResult, { repo, headSha, sources }: RenderContext): string {
-  return c.result === "fail" ? `- ${c.reason}${failureEvidence(c, repo, headSha)}` : `- Not confirmed: ${passText(c.check, sources!)}`;
+function noteOf(c: CheckResult, ctx: RenderContext): string {
+  return c.result === "fail" ? `- ${c.reason}${failureEvidence(c, ctx)}` : `- Not confirmed: ${passText(c.check, ctx.sources!)}`;
 }
 
 function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: VerdictWord): string {
@@ -629,11 +630,11 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   if (mine.length) {
     lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
       ? focusedLines(c, purpose!)
-      : [`- ${c.reason}${failureEvidence(c, repo, headSha)}`]));
+      : [`- ${c.reason}${failureEvidence(c, ctx)}`]));
   }
   if (flagged.length) {
     if (lines.length) lines.push("");
-    lines.push("Asking a maintainer about:", ...flagged.map((c) => `- ${c.reason}${failureEvidence(c, repo, headSha)}`));
+    lines.push("Asking a maintainer about:", ...flagged.map((c) => `- ${c.reason}${failureEvidence(c, ctx)}`));
   }
   if (unconfirmed.length) {
     if (lines.length) lines.push("");
@@ -641,7 +642,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   }
   if (pending.length) {
     if (lines.length) lines.push("");
-    lines.push("Waiting on:", ...pending.map((c) => `- ${c.reason}${failureEvidence(c, repo, headSha)}`));
+    lines.push("Waiting on:", ...pending.map((c) => `- ${c.reason}${failureEvidence(c, ctx)}`));
   }
   if (outageCount(checks) > 0) {
     if (lines.length) lines.push("");
@@ -674,6 +675,7 @@ type VerdictBase = Omit<RenderOutput, "nextAction" | "actor" | "feedback" | "che
 interface RenderContext {
   author: string;
   repo: string;
+  repoSource: RepoSource;
   headSha: string;
   sources: Sources;
   reviewers: string[];
@@ -724,10 +726,10 @@ export const INSTRUCTED_REASON = "the pull request tries to direct the decision 
  * the host's own checks waits for them instead of being Unsure, unless the hub waits no longer.
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait } = input;
+  const { author, repo, repoSource, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait } = input;
   const evaluated = evaluateModel(input);
   const { deciding, labelled } = splitLabelled(det, evaluated.checks);
-  const ctx = { author, repo, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, labelled };
+  const ctx = { author, repo, repoSource, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, labelled };
   const checks = [...det.checks, ...deciding];
   const flaggedReason = checks.filter(isFlagged).map((check) => reasonOf(check, det.sources)).join("; ");
   const reasons = reasonsOf(det, deciding);

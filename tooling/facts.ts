@@ -25,6 +25,6 @@ export function triage(pr: PRRecord): RenderOutput {
   const facts = toFacts(pr);
   const det = deriveState(facts);
   const { focused } = prepareQualityEvaluation(facts, det.sources);
-  const v = renderVerdict({ author: pr.author, repo: facts.repo, headSha: facts.headSha, det, focused });
+  const v = renderVerdict({ author: pr.author, repo: facts.repo, repoSource: "github", headSha: facts.headSha, det, focused });
   return { ...v, humanGated: v.humanGated || pr.spam >= 0.9 || pr.confidence < 0.5 };
 }

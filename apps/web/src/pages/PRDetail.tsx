@@ -11,6 +11,7 @@ import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
+import type { RepoSource } from "@corbits/triage-contracts";
 import { approvedHead, canRun, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { notPostedText } from "../lib/inbox-view.ts";
 import { heldReason, isHeldBlock } from "../lib/pane-report.ts";
@@ -70,7 +71,7 @@ function checkTone(check: CheckResult): string {
   return check.result;
 }
 
-function CheckRow({ check, name, repo, sha }: { check: CheckResult; name: string | null; repo: string; sha: string | null }) {
+function CheckRow({ check, name, source, repo, sha }: { check: CheckResult; name: string | null; source: RepoSource; repo: string; sha: string | null }) {
   const tone = checkTone(check);
   const value = checkValueText(check);
   return (
@@ -80,12 +81,12 @@ function CheckRow({ check, name, repo, sha }: { check: CheckResult; name: string
       <span className="check-result">{check.gate ? GATE_RESULT[check.result] : check.result}</span>
       {check.reason ? <span className="check-fact">{check.reason}</span> : null}
       {value === null ? null : <span className="check-fact">{value}</span>}
-      {check.evidence.map((line) => <span className="check-fact mono small-text" key={line}><CitedEvidence text={line} output={check.output} repo={repo} sha={sha} /></span>)}
+      {check.evidence.map((line) => <span className="check-fact mono small-text" key={line}><CitedEvidence text={line} output={check.output} source={source} repo={repo} sha={sha} /></span>)}
     </li>
   );
 }
 
-function CheckList({ repo, sha, checks, fallback }: { repo: string; sha: string | null; checks: CheckResult[]; fallback: string[] }) {
+function CheckList({ source, repo, sha, checks, fallback }: { source: RepoSource; repo: string; sha: string | null; checks: CheckResult[]; fallback: string[] }) {
   const pack = useRepoPack(repo);
   if (checks.length === 0) {
     return fallback.length === 0 ? <p className="muted">No triage findings.</p> : <ul>{fallback.map((reason) => <li key={reason}>{reason}</li>)}</ul>;
@@ -94,11 +95,11 @@ function CheckList({ repo, sha, checks, fallback }: { repo: string; sha: string 
   const passed = checks.filter((c) => c.result === "pass");
   return (
     <>
-      {open.length > 0 ? <ul className="verdict-checks">{open.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} repo={repo} sha={sha} />)}</ul> : null}
+      {open.length > 0 ? <ul className="verdict-checks">{open.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} source={source} repo={repo} sha={sha} />)}</ul> : null}
       {passed.length > 0 ? (
         <details className="check-group">
           <summary>{passed.length} checks passed</summary>
-          <ul className="verdict-checks">{passed.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} repo={repo} sha={sha} />)}</ul>
+          <ul className="verdict-checks">{passed.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} source={source} repo={repo} sha={sha} />)}</ul>
         </details>
       ) : null}
     </>
@@ -213,7 +214,7 @@ function About({ item, drafted }: { item: PrItem; drafted: boolean }) {
       </section>
       <section className="brief">
         <h2>Rules</h2>
-        <CheckList repo={item.repo} sha={item.verdictSha} checks={item.checks} fallback={item.evidence} />
+        <CheckList source={item.source} repo={item.repo} sha={item.verdictSha} checks={item.checks} fallback={item.evidence} />
         {item.labels.length > 0 && (
           <div className="row wrap">
             {item.labels.map((label) => <Badge key={label} className="verbatim">{label}</Badge>)}

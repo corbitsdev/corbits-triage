@@ -71,3 +71,10 @@ export function citationUrl(repo: string, headSha: string, citation: LineCitatio
   const lines = added.start === added.end ? `L${added.start}` : `L${added.start}-L${added.end}`;
   return `https://github.com/${repo}/blob/${headSha}/${path}?plain=1#${lines}`;
 }
+
+/** The file at the judged head commit on Bitbucket Data Center; the line anchor is left off until its format is confirmed. */
+export function bitbucketCitationUrl(repoUrl: string, headSha: string, citation: LineCitation): string | undefined {
+  if (!citation.added) return undefined;
+  const path = citation.path.split("/").map(urlSegment).join("/");
+  return `${repoUrl}/browse/${path}?at=${headSha}`;
+}
