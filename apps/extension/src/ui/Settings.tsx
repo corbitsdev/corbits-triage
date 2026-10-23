@@ -1,7 +1,7 @@
 import { Badge, ConfirmButton } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { useState, type ReactNode } from "react";
-import { policyFiles, runStates, tokenSaved, views } from "../storage.ts";
+import { clearSaved, tokenSaved, views } from "../storage.ts";
 import { GithubTokenForm } from "./GithubTokenForm.tsx";
 import { useStorageItem } from "./use-storage.ts";
 
@@ -38,7 +38,7 @@ function AboutSection() {
   async function clearRuns() {
     setError(null);
     try {
-      await Promise.all([views.setValue({}), runStates.setValue({}), policyFiles.setValue({})]);
+      await clearSaved();
       setCleared(true);
     } catch (cause) {
       setError(errorText(cause));

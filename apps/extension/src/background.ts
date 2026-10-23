@@ -4,9 +4,9 @@ import { GITHUB_API, githubApi } from "./github-api.ts";
 import type { Reply, Request } from "./messages.ts";
 import { policyFor } from "./policy-source.ts";
 import { prKey } from "./pr.ts";
-import { browserSession, sessionGithub, type SessionReads } from "./session-reads.ts";
+import { browserSession, sessionGithub, sessionLogin, type SessionReads } from "./session-reads.ts";
 import { openPanelOnActionClick, openSidePanel } from "./side-panel.ts";
-import { clearRunning, githubToken, policyFiles, runStates, saveView, setRunState, tokenSaved, views } from "./storage.ts";
+import { clearRunning, clearSaved, githubToken, readAs, saveView, setRunState, tokenSaved, views } from "./storage.ts";
 import { FRESH_MS, type TriageView } from "./view.ts";
 
 type Triage = Extract<Request, { type: "triage" }>;
@@ -32,17 +32,19 @@ function isFresh(view: TriageView | undefined): view is TriageView {
 
 /** A recent check is reused only while the pull request's head is the one it checked, so a new push is checked again. */
 async function triage({ pr, mode }: Triage): Promise<null> {
-  const saved = (await views.getValue())[prKey(pr)];
-  await setRunState(pr, { running: true });
   let reads: SessionReads | undefined;
   try {
     const token = await githubToken.getValue();
     const cache = mode === "refetch" ? "no-cache" : "default";
+    const login = await sessionLogin();
+    // Checked before the run state is set, since a different account clears every run state.
+    const saved = (await readAs(login)) ? (await views.getValue())[prKey(pr)] : undefined;
+    await setRunState(pr, { running: true });
     reads = sessionGithub(await browserSession(pr, cache), token ? githubApi(token, cache).gh : null);
     const api = { gh: reads.gh };
     const pull = await pullOf(api, pr);
     if (!(mode === "if-stale" && isFresh(saved) && pull.headSha === saved.headSha)) {
-      await saveView(await checkPr(api, pr, pull, await policyFor(api, pr.repo, mode === "refetch")));
+      await saveView(await checkPr(api, pr, pull, await policyFor(api, pr.repo, mode === "refetch")), login);
     }
     await setRunState(pr, { running: false });
   } catch (cause) {
@@ -90,7 +92,7 @@ async function saveToken(token: string): Promise<null> {
 
 /** Saved checks and policy files were read with the old token, which may have seen repositories the new one cannot. */
 async function setToken(token: string | null): Promise<null> {
-  await Promise.all([githubToken.setValue(token), tokenSaved.setValue(token !== null), views.setValue({}), runStates.setValue({}), policyFiles.setValue({})]);
+  await Promise.all([githubToken.setValue(token), tokenSaved.setValue(token !== null), clearSaved()]);
   return null;
 }
 
@@ -129,7 +131,7 @@ async function syncTokenSaved(): Promise<void> {
 }
 
 function onInstalled({ reason }: Browser.runtime.InstalledDetails): void {
-  if (reason === "update") settle(Promise.all([views.setValue({}), runStates.setValue({}), policyFiles.setValue({}), browser.storage.local.remove(["system-one", "packs"]), syncTokenSaved()]));
+  if (reason === "update") settle(Promise.all([clearSaved(), browser.storage.local.remove(["system-one", "packs"]), syncTokenSaved()]));
 }
 
 export function startBackground(): void {

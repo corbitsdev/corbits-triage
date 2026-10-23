@@ -16,6 +16,8 @@ export const runStates = storage.defineItem<Record<string, RunState>>("local:run
 export const policyFiles = storage.defineItem<Record<string, KeptPolicyFile>>("local:policy-files", { fallback: {} });
 /** The person's own GitHub token; every read is made with it. Only the background reads it. */
 export const githubToken = storage.defineItem<string | null>("local:github-token", { fallback: null });
+/** The github.com login saved checks and policy files were read as. */
+export const viewer = storage.defineItem<string>("local:viewer", { fallback: "" });
 /** Whether a token is saved, for the side panel, so no page but the background reads the token itself. */
 export const tokenSaved = storage.defineItem<boolean>("local:token-saved", { fallback: false });
 
@@ -37,8 +39,10 @@ function serialized(write: () => Promise<void>): Promise<void> {
   return next;
 }
 
-export function saveView(view: TriageView): Promise<void> {
+/** A run started as one account and finished after another signed in is not saved. */
+export function saveView(view: TriageView, login: string): Promise<void> {
   return serialized(async function writeView() {
+    if ((await viewer.getValue()) !== login) return;
     const all = await views.getValue();
     const next = { ...all, [prKey(view.pr)]: view };
     const newest = Object.entries(next).sort(([, a], [, b]) => b.ranAt.localeCompare(a.ranAt)).slice(0, MAX_VIEWS);
@@ -65,4 +69,21 @@ export function clearRunning(): Promise<void> {
     const all = await runStates.getValue();
     await runStates.setValue(Object.fromEntries(Object.entries(all).filter(([, state]) => !state.running)));
   });
+}
+
+export function clearSaved(): Promise<void> {
+  return serialized(async function writeCleared() {
+    await Promise.all([views.setValue({}), runStates.setValue({}), policyFiles.setValue({})]);
+  });
+}
+
+/**
+ * Whether saved checks were read as `login` ("" for no one signed in). Ones read as another account, which may see
+ * repositories this one cannot, are cleared.
+ */
+export async function readAs(login: string): Promise<boolean> {
+  if ((await viewer.getValue()) === login) return true;
+  await clearSaved();
+  await viewer.setValue(login);
+  return false;
 }
