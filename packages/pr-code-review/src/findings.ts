@@ -42,7 +42,7 @@ function findingsListOf(json: unknown): Record<string, unknown>[] | undefined {
 }
 
 /** The `findings` array of the first balanced JSON object in `text` that parses and holds one, trying each `{` in turn. */
-function firstFindingsList(text: string): Record<string, unknown>[] | undefined {
+export function firstFindingsList(text: string): Record<string, unknown>[] | undefined {
   for (let open = text.indexOf("{"); open !== -1; open = text.indexOf("{", open + 1)) {
     const close = closingBrace(text, open);
     if (close === -1) continue;
@@ -98,7 +98,7 @@ function rangeOf(value: unknown): [number, number] | undefined {
 }
 
 /** Any finding shape with a path and a line or a line range, flat or under `location`. */
-function findingOf(raw: unknown): Finding | undefined {
+export function findingOf(raw: unknown): Finding | undefined {
   if (!isRecord(raw)) return undefined;
   const item = isRecord(raw.location) ? { ...raw, ...raw.location } : raw;
   const path = firstOf(item, PATH_KEYS);
