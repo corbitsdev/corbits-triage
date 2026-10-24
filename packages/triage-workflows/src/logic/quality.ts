@@ -523,7 +523,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
 
 /**
  * The verdict question: the rules' results with the pull request's metadata and as much of its diff as fits one request,
- * packed as focused's first slice is. Refused when the metadata and rules alone leave too little room for files.
+ * packed as focused's first slice is, asked with the instructed question since it carries the pull request's text.
+ * Refused when the metadata and rules alone leave too little room for files.
  */
 export function verdictRequest(facts: PrFacts, rules: PolicyRule[]): { request: JudgeRequest } | { judgeError: string } {
   const listed = pathList(facts, true);
@@ -541,7 +542,7 @@ export function verdictRequest(facts: PrFacts, rules: PolicyRule[]): { request: 
     used += jsonBytes(fitted) + (files.length > 1 ? 1 : 0);
     if (fitted.hunks.length < hunks.length) break;
   }
-  return { request: { state: { ...empty, pullRequest: { ...empty.pullRequest, files } }, questions: [VERDICT_QUESTION] } };
+  return { request: { state: { ...empty, pullRequest: { ...empty.pullRequest, files } }, questions: [VERDICT_QUESTION, INSTRUCTED_QUESTION] } };
 }
 
 function stateFile(file: PrFileFacts, hunks: string[]): StateFile {

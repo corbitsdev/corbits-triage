@@ -267,7 +267,7 @@ function band(noul: number, yesPasses: boolean): Decided {
   return { result: "unconfirmed", reason: UNDECIDED_REASON };
 }
 
-export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped }: Omit<RenderInput, "repoSource">): ModelEvaluation {
+export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped, choice }: Omit<RenderInput, "repoSource">): ModelEvaluation {
   if (!det.sources) return { checks: [], unanswered: false, instructed: false };
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
@@ -278,8 +278,8 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
   const instructedAnswer = invalid ? undefined : parsed.decisions[INSTRUCTED_QUESTION.id];
   const instructed = instructedAnswer?.type === "noul" && instructedAnswer.noul >= YES;
   const checks: CheckResult[] = [];
-  // Every request asks the instructed question, and without its answer no other answer can be trusted, labelling rules' included.
-  let anyUnanswered = det.needsJudgment && !judgeSkipped && !judgeLimitExceeded && asked.size > 1 && instructedAnswer?.type !== "noul";
+  // Every first-round request and the verdict request ask the instructed question, and without its answer no other answer can be trusted, labelling rules' included.
+  let anyUnanswered = det.needsJudgment && !judgeSkipped && !judgeLimitExceeded && (asked.size > 1 || choice !== undefined) && instructedAnswer?.type !== "noul";
 
   /** A labelling rule left unanswered never holds the verdict back. */
   function unansweredBy(check: string) {

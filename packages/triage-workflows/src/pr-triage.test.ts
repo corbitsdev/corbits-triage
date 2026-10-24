@@ -417,7 +417,7 @@ describe("pr-triage body", () => {
     const files = [...sources, { ...FLAG, filename: "docs/flag.md" }];
     const pack = emptyPack(REPO);
     const { judged, verdict } = await triage({ ...pack, checks: { docs: { enabled: true } } }, { files });
-    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["verdict"]);
+    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["verdict", "instructed"]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["docs", "pass"]]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => c.output)).toEqual([{ kind: "met", items: ["docs/flag.md"] }]);
   });

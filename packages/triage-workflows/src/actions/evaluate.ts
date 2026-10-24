@@ -7,7 +7,7 @@ import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
-import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
+import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation } from "../logic/quality.js";
 import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
@@ -120,10 +120,6 @@ export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[
   return verdictRequest(facts, [...det.checks, ...deciding].map((c) => policyRule(it.pack!, c)));
 }
 
-function choiceAnswer(request: JudgeRequest, reply: [string, unknown]): Record<VerdictChoice, number> | undefined {
-  return choiceOver(answersOf([request], [reply]).decisions[VERDICT_QUESTION.id], VERDICT_CHOICES);
-}
-
 export function partsOf(sources: DeterministicResult["sources"], { plan, focused, requests }: QualityEvaluation, answered: Array<[string, unknown]>): FocusedParts | undefined {
   const failing = focused && sources ? separateSlices(answersOf(requests, answered), focused, askedQuestionIds(sources, plan, focused)) : [];
   return failing.length > 0 ? focusedPartRequests(requests, failing) : undefined;
@@ -218,9 +214,12 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const focused = parts && asked ? { ...asked, parts: parts.asked } : asked;
     // Follow-up replies only name files, so one that failed or came back malformed never costs the first answers.
     const { judgeError } = it.det.needsJudgment ? { ...it, ...errorOf([...first, ...early, ...late]) } : it;
-    const answers = answersOf([...requests, ...(parts?.requests ?? [])], [...first, ...later]);
     const choiceReply = [...early, ...late][0];
-    const answered = asking && choiceReply ? choiceAnswer(asking, choiceReply) : undefined;
+    const choiceAsked = asking && choiceReply ? { requests: [asking], replies: [choiceReply] } : { requests: [], replies: [] };
+    // The verdict request's instructed answer counts with the first round's; its verdict answer is the choice.
+    const { [VERDICT_QUESTION.id]: verdictAnswer, ...decisions } = answersOf([...requests, ...(parts?.requests ?? []), ...choiceAsked.requests], [...first, ...later, ...choiceAsked.replies]).decisions;
+    const answers = { decisions, malformed: false };
+    const answered = choiceOver(verdictAnswer, VERDICT_CHOICES);
     const rendered = renderVerdict({
       author: it.facts.author, repo: it.facts.repo, repoSource: repoSourceOf(it.repoSource), headSha: it.facts.headSha, det: it.det, answers, plan, focused, stack: it.facts.stack, judgeError,
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,

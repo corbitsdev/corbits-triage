@@ -150,7 +150,7 @@ describe("focused rendering", () => {
   });
 
   test("does not apply with no lines to read", () => {
-    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, plan: {}, choice: CHOICE.pass });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, answers: parseAnswers(NOT_INSTRUCTED), plan: {}, choice: CHOICE.pass });
     expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "does not apply", evidence: [], output: { kind: "not-applicable" } }]);
     expect(verdict.degraded).toBeNull();
   });
