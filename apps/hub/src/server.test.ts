@@ -273,6 +273,24 @@ test("repeated sign-in attempts from one client are rate limited", async () => {
   expect(await signIn("203.0.113.2")).toBe(401);
 }, 40_000);
 
+test("on Railway, sign-in attempts are limited per caller by the address its edge sets, whatever x-forwarded-for holds", async () => {
+  const origin = await startHub({ RAILWAY_ENVIRONMENT_ID: "railway-environment" });
+
+  async function signIn(clientIp: string) {
+    const response = await fetch(`${origin}/api/auth/sign-in/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, "x-real-ip": clientIp, "x-forwarded-for": `${clientIp}, 10.0.0.1` },
+      body: JSON.stringify({ email: "nobody@example.com", password: "wrong-password" }),
+    });
+    return response.status;
+  }
+
+  const statuses = [];
+  for (let attempt = 0; attempt < 4; attempt++) statuses.push(await signIn("203.0.113.1"));
+  expect(statuses).toEqual([401, 401, 401, 429]);
+  expect(await signIn("203.0.113.2")).toBe(401);
+}, 40_000);
+
 test("composed hub documents the integration routes and still answers an invalid action with 400", async () => {
   const origin = await startHub();
 

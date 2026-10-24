@@ -63,7 +63,7 @@ import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, 
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { bitbucketEgressAllowlist, childProcessEnv, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
@@ -242,12 +242,14 @@ process.once("SIGTERM", onShutdownSignal);
 
 const portalOrigin = env.PORTAL_ORIGIN === undefined ? [] : [new URL(env.PORTAL_ORIGIN).origin];
 const signIn = signInSettings(env);
+const ipHeaders = clientIpHeaders(env);
+if (ipHeaders === undefined) logJson({ level: "warn", msg: "auth_client_ip_unresolved", reason: "Unknown host: sign-in rate limits may be shared between callers." });
 const email = emailSettings(env);
 const smtp = email === undefined ? undefined : createSmtpEmail(email);
 const composition = await createInterchangeHub({
   database,
   settings: interchangeSettings(env),
-  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { email: { resetPassword: smtp.passwordReset, verifyEmail: smtp.verifyEmail } }) },
+  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(ipHeaders && { clientIpHeaders: ipHeaders }), ...(smtp && { email: { resetPassword: smtp.passwordReset, verifyEmail: smtp.verifyEmail } }) },
   credentialCipher,
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
   sidecarProvisioners,

@@ -34,6 +34,8 @@ export type HubAuthConfig = SignInSettings & {
   secret: string;
   trustedOrigins: string[];
   portalOrigin: string;
+  /** Unset keeps better-auth's `x-forwarded-for`. */
+  clientIpHeaders?: string[];
   /** Unset when the hub sends no email, which leaves password reset and verification email off. */
   email?: { resetPassword: SendAuthEmail; verifyEmail: SendAuthEmail };
 };
@@ -114,7 +116,7 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     await db.delete(deviceCode).where(lt(deviceCode.expiresAt, new Date()));
   }
 
-  // better-auth keys its limits on a forwarded IP it cannot resolve behind a proxy, so resends are limited per account.
+  // better-auth keys its limits on the caller's address, which a caller can change and an unknown host leaves unresolved, so resends are limited per account.
   const recentResends = new Set<string>();
   function forgetResend(key: string) {
     recentResends.delete(key);
@@ -168,6 +170,7 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     disabledPaths: ["/sign-in/magic-link"],
     // better-auth only rate-limits when NODE_ENV is production, which the deployment does not set.
     rateLimit: { enabled: true, customRules: { "/device/code": { window: 60, max: 5 } } },
+    ...(config.clientIpHeaders && { advanced: { ipAddress: { ipAddressHeaders: config.clientIpHeaders } } }),
     ...(google && { socialProviders: { google } }),
     plugins: [
       bearer({ requireSignature: true }),

@@ -548,10 +548,19 @@ account into it through stock invites, so a workspace admin's vouch would be
 too weak. A hub that sends email refuses it and leaves the proof to the
 emailed link. Resending that link is limited to once a minute per signed-in
 account, or per address without a session, rather than by better-auth's
-per-IP limit, which cannot resolve a client behind a proxy. Stock has no unverified state of its own: tenant creation gives any
+per-IP limit alone, since a caller can change its address. Stock has no unverified state of its own: tenant creation gives any
 signed-in user an active owner membership, and the stock tenant middleware
 refuses only inactive memberships, so it covers neither `/api/me` nor tenant
 creation.
+
+better-auth's sign-in and email rate limits key on the caller's address. At
+start-up `clientIpHeaders` in `apps/hub/src/env.ts` detects the host from a
+variable the platform sets and reads the address from the header that
+platform's proxy sets: `X-Real-IP` on Railway, detected by
+`RAILWAY_ENVIRONMENT_ID`. On a detected host each session also records that
+address. Anywhere else better-auth reads `X-Forwarded-For` and trusts it only
+when it holds one address; otherwise every caller shares one bucket per path,
+so the hub logs `auth_client_ip_unresolved` once at start-up.
 
 A workspace is an Interchange tenant; repositories are tenant config
 (`corbitsTriage.repos`) plus a per-repository policy and triage state, both

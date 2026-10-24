@@ -68,6 +68,7 @@ const HubEnvSchema = type({
   "RAILWAY_GIT_COMMIT_SHA?": "string",
   "RAILWAY_GIT_REPO_OWNER?": "string",
   "RAILWAY_GIT_REPO_NAME?": "string",
+  "RAILWAY_ENVIRONMENT_ID?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
@@ -309,6 +310,15 @@ export function signInSettings(env: HubEnv): SignInSettings {
     ...(clientId !== undefined && clientSecret !== undefined && { google: { clientId, clientSecret } }),
     ...(allowedEmails !== undefined && { allowedEmails }),
   };
+}
+
+/**
+ * The header a hosting platform's own proxy sets to the caller's address, picked by a variable the platform sets on
+ * the service: Railway's edge sets `X-Real-IP`. Undefined on any other host.
+ */
+export function clientIpHeaders(env: Pick<HubEnv, "RAILWAY_ENVIRONMENT_ID">): string[] | undefined {
+  if (env.RAILWAY_ENVIRONMENT_ID !== undefined) return ["x-real-ip"];
+  return undefined;
 }
 
 export type EmailSettings = { smtpUrl: string; from: string };
