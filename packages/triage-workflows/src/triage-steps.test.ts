@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { listPrFilesPage } from "@corbits/github-reads";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { triageJudgeDirector } from "./directors.js";
-import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
+import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS, WAITING_LABEL, type CheckPack } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
 import { heldForCi, unsettledBy } from "./logic/settled.js";
 import { NO_FACTS } from "./logic/item.js";
@@ -10,7 +10,8 @@ import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/qu
 import { INSTRUCTED_REASON, NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
 import { evaluate, parts, rules, waiting } from "./actions/index.js";
 import { MAX_DOS_PER_RUN, executeDos } from "./actions/execute.js";
-import { readFacts } from "./actions/facts.js";
+import { MAX_HISTORY_READS, READ_CHUNK, readFacts } from "./actions/facts.js";
+import { MAX_CONTENT_READS } from "./logic/patterns.js";
 import { mirrorVerdicts } from "./actions/mirror.js";
 import type { HostCall } from "./logic/host.js";
 import type { RulesOutput } from "./actions/rules.js";
@@ -153,6 +154,61 @@ describe("facts policy", () => {
       });
       expect("items" in read && read.items[0]).toMatchObject({ error: expect.stringContaining(failed.split(":")[0]!) });
     }
+  });
+
+  function largePullHost(files: Array<Record<string, unknown>>) {
+    const results: Record<string, Record<string, unknown>> = {
+      "pr:8": { title: "Fix", author: "octocat", sha: "abc0000000000000000000000000000000000000", state: "open", draft: false, mergeable: true, body: "" },
+      "reviews:8": { reviews: [] },
+      "comments:8": { comments: [] },
+      "commits:8": { commits: [] },
+      "checks:8": { checks: [] },
+      "files:8:0": { files },
+    };
+    const seen = { history: 0, content: 0, most: 0 };
+    let inFlight = 0;
+    function answer(id: string): Record<string, unknown> {
+      if (id.startsWith("history:")) return { commits: [], truncated: false };
+      if (id.startsWith("content:")) return { text: "a\nb\n" };
+      if (id.endsWith("list_open_prs")) return { prs: [{ number: 8, title: "Fix" }] };
+      const result = results[id];
+      if (!result) throw new Error(`unexpected call ${id}`);
+      return result;
+    }
+    async function host(asked: ToolCall): Promise<ToolResult> {
+      const kind = asked.id.split(":")[0];
+      if (kind === "history" || kind === "content") seen[kind]++;
+      inFlight++;
+      seen.most = Math.max(seen.most, inFlight);
+      await Promise.resolve();
+      inFlight--;
+      return { callId: asked.id, content: answer(asked.id) };
+    }
+    return { host, seen };
+  }
+
+  const conventions: CheckPack["custom"] = [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }];
+
+  test.each(["github", "bitbucket-datacenter"])("a %s pull request changing more files than the history limit reads that many histories a chunk at a time and leaves regression risk unconfirmed", async (repoSource) => {
+    const files = Array.from({ length: MAX_HISTORY_READS + 1 }, (_, i) => ({ path: `src/f${i}.ts`, status: "modified", additions: 1, deletions: 0 }));
+    const { host, seen } = largePullHost(files);
+    const checkPack: CheckPack = { ...emptyPack("acme/widgets"), checks: { "regression-risk": { enabled: true } } };
+    const { items } = await rules(await readFacts({ kind: "pr", repo: "acme/widgets", prNumber: 8, repoSource, policy: { enabled: true }, checkPack }, () => host), ctx, signal);
+    expect(seen).toEqual({ history: MAX_HISTORY_READS, content: 0, most: READ_CHUNK });
+    expect(items[0]!.det.checks.find((check) => check.check === "regression-risk")).toMatchObject({ result: "unconfirmed", reason: "could not read the recent history of some changed files", evidence: [`src/f${MAX_HISTORY_READS}.ts`] });
+  });
+
+  test("a pull request adding code to more files than the content limit reads none and leaves code-pattern rules unconfirmed; at the limit it reads them a chunk at a time", async () => {
+    const files = Array.from({ length: MAX_CONTENT_READS + 1 }, (_, i) => ({ path: `src/f${i}.ts`, status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@\n a\n+b" }));
+    const checkPack: CheckPack = { ...emptyPack("acme/widgets"), custom: conventions };
+    const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack };
+    const over = largePullHost(files);
+    const { items } = await rules(await readFacts(request, () => over.host), ctx, signal);
+    expect(over.seen.content).toBe(0);
+    expect(items[0]!.det.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", reason: `code patterns could not be checked: ${files.length} files with added code, more than the ${MAX_CONTENT_READS} read per pull request` });
+    const at = largePullHost(files.slice(0, MAX_CONTENT_READS));
+    await readFacts(request, () => at.host);
+    expect(at.seen).toEqual({ history: 0, content: MAX_CONTENT_READS, most: READ_CHUNK });
   });
 
   test("an unreadable file list degrades the item instead of reading as no files", async () => {
