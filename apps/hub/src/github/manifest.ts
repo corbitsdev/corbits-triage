@@ -45,7 +45,8 @@ const GITHUB_APP_EVENTS = [
 export type GithubAppManifest = {
   name: string;
   url: string;
-  hook_attributes: { url: string; active: true };
+  /** Absent for a hub on localhost: GitHub refuses a manifest whose hook URL it cannot reach, so the App is created without a webhook. */
+  hook_attributes?: { url: string; active: true };
   redirect_url: string;
   public: false;
   default_permissions: typeof GITHUB_APP_PERMISSIONS;
@@ -55,11 +56,11 @@ export type GithubAppManifest = {
   setup_on_update: true;
 };
 
-function buildGithubAppManifest(portalOrigin: string, hookUrl: string, callbackUrl: string): GithubAppManifest {
+function buildGithubAppManifest(portalOrigin: string, hookUrl: string | null, callbackUrl: string): GithubAppManifest {
   return {
     name: "Corbits Triage",
     url: portalOrigin,
-    hook_attributes: { url: hookUrl, active: true },
+    ...(hookUrl === null ? {} : { hook_attributes: { url: hookUrl, active: true as const } }),
     redirect_url: callbackUrl,
     public: false,
     default_permissions: GITHUB_APP_PERMISSIONS,
@@ -83,7 +84,8 @@ const ManifestConversion = type({
   id: "number.integer >= 1",
   slug: "string > 0",
   pem: "string > 0",
-  webhook_secret: "string > 0",
+  /** Null when the App was created without a webhook. */
+  "webhook_secret?": "(string > 0) | null",
 });
 export type ManifestConversion = typeof ManifestConversion.infer;
 
@@ -151,13 +153,27 @@ export function verifyManifestState(key: Uint8Array, token: string, now: Date): 
   return state;
 }
 
+function loopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
 function safeOrigin(value: string): string {
   const url = new URL(value);
-  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
-  if (url.origin !== value || (url.protocol !== "https:" && !(url.protocol === "http:" && local))) {
+  if (url.origin !== value || (url.protocol !== "https:" && !(url.protocol === "http:" && loopbackHost(url.hostname)))) {
     throw new Error("portalOrigin must be an HTTPS origin (or localhost for development)");
   }
   return url.origin;
+}
+
+/**
+ * The App's webhook URL, or null when the hub is on localhost. GitHub validates
+ * the hook URL as it reads the manifest and refuses one it cannot reach over
+ * the public internet, so a local hub registers the App without a webhook and
+ * finds pull requests by polling instead.
+ */
+export function manifestHookUrl(publicOrigin: string, tenantId: string): string | null {
+  if (loopbackHost(new URL(publicOrigin).hostname)) return null;
+  return `${publicOrigin}/api/hooks/${encodeURIComponent(tenantId)}/github-hook`;
 }
 
 export function validGithubProvider(value: { plugin: string; apiBaseUrl: string | null }, githubApiOrigin: string): boolean {
@@ -213,7 +229,9 @@ export async function prepareCanonicalManifestWrite(
   const appJson = JSON.stringify({ appId: String(conversion.id), privateKey: conversion.pem.trim() });
   // The App is not installed yet, so the credential workflows bind holds no token; the key goes to the hub-only one.
   const noToken = await cipher.encrypt("", credentialAad(appCredentialId, "secret"));
-  const encryptedHook = await cipher.encrypt(conversion.webhook_secret, credentialAad(hookCredentialId, "secret"));
+  // Without a webhook GitHub issues no secret; the hub makes one so the hook credential is complete if a webhook is added later.
+  const hookSecret = conversion.webhook_secret ?? randomBytes(32).toString("hex");
+  const encryptedHook = await cipher.encrypt(hookSecret, credentialAad(hookCredentialId, "secret"));
   return {
     replacement: state.replacement,
     appJson,
@@ -334,7 +352,7 @@ export function createGithubManifestIntegration({
       expiresAt: now().getTime() + GITHUB_MANIFEST_MAX_AGE_MS,
     });
     const callbackUrl = `${publicOrigin}${GITHUB_MANIFEST_CALLBACK_PATH}`;
-    const hookUrl = `${publicOrigin}/api/hooks/${encodeURIComponent(tenantId)}/github-hook`;
+    const hookUrl = manifestHookUrl(publicOrigin, tenantId);
     return securedJson({ manifest: buildGithubAppManifest(portalOrigin, hookUrl, callbackUrl), state }, 201);
   }
 

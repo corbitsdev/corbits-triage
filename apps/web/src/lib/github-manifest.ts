@@ -23,7 +23,8 @@ const ManifestStart = type({
   manifest: {
     name: "string",
     url: "string",
-    hook_attributes: { url: "string", active: "true" },
+    /** Absent when the hub is on localhost: the App is created without a webhook. */
+    "hook_attributes?": { url: "string", active: "true" },
     redirect_url: "string",
     public: "false",
     default_permissions: "object",
