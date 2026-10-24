@@ -15,6 +15,16 @@ test("plain tcp:// reaches only this machine; another machine needs TLS", () => 
   }
 });
 
+test("a response of one JSON value per line, as a pull's progress is, is read line by line", async () => {
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response('{"status":"Pulling"}\n{"error":"denied"}\n') });
+  try {
+    const engine = connectDocker(`tcp://127.0.0.1:${String(server.port)}`);
+    expect(await engine.request("POST", "/images/create", { lines: true })).toEqual([{ status: "Pulling" }, { error: "denied" }]);
+  } finally {
+    server.stop(true);
+  }
+});
+
 /** Absent openssl fails the run rather than skipping the only proof that TLS is verified. */
 function requireOpenssl(): string {
   const found = Bun.which("openssl");

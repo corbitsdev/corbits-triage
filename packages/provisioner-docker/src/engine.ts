@@ -18,6 +18,8 @@ export type DockerRequestOpts = {
   readonly body?: unknown;
   readonly signal?: AbortSignal | undefined;
   readonly timeoutMs?: number;
+  /** The response is one JSON value per line, as a pull's progress is. */
+  readonly lines?: boolean;
 };
 
 export type DockerEngine = {
@@ -75,7 +77,7 @@ export function connectDocker(host: string, tls?: DockerTls): DockerEngine {
 
   return {
     host,
-    async request(method, path, { body, signal, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+    async request(method, path, { body, signal, timeoutMs = REQUEST_TIMEOUT_MS, lines = false } = {}) {
       const timeout = AbortSignal.timeout(timeoutMs);
       const response = await fetch(`${base}${path}`, {
         method,
@@ -87,6 +89,7 @@ export function connectDocker(host: string, tls?: DockerTls): DockerEngine {
       if (!response.ok) {
         throw new DockerEngineError(response.status, `Docker ${method} ${path.split("?")[0]} failed (${String(response.status)}): ${text}`);
       }
+      if (lines) return text.split("\n").filter((line) => line !== "").map((line) => JSON.parse(line));
       return text === "" || text === "OK" ? null : JSON.parse(text);
     },
   };

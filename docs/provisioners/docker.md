@@ -5,7 +5,7 @@
 ## Set up
 
 1. Install Docker Desktop (macOS, Windows) or Docker Engine (Linux) on the hub's machine, and start it. For Docker on another machine, such as a VPS, follow [Docker on another machine](docker-remote.md) instead.
-2. Build the sidecar image from the repository root, and rebuild it after changing the code:
+2. Get the sidecar image. A hub from the published `ghcr.io/corbitsdev/corbits-triage-hub` image runs the sidecar image published with it, `ghcr.io/corbitsdev/corbits-triage-sidecar@sha256:…`, and Docker pulls it the first time a code review needs it. The first review after an upgrade may be retried while the image downloads; a review whose pull fails fails, and the next one tries again. Older sidecar images stay on the daemon; remove unused ones now and then with `docker image prune -a`. A hub built from a checkout runs `corbits-triage-sidecar` instead: build it from the repository root, and rebuild it after changing the code:
 
    ```sh
    docker build --target sidecar -t corbits-triage-sidecar .
@@ -19,10 +19,10 @@
 
 Containers dial the hub at `HUB_SIDECAR_WEBSOCKET_URL`, with a loopback host replaced by `host.docker.internal`. Containers on [another machine](docker-remote.md) dial the hub's public `wss://` address instead. A hub that itself runs in a container needs the daemon's socket mounted and its port published to the Docker host.
 
-Under Docker Compose, `compose.docker.yml` builds the `corbits-triage-sidecar` image before the hub starts and mounts the host's Docker socket into the hub at `/var/run/docker.sock`, where the hub finds it; `compose.yml` already publishes the hub's port. The host socket is `/var/run/docker.sock` unless `DOCKER_SOCKET` in `.env` names another, such as rootless Docker's `$XDG_RUNTIME_DIR/docker.sock` or Podman's. The hub then controls that Docker, which on Linux is root on the host: whoever takes over the hub takes over the machine.
+Under Docker Compose, `compose.docker.yml` mounts the host's Docker socket into the hub at `/var/run/docker.sock`, where the hub finds it; `compose.yml` already publishes the hub's port. The host socket is `/var/run/docker.sock` unless `DOCKER_SOCKET` in `.env` names another, such as rootless Docker's `$XDG_RUNTIME_DIR/docker.sock` or Podman's. The hub then controls that Docker, which on Linux is root on the host: whoever takes over the hub takes over the machine.
 
 ```sh
-docker compose -f compose.yml -f compose.docker.yml up --build -d
+docker compose -f compose.yml -f compose.docker.yml up -d
 ```
 
 ## Memory
@@ -37,7 +37,7 @@ Each sidecar has its own container, processes, filesystem and data volume, with 
 
 A sandbox for repository commands inside the container needs privileges the container does not have today; they come with the tool that runs those commands.
 
-Containers are labelled with a hub id derived from the hub's Postgres cluster, database and schema, so hubs sharing a daemon never touch each other's containers. At boot the hub removes its containers that no allocation or probe still holds. Pointing the hub at another daemon or database changes the provisioner's binding, and sidecars placed through the old one are not cleaned up through the new one.
+Containers are labelled with a hub id derived from the hub's Postgres cluster, database and schema, so hubs sharing a daemon never touch each other's containers. At boot the hub removes its containers that no allocation or probe still holds. Pointing the hub at another daemon or database, or a new sidecar image, changes the provisioner's binding, and sidecars placed through the old one are not cleaned up through the new one.
 
 ## Not registered
 
@@ -46,7 +46,8 @@ The hub logs `docker_sidecars_off` with one of these reasons:
 | Reason | Fix |
 | --- | --- |
 | `no Docker daemon found` | Start Docker, or set `DOCKER_HOST`. |
-| `Docker at … has no corbits-triage-sidecar image or does not answer` | Build the image (step 2); check the daemon is running and the address is `unix://` or `tcp://`. |
+| `Docker at … does not answer` | Check the daemon is running and the address is `unix://` or `tcp://`. |
+| `Docker at … has no corbits-triage-sidecar image` | Build the image (step 2). |
 | `Docker at … is refused (… is another machine; reach it over TLS …)` | Plain `tcp://` is refused for any host but this machine. Set `DOCKER_TLS_CA`, `DOCKER_TLS_CERT` and `DOCKER_TLS_KEY` ([Docker on another machine](docker-remote.md)). |
 | `Docker at … is another machine, and its sidecars would dial the hub at … without TLS` | Set `BETTER_AUTH_BASE_URL` to the hub's `https://` address and leave `HUB_SIDECAR_WEBSOCKET_URL` unset. |
 | `Docker at … is another machine, and its sidecars would dial the hub at its own address …` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |

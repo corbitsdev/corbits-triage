@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
 import { type } from "arktype";
 import {
   connectDocker,
@@ -19,8 +20,10 @@ import { sql } from "drizzle-orm";
 import type { PlaceProbe } from "../code-review.js";
 import type { DatabaseConfig, DockerSettings } from "../env.js";
 
+/** The published sidecar image pinned by digest, which CI writes into the hub image. */
+const BAKED_SIDECAR_IMAGE = new URL("../../sidecar-image", import.meta.url);
 /** Built from the root Dockerfile's `sidecar` stage. */
-const SIDECAR_IMAGE = "corbits-triage-sidecar";
+const LOCAL_SIDECAR_IMAGE = "corbits-triage-sidecar";
 const PING_TIMEOUT_MS = 2_000;
 
 const DatabaseIdentity = type({ cluster: "string", database: "string" });
@@ -49,10 +52,14 @@ export async function hubIdOf(database: DatabaseConfig): Promise<string> {
   }
 }
 
-async function daemonId(engine: DockerEngine): Promise<string> {
-  await engine.request("GET", "/_ping", { timeoutMs: PING_TIMEOUT_MS });
-  await engine.request("GET", `/images/${SIDECAR_IMAGE}/json`);
-  return DaemonInfo.assert(await engine.request("GET", "/info")).ID;
+/** The image sidecars run: the one written into the hub image at `file`, or the locally built one when none was. */
+export async function sidecarImageOf(file: URL): Promise<string> {
+  try {
+    return (await fs.readFile(file, "utf8")).trim();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return LOCAL_SIDECAR_IMAGE;
+    throw error;
+  }
 }
 
 /** Why sidecars on another machine (`where`) cannot dial the hub at `hubUrl`: its token and credentials cross that socket. */
@@ -98,9 +105,19 @@ export async function connectDockerSidecars({ docker, database, adapterManifest 
   }
   let id: string;
   try {
-    id = await daemonId(engine);
+    await engine.request("GET", "/_ping", { timeoutMs: PING_TIMEOUT_MS });
+    id = DaemonInfo.assert(await engine.request("GET", "/info")).ID;
   } catch (error) {
-    return off(`Docker at ${host} has no ${SIDECAR_IMAGE} image or does not answer (${String(error)}); build it with docker build --target sidecar -t ${SIDECAR_IMAGE} .`);
+    return off(`Docker at ${host} does not answer (${String(error)})`);
+  }
+  const image = await sidecarImageOf(BAKED_SIDECAR_IMAGE);
+  // A published image is pulled when a review first needs it; a locally built one must already be there.
+  if (image === LOCAL_SIDECAR_IMAGE) {
+    try {
+      await engine.request("GET", `/images/${image}/json`);
+    } catch (error) {
+      return off(`Docker at ${host} has no ${image} image (${String(error)}); build it with docker build --target sidecar -t ${image} .`);
+    }
   }
   let hubId: string;
   try {
@@ -116,7 +133,7 @@ export async function connectDockerSidecars({ docker, database, adapterManifest 
       engine,
       hubId,
       daemonId: id,
-      image: SIDECAR_IMAGE,
+      image,
       adapterManifest,
       ...(remote && { hubWebSocketUrl: docker.publicHubWebSocketUrl }),
     }),

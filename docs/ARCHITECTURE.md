@@ -159,7 +159,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   on the hub's machine, restores them on boot and declines a placement while
   free memory is short. The Docker provisioner (`packages/provisioner-docker`),
   registered after it when a daemon with the sidecar image answers, runs each
-  sidecar in a container of its own and declares `isolation:workload`;
+  sidecar in a container of its own. A published hub image carries the digest
+  of the sidecar image CI pushed just before it, and the provisioner pulls that
+  image when a placement finds it missing. The provisioner declares `isolation:workload`;
   workflows that require it land there, and probes then require it too.
   The E2B provisioner (`packages/provisioner-e2b`), registered after Docker
   when `E2B_API_KEY` is set, does the same with one E2B sandbox per sidecar.

@@ -97,7 +97,7 @@ DOCKER_HOST=tcp://$HOST:2376 DOCKER_TLS_VERIFY=1 DOCKER_CERT_PATH=$PWD docker in
 
 ## 5. Put the sidecar image on the VPS
 
-The image must be on the VPS's daemon, built from the same commit as the hub. Build it there straight from a checkout of that commit; the build runs on the VPS, so the image has its architecture, and no registry is involved:
+A hub from the published image has the VPS's daemon pull its sidecar image the first time a code review needs it; skip this step. A hub built from a checkout needs `corbits-triage-sidecar` on the VPS's daemon, built from the same commit as the hub. Build it there straight from a checkout of that commit; the build runs on the VPS, so the image has its architecture, and no registry is involved:
 
 ```sh
 DOCKER_HOST=tcp://$HOST:2376 DOCKER_TLS_VERIFY=1 DOCKER_CERT_PATH=/path/to/certs \
