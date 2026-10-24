@@ -6,6 +6,7 @@ import { Template, defaultBuildLogger } from "e2b";
 import { E2B_SIDECAR_TEMPLATE } from "./src/index.js";
 
 const SIDECAR_STAGE = `FROM oven/bun:1.4
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile

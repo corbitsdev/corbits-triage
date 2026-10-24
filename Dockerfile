@@ -19,6 +19,7 @@ RUN bun install --frozen-lockfile --production --linker hoisted --filter @corbit
 # review's linter.
 FROM oven/bun:1.4.2 AS app
 LABEL org.opencontainers.image.source=https://github.com/corbitsdev/corbits-triage
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=runtime /app/package.json /app/tsconfig.json ./
 COPY --from=runtime /app/node_modules node_modules
