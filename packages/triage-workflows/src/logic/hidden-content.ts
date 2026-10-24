@@ -23,6 +23,9 @@ const HIDDEN_MARKUP = [
 // Unless said in the negative on the same line, as a maintainer's warning is; "why not" asks for it.
 const AFFIRMED = String.raw`(?<!(?:(?<!\bwhy[ \t]+)\bnot|n't|\bnever)[ \t]+)`;
 
+// Only a line's first "close" is tried, so a line of them is read once.
+const CLOSE_OTHERS = /^(?:(?!\bclose\b).)*\bclose\b.*\bother\s+(?:prs?|pull\s+requests)\b/im;
+
 /**
  * Text addressed to a model, seeded from the injection attempts Triage has seen and kept to what a maintainer's own
  * wording does not say; read only where a reader can't see it.
@@ -38,7 +41,8 @@ const INSTRUCTIONS = [
   /\ballowlist\s+(?:me|this)\b|\bstanding\s+approval\b/i,
   new RegExp(`${AFFIRMED}\\b(?:approve|merge|pass)\\s+(?:this|the)\\s+(?:pr|pull\\s+request|change)s?\\s+(?:immediately|now|automatically|without)\\b`, "i"),
   /\b(?:mark|treat|label)\s+(?:this|it|me)\s+as\s+(?:approved|safe|trusted)\b/i,
-  /\bclose\s+all\s+(?:other\s+)?(?:prs?|pull\s+requests|issues)\b|\bclose\b.*\bother\s+(?:prs?|pull\s+requests)\b/i,
+  /\bclose\s+all\s+(?:other\s+)?(?:prs?|pull\s+requests|issues)\b/i,
+  CLOSE_OTHERS,
 ];
 
 export function nothingRemoved(): Removed {
