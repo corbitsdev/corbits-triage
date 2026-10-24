@@ -14,8 +14,10 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
   const comments: Comment[] = seed.comments ?? [];
   const builds: Array<Record<string, unknown>> = [];
   const writes: Array<{ method: string; path: string; body: any }> = [];
+  const requested: string[] = [];
   async function bb(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
+    requested.push(path);
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
     if (method !== "GET") writes.push({ method, path, body });
     if (path === "/rest/api/1.0/application-properties") return Response.json({ version: "10.5.1" }, { headers: { "x-auserid": "7", "x-ausername": "triage-bot" } });
@@ -50,7 +52,7 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
     if (method === "POST" && path === `${PR_PATH}/merge?version=4`) return Response.json({ ...pr, state: "MERGED" });
     throw new Error(`unexpected ${method} ${path}`);
   }
-  return { bb: bb satisfies BitbucketFetch, comments, builds, writes };
+  return { bb: bb satisfies BitbucketFetch, comments, builds, writes, requested };
 }
 
 // Lines 10-12 changed: 10 is context, 11-12 added.
@@ -190,5 +192,13 @@ describe("sendCodeReview", () => {
     await sendCodeReview(fake.bb, { ...REVIEW, comments: outside }, user);
     expect(fake.writes.map((w) => w.body.anchor)).toEqual([undefined]);
     expect(fake.comments).toHaveLength(1);
+  });
+
+  test("a finding whose path leaves the repository root is never put in a request, only in the summary", async () => {
+    const fake = fakeBitbucket();
+    const escaping = { path: "../../../../admin/users", start: 1, end: 1, title: "Escapes", body: "a" };
+    await sendCodeReview(fake.bb, { ...REVIEW, comments: [FINDINGS[0]!, escaping] }, user);
+    expect(fake.requested.filter((path) => path.includes("/diff/"))).toEqual([`${PR_PATH}/diff/src/app.ts?withComments=false`]);
+    expect(fake.comments.at(-1)!.text).toContain("**Escapes**");
   });
 });
