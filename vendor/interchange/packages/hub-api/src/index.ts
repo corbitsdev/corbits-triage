@@ -45,4 +45,7 @@ export {
   type CreateApprovalRoutesDeps,
   type ReadRunLifecycles,
 } from "./routes/approvals";
-export { RUN_TOKEN_ROUTES } from "./middleware/run-token-auth";
+export {
+  RUN_TOKEN_ROUTES,
+  type RunTokenRoute,
+} from "./middleware/run-token-auth";

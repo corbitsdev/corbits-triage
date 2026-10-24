@@ -90,16 +90,98 @@ export function matchesRunTokenRoute(pattern: string, path: string): boolean {
   });
 }
 
-export function isRunTokenRoute(method: string, path: string): boolean {
-  return RUN_TOKEN_ROUTES.some(
+function matchesAnyRunTokenRoute(
+  routes: readonly RunTokenRoute[],
+  method: string,
+  path: string,
+): boolean {
+  return routes.some(
     (route) =>
       route.method === method && matchesRunTokenRoute(route.path, path),
   );
 }
 
+export function isRunTokenRoute(
+  method: string,
+  path: string,
+  extraRoutes: readonly RunTokenRoute[] = [],
+): boolean {
+  return (
+    matchesAnyRunTokenRoute(RUN_TOKEN_ROUTES, method, path) ||
+    matchesAnyRunTokenRoute(extraRoutes, method, path)
+  );
+}
+
+const HOST_RUN_TOKEN_ROUTE = /^\/api\/tenants\/:tenantId\/[^/:*{}]+(\/|$)/;
+
+/** A route registered on the app, as Hono lists it in `app.routes`. */
+type RegisteredRoute = { method: string; path: string };
+
+function isMiddleware(route: RegisteredRoute): boolean {
+  return route.method === "ALL" && route.path.endsWith("*");
+}
+
+/**
+ * Whether two route patterns can match the same path. A `:param` segment on
+ * either side matches any one segment, and a trailing `*` matches the rest.
+ */
+function routePatternsOverlap(a: string, b: string): boolean {
+  const left = a.split("/");
+  const right = b.split("/");
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const l = left[i];
+    const r = right[i];
+    if (
+      (l === "*" && i === left.length - 1) ||
+      (r === "*" && i === right.length - 1)
+    ) {
+      return true;
+    }
+    if (l === undefined || r === undefined) return false;
+    if (l !== r && !l.startsWith(":") && !r.startsWith(":")) return false;
+  }
+  return true;
+}
+
+/**
+ * Refuse host run-token routes that could reach a route the app already
+ * registers, so an extra can only admit host routes and never re-open a stock
+ * route the allow-list refuses. Each extra must sit under a literal segment
+ * below `/api/tenants/:tenantId`, and must not overlap a registered route of
+ * the same method; middleware is not a route.
+ */
+export function assertHostRunTokenRoutes(
+  extraRoutes: readonly RunTokenRoute[],
+  registered: readonly RegisteredRoute[],
+): void {
+  for (const extra of extraRoutes) {
+    if (!HOST_RUN_TOKEN_ROUTE.test(extra.path)) {
+      throw new Error(
+        `Host run-token route ${extra.method} ${extra.path} is not under /api/tenants/:tenantId/<literal>`,
+      );
+    }
+    const clash = registered.find(
+      (route) =>
+        !isMiddleware(route) &&
+        (route.method === extra.method || route.method === "ALL") &&
+        routePatternsOverlap(route.path, extra.path),
+    );
+    if (clash !== undefined) {
+      throw new Error(
+        `Host run-token route ${extra.method} ${extra.path} overlaps ${clash.method} ${clash.path}`,
+      );
+    }
+  }
+}
+
 export type CreateRunTokenAuthDeps = {
   db: DB["db"];
   runTokenStore: RunTokenStore;
+  /**
+   * Host routes a run token may also reach, beyond `RUN_TOKEN_ROUTES`. They
+   * match the same way. Each listed route must apply its own grant checks.
+   */
+  extraRoutes?: readonly RunTokenRoute[];
 };
 
 /**
@@ -115,6 +197,7 @@ export type CreateRunTokenAuthDeps = {
 export function createRunTokenAuth({
   db,
   runTokenStore,
+  extraRoutes = [],
 }: CreateRunTokenAuthDeps): MiddlewareHandler<TenantEnv> {
   return createMiddleware<TenantEnv>(async (c, next) => {
     const secret = readRunToken(c.req.header("authorization"));
@@ -173,7 +256,7 @@ export function createRunTokenAuth({
       return errorResponse(c, "unauthorized", "Authentication required");
     }
 
-    if (!isRunTokenRoute(c.req.method, c.req.path)) {
+    if (!isRunTokenRoute(c.req.method, c.req.path, extraRoutes)) {
       log.info("run-token auth: route refused {tokenId} {method} {path}", {
         tokenId: token.id,
         method: c.req.method,
