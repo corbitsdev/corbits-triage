@@ -225,14 +225,15 @@ function excerpt(text: string): string {
   return line.length > EXCERPT_MAX ? `${line.slice(0, EXCERPT_MAX - 1)}…` : line;
 }
 
-type TextItem = { where: string; what: string; text: string; phrases: string[] };
+/** `written` marks the description as written, beside the one a reader is shown. */
+type TextItem = { where: string; what: string; text: string; phrases: string[]; written?: boolean };
 
 /** The raw description answers only for the phrases the shown one lacks, so a visible phrase is quoted once. */
 function descriptionItems(facts: PrFacts, rule: TextCustomCheck): TextItem[] {
   const shown = { where: "description", what: "the description", text: facts.body, phrases: rule.phrases };
   if (rule.failWhen === "not-contains") return [shown];
   const unseen = rule.phrases.filter((phrase) => phraseLines({ ...shown, phrases: [phrase] }).length === 0);
-  return [shown, { ...shown, text: facts.rawBody, phrases: unseen }];
+  return [shown, { ...shown, text: facts.rawBody, phrases: unseen, written: true }];
 }
 
 function textItems(facts: PrFacts, rule: TextCustomCheck): TextItem[] {
@@ -243,10 +244,45 @@ function textItems(facts: PrFacts, rule: TextCustomCheck): TextItem[] {
   });
 }
 
+type TextMatch = { where: string; what: string; line: string; phrases: string[]; written?: boolean };
+
+/** Each line of the item holding a phrase, with the phrases it holds. */
+function textMatches(item: TextItem): TextMatch[] {
+  return item.text.split("\n").flatMap(function matched(line): TextMatch[] {
+    const phrases = item.phrases.filter((phrase) => line.toLowerCase().includes(phrase.toLowerCase()));
+    return phrases.length ? [{ where: item.where, what: item.what, line, phrases, written: item.written }] : [];
+  });
+}
+
+function quotedLine(match: TextMatch): string {
+  return `${match.where}: ${excerpt(match.line)}`;
+}
+
 /** Each line of the item holding a phrase, as evidence quoting it. */
 function phraseLines(item: TextItem): string[] {
-  const lowered = item.phrases.map((phrase) => phrase.toLowerCase());
-  return item.text.split("\n").filter((line) => lowered.some((phrase) => line.toLowerCase().includes(phrase))).map((line) => `${item.where}: ${excerpt(line)}`);
+  return textMatches(item).map(quotedLine);
+}
+
+function withoutLinkTargets(line: string): string {
+  return line.replace(/\]\([^)]*\)/g, "");
+}
+
+/** A written line and a shown line with the same key read the same: the same letters and digits outside link targets. */
+function lineKey(line: string): string {
+  return withoutLinkTargets(line).replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+}
+
+/** The written copy of a quoted shown line, holding no phrase a reader cannot see on it. */
+function shownCopy(match: TextMatch, all: TextMatch[]): boolean {
+  if (!match.written) return false;
+  const visible = withoutLinkTargets(match.line).toLowerCase();
+  if (!match.phrases.every((phrase) => visible.includes(phrase.toLowerCase()))) return false;
+  return all.some((other) => !other.written && other.where === match.where && lineKey(other.line) === lineKey(match.line));
+}
+
+function placeReason(what: string, hits: TextMatch[], rule: TextCustomCheck): string {
+  const found = rule.phrases.filter((phrase) => hits.some((hit) => hit.what === what && hit.phrases.includes(phrase)));
+  return `${what} contains ${quoted(found)}`;
 }
 
 function quoted(phrases: string[]): string {
@@ -258,9 +294,12 @@ function textResult(rule: TextCustomCheck, facts: PrFacts): { failed: boolean; r
   const items = textItems(facts, rule);
   const phrases = quoted(rule.phrases);
   if (rule.failWhen === "contains") {
-    const hits = items.filter((item) => phraseLines(item).length > 0);
-    const what = [...new Set(hits.map((item) => item.what))].join(" and ");
-    return { failed: hits.length > 0, reason: hits.length ? `${what} contains ${phrases}` : `no ${phrases} found`, evidence: hits.flatMap((item) => phraseLines(item)).slice(0, TEXT_EVIDENCE_MAX) };
+    const all = items.flatMap(textMatches);
+    const hits = all.filter((match) => !shownCopy(match, all));
+    const places = [...new Set(hits.map((hit) => hit.what))];
+    const one = places.length === 1 && new Set(hits.flatMap((hit) => hit.phrases)).size === 1;
+    const reason = `${places.map((what) => placeReason(what, hits, rule)).join("; ")}; remove ${one ? "it" : "them"}`;
+    return { failed: hits.length > 0, reason: hits.length ? reason : `no ${phrases} found`, evidence: hits.map(quotedLine).slice(0, TEXT_EVIDENCE_MAX) };
   }
   const missing = items.filter((item) => phraseLines(item).length === 0);
   const what = [...new Set(missing.map((item) => item.what))].join(" and ");

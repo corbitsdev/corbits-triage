@@ -207,11 +207,11 @@ describe("text rules", () => {
   });
 
   test("the title does not contain", () => {
-    expect(textCheck(["title"], "not-contains", ["fix:", "chore:"])).toMatchObject({ result: "fail", evidence: ["title"] });
+    expect(textCheck(["title"], "not-contains", ["fix:", "chore:"])).toMatchObject({ result: "fail", reason: 'the title does not contain "fix:", "chore:"', evidence: ["title"] });
   });
 
   test("the description contains, quoting the line", () => {
-    expect(textCheck(["description"], "contains", ["generated with"])).toMatchObject({ result: "fail", reason: 'the description contains "generated with"', evidence: ["description: Generated with a tool"] });
+    expect(textCheck(["description"], "contains", ["generated with"])).toMatchObject({ result: "fail", reason: 'the description contains "generated with"; remove it', evidence: ["description: Generated with a tool"] });
   });
 
   test("the description contains what its markup hides, quoting the line", () => {
@@ -224,6 +224,29 @@ describe("text rules", () => {
     expect(textCheck(["description"], "contains", ["generated with"], github)).toMatchObject({ result: "fail", evidence: ["description: Generated with a tool"] });
   });
 
+  test("names only the phrases found, quoting a line the description shows once", () => {
+    const attributed = { ...open, body: "Adds login.\n🤖 Generated with Claude Code", rawBody: "Adds login.\n🤖 Generated with [Claude Code](https://claude.com/claude-code)" };
+    const phrases = ["Co-Authored-By:", "Claude-Session:", "claude.ai/code/session", "noreply@anthropic.com", "Generated with Claude", "Generated with [Claude"];
+    expect(textCheck(["description"], "contains", phrases, attributed)).toMatchObject({ result: "fail", reason: 'the description contains "Generated with Claude"; remove it', evidence: ["description: 🤖 Generated with Claude Code"] });
+  });
+
+  test("quotes the written copy of a shown line when a link target hides a phrase", () => {
+    const linked = { ...open, body: "Generated with Claude", rawBody: "[Generated with Claude](https://claude.ai/code/session_1)" };
+    expect(textCheck(["description"], "contains", ["Generated with Claude", "claude.ai/code/session"], linked)).toMatchObject({
+      result: "fail",
+      reason: 'the description contains "Generated with Claude", "claude.ai/code/session"; remove them',
+      evidence: ["description: Generated with Claude", "description: [Generated with Claude](https://claude.ai/code/session_1)"],
+    });
+  });
+
+  test("names each place with the phrases found there", () => {
+    expect(textCheck(["title", "commits"], "contains", ["wip", "co-authored-by:"], { ...open, title: "WIP: Add login" })).toMatchObject({
+      result: "fail",
+      reason: 'the title contains "wip"; a commit message contains "co-authored-by:"; remove them',
+      evidence: ["title: WIP: Add login", 'commit "feat: add login": Co-Authored-By: Bot <bot@example.com>'],
+    });
+  });
+
   test("the description does not contain reads only what a reader sees", () => {
     expect(textCheck(["description"], "not-contains", ["co-authored-by"], hiding)).toMatchObject({ result: "fail", evidence: ["description"] });
   });
@@ -233,7 +256,7 @@ describe("text rules", () => {
   });
 
   test("any commit message contains, past its subject", () => {
-    expect(textCheck(["commits"], "contains", ["co-authored-by:"])).toMatchObject({ result: "fail", reason: 'a commit message contains "co-authored-by:"', evidence: ['commit "feat: add login": Co-Authored-By: Bot <bot@example.com>'] });
+    expect(textCheck(["commits"], "contains", ["co-authored-by:"])).toMatchObject({ result: "fail", reason: 'a commit message contains "co-authored-by:"; remove it', evidence: ['commit "feat: add login": Co-Authored-By: Bot <bot@example.com>'] });
   });
 
   test("any commit message does not contain", () => {
