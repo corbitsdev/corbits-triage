@@ -117,9 +117,9 @@ export function loadHubEnv(raw: Record<string, string | undefined>): HubEnv {
   return env;
 }
 
-const DatabaseEnvSchema = HubEnvSchema.pick("DATABASE_URL", "DB_STATEMENT_TIMEOUT_MS");
+const DatabaseEnvSchema = HubEnvSchema.pick("DATABASE_URL", "DB_STATEMENT_TIMEOUT_MS", "PATH", "HOME", "TMPDIR");
 
-/** The hub's database settings alone, read the same way, for `db:migrate`. */
+/** The hub variables `db:migrate` needs, read the same way. */
 export function loadDatabaseEnv(raw: Record<string, string | undefined>): typeof DatabaseEnvSchema.infer {
   const env = DatabaseEnvSchema(presentValues(raw));
   if (env instanceof type.errors) throw new Error(env.map(describeEnvError).join("\n"));
