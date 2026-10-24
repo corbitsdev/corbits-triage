@@ -55,7 +55,7 @@ import { createBitbucketCodeReviewSend } from "./bitbucket-datacenter/code-revie
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { checkedBitbucketSpawner, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { createPrWorkflowRouter, PR_WORKFLOW_VARIANTS, prWorkflowVariantOf } from "./github/pr-workflow.js";
-import { codeReviewKeys, codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
+import { codeReviewKeys, codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, jobWorkflowsFor, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -436,11 +436,7 @@ async function renewGithubToken(tenantId: string): Promise<void> {
     logJson({ level: "error", msg: "github_token_renew_failed", tenantId, error: String(err) });
   }
 }
-const GITHUB_JOB_WORKFLOWS = new Set([
-  triageWorkflowFor("github").id,
-  codeReviewWorkflowFor("github").id,
-  ...PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === "github").map((variant) => variant.id),
-]);
+const GITHUB_JOB_WORKFLOWS = new Set(jobWorkflowsFor("github"));
 /** A token that could not be renewed may still have time left, so the worker goes ahead and the token loop retries. */
 async function readyWorkerCredentials(job: TriageJob): Promise<void> {
   if (!GITHUB_JOB_WORKFLOWS.has(job.workflow)) return;

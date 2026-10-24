@@ -7,7 +7,7 @@ import { tenantConfigOf } from "../github/bridge.js";
 import { activeCredential, credentialSecret } from "../github/portal-credential.js";
 import { triageNs } from "../github/tenant-config.js";
 import type { TriageJob, WorkerSpawner } from "../github/coordinator.js";
-import { codeReviewWorkflowFor, triageWorkflowFor } from "../github/source-workflow.js";
+import { jobWorkflowsFor } from "../github/source-workflow.js";
 import { bitbucketFetch, lookupAddresses, resolveInstance, type AddressLookup } from "./client.js";
 import { bitbucketConnection, TOKEN_CREDENTIAL } from "./records.js";
 
@@ -36,7 +36,7 @@ export function createTenantBitbucket(deps: TenantBitbucketDeps): TenantBitbucke
   };
 }
 
-const BITBUCKET_WORKFLOWS = new Set([triageWorkflowFor("bitbucket-datacenter").id, codeReviewWorkflowFor("bitbucket-datacenter").id]);
+const BITBUCKET_WORKFLOWS = new Set(jobWorkflowsFor("bitbucket-datacenter"));
 
 /** A Bitbucket run sends the token to the stored instance, so its worker is spawned only while that host passes the check. */
 export function checkedBitbucketSpawner(spawner: WorkerSpawner, tenantBitbucket: TenantBitbucket): WorkerSpawner {
