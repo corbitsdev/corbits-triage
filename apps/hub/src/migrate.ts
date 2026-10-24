@@ -3,11 +3,11 @@ import { childProcessEnv, databaseConfig, loadDatabaseEnv, migrationEnv } from "
 import { logJson } from "./github/bridge.js";
 import { migrateDatabase } from "./migrations.js";
 
-const { PATH, HOME, TMPDIR } = process.env;
-const database = databaseConfig(loadDatabaseEnv(process.env));
+const env = loadDatabaseEnv(process.env);
+const database = databaseConfig(env);
 
 await Bun.$`bunx --no-install drizzle-kit migrate`
   .cwd(resolve(import.meta.dir, "../../../vendor/interchange/packages/db"))
-  .env({ ...childProcessEnv({ PATH, HOME, TMPDIR }), ...migrationEnv(database) });
+  .env({ ...childProcessEnv(env), ...migrationEnv(database) });
 
 await migrateDatabase(database, logJson);
