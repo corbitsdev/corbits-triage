@@ -277,12 +277,13 @@ are required. A model, text or code-patterns rule names its own `id`. A built-in
 its setting as `max` (size limits), `tracker` (linked issue), `paths`
 (forbidden paths) or `types` and `fields` (conventional commits). A
 code-patterns rule lists shipped `presets` (`convention`) and its own ast-grep
-`patterns`, its own winning on a shared id, and fails on a match in a line the
-pull request adds to a TypeScript or JavaScript file; a pattern's ast-grep
-`files` and `ignores` lists scope it to paths by ast-grep's glob rules
-(strings only; a negated class is `[^a]`, and `[!a]` or an invalid glob
-refuses the policy), and the preset's fallback patterns ignore test files;
-`enabled: false` keeps it written down but off.
+`patterns`, and fails on a match in a line the pull request adds to a
+TypeScript or JavaScript file. Its own pattern wins on a shared id in both
+languages; to keep checking JavaScript, add a `language: javascript` pattern
+under the same id. A pattern's ast-grep `files` and `ignores` lists scope it
+to paths by ast-grep's glob rules (strings only; a negated class is `[^a]`,
+and `[!a]` or an invalid glob refuses the policy), and the preset's fallback
+patterns ignore test files. `enabled: false` keeps it written down but off.
 `onFail` says what a failing rule does: `fail` (the default, except `label`
 for the size rules, which features and refactors cross) fails the pull
 request for its author, `ask` makes it Unsure and lists the rule for a

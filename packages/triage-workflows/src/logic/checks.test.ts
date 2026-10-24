@@ -272,6 +272,15 @@ rules:
     expect(result.checks.find((check) => check.check === "no-ternaries")?.onFail).toBeUndefined();
   });
 
+  test("the preset checks JavaScript as TypeScript, and a rule's own pattern replaces the preset's id in both", () => {
+    for (const path of ["src/a.js", "src/a.mjs", "src/a.jsx"]) {
+      const result = patterns([{ ...file, path }], { [path]: content });
+      const fallback = `${path}:2 Invented fallback \`?? 0\`; handle the missing value instead.`;
+      expect(result.checks.find((check) => check.check === "conventions")?.evidence).toEqual([fallback, `${path}:3 Nested ternary; use if statements or a lookup.`]);
+      expect(result.checks.find((check) => check.check === "no-ternaries")?.evidence).toEqual([fallback]);
+    }
+  });
+
   test("only root vendored and built code is skipped, and named as skipped; the same folders nested are checked", () => {
     const skipped = ["vendor/lib/a.ts: skipped as vendored, built or installed code", "dist/a.js: skipped as vendored, built or installed code"];
     const rootOnly = patterns([{ ...file, path: "vendor/lib/a.ts" }, { ...file, path: "dist/a.js" }], {});
@@ -288,9 +297,10 @@ rules:
   });
 
   test("a rule's files and ignores scope it as in ast-grep; the shipped fallbacks ignore test files", () => {
-    const testPath = "src/a.test.ts";
-    const inTest = patterns([{ ...file, path: testPath }], { [testPath]: content });
-    expect(inTest.checks.find((check) => check.check === "conventions")?.evidence).toEqual([`${testPath}:3 Nested ternary; use if statements or a lookup.`]);
+    for (const testPath of ["src/a.test.ts", "src/a.test.js"]) {
+      const inTest = patterns([{ ...file, path: testPath }], { [testPath]: content });
+      expect(inTest.checks.find((check) => check.check === "conventions")?.evidence).toEqual([`${testPath}:3 Nested ternary; use if statements or a lookup.`]);
+    }
     function scoped(scope: string) {
       return readPolicyFile(`rules:
   - id: no-ternaries

@@ -13,7 +13,7 @@ export interface PatternRule {
   ignores?: string[];
 }
 
-const TEST_FILES = ["**/*.test.ts", "**/*.test.tsx"];
+const TEST_FILES = ["**/*.test.ts", "**/*.test.tsx", "**/*.test.js", "**/*.test.jsx", "**/*.test.mjs", "**/*.test.cjs"];
 
 // ast-grep's globs: `*` crosses `/`, dotfiles are not special and a leading `!` is literal.
 const GLOB_OPTIONS = { bash: true, dot: true, strictBrackets: true, nonegate: true };
@@ -34,13 +34,14 @@ export function patternRuleApplies(rule: PatternRule, path: string): boolean {
   return (rule.files === undefined || named(path, rule.files)) && (rule.ignores === undefined || !named(path, rule.ignores));
 }
 
-function typescript(id: string, message: string, rule: Record<string, unknown>, scope: Pick<PatternRule, "files" | "ignores"> = {}): PatternRule {
-  return { id, language: "typescript", message, rule, ...scope };
+/** One rule under one id for every language, for a rule that matches the same way in each grammar. */
+function everyLanguage(id: string, message: string, rule: Record<string, unknown>, scope: Pick<PatternRule, "files" | "ignores"> = {}): PatternRule[] {
+  return PATTERN_LANGUAGES.map((language) => ({ id, language, message, rule, ...scope }));
 }
 
 const CONVENTION: PatternRule[] = [
   // A counter's `?? 0` is a real default, so one inside arithmetic is left alone.
-  typescript("zero-fallback", "Invented fallback `?? 0`; handle the missing value instead.", {
+  ...everyLanguage("zero-fallback", "Invented fallback `?? 0`; handle the missing value instead.", {
     pattern: "$X ?? 0",
     not: {
       any: [
@@ -49,8 +50,8 @@ const CONVENTION: PatternRule[] = [
       ],
     },
   }, { ignores: TEST_FILES }),
-  typescript("empty-list-fallback", "Invented fallback `?? []`; handle the missing value instead.", { pattern: "$X ?? []" }, { ignores: TEST_FILES }),
-  typescript("nested-ternary", "Nested ternary; use if statements or a lookup.", {
+  ...everyLanguage("empty-list-fallback", "Invented fallback `?? []`; handle the missing value instead.", { pattern: "$X ?? []" }, { ignores: TEST_FILES }),
+  ...everyLanguage("nested-ternary", "Nested ternary; use if statements or a lookup.", {
     kind: "ternary_expression",
     any: [
       { has: { field: "condition", kind: "ternary_expression" } },
@@ -59,16 +60,16 @@ const CONVENTION: PatternRule[] = [
       { has: { kind: "parenthesized_expression", has: { kind: "ternary_expression" } } },
     ],
   }),
-  typescript("iife", "Immediately invoked function; name the function.", {
+  ...everyLanguage("iife", "Immediately invoked function; name the function.", {
     kind: "call_expression",
     has: { field: "function", kind: "parenthesized_expression", has: { any: [{ kind: "arrow_function" }, { kind: "function_expression" }] } },
   }),
-  typescript("promise-chain", "Promise chain; use async/await with try/catch.", {
+  ...everyLanguage("promise-chain", "Promise chain; use async/await with try/catch.", {
     kind: "call_expression",
     has: { field: "function", kind: "member_expression", has: { field: "property", regex: "^(then|catch|finally)$" } },
   }),
-  typescript("empty-catch", "Empty catch swallows the error.", { kind: "catch_clause", has: { field: "body", regex: "^\\{\\s*\\}$" } }),
-  typescript("suppression-comment", "Lint or type suppression comment.", { kind: "comment", regex: "@ts-(ignore|expect-error|nocheck)|(eslint|oxlint)-disable" }),
+  ...everyLanguage("empty-catch", "Empty catch swallows the error.", { kind: "catch_clause", has: { field: "body", regex: "^\\{\\s*\\}$" } }),
+  ...everyLanguage("suppression-comment", "Lint or type suppression comment.", { kind: "comment", regex: "@ts-(ignore|expect-error|nocheck)|(eslint|oxlint)-disable" }),
 ];
 
 /** Shipped rule sets a policy turns on by id. */

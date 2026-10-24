@@ -46,8 +46,8 @@ At most 8 in total. `id` is lowercase letters, digits and single hyphens, at mos
   - `failWhen`: `contains` (fail when any field has any phrase) or `not-contains` (fail when a field has none of them).
   - `phrases`: 1–50 strings.
 - `check: code-patterns` (no model): fails when a line the pull request adds to a TypeScript or JavaScript file matches; vendored and built files are skipped. On Bitbucket Data Center, which sends no patches, it is unconfirmed whenever such a file changes.
-  - `presets: [convention]` (TypeScript only): invented `?? 0`/`?? []` fallbacks outside tests, nested ternaries, immediately invoked functions, `.then`/`.catch`/`.finally` chains, empty `catch` blocks, suppression comments.
-  - `patterns`: ast-grep rules with `id`, `language` (`typescript` or `javascript`), `message`, `rule` (an ast-grep rule object), and optional `files` (only these paths) and `ignores` (not these). Globs are strings from the repository root, by ast-grep's rules: `*` crosses folders; write `[^a]`, never `[!a]`. A pattern replaces a preset's with the same `id`.
+  - `presets: [convention]` (TypeScript and JavaScript): invented `?? 0`/`?? []` fallbacks outside tests, nested ternaries, immediately invoked functions, `.then`/`.catch`/`.finally` chains, empty `catch` blocks, suppression comments.
+  - `patterns`: ast-grep rules with `id`, `language` (`typescript` or `javascript`), `message`, `rule` (an ast-grep rule object), and optional `files` (only these paths) and `ignores` (not these). Globs are strings from the repository root, by ast-grep's rules: `*` crosses folders; write `[^a]`, never `[!a]`. Patterns may share an `id` across languages. A pattern replaces a preset's with the same `id` in both languages; to keep checking JavaScript, add a `language: javascript` pattern under the same id.
 
 A model rule costs one model request per pull request and needs a decision model set up in Corbits Triage (Settings → Triage → Decision model).
 
@@ -62,7 +62,7 @@ Start from the four starter rules (SKILL.md step 3). Add an extra only when the 
 | Commits mostly follow conventional commits | `conventional-commits`; add `types` only when the history uses a type outside the default list, and `fields: [title]` when pull requests are squash-merged |
 | The user wants to hear when a pull request hides text from reviewers | `hidden-content` with `onFail: ask` |
 | The user bars tool attribution | `no-tool-attribution` below. Add the user's tool trailers to its phrases; never a bare `Co-Authored-By:`, which also fails human co-authors. |
-| The user names TypeScript or JavaScript code conventions | `code-patterns`: `presets: [convention]` for TypeScript, plus patterns for what the preset lacks or for JavaScript |
+| The user names TypeScript or JavaScript code conventions | `code-patterns`: `presets: [convention]`, plus patterns for what the preset lacks |
 | A decision model is set up and pull requests often mix changes | `focused` |
 | A decision model is set up and the repository keeps user docs beside its code | `docs` |
 
