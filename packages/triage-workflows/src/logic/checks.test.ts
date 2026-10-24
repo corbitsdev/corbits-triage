@@ -297,12 +297,21 @@ rules:
     }
   });
 
+  test("a pull request that adds no TypeScript or JavaScript passes and says nothing was checked", () => {
+    const result = patterns([{ ...file, path: "src/old.ts", status: "removed" }, { ...file, path: "cmd/main.go" }], {});
+    expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({
+      result: "pass",
+      reason: "nothing checked: no TypeScript or JavaScript code added",
+      evidence: [],
+    });
+  });
+
   test("only root vendored and built code is skipped, and named as skipped; the same folders nested are checked", () => {
     const skipped = ["vendor/lib/a.ts: skipped as vendored, built or installed code", "dist/a.js: skipped as vendored, built or installed code"];
     const rootOnly = patterns([{ ...file, path: "vendor/lib/a.ts" }, { ...file, path: "dist/a.js" }], {});
     expect(rootOnly.checks.find((check) => check.check === "conventions")).toMatchObject({
       result: "pass",
-      reason: "nothing checked: every changed file is vendored, built or installed code",
+      reason: "nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code",
       evidence: skipped,
       skipped,
     });

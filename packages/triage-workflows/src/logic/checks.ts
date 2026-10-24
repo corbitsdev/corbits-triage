@@ -504,7 +504,8 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
 
 function patternsReason(failed: boolean, found: { skipped: string[]; checked: number }): string {
   if (failed) return "added code matches a code pattern";
-  if (found.checked === 0 && found.skipped.length > 0) return "nothing checked: every changed file is vendored, built or installed code";
+  if (found.checked === 0 && found.skipped.length > 0) return "nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code";
+  if (found.checked === 0) return "nothing checked: no TypeScript or JavaScript code added";
   return "no code pattern matched";
 }
 
