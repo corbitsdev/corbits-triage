@@ -112,21 +112,24 @@ rules:
         language: typescript
         message: Logs a full request URL or a query value, which can hold a secret such as a GitHub manifest code; log the pathname, and give honoLogger a format that does.
         rule:
-          kind: call_expression
           any:
-            - all:
-                - has: { field: function, regex: '^(console\.\w+|logJson|honoLogger|(\w+\.)*log|(\w+\.)*(log|logger)\.(trace|debug|info|warn|warning|error|fatal)|getLogger\([^)]*\)\.(trace|debug|info|warn|warning|error|fatal))$' }
-                - has:
-                    field: arguments
-                    has:
-                      stopBy: end
-                      any:
-                        - kind: member_expression
-                          regex: '^(\w+\.)*(req|request|raw)\.url$'
-                          not: { inside: { kind: arguments, inside: { kind: new_expression, inside: { kind: member_expression, has: { field: property, regex: '^(pathname|origin|host|hostname|protocol|port)$' } } } } }
-                        - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*searchParams\.(get|getAll|toString|entries|values)$' } }
-                        - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*(req|request)\.(query|queries)$' } }
-            - has: { field: function, regex: '^honoLogger$' }
+            - any:
+                - { kind: member_expression, regex: '^(\w+\.)*(req|request|raw)\.url$' }
+                - kind: member_expression
+                  all:
+                    - has: { field: property, regex: '^(href|search)$' }
+                    - has: { field: object, kind: new_expression, regex: '^new URL\(\s*(\w+\.)*(req|request|raw)\.url\b' }
+                - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*searchParams\.(get|getAll|toString|entries|values)$' } }
+                - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*(req|request)\.(query|queries)$' } }
+              inside:
+                stopBy: { not: { any: [{ kind: object }, { kind: pair }, { kind: template_string }, { kind: template_substitution }, { kind: parenthesized_expression }, { kind: binary_expression, has: { field: operator, regex: '^\+$' } }] } }
+                kind: arguments
+                inside:
+                  kind: call_expression
+                  has: { field: function, regex: '^(console\.\w+|logJson|honoLogger|(\w+\.)*log|(\w+\.)*(log|logger)\.(trace|debug|info|warn|warning|error|fatal)|getLogger\([^)]*\)\.(trace|debug|info|warn|warning|error|fatal))$' }
+                  not: { has: { field: function, regex: '^Math\.' } }
+            - kind: call_expression
+              has: { field: function, regex: '^honoLogger$' }
               any:
                 - has: { field: arguments, regex: '^\(\s*\)$' }
                 - has:
@@ -147,21 +150,24 @@ rules:
         language: javascript
         message: Logs a full request URL or a query value, which can hold a secret such as a GitHub manifest code; log the pathname, and give honoLogger a format that does.
         rule:
-          kind: call_expression
           any:
-            - all:
-                - has: { field: function, regex: '^(console\.\w+|logJson|honoLogger|(\w+\.)*log|(\w+\.)*(log|logger)\.(trace|debug|info|warn|warning|error|fatal)|getLogger\([^)]*\)\.(trace|debug|info|warn|warning|error|fatal))$' }
-                - has:
-                    field: arguments
-                    has:
-                      stopBy: end
-                      any:
-                        - kind: member_expression
-                          regex: '^(\w+\.)*(req|request|raw)\.url$'
-                          not: { inside: { kind: arguments, inside: { kind: new_expression, inside: { kind: member_expression, has: { field: property, regex: '^(pathname|origin|host|hostname|protocol|port)$' } } } } }
-                        - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*searchParams\.(get|getAll|toString|entries|values)$' } }
-                        - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*(req|request)\.(query|queries)$' } }
-            - has: { field: function, regex: '^honoLogger$' }
+            - any:
+                - { kind: member_expression, regex: '^(\w+\.)*(req|request|raw)\.url$' }
+                - kind: member_expression
+                  all:
+                    - has: { field: property, regex: '^(href|search)$' }
+                    - has: { field: object, kind: new_expression, regex: '^new URL\(\s*(\w+\.)*(req|request|raw)\.url\b' }
+                - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*searchParams\.(get|getAll|toString|entries|values)$' } }
+                - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*(req|request)\.(query|queries)$' } }
+              inside:
+                stopBy: { not: { any: [{ kind: object }, { kind: pair }, { kind: template_string }, { kind: template_substitution }, { kind: parenthesized_expression }, { kind: binary_expression, has: { field: operator, regex: '^\+$' } }] } }
+                kind: arguments
+                inside:
+                  kind: call_expression
+                  has: { field: function, regex: '^(console\.\w+|logJson|honoLogger|(\w+\.)*log|(\w+\.)*(log|logger)\.(trace|debug|info|warn|warning|error|fatal)|getLogger\([^)]*\)\.(trace|debug|info|warn|warning|error|fatal))$' }
+                  not: { has: { field: function, regex: '^Math\.' } }
+            - kind: call_expression
+              has: { field: function, regex: '^honoLogger$' }
               any:
                 - has: { field: arguments, regex: '^\(\s*\)$' }
                 - has:
