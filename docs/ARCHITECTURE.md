@@ -88,23 +88,23 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     redeploys one Interchange failed, after two minutes and at most three
     times an hour.
   - **Coordinator**: every triage mail (webhook, retry, reconciler) and every
-    code review mail is a job in one in-memory queue keyed per workflow and
-    pull request. Each job runs in a worker deployment of its own, copied from
-    the host's live deployment, which only seeds workers, and released once
-    its run ends. How many run at once is the provisioner's call: a placement
-    it declines for want of room, or a job with no live deployment to copy
-    yet, waits and is retried with backoff. A worker the sender gate refuses
-    (a copy of a deployment made before its workflow declared who may mail
-    it) is released and its job retried the same way five times, enough for
-    the portal reload after a hub deploy; then the head fails with "this
-    repository's Triage deployment is out of date; open the portal to
-    redeploy it", and the reconciler queues it again after the redeploy. A
-    worker not finished an hour after its spawn began, stuck readying,
-    delivering or running, is cancelled and its slot freed; the reconciler
-    retries its head as a cancelled run. The queue, like the coalescer's
-    windows, lives in memory, so the hub runs as one replica. A restart loses
-    only queue order: the hub releases orphaned workers on start and the
-    reconciler queues their heads again.
+    code review mail is a job in one in-memory queue keyed per lane (triage or
+    code review), host and pull request. Each job runs in a worker deployment
+    of its own, copied from the host's live deployment, which only seeds
+    workers, and released once its run ends. How many run at once is the
+    provisioner's call: a placement it declines for want of room, or a job
+    with no live deployment to copy yet, waits and is retried with backoff. A
+    worker the sender gate refuses (a copy of a deployment made before its
+    workflow declared who may mail it) is released and its job retried the
+    same way five times, enough for the portal reload after a hub deploy; then
+    the head fails with "this repository's Triage deployment is out of date;
+    open the portal to redeploy it", and the reconciler queues it again after
+    the redeploy. A worker not finished an hour after its spawn began, stuck
+    readying, delivering or running, is cancelled and its slot freed; the
+    reconciler retries its head as a cancelled run. The queue, like the
+    coalescer's windows, lives in memory, so the hub runs as one replica. A
+    restart loses only queue order: the hub releases orphaned workers on start
+    and the reconciler queues their heads again.
   - **Run recorder**: reads the live logs of tenants with a run in flight and
     records each verdict and executed action.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
