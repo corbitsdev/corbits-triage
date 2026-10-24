@@ -116,13 +116,16 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
 
   // better-auth keys its limits on a forwarded IP it cannot resolve behind a proxy, so resends are limited per account.
   const recentResends = new Set<string>();
+  function forgetResend(key: string) {
+    recentResends.delete(key);
+  }
   async function limitVerificationResend(ctx: AuthMiddlewareContext) {
     if (ctx.path !== "/send-verification-email" || typeof ctx.body?.email !== "string") return;
     const session = await getSessionFromCtx(ctx);
     const key = session ? `user:${session.user.id}` : `email:${ctx.body.email.toLowerCase()}`;
     if (recentResends.has(key)) throw new APIError("TOO_MANY_REQUESTS", { message: "Wait a minute before asking for another link." });
     recentResends.add(key);
-    setTimeout(() => recentResends.delete(key), VERIFICATION_RESEND_MS).unref();
+    setTimeout(forgetResend, VERIFICATION_RESEND_MS, key).unref();
   }
 
   async function signDeviceToken(ctx: AuthMiddlewareContext) {
