@@ -10,7 +10,7 @@ import {
   reposFromConfig,
   removeRepository,
   saveRepoSettings,
-  triagePullRequest,
+  startBacklogTriage,
   untilDeploymentReady,
   patchAppConfig,
   type HubApproval,
@@ -462,12 +462,12 @@ describe("deployment not ready", () => {
         posted.push(`${method} ${path}`);
         const refused = answers.shift();
         if (refused) throw refused;
-        return { status: "queued", headSha: "sha1" } as never;
+        return { status: "started" } as never;
       },
       subscribe,
     };
     async function request() {
-      return triagePullRequest(transport, "tenant", "acme/widgets", 1);
+      return startBacklogTriage(transport, "tenant", "acme/widgets");
     }
     function onWait() {
       waits.push("waiting");
@@ -490,7 +490,7 @@ describe("deployment not ready", () => {
   });
 
   test("another conflict is thrown without a retry", async () => {
-    const conflict = new ApiError(409, "already_queued", "acme/widgets#1 is already queued for triage.");
+    const conflict = new ApiError(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
     const { posted, waits, run } = harness([conflict]);
     await expect(run()).rejects.toBe(conflict);
     expect(posted).toHaveLength(1);

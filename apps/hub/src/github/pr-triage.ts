@@ -6,7 +6,6 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { hasEnabledRules, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
-import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
@@ -17,7 +16,7 @@ import type { Member } from "../integrations/app.js";
 import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
-import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
+import { newestLive, type LiveDeployment } from "./deployment.js";
 import { mergeObservedRuns, observeDeployments, type ObserveRuns } from "./triage-runs.js";
 import { isQueuedSince, isRunningSince, queueHead, restoreHead } from "./triage-queue.js";
 import type { TriageStateStore } from "./triage-state-store.js";
@@ -117,9 +116,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
       } catch (restoreErr) {
         deps.log({ level: "error", msg: "triage_state_restore_failed", tenantId, repo, pr: number, headSha, error: String(restoreErr) });
       }
-      if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
-      const reason = errorText(err);
-      return failure(isRunTriggerUnroutable(err) ? 503 : 502, isRunTriggerUnroutable(err) ? "service_not_running" : "hub_unavailable", `Could not queue ${repo}#${number}: ${reason}. Try again.`);
+      return githubLimited(err) ?? failure(502, "hub_unavailable", `Could not queue ${repo}#${number}: ${errorText(err)}. Try again.`);
     }
     deps.log({ level: "info", msg: "triage_requested", tenantId, principalId, repo, pr: number, headSha });
     return Response.json({ status: "queued", headSha }, { status: 202 });

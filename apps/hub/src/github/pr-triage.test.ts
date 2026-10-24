@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkPackName, emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
-import { DeploymentNotReadyError } from "./deployment.js";
+import { GithubRateLimited } from "./github-usage.js";
 import { createGithubPrTriage, type GithubPrTriageDeps } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
 import { TriageStateConflictError, type TriageStateVersion } from "./triage-state-store.js";
@@ -222,14 +222,16 @@ describe("createGithubPrTriage", () => {
     expect(fresh.saved.at(-1)).toEqual([]);
   });
 
-  test("a deployment that is not ready yet is refused with deployment_not_ready and the row is put back", async () => {
+  test("GitHub's rate limit while routing the mail answers github_rate_limited with Retry-After and puts the row back", async () => {
     const s = stub();
+    const resetAt = Date.now() + 60_000;
     async function send(): Promise<void> {
-      throw new DeploymentNotReadyError();
+      throw new GithubRateLimited("1", resetAt);
     }
     const res = await handler(ENABLED, s, { send })(request(), MEMBER);
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: { code: "deployment_not_ready", message: "The workflow deployment is still starting." } });
+    expect(res.status).toBe(503);
+    expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(await res.json()).toMatchObject({ error: { code: "github_rate_limited", resetAt: new Date(resetAt).toISOString() } });
     expect(s.saved.at(-1)).toEqual([]);
   });
 

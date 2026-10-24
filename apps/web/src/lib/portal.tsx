@@ -349,14 +349,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const triagePullRequest = useCallback(
     async function triagePullRequest(repo: string, number: number) {
       const current = requireSnapshot();
-      const transport = createHubTransport();
-      async function request() {
-        return requestPullRequestTriage(transport, current.workspace.tenantId, repo, number);
-      }
-      await untilDeploymentReady(request, waitForWorkflow);
+      await requestPullRequestTriage(createHubTransport(), current.workspace.tenantId, repo, number);
       await invalidateChangeable(queryClient, [[TRIAGE_VERDICTS_QUERY_KEY]]);
     },
-    [queryClient, requireSnapshot, waitForWorkflow],
+    [queryClient, requireSnapshot],
   );
 
   const writeGithub = useCallback(
