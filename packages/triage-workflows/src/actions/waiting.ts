@@ -1,6 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { ACTION_KINDS, isFromTriageSender, marksWaiting, ownedLabels, repoSourceOf, triggerRequestOf, WAITING_KIND, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
-import { packFromInput } from "../logic/checks.js";
+import { ACTION_KINDS, isFromTriageSender, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, triggerRequestOf, WAITING_KIND, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import type { MarkArgs, WaitingMark } from "../logic/render.js";
 
 /** `mark` is absent when triage does not write the verdict on this host, so nothing is written either. */
@@ -40,7 +39,7 @@ export async function waiting(input: unknown, _ctx: EffectContext, _signal: Abor
   if (!request || !isFromTriageSender(input) || (!held && request["kind"] !== "pr")) return { waiting: false };
   const source = repoSourceOf(request["repoSource"]);
   const { repo, prNumber, headSha, automatic } = request;
-  const pack = packFromInput(request["pack"] ?? request["checkPack"]);
+  const pack = parseCheckPack(request["pack"] ?? request["checkPack"]);
   if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !pack) return { waiting: held };
   if (!marks(source, automatic) || (!held && source !== "github")) return { waiting: held };
   const pull = { repo, number: prNumber, onHead: headSha };

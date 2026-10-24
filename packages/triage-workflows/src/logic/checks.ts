@@ -13,9 +13,9 @@ import {
   isPatternsCheck,
   isTextCheck,
   labelRules,
-  parseCheckPack,
   NO_CHANGES_REQUESTED,
   NOT_A_DRAFT,
+  readCheckPack,
   repoPolicy,
   SIZE_RULES,
   type AuthorKind,
@@ -137,6 +137,8 @@ export interface DeterministicResult {
 }
 
 export const NEEDS_SETUP_REASON = "This repository still needs a policy.";
+/** The hub read the policy but this deployment cannot, so the run stays unsettled and is retried once the deployment catches up. */
+export const DEPLOYMENT_UNREADABLE = "This Triage deployment can't read the policy: ";
 
 type CiRule = { status: string; reason: string; failed: boolean | null; names: (facts: PrFacts) => string[] };
 
@@ -562,10 +564,10 @@ function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
 }
 
 /** The hub read the stored policy, so what that read left out comes with the pack it mails. */
-export function packFromInput(raw: unknown): CheckPack | null {
-  const pack = parseCheckPack(raw);
+export function packFromInput(raw: unknown): CheckPack {
+  const pack = readCheckPack(raw);
   const dropped = isRecord(raw) && Array.isArray(raw.dropped) ? raw.dropped.filter((note): note is string => typeof note === "string") : [];
-  return pack && dropped.length > 0 ? { ...pack, dropped: [...new Set([...(pack.dropped ?? []), ...dropped])] } : pack;
+  return dropped.length > 0 ? { ...pack, dropped: [...new Set([...(pack.dropped ?? []), ...dropped])] } : pack;
 }
 
 export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack | null): DeterministicResult {
