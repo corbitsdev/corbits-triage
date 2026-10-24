@@ -70,15 +70,26 @@ records as a `SignalReceived`, without redelivering it or dropping the run's
 input channel. `hasRecordedSignal` reads the run's event log for that check.
 Stock `cb0bdfb4` stops the child appending a duplicate `SignalReceived`, but
 `dispatchOne` still redelivers the mail and waits for the run to park, which
-a dropped duplicate does not do, so the carry stays. The three files are
-unchanged upstream between `cd02c313` and `b1ca01f0`, so the carry applies
-as-is.
+a dropped duplicate does not do, so the carry stays. The three source files
+are unchanged upstream between `cd02c313` and `b1ca01f0`, so the carry applies
+to them as-is.
+
+The check also counts the mail a run's `RunStarted` records as its
+`consumedMessageId`. A long-lived onTrigger run consumes its first trigger
+only once it parks or ends, so the trigger sits in `processing/` while its
+first event runs. Every recycle path that replays without owned message ids
+(crash respawn and planned recycle) re-admits it, and a first trigger that
+boot replay kept in `processing/` for its live run is re-admitted the same way
+by a later recycle. The new child is re-driving the run, so dispatch waits until it parks and would then
+redeliver the trigger as a new event; the run's work would run twice. The
+carry consumes it instead. A test in `supervisor.test.ts` covers this case.
 
 Allowed files:
 
 - `packages/hub-sessions/src/workflow-run-kind.ts`
 - `packages/hub-sessions/src/substrate.ts`
 - `packages/workflow-host/src/supervisor/supervisor.ts`
+- `packages/workflow-host/src/supervisor/supervisor.test.ts`
 
 Upstream status: to be filed.
 

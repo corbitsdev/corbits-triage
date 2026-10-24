@@ -22,6 +22,7 @@ packages/workflow-host/src/child/substrate-factory.ts
 packages/hub-sessions/src/workflow-run-kind.ts
 packages/hub-sessions/src/substrate.ts
 packages/workflow-host/src/supervisor/supervisor.ts
+packages/workflow-host/src/supervisor/supervisor.test.ts
 
 # INTR-666: the Anthropic adapter's adaptive-thinking set gains the Claude 5.5
 # models and Fable 5.1, and json-schema responseFormat maps to

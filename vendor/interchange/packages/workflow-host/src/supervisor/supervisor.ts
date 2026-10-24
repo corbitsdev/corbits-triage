@@ -3668,10 +3668,11 @@ export function createWorkflowSupervisor(
           const inputChannel = runInputChannels.get(runId);
           if (inputChannel !== undefined) {
             // A mail the run already recorded (left in processing/ by a
-            // restart or failed dispatch) is a duplicate the runtime drops
-            // without re-parking, so waiting would wedge it and every newer
-            // mail; consume it instead (break to the post-loop markConsumed)
-            // and keep the run's current input channel.
+            // restart, crash respawn, recycle or failed dispatch) must not be
+            // redelivered: a recorded signal is dropped without re-parking,
+            // wedging it and every newer mail, and the run's own first trigger
+            // would run as a new event. Consume it instead (break to the
+            // post-loop markConsumed) and keep the run's current input channel.
             if (
               await hasRecordedSignal(
                 bindings.repoStore,
