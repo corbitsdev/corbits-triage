@@ -16,12 +16,17 @@ function quoteIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+export async function triageMigrations(): Promise<string[]> {
+  return (await readdir(MIGRATIONS_DIR)).filter((file) => file.endsWith(".sql")).sort();
+}
+
 /**
  * `schema` is where Interchange's tables live; the `"public".` references in the SQL are rewritten to it. Every
  * statement is idempotent, and the run is one transaction behind an advisory lock so hub replicas cannot race the DDL.
+ * With no ledger, the last file applied is kept as the schema's comment for the start-up check.
  */
 export async function migrateTriageTables(db: DB["db"], schema: string): Promise<void> {
-  const files = (await readdir(MIGRATIONS_DIR)).filter((file) => file.endsWith(".sql")).sort();
+  const files = await triageMigrations();
   const statements: string[] = [];
   for (const file of files) {
     const raw = await readFile(join(MIGRATIONS_DIR, file), "utf8");
@@ -34,5 +39,6 @@ export async function migrateTriageTables(db: DB["db"], schema: string): Promise
     // Every migrate re-runs the idempotent DDL; its "already exists, skipping" notices are noise.
     await tx.execute(sql`SET LOCAL client_min_messages = warning`);
     for (const statement of statements) await tx.execute(sql.raw(statement));
+    await tx.execute(sql.raw(`COMMENT ON SCHEMA ${quoteIdentifier(triageSchema.schemaName)} IS '${files[files.length - 1].replace(/'/g, "''")}'`));
   });
 }
