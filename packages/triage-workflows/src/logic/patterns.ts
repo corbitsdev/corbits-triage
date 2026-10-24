@@ -49,6 +49,10 @@ function wholePatch(file: PrFileFacts): string | undefined {
   return file.patch === undefined || file.patchTruncated || file.patch.length > MAX_PATCH_INPUT_CHARS ? undefined : file.patch;
 }
 
+function readPath(file: PrFileFacts): string {
+  return file.hostPath ?? file.path;
+}
+
 /** The files one pull request reads the content of, GitHub's own diff limit, so one pull request's reads stay bounded. */
 export const MAX_CONTENT_READS = 300;
 
@@ -57,7 +61,7 @@ export function filesToRead(files: readonly PrFileFacts[]): string[] | { unread:
   const scoped = files.filter(inScope);
   const unpatched = scoped.find((file) => wholePatch(file) === undefined);
   if (unpatched) return { unread: `${unpatched.path}: its patch was not read in full` };
-  const toRead = scoped.filter((file) => addedLines(wholePatch(file)!).size > 0).map((file) => file.path);
+  const toRead = scoped.filter((file) => addedLines(wholePatch(file)!).size > 0).map(readPath);
   if (toRead.length > MAX_CONTENT_READS) return { unread: `${toRead.length} files with added code, more than the ${MAX_CONTENT_READS} read per pull request` };
   return toRead;
 }
@@ -86,8 +90,8 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
   const matches: string[] = [];
   try {
     const rules = patternRules(check);
-    for (const file of files.filter((candidate) => toRead.includes(candidate.path))) {
-      const content = contents[file.path];
+    for (const file of files.filter((candidate) => toRead.includes(readPath(candidate)))) {
+      const content = contents[readPath(file)];
       if (content === undefined) return { unread: `${file.path}: its content was not read` };
       matches.push(...fileMatches(file, file.patch!, content, grammarOf(file.path)!, rules));
     }
