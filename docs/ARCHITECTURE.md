@@ -92,19 +92,21 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     code review), host and pull request. Each job runs in a worker deployment
     of its own, copied from the host's live deployment, which only seeds
     workers, and released once its run ends. How many run at once is the
-    provisioner's call: a placement it declines for want of room, or a job
-    with no live deployment to copy yet, waits and is retried with backoff. A
+    provisioner's call: a placement it declines for want of room waits and is
+    retried with backoff. A job with no live deployment to copy, or whose
     worker the sender gate refuses (a copy of a deployment made before its
-    workflow declared who may mail it) is released and its job retried the
-    same way five times, enough for the portal reload after a hub deploy; then
-    the head fails with "this repository's Triage deployment is out of date;
-    open the portal to redeploy it", and the reconciler queues it again after
-    the redeploy. A worker not finished an hour after its spawn began, stuck
-    readying, delivering or running, is cancelled and its slot freed; the
-    reconciler retries its head as a cancelled run. The queue, like the
-    coalescer's windows, lives in memory, so the hub runs as one replica. A
-    restart loses only queue order: the hub releases orphaned workers on start
-    and the reconciler queues their heads again.
+    workflow declared who may mail it, which is released), is retried the same
+    way five times between them, enough for the portal reload after a hub
+    deploy and usually enough for a failed deployment's heal; then the head
+    fails with "this repository's Triage deployment is not running; open the
+    portal to redeploy it" or "this repository's Triage deployment is out of
+    date; open the portal to redeploy it", and the reconciler queues it again
+    once a deployment is live. A worker not finished an hour after its spawn
+    began, stuck readying, delivering or running, is cancelled and its slot
+    freed; the reconciler retries its head as a cancelled run. The queue, like
+    the coalescer's windows, lives in memory, so the hub runs as one replica.
+    A restart loses only queue order: the hub releases orphaned workers on
+    start and the reconciler queues their heads again.
   - **Run recorder**: reads the live logs of tenants with a run in flight and
     records each verdict and executed action.
   - **App Manifest conversion**: GitHub returns a one-time code that must be

@@ -2,12 +2,13 @@
 // one pull request's folded mail, spawned as a fresh worker deployment and
 // released when its one run ends. Capacity is the provisioner's: a spawn it
 // refuses for want of room, or one with no listener to copy yet, waits and is
-// retried. A queued job for a pull request whose head moved is replaced, not
-// added, as the coalescer keys its windows, whichever workflow of its lane
-// either names, and a deferred one a newer head replaced is dropped; a job for a pull request whose
-// worker is still running waits for it, and the reconciler supersedes the old
-// run's result. The queue lives in process: the hub runs as one replica, and
-// the heads stay `queued` rows for the reconciler.
+// retried, the latter only so many times before its head fails. A queued job
+// for a pull request whose head moved is replaced, not added, as the coalescer
+// keys its windows, whichever workflow of its lane either names, and a deferred
+// one a newer head replaced is dropped; a job for a pull request whose worker
+// is still running waits for it, and the reconciler supersedes the old run's
+// result. The queue lives in process: the hub runs as one replica, and the
+// heads stay `queued` rows for the reconciler.
 import { CODE_REVIEW_WORKFLOWS } from "./source-workflow.js";
 import type { RepoRecord } from "./tenant-config.js";
 
@@ -26,16 +27,35 @@ export type TriageJob = {
   record?: RepoRecord;
 };
 
-/** A spawn that cannot happen yet: the host has no room, or no listener to copy is live. The job is retried, not failed. */
-export class WorkerDeferredError extends Error {}
+export const OUTDATED_REASON = "this repository's Triage deployment is out of date; open the portal to redeploy it";
+
+export const NO_LISTENER_REASON = "this repository's Triage deployment is not running; open the portal to redeploy it";
+
+/**
+ * A spawn that cannot happen yet: the host has no room, or its deployment is
+ * not fit to copy. The job is retried; one waiting on room is never failed,
+ * one with a `reason` is failed with it after `DEPLOYMENT_ATTEMPTS`.
+ */
+export class WorkerDeferredError extends Error {
+  constructor(message: string, readonly reason?: string) {
+    super(message);
+  }
+}
 
 /** A worker the sender gate refused: copied from a deployment made before its workflow declared who may mail it, which the portal redeploys. */
-export class WorkerOutdatedError extends WorkerDeferredError {}
+export class WorkerOutdatedError extends WorkerDeferredError {
+  constructor(message: string) {
+    super(message, OUTDATED_REASON);
+  }
+}
 
-/** Enough deferrals to cover a portal reload after a hub deploy; then the head fails and the reconciler queues it after the redeploy. */
-const OUTDATED_ATTEMPTS = 5;
-
-export const OUTDATED_REASON = "this repository's Triage deployment is out of date; open the portal to redeploy it";
+/**
+ * Enough deferrals to cover a portal reload after a hub deploy, and usually a
+ * failed deployment's heal; then the head fails and the reconciler queues it
+ * once a deployment is live. One budget per job, whichever reason each
+ * deferral gives.
+ */
+const DEPLOYMENT_ATTEMPTS = 5;
 
 export const TIMED_OUT_REASON = "worker did not finish in time";
 
@@ -81,8 +101,8 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
   let slots = 0;
   /** Deferred jobs: how often, and when they may spawn again. */
   const refused = new Map<string, { attempts: number; notBefore: number }>();
-  /** How often each job's worker was refused as outdated. */
-  const outdated = new Map<string, number>();
+  /** How often each job was deferred on the host's deployment. */
+  const awaitingDeployment = new Map<string, number>();
   let cancelTimer: (() => void) | undefined;
   let pumping = false;
   let stopped = false;
@@ -150,7 +170,7 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
       deps.log({ level: "error", msg: "worker_timed_out", ...entry, runId });
       if (runId !== undefined) await release(job, runId, entry);
       refused.delete(keyOf(job));
-      outdated.delete(keyOf(job));
+      awaitingDeployment.delete(keyOf(job));
       running.delete(slot);
       await failJob(job, TIMED_OUT_REASON, entry);
       void pump();
@@ -162,18 +182,18 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
       cancelDeadline();
       running.delete(slot);
       const key = keyOf(job);
-      const outdatedAttempts = err instanceof WorkerOutdatedError ? (outdated.get(key) ?? 0) + 1 : 0;
+      const deferrals = awaitingDeployment.get(key);
       if (err instanceof WorkerDeferredError && superseded(job)) {
         refused.delete(key);
-        outdated.delete(key);
+        awaitingDeployment.delete(key);
         deps.log({ level: "info", msg: "worker_job_superseded", ...entry, headSha: job.headSha });
-      } else if (outdatedAttempts > OUTDATED_ATTEMPTS) {
+      } else if (err instanceof WorkerDeferredError && err.reason !== undefined && deferrals !== undefined && deferrals >= DEPLOYMENT_ATTEMPTS) {
         refused.delete(key);
-        outdated.delete(key);
-        deps.log({ level: "error", msg: "worker_outdated", ...entry, error: String(err) });
-        await failJob(job, OUTDATED_REASON, entry);
+        awaitingDeployment.delete(key);
+        deps.log({ level: "error", msg: "worker_deployment_unavailable", ...entry, error: String(err) });
+        await failJob(job, err.reason, entry);
       } else if (err instanceof WorkerDeferredError) {
-        if (outdatedAttempts > 0) outdated.set(key, outdatedAttempts);
+        if (err.reason !== undefined) awaitingDeployment.set(key, deferrals === undefined ? 1 : deferrals + 1);
         deps.log({ level: "warn", msg: "worker_spawn_deferred", ...entry, error: String(err), retryMs: defer(job) });
       } else {
         deps.log({ level: "error", msg: "worker_spawn_failed", ...entry, error: String(err) });
@@ -187,7 +207,7 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
       return;
     }
     refused.delete(keyOf(job));
-    outdated.delete(keyOf(job));
+    awaitingDeployment.delete(keyOf(job));
     deps.log({ level: "info", msg: "worker_spawned", ...entry, runId });
     try {
       await deps.spawner.ended(job.tenantId, runId);
