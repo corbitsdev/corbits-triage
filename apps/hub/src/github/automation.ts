@@ -41,7 +41,7 @@ export function createAutomation(deps: AutomationDeps) {
     const grants = rows.map((row): GrantRule => ({ ...row, conditions: row.conditions as GrantRule["conditions"] }));
     const kinds: ActionKind[] = [];
     for (const kind of ACTION_KINDS) {
-      if ((await evaluateGrants(grants, doResource(kind, repo), DO_GRANT_ACTION)).effect === "allow") kinds.push(kind);
+      if ((await evaluateGrants(grants, doResource(kind, repo), DO_GRANT_ACTION, { conditions: "pessimistic" })).effect === "allow") kinds.push(kind);
     }
     return kinds;
   }

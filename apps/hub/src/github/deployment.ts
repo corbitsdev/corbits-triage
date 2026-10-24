@@ -37,7 +37,7 @@ export function readyMaterializer(materialize: RunTriggerMaterialize): RunTrigge
 /** @corbits/webhooks 0.3.1 materializes without its sender, which Interchange's sender gate refuses; this names the system sender the mail is signed as. Drop once the package passes it. */
 export function systemSenderMaterializer(materialize: RunTriggerMaterialize, sender: ResolvedSenderPrincipal) {
   return async function materializeAsSender({ agentAddress, runId }: { agentAddress: string; runId: string }) {
-    const grants = await materialize({ agentAddress, runId, senderPrincipalId: sender.principalId, senderCoordinates: sender.coordinates });
+    const grants = await materialize({ agentAddress, runId, senderCoordinates: sender.coordinates });
     if (grants.outcome === "rejected" && grants.code === MAIL_ADMISSION_DENIED_CODE) throw new SenderRefusedError(grants.message);
     return grants;
   };

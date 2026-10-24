@@ -27,6 +27,7 @@ export {
 } from "./routes/workflow-principal-name";
 export { HUB_CONDITION_REGISTRY } from "./condition-registry";
 export {
+  collectDeployerInvokerGrants,
   createMailTriggeredRunGrantsMaterializer,
   createCorrespondentGrantMinter,
   setRunToolGrantEffect,
@@ -44,3 +45,4 @@ export {
   type CreateApprovalRoutesDeps,
   type ReadRunLifecycles,
 } from "./routes/approvals";
+export { RUN_TOKEN_ROUTES } from "./middleware/run-token-auth";

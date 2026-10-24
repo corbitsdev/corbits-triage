@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
-import { createDB, createGrantStore, createPrincipalKeyStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, runMigrations, schema, type DB } from "@intx/db";
+import { createDB, createGrantStore, createPrincipalKeyStore, createRunTokenStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, runMigrations, schema, type DB } from "@intx/db";
 import { createMailTriggeredRunGrantsMaterializer, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { collectMailAcceptGrants } from "@intx/workflow-deploy";
 import { createTenantSystemSender } from "@corbits/webhooks";
@@ -44,7 +44,8 @@ async function withDatabase(body: (db: DB["db"]) => Promise<void>): Promise<void
 
 test("PostgreSQL: a deployment declaring the triage accept rule takes its tenant's system sender's trigger and refuses another tenant's", async () => {
   await withDatabase(async function gate(db) {
-    const principalKeyStore = createPrincipalKeyStore({ db, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)) });
+    const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
+    const principalKeyStore = createPrincipalKeyStore({ db, cipher });
     await db.insert(schema.tenant).values([{ id: TENANT, name: "Gate", slug: "gate", domain: "gate.test", config: {} }, { id: OTHER, name: "Other", slug: "other", domain: "other.test", config: {} }]);
     await db.insert(schema.principal).values({ id: "prn_deployer", tenantId: TENANT, kind: "user", refId: "deployer", status: "active" });
     await db.insert(schema.asset).values({ id: "ast_triage", tenantId: TENANT, kind: "workflow", name: "pr-triage-github", creatorPrincipalId: "prn_deployer" });
@@ -62,7 +63,7 @@ test("PostgreSQL: a deployment declaring the triage accept rule takes its tenant
       deployContent: {},
     });
     const systemSender = createTenantSystemSender({ db, principalKeyStore });
-    const materialize = createMailTriggeredRunGrantsMaterializer({ db, principalKeyStore, grantStore: createGrantStore(db), registry: HUB_CONDITION_REGISTRY });
+    const materialize = createMailTriggeredRunGrantsMaterializer({ db, principalKeyStore, runTokenStore: createRunTokenStore({ db, cipher }), grantStore: createGrantStore(db), registry: HUB_CONDITION_REGISTRY });
     async function triggerAs(tenantId: string, domain: string) {
       await systemSender.resolve({ tenantId, domain, localPart: TRIAGE_MAIL_SENDER });
       const sender = await resolveSenderPrincipal(db, principalKeyStore, `${TRIAGE_MAIL_SENDER}@${domain}`);

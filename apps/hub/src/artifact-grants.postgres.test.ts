@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { count, sql } from "drizzle-orm";
 import { authorize } from "@intx/authz";
+import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createDB, createGrantStore, runMigrations, schema } from "@intx/db";
 import { createArtifact, runArtifactMigrations } from "@corbits/artifacts";
 import { checkPackName } from "@corbits/triage-contracts";
@@ -42,7 +43,7 @@ test("PostgreSQL: an artifact is writable and archivable by its creator and admi
     async function may(principalId: string, artifactId: string): Promise<boolean[]> {
       const actions = ["write", "archive"];
       return Promise.all(actions.map(async function allowed(action) {
-        return (await authorize(grants, principalId, TENANT, `artifact:${artifactId}`, action)).effect === "allow";
+        return (await authorize(grants, principalId, TENANT, `artifact:${artifactId}`, action, { conditions: HUB_CONDITION_REGISTRY })).effect === "allow";
       }));
     }
     expect(await may("prn_creator", created.id)).toEqual([true, true]);

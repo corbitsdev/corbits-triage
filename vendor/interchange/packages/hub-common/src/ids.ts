@@ -1,3 +1,4 @@
+import { base64urlEncode } from "@intx/types/base64url";
 import { hexEncode } from "@intx/types/hex";
 
 const PREFIXES = {
@@ -23,6 +24,7 @@ const PREFIXES = {
   turnPart: "tp_",
   asset: "ast_",
   gitToken: "gtk_",
+  runToken: "rtk_",
   workflowRun: "run_",
   approval: "apr_",
   signal: "sig_",
@@ -84,3 +86,23 @@ export async function deriveRunPrincipalId(
  */
 export const PAT_PREFIX = "itx_pat_";
 export const SVC_PREFIX = "itx_svc_";
+
+/**
+ * Prefix of a workflow run token: the bearer a workflow run's consumer (a tool
+ * package or an action handler) presents to the hub REST API as its run
+ * principal. The prefix lets a middleware route the secret without a lookup.
+ */
+export const RUN_TOKEN_PREFIX = "itx_run_";
+
+const BEARER_SECRET_BYTES = 32;
+
+/**
+ * Mint the plaintext of a hub bearer token: the given prefix followed by 32
+ * random bytes, base64url-encoded. The prefix names the token's kind so a
+ * middleware can route a secret without a lookup; the hub stores only what it
+ * needs to verify or deliver the secret, never this string in the clear.
+ */
+export function generateBearerSecret(prefix: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(BEARER_SECRET_BYTES));
+  return `${prefix}${base64urlEncode(bytes)}`;
+}

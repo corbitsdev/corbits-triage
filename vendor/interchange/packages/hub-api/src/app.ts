@@ -14,6 +14,7 @@ import {
   createGrantStore,
   createApprovalStore,
   createPrincipalKeyStore,
+  createRunTokenStore,
   createSignalCorrelationStore,
 } from "@intx/db";
 import type { ConditionRegistry, GrantStore } from "@intx/types/authz";
@@ -80,6 +81,7 @@ import {
   createAgentStateReceivePackDeny,
 } from "./routes/agent-state-git";
 import { createGitTokenAuth } from "./middleware/git-token-auth";
+import { createRunTokenAuth } from "./middleware/run-token-auth";
 
 const log = getLogger(["hub", "app"]);
 
@@ -233,6 +235,7 @@ export function mountHubRoutes(
   const signalCorrelationStore =
     opts.signalCorrelationStore ?? createSignalCorrelationStore(db);
   const resolveTenant = createResolveTenant({ db });
+  const runTokenStore = createRunTokenStore({ db, cipher: credentialCipher });
 
   app.get("/status", (c) => c.json({ status: "ok" }));
 
@@ -283,6 +286,17 @@ export function mountHubRoutes(
       createGitTokenAuth({ db }),
     );
   }
+
+  // A workflow run token authenticates as its run principal. It mounts ahead
+  // of resolveTenant, which then skips the session lookup, and it refuses
+  // every route outside its allow-list. Any other request passes through.
+  app.use(
+    "/api/tenants/:tenantId/*",
+    createRunTokenAuth({
+      db,
+      runTokenStore,
+    }),
+  );
 
   // Tenant-scoped middleware -- require auth + tenant membership for any
   // path under /api/tenants/:tenantId/*. Must be registered before routes
@@ -338,6 +352,7 @@ export function mountHubRoutes(
     createRunRoutes({
       db,
       principalKeyStore,
+      runTokenStore,
       sessionService,
       sidecarRouter,
       eventCollectors,
@@ -380,6 +395,7 @@ export function mountHubRoutes(
       createWorkflowRoutes({
         db,
         principalKeyStore,
+        runTokenStore,
         ...(workflowAllocationService !== undefined
           ? { workflowAllocationService }
           : {}),
@@ -513,7 +529,7 @@ export function mountHubRoutes(
   app.route("/api/tenants/:tenantId", createObservabilityRoutes());
   app.route(
     "/api/tenants/:tenantId/federation",
-    createTenantFederationRoutes({ db }),
+    createTenantFederationRoutes({ db, requireGrant, authorizeGrant }),
   );
   app.route("/api/tenants/:tenantId/agents/:agentId", createAgentDataRoutes());
 

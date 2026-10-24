@@ -24,6 +24,7 @@ import type {
   RunGrantsFrame,
   WorkflowRunRefTips,
 } from "@intx/types/sidecar";
+import type { CredentialDelivery } from "@intx/types/credential-delivery";
 import type { RepoId } from "@intx/types/repo";
 import type {
   ApprovalSnapshot,
@@ -278,6 +279,14 @@ export type SidecarLookups = {
    * credential refs. */
   resyncCredentials?: (agentAddress: string) => void;
 
+  /** Loads a deployment run's hub credentials (its run tokens) by run id, or
+   * null when it has none. The wire layer attaches the result to each
+   * `run.grants` barrier it sends ahead of a trigger mail, so a replayed
+   * barrier carries them again. Absent: barriers carry no hub credentials.
+   * It may throw; the wire layer logs a fault and sends the barrier without
+   * them, so a load failure never drops the mail it precedes. */
+  loadRunCredentials?: (runId: string) => Promise<CredentialDelivery | null>;
+
   /** Persists a delivered outbound mail frame. Returns one row per
    * persisted record; the wire layer attaches `raw` to each row and
    * emits a `mail.persisted` event. */
@@ -320,21 +329,21 @@ export type SidecarLookups = {
    * one. */
   resolveSenderKeyStrict?: (address: string) => Promise<string | null>;
 
-  /** Resolves an authenticated mail sender to its durable invoker identity --
-   * the principal and tenant a mail-triggered run binds as its invoker, plus the
-   * sender's admission coordinates. Distinct from `resolveSenderKey`: that one is
-   * best-effort (degrade-to-null) and yields only a signing key for co-delivery;
-   * this one is the STRICT, coordinate-carrying resolution the invoker binding
-   * needs, and it must NOT be sourced from the degrade-to-null path.
+  /** Resolves an authenticated mail sender to its durable identity -- its
+   * principal and tenant, and its admission coordinates. Distinct from
+   * `resolveSenderKey`: that one is best-effort (degrade-to-null) and yields only
+   * a signing key for co-delivery; this one is the STRICT, coordinate-carrying
+   * resolution admission needs, and it must NOT be sourced from the
+   * degrade-to-null path.
    *
-   * Returns `null` when the sender does not resolve to a concrete invoker
-   * principal -- an address matching no principal, or a run whose deploy is acked
-   * but whose principal is not yet minted (a principal-less signer). THROWS on a
-   * genuine fault (an ambiguous address, a data-integrity break). Both a `null`
-   * and a throw fail the invoker binding closed at the seam: the run materializes
-   * with no invoker authority, so any invoker-sourced grant requirement fails
-   * closed. Wraps the strict `resolveSenderKey` in `@intx/db` WITHOUT unwrapping
-   * to the key, keeping `senderCoordinates`' fail-closed on a principal-less run.
+   * Returns `null` when the sender does not resolve to a concrete principal --
+   * an address matching no principal, or a run whose deploy is acked but whose
+   * principal is not yet minted (a principal-less signer). THROWS on a genuine
+   * fault (an ambiguous address, a data-integrity break). Both a `null` and a
+   * throw leave the sender with no admission coordinates at the seam, so the
+   * gate never admits it. Wraps the strict `resolveSenderKey` in `@intx/db`
+   * WITHOUT unwrapping to the key, keeping `senderCoordinates`' fail-closed on a
+   * principal-less run.
    */
   resolveSenderPrincipal?: (
     address: string,
@@ -373,16 +382,10 @@ export type SidecarLookups = {
    * the deployment has no mail trigger); the caller fails the mail closed for
    * that recipient.
    *
-   * `senderPrincipalId` is the authenticated sender's invoker identity,
-   * resolved ONCE at the seam via `resolveSenderPrincipal` and threaded in so
-   * the run binds its sender as invoker: the materializer collects that
-   * principal's grants in the run's tenant and resolves the definition's
-   * invoker-sourced requirements against them. It is `null` when the sender did
-   * not resolve to a concrete invoker principal, in which case no invoker
-   * grants are collected and any invoker-sourced requirement fails closed.
-   *
-   * `senderCoordinates` are the same sender rendered as the `mail.accept`
-   * admission coordinates, resolved on the same `resolveSenderPrincipal` call.
+   * `senderCoordinates` are the authenticated sender rendered as the
+   * `mail.accept` admission coordinates, resolved ONCE at the seam via
+   * `resolveSenderPrincipal`. The sender is not the run's invoker:
+   * invoker-sourced requirements resolve against the deployment's deployer.
    * The materializer gates delivery on them: a start (first fire) is admitted
    * only when the run's staged `mail.accept` rows admit the sender, and a
    * delivery to an already-committed run is admitted only when the run's
@@ -392,7 +395,6 @@ export type SidecarLookups = {
   materializeMailTriggeredRunGrants?: (args: {
     agentAddress: string;
     runId: string;
-    senderPrincipalId: string | null;
     senderCoordinates: MailAcceptCoordinate[] | null;
   }) => Promise<MailTriggeredRunGrantsResult>;
 

@@ -11,7 +11,7 @@
 // EXPECTED_DEPLOYMENT_SET is that contract, referenced (not stringly typed) so
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
-import { authorize, timeWindowEvaluator } from "@intx/authz";
+import { authorize } from "@intx/authz";
 import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
@@ -308,7 +308,7 @@ if (railway !== undefined && typeof railway !== "string") {
 }
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
-  conditionRegistry: { time_window: timeWindowEvaluator },
+  conditionRegistry: HUB_CONDITION_REGISTRY,
 });
 composition.app.route("/api/tenants/:tenantId", createArtifactRoutes({
   db: composition.db,
@@ -346,6 +346,7 @@ function runTriggerDeliverer(senderLocalPart: string): MailDeliverer {
   const materialize = createMailTriggeredRunGrantsMaterializer({
     db: composition.db,
     principalKeyStore: composition.principalKeyStore,
+    runTokenStore: composition.runTokenStore,
     grantStore: createGrantStore(composition.db),
     registry: HUB_CONDITION_REGISTRY,
   });
@@ -374,7 +375,7 @@ const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
 async function authorizePortal(principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
-  const result = await authorize(portalGrantStore, principalId, tenantId, resource, action, { time_window: timeWindowEvaluator });
+  const result = await authorize(portalGrantStore, principalId, tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY });
   return result.effect === "allow";
 }
 const githubManifest = createGithubManifestIntegration({
@@ -424,7 +425,7 @@ const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
   await githubDeliverer.to(address, JSON.stringify(await withAppLogin(composition.db, tenantId, payload)), tenantId, undefined);
 }
-const githubToken = createGithubTokenRenewal({ ...credentialDeps, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, log: logJson });
+const githubToken = createGithubTokenRenewal({ ...credentialDeps, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, loadRunCredentials: composition.loadRunCredentials, log: logJson });
 for (const tenantId of movedAppKeys) await githubToken.push(tenantId);
 tokenLoop = createReconcileLoop(githubToken.renewAll, { intervalMs: GITHUB_TOKEN_RENEW_MS, retryMs: GITHUB_TOKEN_RETRY_MS, retryMaxMs: GITHUB_TOKEN_RETRY_MAX_MS }, logJson);
 /** A failed renewal is retried by the token loop. */

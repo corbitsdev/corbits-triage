@@ -2,6 +2,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { authorize } from "@intx/authz";
+import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
@@ -101,7 +102,7 @@ async function sessionOf(headers: Headers) {
 }
 
 async function authorizePortal(principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
-  return (await authorize(grants, principalId, tenantId, resource, action)).effect === "allow";
+  return (await authorize(grants, principalId, tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY })).effect === "allow";
 }
 
 const deps = { db: handle.db, cipher, onKeyMoved: noKeyPush, authorize: authorizePortal, githubApiOrigin };

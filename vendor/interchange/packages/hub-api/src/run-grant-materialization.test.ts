@@ -3,7 +3,7 @@ import { describe, test, expect } from "bun:test";
 import { createInMemoryGrantStore, toolConsumer } from "@intx/authz";
 import type { MailAcceptCoordinate } from "@intx/authz";
 import type { GrantRule } from "@intx/types/authz";
-import type { GrantWalkSnapshot } from "@intx/types";
+import { SELF_RUN_RESOURCE, type GrantWalkSnapshot } from "@intx/types";
 import {
   grant as grantTable,
   type LegacyMailAcceptRule,
@@ -12,7 +12,7 @@ import {
   workflowRun as workflowRunTable,
   workflowRunLaunchSpec as workflowRunLaunchSpecTable,
 } from "@intx/db/schema";
-import type { PrincipalKeyStore } from "@intx/db";
+import type { PrincipalKeyStore, RunTokenStore } from "@intx/db";
 
 import { makeGrantRow } from "./grant-materialization";
 import {
@@ -22,9 +22,9 @@ import {
   deriveCredentialUseGrantRows,
   deriveMailAcceptGrantRows,
   grantRowsWithLockedCredentialResolution,
+  stageRunGrantsFromSnapshot,
   type CommittedRunGrants,
   type MailAcceptGrantContext,
-  stageRunGrantsFromSnapshot,
 } from "./run-grant-materialization";
 
 // This suite exercises grant materialization, not key minting. The key store is
@@ -36,10 +36,22 @@ const stubPrincipalKeyStore: PrincipalKeyStore = {
   getPublicKey: async () => "pky_stub_public",
 };
 
+// Minting is the run-token store's concern; this suite records which consumers
+// the commit asks it to mint for.
+const mintedConsumers: string[][] = [];
+const stubRunTokenStore: RunTokenStore = {
+  mintIfAbsent: async (args) => {
+    mintedConsumers.push([...args.consumers]);
+  },
+  findByHash: async () => undefined,
+  loadDelivery: async () => [],
+};
+
 const TENANT_ID = "tenant-1";
 const ASSET_ID = "asset-wf";
 const CREATOR_PRINCIPAL_ID = "prn_creator";
 const SENDER_PRINCIPAL_ID = "prn_sender";
+const DEPLOYER_PRINCIPAL_ID = "prn_deployer";
 const WORKFLOW_ADDRESS = "run_wf1@tenant.example";
 // The capability walk emits this grant for the workflow's mail trigger. A
 // snapshot without it belongs to a workflow that mail does not start.
@@ -48,16 +60,20 @@ const MAIL_TRIGGER_GRANT = `mail.address:${WORKFLOW_ADDRESS}`;
 // The deploy-approved grant-walk snapshot for a one-step workflow: one `tool:`
 // runtime grant plus a creator-sourced and an invoker-sourced requirement. The
 // walk yields the `tool:read_file` grant; the creator requirement resolves
-// against the creator's grants; the invoker requirement must be OMITTED on the
-// mail path. The `mail.accept:invoker` marker declares the definition accepts
-// mail from its invoker, so the mail-transport admission gate admits the sender
-// bound as invoker (`invoker` resolves to the sender's own principal).
+// against the creator's grants and the invoker requirement against the
+// deployer's. The `mail.accept:tenant` marker admits the sender, a principal of
+// the run's tenant; the `mail.accept:invoker` marker resolves to the deployer.
 function snapshot(): GrantWalkSnapshot {
   return {
     perStep: [
       {
         stepId: "work",
-        grants: ["tool:read_file", MAIL_TRIGGER_GRANT, "mail.accept:invoker"],
+        grants: [
+          "tool:read_file",
+          MAIL_TRIGGER_GRANT,
+          "mail.accept:invoker",
+          "mail.accept:tenant",
+        ],
         grantEffects: { "tool:read_file": "allow" },
       },
     ],
@@ -75,7 +91,12 @@ function invokerOnlySnapshot(): GrantWalkSnapshot {
     perStep: [
       {
         stepId: "work",
-        grants: ["tool:read_file", MAIL_TRIGGER_GRANT, "mail.accept:invoker"],
+        grants: [
+          "tool:read_file",
+          MAIL_TRIGGER_GRANT,
+          "mail.accept:invoker",
+          "mail.accept:tenant",
+        ],
         grantEffects: { "tool:read_file": "allow" },
       },
     ],
@@ -91,6 +112,7 @@ function invokerOnlySnapshot(): GrantWalkSnapshot {
 type CredentialRefs = {
   credentialIds: string[];
   bindings: { handle: string; credentialId: string; consumer: string }[];
+  hubConsumers?: string[];
 };
 
 function mockDb(opts: {
@@ -115,6 +137,11 @@ function mockDb(opts: {
    * Absent means the anchor has no allocation row.
    */
   initializationLeaseId?: string | null;
+  /**
+   * The deployment's recorded deployer. Absent means an active deployer;
+   * null means the deployment records none.
+   */
+  deployer?: { id: string; status: string } | null;
 }) {
   function rows(table: unknown, joined: boolean): unknown[] {
     if (table === workflowRunTable && opts.deploymentRow) {
@@ -139,6 +166,15 @@ function mockDb(opts: {
         : [{ status: "running" }];
     }
     if (table === workflowRunLaunchSpecTable) {
+      // The deployer lookup joins the launch spec to the deployer's principal;
+      // the grant snapshot read selects the launch spec alone.
+      if (joined) {
+        const deployer =
+          opts.deployer === undefined
+            ? { id: DEPLOYER_PRINCIPAL_ID, status: "active" }
+            : opts.deployer;
+        return deployer === null ? [] : [deployer];
+      }
       if (opts.snapshotReads) opts.snapshotReads.count += 1;
       return [{ snapshot: opts.grantSnapshot }];
     }
@@ -261,6 +297,91 @@ function creatorGrant(): GrantRule {
   };
 }
 
+describe("stageRunGrantsFromSnapshot with the run's own resource", () => {
+  const STAGED_RUN_ID = "run_self";
+
+  function delegator(resource: string): GrantRule {
+    return { ...creatorGrant(), resource, action: "read" };
+  }
+
+  function stage(creatorGrants: GrantRule[]) {
+    return stageRunGrantsFromSnapshot({
+      snapshot: { perStep: [], grantRequirements: [] },
+      tenantId: TENANT_ID,
+      runId: STAGED_RUN_ID,
+      runPrincipalId: "prn_run",
+      now: new Date("2026-01-01"),
+      invokerPrincipalId: null,
+      assetId: ASSET_ID,
+      legacyMailAccept: null,
+      invokerGrants: [],
+      creatorGrants,
+      grantRequirements: [
+        { resource: SELF_RUN_RESOURCE, action: "read", source: "creator" },
+      ],
+      credentialBindings: [],
+    });
+  }
+
+  test("binds the placeholder to the run's own id", async () => {
+    const staged = await stage([delegator("workflow-run:*")]);
+    if (!staged.ok) throw new Error("expected the requirement to resolve");
+    expect(staged.grantRows.map((g) => g.resource)).toEqual([
+      `workflow-run:${STAGED_RUN_ID}`,
+    ]);
+  });
+
+  test("checks the delegator's authority over the run's own id", async () => {
+    const staged = await stage([delegator("workflow-run:run_other")]);
+    expect(staged.ok).toBe(false);
+  });
+});
+
+// The deployer's delegatable grant that satisfies the invoker requirement.
+function deployerGrant(): GrantRule {
+  return {
+    ...creatorGrant(),
+    id: "grant-deployer-other",
+    resource: "secret:other",
+    origin: "system",
+    principalId: DEPLOYER_PRINCIPAL_ID,
+  };
+}
+
+describe("createMailTriggeredRunGrantsMaterializer hub tokens", () => {
+  test("mints a run token for each hub consumer on the first commit", async () => {
+    mintedConsumers.length = 0;
+    const materialize = createMailTriggeredRunGrantsMaterializer({
+      db: mockDb({
+        deploymentRow,
+        assetRow,
+        grantSnapshot: { ...snapshot(), grantRequirements: [] },
+        credentialRefs: {
+          credentialIds: [],
+          bindings: [],
+          hubConsumers: ["action:a"],
+        },
+      }),
+      principalKeyStore: stubPrincipalKeyStore,
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([]),
+    });
+    const result = await materialize({
+      agentAddress: WORKFLOW_ADDRESS,
+      runId: WORKFLOW_ADDRESS,
+      ...senderArgs,
+    });
+    if (result.outcome !== "materialized") {
+      throw new Error(`expected materialized, got ${result.outcome}`);
+    }
+    expect(mintedConsumers).toEqual([["action:a"]]);
+    expect(
+      result.stepGrants.find((g) => g.resource === "credential:hub:action:a")
+        ?.conditions,
+    ).toEqual({ tool: "action:a" });
+  });
+});
+
 describe("deriveCredentialUseGrantRows", () => {
   test("stamps one row per credential that shares a consumer", () => {
     const now = new Date("2026-01-01T00:00:00.000Z");
@@ -303,6 +424,34 @@ describe("grantRowsWithLockedCredentialResolution", () => {
     runPrincipalId: "prn_run",
     now,
   };
+
+  test("stamps a hub credential use grant for each hub consumer", () => {
+    const rows = grantRowsWithLockedCredentialResolution(
+      [],
+      {
+        credentialRefs: {
+          credentialIds: [],
+          bindings: [],
+          hubConsumers: ["action:a", "tool:@acme/t"],
+        },
+        publicKey: "recorded-key",
+        initializationLeaseId: null,
+      },
+      args,
+    );
+    if (rows === "not-ready") throw new Error("expected rows");
+    expect(
+      rows.map((row) => [row.resource, row.action, row.origin, row.conditions]),
+    ).toEqual([
+      ["credential:hub:action:a", "use", "system", { tool: "action:a" }],
+      [
+        "credential:hub:tool:@acme/t",
+        "use",
+        "system",
+        { tool: "tool:@acme/t" },
+      ],
+    ]);
+  });
 
   test("a recorded key with null refs stamps nothing and keeps a creator credential grant", () => {
     expect(
@@ -452,7 +601,6 @@ const senderCoordinates: MailAcceptCoordinate[] = [
   { coordType: "tenant", id: TENANT_ID },
 ];
 const senderArgs = {
-  senderPrincipalId: SENDER_PRINCIPAL_ID,
   senderCoordinates,
 } as const;
 
@@ -465,7 +613,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         grantSnapshot: snapshot(),
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([creatorGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([creatorGrant(), deployerGrant()]),
     });
     const result = await materialize({
       agentAddress: WORKFLOW_ADDRESS,
@@ -486,7 +635,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         topLevelRunStatus: "completed",
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([creatorGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([creatorGrant(), deployerGrant()]),
     });
 
     await expect(
@@ -514,11 +664,12 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         lockedRunStatus: "failed",
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      // Both the creator and the sender's invoker grant are held, so staging
+      // Both the creator and the deployer's invoker grant are held, so staging
       // succeeds and the run reaches the under-lock revalidation the test
       // exercises -- the lock, not an insufficient-authority reject, is what
       // rejects here.
-      grantStore: createInMemoryGrantStore([creatorGrant(), invokerGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([creatorGrant(), deployerGrant()]),
     });
 
     await expect(
@@ -545,7 +696,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         anchorCancellationRequestedAt: new Date(),
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([creatorGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([creatorGrant(), deployerGrant()]),
     });
 
     await expect(
@@ -572,11 +724,12 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         lockedCancellationRequestedAt: new Date(),
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      // Both the creator and the sender's invoker grant are held, so staging
+      // Both the creator and the deployer's invoker grant are held, so staging
       // succeeds and the run reaches the under-lock revalidation the test
       // exercises -- the lock, not an insufficient-authority reject, is what
       // rejects here.
-      grantStore: createInMemoryGrantStore([creatorGrant(), invokerGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([creatorGrant(), deployerGrant()]),
     });
 
     await expect(
@@ -592,11 +745,12 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
     });
   });
 
-  test("stages the tool grant, the creator requirement, and the invoker requirement bound to the sender", async () => {
+  test("stages the tool grant, the creator requirement, and the invoker requirement bound to the deployer", async () => {
     const materialize = createMailTriggeredRunGrantsMaterializer({
       db: mockDb({ deploymentRow, assetRow, grantSnapshot: snapshot() }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([creatorGrant(), invokerGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([creatorGrant(), deployerGrant()]),
     });
 
     const result = await materialize({
@@ -615,8 +769,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
     // present.
     expect(resources).toContain("tool:read_file/invoke");
     expect(resources).toContain("secret:vault/use");
-    // The invoker-sourced requirement now materializes against the sender's
-    // collected grants -- the mail sender is bound as the run's invoker.
+    // The invoker-sourced requirement materializes against the deployer's
+    // grants, not the sender's.
     expect(resources).toContain("secret:other/use");
     // The materialized invoker grant carries invoker origin and the 24h TTL the
     // shared machinery stamps; the creator/runtime grants do not expire.
@@ -632,11 +786,44 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
     }
   });
 
-  test("binds an invoker-only requirement against the sender's grants", async () => {
+  test("binds an invoker-only requirement against the deployer's grants", async () => {
     // No creator requirement; only an invoker-sourced one. It resolves against
-    // the sender's collected grants, so the run launches with the invoker grant
-    // bound.
+    // the deployer's grants, so the run launches with the invoker grant bound.
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      db: mockDb({
+        deploymentRow,
+        assetRow,
+        grantSnapshot: invokerOnlySnapshot(),
+      }),
+      principalKeyStore: stubPrincipalKeyStore,
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([deployerGrant()]),
+    });
+    const result = await materialize({
+      agentAddress: WORKFLOW_ADDRESS,
+      runId: WORKFLOW_ADDRESS,
+      ...senderArgs,
+    });
+    if (result.outcome !== "materialized") {
+      throw new Error(`expected materialized, got ${result.outcome}`);
+    }
+    const resources = result.stepGrants
+      .map((g) => `${g.resource}/${g.action}`)
+      .sort();
+    // The tool grant, the invoker requirement, and the resolved accept rows
+    // all materialize; `mail.accept:invoker` names the deployer.
+    expect(resources).toEqual([
+      `mail.accept:principal:${DEPLOYER_PRINCIPAL_ID}/accept`,
+      `mail.accept:tenant:${TENANT_ID}/accept`,
+      "secret:other/use",
+      "tool:read_file/invoke",
+    ]);
+  });
+
+  test("rejects an invoker requirement the deployer cannot delegate", async () => {
+    // Only the sender holds the grant; the sender is not the invoker.
+    const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -650,67 +837,57 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
       runId: WORKFLOW_ADDRESS,
       ...senderArgs,
     });
-    if (result.outcome !== "materialized") {
-      throw new Error(`expected materialized, got ${result.outcome}`);
-    }
-    const resources = result.stepGrants
-      .map((g) => `${g.resource}/${g.action}`)
-      .sort();
-    // The tool grant, the invoker requirement, and the resolved
-    // `mail.accept:invoker` accept-row all materialize.
-    expect(resources).toEqual([
-      "mail.accept:principal:prn_sender/accept",
-      "secret:other/use",
-      "tool:read_file/invoke",
-    ]);
-  });
-
-  test("fails an invoker requirement closed when the sender has no principal", async () => {
-    // A sender admitted by its tenant coordinate but with no principal threads
-    // a null invoker id: no invoker grants are collected, so an invoker-sourced
-    // requirement fails closed rather than launching under-authorized.
-    const snapshot = invokerOnlySnapshot();
-    snapshot.perStep[0]?.grants.push("mail.accept:tenant");
-    const materialize = createMailTriggeredRunGrantsMaterializer({
-      db: mockDb({
-        deploymentRow,
-        assetRow,
-        grantSnapshot: snapshot,
-      }),
-      principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([invokerGrant()]),
-    });
-    await expect(
-      materialize({
-        agentAddress: WORKFLOW_ADDRESS,
-        runId: WORKFLOW_ADDRESS,
-        senderPrincipalId: null,
-        senderCoordinates: [{ coordType: "tenant", id: TENANT_ID }],
-      }),
-    ).resolves.toMatchObject({
+    expect(result).toMatchObject({
       outcome: "rejected",
       status: 403,
       code: "insufficient_grants",
     });
   });
 
+  test("resolves an invoker requirement against the deployer when the sender has no principal", async () => {
+    // A sender admitted by its tenant coordinate but with no principal does
+    // not change whose authority the run holds.
+    const snapshot = invokerOnlySnapshot();
+    const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
+      db: mockDb({
+        deploymentRow,
+        assetRow,
+        grantSnapshot: snapshot,
+      }),
+      principalKeyStore: stubPrincipalKeyStore,
+      grantStore: createInMemoryGrantStore([deployerGrant()]),
+    });
+    const result = await materialize({
+      agentAddress: WORKFLOW_ADDRESS,
+      runId: WORKFLOW_ADDRESS,
+      senderCoordinates: [{ coordType: "tenant", id: TENANT_ID }],
+    });
+    if (result.outcome !== "materialized") {
+      throw new Error(`expected materialized, got ${result.outcome}`);
+    }
+    expect(result.stepGrants.map((g) => `${g.resource}/${g.action}`)).toContain(
+      "secret:other/use",
+    );
+  });
+
   test("refuses a sender that does not resolve before any requirement resolves", async () => {
     // A null coordinate set is never admitted, and the sender gate runs before
     // the grant requirements, so the refusal is the admission one.
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
         grantSnapshot: invokerOnlySnapshot(),
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([invokerGrant()]),
+      grantStore: createInMemoryGrantStore([deployerGrant()]),
     });
     await expect(
       materialize({
         agentAddress: WORKFLOW_ADDRESS,
         runId: WORKFLOW_ADDRESS,
-        senderPrincipalId: null,
         senderCoordinates: null,
       }),
     ).resolves.toMatchObject({
@@ -718,6 +895,55 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
       status: 403,
       code: "mail_admission_denied",
     });
+  });
+
+  for (const [label, deployer] of [
+    ["records no deployer", null],
+    ["has a deactivated deployer", { id: "prn_gone", status: "deactivated" }],
+  ] as const) {
+    test(`rejects invoker requirements when the deployment ${label}`, async () => {
+      const materialize = createMailTriggeredRunGrantsMaterializer({
+        db: mockDb({
+          deploymentRow,
+          assetRow,
+          grantSnapshot: invokerOnlySnapshot(),
+          deployer,
+        }),
+        principalKeyStore: stubPrincipalKeyStore,
+        runTokenStore: stubRunTokenStore,
+        grantStore: createInMemoryGrantStore([deployerGrant()]),
+      });
+      const result = await materialize({
+        agentAddress: WORKFLOW_ADDRESS,
+        runId: WORKFLOW_ADDRESS,
+        ...senderArgs,
+      });
+      expect(result).toMatchObject({
+        outcome: "rejected",
+        status: 409,
+        code: "deployer_unavailable",
+      });
+    });
+  }
+
+  test("needs no deployer when no requirement is invoker-sourced", async () => {
+    const materialize = createMailTriggeredRunGrantsMaterializer({
+      db: mockDb({
+        deploymentRow,
+        assetRow,
+        grantSnapshot: { ...snapshot(), grantRequirements: [] },
+        deployer: null,
+      }),
+      principalKeyStore: stubPrincipalKeyStore,
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([]),
+    });
+    const result = await materialize({
+      agentAddress: WORKFLOW_ADDRESS,
+      runId: WORKFLOW_ADDRESS,
+      ...senderArgs,
+    });
+    expect(result.outcome).toBe("materialized");
   });
 
   test("stamps a system credential use grant from the anchor bindings", async () => {
@@ -736,7 +962,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         },
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([invokerGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([deployerGrant()]),
     });
     const result = await materialize({
       agentAddress: WORKFLOW_ADDRESS,
@@ -778,7 +1005,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         },
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([invokerGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([deployerGrant()]),
     });
     const result = await materialize({
       agentAddress: WORKFLOW_ADDRESS,
@@ -810,7 +1038,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         credentialRefs: { credentialIds: ["inference-only"], bindings: [] },
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([invokerGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([deployerGrant()]),
     });
     const result = await materialize({
       agentAddress: WORKFLOW_ADDRESS,
@@ -834,7 +1063,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         publicKey: null,
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([invokerGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([deployerGrant()]),
     });
     const result = await materialize({
       agentAddress: WORKFLOW_ADDRESS,
@@ -864,7 +1094,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
         initializationLeaseId: "lease-1",
       }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([invokerGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([deployerGrant()]),
     });
     const result = await materialize({
       agentAddress: WORKFLOW_ADDRESS,
@@ -880,7 +1111,8 @@ describe("createMailTriggeredRunGrantsMaterializer staging", () => {
     const materialize = createMailTriggeredRunGrantsMaterializer({
       db: mockDb({ deploymentRow, assetRow, grantSnapshot: null }),
       principalKeyStore: stubPrincipalKeyStore,
-      grantStore: createInMemoryGrantStore([creatorGrant()]),
+      runTokenStore: stubRunTokenStore,
+      grantStore: createInMemoryGrantStore([creatorGrant(), deployerGrant()]),
     });
 
     await expect(
@@ -966,6 +1198,7 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
 
   test("first fire: default-denies a definition with no mail.accept policy", async () => {
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -989,6 +1222,7 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
 
   test("first fire: admits a sender an explicit accept coordinate names", async () => {
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -1009,6 +1243,7 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
     // The definition accepts only `prn_admitted`; the sender's coordinates name
     // a different principal, so the gate default-denies before any commit.
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -1021,7 +1256,6 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
       materialize({
         agentAddress: WORKFLOW_ADDRESS,
         runId: WORKFLOW_ADDRESS,
-        senderPrincipalId: SENDER_PRINCIPAL_ID,
         senderCoordinates: [
           { coordType: "principal", id: SENDER_PRINCIPAL_ID },
           { coordType: "tenant", id: TENANT_ID },
@@ -1049,6 +1283,7 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
       grantRequirements: [],
     };
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -1061,7 +1296,6 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
       materialize({
         agentAddress: WORKFLOW_ADDRESS,
         runId: WORKFLOW_ADDRESS,
-        senderPrincipalId: null,
         senderCoordinates: null,
       }),
     ).resolves.toMatchObject({
@@ -1073,6 +1307,7 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
 
   test("deliver-to-existing: admits a sender the run's collected grants accept", async () => {
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -1103,6 +1338,7 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
 
   test("deliver-to-existing: denies a sender the run's grants do not accept", async () => {
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -1133,6 +1369,7 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
 
   test("deliver-to-existing: a broad wildcard grant does not auto-admit", async () => {
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -1179,6 +1416,7 @@ describe("createMailTriggeredRunGrantsMaterializer admission gate", () => {
     // the same specificity as the allow, so the deny wins and blocks mail to a
     // live run even though the definition's own accept-policy would admit.
     const materialize = createMailTriggeredRunGrantsMaterializer({
+      runTokenStore: stubRunTokenStore,
       db: mockDb({
         deploymentRow,
         assetRow,
@@ -1400,6 +1638,7 @@ describe("createMailTriggeredRunGrantsMaterializer committed grants", () => {
         committedGrants,
       }),
       principalKeyStore: stubPrincipalKeyStore,
+      runTokenStore: stubRunTokenStore,
       grantStore: createInMemoryGrantStore([
         runAcceptGrant(`mail.accept:principal:${SENDER_PRINCIPAL_ID}`),
       ]),
@@ -1419,10 +1658,10 @@ describe("createMailTriggeredRunGrantsMaterializer committed grants", () => {
 });
 
 describe("stageRunGrantsFromSnapshot for an HTTP launch", () => {
-  test("stages the caller as the invoker of a definition with no mail trigger", async () => {
-    // The HTTP trigger route passes its caller as the invoker. A definition
+  test("stages the invoker's accept row for a definition with no mail trigger", async () => {
+    // The HTTP trigger route passes the deployer as the invoker. A definition
     // with no mail trigger carries no `mail.address:` grant, and its
-    // `mail.accept:invoker` marker still resolves to the caller.
+    // `mail.accept:invoker` marker still resolves to that invoker.
     const staged = await stageRunGrantsFromSnapshot({
       snapshot: {
         perStep: [
@@ -1435,9 +1674,10 @@ describe("stageRunGrantsFromSnapshot for an HTTP launch", () => {
         grantRequirements: [],
       },
       tenantId: TENANT_ID,
+      runId: "run_http_launch",
       runPrincipalId: "prn_run",
       now: new Date("2026-01-01T00:00:00.000Z"),
-      invokerPrincipalId: "prn_caller",
+      invokerPrincipalId: DEPLOYER_PRINCIPAL_ID,
       assetId: ASSET_ID,
       legacyMailAccept: null,
       invokerGrants: [],
@@ -1451,7 +1691,7 @@ describe("stageRunGrantsFromSnapshot for an HTTP launch", () => {
     expect(
       staged.stepGrants.map((g) => `${g.resource}/${g.action}`).sort(),
     ).toEqual([
-      "mail.accept:principal:prn_caller/accept",
+      `mail.accept:principal:${DEPLOYER_PRINCIPAL_ID}/accept`,
       "tool:mail_send/invoke",
     ]);
   });

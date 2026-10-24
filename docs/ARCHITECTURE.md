@@ -317,8 +317,10 @@ label off that head, so it never stands on a head not yet triaged.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
 `triage-do:<kind>:<owner>/<name>`) and mails them with each trigger; the run
-trusts them only from the hub's sender. Close on Unsure, and merge on anything
-but Pass, are always held. The hub mails the policy twice: `pack` as resolved
+trusts them only from the hub's sender. The kinds are acted on later than they
+are read, so a condition checked at read time would not hold at action time:
+a conditioned allow does not count and a conditioned deny always applies. Close on Unsure, and merge on anything but Pass, are
+always held. The hub mails the policy twice: `pack` as resolved
 from the repository policy and any workspace policy it extends, and `checkPack`
 in the shape a deployment built before steps reads.
 
@@ -650,5 +652,5 @@ read it, and passes the rest of the request to stock.
 ## Vendoring
 
 Interchange is vendored under `vendor/interchange` at a stock pin plus the
-deltas in `vendor/interchange/VENDORED.md`, each with a kill date.
+deltas in `vendor/interchange/VENDORED.md`, each with the condition for removing it.
 `tooling/vendor-diff-check.sh` fails on any other drift.

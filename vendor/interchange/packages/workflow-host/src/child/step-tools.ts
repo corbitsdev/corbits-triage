@@ -11,6 +11,7 @@ import {
   defineAgent,
   defineTool,
   toolApprovalEffect,
+  toolFactoryMeta,
   type Agent,
   type AgentDefinition,
   type AnnotatedPluginFactory,
@@ -60,6 +61,28 @@ export interface StepToolMaterialization {
     readonly factory: AnnotatedToolFactory<BaseEnv>;
   }[];
   readonly pluginFactories: readonly AnnotatedPluginFactory[];
+}
+
+/**
+ * The step tool factories of a source-ref step: the agent's own evaluated
+ * factories, each keyed by its bundle `id` (the credential Gate-2 consumer)
+ * and carrying its `defineTool` credential declaration, so the declared
+ * handles are reconciled against the delivered bindings when the agent is
+ * built.
+ */
+export function sourceStepToolFactories(
+  toolFactories: readonly AnnotatedToolFactory<BaseEnv>[],
+): StepToolMaterialization["factories"] {
+  return toolFactories.map((factory) => ({
+    packageName: factory.id,
+    declaredCredentials: (factory.credentials ?? []).map((declaration) => ({
+      handle: declaration.handle,
+      ...(declaration.scopes !== undefined
+        ? { scopes: [...declaration.scopes] }
+        : {}),
+    })),
+    factory,
+  }));
 }
 
 /**
@@ -279,9 +302,7 @@ export function rewrapStepToolFactory(
   credentials: HostCredentialCapability | undefined,
 ): AnnotatedToolFactory<BaseEnv> {
   return defineTool({
-    id: annotated.id,
-    requires: annotated.requires,
-    definitions: annotated.definitions,
+    ...toolFactoryMeta(annotated),
     factory: (factoryEnv: BaseEnv): ToolBundle => {
       const env =
         credentials === undefined

@@ -12,6 +12,12 @@ import {
 } from "@intx/types";
 
 import type { TenantEnv } from "../context";
+import {
+  denyUnlessBodyGrant,
+  idResource,
+  type AuthorizeGrant,
+  type RequireGrant,
+} from "../middleware/grant";
 import { errorResponse } from "../error-response";
 import { ts } from "../format";
 import { generateId } from "@intx/hub-common";
@@ -26,10 +32,14 @@ import { jsonResponse } from "../openapi";
 
 export type CreateTenantFederationRoutesDeps = {
   db: DB["db"];
+  requireGrant: RequireGrant;
+  authorizeGrant: AuthorizeGrant;
 };
 
 export function createTenantFederationRoutes({
   db,
+  requireGrant,
+  authorizeGrant,
 }: CreateTenantFederationRoutesDeps): Hono<TenantEnv> {
   const app = new Hono<TenantEnv>();
 
@@ -44,8 +54,10 @@ export function createTenantFederationRoutes({
           "Federation trusts",
           paginatedSchema(FederationTrust),
         ),
+        403: jsonResponse("Insufficient grants", ErrorResponse),
       },
     }),
+    requireGrant("federation:*", "read"),
     async (c) => {
       const tenantCtx = c.get("tenant");
       const { limit, cursor } = parsePageParams({
@@ -104,12 +116,25 @@ export function createTenantFederationRoutes({
       responses: {
         201: jsonResponse("Trust established", FederationTrust),
         400: jsonResponse("Validation error", ErrorResponse),
+        403: jsonResponse("Insufficient grants", ErrorResponse),
+        404: jsonResponse("Target tenant not found", ErrorResponse),
+        409: jsonResponse("Trust relationship already exists", ErrorResponse),
       },
     }),
     validator("json", CreateFederationTrust),
     async (c) => {
       const tenantCtx = c.get("tenant");
       const body = c.req.valid("json");
+
+      // Keyed on the target, as revoke is, so a grant on one target's trust
+      // decides that trust and a `federation:*` grant covers every target.
+      const denied = await denyUnlessBodyGrant({
+        c,
+        authorizeGrant,
+        resource: `federation:${body.targetTenantId}`,
+        action: "create",
+      });
+      if (denied !== null) return denied;
 
       const target = await db.query.tenant.findFirst({
         where: eq(tenant.id, body.targetTenantId),
@@ -162,9 +187,11 @@ export function createTenantFederationRoutes({
         204: {
           description: "Trust revoked",
         },
+        403: jsonResponse("Insufficient grants", ErrorResponse),
         404: jsonResponse("Trust not found", ErrorResponse),
       },
     }),
+    requireGrant(idResource("federation", "targetTenantId"), "manage"),
     async (c) => {
       const tenantCtx = c.get("tenant");
       const targetTenantId = c.req.param("targetTenantId");

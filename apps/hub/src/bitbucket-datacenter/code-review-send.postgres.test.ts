@@ -2,6 +2,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { authorize } from "@intx/authz";
+import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
@@ -44,7 +45,7 @@ const send = createBitbucketCodeReviewSend({
   cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
   onKeyMoved: noKeyPush,
   async authorize(principalId, tenantId, resource, action) {
-    return (await authorize(grants, principalId, tenantId, resource, action)).effect === "allow";
+    return (await authorize(grants, principalId, tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY })).effect === "allow";
   },
   async tenantBitbucket() { return bitbucket satisfies BitbucketFetch; },
   codeReviews: { async latest() { return { review: COMPLETED, completed: COMPLETED, carriedTo: null }; } },

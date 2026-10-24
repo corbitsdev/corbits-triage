@@ -15,11 +15,11 @@
 #
 # Env overrides:
 #   INTERCHANGE_STOCK_REPO  upstream repo (default https://github.com/faremeter/interchange)
-#   INTERCHANGE_STOCK_REF   pinned stock commit (default 9aba106e95ff756b28ff3cc3323493217b6e9be8)
+#   INTERCHANGE_STOCK_REF   pinned stock commit (default b1ca01f0d9bc2eb203e95b1780a6f685c5da8215)
 set -eu
 
 STOCK_REPO="${INTERCHANGE_STOCK_REPO:-https://github.com/faremeter/interchange}"
-STOCK_REF="${INTERCHANGE_STOCK_REF:-9aba106e95ff756b28ff3cc3323493217b6e9be8}"
+STOCK_REF="${INTERCHANGE_STOCK_REF:-b1ca01f0d9bc2eb203e95b1780a6f685c5da8215}"
 ALLOWLIST="tooling/vendor-diff-allowlist.txt"
 VENDOR_DIR="vendor/interchange"
 

@@ -29,6 +29,7 @@ import {
   grant as grantTable,
   principal as principalTable,
   sidecarAllocation as sidecarAllocationTable,
+  runToken as runTokenTable,
   workflowRun as workflowRunTable,
   workflowRunLaunchSpec as workflowRunLaunchSpecTable,
 } from "@intx/db/schema";
@@ -268,6 +269,7 @@ const WORKFLOW_JSON_WITH_CREATOR_GRANT = JSON.stringify({
 });
 
 const CREATOR_PRINCIPAL_ID = "prn_creator";
+const DEPLOYER_PRINCIPAL_ID = "prn_deployer";
 
 function makeGrant(overrides: Partial<GrantRule> = {}): GrantRule {
   return {
@@ -322,10 +324,16 @@ type MockDBOpts = {
   credentialRefs?: {
     credentialIds: string[];
     bindings: { handle: string; credentialId: string; consumer: string }[];
+    hubConsumers?: string[];
   };
   /** Null models an anchor whose initialization has not published a key. */
   publicKey?: string | null;
   initializationLeaseId?: string | null;
+  /**
+   * The deployment's recorded deployer. Absent means an active deployer;
+   * null means the deployment records none.
+   */
+  deployer?: { id: string; status: string } | null;
 };
 
 function createMockDB(opts: MockDBOpts) {
@@ -375,6 +383,15 @@ function createMockDB(opts: MockDBOpts) {
               ];
         }
         if (table === workflowRunLaunchSpecTable) {
+          // The deployer lookup joins the launch spec to the deployer's
+          // principal; the grant snapshot read selects the launch spec alone.
+          if (joined) {
+            const deployer =
+              opts.deployer === undefined
+                ? { id: DEPLOYER_PRINCIPAL_ID, status: "active" }
+                : opts.deployer;
+            return deployer === null ? [] : [deployer];
+          }
           return opts.grantSnapshot === undefined
             ? []
             : [{ snapshot: opts.grantSnapshot }];
@@ -2673,29 +2690,20 @@ describe("POST /workflows/:anchorRunId/mail", () => {
     ).toBeGreaterThan(0);
   });
 
-  test("triggerers of differing authority get different declared run grants", async () => {
-    // Run 1: the triggerer holds the delegatable `secret:vault`/`use`, so the
-    // invoker-sourced requirement materializes onto the run.
-    const authorizedGrants = runGrantsForTrigger([
-      manageGrant(),
-      makeGrant({ resource: "secret:vault", action: "use", origin: "system" }),
-    ]);
-    // Run 2: a triggerer lacking that authority. Same requirement, but nothing
-    // to delegate, so the requirement fails closed and no run starts.
-    const unauthorizedRunGrantsCalls: RunGrantsCall[] = [];
-    const unauthorizedInserts: InsertRecord[] = [];
-    const unauthorizedApp = createTestApp({
-      grants: [manageGrant()],
-      runGrantsCalls: unauthorizedRunGrantsCalls,
-      db: {
-        deploymentRow,
-        assetRow: workflowAssetRow,
-        inserts: unauthorizedInserts,
-      },
-      workflowJson: WORKFLOW_JSON_WITH_INVOKER_GRANT,
+  test("deployers of differing authority get different declared run grants", async () => {
+    const deployerVault = makeGrant({
+      id: "grant-deployer-vault",
+      resource: "secret:vault",
+      action: "use",
+      origin: "system",
+      principalId: DEPLOYER_PRINCIPAL_ID,
     });
-
-    const authorized = await authorizedGrants;
+    // Run 1: the deployer holds the delegatable `secret:vault`/`use`, so the
+    // invoker-sourced requirement materializes onto the run.
+    const authorized = await runGrantsForTrigger([
+      manageGrant(),
+      deployerVault,
+    ]);
     expect(authorized.status).toBe(202);
     const authorizedVault = authorized.runGrantsCalls[0]?.stepGrants.find(
       (g) => g.resource === "secret:vault",
@@ -2704,17 +2712,123 @@ describe("POST /workflows/:anchorRunId/mail", () => {
     expect(authorizedVault?.action).toBe("use");
     expect(authorizedVault?.origin).toBe("invoker");
 
+    // Run 2: the deployer lacks that authority. The caller holds it, but the
+    // caller is not the invoker of record, so nothing is delegated and no run
+    // starts.
+    const unauthorizedRunGrantsCalls: RunGrantsCall[] = [];
+    const unauthorizedInserts: InsertRecord[] = [];
+    const unauthorizedApp = createTestApp({
+      grants: [
+        manageGrant(),
+        makeGrant({
+          resource: "secret:vault",
+          action: "use",
+          origin: "system",
+        }),
+      ],
+      runGrantsCalls: unauthorizedRunGrantsCalls,
+      db: {
+        deploymentRow,
+        assetRow: workflowAssetRow,
+        inserts: unauthorizedInserts,
+      },
+      workflowJson: WORKFLOW_JSON_WITH_INVOKER_GRANT,
+    });
     const unauthorizedRes = await unauthorizedApp.fetch(
       authedPost(`${base()}/${DEPLOYMENT_ID}/mail`, { content: "kick off" }),
     );
     expect(unauthorizedRes.status).toBe(403);
     expect(await errorCode(unauthorizedRes)).toBe("insufficient_grants");
-    // The two runs' materialized grants differ: one carries the vault grant,
-    // the other never gets sent because the run is rejected.
     expect(unauthorizedRunGrantsCalls).toHaveLength(0);
     expect(
       unauthorizedInserts.filter((i) => i.table === grantTable),
     ).toHaveLength(0);
+  });
+
+  test("stages the invoker accept row for the deployer, not the caller", async () => {
+    const runGrantsCalls: RunGrantsCall[] = [];
+    const app = createTestApp({
+      grants: [manageGrant()],
+      runGrantsCalls,
+      db: {
+        deploymentRow,
+        assetRow: workflowAssetRow,
+        inserts: [],
+        grantSnapshot: {
+          perStep: [
+            {
+              stepId: "work",
+              grants: ["mail.accept:invoker"],
+              grantEffects: {},
+            },
+          ],
+          grantRequirements: [],
+        },
+      },
+    });
+    const res = await app.fetch(
+      authedPost(`${base()}/${DEPLOYMENT_ID}/mail`, { content: "kick off" }),
+    );
+    expect(res.status).toBe(202);
+    const acceptRows = (runGrantsCalls[0]?.stepGrants ?? [])
+      .map((g) => g.resource)
+      .filter((resource) => resource.startsWith("mail.accept:principal:"));
+    expect(acceptRows).toEqual([
+      `mail.accept:principal:${DEPLOYER_PRINCIPAL_ID}`,
+    ]);
+  });
+
+  test("mints a run token for each hub consumer and grants it the hub credential", async () => {
+    const runGrantsCalls: RunGrantsCall[] = [];
+    const inserts: InsertRecord[] = [];
+    const app = createTestApp({
+      grants: [manageGrant()],
+      runGrantsCalls,
+      db: {
+        deploymentRow,
+        assetRow: workflowAssetRow,
+        inserts,
+        credentialRefs: {
+          credentialIds: [],
+          bindings: [],
+          hubConsumers: ["action:a"],
+        },
+      },
+    });
+    const res = await app.fetch(
+      authedPost(`${base()}/${DEPLOYMENT_ID}/mail`, { content: "kick off" }),
+    );
+    expect(res.status).toBe(202);
+
+    const tokens = inserts.filter((i) => i.table === runTokenTable);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.values).toMatchObject({ consumer: "action:a" });
+    expect(
+      runGrantsCalls[0]?.stepGrants.find(
+        (g) => g.resource === "credential:hub:action:a",
+      )?.conditions,
+    ).toEqual({ tool: "action:a" });
+  });
+
+  test("refuses invoker requirements when the deployer is no longer active", async () => {
+    const runGrantsCalls: RunGrantsCall[] = [];
+    const app = createTestApp({
+      grants: [manageGrant()],
+      runGrantsCalls,
+      db: {
+        deploymentRow,
+        assetRow: workflowAssetRow,
+        inserts: [],
+        deployer: { id: DEPLOYER_PRINCIPAL_ID, status: "deactivated" },
+      },
+      workflowJson: WORKFLOW_JSON_WITH_INVOKER_GRANT,
+    });
+    const res = await app.fetch(
+      authedPost(`${base()}/${DEPLOYMENT_ID}/mail`, { content: "kick off" }),
+    );
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe("deployer_unavailable");
+    expect(runGrantsCalls).toHaveLength(0);
   });
 
   async function runGrantsForTrigger(grants: GrantRule[]): Promise<{
@@ -3148,7 +3262,9 @@ describe("deriveRunRuntimeGrantRows tool-mark floor", () => {
       declaredAllow,
     ];
 
-    const result = await evaluateGrants(grants, `tool:${toolName}`, "invoke");
+    const result = await evaluateGrants(grants, `tool:${toolName}`, "invoke", {
+      conditions: "pessimistic",
+    });
     expect(result.effect).toBe("ask");
   });
 });

@@ -24,10 +24,15 @@ import { workflowDefinition } from "./workflow-definitions";
 export type WorkflowRunCredentialRefs = {
   credentialIds: string[];
   bindings: { handle: string; credentialId: string; consumer: string }[];
+  /**
+   * The consumers that declare the reserved hub handle. Their credentials are
+   * run tokens, not credential rows, so they never appear in `credentialIds`.
+   */
+  hubConsumers?: string[];
 };
 
 // The legacy mail accept rules a pre-gate deployment can hold. A deployment
-// that received mail before the gate admits its first sender as invoker and
+// that received mail before the gate admits its deployer as invoker and
 // its correspondents (`invoker-correspondent`); a deployment that only sent
 // mail admits its correspondents (`correspondent`).
 export const legacyMailAcceptRules = [
@@ -36,6 +41,16 @@ export const legacyMailAcceptRules = [
 ] as const;
 
 export type LegacyMailAcceptRule = (typeof legacyMailAcceptRules)[number];
+
+/**
+ * The consumers that declare the reserved hub handle. A row without the field
+ * has none, so this is the one place that decides what its absence means.
+ */
+export function hubConsumersOf(
+  refs: WorkflowRunCredentialRefs | null | undefined,
+): readonly string[] {
+  return refs?.hubConsumers ?? [];
+}
 
 // workflow_run is the per-run authorization subject: one row per run of a
 // workflow deployment. It gives "this approval belongs to a real run of this

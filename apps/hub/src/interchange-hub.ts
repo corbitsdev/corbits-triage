@@ -2,19 +2,22 @@
 // Keep the bootstrap below synchronized with upstream. Corbits deltas: the
 // function name; the return shape, which adds the Hono `app` (so extra tenant
 // routes mount on the same instance as `resolveTenant`), the live sidecar
-// router, what those routes share (database, credential cipher, principal
-// key store, `getSession`, hoisted out of `createApp` for reuse, and the
-// better-auth instance invites send magic links through) and the
-// workflow allocation and lifecycle services the pr-triage deployment
-// rotation calls, and the deployment plugin registry code review's
+// router, the run token store and run credentials loader the hub's own
+// trigger mail and GitHub token renewal use, what those routes share
+// (database, credential cipher, principal key store, `getSession`, hoisted out
+// of `createApp` for reuse, and the better-auth instance invites send magic
+// links through) and the workflow allocation and lifecycle services the
+// pr-triage deployment rotation calls, and the deployment plugin registry code review's
 // placement asks; and the injected database config, auth config, credential
 // cipher and Interchange settings, whose defaults env.ts `interchangeSettings`
 // mirrors from upstream. The caller builds the cipher so sidecar provisioners
-// created before the hub share it.
+// created before the hub share it. `resolveHubApiOrigin` is imported from
+// stock's hub app source, which is not a package export.
 import {
   createDB,
   createGrantStore,
   createPrincipalKeyStore,
+  createRunTokenStore,
   createSidecarAllocationStore,
   createWorkflowRunDispatchStore,
   createWorkflowRunLaunchSpecStore,
@@ -41,6 +44,7 @@ import {
   createAssetService,
   createEventCollectorRegistry,
   createHubSessionLookups,
+  createRunCredentialsLoader,
   createHubSessionOrchestrator,
   createSessionService,
   createSidecarAllocationReconciler,
@@ -75,6 +79,7 @@ import { errorText } from "@corbits/common";
 import type { DatabaseConfig, InterchangeSettings } from "./env.js";
 import { createHubAuth, type HubAuthConfig } from "./auth.js";
 import { withBlobOutputs } from "./run-outputs.js";
+import { resolveHubApiOrigin } from "../../../vendor/interchange/apps/hub/src/hub-api-origin.js";
 
 export type CreateHubServerOpts = {
   readonly database: DatabaseConfig;
@@ -118,6 +123,18 @@ export async function createInterchangeHub({
   const log = getLogger(["hub"]);
   const { db } = createDB(database);
 
+  // The origin a sidecar reaches the hub REST API at. A run token's mediated
+  // credential is pinned to that origin, so it defaults to the public URL but
+  // can name an address only the sidecars use.
+  const hubApiOrigin =
+    settings.hubApiOrigin !== undefined
+      ? resolveHubApiOrigin("HUB_API_ORIGIN", settings.hubApiOrigin)
+      : resolveHubApiOrigin("BETTER_AUTH_BASE_URL", authConfig.baseURL, () => {
+          log.warn(
+            "BETTER_AUTH_BASE_URL {url} is more than an origin; run tokens use {origin}. Set HUB_API_ORIGIN if the hub REST API is not at that origin's root",
+            { url: authConfig.baseURL, origin: new URL(authConfig.baseURL).origin },
+          );
+        });
   const auth = createHubAuth(db, authConfig);
 
   // Per-principal signing keys are sealed at rest under their own operator key,
@@ -178,6 +195,12 @@ export async function createInterchangeHub({
   // Shared by pack ingestion and lifecycle recovery so recovery never claims a
   // pending projection whose receive can still advance Git.
   const workflowHistoryReceives = createWorkflowHistoryReceiveTracker();
+  const runTokenStore = createRunTokenStore({ db, cipher: credentialCipher });
+  const loadRunCredentials = createRunCredentialsLoader({
+    db,
+    runTokenStore,
+    hubApiOrigin,
+  });
   // Materialize a mail-triggered workflow run's grants from the receiving
   // deployment's definition, so a workflow->workflow mail run is born with
   // the same authorization an externally-triggered run gets. Threaded into
@@ -193,12 +216,14 @@ export async function createInterchangeHub({
       {
         db,
         principalKeyStore,
+        runTokenStore,
         grantStore: createGrantStore(db),
         // The registry createHubApp uses, so a conditioned operator
         // mail.accept deny is evaluated, not skipped, by the admission gate.
         registry: HUB_CONDITION_REGISTRY,
       },
     ),
+    loadRunCredentials,
     resolveSenderKey: (address) =>
       resolveFrameSenderKey(db, principalKeyStore, address),
     // The strict sibling for reconnect reconciliation: it preserves the strict
@@ -209,10 +234,10 @@ export async function createInterchangeHub({
       (await resolveSenderKey(db, principalKeyStore, address))?.publicKey ??
       null,
     // The strict, coordinate-carrying resolution the mail-triggered run's
-    // invoker binding needs. It keeps the widened resolution rather than
-    // unwrapping to the key, so the sender's principal, tenant, and admission
-    // coordinates carry through; a principal-less run and the strict resolver's
-    // throw both fail the binding closed (see `resolveSenderPrincipal`).
+    // admission needs. It keeps the widened resolution rather than unwrapping
+    // to the key, so the sender's principal, tenant, and admission coordinates
+    // carry through; a principal-less run and the strict resolver's throw both
+    // leave the sender unadmitted (see `resolveSenderPrincipal`).
     resolveSenderPrincipal: (address) =>
       resolveSenderPrincipal(db, principalKeyStore, address),
     // Records a correspondent at the send seam: when a live run mails a party,
@@ -249,6 +274,7 @@ export async function createInterchangeHub({
       sidecarRouter,
       agentAddress,
       credentialCipher,
+      loadRunCredentials,
     );
   };
 
@@ -563,6 +589,8 @@ export async function createInterchangeHub({
     // Corbits: same Hono app createApp built (`resolveTenant` already mounted).
     app,
     sidecarRouter,
+    runTokenStore,
+    loadRunCredentials,
     db,
     credentialCipher,
     principalKeyStore,

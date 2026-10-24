@@ -17,12 +17,18 @@ import { type } from "arktype";
 
 import {
   asset,
+  hubConsumersOf,
   isLiveWorkflowRunStatus,
   sidecarAllocation,
   workflowDefinition,
   workflowRun,
 } from "@intx/db/schema";
-import type { DB, DBExecutor, PrincipalKeyStore } from "@intx/db";
+import type {
+  DB,
+  DBExecutor,
+  PrincipalKeyStore,
+  RunTokenStore,
+} from "@intx/db";
 import {
   loadDeploymentGrantSnapshot,
   resolveFrameSenderKey,
@@ -61,6 +67,9 @@ import {
   lockAnchorCredentialResolution,
   lockDispatchableAllocation,
   lockWorkflowRunState,
+  collectDeployerInvokerGrants,
+  loadActiveDeployerId,
+  credentialUseBindings,
   stageRunGrantsFromSnapshot,
 } from "./run-grant-materialization";
 import type { MaterializedGrantRow } from "./grant-materialization";
@@ -88,6 +97,7 @@ export const WorkflowRunTriggerResponse = type({
 export type TriggerWorkflowRunDeps = {
   db: DB["db"];
   principalKeyStore: PrincipalKeyStore;
+  runTokenStore: RunTokenStore;
   grantStore: GrantStore;
   sidecarRouter: SidecarRouter;
   workflowDispatchService?: WorkflowDispatchService;
@@ -145,6 +155,7 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
   const {
     db,
     principalKeyStore,
+    runTokenStore,
     grantStore,
     sidecarRouter,
     workflowDispatchService,
@@ -363,15 +374,22 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
       }
 
       runPrincipalId = await deriveRunPrincipalId(tenant.id, runId);
-      // The external route resolves invoker grants live and passes the
-      // snapshot's FULL requirement list unfiltered, so
-      // `resolveGrantMaterialization` keeps its reject-on-insufficient-invoker
-      // contract.
+      // Invoker-sourced requirements resolve against the deployment's
+      // deployer, not this caller, so the trigger path cannot change whose
+      // authority a run delegates.
       const declaredGrantRequirements = snapshot.grantRequirements;
-      const invokerGrants = await grantStore.collectGrants(
-        principal.id,
-        tenant.id,
-      );
+      const invoker = await collectDeployerInvokerGrants({
+        db,
+        grantStore,
+        tenantId: tenant.id,
+        anchorRunId,
+        grantRequirements: declaredGrantRequirements,
+      });
+      if (!invoker.ok) {
+        const { status, code, message } = invoker.rejection;
+        return { ok: false, status, body: { error: { code, message } } };
+      }
+      const invokerGrants = invoker.invokerGrants;
       const creatorGrants = await collectCreatorGrants(
         grantStore,
         tenant.id,
@@ -381,20 +399,25 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
       const staged = await stageRunGrantsFromSnapshot({
         snapshot,
         tenantId: tenant.id,
+        runId,
         runPrincipalId,
         now,
-        // The calling principal is the run's invoker; the asset behind the
-        // triggered deployment's definition is `self`. Both resolve the run's
-        // declared `mail.accept` relation markers to concrete accept-grant
-        // rows so an HTTP-launched run still carries them for later
-        // mail-transport delivery.
-        invokerPrincipalId: principal.id,
+        // The deployer, not the caller, is the run's invoker; the asset behind
+        // the triggered deployment's definition is `self`. Both resolve the
+        // run's declared `mail.accept` relation markers to concrete
+        // accept-grant rows so an HTTP-launched run still carries them for
+        // later mail-transport delivery.
+        invokerPrincipalId: await loadActiveDeployerId(
+          db,
+          tenant.id,
+          anchorRunId,
+        ),
         assetId: definitionAssetId,
         legacyMailAccept: anchor.legacyMailAccept,
         invokerGrants,
         creatorGrants,
         grantRequirements: declaredGrantRequirements,
-        credentialBindings: anchor.credentialRefs?.bindings ?? [],
+        credentialBindings: credentialUseBindings(anchor.credentialRefs),
       });
       if (!staged.ok) {
         const { status, code, message } = staged.rejection;
@@ -453,6 +476,7 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
       const grantArgs = {
         db,
         principalKeyStore,
+        runTokenStore,
         tenantId: tenant.id,
         anchorRunId,
         definitionId: anchor.definitionId,
@@ -462,7 +486,7 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
       };
       if (committedRunGrants !== null) {
         return commitRunGrants(
-          { ...grantArgs, grantRows: stagedGrantRows },
+          { ...grantArgs, hubConsumers: [], grantRows: stagedGrantRows },
           tx,
         );
       }
@@ -478,7 +502,14 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
         { tenantId: tenant.id, runPrincipalId, now },
       );
       if (grantRows === "not-ready") return grantRows;
-      return commitRunGrants({ ...grantArgs, grantRows }, tx);
+      return commitRunGrants(
+        {
+          ...grantArgs,
+          hubConsumers: hubConsumersOf(resolution.credentialRefs),
+          grantRows,
+        },
+        tx,
+      );
     };
 
     const allocationId = anchor.allocationId;

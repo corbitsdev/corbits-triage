@@ -17,6 +17,7 @@ import {
   WorkflowRunDispatchPayloadConflictError,
   type DB,
   type PrincipalKeyStore,
+  type RunTokenStore,
 } from "@intx/db";
 import type { GrantStore } from "@intx/types/authz";
 import {
@@ -49,7 +50,7 @@ import {
 import type { TenantEnv } from "../context";
 import { errorResponse, tenantConfigErrorResponse } from "../error-response";
 import {
-  denyUnlessAssetGrant,
+  denyUnlessBodyGrant,
   idResource,
   type AuthorizeGrant,
   type RequireGrant,
@@ -200,6 +201,7 @@ async function deploymentAnchorRunExists(
 export type CreateWorkflowRoutesDeps = {
   db: DB["db"];
   principalKeyStore: PrincipalKeyStore;
+  runTokenStore: RunTokenStore;
   workflowAllocationService?: WorkflowAllocationService;
   workflowDispatchService?: WorkflowDispatchService;
   sidecarRouter: SidecarRouter;
@@ -212,6 +214,7 @@ export type CreateWorkflowRoutesDeps = {
 export function createWorkflowRoutes({
   db,
   principalKeyStore,
+  runTokenStore,
   workflowAllocationService,
   workflowDispatchService,
   sidecarRouter,
@@ -225,6 +228,7 @@ export function createWorkflowRoutes({
   const triggerWorkflowRun = createWorkflowRunTrigger({
     db,
     principalKeyStore,
+    runTokenStore,
     grantStore,
     sidecarRouter,
     ...(workflowDispatchService !== undefined
@@ -292,10 +296,11 @@ export function createWorkflowRoutes({
       }
       const definitionAssetId = body.source.assetId;
 
-      const denied = await denyUnlessAssetGrant({
+      const denied = await denyUnlessBodyGrant({
         c,
         authorizeGrant,
-        assetId: definitionAssetId,
+        resource: `asset:${definitionAssetId}`,
+        action: "read",
       });
       if (denied !== null) {
         return denied;
@@ -719,7 +724,7 @@ export function createWorkflowRoutes({
         ),
         404: jsonResponse("Workflow deployment not found", ErrorResponse),
         409: jsonResponse(
-          "Deployment address is not routable, its allocation is no longer active, or its top-level run is stopping or terminal",
+          "Deployment address is not routable, its allocation is no longer active, its top-level run is stopping or terminal, or (`deployer_unavailable`) the definition has invoker-sourced grant requirements and the deployer is not recorded or no longer active",
           ErrorResponse,
         ),
         413: jsonResponse(

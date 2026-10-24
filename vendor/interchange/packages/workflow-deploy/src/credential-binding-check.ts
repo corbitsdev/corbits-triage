@@ -11,8 +11,10 @@
 // of leaving a step without its credential.
 //
 // Scope of the rules:
-//   - The declared-handle rule covers actions only; tool packages carry no
-//     handle declarations in the inert projection.
+//   - The declared-handle rule covers actions and the tool factories that
+//     declare credentials through `defineTool`. A factory that declares no
+//     credentials is not checked, so its bindings may name any handle; one
+//     that declares a list is held to it, both ways.
 //   - Tool consumers are keyed on the tool factory id, the consumer identity
 //     on the source-ref lineage, the only lineage that delivers bindings. A
 //     `package` binding for a plugin package, or for a factory used only in a
@@ -24,6 +26,8 @@
 
 import { type } from "arktype";
 import type { CredentialBinding } from "@intx/types";
+import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
+import { actionConsumer, toolConsumer } from "@intx/authz";
 import type { WorkflowProjectionDefinition } from "@intx/types/sidecar";
 import {
   EXECUTABLE_STEP_DESCENT,
@@ -32,7 +36,7 @@ import {
 
 import {
   inertNestedBodies,
-  readInertStepToolFactoryIds,
+  readInertStepToolFactories,
 } from "./inert-ontrigger-bodies";
 
 const CONTEXT = "credential binding check: ";
@@ -43,6 +47,18 @@ export type CredentialBindingViolation =
       /** An action declares a handle that no root binding names for it. */
       readonly kind: "unbound_declared_handle";
       readonly handler: string;
+      readonly handle: string;
+    }
+  | {
+      /** A tool factory declares a handle that no root binding names for it. */
+      readonly kind: "unbound_declared_tool_handle";
+      readonly factory: string;
+      readonly handle: string;
+    }
+  | {
+      /** A `package` binding names a handle its declaring factory omits. */
+      readonly kind: "undeclared_tool_binding_handle";
+      readonly package: string;
       readonly handle: string;
     }
   | {
@@ -71,6 +87,12 @@ export type CredentialBindingViolation =
       readonly handle: string;
     }
   | {
+      /** An authored binding names the reserved hub handle. */
+      readonly kind: "reserved_handle_binding";
+      readonly consumer: string;
+      readonly handle: string;
+    }
+  | {
       /** Two root bindings name the same consumer and handle. */
       readonly kind: "duplicate_binding";
       readonly consumer: string;
@@ -96,58 +118,17 @@ function bindingConsumerLabel(binding: CredentialBinding): string {
 export function checkCredentialBindings(
   projection: WorkflowProjectionDefinition,
 ): readonly CredentialBindingViolation[] {
-  const violations: CredentialBindingViolation[] = [];
-  const toolFactoryIds = new Set<string>();
-  const declaredByHandler = new Map<string, Set<string>>();
-
-  walkStepTree<unknown, WorkflowProjectionDefinition>({
-    tree: projection,
-    context: CONTEXT,
-    nestedTrees: (step) => inertNestedBodies(step, EXECUTABLE_STEP_DESCENT),
-    visit: ({ stepId, step, path }) => {
-      // Read each body off the step that carries it, so a body is checked
-      // once and whatever its step count.
-      for (const body of inertNestedBodies(step, EXECUTABLE_STEP_DESCENT)) {
-        if (!(HasBindingsKey(body) instanceof type.errors)) {
-          violations.push({
-            kind: "nested_body_bindings",
-            bodyId: body.id,
-            reachedThrough: path,
-          });
-        }
-      }
-
-      for (const id of readInertStepToolFactoryIds(step, CONTEXT, stepId)) {
-        toolFactoryIds.add(id);
-      }
-
-      const asAction = ActionStep(step);
-      if (asAction instanceof type.errors) return;
-      if (
-        typeof step !== "object" ||
-        step === null ||
-        !("credentials" in step)
-      ) {
-        return;
-      }
-      const declared = DeclaredHandles(step.credentials);
-      if (declared instanceof type.errors) {
-        throw new Error(
-          `${CONTEXT}action step ${path.join(" > ")} declares credentials that are not a list of strings: ${declared.summary}`,
-        );
-      }
-      const handles =
-        declaredByHandler.get(asAction.handler) ?? new Set<string>();
-      for (const handle of declared) handles.add(handle);
-      declaredByHandler.set(asAction.handler, handles);
-    },
-  });
+  const { violations, toolFactoryIds, declaredByFactory, declaredByHandler } =
+    collectDeclarations(projection);
 
   const bindings: readonly CredentialBinding[] =
     projection.credentialBindings ?? [];
 
+  // Deploy binds the reserved hub handle itself, so a declaration of it needs
+  // no authored binding.
   for (const [handler, handles] of declaredByHandler) {
     for (const handle of handles) {
+      if (handle === HUB_CREDENTIAL_HANDLE) continue;
       const bound = bindings.some(
         (binding) => binding.action === handler && binding.handle === handle,
       );
@@ -157,9 +138,33 @@ export function checkCredentialBindings(
     }
   }
 
+  for (const [factory, handles] of declaredByFactory) {
+    for (const handle of handles) {
+      if (handle === HUB_CREDENTIAL_HANDLE) continue;
+      const bound = bindings.some(
+        (binding) => binding.package === factory && binding.handle === handle,
+      );
+      if (!bound) {
+        violations.push({
+          kind: "unbound_declared_tool_handle",
+          factory,
+          handle,
+        });
+      }
+    }
+  }
+
   const seen = new Set<string>();
   for (const binding of bindings) {
     const consumer = bindingConsumerLabel(binding);
+    if (binding.handle === HUB_CREDENTIAL_HANDLE) {
+      violations.push({
+        kind: "reserved_handle_binding",
+        consumer,
+        handle: binding.handle,
+      });
+      continue;
+    }
     const key = `${consumer}\u0000${binding.handle}`;
     if (seen.has(key)) {
       violations.push({
@@ -174,6 +179,15 @@ export function checkCredentialBindings(
       if (!toolFactoryIds.has(binding.package)) {
         violations.push({
           kind: "unknown_binding_package",
+          package: binding.package,
+          handle: binding.handle,
+        });
+        continue;
+      }
+      const declaredByTool = declaredByFactory.get(binding.package);
+      if (declaredByTool !== undefined && !declaredByTool.has(binding.handle)) {
+        violations.push({
+          kind: "undeclared_tool_binding_handle",
           package: binding.package,
           handle: binding.handle,
         });
@@ -199,6 +213,99 @@ export function checkCredentialBindings(
   return violations;
 }
 
+/**
+ * The consumers that declare the reserved hub handle anywhere in the workflow
+ * -- the root and every nested body, which all run as the one run principal
+ * -- as `tool:<package>` and `action:<handler>`, sorted and without repeats. Each
+ * gets a run token for the hub REST API when the run principal is created.
+ */
+export function collectHubConsumers(
+  projection: WorkflowProjectionDefinition,
+): readonly string[] {
+  const { declaredByFactory, declaredByHandler } =
+    collectDeclarations(projection);
+  const consumers = new Set<string>();
+  for (const [factory, handles] of declaredByFactory) {
+    if (handles.has(HUB_CREDENTIAL_HANDLE))
+      consumers.add(toolConsumer(factory));
+  }
+  for (const [handler, handles] of declaredByHandler) {
+    if (handles.has(HUB_CREDENTIAL_HANDLE))
+      consumers.add(actionConsumer(handler));
+  }
+  return [...consumers].sort();
+}
+
+type Declarations = {
+  violations: CredentialBindingViolation[];
+  toolFactoryIds: Set<string>;
+  declaredByFactory: Map<string, Set<string>>;
+  declaredByHandler: Map<string, Set<string>>;
+};
+
+/**
+ * Walk the executable tree once for the tool factories it runs, the handles
+ * declaring factories and action handlers declare, and the nested bodies that
+ * wrongly carry bindings.
+ */
+function collectDeclarations(
+  projection: WorkflowProjectionDefinition,
+): Declarations {
+  const violations: CredentialBindingViolation[] = [];
+  const toolFactoryIds = new Set<string>();
+  const declaredByFactory = new Map<string, Set<string>>();
+  const declaredByHandler = new Map<string, Set<string>>();
+
+  walkStepTree<unknown, WorkflowProjectionDefinition>({
+    tree: projection,
+    context: CONTEXT,
+    nestedTrees: (step) => inertNestedBodies(step, EXECUTABLE_STEP_DESCENT),
+    visit: ({ stepId, step, path }) => {
+      // Read each body off the step that carries it, so a body is checked
+      // once and whatever its step count.
+      for (const body of inertNestedBodies(step, EXECUTABLE_STEP_DESCENT)) {
+        if (!(HasBindingsKey(body) instanceof type.errors)) {
+          violations.push({
+            kind: "nested_body_bindings",
+            bodyId: body.id,
+            reachedThrough: path,
+          });
+        }
+      }
+
+      for (const factory of readInertStepToolFactories(step, CONTEXT, stepId)) {
+        toolFactoryIds.add(factory.id);
+        if (factory.credentialHandles === undefined) continue;
+        const handles = declaredByFactory.get(factory.id) ?? new Set<string>();
+        for (const handle of factory.credentialHandles) handles.add(handle);
+        declaredByFactory.set(factory.id, handles);
+      }
+
+      const asAction = ActionStep(step);
+      if (asAction instanceof type.errors) return;
+      if (
+        typeof step !== "object" ||
+        step === null ||
+        !("credentials" in step)
+      ) {
+        return;
+      }
+      const declared = DeclaredHandles(step.credentials);
+      if (declared instanceof type.errors) {
+        throw new Error(
+          `${CONTEXT}action step ${path.join(" > ")} declares credentials that are not a list of strings: ${declared.summary}`,
+        );
+      }
+      const handles =
+        declaredByHandler.get(asAction.handler) ?? new Set<string>();
+      for (const handle of declared) handles.add(handle);
+      declaredByHandler.set(asAction.handler, handles);
+    },
+  });
+
+  return { violations, toolFactoryIds, declaredByFactory, declaredByHandler };
+}
+
 /** One sentence for a violation, for a refusal message. */
 export function describeCredentialBindingViolation(
   violation: CredentialBindingViolation,
@@ -206,6 +313,10 @@ export function describeCredentialBindingViolation(
   switch (violation.kind) {
     case "unbound_declared_handle":
       return `action ${violation.handler} declares credential handle "${violation.handle}", but no root binding names it for that handler`;
+    case "unbound_declared_tool_handle":
+      return `tool factory ${violation.factory} declares credential handle "${violation.handle}", but no root binding names it for that factory`;
+    case "undeclared_tool_binding_handle":
+      return `the binding for handle "${violation.handle}" names package ${violation.package}, which declares its credentials and does not declare that handle`;
     case "nested_body_bindings":
       return `body ${violation.bodyId} (carried by step ${violation.reachedThrough.join(" > ")}) declares credentialBindings; remove them, because only the root definition's bindings are resolved`;
     case "unknown_binding_package":
@@ -214,6 +325,8 @@ export function describeCredentialBindingViolation(
       return `the binding for handle "${violation.handle}" names action handler ${violation.action}, which no action step that declares credentials runs`;
     case "undeclared_binding_handle":
       return `the binding for handle "${violation.handle}" names action handler ${violation.action}, which does not declare that handle`;
+    case "reserved_handle_binding":
+      return `the binding for ${violation.consumer} names the reserved handle "${violation.handle}"; remove it, because deploy binds that handle itself`;
     case "duplicate_binding":
       return `two bindings name ${violation.consumer} and handle "${violation.handle}"`;
     default: {

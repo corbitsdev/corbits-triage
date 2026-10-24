@@ -4,7 +4,7 @@
 // only when their sidecar reconnects.
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { pushCredentialReconcile } from "@intx/hub-sessions";
+import { pushCredentialReconcile, type RunCredentialsLoader } from "@intx/hub-sessions";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import { asRecord, errorText } from "@corbits/common";
 import { json, listInstallations, type GithubInstallation } from "@corbits/github-reads";
@@ -44,6 +44,7 @@ export type GithubTokenDeps = {
   cipher: CredentialCipher;
   githubApiOrigin: string;
   router: Parameters<typeof pushCredentialReconcile>[1];
+  loadRunCredentials: RunCredentialsLoader;
   log: (entry: Record<string, unknown>) => void;
   fetch?: typeof fetch;
 };
@@ -83,7 +84,7 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
   async function push(tenantId: string): Promise<void> {
     const github = await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL);
     if (!github) return;
-    for (const address of await holders(github.id)) await pushCredentialReconcile(deps.db, deps.router, address, deps.cipher);
+    for (const address of await holders(github.id)) await pushCredentialReconcile(deps.db, deps.router, address, deps.cipher, deps.loadRunCredentials);
   }
 
   /** Stores what was issued for `appJson`, unless the App was replaced while it was minted: the replacement wrote its own. */
