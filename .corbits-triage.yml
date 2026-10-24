@@ -82,6 +82,288 @@ rules:
     reason: AGENTS.md rules out invented fallbacks, nested ternaries, IIFEs and promise chains.
     evidence:
       - maintainer-stated
+  - id: code-breaks-runs-or-leaks
+    check: code-patterns
+    text: Added code keeps stdout out of workflows, request URLs and query values out of logs, dynamic imports in the portal and environment reads out of tests.
+    patterns:
+      - id: no-stdout-in-workflows
+        language: typescript
+        message: Writes to stdout, Interchange's control channel, where a stray line crashes the run; log through @intx/log.
+        files: [packages/triage-workflows/src/**, packages/pr-code-review*/src/**, packages/pr-workflow*/src/**]
+        ignores: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule:
+          any:
+            - pattern: console.log($$$)
+            - pattern: console.info($$$)
+            - pattern: console.debug($$$)
+            - pattern: process.stdout.write($$$)
+      - id: no-stdout-in-workflows
+        language: javascript
+        message: Writes to stdout, Interchange's control channel, where a stray line crashes the run; log through @intx/log.
+        files: [packages/triage-workflows/src/**, packages/pr-code-review*/src/**, packages/pr-workflow*/src/**]
+        ignores: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule:
+          any:
+            - pattern: console.log($$$)
+            - pattern: console.info($$$)
+            - pattern: console.debug($$$)
+            - pattern: process.stdout.write($$$)
+      - id: no-request-url-in-logs
+        language: typescript
+        message: Logs a full request URL or a query value, which can hold a secret such as a GitHub manifest code; log the pathname, and give honoLogger a format that does.
+        rule:
+          kind: call_expression
+          any:
+            - all:
+                - has: { field: function, regex: '^(console\.\w+|logJson|honoLogger|(\w+\.)*log|(\w+\.)*(log|logger)\.(trace|debug|info|warn|warning|error|fatal)|getLogger\([^)]*\)\.(trace|debug|info|warn|warning|error|fatal))$' }
+                - has:
+                    field: arguments
+                    has:
+                      stopBy: end
+                      any:
+                        - kind: member_expression
+                          regex: '^(\w+\.)*(req|request|raw)\.url$'
+                          not: { inside: { kind: arguments, inside: { kind: new_expression, inside: { kind: member_expression, has: { field: property, regex: '^(pathname|origin|host|hostname|protocol|port)$' } } } } }
+                        - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*searchParams\.(get|getAll|toString|entries|values)$' } }
+                        - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*(req|request)\.(query|queries)$' } }
+            - has: { field: function, regex: '^honoLogger$' }
+              any:
+                - has: { field: arguments, regex: '^\(\s*\)$' }
+                - has:
+                    field: arguments
+                    has:
+                      kind: object
+                      not: { has: { any: [{ kind: spread_element }, { kind: shorthand_property_identifier, regex: '^format$' }, { kind: pair, has: { field: key, regex: '^format$' } }] } }
+                - has:
+                    field: arguments
+                    has:
+                      kind: object
+                      has:
+                        kind: pair
+                        all:
+                          - has: { field: key, regex: '^format$' }
+                          - has: { field: value, kind: string, regex: '^.(short|combined|common).$' }
+      - id: no-request-url-in-logs
+        language: javascript
+        message: Logs a full request URL or a query value, which can hold a secret such as a GitHub manifest code; log the pathname, and give honoLogger a format that does.
+        rule:
+          kind: call_expression
+          any:
+            - all:
+                - has: { field: function, regex: '^(console\.\w+|logJson|honoLogger|(\w+\.)*log|(\w+\.)*(log|logger)\.(trace|debug|info|warn|warning|error|fatal)|getLogger\([^)]*\)\.(trace|debug|info|warn|warning|error|fatal))$' }
+                - has:
+                    field: arguments
+                    has:
+                      stopBy: end
+                      any:
+                        - kind: member_expression
+                          regex: '^(\w+\.)*(req|request|raw)\.url$'
+                          not: { inside: { kind: arguments, inside: { kind: new_expression, inside: { kind: member_expression, has: { field: property, regex: '^(pathname|origin|host|hostname|protocol|port)$' } } } } }
+                        - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*searchParams\.(get|getAll|toString|entries|values)$' } }
+                        - { kind: call_expression, has: { field: function, regex: '^(\w+\.)*(req|request)\.(query|queries)$' } }
+            - has: { field: function, regex: '^honoLogger$' }
+              any:
+                - has: { field: arguments, regex: '^\(\s*\)$' }
+                - has:
+                    field: arguments
+                    has:
+                      kind: object
+                      not: { has: { any: [{ kind: spread_element }, { kind: shorthand_property_identifier, regex: '^format$' }, { kind: pair, has: { field: key, regex: '^format$' } }] } }
+                - has:
+                    field: arguments
+                    has:
+                      kind: object
+                      has:
+                        kind: pair
+                        all:
+                          - has: { field: key, regex: '^format$' }
+                          - has: { field: value, kind: string, regex: '^.(short|combined|common).$' }
+      - id: no-dynamic-import
+        language: typescript
+        message: Dynamic import; AGENTS.md allows one only in the portal, for bundle splitting.
+        ignores: [apps/web/**, "**/*.d.ts", "**/*.d.mts", "**/*.d.cts"]
+        rule:
+          kind: call_expression
+          has: { field: function, kind: import }
+          not: { inside: { stopBy: end, any: [{ kind: type_query }, { kind: type_annotation }, { kind: type_alias_declaration }, { kind: type_arguments }, { kind: interface_declaration }] } }
+      - id: no-dynamic-import
+        language: javascript
+        message: Dynamic import; AGENTS.md allows one only in the portal, for bundle splitting.
+        ignores: [apps/web/**]
+        rule: { kind: call_expression, has: { field: function, kind: import } }
+      - id: no-env-in-tests
+        language: typescript
+        message: A test reads the environment; pass the value in instead.
+        files: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule:
+          any:
+            - pattern: process.env
+            - pattern: Bun.env
+            - pattern: import.meta.env
+      - id: no-env-in-tests
+        language: javascript
+        message: A test reads the environment; pass the value in instead.
+        files: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule:
+          any:
+            - pattern: process.env
+            - pattern: Bun.env
+            - pattern: import.meta.env
+    onFail: fail
+    reason: A stdout line crashes a workflow run and a logged URL leaked a GitHub manifest code; AGENTS.md keeps dynamic imports to the portal and process.env out of tests.
+    evidence:
+      - maintainer-stated
+  - id: needs-a-person
+    check: code-patterns
+    text: Added code uses no any type and loads portal server data through TanStack Query.
+    patterns:
+      - id: no-any
+        language: typescript
+        message: "`any` turns type checking off; name the type, or take unknown and narrow it."
+        ignores: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule: { kind: predefined_type, regex: '^any$' }
+      - id: no-effect-fetching
+        language: typescript
+        message: An effect loads server data; load it with a TanStack Query query.
+        files: [apps/web/**]
+        ignores: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule:
+          kind: call_expression
+          all:
+            - has: { field: function, regex: '^(React\.)?use(Layout)?Effect$' }
+            - has:
+                field: arguments
+                has:
+                  stopBy: end
+                  kind: call_expression
+                  not: { inside: { stopBy: end, kind: call_expression, has: { field: function, regex: '\.(prefetchQuery|prefetchInfiniteQuery|ensureQueryData|fetchQuery|fetchInfiniteQuery)$' } } }
+                  any:
+                    - has: { field: function, regex: '^(\w+\.)*fetch$' }
+                    - has: { field: arguments, has: { nthChild: 1, regex: '^((\w+\.)*transport|create\w*HubTransport\(\))$' } }
+                    - has: { field: function, kind: member_expression, has: { field: object, regex: '^(\w+\.)*transport$' } }
+                    - all:
+                        - has: { field: function, kind: identifier, pattern: $F }
+                        - inside:
+                            stopBy: end
+                            kind: program
+                            has:
+                              kind: import_statement
+                              all:
+                                - has: { field: source, regex: 'hub-auth(\.tsx?)?.$' }
+                                - has:
+                                    stopBy: end
+                                    kind: import_specifier
+                                    any:
+                                      - has: { field: alias, pattern: $F }
+                                      - all:
+                                          - not: { has: { field: alias, kind: identifier } }
+                                          - has: { field: name, pattern: $F }
+      - id: no-effect-fetching
+        language: javascript
+        message: An effect loads server data; load it with a TanStack Query query.
+        files: [apps/web/**]
+        ignores: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule:
+          kind: call_expression
+          all:
+            - has: { field: function, regex: '^(React\.)?use(Layout)?Effect$' }
+            - has:
+                field: arguments
+                has:
+                  stopBy: end
+                  kind: call_expression
+                  not: { inside: { stopBy: end, kind: call_expression, has: { field: function, regex: '\.(prefetchQuery|prefetchInfiniteQuery|ensureQueryData|fetchQuery|fetchInfiniteQuery)$' } } }
+                  any:
+                    - has: { field: function, regex: '^(\w+\.)*fetch$' }
+                    - has: { field: arguments, has: { nthChild: 1, regex: '^((\w+\.)*transport|create\w*HubTransport\(\))$' } }
+                    - has: { field: function, kind: member_expression, has: { field: object, regex: '^(\w+\.)*transport$' } }
+                    - all:
+                        - has: { field: function, kind: identifier, pattern: $F }
+                        - inside:
+                            stopBy: end
+                            kind: program
+                            has:
+                              kind: import_statement
+                              all:
+                                - has: { field: source, regex: 'hub-auth(\.tsx?)?.$' }
+                                - has:
+                                    stopBy: end
+                                    kind: import_specifier
+                                    any:
+                                      - has: { field: alias, pattern: $F }
+                                      - all:
+                                          - not: { has: { field: alias, kind: identifier } }
+                                          - has: { field: name, pattern: $F }
+    onFail: ask
+    reason: AGENTS.md keeps types checked, and apps/web/AGENTS.md sends server data through TanStack Query, never useEffect.
+    evidence:
+      - maintainer-stated
+  - id: invented-fallbacks
+    check: code-patterns
+    text: Added code handles a missing value instead of inventing an empty one.
+    patterns:
+      - id: more-invented-fallbacks
+        language: typescript
+        message: Invented fallback (an empty string, || [] or || 0); handle the missing value instead.
+        ignores: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule:
+          any:
+            - pattern: $X || []
+            - all:
+                - any:
+                    - pattern: $X ?? ""
+                    - pattern: $X ?? ''
+                    - pattern: $X ?? ``
+                    - pattern: $X || ""
+                    - pattern: $X || ''
+                    - pattern: $X || ``
+                - not:
+                    any:
+                      - inside: { kind: template_substitution }
+                      - inside: { kind: binary_expression, has: { field: operator, regex: '^\+$' } }
+                      - inside: { kind: parenthesized_expression, inside: { kind: binary_expression, has: { field: operator, regex: '^\+$' } } }
+                      - has: { field: left, kind: subscript_expression }
+                      - has: { field: left, kind: call_expression, has: { field: function, regex: '\.(at|get|getAttribute)$' } }
+            - all:
+                - pattern: $X || 0
+                - not:
+                    any:
+                      - inside: { kind: binary_expression, has: { field: operator, regex: '^[-+*/%]$' } }
+                      - inside: { kind: parenthesized_expression, inside: { kind: binary_expression, has: { field: operator, regex: '^[-+*/%]$' } } }
+                      - inside: { kind: augmented_assignment_expression }
+      - id: more-invented-fallbacks
+        language: javascript
+        message: Invented fallback (an empty string, || [] or || 0); handle the missing value instead.
+        ignores: ["**/*.{test,spec}.*", "**/{test,tests,Tests,__tests__}/**", "**/*.*{Test,Tests}/**"]
+        rule:
+          any:
+            - pattern: $X || []
+            - all:
+                - any:
+                    - pattern: $X ?? ""
+                    - pattern: $X ?? ''
+                    - pattern: $X ?? ``
+                    - pattern: $X || ""
+                    - pattern: $X || ''
+                    - pattern: $X || ``
+                - not:
+                    any:
+                      - inside: { kind: template_substitution }
+                      - inside: { kind: binary_expression, has: { field: operator, regex: '^\+$' } }
+                      - inside: { kind: parenthesized_expression, inside: { kind: binary_expression, has: { field: operator, regex: '^\+$' } } }
+                      - has: { field: left, kind: subscript_expression }
+                      - has: { field: left, kind: call_expression, has: { field: function, regex: '\.(at|get|getAttribute)$' } }
+            - all:
+                - pattern: $X || 0
+                - not:
+                    any:
+                      - inside: { kind: binary_expression, has: { field: operator, regex: '^[-+*/%]$' } }
+                      - inside: { kind: parenthesized_expression, inside: { kind: binary_expression, has: { field: operator, regex: '^[-+*/%]$' } } }
+                      - inside: { kind: augmented_assignment_expression }
+    onFail: label
+    reason: AGENTS.md allows a fallback only where a real default exists.
+    evidence:
+      - maintainer-stated
 actions:
   pass:
     - do: approve
