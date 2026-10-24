@@ -193,7 +193,7 @@ afterAll(async () => {
   await admin.close();
 });
 
-function settled(tenantId: string, repo: string, source: RepoSource | undefined) {
+function settled(tenantId: string, repo: string, source: RepoSource) {
   return settlePolicy({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {}, policyFile: policyFile.current }, tenantId, repo, source);
 }
 
@@ -440,11 +440,10 @@ test("PostgreSQL: a policy file extending another repository runs over that repo
   expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 1: The policy file is not YAML`), automatic: [] });
 });
 
-test("PostgreSQL: a name both hosts hold is read only for the host asked, and a caller naming no host reads no policy", async () => {
+test("PostgreSQL: a name both hosts hold is read only for the host asked, and a route naming no host refuses it", async () => {
   onMain(BOTH, YML, FILE, "both1");
   await policyFile.onPush(TENANT, BOTH, "github");
   expect(await readPack(BOTH)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "both1" } } });
-  expect((await settled(TENANT, BOTH, undefined)).read).toEqual({ status: "missing" });
   expect((await policyFile.fileRoute({ repo: BOTH }, MEMBER)).status).toBe(409);
 });
 

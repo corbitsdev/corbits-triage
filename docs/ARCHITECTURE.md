@@ -621,11 +621,13 @@ read it, and passes the rest of the request to stock.
   deployments and runs.
 - Artifacts: the stored policy and the triage state
   (`triage-state/{owner}/{repo}`) per repository. The stored policy is the
-  artifact the repository's record pins by id (`checkPack.id`), else the
-  newest titled `check-pack/{owner}/{repo}`. The triage state holds each open
-  head's status (`new`, `queued`, `waiting`, `running`, `triaged`, `failed`,
-  `stale`) and attempts. Each new artifact is writable and archivable by its
-  creator and the admin role.
+  artifact the repository's record on its host pins by id (`checkPack.id`).
+  A GitHub repository without a usable pin falls back to the newest titled
+  `check-pack/{owner}/{repo}` that a record of the same name on another host
+  does not pin; a Bitbucket Data Center repository has none. The triage
+  state holds each open head's status (`new`, `queued`, `waiting`, `running`,
+  `triaged`, `failed`, `stale`) and attempts. Each new artifact is writable
+  and archivable by its creator and the admin role.
 - Workspace policies (`workspace-policy/{name}`) have a policy's shape without
   a repository. A repository policy whose `extends` names one is resolved over
   it whenever it is read (`resolvePolicy`): built-in rules merge field by

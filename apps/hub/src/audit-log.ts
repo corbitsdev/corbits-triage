@@ -4,14 +4,14 @@
 import { and, desc, eq, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import { type } from "arktype";
 import { getArtifact, listArtifactVersions, type ArtifactDb } from "@corbits/artifacts";
-import { WORKSPACE_POLICY_TITLE_PREFIX, type AuditEntry, type AuditLog, type PolicySource } from "@corbits/triage-contracts";
+import { WORKSPACE_POLICY_TITLE_PREFIX, type AuditEntry, type AuditLog, type PolicySource, type RepoSource } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
 import type { CheckPackRead } from "./github/check-pack-store.js";
 import { ROTATION_REASON } from "./github/deployment.js";
 import { failure } from "./github/portal-credential.js";
-import { repoRecords, triageNs } from "./github/tenant-config.js";
+import { repoRecords, sourceOf, triageNs } from "./github/tenant-config.js";
 import { approvalIn, type Approval } from "./github/triage-runs.js";
 import { verdictRecord, type VerdictRecord } from "./github/verdict-record-store.js";
 import type { Member } from "./integrations/app.js";
@@ -42,7 +42,7 @@ type Window = { tenantId: string; repo?: string; since?: Date; limit: number; pe
 export type AuditLogDeps = {
   db: DB["db"];
   artifacts: ArtifactDb;
-  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  readCheckPack: (tenantId: string, repo: string, source: RepoSource) => Promise<CheckPackRead>;
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
   sameSource: (anchorRunId: string, otherAnchorRunId: string) => Promise<boolean>;
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
@@ -150,11 +150,13 @@ export function createAuditLog(deps: AuditLogDeps) {
 
   async function policyVersions({ tenantId, repo, limit }: Window): Promise<Entry[]> {
     const row = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
-    const repos = repo === undefined ? repoRecords(triageNs(row?.config)).map((record) => record.name) : [repo];
+    const records = repoRecords(triageNs(row?.config)).filter((record) => repo === undefined || record.name === repo);
+    const repos = repo !== undefined && records.length === 0 ? [{ name: repo, source: "github" as const }] : records;
     const entries: Entry[] = [];
     const shared = new Set<string>();
-    for (const name of repos) {
-      const read = await deps.readCheckPack(tenantId, name);
+    for (const record of repos) {
+      const { name } = record;
+      const read = await deps.readCheckPack(tenantId, name, sourceOf(record));
       if (read.status === "missing" || read.status === "invalid") continue;
       const source: PolicySource = read.status === "ok" ? read.source : { repo: read.repo };
       if (source.repo) entries.push(...(await versionsOf(source.repo.id, "checks", name, limit)));

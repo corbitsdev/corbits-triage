@@ -76,7 +76,7 @@ async function until(done: () => boolean): Promise<void> {
 
 test("medians and 75th percentiles count only people other than the author as responses, and humans count each person once across pull requests, leaving bots and the triage user out", async () => {
   const { host } = fakeHost();
-  const stats = await route([1, 2, 3].map(verdict), { host: async () => ({ host }) })();
+  const stats = await route([1, 2, 3].map(verdict), { host: async () => ({ host, source: "github" }) })();
   expect(stats.outcomes).toEqual({
     state: "measured",
     triaged: {
@@ -120,7 +120,7 @@ test("a review between the run's start and its verdict waited for nothing", () =
 
 test("only the 50 newest triaged pull requests are read, at most 8 reads at once", async () => {
   const { host, reads } = fakeHost();
-  const stats = await route(Array.from({ length: 80 }, (_, i) => verdict(i + 1)), { host: async () => ({ host }), enabledAt: async () => undefined })();
+  const stats = await route(Array.from({ length: 80 }, (_, i) => verdict(i + 1)), { host: async () => ({ host, source: "github" }), enabledAt: async () => undefined })();
   expect(stats.outcomes).toMatchObject({ state: "measured", triaged: { prs: 50 }, baseline: null, baselineState: "no_policy" });
   expect(reads).toMatchObject({ prTimes: 50, timeline: 50, closedBefore: 0 });
   expect(reads.peak).toBeLessThanOrEqual(8);
@@ -133,7 +133,7 @@ test("the baseline is read once a day, and closed pull requests are not read aga
     return [{ number: 90, author: "alice", createdAt: at(0), closedAt: at(30) }];
   };
   const clock = { now: NOW };
-  const stats = route([1, 3].map(verdict), { host: async () => ({ host }) }, clock);
+  const stats = route([1, 3].map(verdict), { host: async () => ({ host, source: "github" }) }, clock);
   expect((await stats()).outcomes).toMatchObject({ baseline: { prs: 1, mergeOrCloseMs: 30 * HOUR, firstHumanResponseMs: 90 * HOUR } });
   expect(reads).toMatchObject({ prTimes: 2, timeline: 3, closedBefore: 1 });
   clock.now = new Date(NOW.getTime() + 20 * 60_000);
@@ -151,7 +151,7 @@ test("a failing host leaves the outcomes unavailable and the rest of the stats i
   host.closedBefore = async function closedBefore() {
     throw new Error("github GET search -> 502");
   };
-  const stats = await route([1, 2].map(verdict), { host: async () => ({ host }), log: (entry) => logged.push(entry) })();
+  const stats = await route([1, 2].map(verdict), { host: async () => ({ host, source: "github" }), log: (entry) => logged.push(entry) })();
   expect(stats.triaged).toBe(2);
   expect(stats.outcomes).toEqual({ state: "source_failed" });
   expect(logged).toMatchObject([{ msg: "triage_outcomes_failed", repo: REPO, failed: 3 }]);
@@ -162,6 +162,6 @@ test("a failed baseline read says so beside the triaged medians", async () => {
   host.closedBefore = async function closedBefore() {
     throw new Error("github GET search -> 502");
   };
-  const stats = await route([1, 2].map(verdict), { host: async () => ({ host }) })();
+  const stats = await route([1, 2].map(verdict), { host: async () => ({ host, source: "github" }) })();
   expect(stats.outcomes).toMatchObject({ state: "measured", triaged: { prs: 2 }, baseline: null, baselineState: "source_failed" });
 });

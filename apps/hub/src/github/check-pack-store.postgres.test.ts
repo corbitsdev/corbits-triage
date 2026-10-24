@@ -25,25 +25,40 @@ async function create(db: ArtifactDb, tenantId: string, title: string, content: 
   return row.id;
 }
 
-test("PostgreSQL: a repository's policy is read by its pinned id, else the newest by title, without writing, resolved over the workspace policy it extends, and names the versions it used", async () => {
+/** A fresh database holding TENANT, whose repository records are `repos`, and OTHER; `close` drops it. */
+async function throwawayDatabase(repos: unknown[]): Promise<{ db: ReturnType<typeof createDB>["db"]; close: () => Promise<void> }> {
   const database = `corbits_policy_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
   await admin.db.execute(sql.raw(`create database ${database}`));
   const config = { ...TEST_DB, database };
   let handle: ReturnType<typeof createDB> | undefined;
+  async function close(): Promise<void> {
+    await handle?.close();
+    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
+    await admin.close();
+  }
   try {
     await runMigrations(config, { schema: "public" });
     await runArtifactMigrations(config, { schema: "public" });
     handle = createDB(config);
-    const db = handle.db;
-    await db.insert(schema.tenant).values([
-      { id: TENANT, name: "Policy", slug: "policy", domain: "policy.test", config: { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true }] } } },
+    await handle.db.insert(schema.tenant).values([
+      { id: TENANT, name: "Policy", slug: "policy", domain: "policy.test", config: { corbitsTriage: { repos } } },
       { id: OTHER, name: "Other", slug: "other", domain: "other.test" },
     ]);
-    await db.insert(schema.principal).values([
+    await handle.db.insert(schema.principal).values([
       { id: `prn_${TENANT}`, tenantId: TENANT, kind: "user", refId: "usr_policy", status: "active" },
       { id: `prn_${OTHER}`, tenantId: OTHER, kind: "user", refId: "usr_other", status: "active" },
     ]);
+    return { db: handle.db, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+test("PostgreSQL: a repository's policy is read by its pinned id, else the newest by title, without writing, resolved over the workspace policy it extends, and names the versions it used", async () => {
+  const { db, close } = await throwawayDatabase([{ name: REPO, connected: true, enabled: true }]);
+  try {
     const deps = { db, artifacts: db, async automaticKinds() { return []; }, log() {} };
     const scope = { tenantId: TENANT, principalId: `prn_${TENANT}` };
     async function pin(id: string): Promise<void> {
@@ -61,7 +76,7 @@ test("PostgreSQL: a repository's policy is read by its pinned id, else the newes
     const sharedId = await create(db, TENANT, `${WORKSPACE_POLICY_TITLE_PREFIX}base`, JSON.stringify(SHARED));
     const repoId = await create(db, TENANT, checkPackName(REPO), override(sharedId));
     const before = await tenantConfig();
-    const first = await loadCheckPack(deps, TENANT, REPO);
+    const first = await loadCheckPack(deps, TENANT, REPO, "github");
     expect(first).toMatchObject({ status: "ok", source: { repo: { id: repoId, version: 1 }, shared: { id: sharedId, version: 1 } } });
     expect(first.status === "ok" && first.pack.checks).toEqual({ "ci-green": { enabled: false } });
     expect(await tenantConfig()).toEqual(before);
@@ -70,28 +85,53 @@ test("PostgreSQL: a repository's policy is read by its pinned id, else the newes
     await pin(repoId);
     const newerId = await create(db, TENANT, checkPackName(REPO), JSON.stringify(emptyPack(REPO)));
     await writeArtifactVersion(db, { scope, artifactId: sharedId, content: JSON.stringify({ ...SHARED, actions: { ...SHARED.actions, when: ["ready"] } }) });
-    const second = await loadCheckPack(deps, TENANT, REPO);
+    const second = await loadCheckPack(deps, TENANT, REPO, "github");
     expect(second).toMatchObject({ status: "ok", source: { repo: { id: repoId, version: 1 }, shared: { id: sharedId, version: 2 } } });
     expect(second.status === "ok" && second.pack.actions.when).toEqual(["ready"]);
 
     const foreignId = await create(db, OTHER, `${WORKSPACE_POLICY_TITLE_PREFIX}base`, JSON.stringify(SHARED));
     await point(override(foreignId));
-    expect(await loadCheckPack(deps, TENANT, REPO)).toEqual({ status: "corrupt", reason: "The workspace policy it extends belongs to another workspace.", repo: { id: repoId, version: 2 }, automatic: [] });
+    expect(await loadCheckPack(deps, TENANT, REPO, "github")).toEqual({ status: "corrupt", reason: "The workspace policy it extends belongs to another workspace.", repo: { id: repoId, version: 2 }, automatic: [] });
     await point(override("art_gone"));
-    expect(await loadCheckPack(deps, TENANT, REPO)).toMatchObject({ status: "corrupt", reason: "The workspace policy it extends no longer exists." });
+    expect(await loadCheckPack(deps, TENANT, REPO, "github")).toMatchObject({ status: "corrupt", reason: "The workspace policy it extends no longer exists." });
     await point(override(newerId));
-    expect(await loadCheckPack(deps, TENANT, REPO)).toMatchObject({ status: "corrupt", reason: "It extends an artifact that is not a workspace policy." });
+    expect(await loadCheckPack(deps, TENANT, REPO, "github")).toMatchObject({ status: "corrupt", reason: "It extends an artifact that is not a workspace policy." });
 
     await point(JSON.stringify({ ...emptyPack(REPO), checks: { "max-size": { enabled: true }, "not-a-draft": { enabled: true }, size: { enabled: true } } }));
-    expect(await loadCheckPack(deps, TENANT, REPO)).toMatchObject({ status: "corrupt", reason: "The policy has unknown checks: max-size." });
+    expect(await loadCheckPack(deps, TENANT, REPO, "github")).toMatchObject({ status: "corrupt", reason: "The policy has unknown checks: max-size." });
 
     const pinnedConfig = await tenantConfig();
     await setArtifactArchived(db, (await getArtifact(db, repoId))!, true);
-    expect(await loadCheckPack(deps, TENANT, REPO)).toMatchObject({ status: "ok", source: { repo: { id: newerId, version: 1 } } });
+    expect(await loadCheckPack(deps, TENANT, REPO, "github")).toMatchObject({ status: "ok", source: { repo: { id: newerId, version: 1 } } });
     expect(await tenantConfig()).toEqual(pinnedConfig);
   } finally {
-    await handle?.close();
-    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
-    await admin.close();
+    await close();
+  }
+}, 120_000);
+
+test("PostgreSQL: a GitHub and a Bitbucket Data Center repository sharing a name never read each other's policy", async () => {
+  const github = { name: REPO, connected: true, enabled: true, checkPack: { name: checkPackName(REPO) } };
+  const bitbucket = { name: REPO, source: "bitbucket-datacenter" as const, connected: true, enabled: true, checkPack: { name: checkPackName(REPO) } };
+  const { db, close } = await throwawayDatabase([github, bitbucket]);
+  try {
+    const deps = { db, artifacts: db, async automaticKinds() { return []; }, log() {} };
+    const titledId = await create(db, TENANT, checkPackName(REPO), JSON.stringify(emptyPack(REPO)));
+    expect(await loadCheckPack(deps, TENANT, REPO, "github")).toMatchObject({ status: "ok", source: { repo: { id: titledId } } });
+    expect(await loadCheckPack(deps, TENANT, REPO, "bitbucket-datacenter")).toEqual({ status: "missing" });
+
+    await patchCorbitsTriage(db, TENANT, function pinGithub(ns) {
+      return { ...ns, repos: [{ ...github, checkPack: { name: checkPackName(REPO), id: titledId } }, bitbucket] };
+    });
+    expect(await loadCheckPack(deps, TENANT, REPO, "github")).toMatchObject({ status: "ok", source: { repo: { id: titledId } } });
+    expect(await loadCheckPack(deps, TENANT, REPO, "bitbucket-datacenter")).toEqual({ status: "missing" });
+
+    const bitbucketId = await create(db, TENANT, checkPackName(REPO), JSON.stringify(emptyPack(REPO)));
+    await patchCorbitsTriage(db, TENANT, function pinBitbucket(ns) {
+      return { ...ns, repos: [github, { ...bitbucket, checkPack: { name: checkPackName(REPO), id: bitbucketId } }] };
+    });
+    expect(await loadCheckPack(deps, TENANT, REPO, "github")).toEqual({ status: "missing" });
+    expect(await loadCheckPack(deps, TENANT, REPO, "bitbucket-datacenter")).toMatchObject({ status: "ok", source: { repo: { id: bitbucketId } } });
+  } finally {
+    await close();
   }
 }, 120_000);
