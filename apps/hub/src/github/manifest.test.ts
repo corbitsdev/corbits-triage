@@ -4,6 +4,7 @@ import {
   authorizeCanonicalCredentialWrite,
   createGithubManifestIntegration,
   exchangeGithubManifest,
+  manifestHookUrl,
   manifestStateKey,
   prepareCanonicalManifestWrite,
   signManifestState,
@@ -182,6 +183,14 @@ describe("GitHub manifest authorization", () => {
     expect(validGithubProvider({ plugin: "http", apiBaseUrl: GITHUB_API_ORIGIN }, "http://127.0.0.1:4001")).toBe(false);
   });
 
+  test("accepts a conversion without a webhook secret", async () => {
+    async function convertWithoutHook() {
+      return Response.json({ id: 1, slug: "app", pem: "pem", webhook_secret: null });
+    }
+    await expect(exchangeGithubManifest("code-2", GITHUB_API_ORIGIN, Object.assign(convertWithoutHook, { preconnect: noPreconnect })))
+      .resolves.toEqual({ id: 1, slug: "app", pem: "pem", webhook_secret: null });
+  });
+
   test("exchanges the code against the configured GitHub origin", async () => {
     let seen = "";
     async function recordConversion(input: string | URL | Request) {
@@ -191,6 +200,64 @@ describe("GitHub manifest authorization", () => {
     await expect(exchangeGithubManifest("code-1", "http://127.0.0.1:4001", Object.assign(recordConversion, { preconnect: noPreconnect })))
       .resolves.toMatchObject({ slug: "app" });
     expect(seen).toBe("http://127.0.0.1:4001/app-manifests/code-1/conversions");
+  });
+});
+
+describe("GitHub manifest on localhost", () => {
+  test("registers a webhook only where GitHub can reach the hub", () => {
+    expect(manifestHookUrl("https://hub.example.com", "tnt one")).toBe("https://hub.example.com/api/hooks/tnt%20one/github-hook");
+    for (const origin of ["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"]) {
+      expect(manifestHookUrl(origin, "tnt_one")).toBeNull();
+    }
+  });
+
+  for (const [publicOrigin, hook] of [
+    ["https://hub.example.com", { url: "https://hub.example.com/api/hooks/tnt_one/github-hook", active: true }],
+    ["http://localhost:3000", undefined],
+  ] as const) {
+    test(`start from ${publicOrigin} ${hook ? "includes" : "omits"} the webhook in the manifest`, async () => {
+      const integration = createGithubManifestIntegration({
+        db: startDb([]),
+        cipher: {} as never,
+        getSession: signedInSession,
+        authorizeCredential: async () => true,
+        stateSecret: STATE_SECRET,
+        trustedPortalOrigins: [],
+        githubApiOrigin: GITHUB_API_ORIGIN,
+        publicOrigin,
+      });
+      const request = new Request(`${publicOrigin}/api/integrations/github-manifest/tnt_one/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: publicOrigin, "sec-fetch-site": "same-origin" },
+        body: JSON.stringify({ portalOrigin: publicOrigin, replace: false }),
+      });
+      const response = await integration.start(request, "tnt_one");
+      expect(response.status).toBe(201);
+      const { manifest } = await response.json() as { manifest: Record<string, unknown> };
+      expect(manifest.hook_attributes).toEqual(hook);
+      expect("hook_attributes" in manifest).toBe(hook !== undefined);
+      expect(manifest.redirect_url).toBe(`${publicOrigin}/api/integrations/github-manifest/callback`);
+      expect(manifest.url).toBe(publicOrigin);
+    });
+  }
+
+  test("makes a hook secret of its own when GitHub issued none", async () => {
+    const cipher: CredentialCipher = {
+      async encrypt(plaintext, aad) {
+        return `${aad}|${plaintext}`;
+      },
+      async decrypt(blob) {
+        return blob;
+      },
+    };
+    const state = { appCredentialId: "crd_app", hookCredentialId: "crd_hook", replacement: false };
+    const first = await prepareCanonicalManifestWrite(state, [], { ...conversion, webhook_secret: null }, cipher);
+    const second = await prepareCanonicalManifestWrite(state, [], { id: 42, slug: "app", pem: "pem" }, cipher);
+    const secretOf = (prepared: typeof first) => prepared.values[1].secret.split("|")[1]!;
+    expect(secretOf(first)).toMatch(/^[0-9a-f]{64}$/);
+    expect(secretOf(second)).toMatch(/^[0-9a-f]{64}$/);
+    expect(secretOf(first)).not.toBe(secretOf(second));
+    expect(first.values[1].secret.startsWith(credentialAad("crd_hook", "secret"))).toBeTrue();
   });
 });
 

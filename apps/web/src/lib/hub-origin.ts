@@ -1,4 +1,4 @@
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function assertTrustedHubOrigin(origin: string): void {
   let parsed: URL;
@@ -36,6 +36,11 @@ export function requestOrigin(): string {
 
 export function hubOrigin(): string {
   return requestOrigin() || window.location.origin;
+}
+
+/** GitHub cannot reach a hub here, so its App gets no webhook and pull requests are polled. */
+export function hubOnLocalhost(): boolean {
+  return LOOPBACK_HOSTS.has(new URL(hubOrigin()).hostname);
 }
 
 export function hubConfigured(): boolean {

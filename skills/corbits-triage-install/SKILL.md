@@ -27,7 +27,7 @@ Run every command from the checkout's root.
 
 Ask, suggesting Docker Compose if `docker info` succeeds, otherwise their own Postgres with `bun run dev`. Each path's requirements and portal address are in the table under "Get started" in `README.md`.
 
-Either way, GitHub cannot reach localhost, so pull requests are picked up every five minutes.
+Either way, GitHub cannot reach localhost, so **Create GitHub App** registers the App without a webhook and pull requests are picked up every five minutes.
 
 ## 2. Set the secrets
 
