@@ -71,6 +71,38 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Scan what is about to publish, built for the runner's arch only; the multi-arch builds below reuse its cache.
+      - name: Sidecar image to scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: sidecar
+          load: true
+          tags: corbits-triage-sidecar:scan
+          cache-from: type=gha,scope=sidecar
+          no-cache-filters: app
+      - name: Hub image to scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: corbits-triage-hub:scan
+          cache-from: type=gha,scope=hub
+          no-cache-filters: app
+      - name: Scan sidecar image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: corbits-triage-sidecar:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1
+      - name: Scan hub image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: corbits-triage-hub:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1
       - name: Sidecar image
         id: sidecar
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
