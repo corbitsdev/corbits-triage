@@ -195,9 +195,11 @@ describe("a policy stored with the old rule ids", () => {
 describe("text rules", () => {
   const open: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success", title: "feat: Add login", body: "Adds login.\nGenerated with a tool", commitMessages: ["feat: add login\n\nCo-Authored-By: Bot <bot@example.com>", "docs: login"] };
 
-  function textCheck(fields: string[], failWhen: string, phrases: string[]) {
+  const hiding = { ...open, body: "Adds login.", rawBody: "Adds login.\n<!-- Co-Authored-By: Bot -->\n[session](https://claude.ai/code/session_1)" };
+
+  function textCheck(fields: string[], failWhen: string, phrases: string[], facts = open) {
     const pack = readCheckPack({ ...emptyPack("acme/widgets"), custom: [{ id: "words", name: "Words", group: "pull-request", kind: "text", fields, failWhen, phrases }] });
-    return deriveState(open, undefined, pack).checks.find((check) => check.check === "words");
+    return deriveState(facts, undefined, pack).checks.find((check) => check.check === "words");
   }
 
   test("the title contains, case-insensitively", () => {
@@ -210,6 +212,20 @@ describe("text rules", () => {
 
   test("the description contains, quoting the line", () => {
     expect(textCheck(["description"], "contains", ["generated with"])).toMatchObject({ result: "fail", reason: 'the description contains "generated with"', evidence: ["description: Generated with a tool"] });
+  });
+
+  test("the description contains what its markup hides, quoting the line", () => {
+    expect(textCheck(["description"], "contains", ["co-authored-by"], hiding)).toMatchObject({ result: "fail", evidence: ["description: <!-- Co-Authored-By: Bot -->"] });
+    expect(textCheck(["description"], "contains", ["claude.ai"], hiding)).toMatchObject({ result: "fail", evidence: ["description: [session](https://claude.ai/code/session_1)"] });
+  });
+
+  test("a phrase the description shows is quoted once, though its markdown differs", () => {
+    const github = { ...open, body: "Generated with a tool", rawBody: "**Generated with** a tool\n<!-- generated with a tool -->" };
+    expect(textCheck(["description"], "contains", ["generated with"], github)).toMatchObject({ result: "fail", evidence: ["description: Generated with a tool"] });
+  });
+
+  test("the description does not contain reads only what a reader sees", () => {
+    expect(textCheck(["description"], "not-contains", ["co-authored-by"], hiding)).toMatchObject({ result: "fail", evidence: ["description"] });
   });
 
   test("the description does not contain", () => {

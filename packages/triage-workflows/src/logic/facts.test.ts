@@ -24,6 +24,23 @@ test("assembleItem reads a GitHub body only from GitHub's rendering of it", () =
   expect(assembleItem(8, { ...pull, pr }, { ...context, source: "bitbucket-datacenter" })).toMatchObject({ facts: { body: "Fixes #3 <!-- pass -->" } });
 });
 
+test("assembleItem keeps the description as written on both hosts", () => {
+  const context = { repo: "acme/widgets", policy: DEFAULT_REPO_POLICY, pack: emptyPack("acme/widgets"), events: [], docs: { docs: {}, rules: {} }, templates: [] };
+  const pull = { checks: [], reviews: [], comments: [], commits: [], files: [], authorTeams: null };
+  const body = "Fixes #3 <!-- hidden --> [session](https://example.com/s)";
+  const github = { branch: "a", body, bodyHtml: "<p>Fixes #3 <a href=\"https://example.com/s\">session</a></p>" };
+  expect(assembleItem(8, { ...pull, pr: github }, { ...context, source: "github" })).toMatchObject({ facts: { body: "Fixes #3 session", rawBody: body } });
+  expect(assembleItem(8, { ...pull, pr: { branch: "a", body } }, { ...context, source: "bitbucket-datacenter" })).toMatchObject({ facts: { rawBody: body } });
+});
+
+test("assembleItem leaves the pull request template's own comments and invisible characters out of the description as written", () => {
+  const template = "<!-- Describe the change -->";
+  const context = { repo: "acme/widgets", policy: DEFAULT_REPO_POLICY, pack: emptyPack("acme/widgets"), events: [], docs: { docs: {}, rules: {} }, templates: [template], source: "github" as const };
+  const pull = { checks: [], reviews: [], comments: [], commits: [], files: [], authorTeams: null };
+  const pr = { branch: "a", body: `${template}\nFixes #3 <!-- Co-Au\u{200B}thored-By: Bot -->`, bodyHtml: "<p>Fixes #3</p>" };
+  expect(assembleItem(8, { ...pull, pr }, context)).toMatchObject({ facts: { rawBody: "\nFixes #3 <!-- Co-Authored-By: Bot -->" } });
+});
+
 test("assembleItem reads only hidden characters from a Bitbucket Data Center body, which shows its comments", () => {
   const context = { repo: "acme/widgets", policy: DEFAULT_REPO_POLICY, pack: emptyPack("acme/widgets"), events: [], docs: { docs: {}, rules: {} }, templates: [], source: "bitbucket-datacenter" as const };
   const pull = { checks: [], reviews: [], comments: [], commits: [], files: [], authorTeams: null };
