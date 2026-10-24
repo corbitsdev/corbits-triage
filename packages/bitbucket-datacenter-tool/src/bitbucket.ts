@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
@@ -270,14 +271,15 @@ export async function sendCodeReview(bb: BitbucketFetch, input: SendCodeReviewIn
   if (summaryId !== undefined) return { commentId: summaryId, sent: false };
   if ((await readPr(bb, repo, number)).sha !== sha) return { commentId: null, sent: false, skipped: HEAD_MOVED };
   const diffs = new Map<string, FileDiff>();
-  for (const path of new Set(input.comments.map((finding) => finding.path))) {
+  for (const path of new Set(input.comments.map((finding) => finding.path).filter(plainSegments))) {
     const file = await json(bb, `${prPath(repo, number)}/diff/${filePath(path)}?withComments=false`) as FileDiff;
     if (file.toHash !== sha) return { commentId: null, sent: false, skipped: HEAD_MOVED };
     diffs.set(path, file);
   }
   const outside: string[] = [];
   for (const finding of input.comments) {
-    const anchor = anchorOf(finding, diffs.get(finding.path)!);
+    const file = diffs.get(finding.path);
+    const anchor = file === undefined ? undefined : anchorOf(finding, file);
     if (!anchor) {
       outside.push(findingSection(finding));
       continue;

@@ -2,7 +2,7 @@ const SHA = /^[0-9a-f]{40}$/;
 
 const REPO = /^[\w.~-]+\/[\w.~-]+$/;
 
-function plainSegments(value: string): boolean {
+export function plainSegments(value: string): boolean {
   return value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
