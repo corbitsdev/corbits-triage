@@ -121,8 +121,11 @@ interface FetchContext {
 /** A scan reads paths and sizes, not patches. */
 const HISTORY_FILES_PAGE: FilesCursor = { offset: 0, patches: false };
 
-/** Pull requests, or file histories, read at once, so the host sees a bounded number of concurrent requests. */
-const HISTORY_CHUNK = 10;
+/** Pull requests, file histories or file contents read at once, so the host sees a bounded number of concurrent requests. */
+export const READ_CHUNK = 10;
+
+/** The changed paths whose history one pull request reads, GitHub's own diff limit; the rest count as unread, so one pull request's reads stay bounded. */
+export const MAX_HISTORY_READS = 300;
 
 const HISTORY_LIMIT = 200;
 
@@ -130,9 +133,17 @@ const NO_DOCS: RepoDocs = { docs: {}, rules: {} };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+async function runChunked(host: HostCall, calls: readonly ToolCall[]): Promise<Map<string, ToolResult>> {
+  const results = new Map<string, ToolResult>();
+  for (let start = 0; start < calls.length; start += READ_CHUNK) {
+    for (const [id, result] of await runAll(host, calls.slice(start, start + READ_CHUNK))) results.set(id, result);
+  }
+  return results;
+}
+
 /** Each file's text at `sha`; a file that could not be read is left out, so its rule cannot pass. */
 async function readContents(host: HostCall, tool: string, repo: string, sha: string, paths: string[]): Promise<Record<string, string>> {
-  const results = await runAll(host, paths.map((path) => call(tool, { repo, sha, path, whole: true }, `content:${path}`)));
+  const results = await runChunked(host, paths.map((path) => call(tool, { repo, sha, path, whole: true }, `content:${path}`)));
   return Object.fromEntries(paths.flatMap(function text(path): Array<[string, string]> {
     const read = data<{ text?: unknown }>(results.get(`content:${path}`))?.text;
     return typeof read === "string" ? [[path, read]] : [];
@@ -233,16 +244,13 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   function historyCalls(): ToolCall[] {
     if (!risk) return [];
     const since = new Date(Date.now() - DEFAULT_RISK.hotFileDays * DAY_MS).toISOString();
-    return [...new Set(numbers.flatMap(historyPathsOf))].map((path) => call(tool("list_path_commits"), { repo, path, since }, `history:${path}`));
+    return [...new Set(numbers.flatMap((n) => historyPathsOf(n).slice(0, MAX_HISTORY_READS)))].map((path) => call(tool("list_path_commits"), { repo, path, since }, `history:${path}`));
   }
 
   const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...teamsCalls()]);
-  const history = historyCalls();
-  for (let start = 0; start < history.length; start += HISTORY_CHUNK) {
-    for (const [id, result] of await runAll(host, history.slice(start, start + HISTORY_CHUNK))) r2.set(id, result);
-  }
+  for (const [id, result] of await runChunked(host, historyCalls())) r2.set(id, result);
 
-  /** A history that failed or holds more than one page counts as unread (null), which leaves only the risk rule unconfirmed. */
+  /** A history that failed, holds more than one page or is past the read limit counts as unread (null), which leaves only the risk rule unconfirmed. */
   function fixesOf(n: number): PullData["fixes"] {
     if (!risk) return undefined;
     return Object.fromEntries(historyPathsOf(n).map(function fixesFor(path) {
@@ -347,8 +355,8 @@ async function fetchHistory(read: Host, repo: string, limit: number): Promise<Fa
     closed.push(...listed.prs.slice(0, limit - closed.length));
     page = listed.next;
   }
-  for (let start = 0; start < closed.length; start += HISTORY_CHUNK) {
-    const numbers = closed.slice(start, start + HISTORY_CHUNK).map((pr) => pr.number);
+  for (let start = 0; start < closed.length; start += READ_CHUNK) {
+    const numbers = closed.slice(start, start + READ_CHUNK).map((pr) => pr.number);
     items.push(...await fetchTargets(read, repo, numbers, context));
   }
   return { repo, closed, items };
