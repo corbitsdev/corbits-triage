@@ -38,6 +38,8 @@ import { hotFiles, migrationPaths } from "./risk.js";
 
 export interface PrFileFacts {
   path: string;
+  /** The host's path, when it differs from the shown `path`; reads use it. */
+  hostPath?: string;
   previousPath?: string;
   status?: string;
   additions?: number;

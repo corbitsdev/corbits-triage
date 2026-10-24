@@ -310,6 +310,14 @@ describe("pr-triage body", () => {
     expect((unread.verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
   });
 
+  test("a code-pattern rule reads a changed file by the host's path", async () => {
+    const files = [{ filename: "src/a​.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const b = y ?? 0;" }];
+    const contents = { "src/a.ts": "const a = 1;\n", "src/a%E2%80%8B.ts": "const b = y ?? 0;\n" };
+    const pack: CheckPack = { ...emptyPack(REPO), custom: [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }] };
+    const { verdict } = await triage(pack, { files, contents });
+    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:1 Invented fallback `?? 0`; handle the missing value instead."] });
+  });
+
   test("a reference-style link in the body still links the issue", async () => {
     const bodyHtml = '<p dir="auto">Fixes <a href="https://github.com/acme/widgets/issues/7">the bug</a></p>';
     const { verdict } = await triage({ ...emptyPack(REPO), checks: { "linked-issue": { enabled: true, tracker: "github" } } }, { title: "Fix the parser", bodyHtml });

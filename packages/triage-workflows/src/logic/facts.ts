@@ -258,7 +258,8 @@ function pathPlace(path: string): string {
 
 /** Patches are left as the host sent them; hunks.ts makes them safe to read. */
 function shownFile(file: PrFileFacts, hidden: string[]): PrFileFacts {
-  return { ...file, path: shownText(file.path, hidden, pathPlace), ...(file.previousPath === undefined ? {} : { previousPath: shownText(file.previousPath, hidden, pathPlace) }) };
+  const path = shownText(file.path, hidden, pathPlace);
+  return { ...file, path, ...(path === file.path ? {} : { hostPath: file.path }), ...(file.previousPath === undefined ? {} : { previousPath: shownText(file.previousPath, hidden, pathPlace) }) };
 }
 
 /** The description as a reader sees it, noting in `hidden` what it hid; on GitHub its markdown hides comments. */
