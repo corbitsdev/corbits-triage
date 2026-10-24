@@ -41,11 +41,11 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 At most 8 in total. `id` is lowercase letters, digits and single hyphens, at most 64 characters; it must not be a rule id Triage uses (the check names a clash), start with `docs-` or `focused-`, or end in `-file`, `-hunk` or `-slice` followed by numbers.
 
 - `check: model` (needs a model): `text` is a statement the decision model answers yes or no about the whole pull request; the rule fails on no. Example `text`: `The title says what changed.`
-- `check: text` (no model): fails on a phrase match, case ignored. A phrase matches anywhere in the field; there is no prefix or pattern match.
+- `check: text` (no model): fails on a phrase match, case ignored. A phrase matches anywhere in the field; there is no prefix or pattern match. A `contains` rule on `description` also reads the description's hidden parts (HTML comments and link addresses); `not-contains` reads only what a reader sees.
   - `fields`: any of `title`, `description`, `commits` (each commit message; first 100 commits).
   - `failWhen`: `contains` (fail when any field has any phrase) or `not-contains` (fail when a field has none of them).
   - `phrases`: 1–50 strings.
-- `check: code-patterns` (no model): fails when a line the pull request adds to a TypeScript or JavaScript file matches; vendored and built files are skipped. On Bitbucket Data Center, which sends no patches, it is unconfirmed whenever such a file changes.
+- `check: code-patterns` (no model): fails when a line the pull request adds to a `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` or `.cjs` file matches (no other language is checked, so leave it out of a repository with none); vendored and built files are skipped. On Bitbucket Data Center, which sends no patches, it is unconfirmed whenever a TypeScript or JavaScript file of your own is added, edited, moved or copied.
   - `presets: [convention]` (TypeScript and JavaScript): invented `?? 0`/`?? []` fallbacks outside tests, nested ternaries, immediately invoked functions, `.then`/`.catch`/`.finally` chains, empty `catch` blocks, suppression comments.
   - `patterns`: ast-grep rules with `id`, `language` (`typescript` or `javascript`), `message`, `rule` (an ast-grep rule object), and optional `files` (only these paths) and `ignores` (not these). Globs are strings from the repository root, by ast-grep's rules: `*` crosses folders; write `[^a]`, never `[!a]`. Patterns may share an `id` across languages. A pattern replaces a preset's with the same `id` in both languages; to keep checking JavaScript, add a `language: javascript` pattern under the same id.
 

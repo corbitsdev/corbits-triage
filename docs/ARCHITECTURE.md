@@ -271,7 +271,8 @@ label off that head, so it never stands on a head not yet triaged.
    arithmetic is a counter's real default. With such a rule on, the facts step reads each file whose patch
    adds lines at the head through the host's `read_file` (`whole`), runs the
    rules there and outputs only the matches. Bitbucket Data Center lists no
-   patch, so there the rule is unconfirmed. The extension leaves code-pattern rules out and swaps the native module
+   patch, so there the rule is unconfirmed whenever an in-scope TypeScript or
+   JavaScript file is added, edited, moved or copied. The extension leaves code-pattern rules out and swaps the native module
    for a stub.
 3. **route**: skips the judge when no question needs asking.
 4. **judge**: one System One call per request of questions that no carried
