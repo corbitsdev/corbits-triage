@@ -5,7 +5,7 @@ import { reconcileModelCatalog, saveInference } from "./model-catalog.ts";
 
 type Row = Record<string, unknown> & { id: string };
 
-function fakeHub(credentials: string[]) {
+function fakeHub(credentials: string[], placeFailure = new ApiError(403, "forbidden", "forbidden")) {
   const rows: Record<string, Row[]> = { providers: [], models: [], offerings: [] };
   const writes: string[] = [];
   const credentialBodies: unknown[] = [];
@@ -19,7 +19,7 @@ function fakeHub(credentials: string[]) {
     }
     if (path === "/api/tenants/t/credentials") return { data: keys, nextCursor: null } as T;
     if (path === "/api/tenants/t") return { id: "t", name: "Acme", slug: "acme", config: {} } as T;
-    if (path === "/api/integrations/code-review/t/place") throw new ApiError(403, "forbidden", "forbidden");
+    if (path === "/api/integrations/code-review/t/place") throw placeFailure;
     if (path === "/api/tenants/t/providers") return (method === "GET" ? { data: [], nextCursor: null } : { id: "vault_provider" }) as T;
     if (!path.includes("/catalog/")) throw new Error(`unexpected ${method} ${path}`);
     const kind = path.split("/catalog/")[1]!.split("/")[0]!;
@@ -92,5 +92,15 @@ describe("saveInference", () => {
     await saveInference(hub.transport, "t", { endpoint: "https://inference.example/v1", model: "triage-large", secret: "sk-test" });
     hub.keys[0]!.status = "expired";
     expect(await savedModel(hub.transport)).toBeUndefined();
+  });
+});
+
+describe("loadPortal", () => {
+  test("a failed code review place read leaves the other sections loaded", async () => {
+    const hub = fakeHub(["anthropic"], new ApiError(500, "internal", "The hub could not list the places."));
+    const snapshot = await loadPortal(hub.transport, ACCESS, async () => false);
+
+    expect(snapshot).toMatchObject({ tenantName: "Acme", credentials: [{ name: "anthropic" }], codeReviewPlaceError: "The hub could not list the places." });
+    expect(snapshot.codeReviewPlace).toBeUndefined();
   });
 });

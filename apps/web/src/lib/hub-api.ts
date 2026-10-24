@@ -133,13 +133,15 @@ export type PortalSnapshot = {
   configVersion?: string;
   credentials: HubCredential[];
   decisionModel?: Inference;
-  /** Absent when the hub refused to say where code review runs. */
+  /** Absent when the hub refused or failed to say where code review runs. */
   codeReviewPlace?: CodeReviewPlace["provisioner"];
   codeReviewPlaces?: CodeReviewPlace["places"];
   /** The hosts whose PR workflow deploys; absent with `codeReviewPlace`. */
   prWorkflowSources?: CodeReviewPlace["prWorkflow"];
   /** Set when the hub failed to list the keys for a reason other than access, so an empty `credentials` does not mean no key is stored. */
   credentialsError?: string;
+  /** Set when the hub failed to say where code review runs for a reason other than access. */
+  codeReviewPlaceError?: string;
   denied: SectionDenied;
 };
 
@@ -1221,13 +1223,8 @@ export async function listRuns(transport: Transport, tenantId: string): Promise<
   return listAll<HubRun>(transport, `/api/tenants/${tid}/workflows/runs`);
 }
 
-async function readCodeReviewPlace(transport: Transport, tid: string): Promise<CodeReviewPlace | undefined> {
-  try {
-    return CodeReviewPlace.assert(await transport.fetch<unknown>("GET", `/api/integrations/code-review/${tid}/place`));
-  } catch (cause) {
-    if (isAuthDenied(cause)) return undefined;
-    throw cause;
-  }
+async function readCodeReviewPlace(transport: Transport, tid: string): Promise<CodeReviewPlace> {
+  return CodeReviewPlace.assert(await transport.fetch<unknown>("GET", `/api/integrations/code-review/${tid}/place`));
 }
 
 const EMPTY_CATALOG: Catalog = { providers: [], models: [], offerings: [] };
@@ -1242,7 +1239,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     tolerateSection(transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`), tenantFallback),
     tolerateSection(listAll<HubCredential>(transport, `/api/tenants/${tid}/credentials`), []),
     tolerateSection(listCatalog(transport, tenantId), EMPTY_CATALOG),
-    readCodeReviewPlace(transport, tid),
+    tolerateSection(readCodeReviewPlace(transport, tid), undefined),
   ]);
   const decisionModel = decisionModelOf(catalog.value, credentials.value);
   return {
@@ -1255,8 +1252,9 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
     ...(decisionModel && { decisionModel }),
-    ...(places && { codeReviewPlace: places.provisioner, codeReviewPlaces: places.places, prWorkflowSources: places.prWorkflow }),
+    ...(places.value && { codeReviewPlace: places.value.provisioner, codeReviewPlaces: places.value.places, prWorkflowSources: places.value.prWorkflow }),
     ...(credentials.failure && { credentialsError: credentials.failure.message }),
+    ...(places.failure && { codeReviewPlaceError: places.failure.message }),
     denied: {
       repos: tenant.denied,
       credentials: credentials.denied,

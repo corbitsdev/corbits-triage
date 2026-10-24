@@ -92,6 +92,7 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
           />
         </div>
         {snapshot.codeReviewPlaces && <WhereItRuns places={snapshot.codeReviewPlaces} />}
+        {snapshot.codeReviewPlaceError && <p role="alert" className="error">Could not read where code review runs. {snapshot.codeReviewPlaceError}</p>}
       </div>
     </section>
   );
