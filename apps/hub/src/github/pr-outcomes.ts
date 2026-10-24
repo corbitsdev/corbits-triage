@@ -8,13 +8,13 @@ import type { ArtifactDb } from "@corbits/artifacts";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { getPrTimes, listPrTimeline, searchClosedPrsBefore, type PrTimes, type TimelineEvent } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
-import type { OutcomeMedians, OutcomeTimes, TriageOutcomes } from "@corbits/triage-contracts";
+import type { OutcomeMedians, OutcomeTimes, RepoSource, TriageOutcomes } from "@corbits/triage-contracts";
 import { bitbucketConnection } from "../bitbucket-datacenter/records.js";
 import { repoPolicyRow } from "./check-pack-store.js";
 import { sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
-import { repoRecords, triageNs } from "./tenant-config.js";
+import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
 const DAY_MS = 86_400_000;
 const OPEN_MS = 15 * 60_000;
@@ -34,12 +34,12 @@ export type Host = {
 };
 
 /** Undefined when the repository is not connected. */
-type HostRead = { host: Host } | { state: "no_credential" } | undefined;
+type HostRead = { host: Host; source: RepoSource } | { state: "no_credential" } | undefined;
 
 export type OutcomeReaderDeps = {
   host: (tenantId: string, principalId: string, repo: string) => Promise<HostRead>;
   /** When the repository's policy was first saved; undefined without one. */
-  enabledAt: (tenantId: string, repo: string) => Promise<Date | undefined>;
+  enabledAt: (tenantId: string, repo: string, source: RepoSource) => Promise<Date | undefined>;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -202,13 +202,13 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
   }
 
   async function read(tenantId: string, principalId: string, repo: string, triaged: readonly Triaged[]): Promise<TriageOutcomes | null> {
-    const source = await deps.host(tenantId, principalId, repo);
-    if (source === undefined) return null;
-    if ("state" in source) return source;
-    const { host } = source;
+    const reached = await deps.host(tenantId, principalId, repo);
+    if (reached === undefined) return null;
+    if ("state" in reached) return reached;
+    const { host, source } = reached;
     const now = deps.now();
     const at = now.getTime();
-    const enabledAt = await deps.enabledAt(tenantId, repo);
+    const enabledAt = await deps.enabledAt(tenantId, repo, source);
     const [{ outcomes, failed }, [baselineRead]] = await Promise.all([
       settledOutcomes(triaged.map((pr) => triagedOutcome(host, `${tenantId}\n${repo}\n${pr.number}\n${pr.verdictAt.toISOString()}`, pr, at))),
       Promise.allSettled(enabledAt === undefined ? [] : [baselineOf(host, `${tenantId}\n${repo}\n${utcDay(now)}\n${enabledAt.toISOString()}`, enabledAt, at)]),
@@ -265,6 +265,7 @@ export function createHostReads(deps: HostReadsDeps): Pick<OutcomeReaderDeps, "h
           // The token user posts triage's own comments and reviews, and Data Center marks only access-token users as bots.
           botLogins: own === undefined ? [] : [own],
         },
+        source: sourceOf(record),
       };
     }
     const { gh } = source;
@@ -275,11 +276,12 @@ export function createHostReads(deps: HostReadsDeps): Pick<OutcomeReaderDeps, "h
         closedBefore: (before) => searchClosedPrsBefore(gh, repo, before),
         botLogins: [],
       },
+      source: sourceOf(record),
     };
   }
 
-  async function enabledAt(tenantId: string, repo: string): Promise<Date | undefined> {
-    return (await repoPolicyRow(deps, tenantId, repo))?.createdAt;
+  async function enabledAt(tenantId: string, repo: string, source: RepoSource): Promise<Date | undefined> {
+    return (await repoPolicyRow(deps, tenantId, repo, source))?.createdAt;
   }
 
   return { host, enabledAt };

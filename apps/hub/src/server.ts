@@ -528,16 +528,16 @@ const policyFile = createPolicyFile({
   quiet: repoActivity.quiet,
 });
 const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
-function readStoredCheckPack(tenantId: string, repo: string) {
-  return loadCheckPack(checkPackStore, tenantId, repo);
+function readStoredCheckPack(tenantId: string, repo: string, source: RepoSource) {
+  return loadCheckPack(checkPackStore, tenantId, repo, source);
 }
-function settleRepoPolicy(tenantId: string, repo: string, source: RepoSource | undefined) {
+function settleRepoPolicy(tenantId: string, repo: string, source: RepoSource) {
   return settlePolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source);
 }
 function chosenFileRefusal(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
   return fileRefusal({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source, policy);
 }
-async function readCheckPack(tenantId: string, repo: string, source: RepoSource | undefined) {
+async function readCheckPack(tenantId: string, repo: string, source: RepoSource) {
   return (await settleRepoPolicy(tenantId, repo, source)).read;
 }
 /** A push that lands a file matching the saved rules retires them now, so an edit after it is not taken for a difference. */

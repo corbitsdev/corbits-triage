@@ -12,7 +12,7 @@ import { asRepo } from "@corbits/common";
 import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, refuseUnknownChecks, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type PolicyWorkflow, type RepoSource, type SharedFileRef } from "@corbits/triage-contracts";
 import type { PolicyFileState } from "./policy-file.js";
 import { prWorkflowKeys } from "./pr-workflow.js";
-import { repoRecords, triageNs } from "./tenant-config.js";
+import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
 /**
  * `automatic` is the Do kinds the pr-triage role is granted on the repository; `source` is what `pack` was resolved from;
@@ -48,11 +48,17 @@ function refOf(row: ArtifactRow): ArtifactRef {
   return { id: row.id, version: row.version };
 }
 
-/** The record is tenant config a manager may write, so the id's type is not trusted. */
-async function pinnedPolicyId(db: DB["db"], tenantId: string, repo: string): Promise<string | undefined> {
+/**
+ * The id `repo`'s record on its host pins, whether it may fall back to the newest policy titled for it, and the ids its
+ * namesakes on other hosts pin. Only GitHub repositories predate pins, so only they fall back. The record is tenant
+ * config a manager may write, so an id's type is not trusted.
+ */
+async function policyPins(db: DB["db"], tenantId: string, repo: string, source: RepoSource): Promise<{ own: string | undefined; titled: boolean; others: string[] }> {
   const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
-  const id: unknown = repoRecords(triageNs(tenant?.config)).find((record) => record.name === repo)?.checkPack?.id;
-  return typeof id === "string" ? id : undefined;
+  const named = repoRecords(triageNs(tenant?.config)).filter((record) => record.name === repo);
+  const id: unknown = named.find((record) => sourceOf(record) === source)?.checkPack?.id;
+  const others = named.filter((record) => sourceOf(record) !== source).map((record): unknown => record.checkPack?.id);
+  return { own: typeof id === "string" ? id : undefined, titled: source === "github", others: others.filter((other) => typeof other === "string") };
 }
 
 async function usablePolicy(artifacts: ArtifactDb, tenantId: string, id: string | undefined): Promise<ArtifactRow | undefined> {
@@ -60,10 +66,13 @@ async function usablePolicy(artifacts: ArtifactDb, tenantId: string, id: string 
   return row && row.tenantId === tenantId && row.archivedAt === null ? row : undefined;
 }
 
-export async function repoPolicyRow({ db, artifacts }: Pick<CheckPackStoreDeps, "db" | "artifacts">, tenantId: string, repo: string): Promise<ArtifactRow | undefined> {
-  const pinned = await usablePolicy(artifacts, tenantId, await pinnedPolicyId(db, tenantId, repo));
-  if (pinned) return pinned;
-  return usablePolicy(artifacts, tenantId, (await findArtifactByTitle(artifacts, tenantId, checkPackName(repo)))?.artifactId);
+/** Saved rules are titled by name alone, so a policy found by its title is never one a namesake on another host pins. */
+export async function repoPolicyRow({ db, artifacts }: Pick<CheckPackStoreDeps, "db" | "artifacts">, tenantId: string, repo: string, source: RepoSource): Promise<ArtifactRow | undefined> {
+  const pins = await policyPins(db, tenantId, repo, source);
+  const pinned = await usablePolicy(artifacts, tenantId, pins.own);
+  if (pinned || !pins.titled) return pinned;
+  const titled = (await findArtifactByTitle(artifacts, tenantId, checkPackName(repo)))?.artifactId;
+  return titled === undefined || pins.others.includes(titled) ? undefined : usablePolicy(artifacts, tenantId, titled);
 }
 
 /** `shared` is undefined when the policy extends none. An archived shared policy still applies: archiving hides, it does not revoke. */
@@ -85,13 +94,13 @@ function corrupt(row: ArtifactRow, error: unknown, automatic: ActionKind[]): Sav
   return { status: "corrupt", reason: error.message, repo: refOf(row), automatic };
 }
 
-export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, repo: string): Promise<SavedRead> {
+export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, repo: string, source: RepoSource): Promise<SavedRead> {
   try {
     checkPackName(repo);
   } catch {
     return { status: "missing" };
   }
-  const row = await repoPolicyRow(deps, tenantId, repo);
+  const row = await repoPolicyRow(deps, tenantId, repo, source);
   if (!row) return { status: "missing" };
   let read: ReturnType<typeof resolved>;
   try {
@@ -99,9 +108,9 @@ export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, 
   } catch (error) {
     return corrupt(row, error, await deps.automaticKinds(tenantId, repo));
   }
-  const source = { repo: refOf(row), ...(read.shared && { shared: read.shared }) };
-  if (source.shared) deps.log({ level: "info", msg: "policy_shared_resolved", tenantId, repo, source });
-  return { status: "ok", pack: read.pack, source, automatic: await deps.automaticKinds(tenantId, repo) };
+  const from = { repo: refOf(row), ...(read.shared && { shared: read.shared }) };
+  if (from.shared) deps.log({ level: "info", msg: "policy_shared_resolved", tenantId, repo, source: from });
+  return { status: "ok", pack: read.pack, source: from, automatic: await deps.automaticKinds(tenantId, repo) };
 }
 
 type FileRead = Extract<CheckPackRead, { status: "ok" | "invalid" }>;
@@ -109,8 +118,8 @@ type FileRead = Extract<CheckPackRead, { status: "ok" | "invalid" }>;
 /** `source` is the repository's host; a caller without one reads no file where both hosts hold the name. */
 type PolicyFileReader = (tenantId: string, repo: string, source: RepoSource | undefined) => Promise<PolicyFileState>;
 
-/** The policy triage runs on for `repo` on `source`; see `PolicyFileReader` for a caller without a host. */
-export type PolicyReader = (tenantId: string, repo: string, source: RepoSource | undefined) => Promise<CheckPackRead>;
+/** The policy triage runs on for `repo` on `source`. */
+export type PolicyReader = (tenantId: string, repo: string, source: RepoSource) => Promise<CheckPackRead>;
 
 /** Over the policy file of the repository `extends` names, read with this workspace's own access to it. */
 async function overSharedFile(policyFile: PolicyFileReader, tenantId: string, repo: string, source: RepoSource | undefined, content: Record<string, unknown>, shared: string): Promise<Pick<StoredPack, "pack"> & { sharedFile: SharedFileRef }> {
@@ -152,8 +161,8 @@ async function fileRead(deps: CheckPackStoreDeps & { policyFile: PolicyFileReade
 }
 
 /** Archiving hides and keeps restorable; every saved policy titled for the repository goes, since an older one would otherwise become the saved rules. */
-async function retireSaved(deps: CheckPackStoreDeps, tenantId: string, repo: string): Promise<void> {
-  for (let row = await repoPolicyRow(deps, tenantId, repo); row; row = await repoPolicyRow(deps, tenantId, repo)) {
+async function retireSaved(deps: CheckPackStoreDeps, tenantId: string, repo: string, source: RepoSource): Promise<void> {
+  for (let row = await repoPolicyRow(deps, tenantId, repo, source); row; row = await repoPolicyRow(deps, tenantId, repo, source)) {
     await setArtifactArchived(deps.artifacts, row, true);
     deps.log({ level: "info", msg: "policy_saved_retired", tenantId, repo, artifact: row.id, version: row.version });
   }
@@ -176,9 +185,9 @@ export type PolicySettled = { read: CheckPackRead; upgrade: PolicyUpgrade; saved
  * saved rules and no file is `upgrade`; both, running differently or with a file triage refuses, is `differs`, and the
  * saved rules apply; else the file or the saved rules alone apply and it is `ok`.
  */
-export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, source: RepoSource | undefined): Promise<PolicySettled> {
+export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, source: RepoSource): Promise<PolicySettled> {
   const file = await deps.policyFile(tenantId, repo, source);
-  const stored = await loadCheckPack(deps, tenantId, repo);
+  const stored = await loadCheckPack(deps, tenantId, repo, source);
   const saved = stored.status === "ok" ? stored : undefined;
   if (file.status === "absent" && saved) return { read: stored, upgrade: { state: "upgrade", saved: saved.source.repo, unexpressed: exported(saved).unexpressed }, saved };
   if (file.status === "absent") return { read: stored, upgrade: { state: stored.status === "missing" ? "start" : "ok" } };
@@ -187,6 +196,6 @@ export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: Poli
   const differences = read.status === "ok" ? policyDifferences(saved.pack, read.pack) : [];
   const problem = read.status === "ok" ? undefined : read.reason;
   if (differences.length > 0 || problem) return { read: saved, upgrade: { state: "differs", path: file.status === "ok" ? file.file.path : file.path, saved: saved.source.repo, differences, ...(problem && { problem }), fixable: fileCanChange(saved, read, repo), unexpressed: exported(saved).unexpressed }, saved };
-  await retireSaved(deps, tenantId, repo);
+  await retireSaved(deps, tenantId, repo, source);
   return { read, upgrade: { state: "ok" } };
 }
