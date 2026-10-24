@@ -9,7 +9,7 @@
     "@corbits/provisioner-railway": "workspace:*",
     "@corbits/provisioner-test": "workspace:*",
     "arktype": "catalog:",
-    "e2b": "2.52.1"
+    "e2b": "2.56.0"
   },
   "description": "Live checks against real services, run by hand"
 }
