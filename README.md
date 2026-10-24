@@ -22,16 +22,16 @@ You need a GitHub account that can create a GitHub App, an API key for the
 
 On a server or Railway, follow [docs/SELF_HOST.md](docs/SELF_HOST.md).
 
-Add the Corbits Triage skills to your coding agent, then give it the Setup Prompt:
+In the folder where you'll set it up, add the Corbits Triage skills to your coding agent, then give it the Setup Prompt:
 
 ```sh
-npx skills add corbitsdev/corbits-triage -g
+npx skills add corbitsdev/corbits-triage
 ```
 
 **Setup Prompt**
 
 ```text
-Use the corbits-triage-install skill to get Corbits Triage running on this machine. Prefer Docker Compose if I have Docker; otherwise use a Postgres I choose and bun run dev. Do everything you can yourself and tell me exactly what to do when it needs me.
+Set up Corbits Triage on this machine with the corbits-triage-install skill. Use Docker if I have it, otherwise my own Postgres. Tell me when you need me to do something.
 ```
 
 Or by hand:
@@ -52,7 +52,7 @@ Or by hand:
    **Configure Prompt**
 
    ```text
-   Use the corbits-triage-setup skill to write .corbits-triage.yml for this repository. Look at the repository first, suggest rules, and check the file before you finish. Ask me what Triage should do on Pass, Fail and Unsure.
+   Use the corbits-triage-setup skill to write a policy for this repository. Look around first, suggest rules, and ask me what should happen on Pass, Fail and Unsure.
    ```
 
 4. **Turn on triage** for the repository under Repositories. Its open pull
