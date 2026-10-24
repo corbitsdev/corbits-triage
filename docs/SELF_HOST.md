@@ -145,6 +145,13 @@ Railway Sandboxes need them set by hand.
    one timeout.
 5. Terminate TLS in front of the hub.
 
+Sign-in and email rate limits count each caller by address. On Railway the
+hub is detected and reads the address from the header Railway's proxy sets,
+and each session records that address; there is nothing to configure. Anywhere
+else the hub logs `auth_client_ip_unresolved` at start-up: the limits are
+shared unless a proxy sets `X-Forwarded-For` to exactly the caller's address,
+so one person's failed attempts can briefly block another's.
+
 ### Database role
 
 On every Postgres but Compose's, set this on the hub's database role: it ends
