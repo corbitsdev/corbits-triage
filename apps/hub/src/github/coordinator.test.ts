@@ -197,6 +197,20 @@ test("a pull request's code review is a job of its own beside its triage", async
   expect(fake.spawned.map((j) => j.workflow)).toEqual(["pr-triage-github", "pr-code-review-github"]);
 });
 
+test("same-named pull requests on two hosts get code reviews that neither replace nor wait for each other", async () => {
+  const { clock, fake, coordinator } = setup();
+  const github = { ...job("t1", 1), workflow: "pr-code-review-github" };
+  coordinator.enqueue({ ...github, headSha: "h1" });
+  await clock.advance(0);
+  coordinator.enqueue({ ...github, headSha: "h2" });
+  coordinator.enqueue({ ...github, headSha: "h3" });
+  coordinator.enqueue({ ...github, workflow: "pr-code-review-bitbucket-datacenter", headSha: "b1" });
+  await clock.advance(0);
+  expect(fake.spawned.map((j) => j.headSha)).toEqual(["h1", "b1"]);
+  await fake.end("run_1");
+  expect(fake.spawned.map((j) => j.headSha)).toEqual(["h1", "b1", "h3"]);
+});
+
 test("a newer head's job replaces a queued one whatever workflow of the lane each names, so one pull request gets one run", async () => {
   const { clock, fake, coordinator } = setup();
   const spawn = fake.spawner.spawn;

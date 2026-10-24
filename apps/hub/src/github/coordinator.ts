@@ -68,8 +68,10 @@ export type Coordinator = {
 };
 
 /** One job per pull request for its triage, whichever triage workflow it names, and one for its code review. */
-function keyOf({ tenantId, workflow, repo, number }: TriageJob): string {
-  const lane = CODE_REVIEW_WORKFLOWS.some((review) => review.id === workflow) ? "code-review" : "triage";
+function keyOf({ tenantId, workflow: id, repo, number }: TriageJob): string {
+  // A triage job's repo is already unique per host.
+  const review = CODE_REVIEW_WORKFLOWS.find((workflow) => workflow.id === id);
+  const lane = review ? `code-review\n${review.source}` : "triage";
   return `${tenantId}\n${lane}\n${repo}\n${number}`;
 }
 
