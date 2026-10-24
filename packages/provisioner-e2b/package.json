@@ -13,7 +13,7 @@
     "@corbits/triage-contracts": "workspace:*",
     "@intx/hub-sessions": "0.5.0",
     "@intx/types": "workspace:*",
-    "e2b": "2.52.1"
+    "e2b": "2.56.0"
   },
   "devDependencies": {
     "@corbits/provisioner-test": "workspace:*"
