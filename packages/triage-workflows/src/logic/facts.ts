@@ -1,7 +1,7 @@
 import { checkCancelled, checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
 import { authorAssociation, authorKindOf, catalogCheckEnabled, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
-import { hiddenIn, hiddenMarkup, nothingRemoved } from "./hidden-content.js";
+import { hiddenIn, hiddenMarkup, nothingRemoved, writtenDescription } from "./hidden-content.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "@corbits/common";
@@ -57,7 +57,7 @@ export function buildFacts(
   reviews: Review[],
   comments: IssueComment[],
   policy: RepoPolicy,
-): Omit<PrFacts, keyof ItemFacts> {
+): Omit<PrFacts, keyof ItemFacts | "rawBody"> {
   const latest = latestDecisive(reviews);
   const author = pr.author ?? "";
   const changesRequested = reviewersWith(latest, "CHANGES_REQUESTED");
@@ -271,7 +271,7 @@ function shownDescription(pr: PrData, source: RepoSource, templates: string[], h
   return body;
 }
 
-/** Every rule, the judge and the comment read pull request text only as a reader sees it. */
+/** The judge and the comment read pull request text only as a reader sees it; a contains text rule also reads the description as written. */
 export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs, templates, source }: ItemContext): RulesItem {
   const { pr } = data;
   if (!pr) return { error: `github_get_pr failed for #${number}` };
@@ -288,6 +288,6 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   const commits = messages.map(firstLine);
   const commitMessages = messages.slice(0, COMMIT_MESSAGES_MAX);
   const shown = { ...pr, title, body };
-  const facts: PrFacts = { ...buildFacts(repo, number, shown, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, hidden, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack), ...(data.fixes && { fixes: data.fixes }) };
+  const facts: PrFacts = { ...buildFacts(repo, number, shown, data.checks, data.reviews, data.comments, policy), rawBody: writtenDescription(pr.body ?? "", templates), paths, files, commits, commitMessages, events, hidden, ...docs, ...membership(data.authorTeams, pack, repo), ...stackOf(data.stack), ...(data.fixes && { fixes: data.fixes }) };
   return { facts, pack };
 }

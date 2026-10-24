@@ -88,7 +88,9 @@ recommended forbidden paths are `vendor/**`, `node_modules/**` and
 
 A text rule fails when the title, the description or any commit message (the
 first 100) contains one of its phrases, or with `not-contains` when none
-does, ignoring case. A policy holds at most eight rules of its own, text and
+does, ignoring case. A `contains` rule also reads the description as written,
+with its HTML comments and link addresses, but not the comments of a pull
+request template. A policy holds at most eight rules of its own, text and
 decision-model together.
 
 ### Decision models

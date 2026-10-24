@@ -76,6 +76,8 @@ export interface PrFacts {
   paths: string[];
   files: PrFileFacts[];
   body: string;
+  /** The description as written, with the comments and link addresses a reader does not see. */
+  rawBody: string;
   commits: string[];
   /** In full, the first 100. */
   commitMessages: string[];
@@ -223,19 +225,27 @@ function excerpt(text: string): string {
   return line.length > EXCERPT_MAX ? `${line.slice(0, EXCERPT_MAX - 1)}…` : line;
 }
 
-type TextItem = { where: string; what: string; text: string };
+type TextItem = { where: string; what: string; text: string; phrases: string[] };
+
+/** The raw description answers only for the phrases the shown one lacks, so a visible phrase is quoted once. */
+function descriptionItems(facts: PrFacts, rule: TextCustomCheck): TextItem[] {
+  const shown = { where: "description", what: "the description", text: facts.body, phrases: rule.phrases };
+  if (rule.failWhen === "not-contains") return [shown];
+  const unseen = rule.phrases.filter((phrase) => phraseLines({ ...shown, phrases: [phrase] }).length === 0);
+  return [shown, { ...shown, text: facts.rawBody, phrases: unseen }];
+}
 
 function textItems(facts: PrFacts, rule: TextCustomCheck): TextItem[] {
   return rule.fields.flatMap(function items(field): TextItem[] {
-    if (field === "title") return [{ where: "title", what: "the title", text: facts.title }];
-    if (field === "description") return [{ where: "description", what: "the description", text: facts.body }];
-    return facts.commitMessages.map((message) => ({ where: `commit "${excerpt(message.split("\n", 1)[0]!)}"`, what: "a commit message", text: message }));
+    if (field === "title") return [{ where: "title", what: "the title", text: facts.title, phrases: rule.phrases }];
+    if (field === "description") return descriptionItems(facts, rule);
+    return facts.commitMessages.map((message) => ({ where: `commit "${excerpt(message.split("\n", 1)[0]!)}"`, what: "a commit message", text: message, phrases: rule.phrases }));
   });
 }
 
 /** Each line of the item holding a phrase, as evidence quoting it. */
-function phraseLines(item: TextItem, phrases: string[]): string[] {
-  const lowered = phrases.map((phrase) => phrase.toLowerCase());
+function phraseLines(item: TextItem): string[] {
+  const lowered = item.phrases.map((phrase) => phrase.toLowerCase());
   return item.text.split("\n").filter((line) => lowered.some((phrase) => line.toLowerCase().includes(phrase))).map((line) => `${item.where}: ${excerpt(line)}`);
 }
 
@@ -248,11 +258,11 @@ function textResult(rule: TextCustomCheck, facts: PrFacts): { failed: boolean; r
   const items = textItems(facts, rule);
   const phrases = quoted(rule.phrases);
   if (rule.failWhen === "contains") {
-    const hits = items.filter((item) => phraseLines(item, rule.phrases).length > 0);
+    const hits = items.filter((item) => phraseLines(item).length > 0);
     const what = [...new Set(hits.map((item) => item.what))].join(" and ");
-    return { failed: hits.length > 0, reason: hits.length ? `${what} contains ${phrases}` : `no ${phrases} found`, evidence: hits.flatMap((item) => phraseLines(item, rule.phrases)).slice(0, TEXT_EVIDENCE_MAX) };
+    return { failed: hits.length > 0, reason: hits.length ? `${what} contains ${phrases}` : `no ${phrases} found`, evidence: hits.flatMap((item) => phraseLines(item)).slice(0, TEXT_EVIDENCE_MAX) };
   }
-  const missing = items.filter((item) => phraseLines(item, rule.phrases).length === 0);
+  const missing = items.filter((item) => phraseLines(item).length === 0);
   const what = [...new Set(missing.map((item) => item.what))].join(" and ");
   return { failed: missing.length > 0, reason: missing.length ? `${what} does not contain ${phrases}` : `contains ${phrases}`, evidence: missing.map((item) => item.where).slice(0, TEXT_EVIDENCE_MAX) };
 }

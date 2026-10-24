@@ -72,6 +72,13 @@ function markupOf(markdown: string): string[] {
   return HIDDEN_MARKUP.flatMap((pattern) => [...markdown.matchAll(pattern)].map((match) => match[0]));
 }
 
+/** The description as written, without the pieces a pull request template put there and the characters a reader never sees. */
+export function writtenDescription(markdown: string, templates: readonly string[]): string {
+  const given = new Set(templates.flatMap(markupOf).map(words));
+  const own = markupOf(markdown).filter((piece) => given.has(words(piece)));
+  return visibleText(own.reduce((text, piece) => text.replace(piece, ""), markdown));
+}
+
 /**
  * What the markup a GitHub body's markdown hides, and its rendering does not show, holds beyond what a pull request
  * template put there: smuggled characters, or text that speaks to a model.

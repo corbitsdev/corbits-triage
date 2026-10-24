@@ -31,7 +31,7 @@ export const NO_FACTS: PrFacts = {
   repo: "", number: 0, title: "", author: "", tier: "external", headSha: "", state: "open", draft: false, mergeable: null,
   checks: "none", failingChecks: [], pendingChecks: [], cancelledChecks: [], reviewers: [], approvals: 0, changesRequested: [], triageRequested: false,
   reviewAnswered: false, reviewedBy: [], labels: [], assignees: [], changedFiles: 0, additions: 0, deletions: 0, paths: [], files: [],
-  body: "", commits: [], commitMessages: [], docs: {}, rules: {}, branch: "", authorTeams: [], authorTeamsUnknown: [], events: [], hidden: [],
+  body: "", rawBody: "", commits: [], commitMessages: [], docs: {}, rules: {}, branch: "", authorTeams: [], authorTeamsUnknown: [], events: [], hidden: [],
 };
 
 /** The head of a pull request that could not be read, when the host or the mail named one. */
