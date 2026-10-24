@@ -8,9 +8,11 @@ function detail(body: string, comments: Array<{ author: string; body: string }> 
 
 const URL = "https://linear.app/acme/issue/ENG-42/retry-payouts";
 
-test("a Linear issue links to the URL its bot posted, once per key", () => {
-  const bot = { author: "linear[bot]", body: `<a href="${URL}">ENG-42 Retry payouts</a>` };
-  expect(linearIssues(detail("Fixes ENG-42", [bot, bot]))).toEqual([{ key: "ENG-42", url: URL }]);
+test("a Linear issue links to the URL either of Linear's bots posted, once per key", () => {
+  for (const author of ["linear[bot]", "linear-code[bot]"]) {
+    const bot = { author, body: `<a href="${URL}">ENG-42 Retry payouts</a>` };
+    expect(linearIssues(detail("Fixes ENG-42", [bot, bot]))).toEqual([{ key: "ENG-42", url: URL }]);
+  }
 });
 
 test("only the description, commits and Linear's bot link an issue, and a key in two workspaces links none", () => {
