@@ -5,7 +5,7 @@ import path from "node:path";
 import { Template, defaultBuildLogger } from "e2b";
 import { E2B_SIDECAR_TEMPLATE } from "./src/index.js";
 
-const SIDECAR_STAGE = `FROM oven/bun:1.4
+const SIDECAR_STAGE = `FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .

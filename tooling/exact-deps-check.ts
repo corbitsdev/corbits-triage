@@ -31,7 +31,14 @@ for await (const file of new Glob("{package.json,{apps,packages,tooling,e2e}/*/p
   }
 }
 
+// Stage names carry no tag, so any FROM naming a tagged image must also pin its digest.
+for (const file of ["Dockerfile", "packages/provisioner-e2b/template.ts"]) {
+  for (const [, image] of (await Bun.file(file).text()).matchAll(/FROM (\S+:\S+)/g)) {
+    if (!/@sha256:[0-9a-f]{64}$/.test(image)) offenders.push(`${file} FROM ${image}`);
+  }
+}
+
 if (offenders.length > 0) {
-  console.error(`Dependencies must be exact versions:\n${offenders.join("\n")}`);
+  console.error(`Dependencies must be exact versions, base images pinned by digest:\n${offenders.join("\n")}`);
   process.exit(1);
 }

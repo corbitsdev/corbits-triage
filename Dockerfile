@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.2 AS base
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS base
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile
@@ -10,14 +10,14 @@ RUN bun run --cwd apps/web build
 # Only the dependencies the hub and its sidecars load. Hoisted, because vendored Interchange imports dependencies its
 # manifests list as dev-only (arktype in workflow-deploy, @intx/mime in inference) and its db package runs the hub's
 # drizzle-kit for migrations; an isolated install leaves those unresolved.
-FROM oven/bun:1.4.2 AS runtime
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS runtime
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile --production --linker hoisted --filter @corbits/hub --filter @intx/sidecar-app
 
 # What the hub and its sidecars both run: Interchange, the workspace packages, the hub's adapter modules and the code
 # review's linter.
-FROM oven/bun:1.4.2 AS app
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS app
 LABEL org.opencontainers.image.source=https://github.com/corbitsdev/corbits-triage
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
