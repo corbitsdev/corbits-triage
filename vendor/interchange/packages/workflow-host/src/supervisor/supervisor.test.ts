@@ -4912,6 +4912,94 @@ describe("createWorkflowSupervisor", () => {
     await wired.supervisor.shutdown();
   });
 
+  test("a replayed first trigger the re-driven run started from is consumed without redelivery", async () => {
+    const baseDir = await makeTempDir("supervisor-replayed-first-trigger-");
+    await seedStepGrants(
+      baseDir,
+      defaultStepRepoId({ runId: "run_deployment-x", stepId: "step-1" }),
+      [{ resource: "thing", action: "read" }],
+    );
+    const wired = await spawnWithRunStart({
+      baseDir,
+      onRunStart: async () =>
+        assembleCredentialsSnapshot({
+          repoStore: createStubRepoStore({ baseDir }),
+          principal: { kind: "supervisor" },
+          stepOrder: ["step-1"],
+          anchorRunId: "run_deployment-x",
+          deriveStepAddress: ({ runId, stepId }) =>
+            `${runId}-${stepId}@example.com`,
+        }),
+    });
+    const address = "run_deployment-x@example.com";
+
+    // Model a recycle that replays without owned ids: the respawned child
+    // re-drives the run whose first trigger is back in the inbox.
+    await wired.childSender.send({
+      type: "resumed.runs",
+      data: { runIds: ["run_deployment-x"] },
+    });
+    wired.mailBus.deliver(address, new TextEncoder().encode("first trigger"));
+    await wired.inboxPrimitives.awaitState(
+      () => wired.inboxPrimitives.snapshot(address).processing.size >= 1,
+    );
+    const [trigger] = [
+      ...wired.inboxPrimitives.snapshot(address).processing.values(),
+    ];
+    if (trigger === undefined) throw new Error("unreachable");
+    const runEventsDir = path.join(
+      baseDir,
+      "workflow-run",
+      "run_deployment-x",
+      "runs",
+      "run_deployment-x",
+      "events",
+    );
+    await fs.mkdir(runEventsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runEventsDir, "0.json"),
+      JSON.stringify({
+        type: "RunStarted",
+        seq: 0,
+        consumedMessageId: trigger.messageId,
+      }),
+    );
+
+    await wired.childSender.send({
+      type: "park.notify",
+      data: {
+        runId: "run_deployment-x",
+        correlationId: "corr-input-1",
+        parkKind: "input",
+      },
+    });
+    // A redelivered trigger is never consumed, since the run drops it without
+    // re-parking, so settle on whichever comes first.
+    await Promise.race([
+      wired.inboxPrimitives.awaitState(
+        () => wired.inboxPrimitives.snapshot(address).consumed.size >= 1,
+      ),
+      waitForUpstreamPayload(wired.supervisorToChild, "signal.deliver"),
+    ]);
+    expect(parseSignalDelivers(wired.supervisorToChild.flushed())).toEqual([]);
+    expect(parseTriggerFireRunIds(wired.supervisorToChild.flushed())).toEqual(
+      [],
+    );
+    const consumed = wired.inboxPrimitives
+      .snapshot(address)
+      .consumed.get(trigger.messageId);
+    expect(consumed).toBeDefined();
+    expect(consumed?.rejection).toBeUndefined();
+
+    wired.mailBus.deliver(address, new TextEncoder().encode("next mail"));
+    await waitForUpstreamPayload(wired.supervisorToChild, "signal.deliver");
+    expect(parseSignalDelivers(wired.supervisorToChild.flushed()).length).toBe(
+      1,
+    );
+
+    await wired.supervisor.shutdown();
+  });
+
   test("a clean deployment with grants but no events fires its top-level run", async () => {
     const baseDir = await makeTempDir("supervisor-clean-run-");
     await seedStepGrants(

@@ -3983,10 +3983,13 @@ export async function readWorkflowRunLifecycle(
 }
 
 /**
- * Whether a run's event log already records a `SignalReceived` for
- * `signalId`. A restart or failed dispatch can leave a mail the run already
- * took up in `processing/`; redelivering it is a duplicate the runtime drops
- * without re-parking, so the supervisor checks this first and consumes it.
+ * Whether a run's event log already records `signalId`, as a
+ * `SignalReceived` or as the trigger its `RunStarted` consumed. A restart,
+ * recycle or failed dispatch can leave a mail the run already took up in
+ * `processing/`, so the supervisor checks this first and consumes it. A
+ * redelivered `SignalReceived` mail is a duplicate the runtime drops without
+ * re-parking, so waiting on it wedges the inbox; a redelivered `RunStarted`
+ * trigger would be taken as a new event, so its work would run twice.
  */
 export async function hasRecordedSignal(
   store: RepoStore,
@@ -4018,7 +4021,11 @@ export async function hasRecordedSignal(
   for (const file of files) {
     if (parseEventSeq(file) === null) continue;
     const eventPath = path.join(eventsDir, file);
-    let event: { type?: unknown; signalId?: unknown };
+    let event: {
+      type?: unknown;
+      signalId?: unknown;
+      consumedMessageId?: unknown;
+    };
     try {
       event = JSON.parse(await fs.readFile(eventPath, "utf8"));
     } catch (cause) {
@@ -4027,6 +4034,9 @@ export async function hasRecordedSignal(
       });
     }
     if (event.type === "SignalReceived" && event.signalId === signalId) {
+      return true;
+    }
+    if (event.type === "RunStarted" && event.consumedMessageId === signalId) {
       return true;
     }
   }
