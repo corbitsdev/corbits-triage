@@ -5,7 +5,8 @@ import { type } from "arktype";
  * delivered to a running agent so its consumers -- tools and action handlers --
  * can use provider-backed credentials. Secrets are decrypted hub-side and ride
  * this payload on the live channel ONLY -- the deploy frame at launch, a
- * `credentials.update` frame on rotation, and the child's in-memory cell. They
+ * `credentials.update` frame on rotation, a run's `run.grants` barrier (its
+ * hub tokens), and the child's in-memory cell. They
  * are NEVER written to disk (they do not ride the git-committed grants file)
  * and NEVER copied into any snapshot, event, or state -- redaction is by
  * construction, mirroring how an `InferenceSource`'s `apiKey` stays off every
@@ -36,3 +37,20 @@ export const CredentialDelivery = type({
   materials: CredentialMaterialEntry.array(),
 });
 export type CredentialDelivery = typeof CredentialDelivery.infer;
+
+/**
+ * The reserved credential handle a tool or an action handler declares to call
+ * the hub REST API as its run principal. Deploy binds it without an authored
+ * `credentialBindings` entry, and an authored binding may not name it.
+ */
+export const HUB_CREDENTIAL_HANDLE = "interchange.hub";
+
+/**
+ * The delivery `credentialId` of a consumer's hub credential, and the id its
+ * `credential:{id}` / `use` grant names. It is fixed per consumer, so the grant
+ * can be staged before the run's token exists; a deployment has one run
+ * principal, so one id per consumer cannot carry another run's token.
+ */
+export function hubCredentialId(consumer: string): string {
+  return `hub:${consumer}`;
+}

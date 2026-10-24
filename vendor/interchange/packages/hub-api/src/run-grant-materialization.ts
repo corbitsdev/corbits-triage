@@ -27,12 +27,19 @@ import {
   isLiveWorkflowRunStatus,
   type LegacyMailAcceptRule,
   principal as principalTable,
+  workflowRunLaunchSpec,
   sidecarAllocation,
   workflowDefinition,
   workflowRun,
+  hubConsumersOf,
   type WorkflowRunCredentialRefs,
 } from "@intx/db/schema";
-import type { DB, DBExecutor, PrincipalKeyStore } from "@intx/db";
+import type {
+  DB,
+  DBExecutor,
+  PrincipalKeyStore,
+  RunTokenStore,
+} from "@intx/db";
 import {
   createPrincipalStore,
   createWorkflowRunStore,
@@ -46,9 +53,11 @@ import type {
   GrantRule,
   ConditionRegistry,
 } from "@intx/types/authz";
+import { hubCredentialId } from "@intx/types/credential-delivery";
 import {
   deriveWorkflowRunId,
   isSidecarAllocationDispatchable,
+  SELF_RUN_RESOURCE,
   type GrantRequirement,
   type GrantWalkSnapshot,
 } from "@intx/types";
@@ -76,6 +85,7 @@ import {
 import {
   makeGrantRow,
   resolveGrantMaterialization,
+  type GrantMaterializationRejection,
   type MaterializedGrantRow,
 } from "./grant-materialization";
 
@@ -117,6 +127,23 @@ export function deriveCredentialUseGrantRows(args: {
       now: args.now,
     }),
   );
+}
+
+/**
+ * The `(credentialId, consumer)` pairs a run's credential-use grants cover:
+ * the anchor's resolved credential bindings, and one hub credential for each
+ * consumer that declares the reserved hub handle.
+ */
+export function credentialUseBindings(
+  refs: WorkflowRunCredentialRefs | null | undefined,
+): { credentialId: string; consumer: string }[] {
+  return [
+    ...(refs?.bindings ?? []),
+    ...hubConsumersOf(refs).map((consumer) => ({
+      credentialId: hubCredentialId(consumer),
+      consumer,
+    })),
+  ];
 }
 
 /**
@@ -215,7 +242,7 @@ export function grantRowsWithLockedCredentialResolution(
   return [
     ...base,
     ...deriveCredentialUseGrantRows({
-      bindings: resolution.credentialRefs?.bindings ?? [],
+      bindings: credentialUseBindings(resolution.credentialRefs),
       tenantId: args.tenantId,
       runPrincipalId: args.runPrincipalId,
       now: args.now,
@@ -265,10 +292,10 @@ export function legacyMailAcceptMarkers(
 /**
  * The launch context a run's `mail.accept` accept-grants resolve against. The
  * relational markers name a coordinate that is only concrete at launch: the run
- * itself (`self` -> the deployment's workflow asset), the launching principal
- * (`invoker`), or the run's tenant. `invokerPrincipalId` is null when no invoker
- * principal resolved (e.g. an unresolvable mail sender), in which case no
- * invoker row is emitted. `legacyMailAccept` is the deployment's legacy rule,
+ * itself (`self` -> the deployment's workflow asset), its invoker of record,
+ * the deployer (`invoker`), or the run's tenant. `invokerPrincipalId` is null
+ * when the deployment has no active deployer, in which case no invoker row is
+ * emitted. `legacyMailAccept` is the deployment's legacy rule,
  * null for a deployment made after the sender gate.
  */
 export type MailAcceptGrantContext = {
@@ -300,8 +327,8 @@ function resolveMailAcceptMarker(
   }
   switch (marker) {
     case MAIL_ACCEPT_INVOKER_MARKER:
-      // No invoker principal resolved (an unresolvable mail sender threads a
-      // null invoker). Emit no invoker row rather than invent a coordinate.
+      // The deployment has no active deployer. Emit no invoker row rather
+      // than invent a coordinate.
       return ctx.invokerPrincipalId === null
         ? null
         : mailAcceptResource("principal", ctx.invokerPrincipalId);
@@ -417,13 +444,18 @@ export type StageRunGrantsFromSnapshotArgs = {
    */
   snapshot: GrantWalkSnapshot;
   tenantId: string;
+  /**
+   * The stable top-level run id the grants are for. A requirement on
+   * `SELF_RUN_RESOURCE` resolves to `workflow-run:<runId>`.
+   */
+  runId: string;
   runPrincipalId: string;
   now: Date;
   /**
-   * The launching principal's id -- the run's invoker. Resolves the snapshot's
-   * `mail.accept:invoker` marker to `mail.accept:principal:<id>`. Null when no
-   * invoker principal resolved (e.g. an unresolvable mail sender); then no
-   * invoker accept-grant row is emitted.
+   * The deployment's active deployer, its invoker of record. Resolves the
+   * snapshot's `mail.accept:invoker` marker to `mail.accept:principal:<id>`.
+   * Null when the deployment has no active deployer; then no invoker
+   * accept-grant row is emitted.
    */
   invokerPrincipalId: string | null;
   /**
@@ -437,10 +469,8 @@ export type StageRunGrantsFromSnapshotArgs = {
    */
   legacyMailAccept: LegacyMailAcceptRule | null;
   /**
-   * Declared invoker grants resolved against the launching principal's
-   * authority. The external trigger route passes the caller's grants; the mail
-   * path passes the authenticated sender's grants (empty when the sender did
-   * not resolve to an invoker principal).
+   * The grants invoker-sourced requirements resolve against: the deployer's,
+   * from `collectDeployerInvokerGrants`, on both trigger paths.
    */
   invokerGrants: GrantRule[];
   /** Declared creator grants resolved against the definition asset's creator. */
@@ -506,11 +536,17 @@ export async function stageRunGrantsFromSnapshot(
     args.now,
   );
 
+  // The operator approved the literal placeholder; bind it to this run before
+  // the authority check, so the delegator must cover the concrete run id.
+  const grantRequirements = args.grantRequirements.map((req) =>
+    req.resource === SELF_RUN_RESOURCE
+      ? { ...req, resource: `workflow-run:${args.runId}` }
+      : req,
+  );
   const materialization = await resolveGrantMaterialization({
     tenantId: args.tenantId,
     targetPrincipalId: args.runPrincipalId,
-    grantRequirements: args.grantRequirements,
-    adHocInvokerGrants: [],
+    grantRequirements,
     invokerGrants: args.invokerGrants,
     creatorGrants: args.creatorGrants,
     now: args.now,
@@ -571,9 +607,91 @@ export async function collectCreatorGrants(
   return grantStore.collectGrants(creatorPrincipalId, tenantId);
 }
 
+export type DeployerInvokerGrantsResult =
+  | { ok: true; invokerGrants: GrantRule[] }
+  | { ok: false; rejection: GrantMaterializationRejection };
+
+/**
+ * Collect the grants a run's invoker-sourced requirements resolve against.
+ * The invoker of record is the deployment's deployer -- the principal its
+ * launch spec records as source authority -- not whoever sends the trigger
+ * mail, so a run started by another run delegates from the run that deployed
+ * it.
+ * A deployment with invoker requirements whose deployer is unrecorded or no
+ * longer active is unusable and is refused; one without such requirements
+ * needs no deployer.
+ */
+/**
+ * The deployment's active deployer -- the launch spec's source authority, its
+ * invoker of record -- or null when the launch spec records none, or names a
+ * principal outside the deployment's tenant or not active.
+ */
+export async function loadActiveDeployerId(
+  db: DBExecutor,
+  tenantId: string,
+  anchorRunId: string,
+): Promise<string | null> {
+  const [deployer] = await db
+    .select({ id: principalTable.id, status: principalTable.status })
+    .from(workflowRunLaunchSpec)
+    .innerJoin(
+      principalTable,
+      eq(principalTable.id, workflowRunLaunchSpec.sourceAuthorityPrincipalId),
+    )
+    .where(
+      and(
+        eq(workflowRunLaunchSpec.anchorRunId, anchorRunId),
+        eq(principalTable.tenantId, tenantId),
+      ),
+    )
+    .limit(1);
+  return deployer?.status === "active" ? deployer.id : null;
+}
+
+export async function collectDeployerInvokerGrants(args: {
+  db: DBExecutor;
+  grantStore: GrantStore;
+  tenantId: string;
+  anchorRunId: string;
+  grantRequirements: readonly GrantRequirement[];
+}): Promise<DeployerInvokerGrantsResult> {
+  if (!args.grantRequirements.some((r) => r.source === "invoker")) {
+    return { ok: true, invokerGrants: [] };
+  }
+  const deployerId = await loadActiveDeployerId(
+    args.db,
+    args.tenantId,
+    args.anchorRunId,
+  );
+  if (deployerId === null) {
+    return {
+      ok: false,
+      rejection: {
+        status: 409,
+        code: "deployer_unavailable",
+        message: `Deployment ${args.anchorRunId} has no active deployer to resolve its invoker requirements against`,
+      },
+    };
+  }
+  return {
+    ok: true,
+    invokerGrants: await args.grantStore.collectGrants(
+      deployerId,
+      args.tenantId,
+    ),
+  };
+}
+
 export type CommitRunGrantsArgs = {
   db: DB["db"];
   principalKeyStore: PrincipalKeyStore;
+  runTokenStore: RunTokenStore;
+  /**
+   * The consumers that get a hub run token, from the locked anchor's
+   * `credentialRefs.hubConsumers`. Minted only by the commit that creates
+   * the run principal.
+   */
+  hubConsumers: readonly string[];
   tenantId: string;
   anchorRunId: string;
   /**
@@ -832,6 +950,10 @@ export async function commitRunGrants(
       return winner.stepGrants;
     }
 
+    await args.runTokenStore.mintIfAbsent(
+      { principalId: args.runPrincipalId, consumers: args.hubConsumers },
+      executor,
+    );
     await workflowRunStore.anchorWithPrincipal(
       {
         id: args.runId,
@@ -859,6 +981,7 @@ export async function commitRunGrants(
 export type MailTriggeredRunGrantsDeps = {
   db: DB["db"];
   principalKeyStore: PrincipalKeyStore;
+  runTokenStore: RunTokenStore;
   grantStore: GrantStore;
   // The hub's condition registry, passed to the admission evaluator so a
   // conditioned operator `mail.accept` deny (collected on the deliver path) is
@@ -894,21 +1017,16 @@ function materializedRowToGrantRule(row: MaterializedGrantRow): GrantRule {
  *
  * A mail-triggered run derives its grants from the RECEIVING deployment's
  * frozen snapshot and from that deployment's anchor: the snapshot's
- * `tool:`/`effect:` runtime grants, the declared requirements resolved against
- * their sources, and the anchor's resolved credential-binding grants.
+ * `tool:`/`effect:` runtime grants, the declared requirements resolved
+ * against the creator and the deployer, and the anchor's resolved
+ * credential-binding grants.
  * A first commit returns `notReady` and writes nothing while initialization
  * has not published credential resolution. That is an anchor with neither a
  * public key nor credential refs, or one whose allocation holds an
  * initialization lease. Committing during the lease would freeze the
  * previous bindings.
- * Creator-sourced requirements resolve against the workflow asset's creator;
- * invoker-sourced requirements resolve against the authenticated mail sender's
- * grants, binding the sender as the run's invoker -- the mail equivalent of the
- * HTTP-trigger route resolving its calling principal as invoker. The sender's
- * `(principalId, tenantId)` are resolved ONCE at the mail seam and threaded in;
- * when the sender did not resolve to a concrete invoker principal both are
- * `null`, no invoker grants are collected, and any invoker-sourced requirement
- * fails closed in `resolveGrantMaterialization`.
+ * The mail's sender is not the invoker: invoker-sourced requirements resolve
+ * against the deployment's deployer, as on the external route.
  *
  * The materializer reserves the stable run and its immutable grants before
  * delivery. A delivery failure can therefore leave a grants-only run, which
@@ -920,15 +1038,9 @@ export function createMailTriggeredRunGrantsMaterializer(
 ): (args: {
   agentAddress: string;
   runId: string;
-  senderPrincipalId: string | null;
   senderCoordinates: MailAcceptCoordinate[] | null;
 }) => Promise<MailTriggeredRunGrantsResult> {
-  return async ({
-    agentAddress,
-    runId,
-    senderPrincipalId,
-    senderCoordinates,
-  }) => {
+  return async ({ agentAddress, runId, senderCoordinates }) => {
     const topLevelRun = alias(workflowRun, "mail_triggered_top_level_run");
     const [anchor] = await deps.db
       .select({
@@ -1042,8 +1154,8 @@ export function createMailTriggeredRunGrantsMaterializer(
     // Mail starts only a deployment that has a mail trigger. A deployment with
     // another trigger starts through that trigger, and its `mail.accept` rules
     // then admit mail to the run that the start commits. Without this check, a
-    // sender that a launch rule admits would start the run as its invoker and
-    // bypass the authorization of the deployment's own trigger.
+    // sender that a launch rule admits would start the run and bypass the
+    // authorization of the deployment's own trigger.
     if (!snapshotHasMailTrigger(snapshot)) {
       return {
         outcome: "rejected",
@@ -1063,7 +1175,7 @@ export function createMailTriggeredRunGrantsMaterializer(
     // `mail.accept` rows BEFORE committing: an un-admitted sender must not
     // create or fire the run. The rows are the same derivation the staging
     // below writes: the definition's declared accept-allows resolved onto this
-    // run (`invoker`->the sender's principal, `self`->the definition's asset,
+    // run (`invoker`->the deployer, `self`->the definition's asset,
     // `tenant`->the run tenant, plus explicit coordinates).
     // `evaluateMailAdmission` filters them to the `mail.accept` namespace,
     // picks one winning grant across the sender's coordinates, and
@@ -1076,14 +1188,23 @@ export function createMailTriggeredRunGrantsMaterializer(
     // The check runs before the grant requirements resolve, so a refused
     // sender is refused as `mail_admission_denied` and costs no grant reads.
     //
-    // This check is provisional until the commit below: a staged `invoker` row
-    // names THIS sender, so two senders racing the first fire each pass it. The
-    // anchor lock serializes them, and the loser finds the winner's committed
-    // run there and is gated as a delivery to that existing run instead.
+    // This check is provisional until the commit below: two admitted senders
+    // racing the first fire each pass it. The anchor lock serializes them, and
+    // the loser finds the winner's committed run there and is gated as a
+    // delivery to that existing run instead.
+    //
+    // `invoker` names the deployer, not this sender, so which sender wins the
+    // race does not change who the rules admit. Reading the deployer is not a
+    // grant read: its grants are collected only after admission.
+    const deployerPrincipalId = await loadActiveDeployerId(
+      deps.db,
+      tenantId,
+      anchorRunId,
+    );
     const acceptRows = deriveMailAcceptGrantRows(
       snapshot,
       {
-        invokerPrincipalId: senderPrincipalId,
+        invokerPrincipalId: deployerPrincipalId,
         assetId: definitionAssetId,
         tenantId,
         runPrincipalId,
@@ -1106,23 +1227,9 @@ export function createMailTriggeredRunGrantsMaterializer(
     }
 
     // The definition's FULL declared requirements are resolved -- both creator-
-    // and invoker-sourced -- so an invoker requirement materializes against the
-    // sender's grants rather than being stripped. Passing the unfiltered list
-    // keeps `resolveGrantMaterialization`'s reject-on-insufficient-invoker
-    // contract intact, so an invoker requirement the sender cannot satisfy fails
-    // the run closed instead of launching under-authorized.
-    const declaredGrantRequirements = snapshot.grantRequirements;
-
-    // Invoker authority is the authenticated mail sender's grants, binding the
-    // sender as the run's invoker. Resolved live per run in the RUN's tenant,
-    // the same as the HTTP trigger route: a sender from another tenant holds no
-    // authority here, whatever it holds in its own tenant. A null sender (an
-    // unresolvable/ambiguous sender, or none resolved) collects nothing, so an
-    // invoker-sourced requirement fails closed in the staging below.
-    const invokerGrants =
-      senderPrincipalId !== null
-        ? await deps.grantStore.collectGrants(senderPrincipalId, tenantId)
-        : [];
+    // and invoker-sourced -- so an invoker requirement the deployer cannot
+    // satisfy fails the run closed instead of launching under-authorized.
+    const grantRequirements = snapshot.grantRequirements;
 
     // Creator authority is resolved LIVE per run: the definition's grant SHAPE
     // is frozen in the snapshot, but which grants the creator currently holds
@@ -1137,25 +1244,41 @@ export function createMailTriggeredRunGrantsMaterializer(
       deps.grantStore,
       tenantId,
       creatorPrincipalId,
-      declaredGrantRequirements,
+      grantRequirements,
     );
+    const invoker = await collectDeployerInvokerGrants({
+      db: deps.db,
+      grantStore: deps.grantStore,
+      tenantId,
+      anchorRunId,
+      grantRequirements,
+    });
+    if (!invoker.ok) {
+      return {
+        outcome: "rejected",
+        status: invoker.rejection.status,
+        code: invoker.rejection.code,
+        message: invoker.rejection.message,
+      };
+    }
 
     const staged = await stageRunGrantsFromSnapshot({
       snapshot,
       tenantId: tenantId,
+      runId,
       runPrincipalId,
       now,
-      // The authenticated mail sender is the run's invoker; the asset behind
-      // the receiving deployment's definition is `self`. Both resolve the
-      // run's declared `mail.accept` relation markers to concrete accept-grant
-      // rows.
-      invokerPrincipalId: senderPrincipalId,
+      // The deployer resolves the run's `mail.accept:invoker` marker; the
+      // asset behind the receiving deployment's definition is `self`. Both
+      // resolve the run's declared `mail.accept` relation markers to concrete
+      // accept-grant rows.
+      invokerPrincipalId: deployerPrincipalId,
       assetId: definitionAssetId,
       legacyMailAccept: anchor.legacyMailAccept,
-      invokerGrants,
+      invokerGrants: invoker.invokerGrants,
       creatorGrants,
-      grantRequirements: declaredGrantRequirements,
-      credentialBindings: anchor.credentialRefs?.bindings ?? [],
+      grantRequirements,
+      credentialBindings: credentialUseBindings(anchor.credentialRefs),
     });
     if (!staged.ok) {
       return {
@@ -1203,6 +1326,8 @@ export function createMailTriggeredRunGrantsMaterializer(
         {
           db: deps.db,
           principalKeyStore: deps.principalKeyStore,
+          runTokenStore: deps.runTokenStore,
+          hubConsumers: hubConsumersOf(resolution.credentialRefs),
           tenantId,
           anchorRunId,
           definitionId: anchor.definitionId,

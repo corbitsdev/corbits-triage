@@ -17,10 +17,10 @@ const effectDescription =
   "Outcome when this grant is the one resolved for a request: `allow` permits the action, `deny` blocks it, `ask` requires interactive approval before proceeding. When several grants match, the most specific wins, and at equal specificity the strongest effect wins (`deny` over `ask` over `allow`).";
 
 const originDescription =
-  "Records where the grant came from: `system` (built-in), `role` (granted via a role), `creator` (from the workflow definition author), or `invoker` (delegated by whoever launched the workflow run). Origin is provenance only; it does not affect evaluation precedence.";
+  "Records where the grant came from: `system` (built-in), `role` (granted via a role), `creator` (from the workflow definition author), or `invoker` (delegated by the workflow deployment's deployer, its invoker of record). Origin is provenance only; it does not affect evaluation precedence.";
 
 const conditionsDescription =
-  "Optional map of named conditions that must all pass for the grant to apply, evaluated against a condition registry at authorization time. A grant with conditions is skipped (fails closed) when no registry is available to evaluate them.";
+  "Optional map of named conditions that must all pass for the grant to apply, evaluated against a condition registry at authorization time. A check with no request to evaluate conditions against, such as delegation at launch, treats a conditioned `deny` or `ask` as applying and a conditioned `allow` as not applying.";
 
 const specificityDescription =
   "Computed match-strength score used to rank grants: the count of non-wildcard characters in the resource and action patterns, with exact (wildcard-free) patterns scored far above prefix globs. Higher wins; ties are broken by effect priority.";
@@ -79,6 +79,9 @@ export const GrantResponse = type({
 export const EvaluateRequest = type({
   resource: "string",
   action: "string",
+  "consumer?": type("string > 0").describe(
+    "The workflow consumer to evaluate as, such as `action:<handler>` or `tool:<package>`. A grant scoped to a consumer by a `{ tool }` condition matches only that consumer; without it, such a grant matches nothing.",
+  ),
 });
 
 export const MatchedGrant = type({
@@ -100,6 +103,15 @@ export const EvaluateResult = type({
   ),
 });
 
+/**
+ * The resource a grant requirement uses to name the run it is materialized
+ * for. Launch replaces it with that run's own `workflow-run:<runId>`, the
+ * top-level run, which child bodies share. It lets a run hold a grant on
+ * itself without a `workflow-run:*` grant on every run in the tenant. The
+ * delegator still needs authority over the concrete run id.
+ */
+export const SELF_RUN_RESOURCE = "workflow-run:self";
+
 export const GrantRequirement = type({
   resource: "string",
   action: "string",
@@ -107,11 +119,24 @@ export const GrantRequirement = type({
     "Effect to assign the materialized grant: `allow`, `deny`, or `ask`. Defaults to `allow` when omitted.",
   ),
   source: GrantSourceType.describe(
-    "Whose authority the grant is resolved against at launch: `creator` (the definition author) or `invoker` (whoever launched the workflow run) -- satisfied only if that party actually holds the requested capability. Tenant-owned credential use is not a grant requirement: it is authorized by ownership at resolution and its consumer-scoping grant is stamped directly (see CREDENTIALS.md).",
+    "Whose authority the grant is resolved against at launch: `creator` (the definition author) or `invoker` (the workflow deployment's deployer, its invoker of record) -- satisfied only if that party actually holds the requested capability. Tenant-owned credential use is not a grant requirement: it is authorized by ownership at resolution and its consumer-scoping grant is stamped directly (see CREDENTIALS.md).",
   ),
   "conditions?": "Record<string, unknown> | null",
 });
 export type GrantRequirement = typeof GrantRequirement.infer;
+
+/**
+ * Whether a requirement's resource uses `self` anywhere but the whole
+ * `SELF_RUN_RESOURCE`. Launch binds only that exact resource, so `self`
+ * elsewhere would be stored literally and match nothing. The comparison
+ * ignores case and surrounding whitespace, so a near miss is caught too.
+ */
+export function misplacesSelfRunResource(resource: string): boolean {
+  if (resource === SELF_RUN_RESOURCE) return false;
+  return resource
+    .split(":")
+    .some((part) => part.trim().toLowerCase() === "self");
+}
 
 export const ApprovalItem = type("string").or(GrantRequirement);
 

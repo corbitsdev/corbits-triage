@@ -41,7 +41,6 @@ describe("resolveGrantMaterialization", () => {
       grantRequirements: [
         { resource: "wallet:w1", action: "spend", source: "creator" },
       ],
-      adHocInvokerGrants: [],
       invokerGrants: [],
       creatorGrants: [
         grant({ resource: "wallet:w1", action: "spend", origin: "creator" }),
@@ -67,7 +66,6 @@ describe("resolveGrantMaterialization", () => {
       grantRequirements: [
         { resource: "wallet:w1", action: "spend", source: "invoker" },
       ],
-      adHocInvokerGrants: [],
       invokerGrants: [
         grant({ resource: "wallet:w1", action: "spend", origin: "role" }),
       ],
@@ -87,7 +85,6 @@ describe("resolveGrantMaterialization", () => {
       grantRequirements: [
         { resource: "wallet:w1", action: "spend", source: "invoker" },
       ],
-      adHocInvokerGrants: [],
       invokerGrants: [
         grant({ resource: "wallet:w1", action: "spend", origin: "invoker" }),
       ],
@@ -98,9 +95,36 @@ describe("resolveGrantMaterialization", () => {
     expect(res.rejection).toEqual({
       status: 403,
       code: "insufficient_grants",
-      message: "Invoker lacks authority for wallet:w1/spend",
+      message:
+        "Invoker lacks authority for wallet:w1/spend (no_matching_grant)",
     });
   });
+
+  for (const effect of ["deny", "ask"] as const) {
+    test(`an invoker-origin ${effect} still blocks delegation`, async () => {
+      // A run that deploys a workflow holds invoker-origin rows. Its allow
+      // cannot be re-delegated, but its deny or ask still restricts it.
+      const res = await resolveGrantMaterialization({
+        ...base,
+        grantRequirements: [
+          { resource: "asset:a1", action: "read", source: "invoker" },
+        ],
+        invokerGrants: [
+          grant({ resource: "asset:a1", action: "read", origin: "creator" }),
+          grant({
+            resource: "asset:a1",
+            action: "read",
+            origin: "invoker",
+            effect,
+          }),
+        ],
+        creatorGrants: [],
+      });
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.rejection.message).toEndWith(`(${effect})`);
+    });
+  }
 
   test("creator lacking authority => 403 insufficient_grants with creator message", async () => {
     const res = await resolveGrantMaterialization({
@@ -108,7 +132,6 @@ describe("resolveGrantMaterialization", () => {
       grantRequirements: [
         { resource: "wallet:w1", action: "spend", source: "creator" },
       ],
-      adHocInvokerGrants: [],
       invokerGrants: [],
       creatorGrants: [],
     });
@@ -117,9 +140,65 @@ describe("resolveGrantMaterialization", () => {
     expect(res.rejection).toEqual({
       status: 403,
       code: "insufficient_grants",
-      message: "Creator lacks authority to delegate wallet:w1/spend",
+      message:
+        "Creator lacks authority to delegate wallet:w1/spend (no_matching_grant)",
     });
   });
+
+  // A delegation check has no request, so it cannot tell whether a
+  // delegator's conditioned grant holds. A user's time-window grant and a
+  // run's consumer-scoped grant are both conditioned grants.
+  const CONDITIONS = [
+    { time_window: { after: "09:00", before: "17:00" } },
+    { tool: "tool:@acme/wallet" },
+  ];
+
+  for (const source of ["creator", "invoker"] as const) {
+    const delegate = (delegatorGrants: GrantRule[]) =>
+      resolveGrantMaterialization({
+        ...base,
+        grantRequirements: [{ resource: "wallet:w1", action: "spend", source }],
+        invokerGrants: source === "invoker" ? delegatorGrants : [],
+        creatorGrants: source === "creator" ? delegatorGrants : [],
+      });
+
+    for (const conditions of CONDITIONS) {
+      const kind = Object.keys(conditions).join();
+
+      for (const effect of ["deny", "ask"] as const) {
+        test(`a ${source}'s ${kind} ${effect} blocks delegation over its unconditioned allow`, async () => {
+          const res = await delegate([
+            grant({ resource: "wallet:*", action: "spend", origin: "role" }),
+            grant({
+              resource: "wallet:*",
+              action: "spend",
+              origin: "role",
+              effect,
+              conditions,
+            }),
+          ]);
+          expect(res.ok).toBe(false);
+          if (res.ok) return;
+          expect(res.rejection.code).toBe("insufficient_grants");
+          expect(res.rejection.message).toEndWith(`(${effect})`);
+        });
+      }
+
+      test(`a ${source}'s ${kind} allow alone does not delegate`, async () => {
+        const res = await delegate([
+          grant({
+            resource: "wallet:*",
+            action: "spend",
+            origin: "role",
+            conditions,
+          }),
+        ]);
+        expect(res.ok).toBe(false);
+        if (res.ok) return;
+        expect(res.rejection.message).toEndWith("(no_matching_grant)");
+      });
+    }
+  }
 
   test("unknown source => 409 not_launchable", async () => {
     const res = await resolveGrantMaterialization({
@@ -128,7 +207,6 @@ describe("resolveGrantMaterialization", () => {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- deliberately bypass the validated type to reach the defensive unknown-source branch
         { resource: "x", action: "y", source: "bogus" as unknown as "creator" },
       ],
-      adHocInvokerGrants: [],
       invokerGrants: [],
       creatorGrants: [],
     });
@@ -138,40 +216,6 @@ describe("resolveGrantMaterialization", () => {
       status: 409,
       code: "not_launchable",
       message: "Unknown grant requirement source: bogus",
-    });
-  });
-
-  test("ad-hoc invoker grants resolve against delegatable invoker grants, origin invoker + TTL", async () => {
-    const res = await resolveGrantMaterialization({
-      ...base,
-      grantRequirements: [],
-      adHocInvokerGrants: [{ resource: "wallet:w1", action: "spend" }],
-      invokerGrants: [
-        grant({ resource: "wallet:w1", action: "spend", origin: "system" }),
-      ],
-      creatorGrants: [],
-    });
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const r = first(res.grantRows);
-    expect(r.origin).toBe("invoker");
-    expect(r.expiresAt).toEqual(new Date(NOW.getTime() + INVOKER_GRANT_TTL_MS));
-  });
-
-  test("ad-hoc invoker grant lacking authority => 403", async () => {
-    const res = await resolveGrantMaterialization({
-      ...base,
-      grantRequirements: [],
-      adHocInvokerGrants: [{ resource: "wallet:w9", action: "spend" }],
-      invokerGrants: [],
-      creatorGrants: [],
-    });
-    expect(res.ok).toBe(false);
-    if (res.ok) return;
-    expect(res.rejection).toEqual({
-      status: 403,
-      code: "insufficient_grants",
-      message: "Invoker lacks authority for wallet:w9/spend",
     });
   });
 
@@ -186,7 +230,6 @@ describe("resolveGrantMaterialization", () => {
           effect: "deny",
         },
       ],
-      adHocInvokerGrants: [],
       invokerGrants: [],
       // creator holds an allow that authorizes delegation; the materialized
       // row still carries the requirement's own effect (deny).
@@ -207,7 +250,6 @@ describe("resolveGrantMaterialization", () => {
         { resource: "wallet:w1", action: "spend", source: "creator" },
         { resource: "wallet:w2", action: "spend", source: "creator" },
       ],
-      adHocInvokerGrants: [],
       invokerGrants: [],
       creatorGrants: [
         grant({ resource: "wallet:w2", action: "spend", origin: "creator" }),
@@ -216,18 +258,17 @@ describe("resolveGrantMaterialization", () => {
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.rejection.message).toBe(
-      "Creator lacks authority to delegate wallet:w1/spend",
+      "Creator lacks authority to delegate wallet:w1/spend (no_matching_grant)",
     );
   });
 
-  test("requirements resolve in order, then ad-hoc grants appended", async () => {
+  test("requirements resolve in order", async () => {
     const res = await resolveGrantMaterialization({
       ...base,
       grantRequirements: [
         { resource: "wallet:w1", action: "spend", source: "creator" },
         { resource: "wallet:w2", action: "read", source: "invoker" },
       ],
-      adHocInvokerGrants: [{ resource: "wallet:w3", action: "read" }],
       invokerGrants: [
         grant({ resource: "wallet:*", action: "*", origin: "role" }),
       ],
@@ -240,7 +281,6 @@ describe("resolveGrantMaterialization", () => {
     expect(res.grantRows.map((r) => [r.resource, r.origin])).toEqual([
       ["wallet:w1", "creator"],
       ["wallet:w2", "invoker"],
-      ["wallet:w3", "invoker"],
     ]);
   });
 });

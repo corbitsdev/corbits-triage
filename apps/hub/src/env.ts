@@ -54,6 +54,7 @@ const HubEnvSchema = type({
   "GITHUB_API_ORIGIN?": "string.url",
   "BITBUCKET_EGRESS_ALLOWLIST?": "string",
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
+  "HUB_API_ORIGIN?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
   "DOCKER_HOST?": "string",
@@ -333,6 +334,7 @@ export type InterchangeSettings = {
   maxTarballBytes: number;
   agentGc: { packThreshold: number; looseThreshold: number; warnBytes: number };
   probeTimeoutMs?: number;
+  hubApiOrigin?: string;
   sidecarLink: { mailHoldTTLMs: number; mailAckRetryIntervalMs: number; mailAckMaxRetries: number };
   sidecarWebSocketUrl: string;
   defaultLifecyclePolicy: ResolvedWorkflowLifecyclePolicy;
@@ -358,6 +360,7 @@ export function interchangeSettings(env: HubEnv): InterchangeSettings {
       warnBytes: numberOr(env.HUB_AGENT_GC_WARN_BYTES, 256 * 1024 * 1024),
     },
     ...(env.HUB_PROBE_TIMEOUT_MS !== undefined && { probeTimeoutMs: Number(env.HUB_PROBE_TIMEOUT_MS) }),
+    ...(env.HUB_API_ORIGIN !== undefined && { hubApiOrigin: env.HUB_API_ORIGIN }),
     // Triage mail is routed, not dispatched, so only the router's ack retries keep it alive. A
     // pack receive holds the connection queue for minutes and the stock 5 x 10 s give-up drops it.
     sidecarLink: {

@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { authorize } from "@intx/authz";
+import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createDB, createGrantStore, runMigrations, schema } from "@intx/db";
 import { asRecord } from "@corbits/common";
 import { bitbucketConnection } from "../bitbucket-datacenter/records.js";
@@ -54,7 +55,7 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     const deps = {
       db,
       async authorize(principalId: string, tenantId: string, resource: string, action: string) {
-        return (await authorize(grants, principalId, tenantId, resource, action)).effect === "allow";
+        return (await authorize(grants, principalId, tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY })).effect === "allow";
       },
       async grantEnabled(_tx: unknown, repo: string) {
         granted.push(repo);

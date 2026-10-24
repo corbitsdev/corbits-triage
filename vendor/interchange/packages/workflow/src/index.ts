@@ -5,6 +5,7 @@ export type {
 
 export * from "./state-machine/index";
 export * from "./definition/index";
+export { SELF_RUN_RESOURCE } from "@intx/types/grants";
 export {
   collectDeclaredPluginNames,
   type PluginToolDefinitions,
@@ -36,6 +37,7 @@ export {
   type InertPlugin,
   type InertStep,
   type InertStepStep,
+  type InertToolCredentialDeclaration,
   type InertToolDeclaration,
   type InertToolFactory,
   type InertWorkflowDefinition,

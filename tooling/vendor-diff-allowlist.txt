@@ -8,24 +8,24 @@
 # ignored. Keep entries justified: each must cite the tracking issue for
 # its upstream resolution.
 #
-# Composite pin: stock 9aba106e95ff756b28ff3cc3323493217b6e9be8 plus the
+# Composite pin: stock b1ca01f0d9bc2eb203e95b1780a6f685c5da8215 plus the
 # allowlisted deltas below. Full rationale is in vendor/interchange/VENDORED.md.
 #
 # Upstream PR #193 step-env director threading: the step env and spawned-child
-# deps resolve the closure's own directors. Remove by 2026-11-01 or when
-# upstream's step env loads the closure registry.
+# deps resolve the closure's own directors. Remove when upstream's step env
+# loads the closure registry.
 packages/workflow-host/src/child/substrate-factory.ts
 
 # CL-10210 local carry: consume a replayed signal mail the run already
 # recorded instead of wedging the deployment inbox. Not upstream yet.
-# Remove by 2026-11-01 or when re-pinning to a stock commit that fixes it.
+# Remove when re-pinning to a stock commit that fixes it.
 packages/hub-sessions/src/workflow-run-kind.ts
 packages/hub-sessions/src/substrate.ts
 packages/workflow-host/src/supervisor/supervisor.ts
 
 # INTR-666: the Anthropic adapter's adaptive-thinking set gains the Claude 5.5
 # models and Fable 5.1, and json-schema responseFormat maps to
-# output_config.format (structured outputs). Remove by 2026-11-01 or on the
-# first bump whose stock adapter has both.
+# output_config.format (structured outputs). Remove on the first bump whose
+# stock adapter has both.
 packages/inference/src/providers/anthropic.ts
 packages/inference/src/providers/anthropic.test.ts

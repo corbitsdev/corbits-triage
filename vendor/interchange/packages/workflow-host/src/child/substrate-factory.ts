@@ -162,6 +162,7 @@ import {
   attachStepTools,
   createToolBearingAgentFactory,
   deriveToolMarkFloorGrants,
+  sourceStepToolFactories,
   type StepToolCacheConfig,
   type StepToolMaterialization,
 } from "./step-tools";
@@ -1047,8 +1048,9 @@ export function createSidecarStepBuildEnv(
     //     stages no `tool-packages-manifest.json`, so `materializeStepTools`
     //     would find nothing here; feeding the evaluated factories straight
     //     into the slot is what runs a source workflow's tools. `packageName`
-    //     is the factory's bundle `id` (the credential Gate-2 key; a mail/plain
-    //     tool declares no credentials, so it stays inert). Plugin factories --
+    //     is the factory's bundle `id` (the credential Gate-2 key), and its
+    //     `defineTool` declaration feeds the declared-versus-bound check; a
+    //     mail/plain tool declares no credentials, so it stays inert. Plugin factories --
     //     which have no agent slot, so Option A cannot carry them -- are
     //     materialized separately from the frozen closure the child already
     //     holds (`materializeSourcePluginFactories`) and fed into the SAME
@@ -1067,11 +1069,7 @@ export function createSidecarStepBuildEnv(
     const materialization: StepToolMaterialization =
       deps.sourceTools === true
         ? {
-            factories: req.agent.toolFactories.map((factory) => ({
-              packageName: factory.id,
-              declaredCredentials: [],
-              factory,
-            })),
+            factories: sourceStepToolFactories(req.agent.toolFactories),
             pluginFactories: await materializeSourcePluginFactories(deps, req),
           }
         : await deps.materializeStepTools({

@@ -277,6 +277,7 @@ All optional; the defaults suit most installs.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. |
+| `HUB_API_ORIGIN` | the origin of `BETTER_AUTH_BASE_URL` | The origin sidecars reach the hub REST API at, for workflows that call it. An `http` or `https` origin with no path. Set it when sidecars run in Docker on the hub's machine, where `localhost` is the container. |
 | `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset for Docker [on another machine](provisioners/docker-remote.md), whose sidecars dial `BETTER_AUTH_BASE_URL` over `wss://`. |
 | `DOCKER_HOST` | the docker CLI's context, else its default sockets | The daemon for the [Docker provisioner](provisioners/docker.md). |
 | `DOCKER_CONTEXT` | the docker CLI's current context | The docker CLI context to use when `DOCKER_HOST` is unset. |

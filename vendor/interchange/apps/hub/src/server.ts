@@ -2,6 +2,7 @@ import {
   createDB,
   createGrantStore,
   createPrincipalKeyStore,
+  createRunTokenStore,
   createSidecarAllocationStore,
   createWorkflowRunDispatchStore,
   createWorkflowRunLaunchSpecStore,
@@ -33,6 +34,7 @@ import {
   createAssetService,
   createEventCollectorRegistry,
   createHubSessionLookups,
+  createRunCredentialsLoader,
   createHubSessionOrchestrator,
   createSessionService,
   createSidecarAllocationReconciler,
@@ -62,6 +64,8 @@ import { hexEncode } from "@intx/types";
 import { MAX_SIDECAR_FRAME_BYTES } from "@intx/types/sidecar";
 import { upgradeWebSocket, websocket } from "hono/bun";
 import { setup, getLogger } from "@intx/log";
+
+import { resolveHubApiOrigin } from "./hub-api-origin";
 
 export type CreateHubServerOpts = {
   /** Provisioners eligible to host frozen workflow deployments. */
@@ -120,7 +124,22 @@ export async function createHubServer({
     }),
   });
 
-  const auth = createAuth(db);
+  // The hub's public base URL, and the origin a sidecar reaches its REST API
+  // at. A run token's mediated credential is pinned to that origin, so it
+  // defaults to the public URL but can name an address only the sidecars use.
+  const authBaseUrl =
+    process.env["BETTER_AUTH_BASE_URL"] ?? "http://localhost:3000";
+  const configuredHubApiOrigin = process.env["HUB_API_ORIGIN"];
+  const hubApiOrigin =
+    configuredHubApiOrigin !== undefined
+      ? resolveHubApiOrigin("HUB_API_ORIGIN", configuredHubApiOrigin)
+      : resolveHubApiOrigin("BETTER_AUTH_BASE_URL", authBaseUrl, () => {
+          log.warn(
+            "BETTER_AUTH_BASE_URL {url} is more than an origin; run tokens use {origin}. Set HUB_API_ORIGIN if the hub REST API is not at that origin's root",
+            { url: authBaseUrl, origin: new URL(authBaseUrl).origin },
+          );
+        });
+  const auth = createAuth(db, authBaseUrl);
 
   const hubDataDir = process.env["HUB_DATA_DIR"];
   if (!hubDataDir) {
@@ -320,6 +339,12 @@ export async function createHubServer({
   // Shared by pack ingestion and lifecycle recovery so recovery never claims a
   // pending projection whose receive can still advance Git.
   const workflowHistoryReceives = createWorkflowHistoryReceiveTracker();
+  const runTokenStore = createRunTokenStore({ db, cipher: credentialCipher });
+  const loadRunCredentials = createRunCredentialsLoader({
+    db,
+    runTokenStore,
+    hubApiOrigin,
+  });
   // Materialize a mail-triggered workflow run's grants from the receiving
   // deployment's definition, so a workflow->workflow mail run is born with
   // the same authorization an externally-triggered run gets. Threaded into
@@ -335,12 +360,14 @@ export async function createHubServer({
       {
         db,
         principalKeyStore,
+        runTokenStore,
         grantStore: createGrantStore(db),
         // The registry createHubApp uses, so a conditioned operator
         // mail.accept deny is evaluated, not skipped, by the admission gate.
         registry: HUB_CONDITION_REGISTRY,
       },
     ),
+    loadRunCredentials,
     resolveSenderKey: (address) =>
       resolveFrameSenderKey(db, principalKeyStore, address),
     // The strict sibling for reconnect reconciliation: it preserves the strict
@@ -351,10 +378,10 @@ export async function createHubServer({
       (await resolveSenderKey(db, principalKeyStore, address))?.publicKey ??
       null,
     // The strict, coordinate-carrying resolution the mail-triggered run's
-    // invoker binding needs. It keeps the widened resolution rather than
-    // unwrapping to the key, so the sender's principal, tenant, and admission
-    // coordinates carry through; a principal-less run and the strict resolver's
-    // throw both fail the binding closed (see `resolveSenderPrincipal`).
+    // admission needs. It keeps the widened resolution rather than unwrapping
+    // to the key, so the sender's principal, tenant, and admission coordinates
+    // carry through; a principal-less run and the strict resolver's throw both
+    // leave the sender unadmitted (see `resolveSenderPrincipal`).
     resolveSenderPrincipal: (address) =>
       resolveSenderPrincipal(db, principalKeyStore, address),
     // Records a correspondent at the send seam: when a live run mails a party,
@@ -393,6 +420,7 @@ export async function createHubServer({
       sidecarRouter,
       agentAddress,
       credentialCipher,
+      loadRunCredentials,
     );
   };
 

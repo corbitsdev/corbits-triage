@@ -1272,6 +1272,28 @@ export function createSidecarRouter(
     return true;
   }
 
+  // The run's hub credentials for a `run.grants` barrier, or null when the
+  // run has none or no loader is wired. The tokens are minted when the first
+  // trigger commits the run principal, which every barrier follows.
+  //
+  // Best-effort and NEVER throws, like `resolveSenderKey`: it runs on the
+  // reconnect replay and ahead of a committed trigger, where a throw would
+  // drop the pending mail. A fault is logged and degrades to null, so the
+  // barrier carries no hub credentials and each consumer that declares the
+  // hub handle fails closed when its step is built.
+  async function loadRunCredentials(
+    runId: string,
+  ): Promise<CredentialDelivery | null> {
+    if (lookups.loadRunCredentials === undefined) return null;
+    try {
+      return await lookups.loadRunCredentials(runId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error`Failed to load hub credentials for run ${runId}; sending its grants without them: ${message}`;
+      return null;
+    }
+  }
+
   // Resolve the frame that must precede a redelivery of a trigger mail on the
   // FIFO socket, re-resolving a keyless run sender's key so it still
   // co-delivers. Returns:
@@ -1317,6 +1339,7 @@ export function createSidecarRouter(
       const key = await reresolveRunSenderKey(authenticatedSender);
       senderIdentities = senderIdentitiesFromKey(authenticatedSender, key);
     }
+    const credentials = await loadRunCredentials(entry.runGrants.runId);
     return {
       type: "run.grants",
       agentAddress: entry.agentAddress,
@@ -1324,6 +1347,7 @@ export function createSidecarRouter(
       runId: entry.runGrants.runId,
       stepGrants: entry.runGrants.stepGrants,
       ...(senderIdentities !== undefined ? { senderIdentities } : {}),
+      ...(credentials !== null ? { credentials } : {}),
     };
   }
 
@@ -3386,15 +3410,14 @@ export function createSidecarRouter(
     const boundSenderKey =
       boundIdentity === undefined ? null : boundIdentity.publicKey;
 
-    // Resolve the authenticated sender's durable invoker identity ONCE for the
-    // whole fan-out (the sender is the same for every recipient), scoped to the
-    // run-address deliver path -- only a run recipient materializes a run that
-    // binds an invoker. This is the STRICT, coordinate-carrying resolution, kept
-    // separate from the best-effort key co-delivery above: an unresolvable or
-    // ambiguous sender yields no invoker principal, so the run materializes with
-    // no invoker authority and any invoker-sourced requirement fails closed. The
-    // strict resolver throws on a fault; catch it and keep the binding closed
-    // rather than abort the fan-out, so co-delivery to co-recipients (and the
+    // Resolve the authenticated sender's durable identity ONCE for the whole
+    // fan-out (the sender is the same for every recipient), scoped to the
+    // run-address deliver path -- only a run recipient gates mail on it. This is
+    // the STRICT, coordinate-carrying resolution, kept separate from the
+    // best-effort key co-delivery above: an unresolvable or ambiguous sender
+    // yields no coordinates, so the gate never admits it. The strict resolver
+    // throws on a fault; catch it and keep the sender unadmitted rather than
+    // abort the fan-out, so co-delivery to co-recipients (and the
     // unknown-sender park path) is unaffected.
     let senderPrincipal: ResolvedSenderPrincipal | null = null;
     if (
@@ -3406,7 +3429,7 @@ export function createSidecarRouter(
         senderPrincipal =
           await lookups.resolveSenderPrincipal(authenticatedSender);
       } catch (err) {
-        logger.error`Resolving the invoker principal for ${authenticatedSender} failed; the mail-triggered run binds no invoker authority: ${err instanceof Error ? err.message : String(err)}`;
+        logger.error`Resolving the sender principal for ${authenticatedSender} failed; the mail-triggered run does not admit it: ${err instanceof Error ? err.message : String(err)}`;
         senderPrincipal = null;
       }
     }
@@ -3539,16 +3562,14 @@ export function createSidecarRouter(
       // path), so this re-send is idempotent -- it re-establishes the run's
       // current floor on the sidecar, self-healing a `grants.json` a sidecar
       // may have lost, and never overwrites it with anything staler.
-      // Thread the once-resolved sender invoker identity into the materializer
-      // so the run binds its authenticated sender as invoker. A `null`
-      // senderPrincipal (unresolvable/ambiguous sender, or no strict resolver
-      // wired) yields no invoker authority; the materializer then fails any
-      // invoker-sourced requirement closed.
+      // Thread the once-resolved sender into the materializer, which gates
+      // the mail on it. A `null` senderPrincipal (unresolvable/ambiguous
+      // sender, or no strict resolver wired) names no principal coordinate.
+      // The run's invoker is the deployment's deployer, not this sender.
       const result = await lookups.materializeMailTriggeredRunGrants({
         agentAddress: recipient,
         runId,
-        senderPrincipalId: senderPrincipal?.principalId ?? null,
-        // The same resolved sender rendered as admission coordinates. The
+        // The resolved sender rendered as admission coordinates. The
         // materializer gates the mail-transport start and deliver-to-existing
         // paths on them; a null (unresolvable/ambiguous sender) is never
         // admitted.
@@ -4934,6 +4955,10 @@ export function createSidecarRouter(
       authenticatedSender,
       ...(messageId !== undefined ? { messageId } : {}),
     };
+    const credentials =
+      runGrants === undefined
+        ? null
+        : await loadRunCredentials(runGrants.runId);
     const grantsFrame: HubFrame | undefined =
       runGrants === undefined
         ? undefined
@@ -4946,6 +4971,7 @@ export function createSidecarRouter(
             ...(runGrants.senderIdentities !== undefined
               ? { senderIdentities: runGrants.senderIdentities }
               : {}),
+            ...(credentials !== null ? { credentials } : {}),
           };
     const target = {
       allocationId: binding.allocationId,
@@ -5070,6 +5096,10 @@ export function createSidecarRouter(
       stepGrants,
       ...(senderIdentities !== undefined ? { senderIdentities } : {}),
     };
+    // Loaded at send time, never persisted with the dispatch row: the run's
+    // tokens ride every barrier, including a redelivery.
+    const credentials = await loadRunCredentials(runId);
+    signal?.throwIfAborted();
     const frame: MailInboundFrame = {
       type: "mail.inbound",
       agentAddress,
@@ -5088,6 +5118,7 @@ export function createSidecarRouter(
           agentAddress,
           generation: target.generation,
           ...runGrants,
+          ...(credentials !== null ? { credentials } : {}),
         });
         conn.send(frame);
         trackPendingMail(

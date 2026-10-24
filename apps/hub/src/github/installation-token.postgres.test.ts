@@ -57,6 +57,10 @@ function fakeGithub(apps: App[]) {
 
 function noLog(): void {}
 
+async function noRunCredentials(): Promise<null> {
+  return null;
+}
+
 async function allowAll(): Promise<boolean> {
   return true;
 }
@@ -120,7 +124,7 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
       { id: "run_other", anchorRunId: "run_other", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed", address: "run_other@token.test", credentialRefs: { credentialIds: [], bindings: [] } },
     ]);
     const { sent, router, pushed } = deliveries();
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
     const secretOf = secrets(db, cipher);
 
     expect(await renewal.renewAll()).toEqual({ retry: false });
@@ -186,7 +190,7 @@ test("PostgreSQL: connecting an App writes its key and token together, a renewal
   const replacement = app("2", [9, 8]);
   await withWorkspace([first, replacement], async function connectAndReplace({ db, cipher, origin, github }) {
     const { router, pushed } = deliveries();
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
     const connect = createGithubAppConnection({ db, cipher, authorize: allowAll, githubApiOrigin: origin, renewal });
     const member = { tenantId: TENANT, principalId: "prn_admin" };
     const secretOf = secrets(db, cipher);
@@ -229,7 +233,7 @@ test("PostgreSQL: a child workspace inheriting its parent's App gets the parent'
       credentialRefs: { credentialIds: ["crd_github"], bindings: [{ handle: "github", credentialId: "crd_github", consumer: "action:facts" }] },
     });
     const { router, pushed } = deliveries();
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
 
     expect(await withAppLogin(db, "tnt_child", { kind: "pr" })).toEqual({ kind: "pr", appLogin: "app-1[bot]" });
     await expect(withAppLogin(db, "tnt_none", { kind: "pr" })).rejects.toThrow("github app credential is missing");
@@ -255,7 +259,7 @@ test("PostgreSQL: App JSON a stock write leaves in the bound credential is taken
       credentialRefs: { credentialIds: ["crd_github"], bindings: [{ handle: "github", credentialId: "crd_github", consumer: "action:facts" }] },
     });
     const { sent, router } = deliveries();
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
     const secretOf = secrets(db, cipher);
 
     // A stock credential write puts the App JSON where workflows bind it; securing that write moves it and pushes the blank.
@@ -294,7 +298,7 @@ test("PostgreSQL: an early retry after one workspace fails renews only that work
         secret: await cipher.encrypt(theApp.json, credentialAad(id, "secret")), status: "active", metadata: { appSlug: "app" },
       });
     }
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router: deliveries().router, log: noLog });
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router: deliveries().router, log: noLog, loadRunCredentials: noRunCredentials });
     expect(await renewal.renewAll()).toEqual({ retry: true });
     expect(github.minted()).toBe(1);
     expect(await renewal.renewAll()).toEqual({ retry: true });
@@ -317,7 +321,7 @@ test("PostgreSQL: a blank push a sidecar did not take is sent again on the next 
     let fail = true;
     const sent: string[] = [];
     const router = { async sendCredentialsUpdate(address: string) { if (fail) throw new Error("sidecar timeout"); sent.push(address); } };
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
     await renewal.secure(TENANT);
     fail = false;
     await renewal.renewAll();
@@ -334,7 +338,7 @@ test("PostgreSQL: a github-app provider given an origin loses it before the key 
       secret: await cipher.encrypt(theApp.json, credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "app-1" },
     });
     const { router } = deliveries();
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog });
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
     await renewal.renewAll();
     const key = await buildCredentialDelivery({
       db, tenantId: TENANT, creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher,

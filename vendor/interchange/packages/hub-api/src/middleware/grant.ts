@@ -35,6 +35,12 @@ export type AuthorizeGrantCheck = {
   tenantId: string;
   resource: string;
   action: string;
+  /**
+   * The run-token consumer, or `undefined` for a caller that is not one; see
+   * `TenantEnv`. Required so that no request-driven check can forget it: a
+   * check without the consumer would skip a `{tool}`-scoped deny grant.
+   */
+  consumer: string | undefined;
 };
 
 /**
@@ -53,6 +59,7 @@ export function createAuthorizeGrant({
     tenantId,
     resource,
     action,
+    consumer,
   }) {
     const result = await authorize(
       grantStore,
@@ -60,7 +67,10 @@ export function createAuthorizeGrant({
       tenantId,
       resource,
       action,
-      conditionRegistry,
+      {
+        conditions: conditionRegistry,
+        ...(consumer !== undefined ? { consumer } : {}),
+      },
     );
     if (result.effect === "allow") return true;
 
@@ -71,6 +81,7 @@ export function createAuthorizeGrant({
         tenantId,
         resource,
         action,
+        consumer: consumer ?? null,
         effect: result.effect ?? "no_match",
         resolvedBy: result.resolvedBy?.id ?? null,
       },
@@ -100,6 +111,7 @@ export function createRequireGrant(deps: CreateRequireGrantDeps): RequireGrant {
         tenantId: c.get("tenant").id,
         resource: resolvedResource,
         action,
+        consumer: c.get("consumer"),
       });
       if (allowed) {
         await next();
@@ -133,22 +145,24 @@ export function idResource(
 }
 
 /**
- * In-handler grant check for an asset named in a request body. `idResource`
+ * In-handler grant check for a resource named in a request body. `idResource`
  * only reads URL params and `requireGrant` runs before the body validator, so
- * a body-sourced `asset:<id>` cannot be gated in middleware. Returns the same
- * 403 envelope as `requireGrant` when the principal lacks `read`, or `null`
- * when the caller may proceed.
+ * a body-sourced resource cannot be gated in middleware. Returns the same 403
+ * envelope as `requireGrant` when the principal lacks `action` on `resource`,
+ * or `null` when the caller may proceed.
  */
-export async function denyUnlessAssetGrant(args: {
+export async function denyUnlessBodyGrant(args: {
   c: Context<TenantEnv>;
   authorizeGrant: AuthorizeGrant;
-  assetId: string;
+  resource: string;
+  action: string;
 }): Promise<Response | null> {
   const allowed = await args.authorizeGrant({
     principalId: args.c.get("principal").id,
     tenantId: args.c.get("tenant").id,
-    resource: `asset:${args.assetId}`,
-    action: "read",
+    resource: args.resource,
+    action: args.action,
+    consumer: args.c.get("consumer"),
   });
   if (allowed) return null;
   return errorResponse(
