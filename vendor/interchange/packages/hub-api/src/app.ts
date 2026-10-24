@@ -81,7 +81,11 @@ import {
   createAgentStateReceivePackDeny,
 } from "./routes/agent-state-git";
 import { createGitTokenAuth } from "./middleware/git-token-auth";
-import { createRunTokenAuth } from "./middleware/run-token-auth";
+import {
+  assertHostRunTokenRoutes,
+  createRunTokenAuth,
+  type RunTokenRoute,
+} from "./middleware/run-token-auth";
 
 const log = getLogger(["hub", "app"]);
 
@@ -165,6 +169,8 @@ export type MountHubRoutesDeps = {
   signalCorrelationStore?: SignalCorrelationStore;
   readRunLifecycles?: ReadRunLifecycles;
   sidecarWsHandler?: Handler<AppEnv>;
+  /** Host routes a workflow run token may reach beyond the stock allow-list. */
+  extraRunTokenRoutes?: readonly RunTokenRoute[];
   /**
    * The asset REST endpoint and smart-HTTP route group mount under
    * `/api/tenants/:tenantId/assets` when both are supplied. Tests
@@ -214,6 +220,7 @@ export function mountHubRoutes(
     repoStore,
     readRunLifecycles,
     maxTarballBytes,
+    extraRunTokenRoutes,
   } = opts;
   if ((assetService === null) !== (repoStore === null)) {
     throw new Error(
@@ -295,6 +302,9 @@ export function mountHubRoutes(
     createRunTokenAuth({
       db,
       runTokenStore,
+      ...(extraRunTokenRoutes !== undefined
+        ? { extraRoutes: extraRunTokenRoutes }
+        : {}),
     }),
   );
 
@@ -567,6 +577,10 @@ export function mountHubRoutes(
   if (sidecarWsHandler) {
     app.get("/api/sidecars/ws", sidecarWsHandler);
   }
+
+  if (extraRunTokenRoutes !== undefined) {
+    assertHostRunTokenRoutes(extraRunTokenRoutes, app.routes);
+  }
 }
 
 export type CreateAppOpts = {
@@ -598,6 +612,8 @@ export type CreateAppOpts = {
   signalCorrelationStore?: SignalCorrelationStore;
   readRunLifecycles?: ReadRunLifecycles;
   sidecarWsHandler?: Handler<AppEnv>;
+  /** Host routes a workflow run token may reach beyond the stock allow-list. */
+  extraRunTokenRoutes?: readonly RunTokenRoute[];
   assetService: AssetService | null;
   repoStore: RepoStore | null;
   /**
@@ -625,6 +641,7 @@ export function createApp({
   signalCorrelationStore,
   readRunLifecycles,
   sidecarWsHandler,
+  extraRunTokenRoutes,
   assetService,
   repoStore,
   maxTarballBytes,
@@ -666,6 +683,7 @@ export function createApp({
     ...(signalCorrelationStore ? { signalCorrelationStore } : {}),
     ...(readRunLifecycles ? { readRunLifecycles } : {}),
     ...(sidecarWsHandler ? { sidecarWsHandler } : {}),
+    ...(extraRunTokenRoutes !== undefined ? { extraRunTokenRoutes } : {}),
   });
 
   app.get(

@@ -5,9 +5,9 @@
 - Upstream: <https://github.com/faremeter/interchange>
 - Stock ref: `b1ca01f0d9bc2eb203e95b1780a6f685c5da8215`
 - Composite pin: stock `b1ca01f0` (`v0.5.0-67`) plus the
-  step-env director threading from PR #193, the local CL-10210 carry and the
-  INTR-666 adaptive-thinking model ids and Anthropic structured outputs. Do
-  not treat any delta as a new stock pin.
+  step-env director threading from PR #193, the local CL-10210 carry, the
+  INTR-666 adaptive-thinking model ids and Anthropic structured outputs, and
+  the host run-token routes. Do not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -144,6 +144,35 @@ Upstream reference: INTR-666.
 
 Remove when upstream's Anthropic adapter supports
 structured outputs.
+
+### Host run-token routes
+
+Stock `createRunTokenAuth` refuses a workflow run token on every tenant route
+outside the fixed `RUN_TOKEN_ROUTES`, and a host has no way to add one. The
+carry lets the host extend the list, for the router workflow's state routes,
+which its run token will reach on curated Corbits hub routes. `createApp`
+and `mountHubRoutes` take an optional `extraRunTokenRoutes`, passed to
+`createRunTokenAuth` as `extraRoutes`; a request is admitted when it matches
+the stock list or the extras, with the same pattern matching, and every other
+route is refused as before. Each listed host route must apply its own grant
+checks. `mountHubRoutes` throws at startup on an extra that is not under
+`/api/tenants/:tenantId/<literal>` or that could match a route stock
+registers (a `:param` segment matches any segment on either side), so an
+extra cannot re-open a stock route the allow-list refuses. `index.ts` also
+exports the `RunTokenRoute` type so the host can type its list. Two tests in
+`run-token-auth.test.ts` build the hub with an extra: a run token reaches the
+host route and a stock route still passes, and an overlapping extra throws.
+
+Allowed files:
+
+- `packages/hub-api/src/middleware/run-token-auth.ts`
+- `packages/hub-api/src/middleware/run-token-auth.test.ts`
+- `packages/hub-api/src/app.ts`
+- `packages/hub-api/src/index.ts`
+
+Upstream reference: none (not proposed upstream).
+
+Remove when stock Interchange lets a host extend the run-token allowlist.
 
 ## Dropped deltas
 

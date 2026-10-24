@@ -30,3 +30,12 @@ packages/workflow-host/src/supervisor/supervisor.test.ts
 # stock adapter has both.
 packages/inference/src/providers/anthropic.ts
 packages/inference/src/providers/anthropic.test.ts
+
+# Host run-token routes: createApp and createRunTokenAuth take extra routes a
+# workflow run token may reach, for the router workflow's state routes.
+# Upstream reference: none (not proposed upstream). Remove when stock lets a
+# host extend the run-token allowlist.
+packages/hub-api/src/middleware/run-token-auth.ts
+packages/hub-api/src/middleware/run-token-auth.test.ts
+packages/hub-api/src/app.ts
+packages/hub-api/src/index.ts
