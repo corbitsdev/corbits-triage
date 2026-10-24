@@ -20,7 +20,9 @@ You need a GitHub account that can create a GitHub App, an API key for the
 | Docker Compose ([steps](docs/SELF_HOST.md#docker-compose)) | Docker with Compose, about 3 GB free Docker disk | http://localhost:3000 |
 | `bun run dev` ([steps](docs/DEV.md)) | Bun 1.4+, Postgres 15+ | http://localhost:5173 |
 
-On a server or Railway, follow [docs/SELF_HOST.md](docs/SELF_HOST.md).
+On this machine GitHub cannot reach the hub, so the GitHub App is created
+without a webhook and pull requests are picked up every five minutes. On a
+server or Railway, follow [docs/SELF_HOST.md](docs/SELF_HOST.md).
 
 In the folder where you'll set it up, add the Corbits Triage skills to your coding agent, then give it the Setup Prompt:
 
