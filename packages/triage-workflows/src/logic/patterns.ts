@@ -26,10 +26,10 @@ function presetRules(id: string): readonly PatternRule[] {
   return rules;
 }
 
-/** The presets' rules, then the rule's own, which win on a shared id. */
+/** The presets' rules, then the rule's own, which replace a preset rule of the same id in every language. */
 export function patternRules(check: PatternsCheck): PatternRule[] {
-  const all = [...check.presets.flatMap(presetRules), ...check.patterns];
-  return [...new Map(all.map((rule) => [rule.id, rule])).values()];
+  const own = new Set(check.patterns.map((rule) => rule.id));
+  return [...check.presets.flatMap(presetRules).filter((rule) => !own.has(rule.id)), ...check.patterns];
 }
 
 function grammarOf(path: string): Grammar | undefined {
