@@ -690,7 +690,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${CODE_REVIEW_PATH}/:tenantId`,
     describeRoute({
       summary: "Turn code review on or off for a repository",
-      description: "Needs `manage` on the workspace. Sets `codeReview` on the repository's record (`source` absent means GitHub). Turning it on needs a provisioner code review can run on (`no_isolated_place` otherwise; see `GET /api/integrations/code-review/{tenantId}/place`), the repository's host connected and the workspace's Anthropic key; the portal then deploys that host's code review. Turning off the last repository of a host releases its code review deployment.",
+      description: "Needs `manage` on the workspace. Sets `codeReview` on the repository's record (`source` absent means GitHub). Refuses a repository whose policy file decides code review (`policy_file_decides`). Turning it on needs a provisioner code review can run on (`no_isolated_place` otherwise; see `GET /api/integrations/code-review/{tenantId}/place`), the repository's host and the repository connected (`repo_not_connected` otherwise) and the workspace's Anthropic key; the portal then deploys that host's code review. Turning off the last repository of a host releases its code review deployment.",
       tags: TAGS,
       responses: {
         200: json("The repository's code review setting", CodeReviewSet),
@@ -698,7 +698,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         401: failures[401],
         403: failures[403],
         404: json("No such repository", Failure),
-        409: json("`no_isolated_place`, `source_not_connected` or `anthropic_key_missing`", Failure),
+        409: json("`policy_file_decides`, `no_isolated_place`, `source_not_connected`, `anthropic_key_missing` or `repo_not_connected`", Failure),
       },
     }),
     member,
@@ -712,7 +712,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${CODE_REVIEW_PATH}/:tenantId`,
     describeRoute({
       summary: "A pull request's latest code review",
-      description: "Needs `workflow-run:*` read. Read from the run logs of the host's code review deployments (`source` absent means GitHub), newest first among the workspace's recent reviews: `running`, `failed`, or `completed` with the summary, each finding's comment (path, lines, title, explanation, priority, the code it quotes and `unverified` when none of its file's lines could be read) and `cut` when the diff was cut for size, with the files it left `unread`. `completed` is the newest finished review, the same as `review` unless a newer one is running or failed; both are null when the pull request has none. Nothing is posted to the host.",
+      description: "Needs `workflow-run:*` read. Read from the run logs of the host's code review deployments (`source` absent means GitHub), newest first among the workspace's recent reviews: `running`, `failed`, or `completed` with the summary, each finding's comment (path, lines, title, explanation, priority, the code it quotes and `unverified` when none of its file's lines could be read) and `cut` when the diff was cut for size, with the files it left `unread`. `completed` is the newest finished review, the same as `review` unless a newer one is running or failed; both are null when the pull request has none. `head`: the pull request's head as the caller last read it. `carriedTo`: that head when its diff is the one the newest finished review read, else null. Nothing is posted to the host.",
       tags: TAGS,
       responses: { 200: json("The latest review, or null", CodeReviewFound), ...invalid, 401: failures[401], 403: failures[403] },
     }),
@@ -742,7 +742,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${CODE_REVIEW_PATH}/:tenantId/run`,
     describeRoute({
       summary: "Review a pull request again",
-      description: "Needs `manage` on the workspace. Sends the pull request's current head to its host's code review even when that head was reviewed already. The repository must have code review on and the workspace its Anthropic key. Refuses a draft (`draft`) or a closed pull request (`not_open`).",
+      description: "Needs `manage` on the workspace. Sends the pull request's current head to its host's code review even when that head was reviewed already. Needs a provisioner code review can run on (`no_isolated_place` otherwise). The repository must have code review on and the workspace its Anthropic key. Refuses a repository whose policy file decides code review (`policy_file_decides`). Refuses a draft (`draft`) or a closed pull request (`not_open`).",
       tags: TAGS,
       responses: {
         202: json("Queued", CodeReviewQueued),
@@ -750,7 +750,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         401: failures[401],
         403: failures[403],
         404: json("No such connected repository", Failure),
-        409: json("`no_isolated_place`, `code_review_off`, `draft` or `not_open`", Failure),
+        409: json("`no_isolated_place`, `policy_file_decides`, `code_review_off`, `draft` or `not_open`", Failure),
         502: json("The host or the run trigger failed", Failure),
         ...githubLimited,
       },
