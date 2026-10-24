@@ -55,6 +55,12 @@ export function codeReviewWorkflowFor(source: RepoSource): CodeReviewWorkflow {
   return CODE_REVIEW_WORKFLOWS.find((workflow) => workflow.source === source)!;
 }
 
+/** Every workflow a host's pull request job can run in: its triage, its code review and its PR workflow variants. */
+export function jobWorkflowsFor(source: RepoSource): string[] {
+  const variants = PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === source).map((variant) => variant.id);
+  return [triageWorkflowFor(source).id, codeReviewWorkflowFor(source).id, ...variants];
+}
+
 /** The host whose credential a package entry binds; undefined for an entry that binds none. */
 export function entrySource(entry: string): RepoSource | undefined {
   if (entry === HISTORICAL_ENTRY) return "github";
