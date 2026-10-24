@@ -11,7 +11,7 @@ import { createWorkflowHistoryReceiveTracker, createWorkflowLifecycleService, Wo
 import type { ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { interchangeSettings, type HubEnv } from "../env.js";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
-import { createCoordinator, type TriageJob } from "./coordinator.js";
+import { createCoordinator, NO_LISTENER_REASON, type TriageJob } from "./coordinator.js";
 import { DeploymentNotReadyError, SenderRefusedError } from "./deployment.js";
 import { createWorkerSpawner } from "./worker-spawn.js";
 
@@ -135,6 +135,59 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
     expect(await released.promise).toBe("run_worker");
     expect(delivered).toEqual([`run_worker@${DOMAIN}`]);
     expect(failed).toEqual([]);
+    coordinator.stop();
+  });
+}, 120_000);
+
+test("PostgreSQL: a job with no listener to copy is retried five times, then its head fails and it is not retried again", async () => {
+  await withDatabase(async function deferThenFail(db) {
+    let clock = 0;
+    let timer: (() => Promise<void>) | undefined;
+    let settled = Promise.withResolvers<string>();
+    const failed: string[] = [];
+    const coordinator = createCoordinator({
+      spawner: createWorkerSpawner({
+        db,
+        beforeDeploy: nothingToReady,
+        redeploy: notReached,
+        deliver: notReached,
+        lifecycle: { requestCancellation: notReached, getStatus: notReached },
+        sleep: () => Bun.sleep(1),
+        fireTimeoutMs: 60_000,
+        pollMs: 1,
+      }),
+      retry: { minMs: 1, maxMs: 1 },
+      async failed(job, error) {
+        failed.push(`${job.number}: ${error}`);
+      },
+      runTimeoutMs: RUN_TIMEOUT_MS,
+      setTimer(fire, ms) {
+        if (ms === RUN_TIMEOUT_MS) return () => {};
+        timer = async function elapse() {
+          clock += ms;
+          await fire();
+        };
+        return () => {};
+      },
+      now: () => new Date(clock),
+      log(entry) {
+        settled.resolve(String(entry.msg));
+      },
+    });
+
+    const outcomes: string[] = [];
+    coordinator.enqueue(JOB);
+    // Bounded so a job retried forever fails the test instead of hanging it.
+    while (outcomes.length < 10) {
+      outcomes.push(await settled.promise);
+      settled = Promise.withResolvers();
+      const elapse = timer;
+      timer = undefined;
+      if (!elapse) break;
+      await elapse();
+    }
+    expect(outcomes).toEqual([...Array<string>(5).fill("worker_spawn_deferred"), "worker_deployment_unavailable"]);
+    expect(failed).toEqual([`8: ${NO_LISTENER_REASON}`]);
     coordinator.stop();
   });
 }, 120_000);
