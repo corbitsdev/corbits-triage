@@ -4,7 +4,7 @@ import { type } from "arktype";
 import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, triggerRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
-import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
+import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
 import { asText } from "../logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "../logic/facts.js";
 import type { History } from "../logic/history.js";
@@ -379,8 +379,14 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
   if (!request || typeof repo !== "string") return fail("facts: input has no repo");
   if (!policy.enabled) return fail("Triage is disabled for this repository.");
   if (trusted && typeof request.policyUnreadable === "string") return unreadablePolicy(request, repo, request.policyUnreadable, appLogin);
-  const pack = packFromInput(request.pack ?? request.checkPack);
-  if (!pack) return fail(NEEDS_SETUP_REASON);
+  const rawPack = request.pack ?? request.checkPack;
+  if (rawPack === undefined || rawPack === null) return fail(NEEDS_SETUP_REASON);
+  let pack: CheckPack;
+  try {
+    pack = packFromInput(rawPack);
+  } catch (error) {
+    return fail(`${DEPLOYMENT_UNREADABLE}${error instanceof Error ? error.message : String(error)}`);
+  }
   const repoSource = repoSourceOf(request.repoSource);
   const source = policySource(request);
   const items = request.kind === "pr" && Array.isArray(request.items) ? request.items : undefined;

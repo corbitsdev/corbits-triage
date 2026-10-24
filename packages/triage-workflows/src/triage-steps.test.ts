@@ -3,7 +3,7 @@ import { listPrFilesPage } from "@corbits/github-reads";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { triageJudgeDirector } from "./directors.js";
 import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS, WAITING_LABEL, type CheckPack } from "@corbits/triage-contracts";
-import { NEEDS_SETUP_REASON } from "./logic/checks.js";
+import { DEPLOYMENT_UNREADABLE, NEEDS_SETUP_REASON } from "./logic/checks.js";
 import { heldForCi, unsettledBy } from "./logic/settled.js";
 import { NO_FACTS } from "./logic/item.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
@@ -114,11 +114,17 @@ describe("facts policy", () => {
     expect(read).toEqual({ items: [{ error: "Triage is disabled for this repository." }], batch: false });
   });
 
-  test("missing check pack skips classify without fetching", async () => {
+  test("a missing check pack needs setup and one this deployment can't read says why and stays unsettled, without fetching", async () => {
     const calls: ToolCall[] = [];
-    const read = await readFacts({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true } }, () => answering({}, calls));
-    expect(calls).toEqual([]);
+    const mail = { kind: "pr", repo: "acme/widgets", prNumber: 8, headSha: "abc", policy: { enabled: true } };
+    const read = await readFacts(mail, () => answering({}, calls));
     expect(read).toEqual({ items: [{ error: NEEDS_SETUP_REASON }], batch: false });
+    const reason = `${DEPLOYMENT_UNREADABLE}schemaVersion must be 2.`;
+    const newer = await readFacts({ ...mail, checkPack: { ...emptyPack("acme/widgets"), schemaVersion: 3 } }, () => answering({}, calls));
+    expect(newer).toEqual({ items: [{ error: reason }], batch: false });
+    expect(calls).toEqual([]);
+    const verdict = await evaluate(await rules(newer, ctx, signal), ctx, signal) as Verdict;
+    expect(unsettledBy(verdict)).toEqual({ unsettled: `degraded: ${reason}` });
   });
 
   async function factsThrough(filesContent: unknown) {
