@@ -49,12 +49,17 @@ function wholePatch(file: PrFileFacts): string | undefined {
   return file.patch === undefined || file.patchTruncated || file.patch.length > MAX_PATCH_INPUT_CHARS ? undefined : file.patch;
 }
 
-/** The files whose content the rules need, or why they cannot be checked: a file in scope without its whole patch. */
+/** The files one pull request reads the content of, GitHub's own diff limit, so one pull request's reads stay bounded. */
+export const MAX_CONTENT_READS = 300;
+
+/** The files whose content the rules need, or why they cannot be checked: a file in scope without its whole patch, or more files than are read. */
 export function filesToRead(files: readonly PrFileFacts[]): string[] | { unread: string } {
   const scoped = files.filter(inScope);
   const unpatched = scoped.find((file) => wholePatch(file) === undefined);
   if (unpatched) return { unread: `${unpatched.path}: its patch was not read in full` };
-  return scoped.filter((file) => addedLines(wholePatch(file)!).size > 0).map((file) => file.path);
+  const toRead = scoped.filter((file) => addedLines(wholePatch(file)!).size > 0).map((file) => file.path);
+  if (toRead.length > MAX_CONTENT_READS) return { unread: `${toRead.length} files with added code, more than the ${MAX_CONTENT_READS} read per pull request` };
+  return toRead;
 }
 
 function fileMatches(file: PrFileFacts, patch: string, content: string, grammar: Grammar, rules: PatternRule[]): string[] {
