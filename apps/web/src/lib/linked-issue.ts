@@ -9,15 +9,15 @@ type PullText = {
 };
 
 const LINEAR_URL = /https:\/\/linear\.app\/([\w-]+)\/issue\/([A-Z][A-Z0-9]*-\d+)(?:\/[\w-]*)?/g;
-const LINEAR_BOT = "linear[bot]";
+const LINEAR_BOTS = new Set(["linear[bot]", "linear-code[bot]"]);
 
 /**
- * Linear issues the pull request links to: issue URLs in its shown description and commits, or posted by Linear's bot.
+ * Linear issues the pull request links to: issue URLs in its shown description and commits, or posted by one of Linear's bots.
  * Anyone else's comment could point anywhere, and a key linked into two workspaces is ambiguous, so neither is shown.
  * There is no Linear credential, so a bare key with no URL is not resolved.
  */
 export function linearIssues(detail: PullText): LinearIssue[] {
-  const bot = detail.comments.filter((comment) => comment.author === LINEAR_BOT).map((comment) => comment.body);
+  const bot = detail.comments.filter((comment) => LINEAR_BOTS.has(comment.author)).map((comment) => comment.body);
   const text = [detail.pr.shownBody, ...detail.commits.map((commit) => commit.message), ...bot].join("\n");
   const byKey = new Map<string, { url: string; workspaces: Set<string> }>();
   for (const [url, workspace, key] of text.matchAll(LINEAR_URL)) {
