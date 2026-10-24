@@ -88,3 +88,10 @@ test("PostgreSQL: a database the old hub start migrated takes the new migrate an
     await assertMigrated(config);
   });
 }, 120_000);
+
+test("PostgreSQL: a database without the hub's own migrations fails the start check", async () => {
+  await withDatabase("hubless", async function skipHubMigrations(config) {
+    await drizzleOnly(config);
+    await expect(assertMigrated(config)).rejects.toThrow("Missing: 0001_corbits_triage.sql");
+  });
+}, 120_000);

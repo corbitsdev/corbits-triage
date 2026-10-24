@@ -642,8 +642,12 @@ read it, and passes the rest of the request to stock.
   service, or whatever the operator runs as a pre-deploy step. It applies
   Interchange's tables with stock `drizzle-kit migrate`, then the
   `@corbits/webhooks`, `@corbits/artifacts` and `@corbits/cron` tables,
-  triage's tables and the data backfills. The hub refuses to start while
-  fewer migrations are applied than the vendored journal lists.
+  triage's tables and the data backfills, and records the last
+  `apps/hub/migrations` file it applied as the `corbits_triage` schema's
+  comment. The hub refuses to start, naming what is missing, while fewer
+  Interchange migrations are applied than the vendored journal lists or the
+  recorded file is older than its own last one; the `@corbits/*` packages'
+  migrations keep no record of their own.
 - Triage's tables, in the `corbits_triage` schema: `verdict` (verdicts per
   head, with the outcomes of the actions their run executed) and
   `device_code` (better-auth's device authorization, for agents a signed-in
