@@ -1,4 +1,4 @@
-import type { LineCitation } from "@corbits/triage-contracts";
+import { visibleText, type LineCitation } from "@corbits/triage-contracts";
 
 /** The most of one file's patch the judge reads. */
 export const MAX_PATCH_INPUT_CHARS = 65_536;
@@ -7,23 +7,9 @@ const MAX_PATH_CHARS = 512;
 const ESCAPE = String.fromCharCode(27);
 const BELL = String.fromCharCode(7);
 const ANSI = new RegExp(`${ESCAPE}(?:\\[[0-?]*[ -/]*[@-~]|\\][^${BELL}]*(?:${BELL}|${ESCAPE}\\\\)?)`, "g");
-const BIDI = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
-
-function removeControls(value: string): string {
-  let clean = "";
-  for (const character of value) {
-    const code = character.charCodeAt(0);
-    if (code <= 9 || code === 11 || code === 12 || (code >= 14 && code <= 31) || (code >= 127 && code <= 159)) continue;
-    clean += character;
-  }
-  return clean;
-}
 
 function safeText(value: string): string {
-  return removeControls(value
-    .replace(/\r\n?/g, "\n")
-    .replace(ANSI, "")
-    .replace(BIDI, ""));
+  return visibleText(value.replace(/\r\n?/g, "\n").replace(ANSI, "")).replace(/\t/g, "");
 }
 
 function safeInline(value: string, limit: number): string {
