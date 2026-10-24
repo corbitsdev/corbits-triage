@@ -408,7 +408,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         202: json("Queued", TriageQueued),
         ...invalid,
         ...failures,
-        502: json("GitHub or the run trigger failed", Failure),
+        502: json("`source_failed`: the pull request could not be read; `hub_unavailable`: it could not be queued", Failure),
         503: json("`service_not_running`: the pr-triage service is not running; `github_rate_limited`: GitHub's rate limit is reached, `Retry-After` and `resetAt` say when it lifts", Failure),
       },
     }),
