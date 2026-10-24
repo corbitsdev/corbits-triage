@@ -120,6 +120,6 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 ## Build
 
 One image, the root `Dockerfile`: the hub serving the built portal from
-`PORTAL_DIR`, on `oven/bun:1.4.2`, the Bun the Railway sidecar template installs and the Bun minor CI runs. Its `sidecar` target is
+`PORTAL_DIR`, on `oven/bun:1.4.2` pinned by digest (`bun run check` fails on an unpinned `FROM`), the Bun the Railway sidecar template installs and the Bun minor CI runs. Its `sidecar` target is
 the image the Docker provisioner runs. CI scans both with Trivy before publishing and fails on critical or high vulnerabilities that have a fix. Both hold only the production dependencies of the hub and the sidecar,
 the sources they run from and, for the hub, the built portal; the `base` stage keeps the full install that builds the portal and supplies the oxlint binary to both. See [SELF_HOST.md](SELF_HOST.md).
