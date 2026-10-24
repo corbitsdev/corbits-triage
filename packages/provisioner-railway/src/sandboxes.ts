@@ -44,13 +44,14 @@ export type SidecarTemplateSource = {
   readonly commit: string;
 };
 
-/** The repository at the hub's commit, installed at SIDECAR_ROOT as in the hub image, with a pinned Bun. */
+/** The repository at the hub's commit, installed at SIDECAR_ROOT as in the hub image, with a pinned Bun and oxlint. */
 export function sidecarTemplate({ repository, commit }: SidecarTemplateSource): readonly string[] {
   return [
     "apt-get update && apt-get install -y --no-install-recommends unzip",
     `curl -fsSLo /tmp/bun.zip ${BUN.url} && echo "${BUN.sha256}  /tmp/bun.zip" | sha256sum -c - && unzip -q /tmp/bun.zip -d /tmp && install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun && rm -rf /tmp/bun.zip /tmp/bun-linux-x64`,
     `git init ${SIDECAR_ROOT} && git -C ${SIDECAR_ROOT} fetch --depth 1 ${repository} ${commit} && git -C ${SIDECAR_ROOT} checkout FETCH_HEAD`,
     `cd ${SIDECAR_ROOT} && bun install --frozen-lockfile`,
+    `cd ${SIDECAR_ROOT} && bun tooling/install-oxlint.ts /usr/local/bin/oxlint && /usr/local/bin/oxlint --version`,
   ];
 }
 
