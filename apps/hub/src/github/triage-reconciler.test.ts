@@ -14,7 +14,8 @@ import type { RotationRecord } from "./tenant-config.js";
 import { createRunRecorder } from "./run-recorder.js";
 import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
 import type { ApprovedDo, RecordedVerdict, VerdictRecord } from "./verdict-record-store.js";
-import { createTriageReconciler } from "./triage-reconciler.js";
+import { createTriageReconciler, type ReconcileOutcome } from "./triage-reconciler.js";
+import { createReconcileLoop } from "./reconcile-loop.js";
 import { createRepoActivity, type RepoActivity } from "./repo-activity.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { markBaseMoved } from "./triage-queue.js";
@@ -1077,12 +1078,42 @@ describe("triage reconciler", () => {
     // The App's webhook went quiet, so the listing is read again, and GitHub refuses it.
     clock = at(31);
     options.listError = new GithubRateLimited("1", at(33).getTime());
-    expect(await reconcile()).toEqual(expect.objectContaining({ retryAt: at(33).getTime() }));
+    expect(await reconcile()).toEqual({ retry: false, retryAt: at(33).getTime() });
     options.listError = undefined;
     clock = at(32);
     activity.heard(TENANT_ID, "github", "acme/gadgets");
     clock = at(33);
     await reconcile();
     expect(listings).toEqual([REPO, REPO, REPO]);
+  });
+
+  test("a repository that fails to load asks for the early retry, and that pass queues its head", async () => {
+    const options: HarnessOptions = { listError: new Error("connection reset") };
+    const { reconcile, delivered } = harness({}, [head(1)], options);
+    const passes: Array<Promise<ReconcileOutcome>> = [];
+    function pass(): Promise<ReconcileOutcome> {
+      const outcome = reconcile();
+      passes.push(outcome);
+      return outcome;
+    }
+    const retry = Promise.withResolvers<{ run: () => void; ms: number }>();
+    function schedule(run: () => void, ms: number): void {
+      retry.resolve({ run, ms });
+    }
+    const loop = createReconcileLoop(pass, { intervalMs: 300_000, retryMs: 15_000, retryMaxMs: 120_000, schedule }, () => {});
+    loop.kick();
+    const { run, ms } = await retry.promise;
+    expect(ms).toBe(15_000);
+    expect(delivered).toEqual([]);
+    options.listError = undefined;
+    run();
+    await passes[1];
+    expect(mailedNumbers(delivered)).toEqual([1]);
+  });
+
+  test("a tenant whose runs cannot be read asks for another pass soon", async () => {
+    const { reconcile } = harness({}, [head(1)]);
+    failNextList = true;
+    expect(await reconcile()).toEqual({ retry: true });
   });
 });

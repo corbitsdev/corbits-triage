@@ -71,7 +71,7 @@ type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: Ope
 type LoadedRepo = EnabledRepo & (StoredPack | PolicyUnreadable) & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
 
 /**
- * `retry` asks for another pass soon: a repository's pass failed, or a failed deployment is being redeployed.
+ * `retry` asks for another pass soon: a repository's or a tenant's pass failed, or a failed deployment is being redeployed.
  * `retryAt` is when a GitHub rate limit the pass ran into lifts; no sooner pass could read anything.
  */
 export type ReconcileOutcome = { retry: boolean; retryAt?: number };
@@ -484,12 +484,13 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     const pass: TenantPass = { tenantId: tenant.id, deployment, openHeads, runs };
     const loaded: LoadedRepo[] = [];
+    let failed = false;
     for (const repo of repos) {
       try {
         const repoLoaded = await loadRepo(pass, repo);
         if (repoLoaded) loaded.push(repoLoaded);
       } catch (err) {
-        reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err);
+        if (reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err)) failed = true;
       }
     }
     const plans = planTenant({
@@ -500,7 +501,6 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       workflowVersion: pass.deployment.workflowVersion,
       offeringId: pass.deployment.offeringId,
     });
-    let failed = false;
     for (const repo of loaded) {
       try {
         await pollBuilds(pass, repo, plans.get(repo.record.name)!);
@@ -519,7 +519,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       try {
         if (await reconcileTenant(tenant)) retry = true;
       } catch (err) {
-        reconcileFailed({ tenantId: tenant.id }, err);
+        if (reconcileFailed({ tenantId: tenant.id }, err)) retry = true;
       }
     }
     if (limitedUntil === undefined) return { retry };
