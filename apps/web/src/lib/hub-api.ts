@@ -426,10 +426,10 @@ async function withPackPointers(repos: RepoRecord[], hasPack: CheckPackLookup): 
   }));
 }
 
-export async function loadRepoPolicy(transport: Transport, tenantId: string, repo: string): Promise<RepoPolicy> {
+export async function loadRepoPolicy(transport: Transport, tenantId: string, repo: string, source: RepoSource): Promise<RepoPolicy> {
   const tid = enc(requireTenantId(tenantId));
   const tenant = await transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`);
-  const row = reposFromConfig(tenant.config).find((item) => item.name === repo);
+  const row = reposFromConfig(tenant.config).find((item) => item.name === repo && item.source === source);
   return repoPolicy(row);
 }
 
@@ -437,6 +437,7 @@ export async function saveRepoSettings(
   transport: Transport,
   tenantId: string,
   repo: string,
+  source: RepoSource,
   settings: Pick<RepoPolicy, "enabled">,
   packId: string | null,
 ): Promise<void> {
@@ -446,10 +447,13 @@ export async function saveRepoSettings(
   function withSettings(row: RepoRecord): RepoRecord {
     return { ...row, enabled, ...(packId !== null && { checkPack: { name: checkPackName(clean), id: packId } }) };
   }
+  function isRepo(row: unknown): boolean {
+    return rowName(row) === clean && repoSourceOf((row as { source?: unknown }).source) === source;
+  }
   await patchAppConfig(transport, tenantId, function applySettings(current) {
     const repos = current.repos ?? [];
-    if (!repos.some((row) => rowName(row) === clean)) throw new Error("Repository not found.");
-    return { ...current, repos: repos.map((row) => (rowName(row) === clean ? withSettings(row as RepoRecord) : row)) };
+    if (!repos.some(isRepo)) throw new Error("Repository not found.");
+    return { ...current, repos: repos.map((row) => (isRepo(row) ? withSettings(row as RepoRecord) : row)) };
   });
 }
 

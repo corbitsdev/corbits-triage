@@ -20,7 +20,7 @@ test("turning triage on reads the policy file standing again, which lists only e
   const queryClient = new QueryClient();
   const upgrades = [POLICY_UPGRADES_QUERY_KEY, "tenant"];
   queryClient.setQueryData(upgrades, { rows: [], settled: [] });
-  await hubRepoPackStore(queryClient, "tenant", transport).writePolicy("acme/widgets", { enabled: true }, null);
+  await hubRepoPackStore(queryClient, "tenant", transport).writePolicy("acme/widgets", "github", { enabled: true }, null);
   expect(queryClient.getQueryState(upgrades)?.isInvalidated).toBe(true);
 });
 
@@ -32,9 +32,9 @@ test("the policy load recovers from one failed read, and still fails when reads 
     if (failures-- > 0) throw new Error("hub unavailable");
     return pack;
   }
-  expect(await new QueryClient().fetchQuery(repoPackSessionQuery(store, "acme/widgets", 0, load))).toBe(pack);
+  expect(await new QueryClient().fetchQuery(repoPackSessionQuery(store, "acme/widgets", "github", 0, load))).toBe(pack);
   failures = Infinity;
-  await expect(new QueryClient().fetchQuery(repoPackSessionQuery(store, "acme/widgets", 0, load))).rejects.toThrow("hub unavailable");
+  await expect(new QueryClient().fetchQuery(repoPackSessionQuery(store, "acme/widgets", "github", 0, load))).rejects.toThrow("hub unavailable");
 });
 
 test("the policy load does not retry a rejected session", async () => {
@@ -43,6 +43,18 @@ test("the policy load does not retry a rejected session", async () => {
     reads += 1;
     throw new ApiError(401, "unauthorized", "Sign in again.");
   }
-  await expect(new QueryClient().fetchQuery(repoPackSessionQuery({ tenantId: "tenant" } as RepoPackStore, "acme/widgets", 0, load))).rejects.toThrow();
+  await expect(new QueryClient().fetchQuery(repoPackSessionQuery({ tenantId: "tenant" } as RepoPackStore, "acme/widgets", "github", 0, load))).rejects.toThrow();
   expect(reads).toBe(1);
+});
+
+test("a settled policy upgrade's invalidation by tenant and repository reaches the open policy on either host", async () => {
+  const queryClient = new QueryClient();
+  const store = { tenantId: "tenant" } as RepoPackStore;
+  async function load(): Promise<LoadedRepoPack> {
+    return { artifact: null, policy: draftPolicy(repoPolicy(undefined)) };
+  }
+  const session = repoPackSessionQuery(store, "acme/widgets", "bitbucket-datacenter", 0, load);
+  await queryClient.fetchQuery(session);
+  await queryClient.invalidateQueries({ queryKey: ["repo-pack-session", "tenant", "acme/widgets"] });
+  expect(queryClient.getQueryState(session.queryKey)?.isInvalidated).toBe(true);
 });

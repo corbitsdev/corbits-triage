@@ -5,6 +5,7 @@ import {
   ensureWorkspace,
   ensureHookCredential,
   GITHUB_HOOK_CREDENTIAL_NAME,
+  loadRepoPolicy,
   portalConnected,
   projectQueue,
   reposFromConfig,
@@ -426,7 +427,7 @@ describe("repository policy config", () => {
       subscribe: () => () => {},
     };
 
-    await saveRepoSettings(transport, "tenant", "acme/one", {
+    await saveRepoSettings(transport, "tenant", "acme/one", "github", {
       enabled: false,
     }, null);
 
@@ -441,6 +442,33 @@ describe("repository policy config", () => {
     });
     expect(ns.repos[0]).not.toHaveProperty("checkPack");
     expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, installationId: 3 });
+  });
+
+  test("a repository with the same name on both hosts is read and saved on its own host only", async () => {
+    const github = { name: "acme/api", connected: true, enabled: false, installationId: 9 };
+    const bitbucket = { name: "acme/api", connected: true, enabled: true, source: "bitbucket-datacenter" };
+    let config: Record<string, unknown> = { corbitsTriage: { repos: [github, bitbucket] } };
+    const transport: Transport = {
+      fetch: async (method, path, body) => {
+        if (path !== "/api/tenants/tenant") throw new Error(`unexpected ${method} ${path}`);
+        if (method === "GET") return { id: "tenant", name: "Tenant", slug: "tenant", config } as never;
+        config = (body as { config: Record<string, unknown> }).config;
+        return undefined as never;
+      },
+      subscribe: () => () => {},
+    };
+    function repos() {
+      return (config.corbitsTriage as { repos: unknown[] }).repos;
+    }
+
+    expect((await loadRepoPolicy(transport, "tenant", "acme/api", "github")).enabled).toBe(false);
+    expect((await loadRepoPolicy(transport, "tenant", "acme/api", "bitbucket-datacenter")).enabled).toBe(true);
+
+    await saveRepoSettings(transport, "tenant", "acme/api", "github", { enabled: true }, "pack_1");
+    expect(repos()).toEqual([{ ...github, enabled: true, checkPack: { name: "check-pack/acme/api", id: "pack_1" } }, bitbucket]);
+
+    await saveRepoSettings(transport, "tenant", "acme/api", "bitbucket-datacenter", { enabled: false }, null);
+    expect(repos()).toEqual([{ ...github, enabled: true, checkPack: { name: "check-pack/acme/api", id: "pack_1" } }, { ...bitbucket, enabled: false }]);
   });
 });
 

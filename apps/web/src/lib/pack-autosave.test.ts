@@ -17,16 +17,16 @@ async function open(stored: CheckPack | null, afterReread?: (hub: FakeHub) => vo
   const linked = stored ? { enabled: true, checkPack: { name: title } } : {};
   const hub = fakeHub(stored ? [{ id: "art_1", title, content: JSON.stringify(stored), version: 1, updatedAt: 1 }] : [], { corbitsTriage: { repos: [{ name: repo, connected: true, installationId: 9, ...linked }] } });
   const store = transportRepoPackStore(hub.transport, "t");
-  const session = openSession(repo, await store.load(repo, false));
+  const session = openSession(repo, await store.load(repo, "github", false));
   async function reread(): Promise<PackSession> {
-    const fresh = openSession(repo, await store.load(repo, true));
+    const fresh = openSession(repo, await store.load(repo, "github", true));
     afterReread?.(hub);
     return fresh;
   }
   const autosave = createAutosave({
     session,
     delayMs: 60_000,
-    write: (current, draft) => saveDraft(store, repo, current, draft),
+    write: (current, draft) => saveDraft(store, repo, "github", current, draft),
     reread,
     changed: () => undefined,
     afterSave: async () => undefined,

@@ -93,12 +93,6 @@ export function useDisconnectBitbucketDatacenter() {
   });
 }
 
-/** Whether the Bitbucket Data Center listing names `repo`; it lists the recorded repositories too. */
-export function isBitbucketDatacenterRepo(queryClient: QueryClient, tenantId: string, repo: string): boolean {
-  const listed = queryClient.getQueryData<RepoRecord[]>(repositoriesKey(tenantId));
-  return listed?.some((row) => row.name === repo) === true;
-}
-
 function webhookKey(tenantId: string | undefined, repo: string) {
   return [BITBUCKET_DATACENTER_QUERY_KEY, tenantId, "webhook", repo] as const;
 }
