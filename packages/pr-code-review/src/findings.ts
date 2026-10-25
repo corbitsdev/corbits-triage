@@ -136,9 +136,9 @@ export function samePath(a: string, b: string): boolean {
   return a !== "" && b !== "" && (a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`));
 }
 
-/** A finding a linter or a CI tool reported, as a fix workflow takes it. */
+/** A finding a linter reported, as a fix workflow takes it. */
 export interface ToolFinding {
-  /** The linter, check run or Code Insights report that reported it. */
+  /** The linter that reported it. */
   source: string;
   rule?: string;
   path: string;

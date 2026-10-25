@@ -154,7 +154,7 @@ function variant() {
   return { workflow, directors: [triageJudgeDirector.factory, ...Object.values(directors).map((d) => d.factory)], actions, credentialBindings: credentialBindingsFor(["github"]) };
 }
 
-const REVIEW_STEPS = ["reviewInput", "plan", "checkout", "lint", "ciAnnotations", "findersInput", "findDiff", "findRepo", "candidates", "consolidate", "checks", "check", "writeInput", "write", "review"].map((id) => `codeReview_${id}`);
+const REVIEW_STEPS = ["reviewInput", "plan", "checkout", "lint", "findersInput", "findDiff", "findRepo", "candidates", "consolidate", "checks", "check", "writeInput", "write", "review"].map((id) => `codeReview_${id}`);
 
 /** Code review as the hub fills it from the policy, for everyone on any verdict. */
 const ON = { on: true, for: ["everyone"], triage: [...VERDICTS], rules: "pass" };

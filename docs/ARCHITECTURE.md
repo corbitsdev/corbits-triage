@@ -376,7 +376,7 @@ the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file".
 
-Beside the model steps, two steps read what tools already say, as structured
+Beside the model steps, one step runs a tool and keeps what it says, as structured
 findings (source, rule, path, line, message, severity, fix when the tool gives
 one) for a fix workflow to take later; nothing is sent on yet. `lint` runs the
 native oxlint binary every image that runs sidecars pins (never through bun or node) over the changed files with the repository's own
@@ -387,10 +387,8 @@ ignorePatterns, overrides of the same); a config with any other key (`extends`,
 refused unrun. The kept keys are written to a config in a fresh folder outside
 the checkout, oxlint runs from that folder with only an absolute PATH, ignore
 patterns are applied before it runs, and the absolute file paths follow `--`. A changed path missing from the checkout makes the step
-incomplete. A repository with no config is not linted. `ciAnnotations` reads
-the head's GitHub check-run annotations or Bitbucket Data Center Code Insights
-annotations through the host credential, under the checkout's effect
-capability. A lint or a read that fails is `incomplete`, never an empty list.
+incomplete. A repository with no config is not linted. A lint that fails is
+`incomplete`, never an empty list.
 
 Each request carries `diffHash`, a SHA-256 of the full diff, `index` lines
 included, so a base change to a file the diff touches, or a binary change,
