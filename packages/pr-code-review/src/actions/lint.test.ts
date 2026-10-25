@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { ToolFindings } from "../findings.js";
 import { lintWith } from "./lint.js";
 
@@ -120,6 +120,18 @@ test("a changed file named like an oxlint flag is linted as a file", async () =>
   const path = checkout({ [name]: FILE, ".oxlintrc.json": JSON.stringify(RULES) });
   const result = await lint({ path, diff: `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${HUNK}` });
   expect(result).toMatchObject({ status: "complete", findings: [{ path: name, line: 2 }, { path: name, line: 3 }] });
+});
+
+test("a file named with two leading dots is linted, while links out of the checkout are not", async () => {
+  const path = checkout({ "..a.js": FILE, ".oxlintrc.json": JSON.stringify(RULES) });
+  const sibling = `${path}-evil`;
+  dirs.push(sibling);
+  mkdirSync(sibling);
+  writeFileSync(join(sibling, "b.js"), FILE);
+  symlinkSync(join(sibling, "b.js"), join(path, "b.js"));
+  symlinkSync(`../${basename(path)}-evil/b.js`, join(path, "c.js"));
+  const diff = ["..a.js", "b.js", "c.js"].map((name) => `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${HUNK}`).join("");
+  expect(await lint({ path, diff })).toMatchObject({ status: "complete", findings: [{ path: "..a.js", line: 2 }, { path: "..a.js", line: 3 }] });
 });
 
 test("a lint that cannot run is incomplete, never a clean result", async () => {

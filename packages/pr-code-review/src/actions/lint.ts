@@ -1,8 +1,8 @@
-import { lstatSync } from "node:fs";
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { addedLines } from "@corbits/common/diff-files";
+import { isBelow } from "@corbits/repo-read-tool";
 import { type } from "arktype";
 import ignore from "ignore";
 import type { ToolFinding, ToolFindings } from "../findings.js";
@@ -25,7 +25,17 @@ const Report = type({
 async function inside(root: string, path: string): Promise<boolean> {
   try {
     const real = await realpath(path);
-    return !relative(root, real).startsWith("..") && (await stat(real)).isFile();
+    return isBelow(root, real) && (await stat(real)).isFile();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw err;
@@ -93,7 +103,7 @@ async function lintChanges(oxlint: string, root: string, diff: string): Promise<
     const files: string[] = [];
     for (const path of added.keys()) {
       // A path the diff names but the checkout lacks was misread, so linting the rest would pass a file unseen.
-      if (lstatSync(join(real, path), { throwIfNoEntry: false }) === undefined) return { status: "incomplete", reason: `lint: changed file ${JSON.stringify(path)} is not in the checkout` };
+      if (!(await exists(join(real, path)))) return { status: "incomplete", reason: `lint: changed file ${JSON.stringify(path)} is not in the checkout` };
       if (!ignored.ignores(path) && (await inside(real, join(real, path)))) files.push(join(real, path));
     }
     if (files.length === 0) return { status: "complete", findings: [] };
