@@ -9,7 +9,7 @@ import type { DB } from "@intx/db";
 import { getLogger } from "@intx/log";
 import { honoLogger, type HonoContext } from "@intx/log/hono";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
@@ -551,7 +551,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
-        { in: "query", name: "numbers", required: true, description: "Comma-separated pull request numbers, at most 100, each at most 2147483647", schema: { type: "string", pattern: "^[1-9]\\d*(,[1-9]\\d*)*$" } },
+        { in: "query", name: "numbers", required: true, description: `Comma-separated pull request numbers, at most ${MAX_MERGE_STATES}, each at most 2147483647`, schema: { type: "string", pattern: "^[1-9]\\d*(,[1-9]\\d*)*$" } },
       ],
       responses: { 200: json("GitHub's merge state and review decision, or Bitbucket's merge checks, per pull request", MergeStates), ...invalid, ...failures, ...githubFailed },
     }),

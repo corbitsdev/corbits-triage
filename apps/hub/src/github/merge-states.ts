@@ -7,6 +7,7 @@ import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readMergeStates, type MergeState } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
+import { MAX_MERGE_STATES } from "@corbits/triage-contracts";
 import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
@@ -17,8 +18,6 @@ import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 export const MERGE_STATES_PATH = "/api/integrations/merge-states";
 
 const MergeStatesQuery = type({ repo: /^[\w.-]+\/[\w.-]+$/, numbers: /^[1-9]\d*(,[1-9]\d*)*$/ });
-
-export const MAX_MERGE_STATES = 100;
 
 /** GraphQL's Int. */
 const MAX_NUMBER = 2 ** 31 - 1;
