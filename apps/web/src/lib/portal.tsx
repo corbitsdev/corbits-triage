@@ -107,7 +107,6 @@ export const RUN_LOG_QUERY_KEY = "run-log";
 export const TRIAGE_VERDICTS_QUERY_KEY = "triage-verdicts";
 export const APPROVALS_QUERY_KEY = "approvals";
 export const RUNS_QUERY_KEY = "runs";
-export const GRANTS_QUERY_KEY = "grants";
 export const PRINCIPALS_QUERY_KEY = "principals";
 export const ROLES_QUERY_KEY = "roles";
 export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
@@ -123,7 +122,6 @@ const REFRESH_QUERY_KEYS = [
   [TRIAGE_VERDICTS_QUERY_KEY],
   [APPROVALS_QUERY_KEY],
   [RUNS_QUERY_KEY],
-  [GRANTS_QUERY_KEY],
   [PRINCIPALS_QUERY_KEY],
   [ROLES_QUERY_KEY],
   [DEPLOYED_WORKFLOWS_QUERY_KEY],

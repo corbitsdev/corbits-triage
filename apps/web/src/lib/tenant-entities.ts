@@ -4,13 +4,11 @@ import {
   evaluateAccess,
   listApprovals,
   listDeployedWorkflows,
-  listGrants,
   listPrincipals,
   listRoles,
   listRuns,
   type DeployedWorkflow,
   type HubApproval,
-  type HubGrant,
   type HubPrincipal,
   type HubRole,
   type HubRun,
@@ -20,7 +18,6 @@ import {
   ALLOWED_QUERY_KEY,
   APPROVALS_QUERY_KEY,
   DEPLOYED_WORKFLOWS_QUERY_KEY,
-  GRANTS_QUERY_KEY,
   PRINCIPALS_QUERY_KEY,
   ROLES_QUERY_KEY,
   RUNS_QUERY_KEY,
@@ -82,10 +79,6 @@ export function useApprovals(): TenantSection<HubApproval> {
 
 export function useRuns(): TenantSection<HubRun> {
   return useTenantSection(RUNS_QUERY_KEY, listRuns, LIVE_REFRESH_MS);
-}
-
-export function useGrants(): TenantSection<HubGrant> {
-  return useTenantSection(GRANTS_QUERY_KEY, listGrants, DIRECTORY_REFRESH_MS);
 }
 
 export function usePrincipals(): TenantSection<HubPrincipal> {
