@@ -6,7 +6,7 @@ import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, VERDICTS, type Acti
 import { findTriageRole } from "../../lib/automation-grid.ts";
 import { checkPackQuery } from "../../lib/check-packs.ts";
 import { doName, postingKinds } from "../../lib/policy-view.ts";
-import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
+import { usePortal } from "../../lib/portal.tsx";
 import { useAllowed, useRoles } from "../../lib/tenant-entities.ts";
 
 
@@ -30,7 +30,7 @@ export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsPro
   const allow = useMutation({
     mutationFn: async function allowKinds({ roleId, kinds }: { roleId: string; kinds: ActionKind[] }) {
       for (const kind of kinds) await addGrant({ roleId, resource: doResource(kind, repo), action: DO_GRANT_ACTION });
-      await Promise.all([queryClient.invalidateQueries({ queryKey: [GRANTS_QUERY_KEY] }), queryClient.invalidateQueries({ queryKey: ["check-pack", tenantId, repo] })]);
+      await queryClient.invalidateQueries({ queryKey: ["check-pack", tenantId, repo] });
     },
   });
 

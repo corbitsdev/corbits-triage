@@ -1208,11 +1208,6 @@ async function tolerateSection<T>(work: Promise<T>, fallback: T): Promise<{ valu
   }
 }
 
-export async function listGrants(transport: Transport, tenantId: string): Promise<HubGrant[]> {
-  const tid = enc(requireTenantId(tenantId));
-  return listAll<HubGrant>(transport, `/api/tenants/${tid}/grants`);
-}
-
 export async function listApprovals(transport: Transport, tenantId: string): Promise<HubApproval[]> {
   const tid = enc(requireTenantId(tenantId));
   return listAll<HubApproval>(transport, `/api/tenants/${tid}/approvals`);
