@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { connectGithubApp } from "../../lib/github-manifest.ts";
 import { isActiveCredential, type HubCredential } from "../../lib/hub-api.ts";
+import { createHubTransport } from "../../lib/hub-transport.ts";
 import { usePortal } from "../../lib/portal.tsx";
 
 type GithubAppRowProps = {
@@ -29,7 +30,7 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
   const [privateKey, setPrivateKey] = useState("");
   const replace = useMutation({
     mutationFn: function replaceKey() {
-      return connectGithubApp(tenantId, { appId: appId.trim(), privateKey });
+      return connectGithubApp(createHubTransport(), tenantId, { appId: appId.trim(), privateKey });
     },
     onSuccess: function closeEditor() {
       setAppId("");
@@ -72,7 +73,7 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
             <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={cancel}>Cancel</Button>
           </form>
         )}
-        {replace.error && <p role="alert" className="field-error">Could not replace the {name} key. {errorText(replace.error)}</p>}
+        {replace.error && <p role="alert" className="field-error">Could not replace the {name} key. {errorText(replace.error)} Try again.</p>}
         {removal.error && <p role="alert" className="field-error">Could not remove {name}. {errorText(removal.error)} Try again.</p>}
       </div>
       {replaceable && !editing && <Button type="button" variant="outline" size="sm" aria-label={`Replace ${name} key`} disabled={disabled} onClick={() => setEditing(true)}>Replace key</Button>}
