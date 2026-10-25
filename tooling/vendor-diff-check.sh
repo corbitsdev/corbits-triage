@@ -2,16 +2,17 @@
 # CI vendor-diff gate: files under vendor/interchange must match the pinned
 # stock Interchange commit, except for entries in
 # tooling/vendor-diff-allowlist.txt. Exits 0 when clean, 1 with the
-# offending diff lines otherwise.
+# offending paths otherwise.
 #
 # Scope notes:
+# - Compares committed content only: the vendor/interchange tree at HEAD
+#   against the stock commit's tree, by exact path, mode and blob id. Local
+#   untracked or uncommitted files are not seen.
 # - The vendored tree is a pruned checkout (upstream-only paths such as
 #   bin/, docs/, or packages never vendored are reported as information,
-#   not failures). The gate fails on *vendor drift*: vendored files whose
-#   bytes differ from stock, and files added locally under vendor/.
-# - Local build artifacts (node_modules, tsbuildinfo, .DS_Store, tmp/,
-#   .env* other than .env*.example) and our provenance record (VENDORED.md)
-#   are excluded.
+#   not failures). The gate fails on any other difference: a changed blob,
+#   mode or type, or a path added locally, unless the path is exactly an
+#   allowlist entry. Our provenance record (VENDORED.md) is excluded.
 #
 # Env overrides:
 #   INTERCHANGE_STOCK_REPO  upstream repo (default https://github.com/faremeter/interchange)
@@ -26,35 +27,47 @@ VENDOR_DIR="vendor/interchange"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
+VENDOR_TREE="$(git rev-parse --verify "HEAD:$VENDOR_DIR")"
+
 git init -q "$WORK/stock"
-git -C "$WORK/stock" remote add origin "$STOCK_REPO"
-git -C "$WORK/stock" fetch -q --depth 1 origin "$STOCK_REF"
-git -C "$WORK/stock" checkout -q FETCH_HEAD
+git -C "$WORK/stock" fetch -q --depth 1 "$STOCK_REPO" "$STOCK_REF"
+STOCK_TREE="$(git -C "$WORK/stock" rev-parse --verify "FETCH_HEAD^{tree}")"
+# The scratch repo then borrows this repository's objects, so one diff-tree
+# sees both trees without fetching stock into this repository. Borrowing only
+# after the fetch keeps a shallow checkout's refs out of its negotiation.
+echo "$(git rev-parse --path-format=absolute --git-common-dir)/objects" \
+  > "$WORK/stock/.git/objects/info/alternates"
 
-diff -qr "$WORK/stock" "$VENDOR_DIR" > "$WORK/diff.txt" || true
+# Quoted paths keep each entry on one line: a path with a control character
+# is quoted, so it never equals an allowlist entry and fails.
+git -C "$WORK/stock" -c core.quotePath=true diff-tree -r --no-renames --no-abbrev \
+  "$STOCK_TREE" "$VENDOR_TREE" > "$WORK/diff.txt"
 
-# Upstream-only paths (pruned from the vendored checkout): informational.
-grep "^Only in $WORK/stock" "$WORK/diff.txt" > "$WORK/upstream-only.txt" || true
-grep -v "^Only in $WORK/stock" "$WORK/diff.txt" > "$WORK/vendor-side.txt" || true
+grep -v '^#' "$ALLOWLIST" | grep -v '^$' > "$WORK/allowlist.txt" || true
 
-# `diff -q` renders an added file as `Only in <dir>: <name>`. Normalize that
-# vendor-side form to a full path so allowlist entries can remain exact and a
-# bare filename (which could mask drift elsewhere) is never necessary.
-sed 's|^Only in \(vendor/interchange/.*\): \([^/]*\)$|Only in \1/\2|' \
-  "$WORK/vendor-side.txt" > "$WORK/vendor-side-normalized.txt"
-
-# Drop local build artifacts, local env files and the provenance record from
-# the verdict. Tracked `.env*.example` templates stay checked.
-grep -vE "node_modules|\.tsbuildinfo|\.DS_Store|/\.claude|tmp(/|$)|: tmp$|VENDORED\.md" \
-  "$WORK/vendor-side-normalized.txt" |
-  awk '!/\.env($|[.-])/ || /\.env[^ ]*\.example( |$)/' > "$WORK/candidates.txt" || true
-
-grep -v '^#' "$ALLOWLIST" | grep -v '^$' > "$WORK/patterns.txt" || true
-if [ -s "$WORK/patterns.txt" ]; then
-  grep -vF -f "$WORK/patterns.txt" "$WORK/candidates.txt" > "$WORK/unexpected.txt" || true
-else
-  cp "$WORK/candidates.txt" "$WORK/unexpected.txt"
-fi
+# Deleted entries are the pruned upstream-only paths. Every other entry fails
+# unless its path is exactly allowlisted; a line that is not a diff-tree raw
+# entry fails as it is.
+awk -v allowlist="$WORK/allowlist.txt" \
+  -v unexpected="$WORK/unexpected.txt" \
+  -v upstream_only="$WORK/upstream-only.txt" '
+  BEGIN {
+    while ((getline entry < allowlist) > 0) allowed[entry] = 1
+    allowed["VENDORED.md"] = 1
+    printf "" > unexpected
+    printf "" > upstream_only
+  }
+  !/^:[0-7]+ [0-7]+ [0-9a-f]+ [0-9a-f]+ [A-Z][0-9]*\t/ {
+    print "unparseable: " $0 > unexpected
+    next
+  }
+  {
+    path = substr($0, index($0, "\t") + 1)
+    status = substr($5, 1, 1)
+    if (status == "D") print path > upstream_only
+    else if (!(path in allowed)) print status " " path > unexpected
+  }
+' "$WORK/diff.txt"
 
 if [ -s "$WORK/unexpected.txt" ]; then
   echo "vendor-diff gate FAILED: vendor/interchange drifts from stock $STOCK_REF outside the allowlist:"
@@ -63,7 +76,4 @@ if [ -s "$WORK/unexpected.txt" ]; then
   exit 1
 fi
 echo "vendor-diff gate passed: no vendor drift from stock $STOCK_REF (allowlist: $ALLOWLIST)."
-if [ -s "$WORK/upstream-only.txt" ]; then
-  echo "informational: upstream paths absent from the pruned checkout:"
-  cat "$WORK/upstream-only.txt"
-fi
+echo "informational: $(wc -l < "$WORK/upstream-only.txt" | tr -d ' ') upstream paths are absent from the pruned checkout."
