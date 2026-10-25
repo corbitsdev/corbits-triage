@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Button } from "@corbits/react-ui";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import { errorText } from "@corbits/common";
 import HealthMark from "../components/repo-panel/HealthMark.tsx";
@@ -16,8 +16,9 @@ import { awaitingText } from "../lib/inbox-view.ts";
 import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { hostName } from "../lib/pull-link.ts";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
-import { repoRows, type RepoRow } from "../lib/repo-rows.ts";
+import { findRepo, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
 import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
@@ -58,13 +59,6 @@ function isPlainClick(event: MouseEvent): boolean {
   return window.getSelection()?.type !== "Range";
 }
 
-/** `/repositories/owner/name`; the older `/repositories/owner%2Fname[/setup]` links arrive with the slash inside the first segment and move to the new form. */
-function selectedRepo(params: { owner?: string; repo?: string }): { name: string | null; redirect: string | null } {
-  if (params.owner?.includes("/")) return { name: null, redirect: `/repositories/${params.owner}` };
-  if (params.owner && params.repo) return { name: `${params.owner}/${params.repo}`, redirect: null };
-  return { name: null, redirect: params.owner === undefined ? null : "/repositories" };
-}
-
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
   const packStore = useHubRepoPackStore();
@@ -73,7 +67,8 @@ export default function Repositories() {
   const runs = useRuns();
   const navigate = useNavigate();
   const params = useParams();
-  const selection = selectedRepo(params);
+  const [search] = useSearchParams();
+  const selection = selectedRepo(params, search);
   const { repos, pending: reposPending } = useRepositories();
   const bitbucket = useBitbucketDatacenterRepositories();
   const denied = snapshot?.denied.repos ?? false;
@@ -94,8 +89,8 @@ export default function Repositories() {
   );
   const accounts = [...new Set(repos.filter((repo) => repo.source === "github").map((repo) => repo.name.split("/")[0]!))];
   const fromBitbucket = repos.some((repo) => repo.source === "bitbucket-datacenter");
-  const selectedConfig = repos.find((repo) => repo.name === selection.name);
-  const selectedRow = rows.find((row) => row.name === selection.name);
+  const selectedConfig = findRepo(repos, selection.repo);
+  const selectedRow = findRepo(rows, selection.repo);
   const lastOpen = useRef<string | null>(null);
 
   const closePanel = useCallback(function closePanel() {
@@ -104,7 +99,7 @@ export default function Repositories() {
 
   useEffect(function returnFocusToRow() {
     const closed = lastOpen.current;
-    lastOpen.current = selectedRow ? selectedRow.name : null;
+    lastOpen.current = selectedRow ? selectedRow.href : null;
     if (closed && !selectedRow) document.querySelector<HTMLElement>(`[data-repo-link="${CSS.escape(closed)}"]`)?.focus();
   }, [selectedRow]);
 
@@ -151,16 +146,16 @@ export default function Repositories() {
       if (isPlainClick(event)) navigate(row.href);
     }
     const pulls = "error" in row.pulls ? null : row.pulls;
-    const open = row.name === selection.name;
+    const open = row === selectedRow;
     return (
-      <tr key={row.name} className={open ? "on" : undefined} onClick={openRow}>
+      <tr key={row.href} className={open ? "on" : undefined} onClick={openRow}>
         <td className="c-name">
-          <Link to={row.href} data-repo-link={row.name} aria-current={open ? "true" : undefined}><b title={row.name}>{row.name}</b></Link>
+          <Link to={row.href} data-repo-link={row.href} aria-current={open ? "true" : undefined}><b title={row.name}>{row.name}</b></Link>
           {row.source === "bitbucket-datacenter" && <small className="src">Bitbucket Data Center</small>}
           {pulls && pulls.awaiting > 0 && live(<small>{awaitingText(pulls.awaiting)}</small>)}
         </td>
         <td className="c-n mono">{pulls && live(pulls.open)}</td>
-        <td className="c-n mono">{"error" in row.pulls ? <span title={row.pulls.error}>GitHub error</span> : live(row.pulls.needsYou)}</td>
+        <td className="c-n mono">{"error" in row.pulls ? <span title={row.pulls.error}>{hostName(row.source)} error</span> : live(row.pulls.needsYou)}</td>
         <td className="c-checks">{checksLabel(packs.get(row.name))}</td>
         <td className="c-own" title={pulls?.owners.join(", ")}>{pulls && live(ownersLabel(pulls.owners))}</td>
         <td className="c-act">{pulls && live(pulls.lastActivity ? relativeTime(pulls.lastActivity) : "None")}</td>
@@ -170,7 +165,7 @@ export default function Repositories() {
   }
 
   if (selection.redirect) return <Navigate to={selection.redirect} replace />;
-  if (selection.name && snapshot && !reposPending && !selectedConfig && !denied) return <Navigate to="/repositories" replace />;
+  if (selection.repo && snapshot && !reposPending && !selectedConfig && !denied) return <Navigate to="/repositories" replace />;
 
   return (
     <div className={`repos${selectedConfig && selectedRow ? " split" : ""}`}>
@@ -217,7 +212,7 @@ export default function Repositories() {
           )}
         </main>
       </section>
-      {selectedConfig && selectedRow ? <RepoPanel key={selectedConfig.name} repo={selectedConfig} row={selectedRow} live={!loading && !packs.get(selectedRow.name)?.pending} store={packStore} onClose={closePanel} /> : null}
+      {selectedConfig && selectedRow ? <RepoPanel key={selectedRow.href} repo={selectedConfig} row={selectedRow} live={!loading && !packs.get(selectedRow.name)?.pending} store={packStore} onClose={closePanel} /> : null}
     </div>
   );
 }
