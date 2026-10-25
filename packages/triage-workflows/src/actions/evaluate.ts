@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, FAILED_LABEL, hostKinds, isTextCheck, marksWaiting, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step } from "@corbits/triage-contracts";
+import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { ciRefusal } from "@corbits/github-reads";
 import { approvalHeldBy, changesWanted, heldApprovals, holdDos, packApproves, stepActions, type ActionInput, type SuggestedAction } from "../logic/actions.js";
@@ -96,8 +96,7 @@ function reusable(answered: Array<[string, unknown]>): Judged {
 function policyRule(pack: CheckPack, c: CheckResult): PolicyRule {
   const pass = c.output.kind === "score" ? Math.round(c.output.score) / 100 : undefined;
   const level = c.output.kind === "level" ? c.output.level : undefined;
-  const text = pack.custom.some((rule) => rule.id === c.check && isTextCheck(rule));
-  return { name: checkName(pack, c.check), judged: c.kind === "model", result: c.result, reason: c.reason, evidence: text ? [] : c.evidence, ...(pass !== undefined && { pass }), ...(level !== undefined && { level }) };
+  return { name: checkName(pack, c.check), judged: c.kind === "model", result: c.result, reason: c.reason, evidence: c.evidence, ...(pass !== undefined && { pass }), ...(level !== undefined && { level }) };
 }
 
 /** Whether the verdict question is asked with the judged rules' first calls: when none of those is left to ask, their answers are already known. */
