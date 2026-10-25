@@ -114,6 +114,12 @@ test("consolidate cites file lines without their tags taking effect, and still a
   expect(JSON.parse(replied).sites).toEqual([{ path: "src/ok.ts", start: 2, end: 2 }]);
 });
 
+test("consolidate fails on a read that returns no window of lines", async () => {
+  const finding = { path: "src/ok.ts", start: 1, end: 1, code: CODE, title: "t", why: "w", trigger: "when" };
+  const built = await messages({ title: "t", description: "d", diff: diffOf("src/ok.ts", CODE) }, "p", finding, "");
+  await expect(consolidated(built.consolidate, () => ({ content: { lines: [CODE] } }))).rejects.toThrow("github_read_file returned no window: text must be a string (was missing)");
+});
+
 /** A host read of `files`, each a file's lines from line 1; a file not listed is not found. */
 function readsFrom(files: Record<string, string[]>) {
   return function answer({ arguments: { path, start, end } }: ToolCall): ReadResult {
