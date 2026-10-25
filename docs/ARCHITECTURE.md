@@ -684,7 +684,15 @@ read it, and passes the rest of the request to stock.
   closes the pass and, under the claim's lock, ends the claim only when no
   event is pending and no reviewer of the current head is due, so an event
   committed before it is taken by this manager and one after it starts the
-  next.
+  next. A manager run reaches take and done, and a reviewer run records its
+  result (under its own run id), through `POST
+  /api/tenants/:tenantId/manager/{take,done,reviewer-result}`
+  (`apps/hub/src/manager-routes.ts`). They admit a run token only, as the
+  hub's extra run-token routes, and need `write` on `triage-manager:state`;
+  the calling run is the token's run, never a body field. Take and done
+  answer 409 `not_manager` to a run the claim does not name.
+  Reviewer-result is not fenced: any run with the grant records under its
+  own run id, and the manager matches results to its reviewers by run id.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 
