@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Transport } from "@intx/hub-client";
-import { connectGithubApp, GITHUB_MANIFEST_URL, postGithubManifest, saveExistingGithubApp, type ManifestStart } from "./github-manifest.ts";
+import { connectGithubApp, GITHUB_MANIFEST_URL, loadOpenPulls, postGithubManifest, saveExistingGithubApp, syncGithubInstallations, type ManifestStart } from "./github-manifest.ts";
 import type { HubCredential } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 
@@ -53,10 +53,12 @@ describe("GitHub App manifest browser handoff", () => {
     }, transport)).rejects.toEqual(expect.objectContaining({ reason: "replacement_confirmation_required" }));
   });
 
-  test("saving the App key reports the HTTP status when the error response is not JSON", async () => {
+  test("GitHub setup calls report the HTTP status when the error response is not JSON", async () => {
     globalThis.fetch = async function proxyFailure() {
       return new Response("<html>Bad Gateway</html>", { status: 502, headers: { "content-type": "text/html" } });
     } as unknown as typeof fetch;
     await expect(connectGithubApp(createHubTransport(), "tnt_one", { appId: "42", privateKey: "pem" })).rejects.toThrow("HTTP 502");
+    await expect(syncGithubInstallations("tnt_one")).rejects.toThrow("HTTP 502");
+    await expect(loadOpenPulls("tnt_one")).rejects.toThrow("HTTP 502");
   });
 });
