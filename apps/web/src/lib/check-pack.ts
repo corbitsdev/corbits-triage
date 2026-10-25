@@ -4,6 +4,7 @@ import {
   checkPackName,
   readCheckPack,
   type CheckPack,
+  type RepoSource,
 } from "@corbits/triage-contracts";
 import { enc, findArtifactByTitle, listArtifacts, loadRepoCheckPack, newestByTitle, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
 
@@ -37,11 +38,11 @@ export class ExtendedPolicyError extends Error {
 }
 
 /** Versions the artifact the draft was loaded from while triage still reads it; `expectedVersion` refuses it when anyone wrote since. */
-async function versionCheckPack(transport: Transport, tenantId: string, repo: string, content: string, loaded: LoadedCheckPack): Promise<number> {
-  const current = await loadRepoCheckPack(transport, tenantId, repo);
+async function versionCheckPack(transport: Transport, tenantId: string, repo: string, source: RepoSource, content: string, loaded: LoadedCheckPack): Promise<number> {
+  const current = await loadRepoCheckPack(transport, tenantId, repo, source);
   if ((current?.kind !== "pack" && current?.kind !== "corrupt") || current.id !== loaded.id) throw new StaleCheckPackError();
   if (current.kind === "pack" && current.shared) throw new ExtendedPolicyError();
-  const title = checkPackName(repo, "github");
+  const title = checkPackName(repo, source);
   try {
     const revised = await transport.fetch<{ version?: number }>("POST", `${collection(tenantId)}/${enc(loaded.id)}/versions`, {
       content,
@@ -74,13 +75,13 @@ async function createCheckPack(transport: Transport, tenantId: string, title: st
 }
 
 /** Writes the draft onto the artifact it was loaded from, or creates one when the form saw none; never over a pack it did not see. */
-export async function writeCheckPack(transport: Transport, tenantId: string, repo: string, pack: CheckPack, loaded: LoadedCheckPack | null): Promise<StoredCheckPack> {
+export async function writeCheckPack(transport: Transport, tenantId: string, repo: string, source: RepoSource, pack: CheckPack, loaded: LoadedCheckPack | null): Promise<StoredCheckPack> {
   const clean = validateRepo(repo);
   const parsed = readCheckPack(pack, clean);
-  const title = checkPackName(clean, "github");
+  const title = checkPackName(clean, source);
   const content = JSON.stringify(parsed);
   const stored = loaded
-    ? { id: loaded.id, version: await versionCheckPack(transport, tenantId, clean, content, loaded) }
+    ? { id: loaded.id, version: await versionCheckPack(transport, tenantId, clean, source, content, loaded) }
     : await createCheckPack(transport, tenantId, title, content);
   return { kind: "pack", ...stored, pack: parsed };
 }

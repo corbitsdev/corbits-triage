@@ -1,5 +1,5 @@
 import { ApiError, type Transport } from "@intx/hub-client";
-import { checkPackName, readCheckPack, type TriageStats } from "@corbits/triage-contracts";
+import { checkPackName, readCheckPack, repoSourceOf, type RepoSource, type TriageStats } from "@corbits/triage-contracts";
 
 export type FakeArtifact = { id: string; title: string; content: string; version: number; updatedAt: number; archivedAt?: string };
 
@@ -15,8 +15,10 @@ export type FakeHub = {
 /**
  * The artifact routes as the hub serves them: listings ordered newest first,
  * `query` matched against title or content, archived ones left out, `limit` paging with `nextCursor`,
- * create never refuses a duplicate title, and `expectedVersion` answers 409. The policy route reads the newest
- * artifact titled for the repository; pins and workspace policies are the hub's, set through `policies`.
+ * create never refuses a duplicate title, a new version takes the title sent, and `expectedVersion` answers 409. The
+ * policy route reads, as the hub does, the artifact the repository's record on that host pins, else for GitHub the
+ * newest titled for it, and nothing when a namesake on another host pins that one; any other answer is set through
+ * `policies`.
  */
 export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, unknown> = {}): FakeHub {
   const hub: FakeHub = { artifacts, config, stats: null, policies: {}, requests: [], transport: { fetch, subscribe: () => () => {} } };
@@ -27,10 +29,22 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
     while (hub.artifacts.some((row) => row.id === id)) id = `art_${++created}`;
     return id;
   }
-  function policyRead(repo: string): unknown {
-    const row = [...hub.artifacts]
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .find((item) => item.archivedAt === undefined && item.title === checkPackName(repo, "github"));
+  function pinsOf(repo: string, source: RepoSource): { own: string | undefined; others: string[] } {
+    const repos = (hub.config.corbitsTriage as { repos?: Array<{ name: string; source?: string; checkPack?: { id?: string } }> } | undefined)?.repos ?? [];
+    const named = repos.filter((record) => record.name === repo);
+    const own = named.find((record) => repoSourceOf(record.source) === source)?.checkPack?.id;
+    return { own, others: named.filter((record) => repoSourceOf(record.source) !== source).flatMap((record) => record.checkPack?.id ?? []) };
+  }
+  function policyRow(repo: string, source: RepoSource): FakeArtifact | undefined {
+    const usable = hub.artifacts.filter((item) => item.archivedAt === undefined);
+    const pins = pinsOf(repo, source);
+    const pinned = usable.find((item) => item.id === pins.own);
+    if (pinned || source !== "github") return pinned;
+    const titled = usable.sort((a, b) => b.updatedAt - a.updatedAt).find((item) => item.title === checkPackName(repo, source));
+    return titled === undefined || pins.others.includes(titled.id) ? undefined : titled;
+  }
+  function policyRead(repo: string, source: RepoSource): unknown {
+    const row = policyRow(repo, source);
     if (!row) return { status: "missing" };
     try {
       return { status: "ok", pack: readCheckPack(row.content, repo), source: { repo: { id: row.id, version: row.version } }, automatic: [], decide: [], mergeRisks: [] };
@@ -47,9 +61,10 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
     }
     if (method === "GET" && path.startsWith("/api/integrations/triage-stats/t?") && hub.stats) return hub.stats as T;
     if (method === "GET" && path.startsWith("/api/integrations/github-triage/t/policy?")) {
-      const repo = new URL(path, "http://hub").searchParams.get("repo");
+      const query = new URL(path, "http://hub").searchParams;
+      const repo = query.get("repo");
       if (repo === null) throw new ApiError(400, "invalid_request", "repo is required.");
-      return (repo in hub.policies ? hub.policies[repo] : policyRead(repo)) as T;
+      return (repo in hub.policies ? hub.policies[repo] : policyRead(repo, repoSourceOf(query.get("source")))) as T;
     }
     if (method === "GET" && path.startsWith("/api/tenants/t/artifacts?")) {
       const url = new URL(path, "http://hub");
@@ -80,11 +95,12 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
       const id = decodeURIComponent(path.split("/").at(-2) ?? "");
       const row = hub.artifacts.find((item) => item.id === id);
       if (!row) throw new ApiError(404, "not_found", "No such artifact.");
-      const posted = body as { content: string; expectedVersion?: number };
+      const posted = body as { content: string; title?: string; expectedVersion?: number };
       if (posted.expectedVersion !== undefined && posted.expectedVersion !== row.version) {
         throw new ApiError(409, "conflict", "expectedVersion did not match the current version");
       }
       row.content = posted.content;
+      if (posted.title !== undefined) row.title = posted.title;
       row.version += 1;
       row.updatedAt = ++clock;
       return { artifactId: id, version: row.version } as T;

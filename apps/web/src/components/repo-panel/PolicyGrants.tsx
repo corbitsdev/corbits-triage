@@ -23,14 +23,14 @@ type PolicyGrantsProps = { repo: string; source: RepoSource; disabled: boolean }
 export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsProps) {
   const { addGrant, snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
-  const policy = useQuery(checkPackQuery(tenantId, repo));
+  const policy = useQuery(checkPackQuery(tenantId, repo, source));
   const roles = useRoles();
   const canCreate = useAllowed("grant:*", "create");
   const queryClient = useQueryClient();
   const allow = useMutation({
     mutationFn: async function allowKinds({ roleId, kinds }: { roleId: string; kinds: ActionKind[] }) {
       for (const kind of kinds) await addGrant({ roleId, resource: doResource(kind, repo), action: DO_GRANT_ACTION });
-      await queryClient.invalidateQueries({ queryKey: ["check-pack", tenantId, repo] });
+      await queryClient.invalidateQueries({ queryKey: checkPackQuery(tenantId, repo, source).queryKey });
     },
   });
 
