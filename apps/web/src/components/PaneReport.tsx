@@ -17,11 +17,23 @@ import { Markdown } from "./Markdown.tsx";
 
 export type PullState = { data: GithubPullDetail | undefined; loading: boolean; error: unknown };
 
+/** Labels in the status line's words; a failed rule is the author's to fix only once it is their turn. */
 const MARK: Record<Severity, { className: string; glyph: string; label: string }> = {
-  fail: { className: "mk flag", glyph: "!", label: "To fix" },
-  unsure: { className: "mk judge", glyph: "?", label: "Your call" },
+  fail: { className: "mk flag", glyph: "!", label: "Not met" },
+  unsure: { className: "mk judge", glyph: "?", label: "Decide" },
   cant: { className: "mk cant", glyph: "–", label: "Couldn't check" },
 };
+
+function sentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+/** The rule's name, then why; a reason that already opens with the name as a word is shown alone, so the row never repeats itself. */
+function problemText(name: string, reason: string | null): string {
+  if (reason === null) return name;
+  const opensWithName = reason.toLowerCase().startsWith(name.toLowerCase()) && /^(?:$|[\s\p{P}])/u.test(reason.slice(name.length));
+  return opensWithName ? sentence(reason) : `${name}: ${sentence(reason)}`;
+}
 
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
@@ -36,15 +48,19 @@ export function StatusLine({ status }: { status: PaneStatus }) {
   );
 }
 
-function ProblemRow({ problem, pack, item }: { problem: Problem; pack: CheckPack | null; item: PrItem }) {
+type ProblemsProps = { problems: Problem[]; pack: CheckPack | null; item: PrItem; authorsTurn: boolean };
+
+function ProblemRow({ problem, pack, item, authorsTurn }: Omit<ProblemsProps, "problems"> & { problem: Problem }) {
   const { check, severity, cited, notes } = problem;
   const mark = MARK[severity];
-  const text = problem.text ?? checkLabel(pack, check.check) ?? check.check;
+  const label = severity === "fail" && authorsTurn ? "To fix" : mark.label;
+  const name = checkLabel(pack, check.check) ?? check.check;
+  const text = problemText(name, problem.text);
   return (
     <li className={`pb s-${severity}`}>
       <span className={mark.className} aria-hidden="true">{mark.glyph}</span>
       <div>
-        <p className="pb-w">{severity === "unsure" ? <b>{mark.label}: </b> : <span className="sr-only">{mark.label}: </span>}{text}</p>
+        <p className="pb-w">{severity === "unsure" ? <b>{label}: </b> : <span className="sr-only">{label}: </span>}{text}</p>
         {cited.length > 0 ? (
           <p className="pb-c">{cited.map((evidence) => <span key={evidence} className="mono"><CitedEvidence text={evidence} output={check.output} source={item.source} repo={item.repo} sha={item.verdictSha} /></span>)}</p>
         ) : null}
@@ -54,9 +70,9 @@ function ProblemRow({ problem, pack, item }: { problem: Problem; pack: CheckPack
   );
 }
 
-export function Problems({ problems, pack, item }: { problems: Problem[]; pack: CheckPack | null; item: PrItem }) {
+export function Problems({ problems, pack, item, authorsTurn }: ProblemsProps) {
   if (problems.length === 0) return null;
-  return <ol className="pbs">{problems.map((problem) => <ProblemRow key={problem.check.check} problem={problem} pack={pack} item={item} />)}</ol>;
+  return <ol className="pbs">{problems.map((problem) => <ProblemRow key={problem.check.check} problem={problem} pack={pack} item={item} authorsTurn={authorsTurn} />)}</ol>;
 }
 
 function Disclosure({ label, children }: { label: ReactNode; children: ReactNode }) {
@@ -220,7 +236,7 @@ export function ReportRows({ item, pull, pack }: { item: PrItem; pull: PullState
           <Disclosure label={plural(detail.pr.changedFiles, "file", "files")}><Files files={detail.files} changed={detail.pr.changedFiles} /></Disclosure>
         </>
       )}
-      {passed.length > 0 ? <Disclosure label={`${plural(passed.length, "rule", "rules")} passed`}><Passed checks={passed} pack={pack} /></Disclosure> : null}
+      {passed.length > 0 ? <Disclosure label={`Checked and fine: ${plural(passed.length, "rule", "rules")}`}><Passed checks={passed} pack={pack} /></Disclosure> : null}
       <Link className="more" to={prHref(item)}>Commits and conversation</Link>
     </div>
   );

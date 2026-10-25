@@ -1,19 +1,25 @@
-import { citationOf } from "@corbits/triage-contracts";
-import type { CheckResult, GithubPullDetail, HeldBlock, MergeBlock, PrItem, QueueState, RunFailure } from "./hub-api.ts";
-import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
+import { askRules, citationOf, NO_CHANGES_REQUESTED, type CheckPack } from "@corbits/triage-contracts";
+import type { CheckResult, GithubPullDetail, HeldBlock, PrItem, RunFailure } from "./hub-api.ts";
+import { hasUncheckedCommits, paneActions, paneFacts, type ActionBlocker, type MenuEntry, type PaneFacts, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, postedLabel, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
+import { checkLabel } from "./pack-prose.ts";
 import { pendingDos, type PendingDo } from "./pending-dos.ts";
+import { hostName } from "./pull-link.ts";
 import { upperFirst } from "./triage-view.ts";
 
-/** A failed check is something to fix; a model check the judge did not settle is the maintainer's call; anything else unconfirmed could not be checked. */
+/**
+ * A failed check is something to fix, unless the policy asks a maintainer about it; that and a model check the judge did
+ * not settle are the maintainer's call; anything else unconfirmed could not be checked.
+ */
 export type Severity = "fail" | "unsure" | "cant";
 
 export type Problem = { check: CheckResult; severity: Severity; text: string | null; cited: string[]; notes: string[] };
 
 /** An author rule never fails a pull request, so it is a problem only when it could not be decided. */
-function severityOf(check: CheckResult): Severity | null {
+function severityOf(check: CheckResult, ask: readonly string[]): Severity | null {
   if (check.result === "pass") return null;
-  if (check.result === "fail") return check.gate ? null : "fail";
+  if (check.result === "fail" && check.gate) return null;
+  if (check.result === "fail") return ask.includes(check.check) ? "unsure" : "fail";
   if (check.gate) return "cant";
   if (check.output?.kind === "score" || (check.output === null && check.kind === "model")) return "unsure";
   return "cant";
@@ -22,9 +28,10 @@ function severityOf(check: CheckResult): Severity | null {
 const SEVERITY_ORDER: Severity[] = ["fail", "unsure", "cant"];
 
 /** What stands in the way, failures first; `text` is null when the check gave no reason, so its name stands in. */
-export function paneProblems(checks: CheckResult[]): Problem[] {
+export function paneProblems(checks: CheckResult[], pack: CheckPack | null): Problem[] {
+  const ask = pack === null ? [] : askRules(pack);
   const problems = checks.flatMap((check) => {
-    const severity = severityOf(check);
+    const severity = severityOf(check, ask);
     if (severity === null) return [];
     const cited = check.evidence.filter((evidence) => citationOf(check.output, evidence) !== undefined);
     const notes = check.evidence.filter((evidence) => !cited.includes(evidence));
@@ -48,11 +55,14 @@ const FAILURE_TEXT: Record<RunFailure, string> = {
 };
 
 /** Why a ready pull request cannot merge yet, when the merge is what holds it. */
-const NOT_YET: Partial<Record<ActionBlocker, string>> = {
-  draft: "Ready, but it's a draft",
-  "not-mergeable": "Ready, but has conflicts",
-  "mergeability-unknown": "Ready, once GitHub has checked for conflicts",
-};
+function notYetText(blocker: ActionBlocker, item: PrItem): string | null {
+  switch (blocker) {
+    case "draft": return "it's a draft";
+    case "not-mergeable": return "it has conflicts";
+    case "mergeability-unknown": return `${hostName(item.source)} hasn't checked for conflicts`;
+    default: return null;
+  }
+}
 
 const HELD_REASON: Record<HeldBlock, string> = {
   behind: "behind its base branch",
@@ -72,17 +82,39 @@ export function heldReason(block: HeldBlock, detail: GithubPullDetail | undefine
   return HELD_REASON[block];
 }
 
-function things(count: number): string {
-  return `${count} ${count === 1 ? "thing" : "things"}`;
+/** The list's own word for what holds the merge, read from the host before any pane opens it. */
+const HELD_ROW: Record<HeldBlock, string> = {
+  behind: "Behind base",
+  "review-required": "Waiting for review",
+  "changes-requested": "Changes requested",
+  blocked: "Merge blocked",
+};
+
+function heldRowText(blocker: ActionBlocker): string | null {
+  if (isHeldBlock(blocker)) return HELD_ROW[blocker];
+  if (blocker === "mergeability-unknown") return "Checking merge state";
+  if (blocker === "not-mergeable") return "Has conflicts";
+  return blocker === "draft" ? "Draft" : null;
 }
 
-function status(tone: StatusTone, text: string): PaneStatus {
-  return { tone, text, live: false };
+/** Words for a status, with how many more rules than it names; the reasons are in the problem rows, so a status names only rules. */
+export type StatusWords = { text: string; more: number };
+
+function ruleNames(problems: Problem[], pack: CheckPack | null, shown: number): StatusWords {
+  const names = problems.map((problem) => checkLabel(pack, problem.check.check) ?? problem.check.check);
+  return { text: names.slice(0, shown).join(", "), more: Math.max(names.length - shown, 0) };
 }
 
-export function approvedByTriage(item: PrItem): boolean {
-  const head = currentHead(item);
-  return head !== null && head === item.verdictSha && item.actions.some((action) => action.kind === "approve" && (action.status === "done" || action.status === "satisfied"));
+export function moreText(more: number): string {
+  return `+${more} more`;
+}
+
+export function statusText({ text, more }: StatusWords): string {
+  return more > 0 ? `${text} ${moreText(more)}` : text;
+}
+
+function plain(text: string): StatusWords {
+  return { text, more: 0 };
 }
 
 export function endedText(item: PrItem, detail: GithubPullDetail | undefined, handled: HandledMark | null): string | null {
@@ -91,85 +123,163 @@ export function endedText(item: PrItem, detail: GithubPullDetail | undefined, ha
   return null;
 }
 
-export type StatusInput = {
-  item: PrItem;
-  detail: GithubPullDetail | undefined;
-  handled: HandledMark | null;
-  approved: boolean;
-  /** The bar's primary, so the line never asks for what the button does not do. */
-  primary: MenuEntry | null;
-};
+/** `detail` is the host's own read, which only the pane has; without it the list's read of the host stands in. */
+export type StatusInput = { item: PrItem; detail: GithubPullDetail | undefined; handled: HandledMark | null; pack: CheckPack | null };
 
-function problemsText(item: PrItem, primary: MenuEntry | null, fix: number, check: number): string {
-  const rest = check > 0 ? `, ${check} to check` : "";
-  if (primary?.kind === "reply" || primary?.kind === "comment") return `Needs your reply · ${things(fix)} to fix${rest}`;
-  return `${inboxStatus(item)} · ${things(fix)} to fix${rest}`;
+/** The pane's line and the row's shortened one, said with the same verb. */
+type Standing = { tone: StatusTone; pane: string; row: StatusWords; live: boolean };
+
+function line(tone: StatusTone, pane: string, row: string | StatusWords): Standing {
+  return { tone, pane, row: typeof row === "string" ? plain(row) : row, live: false };
 }
 
-const BLOCK_ROW_STATUS: Record<MergeBlock, string> = {
-  checking: "Checking merge state",
-  behind: "Behind base",
-  "review-required": "Waiting for review",
-  "changes-requested": "Changes requested",
-  blocked: "Merge blocked",
-};
-
-const ROW_STATUS: Record<QueueState, string> = {
-  "needs-decision": "Your call",
-  "awaiting-review": "Needs review",
-  "needs-author-update": "Waiting on author",
-  blocked: "Blocked",
-  ready: "Ready",
-  stale: "Rechecking",
-  new: "Not triaged",
-};
-
-/** A few words for where the pull request stands, for its row in a list; `handled` is what you did, null in Needs you. */
-export function rowStatus(item: PrItem, handled: HandledMark | null): string {
-  if (item.running || item.waitingForCi) return inboxStatus(item);
-  if (item.draft) return "Draft";
-  const posted = handled === null ? null : postedLabel(item, handled);
-  if (posted !== null) return posted;
-  if (inboxAction(item) === "failed") return "Couldn't triage";
-  const fix = paneProblems(item.checks).filter((problem) => problem.severity === "fail").length;
-  if (fix > 0) return `${fix} to fix`;
-  if (item.state === "ready" && item.mergeable === false) return "Has conflicts";
-  if (item.state === "ready" && item.mergeBlock !== null) return BLOCK_ROW_STATUS[item.mergeBlock];
-  return ROW_STATUS[isReReview(item) ? "awaiting-review" : item.state];
+/** The pane names up to `shown` rules after `pane`; the row names one after `row`. */
+function named(tone: StatusTone, pane: string, row: string, problems: Problem[], pack: CheckPack | null, shown = 1): Standing {
+  const one = ruleNames(problems, pack, 1);
+  return line(tone, `${pane}${statusText(ruleNames(problems, pack, shown))}`, { ...one, text: `${row}${one.text}` });
 }
 
-/** One line for where the pull request stands, read from the same verdict state, waits-on and actions as the list and the bar. */
-export function paneStatus({ item, detail, handled, approved, primary }: StatusInput): PaneStatus {
+type Severities = Record<Severity, Problem[]>;
+
+function bySeverity(item: PrItem, pack: CheckPack | null): Severities {
+  const problems = paneProblems(item.checks, pack);
+  return {
+    fail: problems.filter((problem) => problem.severity === "fail"),
+    unsure: problems.filter((problem) => problem.severity === "unsure"),
+    cant: problems.filter((problem) => problem.severity === "cant"),
+  };
+}
+
+/** Why a rule is yours to decide: the judge was not sure, or the policy asks a maintainer when it fails. */
+function decideWhy(unsure: Problem[]): string {
+  const asked = unsure.filter((problem) => problem.check.result === "fail").length;
+  if (asked === 0) return "Triage wasn't sure";
+  return asked === unsure.length ? "your policy asks you" : "see why below";
+}
+
+type Context = { item: PrItem; author: string; problems: Severities; pack: CheckPack | null; facts: PaneFacts; detail: GithubPullDetail | undefined };
+
+/** What a re-review finds still open; the requested change is what it answers, so it is not listed. */
+function reReviewLine({ author, problems, pack }: Context): Standing {
+  const still = problems.fail.filter((problem) => problem.check.check !== NO_CHANGES_REQUESTED);
+  const open: Array<[string, Problem[]]> = [["still not met: ", still], ["still to decide: ", problems.unsure], ["couldn't check: ", problems.cant]];
+  const parts = open.filter(([, listed]) => listed.length > 0).map(([label, listed]) => `${label}${statusText(ruleNames(listed, pack, 1))}`);
+  return line("you", `Re-review: ${author} updated it · ${parts.length > 0 ? parts.join(" · ") : "all rules met"}`, "Re-review");
+}
+
+/**
+ * What the main button does and what it is about; null where the button says nothing about the rules and one could not
+ * be checked, or there is none to say. Once the feedback is posted the turn is the author's, whatever reply the bar offers.
+ */
+function buttonLine(primary: MenuEntry | null, { item, author, problems: { fail, cant }, pack, facts, detail }: Context): Standing | null {
+  if (isPostedToAuthor(item)) return fail.length > 0 ? { ...named("author", `Waiting on ${author} to fix: `, "", fail, pack), row: plain(`Waiting on ${author}`) } : line("author", `Waiting on ${author}`, `Waiting on ${author}`);
+  /** A line naming no rule gives way to the rules that could not be checked. */
+  function unnamed(said: Standing): Standing | null {
+    return cant.length > 0 ? null : said;
+  }
+  switch (primary?.kind) {
+    case "reply":
+      return fail.length > 0 ? named("you", `Ask ${author} to fix: `, "Ask to fix: ", fail, pack, 2) : unnamed(line("you", `Send feedback to ${author}`, "Send feedback"));
+    case "changes": {
+      if (fail.length > 0) return named("you", `Request changes from ${author}: `, "Request changes: ", fail, pack);
+      const held = isHeldBlock(facts.hostBlock) ? `: ${heldReason(facts.hostBlock, detail)}` : "";
+      return unnamed(line("you", `Request changes from ${author}${held}`, "Request changes"));
+    }
+    case "approve":
+      return fail.length > 0 ? named("you", `Approve anyway, or ask ${author} to fix: `, "Review: ", fail, pack) : unnamed(line("you", "Review and approve", "Review"));
+    case "comment":
+      return fail.length > 0 ? named("you", `Reply to ${author} · not met: `, "Reply: ", fail, pack) : unnamed(line("you", `Reply to ${author}`, "Reply"));
+    case "merge": {
+      const blocker = primary.blocker;
+      const row = blocker === null ? null : heldRowText(blocker);
+      if (blocker !== null && row !== null) return line("you", `Can't merge yet: ${isHeldBlock(blocker) ? heldReason(blocker, detail) : notYetText(blocker, item)}`, row);
+      if (fail.length > 0) return named("you", "Ready to merge · still not met: ", "Ready to merge: not met ", fail, pack);
+      return unnamed(line("ready", "Ready to merge", "Ready to merge"));
+    }
+    case undefined: {
+      if (fail.length > 0) return named("you", "Not met: ", "Not met: ", fail, pack);
+      const held = item.state === "blocked" && isHeldBlock(facts.hostBlock) ? facts.hostBlock : null;
+      return held === null ? null : unnamed(line("you", `Blocked: ${heldReason(held, detail)}`, "Blocked"));
+    }
+    default:
+      return null;
+  }
+}
+
+/** Re-review, then rules to decide, then what the main button does, then rules that could not be checked. */
+function ruledLine(context: Context): Standing {
+  const { item, facts, problems: { unsure, cant }, pack } = context;
+  if (isReReview(item)) return reReviewLine(context);
+  if (unsure.length > 0) {
+    const decide = named("you", "Decide: ", "Decide: ", unsure, pack);
+    return { ...decide, pane: `${decide.pane} (${decideWhy(unsure)})` };
+  }
+  const primary = paneBar({ item, facts, readOnly: false, busy: false }, null, facts.author).primary;
+  const button = buttonLine(primary, context);
+  if (button !== null) return button;
+  if (cant.length > 0) {
+    const checked = named("you", "Couldn't check ", "Couldn't check: ", cant, pack);
+    return { ...checked, pane: `${checked.pane} · use Triage again in More` };
+  }
+  return line("you", inboxStatus(item), inboxStatus(item));
+}
+
+/**
+ * After your approval the button has done its part, so the line says only what is still open, or what holds the merge.
+ * Your approval answers the change you requested, so that is not listed as unmet.
+ */
+function approvedLine({ item, author, problems: { fail, unsure, cant }, pack, facts, detail }: Context): Standing {
+  const unmet = fail.filter((problem) => problem.check.check !== NO_CHANGES_REQUESTED);
+  if (unmet.length > 0) return named("you", "You approved · still not met: ", "", unmet, pack);
+  if (unsure.length > 0) return named("you", "You approved · still to decide: ", "", unsure, pack);
+  if (cant.length > 0) return named("you", "You approved · couldn't check: ", "", cant, pack);
+  if (isPostedToAuthor(item)) return line("author", `You approved · waiting on ${author}`, "");
+  const primary = paneBar({ item, facts, readOnly: false, busy: false }, null, facts.author).primary;
+  if (primary?.kind !== "merge") return line("you", "You approved", "");
+  const { blocker } = primary;
+  if (blocker === null || heldRowText(blocker) === null) return line("ready", "You approved · ready to merge", "");
+  return line("you", `You approved · can't merge yet: ${isHeldBlock(blocker) ? heldReason(blocker, detail) : notYetText(blocker, item)}`, "");
+}
+
+/**
+ * Where the pull request stands, for the pane's status line and, shortened, its row in a list, read in one order: ended,
+ * running, CI, a failed run, a draft, not triaged or rechecking, commits Triage has not checked, what you did, a re-review,
+ * rules to decide, what the main button does, rules that could not be checked. The row's main button is read from the
+ * list, the pane's from the host's detail once it has loaded; that is the only way the two can differ.
+ */
+function standing({ item, detail, handled, pack }: StatusInput): Standing {
   const ended = endedText(item, detail, handled);
-  if (ended !== null) return status("quiet", ended);
-  if (item.running) return { ...status("quiet", "Triage running…"), live: true };
-  if (item.waitingForCi) return status("quiet", hasUncheckedCommits(item) ? "Waiting for CI · new commits since Triage checked" : "Waiting for CI");
-  if (inboxAction(item) === "failed" && item.failure !== null) return status("quiet", `Couldn't triage: ${FAILURE_TEXT[item.failure]}`);
-  if (item.state === "new" || item.state === "stale") return status("quiet", inboxStatus(item));
-  if (hasUncheckedCommits(item)) return status("quiet", "New commits since Triage checked · rechecking");
-  const problems = paneProblems(item.checks);
-  const fix = problems.filter((problem) => problem.severity === "fail").length;
-  const unsure = problems.filter((problem) => problem.severity === "unsure").length;
-  const check = problems.length - fix;
-  const author = item.author === null ? "the author" : `@${item.author}`;
-  if (item.draft === true) return status("author", `Draft · waiting on ${author}`);
-  if (handled?.kind === "approve") {
-    if (fix === 0) return status("ready", "You approved · ready to merge");
-    return status("you", `You approved · ${fix} ${fix === 1 ? "rule" : "rules"} failing`);
+  if (ended !== null) return line("quiet", ended, ended);
+  if (item.running) return { ...line("quiet", "Triage running…", inboxStatus(item)), live: true };
+  if (item.waitingForCi) return line("quiet", hasUncheckedCommits(item) ? "Waiting for CI · new commits since Triage checked" : "Waiting for CI", "Waiting for CI");
+  if (inboxAction(item) === "failed") {
+    // A draft has no main button, so Triage again waits in More.
+    const why = item.failure === null ? "Couldn't triage" : `Couldn't triage: ${FAILURE_TEXT[item.failure]}`;
+    return line("quiet", item.draft === true ? `${why} · use Triage again in More` : why, "Couldn't triage");
   }
-  if (isPostedToAuthor(item) || (handled !== null && waitsOn(item, handled) === "author")) {
-    return status("author", fix > 0 ? `Waiting on ${author} to fix ${things(fix)}` : `Waiting on ${author}`);
-  }
-  if (isReReview(item)) return status("you", "Ready for your re-review");
-  if (fix > 0) return status("you", problemsText(item, primary, fix, check));
-  if (unsure > 0) return status("you", `Not sure about ${things(check)} — your call`);
-  if (check > 0) return status("you", `Couldn't check ${things(check)}: ${problems.filter((problem) => problem.severity === "cant").map((problem) => problem.text ?? problem.check.check).join("; ")}`);
-  if (item.state !== "ready") return status("you", inboxStatus(item));
-  const blocker = primary?.kind === "merge" ? primary.blocker : null;
-  if (isHeldBlock(blocker)) return status("you", `Ready, but ${heldReason(blocker, detail)}`);
-  const blocked = blocker === null ? undefined : NOT_YET[blocker];
-  if (blocked !== undefined) return status("you", blocked);
-  return status("ready", approved ? "Approved by Triage · ready for you to merge" : "Ready to merge");
+  const facts = paneFacts(item, detail);
+  const author = facts.author === null ? "the author" : `@${facts.author}`;
+  if (item.draft === true) return line("author", `Draft · waiting on ${author}`, "Draft");
+  if (item.state === "new" || item.state === "stale") return line("quiet", inboxStatus(item), inboxStatus(item));
+  if (hasUncheckedCommits(item)) return line("quiet", "New commits since Triage checked · rechecking", "Rechecking");
+  const problems = bySeverity(item, pack);
+  const context: Context = { item, author, problems, pack, facts, detail };
+  if (handled === null) return ruledLine(context);
+  const posted = postedLabel(item, handled) ?? inboxStatus(item);
+  if (handled.kind === "approve") return { ...approvedLine(context), row: plain(posted) };
+  if (waitsOn(item, handled) === "author") return problems.fail.length > 0 ? { ...named("author", `Waiting on ${author} to fix: `, "", problems.fail, pack), row: plain(posted) } : line("author", `Waiting on ${author}`, posted);
+  return { ...ruledLine(context), row: plain(posted) };
+}
+
+/** A few words for the pull request's row in a list: the pane's status line, shortened; `more` is apart so the row can cut the names and keep the count. */
+export function rowStatus(item: PrItem, handled: HandledMark | null, pack: CheckPack | null): StatusWords {
+  return standing({ item, detail: undefined, handled, pack }).row;
+}
+
+/** One line for where the pull request stands: what the main button does and what it is about. */
+export function paneStatus(input: StatusInput): PaneStatus {
+  const { tone, pane, live } = standing(input);
+  return { tone, text: pane, live };
 }
 
 /** `held` is Triage's held action with the same kind and label, which the button completes instead of writing a second one. */

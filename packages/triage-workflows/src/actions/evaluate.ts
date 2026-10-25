@@ -92,11 +92,19 @@ function reusable(answered: Array<[string, unknown]>): Judged {
   return judged;
 }
 
+/** The names the verdict question was evaluated with, kept when the portal renames a rule so the model reads the same state. */
+const VERDICT_RULE_NAMES: ReadonlyMap<string, string> = new Map([
+  ["no-merge-conflicts", "No merge conflicts"],
+  ["no-forbidden-paths", "No forbidden paths"],
+  ["not-a-draft", "Not a draft"],
+  ["no-changes-requested", "No changes requested"],
+]);
+
 /** A rule as the verdict question reads it; a judged rule scored out of 100 says how likely it passes, and a score rule names its level. */
 function policyRule(pack: CheckPack, c: CheckResult): PolicyRule {
   const pass = c.output.kind === "score" ? Math.round(c.output.score) / 100 : undefined;
   const level = c.output.kind === "level" ? c.output.level : undefined;
-  return { name: checkName(pack, c.check), judged: c.kind === "model", result: c.result, reason: c.reason, evidence: c.evidence, ...(pass !== undefined && { pass }), ...(level !== undefined && { level }) };
+  return { name: VERDICT_RULE_NAMES.get(c.check) ?? checkName(pack, c.check), judged: c.kind === "model", result: c.result, reason: c.reason, evidence: c.evidence, ...(pass !== undefined && { pass }), ...(level !== undefined && { level }) };
 }
 
 /** Whether the verdict question is asked with the judged rules' first calls: when none of those is left to ask, their answers are already known. */

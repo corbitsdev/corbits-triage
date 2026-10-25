@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem, SuggestedAction } from "./hub-api.ts";
 import { mergeBlockOf, paneFacts } from "./inbox-pane.ts";
-import { approvedByTriage, heldChoices, paneBar, paneProblems, paneStatus, passedChecks, rowStatus, type StatusInput } from "./pane-report.ts";
+import type { HandledMark } from "./inbox-view.ts";
+import { heldChoices, paneBar, paneProblems, paneStatus, passedChecks, rowStatus, statusText, type StatusInput } from "./pane-report.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
@@ -46,6 +48,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     failure: null,
     actions: [],
     href: "/prs/acme/widgets/1",
+    source: "github",
     ...overrides,
   };
 }
@@ -57,14 +60,22 @@ function check(overrides: Partial<CheckResult>): CheckResult {
 const FAIL = check({ check: "docs", kind: "model", result: "fail", reason: "the new retry path is not documented", evidence: ["retry.rs:40-49"], output: { kind: "score", score: 20, passAt: 70, items: [{ path: "retry.rs", added: { start: 40, end: 49 } }] } });
 const UNSURE = check({ check: "focused", kind: "model", result: "unconfirmed", reason: "not sure the old job can go", output: { kind: "score", score: 50, passAt: 70, items: [] } });
 const CANT = check({ check: "no-merge-conflicts", result: "unconfirmed", reason: "mergeability not yet computed", output: { kind: "could-not-check", reason: "mergeability not yet computed" } });
+const RELEASE_NOTES = check({ check: "release-notes", kind: "text", result: "fail", reason: "the description does not contain Release notes" });
+const PACK: CheckPack = {
+  ...emptyPack("acme/widgets"),
+  custom: [{ id: "release-notes", name: "Release notes describe the user-facing change", group: "pull-request", kind: "text", fields: ["description"], failWhen: "not-contains", phrases: ["Release notes"] }],
+};
+
+function failed(id: string): CheckResult {
+  return check({ check: id, result: "fail" });
+}
 
 function barOf(pr: PrItem, detail?: GithubPullDetail, readOnly = false) {
   return paneBar({ item: pr, facts: paneFacts(pr, detail), readOnly, busy: false }, "main", pr.author);
 }
 
-function statusOf(overrides: Partial<PrItem>, input: Partial<Omit<StatusInput, "item" | "primary">> = {}) {
-  const pr = item(overrides);
-  return paneStatus({ item: pr, detail: undefined, handled: null, approved: false, primary: barOf(pr, input.detail).primary, ...input });
+function statusOf(overrides: Partial<PrItem>, input: Partial<Omit<StatusInput, "item">> = {}) {
+  return paneStatus({ item: item(overrides), detail: undefined, handled: null, pack: null, ...input });
 }
 
 function detail(pr: Partial<GithubPullDetail["pr"]>): GithubPullDetail {
@@ -78,101 +89,105 @@ describe("paneProblems", () => {
   test("lists only what is in the way, failures first, with cited lines apart from other evidence", () => {
     const gate = check({ check: "custom-1", result: "fail", gate: true });
     const size = check({ check: "max-files-changed", result: "fail", reason: "pull request is over the files limit", evidence: ["31 files (max 30)"], output: { kind: "values", values: { files: 31 } } });
-    const problems = paneProblems([CANT, check({}), UNSURE, gate, FAIL, size]);
+    const problems = paneProblems([CANT, check({}), UNSURE, gate, FAIL, size], null);
     expect(problems.map((problem) => [problem.check.check, problem.severity])).toEqual([["docs", "fail"], ["max-files-changed", "fail"], ["focused", "unsure"], ["no-merge-conflicts", "cant"]]);
     expect(problems[0]).toMatchObject({ text: "The new retry path is not documented", cited: ["retry.rs:40-49"], notes: [] });
     expect(problems[1]).toMatchObject({ cited: [], notes: ["31 files (max 30)"] });
   });
 
   test("an undecided gate could not be checked; a check from before outputs is unsure only when a model asked it", () => {
-    expect(paneProblems([check({ result: "unconfirmed", gate: true })])[0]?.severity).toBe("cant");
-    expect(paneProblems([check({ kind: "model", result: "unconfirmed" })])[0]).toMatchObject({ severity: "unsure", text: null });
-    expect(paneProblems([check({ result: "unconfirmed" })])[0]?.severity).toBe("cant");
+    expect(paneProblems([check({ result: "unconfirmed", gate: true })], null)[0]?.severity).toBe("cant");
+    expect(paneProblems([check({ kind: "model", result: "unconfirmed" })], null)[0]).toMatchObject({ severity: "unsure", text: null });
+    expect(paneProblems([check({ result: "unconfirmed" })], null)[0]?.severity).toBe("cant");
   });
 });
 
-describe("paneStatus", () => {
-  test("each state reads as one line with its tone", () => {
-    expect(statusOf({ checks: [FAIL, UNSURE, CANT], comment: "Please add a test." })).toMatchObject({ tone: "you", text: "Needs your reply · 1 thing to fix, 2 to check" });
-    expect(statusOf({ checks: [UNSURE, CANT, check({})] })).toMatchObject({ tone: "you", text: "Not sure about 2 things — your call" });
-    expect(statusOf({ checks: [CANT, check({})] })).toMatchObject({ tone: "you", text: "Couldn't check 1 thing: Mergeability not yet computed" });
-    expect(statusOf({ state: "ready", checks: [check({})] })).toMatchObject({ tone: "ready", text: "Ready to merge" });
-    expect(statusOf({ state: "ready" }, { approved: true })).toMatchObject({ tone: "ready", text: "Approved by Triage · ready for you to merge" });
-    expect(statusOf({ running: true })).toMatchObject({ text: "Triage running…", live: true });
-    expect(statusOf({ waitingForCi: true, verdictSha: "head-1", waitingHeadSha: "head-1" }).text).toBe("Waiting for CI");
-    expect(statusOf({ waitingForCi: true, verdictSha: "head-1", waitingHeadSha: "head-2", headSha: "head-1" }).text).toBe("Waiting for CI · new commits since Triage checked");
-    expect(statusOf({ state: "new", runId: null, failure: "stuck" }).text).toBe("Couldn't triage: the run stopped responding");
-    expect(statusOf({ state: "new", runId: null }).text).toBe("Not triaged yet");
-    expect(statusOf({ state: "new", runId: null, draft: true }).text).toBe("Draft");
+describe("status line and row", () => {
+  const feedback = "Please add a test.";
+  const requested = check({ check: "no-changes-requested", result: "fail", reason: "a reviewer requested changes" });
+  const asked: CheckPack = { ...emptyPack("acme/widgets"), checks: { "linked-issue": { enabled: true, tracker: "github", onFail: "ask" } } };
+
+  /** Each case through both, in the one order: what the pane says, and the row's shortened words. */
+  const CASES: Array<[string, Partial<PrItem>, string, string, CheckPack?, HandledMark?]> = [
+    ["closed", { closed: true, checks: [FAIL] }, "Closed", "Closed"],
+    ["running", { running: true }, "Triage running…", "Running"],
+    ["waiting for CI", { waitingForCi: true, checks: [FAIL] }, "Waiting for CI", "Waiting for CI"],
+    ["a failed run that is also a draft", { state: "new", runId: null, failure: "stuck", draft: true, checks: [FAIL] }, "Couldn't triage: the run stopped responding · use Triage again in More", "Couldn't triage"],
+    ["a failed run", { state: "new", runId: null, failure: "stuck" }, "Couldn't triage: the run stopped responding", "Couldn't triage"],
+    ["a draft that is rechecking", { state: "stale", draft: true }, "Draft · waiting on @ada", "Draft"],
+    ["rechecking with commits Triage has not checked", { state: "stale", headSha: "head-2" }, "Rechecking", "Rechecking"],
+    ["a draft with a failed rule", { state: "awaiting-review", draft: true, checks: [FAIL] }, "Draft · waiting on @ada", "Draft"],
+    ["stale", { state: "stale", checks: [FAIL], comment: feedback }, "Rechecking", "Rechecking"],
+    ["new", { state: "new", runId: null }, "Not triaged yet", "Not triaged yet"],
+    ["commits Triage has not checked", { state: "blocked", checks: [FAIL], headSha: "head-2" }, "New commits since Triage checked · rechecking", "Rechecking"],
+    ["a re-review with a rule to decide", { state: "awaiting-review", reviewAnswered: true, checks: [requested, UNSURE] }, "Re-review: @ada updated it · still to decide: Focused", "Re-review"],
+    ["a re-review with nothing open", { state: "awaiting-review", reviewAnswered: true, checks: [requested] }, "Re-review: @ada updated it · all rules met", "Re-review"],
+    ["a rule Triage wasn't sure of, before the button", { checks: [FAIL, UNSURE], comment: feedback }, "Decide: Focused (Triage wasn't sure)", "Decide: Focused"],
+    ["a rule the policy asks about", { checks: [failed("linked-issue")], comment: feedback }, "Decide: Linked issue (your policy asks you)", "Decide: Linked issue", asked],
+    ["both kinds to decide", { checks: [failed("linked-issue"), UNSURE] }, "Decide: Linked issue +1 more (see why below)", "Decide: Linked issue +1 more", asked],
+    ["Send feedback", { checks: [FAIL, failed("linked-issue"), failed("ci-green")], comment: feedback }, "Ask @ada to fix: Docs, Linked issue +1 more", "Ask to fix: Docs +2 more"],
+    ["Send feedback with nothing failed", { comment: feedback }, "Send feedback to @ada", "Send feedback"],
+    ["Request changes", { state: "blocked", checks: [FAIL] }, "Request changes from @ada: Docs", "Request changes: Docs"],
+    ["Request changes with no failed rule", { state: "blocked" }, "Request changes from @ada", "Request changes"],
+    ["Approve with every rule met", { state: "awaiting-review" }, "Review and approve", "Review"],
+    ["Approve with a rule failing", { state: "awaiting-review", checks: [failed("linked-issue")] }, "Approve anyway, or ask @ada to fix: Linked issue", "Review: Linked issue"],
+    ["Reply", {}, "Reply to @ada", "Reply"],
+    ["Reply with a rule failing and no feedback drafted", { checks: [FAIL] }, "Reply to @ada · not met: Docs", "Reply: Docs"],
+    ["Merge", { state: "ready", verdict: "pass" }, "Ready to merge", "Ready to merge"],
+    ["Merge with a rule failing", { state: "ready", verdict: "pass", checks: [FAIL, failed("ci-green")] }, "Ready to merge · still not met: Docs +1 more", "Ready to merge: not met Docs +1 more"],
+    ["Merge with a rule that couldn't be checked", { state: "ready", verdict: "pass", checks: [CANT] }, "Couldn't check Merge conflicts · use Triage again in More", "Couldn't check: Merge conflicts"],
+    ["Send feedback with nothing failed and a rule that couldn't be checked", { comment: feedback, checks: [CANT] }, "Couldn't check Merge conflicts · use Triage again in More", "Couldn't check: Merge conflicts"],
+    ["Request changes with nothing failed and a rule that couldn't be checked", { state: "blocked", checks: [CANT] }, "Couldn't check Merge conflicts · use Triage again in More", "Couldn't check: Merge conflicts"],
+    ["Approve with nothing failed and a rule that couldn't be checked", { state: "awaiting-review", checks: [CANT] }, "Couldn't check Merge conflicts · use Triage again in More", "Couldn't check: Merge conflicts"],
+    ["a failed rule before one that couldn't be checked", { checks: [FAIL, CANT], comment: feedback }, "Ask @ada to fix: Docs", "Ask to fix: Docs"],
+    ["Merge held by the host, as the list read it", { state: "ready", verdict: "pass", mergeBlock: "behind" }, "Can't merge yet: behind its base branch", "Behind base"],
+    ["Triage's own pull request, merged rather than approved", { byTriage: true, state: "awaiting-review" }, "Ready to merge", "Ready to merge"],
+    ["Triage's own pull request with no button and a rule failing", { byTriage: true, state: "blocked", checks: [FAIL] }, "Not met: Docs", "Not met: Docs"],
+    ["Triage's own pull request held by the host", { byTriage: true, state: "blocked", mergeBlock: "behind" }, "Blocked: behind its base branch", "Blocked"],
+    ["your approval of a re-review, before the re-review, leaving out the change you requested", { state: "awaiting-review", reviewAnswered: true, checks: [requested] }, "You approved", "Approved", undefined, { kind: "approve" }],
+    ["your approval with Merge the main button", { state: "ready", verdict: "pass" }, "You approved · ready to merge", "Approved", undefined, { kind: "approve" }],
+    ["your approval with a rule failing", { state: "blocked", checks: [FAIL, failed("ci-green"), requested] }, "You approved · still not met: Docs +1 more", "Approved", undefined, { kind: "approve" }],
+    ["your approval with a rule to decide", { checks: [UNSURE] }, "You approved · still to decide: Focused", "Approved", undefined, { kind: "approve" }],
+    ["your approval with a rule that couldn't be checked", { checks: [CANT] }, "You approved · couldn't check: Merge conflicts", "Approved", undefined, { kind: "approve" }],
+    ["your approval on the author's turn", { state: "needs-author-update", posted: true }, "You approved · waiting on @ada", "Approved", undefined, { kind: "approve" }],
+    ["your approval with the host holding the merge", { state: "ready", verdict: "pass", mergeBlock: "behind" }, "You approved · can't merge yet: behind its base branch", "Approved", undefined, { kind: "approve" }],
+    ["what you did, recorded without its kind", { state: "awaiting-review" }, "Review and approve", "Waiting for review", undefined, { kind: null }],
+    ["the author's turn", { state: "needs-author-update", posted: true, checks: [FAIL, failed("ci-green")] }, "Waiting on @ada to fix: Docs +1 more", "Waiting on @ada"],
+    ["the author's turn with a rule to decide", { state: "needs-author-update", posted: true, checks: [FAIL, UNSURE] }, "Decide: Focused (Triage wasn't sure)", "Decide: Focused"],
+    ["a rule that couldn't be checked", { checks: [CANT, check({ check: "ci-green", result: "unconfirmed" })] }, "Couldn't check Merge conflicts +1 more · use Triage again in More", "Couldn't check: Merge conflicts +1 more"],
+    ["a custom rule from the pack", { state: "blocked", checks: [RELEASE_NOTES] }, "Request changes from @ada: Release notes describe the user-facing change", "Request changes: Release notes describe the user-facing change", PACK],
+    ["a custom rule without a pack", { state: "blocked", checks: [RELEASE_NOTES] }, "Request changes from @ada: release-notes", "Request changes: release-notes"],
+  ];
+
+  test.each(CASES)("the row says what the pane says, shortened: %s", (_, overrides, pane, row, pack = null, handled = null) => {
+    expect(statusOf(overrides, { pack, handled }).text).toBe(pane);
+    expect(statusText(rowStatus(item(overrides), handled, pack))).toBe(row);
   });
 
-  test("agrees with the list and the primary: re-review, rechecking, and never asking for a reply when the button approves", () => {
-    const requested = check({ check: "no-changes-requested", result: "fail", reason: "a reviewer requested changes" });
-    expect(statusOf({ state: "awaiting-review", checks: [requested], reviewAnswered: true })).toMatchObject({ text: "Ready for your re-review" });
-    expect(barOf(item({ state: "awaiting-review", checks: [requested], reviewAnswered: true })).primary?.kind).toBe("approve");
-    expect(statusOf({ state: "stale" }).text).toBe("Rechecking");
-    const draft = check({ check: "not-a-draft", result: "fail", reason: "pull request is a draft" });
-    expect(barOf(item({ state: "awaiting-review", checks: [draft] })).primary?.kind).toBe("approve");
-    expect(statusOf({ state: "awaiting-review", checks: [draft] }).text).toBe("Waiting for review · 1 thing to fix");
+  test("the row keeps the count apart, so it is never cut off", () => {
+    expect(rowStatus(item({ checks: [FAIL, failed("linked-issue"), failed("ci-green")], comment: feedback }), null, null)).toEqual({ text: "Ask to fix: Docs", more: 2 });
   });
 
-  test("commits Triage has not checked are rechecked, never ready, and never merged from the primary", () => {
-    const stale = { state: "ready" as const, verdictSha: "head-1", headSha: "head-2" };
-    expect(statusOf(stale, { approved: true })).toMatchObject({ tone: "quiet", text: "New commits since Triage checked · rechecking" });
-    const bar = barOf(item(stale));
+  test("only the host's own read changes the pane: what holds the merge, and what holds a pull request with nothing to fix", () => {
+    const ready = { state: "ready", verdict: "pass" } as const;
+    expect(statusOf(ready, { detail: detail({ draft: true }) }).text).toBe("Can't merge yet: it's a draft");
+    expect(statusOf(ready, { detail: detail({ mergeable: false }) }).text).toBe("Can't merge yet: it has conflicts");
+    expect(statusOf({ ...ready, source: "bitbucket-datacenter" }, { detail: detail({ mergeable: null }) }).text).toBe("Can't merge yet: Bitbucket hasn't checked for conflicts");
+    expect(statusOf({ state: "blocked" }, { detail: detail({ mergeableState: "behind" }) }).text).toBe("Request changes from @ada: behind its base branch");
+  });
+
+  test("what you did shows on the row; the pane says where that leaves it", () => {
+    expect(statusOf({ state: "ready", verdict: "pass" }, { handled: { kind: "approve" } })).toMatchObject({ tone: "ready", text: "You approved · ready to merge" });
+    expect(statusOf({ state: "blocked", checks: [FAIL] }, { handled: { kind: "changes" } })).toMatchObject({ tone: "author", text: "Waiting on @ada to fix: Docs" });
+    expect(rowStatus(item({ state: "blocked", checks: [FAIL] }), { kind: "changes" }, null).text).toBe("Requested changes");
+    expect(statusOf({ checks: [FAIL] }, { detail: detail({ merged: true, state: "closed" }) }).text).toBe("Merged");
+    expect(statusOf({}, { handled: { kind: "merge" } }).text).toBe("Merged");
+  });
+
+  test("commits Triage has not checked are never merged from the primary", () => {
+    const bar = barOf(item({ state: "ready", verdictSha: "head-1", headSha: "head-2" }));
     expect(bar.primary).toBeNull();
     expect(bar.rest.find((entry) => entry.kind === "merge")).toMatchObject({ blocker: "unchecked-commits", label: "Merge" });
-  });
-
-  test("a ready pull request says what holds the merge, and Triage's approval only shows with nothing left to call", () => {
-    expect(statusOf({ state: "ready" }, { detail: detail({ draft: true }) }).text).toBe("Ready, but it's a draft");
-    expect(statusOf({ state: "ready" }, { detail: detail({ mergeable: false }) }).text).toBe("Ready, but has conflicts");
-    expect(statusOf({ state: "ready", checks: [UNSURE] }, { approved: true }).text).toBe("Not sure about 1 thing — your call");
-  });
-
-  test("merged or closed, on GitHub or from the inbox, outranks everything", () => {
-    expect(statusOf({ checks: [FAIL] }, { detail: detail({ merged: true, state: "closed" }) }).text).toBe("Merged");
-    expect(statusOf({}, { detail: detail({ state: "closed" }) }).text).toBe("Closed");
-    expect(statusOf({}, { handled: { kind: "merge" } }).text).toBe("Merged");
-    expect(statusOf({ closed: true }).text).toBe("Closed");
-  });
-
-  test("waiting on the author counts what they must fix; the maintainer's approval names failing rules", () => {
-    expect(statusOf({ state: "needs-author-update", posted: true, checks: [FAIL, check({ check: "ci-green", result: "fail" })] })).toEqual({ tone: "author", text: "Waiting on @ada to fix 2 things", live: false });
-    expect(statusOf({ checks: [FAIL] }, { handled: { kind: "changes" } })).toMatchObject({ tone: "author", text: "Waiting on @ada to fix 1 thing" });
-    expect(statusOf({ checks: [FAIL] }, { handled: { kind: "approve" } })).toMatchObject({ tone: "you", text: "You approved · 1 rule failing" });
-  });
-});
-
-test("a pull request turned into a draft after its verdict waits on its author, with no review offered first", () => {
-  const drafted = item({ state: "awaiting-review", draft: true });
-  expect(statusOf({ state: "awaiting-review", draft: true })).toMatchObject({ tone: "author", text: "Draft · waiting on @ada" });
-  expect(barOf(drafted).primary).toBeNull();
-});
-
-describe("rowStatus", () => {
-  test("CI and drafts first, then what you did, then failures to fix, else the verdict", () => {
-    expect(rowStatus(item({ waitingForCi: true, draft: true }), null)).toBe("Waiting for CI");
-    expect(rowStatus(item({ draft: true, checks: [FAIL] }), null)).toBe("Draft");
-    expect(rowStatus(item({ checks: [FAIL] }), { kind: "approve" })).toBe("Approved");
-    expect(rowStatus(item({ state: "blocked", checks: [FAIL, UNSURE] }), null)).toBe("1 to fix");
-    expect(rowStatus(item({ state: "ready" }), null)).toBe("Ready");
-  });
-});
-
-describe("approvedByTriage", () => {
-  const approved = (overrides: Partial<SuggestedAction>, pr: Partial<PrItem> = {}) => approvedByTriage(item({
-    ...pr,
-    actions: [{ list: "pass", index: 0, effectId: "e", kind: "approve", reason: "", target: {}, held: false, status: "done", ...overrides }],
-  }));
-
-  test("only the verdict's settled approve Do on the current head counts", () => {
-    expect(approved({})).toBe(true);
-    expect(approved({ status: "satisfied" })).toBe(true);
-    expect(approved({}, { headSha: "head-2" })).toBe(false);
-    expect(approved({ status: "failed" })).toBe(false);
-    expect(approved({ kind: "labels" })).toBe(false);
-    expect(approved({ status: undefined, held: true })).toBe(false);
   });
 });
 
@@ -222,22 +237,22 @@ describe("a merge the host blocks", () => {
   test("a pass free of conflicts that a ruleset holds for a review offers no merge and says why", () => {
     const live = detail({ mergeable: true, mergeableState: "blocked", reviewDecision: "REVIEW_REQUIRED" });
     expect(barOf(item(ready), live).primary?.blocker).toBe("review-required");
-    expect(statusOf(ready, { detail: live })).toMatchObject({ tone: "you", text: "Ready, but waiting for a required review" });
+    expect(statusOf(ready, { detail: live })).toMatchObject({ tone: "you", text: "Can't merge yet: waiting for a required review" });
   });
 
   test("other blocks on GitHub and Bitbucket's merge checks hold the merge too", () => {
-    expect(statusOf(ready, { detail: detail({ mergeableState: "blocked", reviewDecision: null }) }).text).toBe("Ready, but the branch's rules block the merge");
-    expect(statusOf(ready, { detail: detail({ mergeableState: "behind" }) }).text).toBe("Ready, but behind its base branch");
-    expect(statusOf(ready, { detail: detail({ mergeableState: "unknown" }) }).text).toBe("Ready, once GitHub has checked for conflicts");
-    expect(statusOf(ready, { detail: detail({ canMerge: false, mergeVetoes: ["Needs 2 approvals"] }) }).text).toBe("Ready, but the merge checks say: Needs 2 approvals");
+    expect(statusOf(ready, { detail: detail({ mergeableState: "blocked", reviewDecision: null }) }).text).toBe("Can't merge yet: the branch's rules block the merge");
+    expect(statusOf(ready, { detail: detail({ mergeableState: "behind" }) }).text).toBe("Can't merge yet: behind its base branch");
+    expect(statusOf(ready, { detail: detail({ mergeableState: "unknown" }) }).text).toBe("Can't merge yet: GitHub hasn't checked for conflicts");
+    expect(statusOf(ready, { detail: detail({ canMerge: false, mergeVetoes: ["Needs 2 approvals"] }) }).text).toBe("Can't merge yet: the merge checks say: Needs 2 approvals");
     expect(statusOf(ready, { detail: detail({ mergeableState: "clean" }) }).text).toBe("Ready to merge");
   });
 
   test("the list's read of the host holds the row and the pane before the pane's own read", () => {
     const mergeBlock = mergeBlockOf({ number: 1, mergeable: true, mergeableState: "blocked", reviewDecision: "REVIEW_REQUIRED" });
-    expect(rowStatus(item({ ...ready, mergeBlock }), null)).toBe("Waiting for review");
-    expect(statusOf({ ...ready, mergeBlock }).text).toBe("Ready, but waiting for a required review");
-    expect(rowStatus(item({ ...ready, mergeBlock: "checking" }), null)).toBe("Checking merge state");
+    expect(rowStatus(item({ ...ready, mergeBlock }), null, null).text).toBe("Waiting for review");
+    expect(statusOf({ ...ready, mergeBlock }).text).toBe("Can't merge yet: waiting for a required review");
+    expect(rowStatus(item({ ...ready, mergeBlock: "checking" }), null, null).text).toBe("Checking merge state");
     expect(barOf(item({ ...ready, mergeBlock: "checking" })).primary?.blocker).toBe("mergeability-unknown");
   });
 

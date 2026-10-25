@@ -48,9 +48,9 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   focused: { name: "Focused", group: "pull-request", kind: "quality" },
   docs: { name: "Docs", group: "pull-request", kind: "quality" },
   "linked-issue": { name: "Linked issue", group: "issue", kind: "machine" },
-  "no-merge-conflicts": { name: "No merge conflicts", group: "around", kind: "machine" },
+  "no-merge-conflicts": { name: "Merge conflicts", group: "around", kind: "machine" },
   "ci-green": { name: "CI green", group: "code-vs-ci", kind: "machine" },
-  "no-forbidden-paths": { name: "No forbidden paths", group: "code-vs-ci", kind: "machine" },
+  "no-forbidden-paths": { name: "Forbidden paths", group: "code-vs-ci", kind: "machine" },
   "conventional-commits": { name: "Conventional commits", group: "pull-request", kind: "machine" },
   "hidden-content": { name: "Hidden content", group: "pull-request", kind: "machine" },
   "regression-risk": { name: "Regression risk", group: "pull-request", kind: "machine" },
@@ -60,7 +60,7 @@ export const NOT_A_DRAFT = "not-a-draft";
 export const NO_CHANGES_REQUESTED = "no-changes-requested";
 
 /** Outside any policy's switches. */
-export const BUILT_IN_CHECK_NAMES: ReadonlyMap<string, string> = new Map([[NOT_A_DRAFT, "Not a draft"], [NO_CHANGES_REQUESTED, "No changes requested"]]);
+export const BUILT_IN_CHECK_NAMES: ReadonlyMap<string, string> = new Map([[NOT_A_DRAFT, "Draft"], [NO_CHANGES_REQUESTED, "Requested changes"]]);
 
 export function isCatalogId(id: string): id is CatalogId {
   return (CATALOG_IDS as readonly string[]).includes(id);
@@ -672,7 +672,7 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
     if (typeof row.tracker === "string" && TRACKER_SET.has(row.tracker)) check.tracker = row.tracker as IssueTracker;
   }
   if (id === "no-forbidden-paths") {
-    const globs = parseGlobs(row.forbiddenGlobs, "No forbidden paths globs");
+    const globs = parseGlobs(row.forbiddenGlobs, "Forbidden paths globs");
     if (globs) check.forbiddenGlobs = globs;
   }
   if (id === "regression-risk") {
