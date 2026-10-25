@@ -666,11 +666,25 @@ read it, and passes the rest of the request to stock.
   migrations keep no record of their own.
 - Triage's tables, in the `corbits_triage` schema: `verdict` (verdicts per
   head, with the outcomes of the actions their run executed; a verdict's host
-  is its run's workflow's, and GitHub when that run is gone) and
-  `device_code` (better-auth's device authorization, for agents a signed-in
-  person approves), migrated from `apps/hub/migrations` by `db:migrate` in one
-  transaction under an advisory lock. Nothing else is stored: GitHub App setup
-  state is a signed token, and an invite is a stock invited principal.
+  is its run's workflow's, and GitHub when that run is gone), `device_code`
+  (better-auth's device authorization, for agents a signed-in person
+  approves) and `manager_state` (below), migrated from `apps/hub/migrations`
+  by `db:migrate` in one transaction under an advisory lock. Nothing else is
+  stored: GitHub App setup state is a signed token, and an invite is a stock
+  invited principal.
+- `manager_state` (`apps/hub/src/manager-state.ts`) holds a pull request's
+  manager claim (`mgr:<source>:<repo>#<n>`: status, the run it names, the
+  open pass, reviewers and closed passes) and its pending events
+  (`evt:<source>:<repo>#<n>:<deliveryId>`), each change one short
+  transaction. Intake commits the event (a redelivery is a no-op), then
+  upserts the claim so exactly one caller wins one that is missing or
+  ended. Take and done refuse any run the claim does not name. Take resumes
+  the open pass or takes every pending event no other transaction holds,
+  keeps the newest head and consumes reviewer results for other heads. Done
+  closes the pass and, under the claim's lock, ends the claim only when no
+  event is pending and no reviewer of the current head is due, so an event
+  committed before it is taken by this manager and one after it starts the
+  next.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 
