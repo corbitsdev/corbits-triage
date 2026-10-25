@@ -672,4 +672,6 @@ read it, and passes the rest of the request to stock.
 
 Interchange is vendored under `vendor/interchange` at a stock pin plus the
 deltas in `vendor/interchange/VENDORED.md`, each with the condition for removing it.
-`tooling/vendor-diff-check.sh` fails on any other drift.
+`tooling/vendor-diff-check.sh` fails on any other drift, including a stock
+file missing from the vendored copy unless `tooling/vendor-diff-pruned.txt`
+lists it or a directory above it as an upstream path we don't vendor.
