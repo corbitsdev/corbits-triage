@@ -1,4 +1,4 @@
-import { repoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { REPO_SOURCES, repoPolicy, repoSourceOf, type RepoSource } from "@corbits/triage-contracts";
 import type { PackState } from "./check-packs.ts";
 import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
@@ -29,10 +29,42 @@ export function packsPending(packs: ReadonlyMap<string, PackState>): boolean {
   return [...packs.values()].some((state) => state.pending);
 }
 
+/** A repository is its host and its name; the same name can be connected from both hosts, and no host means GitHub. */
+type RepoId = { name: string; source?: RepoSource };
+
+function sameRepo(a: RepoId, b: RepoId): boolean {
+  return a.name === b.name && repoSourceOf(a.source) === repoSourceOf(b.source);
+}
+
+/** A GitHub repository's link carries no host, so links from before Bitbucket Data Center still open it. */
+function repoHref(repo: RepoId): string {
+  return repo.source === "bitbucket-datacenter" ? `/repositories/${repo.name}?source=${repo.source}` : `/repositories/${repo.name}`;
+}
+
+/** The repository a link names; `source` is null on a link without a host. */
+type RepoLink = { name: string; source: RepoSource | null };
+
+/** `/repositories/owner/name[?source=host]`; the older `/repositories/owner%2Fname[/setup]` links arrive with the slash inside the first segment and move to the new form. */
+export function selectedRepo(params: { owner?: string; repo?: string }, search: URLSearchParams): { repo: RepoLink | null; redirect: string | null } {
+  if (params.owner?.includes("/")) return { repo: null, redirect: `/repositories/${params.owner}` };
+  const source = search.get("source");
+  if (source !== null && !(REPO_SOURCES as readonly string[]).includes(source)) return { repo: null, redirect: "/repositories" };
+  if (params.owner && params.repo) return { repo: { name: `${params.owner}/${params.repo}`, source: source === null ? null : repoSourceOf(source) }, redirect: null };
+  return { repo: null, redirect: params.owner === undefined ? null : "/repositories" };
+}
+
+/** A link without a host predates Bitbucket Data Center: it opens the GitHub repository of that name, else the only one. */
+export function findRepo<T extends RepoId>(rows: T[], link: RepoLink | null): T | undefined {
+  if (link === null) return undefined;
+  const { name, source } = link;
+  if (source !== null) return rows.find((row) => sameRepo(row, { name, source }));
+  const named = rows.filter((row) => row.name === name);
+  return named.find((row) => repoSourceOf(row.source) === "github") ?? (named.length === 1 ? named[0] : undefined);
+}
+
 /** The stored repositories, then the Bitbucket Data Center repositories not recorded yet. */
 export function mergeRepositories(stored: RepoRecord[], listed: RepoRecord[] | undefined): RepoRecord[] {
-  const names = new Set(stored.map((repo) => repo.name));
-  return [...stored, ...(listed ?? []).filter((repo) => !names.has(repo.name))];
+  return [...stored, ...(listed ?? []).filter((repo) => !stored.some((row) => sameRepo(row, repo)))];
 }
 
 export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
@@ -82,16 +114,16 @@ export function repoRows(
   pullsError: Error | null,
 ): RepoRow[] {
   const needsSetup = reposNeedingSetup(packs);
-  const ready = triageReadyRepos(repos, packs);
-  const errors = new Map(openPulls?.repos.flatMap((row) => (row.error ? [[row.repo, row.error] as const] : [])));
   return repos.map(function repoRow(repo) {
     const { enabled } = repoPolicy(repo);
-    const error = pullsError?.message ?? errors.get(repo.name);
+    const listing = openPulls?.repos.find((row) => row.error !== undefined && sameRepo({ name: row.repo, source: row.source }, repo));
+    const error = pullsError?.message ?? listing?.error;
+    const open = items.filter((item) => sameRepo({ name: item.repo, source: item.source }, repo));
     return {
       name: repo.name,
       source: repo.source,
-      href: `/repositories/${repo.name}`,
-      pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), ready.has(repo.name)) : { error },
+      href: repoHref(repo),
+      pulls: error === undefined ? pullsOf(open, enabled && policyRuns(packs.get(repo.name))) : { error },
       health: repoHealth({ needsSetup: needsSetup.has(repo.name), enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: active.has(repo.name) }),
     };
   });

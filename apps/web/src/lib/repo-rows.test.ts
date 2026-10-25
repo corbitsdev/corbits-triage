@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import type { PackState } from "./check-packs.ts";
-import { projectQueue, type PrItem } from "./hub-api.ts";
+import { projectQueue, type OpenPulls, type PrItem } from "./hub-api.ts";
 import { groupInbox, regroupInbox } from "./inbox-view.ts";
-import { mergeRepositories, packsPending, repoHealth, repoRows, triageReadyRepos } from "./repo-rows.ts";
+import { findRepo, mergeRepositories, packsPending, repoHealth, repoRows, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   return {
@@ -26,6 +26,13 @@ function read(found: PackState["found"]): PackState {
 
 function policyFile(repo: string): PackState {
   return read({ kind: "file", path: ".corbits-triage.yml", pack: recommendedPack(repo) });
+}
+
+function twoHosts(github: number[], bitbucket: number[]): OpenPulls {
+  function prs(numbers: number[]) {
+    return numbers.map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, updatedAt: "2026-10-01T00:00:00.000Z", labels: [] }));
+  }
+  return { repos: [{ repo: "acme/api", prs: prs(github) }, { repo: "acme/api", source: "bitbucket-datacenter", prs: prs(bitbucket) }] };
 }
 
 const packs = new Map([["acme/api", policyFile("acme/api")], ["acme/web", read(null)]]);
@@ -119,5 +126,40 @@ describe("merged repositories", () => {
       { name: "TRI/gadgets", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
     ];
     expect(mergeRepositories(stored, listed)).toEqual([stored[0]!, listed[1]!]);
+  });
+
+  test("the same name on both hosts lists both, and each row's link opens its own host's repository", () => {
+    const stored = [{ name: "acme/api", connected: true, source: "github" as const, enabled: true }];
+    const listed = [{ name: "acme/api", connected: true, source: "bitbucket-datacenter" as const, enabled: false }];
+    const merged = mergeRepositories(stored, listed);
+    expect(merged).toEqual([stored[0]!, listed[0]!]);
+    function opened(href: string) {
+      const url = new URL(href, "https://portal.test");
+      const [, , owner, repo] = url.pathname.split("/");
+      const selection = selectedRepo({ owner, repo }, url.searchParams);
+      return selection.redirect ?? findRepo(merged, selection.repo);
+    }
+    const rows = repoRows(merged, new Map(), [], new Set(), new Set(), undefined, null);
+    expect(rows.map((row) => opened(row.href))).toEqual(merged);
+    expect(opened("/repositories/acme/api?source=gitlab")).toBe("/repositories");
+  });
+
+  test("a link without a host opens the GitHub repository of that name, else the only one with it", () => {
+    const github = { name: "acme/api", connected: true, source: "github" as const };
+    const bitbucket = { name: "acme/api", connected: true, source: "bitbucket-datacenter" as const };
+    const link = selectedRepo({ owner: "acme", repo: "api" }, new URLSearchParams()).repo;
+    expect(findRepo([bitbucket, github], link)).toBe(github);
+    expect(findRepo([bitbucket], link)).toBe(bitbucket);
+    expect(findRepo([bitbucket, { ...bitbucket }], link)).toBeUndefined();
+  });
+
+  test("a disabled repository awaits no verdicts while its same-named repository on the other host is on", () => {
+    const merged = [
+      { name: "acme/api", connected: true, source: "github" as const, enabled: true },
+      { name: "acme/api", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
+    ];
+    const items = projectQueue([], [], twoHosts([1], [2]));
+    const [, bitbucket] = repoRows(merged, new Map([["acme/api", policyFile("acme/api")]]), items, new Set(), new Set(), undefined, null);
+    expect(bitbucket!.pulls).toMatchObject({ awaiting: 0 });
   });
 });
