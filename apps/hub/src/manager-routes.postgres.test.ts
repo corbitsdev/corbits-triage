@@ -21,6 +21,7 @@ const USER = { id: "usr_member", email: "member@manager.test", emailVerified: tr
 const SESSION = { id: "ses_member", userId: USER.id, token: "tok_member", expiresAt: new Date("2999-01-01"), createdAt: new Date(), updatedAt: new Date() };
 const GITHUB: PullRequestRef = { source: "github", repo: "acme/widgets", number: 7 };
 const BITBUCKET: PullRequestRef = { source: "bitbucket-datacenter", repo: "ACME/widgets", number: 7 };
+const REVIEW = { summary: "No bugs.", comments: [], budgetExhausted: false };
 const OpenApi = type({ paths: "Record<string, Record<string, unknown>>" });
 const Operation = type({ requestBody: { content: { "application/json": { schema: "object" } } }, responses: { 200: { content: { "application/json": { schema: "object" } } }, 400: "object", 403: "object", 413: "object" } });
 const FencedOperation = Operation.and({ responses: { 409: "object" } });
@@ -145,7 +146,7 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
       expect(taken.status).toBe(200);
       expect(await taken.json()).toMatchObject({ outcome: "pass", resumed: false, pass: { head: "h1", takes: 1 }, events: [{ event: { type: "webhook", head: "h1" } }] });
 
-      const result = { ...pr, head: "h1", result: { verdict: "pass" } };
+      const result = { ...pr, kind: "code-review", head: "h1", result: REVIEW };
       const reported = await post(app, "reviewer-result", result, reviewer);
       expect(reported.status).toBe(200);
       expect(await reported.json()).toEqual({ recorded: true });
@@ -155,7 +156,7 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
       expect(more.status).toBe(200);
       expect(await more.json()).toEqual({ outcome: "more" });
 
-      expect(await (await post(app, "take", pr, manager)).json()).toMatchObject({ outcome: "pass", events: [{ key: `evt:${pr.source}:${pr.repo}#7:run_reviewer`, event: { type: "reviewer-result", payload: { verdict: "pass" } } }] });
+      expect(await (await post(app, "take", pr, manager)).json()).toMatchObject({ outcome: "pass", events: [{ key: `evt:${pr.source}:${pr.repo}#7:run_reviewer`, event: { type: "reviewer-result", payload: { kind: "code-review", result: REVIEW } } }] });
       expect(await (await post(app, "done", { ...pr, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });
     }
   });
@@ -197,8 +198,8 @@ test("PostgreSQL: a malformed, non-JSON or oversized body is refused before the 
       ["take", { ...GITHUB, number: 0 }],
       ["done", GITHUB],
       ["done", { ...GITHUB, reviewers: [{ kind: "judge" }] }],
-      ["reviewer-result", { ...GITHUB, head: "h1", result: ["pass"] }],
-      ["reviewer-result", { ...GITHUB, result: { verdict: "pass" } }],
+      ["reviewer-result", { ...GITHUB, kind: "code-review", head: "h1", result: { verdict: "pass" } }],
+      ["reviewer-result", { ...GITHUB, kind: "code-review", result: REVIEW }],
     ];
     for (const [route, body] of bodies) {
       const response = await post(app, route, body, manager);

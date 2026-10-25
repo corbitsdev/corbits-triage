@@ -696,6 +696,9 @@ read it, and passes the rest of the request to stock.
   answer 409 `not_manager` to a run the claim does not name.
   Reviewer-result is not fenced: any run with the grant records under its
   own run id, and the manager matches results to its reviewers by run id.
+  Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's
+  kind (`code-review` or `judge`), the head it reviewed and its result, a
+  code review's output or a judge's verdict detail.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 
