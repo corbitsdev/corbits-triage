@@ -91,6 +91,6 @@ test("PostgreSQL: the old host-schema tables move into corbits_triage with their
     fresh = await shape(db);
   });
   expect(moved!.leftover).toEqual([]);
-  expect(fresh!.columns).toHaveLength(28);
+  expect(fresh!.columns).toHaveLength(32);
   expect(moved).toEqual(fresh);
 }, 120_000);
