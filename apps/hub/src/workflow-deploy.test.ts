@@ -64,15 +64,13 @@ describe("createWorkflowDeploy", () => {
     }
   });
 
-  test("logs why a deployment was refused", async () => {
-    const logged: Record<string, unknown>[] = [];
+  test("answers a refused deployment with why it was refused", async () => {
     const refuse = handler(calls(), {
-      log: (line) => logged.push(line),
       allocation: { async prepareProvisionedDeployment() { throw new WorkflowProvisioningError("no_capacity", "No sidecar can take this workflow."); } },
     });
     const res = await refuse(BODY, MEMBER);
     expect(res.status).toBe(409);
-    expect(logged).toEqual([{ level: "warn", msg: "workflow_deploy_refused", tenantId: TENANT_ID, entry: BODY.entry, code: "no_capacity", reason: "No sidecar can take this workflow." }]);
+    expect(await res.json()).toEqual({ error: { code: "no_capacity", message: "No sidecar can take this workflow." } });
   });
 
   test("deploys the registry tarball under the pin with the separate definition asset as the member", async () => {

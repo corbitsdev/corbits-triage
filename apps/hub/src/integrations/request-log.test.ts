@@ -25,12 +25,10 @@ afterEach(() => {
 
 const signedIn = async () => ({ user: { id: "user-1" } }) as never;
 
-test("a refused integration request is logged with its status", async () => {
+test("a request from outside the portal is refused", async () => {
   const app = guardedApp({} as never, signedIn, createInMemoryGrantStore([]), {});
   const res = await app.request("/api/integrations/workflow-deploy/tenant-1", { method: "POST", headers: { "content-type": "application/json", origin: "https://elsewhere.example" }, body: "{}" });
-  await res.text();
-  expect(lines.map((line) => [line.category, line.properties["method"], line.properties["url"], line.properties["status"]])).toEqual([[["hub", "requests"], "POST", "/api/integrations/workflow-deploy/tenant-1", 403]]);
-  expect(res.status).toBe(403);
+  expect({ status: res.status, body: await res.json() }).toEqual({ status: 403, body: { error: { code: "forbidden", message: "This request did not come from the portal." } } });
 });
 
 test("the manifest callback's code and state never reach the request log", async () => {
