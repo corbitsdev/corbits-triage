@@ -931,7 +931,7 @@ describe("a run that could not read the pull request", () => {
     const github = fakeGithub({ labels: ["bug", "Triage: Ready"] });
     const { outputs } = await runTriage(github.gh, [], false, hubMail({ ...mail, repo: REPO, prNumber: undefined, items: [{ prNumber: 8, headSha: github.pr.head }] }, "github@acme.test"));
     const [marked] = (outputs["evaluateRules"] as { items: Verdict[] }).items;
-    expect(marked).toMatchObject({ degraded: "error", reason: `Policy can't be read: ${reason}`, actions: [] });
+    expect(marked).toMatchObject({ repo: REPO, number: 8, degraded: "error", reason: `Policy can't be read: ${reason}`, actions: [] });
     expect(unsettledBy(marked!, github.pr.head)).toEqual({});
     expect(github.labels).toEqual(["bug", "Triage: Failed to Run"]);
     const ungranted = fakeGithub({ labels: ["bug"] });

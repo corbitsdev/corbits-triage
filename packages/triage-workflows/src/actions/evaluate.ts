@@ -27,9 +27,9 @@ export type EvaluateOutput = Verdict | { items: Verdict[]; summary: BacklogSumma
 // Items are unchecked so a malformed one degrades its own verdict instead of failing the batch.
 export const Input = type({ items: "object[]", batch: "boolean", "judge?": { output: "unknown[]" }, "judgeParts?": { output: "unknown[]" } });
 
-/** A facts failure or malformed input reaches this step without facts: the verdict then names no head and is degraded. */
-function stamp(facts: PrFacts | undefined, it?: Item) {
-  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null, ...(it?.repoSource && { repoSource: it.repoSource }), ...(it?.appLogin && { appLogin: it.appLogin }) };
+/** A degraded verdict names no head: its facts may be only what a failed read named. */
+function stamp(it: Item, headSha: string | null) {
+  return { repo: it.facts.repo, number: it.facts.number, headSha, ...(it.repoSource && { repoSource: it.repoSource }), ...(it.appLogin && { appLogin: it.appLogin }) };
 }
 
 /**
@@ -158,7 +158,7 @@ function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, au
 }
 
 function degradedOf(it: Item, reason: string): Verdict {
-  const verdict = { ...stamp(undefined, it), ...degradedVerdict(reason), automatic: it.automatic ?? [], actions: [] };
+  const verdict = { ...stamp(it, null), ...degradedVerdict(reason), automatic: it.automatic ?? [], actions: [] };
   const request = toMirrorRequest(verdict, it.pack && ownedLabels(it.pack.labels));
   const mark = degradedMark(it.facts, repoSourceOf(it.repoSource), verdict.automatic, request.owned, it.appLogin);
   return { ...verdict, request, ...(mark && { mark }) };
@@ -228,7 +228,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
     const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none", it.appLogin);
     const verdict = {
-      ...stamp(it.facts, it), ...rendered, labels, reasons, feedback, automatic, actions,
+      ...stamp(it, it.facts.headSha), ...rendered, labels, reasons, feedback, automatic, actions,
       ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),
       ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
     };
