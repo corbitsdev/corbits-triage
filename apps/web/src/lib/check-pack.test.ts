@@ -25,27 +25,36 @@ describe("check-pack client", () => {
 
   test("a repository's pack is read with its artifact and version; a repository without one reads nothing", async () => {
     const hub = fakeHub([row("art_1", "check-pack/acme/widgets", widgets, 1, 3)]);
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "art_1", version: 3, pack: widgets, automatic: [], decide: [], mergeRisks: [] });
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/gadgets")).toBeNull();
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets", "github")).toEqual({ kind: "pack", id: "art_1", version: 3, pack: widgets, automatic: [], decide: [], mergeRisks: [] });
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/gadgets", "github")).toBeNull();
   });
 
   test("a first save creates the pack; later saves version the artifact that was loaded", async () => {
     const hub = fakeHub([], config);
     const pack = emptyPack("acme/widgets");
-    const created = await writeCheckPack(hub.transport, "t", "acme/widgets", pack, null);
+    const created = await writeCheckPack(hub.transport, "t", "acme/widgets", "github", pack, null);
     expect(created).toEqual({ kind: "pack", id: "art_1", version: 1, pack });
     expect(hub.artifacts[0]).toMatchObject({ title: "check-pack/acme/widgets", content: JSON.stringify(pack), version: 1 });
-    const revised = await writeCheckPack(hub.transport, "t", "acme/widgets", widgets, created);
+    const revised = await writeCheckPack(hub.transport, "t", "acme/widgets", "github", widgets, created);
     expect(revised).toEqual({ kind: "pack", id: "art_1", version: 2, pack: widgets });
     expect(hub.requests).toContain("POST /api/tenants/t/artifacts/art_1/versions");
     expect(hub.artifacts).toHaveLength(1);
   });
 
+  test("a pinned Bitbucket Data Center repository's saved rules load and save onto the artifact its record pins, retitled for its host", async () => {
+    const pinned = { corbitsTriage: { repos: [{ name: "PROJ/widgets", source: "bitbucket-datacenter", connected: true, checkPack: { name: "check-pack/PROJ/widgets", id: "art_bb" } }] } };
+    const hub = fakeHub([row("art_bb", "check-pack/PROJ/widgets", recommendedPack("PROJ/widgets"), 1, 2)], pinned);
+    expect(await loadRepoCheckPack(hub.transport, "t", "PROJ/widgets", "bitbucket-datacenter")).toMatchObject({ kind: "pack", id: "art_bb", version: 2 });
+    const saved = await writeCheckPack(hub.transport, "t", "PROJ/widgets", "bitbucket-datacenter", emptyPack("PROJ/widgets"), { id: "art_bb", version: 2 });
+    expect(saved).toMatchObject({ id: "art_bb", version: 3 });
+    expect(hub.artifacts).toEqual([expect.objectContaining({ id: "art_bb", title: "check-pack/bitbucket-datacenter/PROJ/widgets", version: 3 })]);
+  });
+
   test("a save refuses to overwrite a pack that changed, or appeared, since the form was opened", async () => {
     const hub = fakeHub([row("art_1", "check-pack/acme/widgets", widgets, 1, 2)], config);
-    const changed = writeCheckPack(hub.transport, "t", "acme/widgets", emptyPack("acme/widgets"), { id: "art_1", version: 1 });
+    const changed = writeCheckPack(hub.transport, "t", "acme/widgets", "github", emptyPack("acme/widgets"), { id: "art_1", version: 1 });
     await expect(changed).rejects.toBeInstanceOf(StaleCheckPackError);
-    const unseen = writeCheckPack(hub.transport, "t", "acme/widgets", emptyPack("acme/widgets"), null);
+    const unseen = writeCheckPack(hub.transport, "t", "acme/widgets", "github", emptyPack("acme/widgets"), null);
     await expect(unseen).rejects.toBeInstanceOf(StaleCheckPackError);
     expect(hub.artifacts).toHaveLength(1);
     expect(JSON.parse(hub.artifacts[0]!.content)).toEqual(widgets);

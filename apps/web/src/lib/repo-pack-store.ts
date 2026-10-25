@@ -17,7 +17,7 @@ export type RepoPackStore = {
   /** `fresh` reads past any cache, which may predate the change that made a reload necessary. */
   load: (repo: string, source: RepoSource, fresh: boolean) => Promise<LoadedRepoPack>;
   /** Writes onto the artifact the pack was loaded from, or creates one when there was none; throws StaleCheckPackError otherwise. */
-  writePack: (pack: CheckPack, loaded: PackRef | null) => Promise<PackRef>;
+  writePack: (pack: CheckPack, source: RepoSource, loaded: PackRef | null) => Promise<PackRef>;
   writePolicy: (repo: string, source: RepoSource, policy: DraftPolicy, packId: string | null) => Promise<void>;
   loadStats: (repo: string, days: number) => Promise<TriageStats>;
 };
@@ -44,11 +44,11 @@ export function transportRepoPackStore(transport: Transport, tenantId: string): 
   return {
     tenantId,
     async load(repo, source) {
-      const [found, policy] = await Promise.all([loadRepoCheckPack(transport, tenantId, repo), loadRepoPolicy(transport, tenantId, repo, source)]);
+      const [found, policy] = await Promise.all([loadRepoCheckPack(transport, tenantId, repo, source), loadRepoPolicy(transport, tenantId, repo, source)]);
       return { artifact: packArtifact(found), policy: draftPolicy(policy) };
     },
-    async writePack(pack, loaded) {
-      const { id, version } = await writeCheckPack(transport, tenantId, pack.repo, pack, loaded);
+    async writePack(pack, source, loaded) {
+      const { id, version } = await writeCheckPack(transport, tenantId, pack.repo, source, pack, loaded);
       return { id, version };
     },
     async writePolicy(repo, source, policy, packId) {

@@ -632,11 +632,14 @@ read it, and passes the rest of the request to stock.
 - Artifacts: the stored policy and the triage state
   (`triage-state/{owner}/{repo}`) per repository. The stored policy is the
   artifact the repository's record on its host pins by id (`checkPack.id`).
-  The trigger mail names its title for the repository's host
-  (`policy.checkPack.name`). A GitHub repository without a usable pin falls
-  back to the newest titled `check-pack/{owner}/{repo}` that a record of the
-  same name on another host does not pin; a Bitbucket Data Center repository
-  has none. The triage
+  A GitHub repository's is titled `check-pack/{owner}/{repo}` and a Bitbucket
+  Data Center repository's `check-pack/bitbucket-datacenter/{owner}/{repo}`;
+  a Bitbucket Data Center policy titled the GitHub way is read by its pin
+  and retitled on its next save. The trigger mail names its title for
+  the repository's host (`policy.checkPack.name`). A GitHub repository
+  without a usable pin falls back to the newest titled
+  `check-pack/{owner}/{repo}` that a record of the same name on another host
+  does not pin; a Bitbucket Data Center repository has none. The triage
   state holds each open head's status (`new`, `queued`, `waiting`, `running`,
   `triaged`, `failed`, `stale`) and attempts. Each new artifact is writable
   and archivable by its creator and the admin role.

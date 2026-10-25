@@ -90,7 +90,7 @@ export async function saveDraft(store: RepoPackStore, repo: string, source: Repo
   let current = session;
   if (packChanges(session.saved.pack, next.pack) > 0 || session.corrupt !== null) {
     try {
-      const loaded = await store.writePack(next.pack, session.loaded);
+      const loaded = await store.writePack(next.pack, source, session.loaded);
       current = { loaded, corrupt: null, saved: { ...session.saved, pack: next.pack, stepIds: next.stepIds }, unlinked: true };
     } catch (cause) {
       if (cause instanceof StaleCheckPackError) return { session, renamed: {}, failure: { message: cause.message, cause, stale: true } };

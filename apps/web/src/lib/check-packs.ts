@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { queryOptions, skipToken, useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { CATALOG_IDS, catalogCheckEnabled, type CheckPack } from "@corbits/triage-contracts";
+import { CATALOG_IDS, catalogCheckEnabled, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { listCheckPacks } from "./check-pack.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { loadRepoCheckPack, type CheckPackArtifact } from "./hub-api.ts";
@@ -17,13 +17,13 @@ export function checkPackIndexQuery(tenantId: string) {
   });
 }
 
-export function checkPackQuery(tenantId: string | undefined, repo: string) {
+export function checkPackQuery(tenantId: string | undefined, repo: string, source: RepoSource) {
   return queryOptions({
-    queryKey: ["check-pack", tenantId, repo],
+    queryKey: ["check-pack", tenantId, repo, source],
     queryFn: tenantId === undefined
       ? skipToken
       : function readCheckPack(): Promise<CheckPackArtifact | null> {
-        return loadRepoCheckPack(createHubTransport(), tenantId, repo);
+        return loadRepoCheckPack(createHubTransport(), tenantId, repo, source);
       },
     staleTime: 60_000,
   });
@@ -31,7 +31,7 @@ export function checkPackQuery(tenantId: string | undefined, repo: string) {
 
 export function useRepoPack(repo: string): CheckPack | null {
   const { snapshot } = usePortal();
-  return packOf(useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo)).data);
+  return packOf(useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, "github")).data);
 }
 
 export function packOf(found: CheckPackArtifact | null | undefined): CheckPack | null {
@@ -52,5 +52,5 @@ export function useCheckPacks(repos: string[]): Map<string, PackState> {
   const byRepo = useCallback(function byRepo(results: Array<UseQueryResult<CheckPackArtifact | null>>): Map<string, PackState> {
     return new Map(results.map((result, i) => [repos[i]!, { found: result.data ?? null, pending: result.isLoading, error: result.error }]));
   }, [repos]);
-  return useQueries({ queries: repos.map((repo) => checkPackQuery(tenantId, repo)), combine: byRepo });
+  return useQueries({ queries: repos.map((repo) => checkPackQuery(tenantId, repo, "github")), combine: byRepo });
 }

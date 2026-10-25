@@ -22,7 +22,7 @@ type PolicySectionProps = { repo: string; source: RepoSource; pack: CheckPack; d
 export default function PolicySection({ repo, source, pack, disabled, onSettled }: PolicySectionProps) {
   const { snapshot } = usePortal();
   const policyFile = usePolicyFile(repo);
-  const policy = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo));
+  const policy = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, source));
   const row = usePolicyUpgrade(repo);
   const settled = useSettled(repo);
   const file = policyFile.data;

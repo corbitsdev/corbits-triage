@@ -403,9 +403,9 @@ type FileCheckPack = { kind: "file"; path: string; pack: CheckPack; shared?: Art
 type InvalidPolicyFile = { kind: "invalid"; path: string; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack | FileCheckPack | InvalidPolicyFile;
 
-export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPackArtifact | null> {
+export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string, source: RepoSource): Promise<CheckPackArtifact | null> {
   const clean = validateRepo(repo);
-  const read = PolicyRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy?repo=${enc(clean)}`));
+  const read = PolicyRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy?repo=${enc(clean)}&source=${source}`));
   if (read.status === "missing") return null;
   if (read.status === "corrupt") return { kind: "corrupt", ...read.repo, reason: read.reason };
   if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
@@ -417,12 +417,12 @@ export async function loadRepoCheckPack(transport: Transport, tenantId: string, 
   return { kind: "pack", ...stored, pack, ...kinds, ...(shared && { shared }) };
 }
 
-export type CheckPackLookup = (repo: string) => Promise<boolean>;
+export type CheckPackLookup = (record: RepoRecord) => Promise<boolean>;
 
 async function withPackPointers(repos: RepoRecord[], hasPack: CheckPackLookup): Promise<RepoRecord[]> {
   return Promise.all(repos.map(async function linkExistingPack(repo) {
     if (repo.checkPack?.name?.trim()) return repo;
-    return (await hasPack(repo.name)) ? { ...repo, checkPack: { name: checkPackName(repo.name, "github") } } : repo;
+    return (await hasPack(repo)) ? { ...repo, checkPack: { name: checkPackName(repo.name, repo.source) } } : repo;
   }));
 }
 
@@ -445,7 +445,7 @@ export async function saveRepoSettings(
   const { enabled } = settings;
   /** So triage reads the same artifact. */
   function withSettings(row: RepoRecord): RepoRecord {
-    return { ...row, enabled, ...(packId !== null && { checkPack: { name: checkPackName(clean, "github"), id: packId } }) };
+    return { ...row, enabled, ...(packId !== null && { checkPack: { name: checkPackName(clean, source), id: packId } }) };
   }
   function isRepo(row: unknown): boolean {
     return rowName(row) === clean && repoSourceOf((row as { source?: unknown }).source) === source;

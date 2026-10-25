@@ -22,7 +22,7 @@ export function hubRepoPackStore(queryClient: QueryClient, tenantId: string, tra
   return {
     ...direct,
     async load(repo, source, fresh) {
-      const pack = checkPackQuery(tenantId, repo);
+      const pack = checkPackQuery(tenantId, repo, source);
       const policy = queryOptions({ queryKey: [REPO_POLICY_QUERY_KEY, tenantId, repo, source], queryFn: () => loadRepoPolicy(transport, tenantId, repo, source) });
       if (fresh) {
         await queryClient.invalidateQueries({ queryKey: [CHECK_PACK_INDEX_QUERY_KEY, tenantId] });
@@ -32,9 +32,9 @@ export function hubRepoPackStore(queryClient: QueryClient, tenantId: string, tra
       const [found, settings] = await Promise.all([queryClient.fetchQuery(pack), queryClient.fetchQuery(policy)]);
       return { artifact: packArtifact(found), policy: draftPolicy(settings) };
     },
-    async writePack(pack, loaded) {
-      const written = await writeCheckPack(transport, tenantId, pack.repo, pack, loaded);
-      queryClient.setQueryData(checkPackQuery(tenantId, pack.repo).queryKey, written);
+    async writePack(pack, source, loaded) {
+      const written = await writeCheckPack(transport, tenantId, pack.repo, source, pack, loaded);
+      queryClient.setQueryData(checkPackQuery(tenantId, pack.repo, source).queryKey, written);
       return { id: written.id, version: written.version };
     },
     /**
