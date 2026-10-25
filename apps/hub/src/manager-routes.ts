@@ -13,7 +13,8 @@ import { REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
-import { done, EventState, PassState, recordEvent, ReviewerState, take } from "./manager-state.js";
+import { ManagerUnavailableError, type ManagerIntake } from "./manager-intake.js";
+import { done, EventState, PassState, ReviewerState, take } from "./manager-state.js";
 
 export const MANAGER_STATE_RESOURCE = "triage-manager:state";
 export const MANAGER_STATE_ACTION = "write";
@@ -38,6 +39,7 @@ const Recorded = type({ recorded: "boolean" });
 
 const TAGS = ["manager"];
 const TOO_LARGE = `The body is over ${MAX_BODY_BYTES / 1024 / 1024} MiB.`;
+const UNAVAILABLE = "`manager_unavailable`: the result is recorded, but the workspace has no manager to start for the pull request's host.";
 const NOT_MANAGER = "`not_manager`: the pull request's claim does not name the calling run as its live manager.";
 
 const refusals = {
@@ -53,9 +55,9 @@ function refused(): Response {
 
 type RunEnv = TenantEnv & { Variables: TenantEnv["Variables"] & { runId: string } };
 
-export type ManagerRoutesDeps = { db: DB["db"]; requireGrant: RequireGrant; log: (entry: Record<string, unknown>) => void };
+export type ManagerRoutesDeps = { db: DB["db"]; requireGrant: RequireGrant; intake: ManagerIntake; log: (entry: Record<string, unknown>) => void };
 
-export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps) {
+export function createManagerRoutes({ db, requireGrant, intake, log }: ManagerRoutesDeps) {
   const app = new Hono<RunEnv>();
   // Hono throws on a body that is not JSON; it keeps the hub's error envelope.
   app.onError(function onError(err) {
@@ -118,9 +120,9 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     REVIEWER_RESULT_PATH,
     describeRoute({
       summary: "Record a reviewer's result for the pull request's manager",
-      description: "Run token only. The body is a `StageResult`. The event is recorded under the calling run's id, so `recorded` is false when that run reported before.",
+      description: "Run token only. The body is a `StageResult`. The event is recorded under the calling run's id, so `recorded` is false when that run reported before. Then the pull request's manager is started, or nudged when one is live.",
       tags: TAGS,
-      responses: { 200: json("Whether the result was recorded now", Recorded), ...refusals },
+      responses: { 200: json("Whether the result was recorded now", Recorded), ...refusals, 503: json(UNAVAILABLE, Failure) },
     }),
     limited,
     asRun,
@@ -128,8 +130,12 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     body(ReviewerResultBody),
     async function reviewerResult(c) {
       const valid = c.req.valid("json");
-      const recorded = await recordEvent(db, c.get("tenant").id, valid, c.get("runId"), { type: "reviewer-result", head: valid.head, payload: { kind: valid.kind, result: valid.result } });
-      return c.json({ recorded });
+      try {
+        return c.json(await intake(c.get("tenant").id, valid, c.get("runId"), { type: "reviewer-result", head: valid.head, payload: { kind: valid.kind, result: valid.result } }));
+      } catch (err) {
+        if (err instanceof ManagerUnavailableError) return failure(503, "manager_unavailable", err.message);
+        throw err;
+      }
     },
   );
 

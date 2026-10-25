@@ -691,7 +691,8 @@ read it, and passes the rest of the request to stock.
   upserts the claim so exactly one caller wins one that is missing or
   ended. Take and done refuse any run the claim does not name. Take resumes
   the open pass or takes every pending event no other transaction holds,
-  keeps the newest head and consumes reviewer results for other heads. Done
+  keeps the newest head and consumes reviewer results for other heads;
+  reviewer results that arrive before the first pass stay pending. Done
   closes the pass and, under the claim's lock, ends the claim only when no
   event is pending and no reviewer of the current head is due, so an event
   committed before it is taken by this manager and one after it starts the
@@ -707,6 +708,23 @@ read it, and passes the rest of the request to stock.
   Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's
   kind (`code-review` or `judge`), the head it reviewed and its result, a
   code review's output or a judge's verdict detail.
+- The manager intake (`apps/hub/src/manager-intake.ts`) records an event,
+  then claims. The winner deploys the host's published manager through
+  Interchange's deploy allocation: its workflow asset by name and its pin,
+  deployed as the principal that deployed the host's pr-triage listener,
+  with that listener's offerings and package registry. Before deploying,
+  it grants the manager asset's creator `write` on `triage-manager:state`,
+  because the manager's grant requirement is creator-sourced. It marks the
+  claim live with the new run and mails it the pr-triage trigger mail for
+  the event's head. An intake that finds the claim live mails the same
+  trigger to that run without waiting for it. If that run has ended or
+  cannot be routed, the intake restarts the claim under a new claim id and
+  deploys a new manager. An intake that finds the claim starting does
+  nothing, because the winner's mail follows its event. A workspace with no
+  manager published for the host, or no live pr-triage listener, keeps the
+  event and takes no claim; the reviewer-result route then answers 503
+  `manager_unavailable`. Reviewer results go through this intake.
+  Webhooks still take the coordinator path.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

@@ -195,6 +195,18 @@ test("PostgreSQL: take skips events another transaction holds, keeps the newest 
   });
 }, 120_000);
 
+test("PostgreSQL: a reviewer result before the claim's first pass stays pending until a webhook gives it a head", async () => {
+  await withDatabase(async function noHead(db) {
+    await recordEvent(db, TENANT, GITHUB, "r1", { type: "reviewer-result", head: "h1", payload: { verdict: "pass" } });
+    await startManager(db, GITHUB, "run_a");
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle" });
+    expect(await stateOf(db, "evt:github:acme/widgets#7:r1")).not.toHaveProperty("consumedBy");
+
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1", events: ["evt:github:acme/widgets#7:r1", "evt:github:acme/widgets#7:d1"] } });
+  });
+}, 60_000);
+
 test("PostgreSQL: an event committed while done waits for the claim's lock keeps the manager running", async () => {
   await withDatabase(async function eventFirst(db) {
     await startManager(db, GITHUB, "run_a");
