@@ -45,7 +45,7 @@ export function rootedAt<T extends ToolCallInput>(call: T, root: string): T {
   return { ...call, arguments: { ...call.arguments, root } };
 }
 
-function isBelow(base: string, path: string): boolean {
+export function isBelow(base: string, path: string): boolean {
   const rel = relative(base, path);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
