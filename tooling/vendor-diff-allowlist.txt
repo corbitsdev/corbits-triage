@@ -30,3 +30,12 @@ packages/workflow-host/src/supervisor/supervisor.test.ts
 # stock adapter has both.
 packages/inference/src/providers/anthropic.ts
 packages/inference/src/providers/anthropic.test.ts
+
+# CL-11373 local carry: createApp and createRunTokenAuth take the Corbits hub
+# routes a workflow run must reach, beyond the stock run-token allowlist. Each
+# extra must be a fixed path under /api/tenants/:tenantId/ with no other
+# parameters, whose own handler checks grants. Not proposed upstream. Remove when stock lets a host extend the run-token allowlist.
+packages/hub-api/src/middleware/run-token-auth.ts
+packages/hub-api/src/app.ts
+packages/hub-api/src/app.test.ts
+packages/hub-api/src/index.ts

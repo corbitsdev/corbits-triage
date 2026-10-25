@@ -5,9 +5,9 @@
 - Upstream: <https://github.com/faremeter/interchange>
 - Stock ref: `b1ca01f0d9bc2eb203e95b1780a6f685c5da8215`
 - Composite pin: stock `b1ca01f0` (`v0.5.0-67`) plus the
-  step-env director threading from PR #193, the local CL-10210 carry and the
-  INTR-666 adaptive-thinking model ids and Anthropic structured outputs. Do
-  not treat any delta as a new stock pin.
+  step-env director threading from PR #193, the local CL-10210 carry, the
+  INTR-666 adaptive-thinking model ids and Anthropic structured outputs, and
+  the host run-token routes. Do not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -144,6 +144,33 @@ Upstream reference: INTR-666.
 
 Remove when upstream's Anthropic adapter supports
 structured outputs.
+
+### Host run-token routes
+
+Stock `createRunTokenAuth` refuses a workflow run token on every tenant route
+outside the fixed `RUN_TOKEN_ROUTES`, and a host has no way to add one. The
+carry lets the host list the Corbits hub routes a workflow run must reach.
+`createApp` and `mountHubRoutes` take an optional `extraRunTokenRoutes`,
+none by default, passed to `createRunTokenAuth` as `extraRoutes`, which
+admits a run token on the stock list plus the extras with the same matching;
+every other route is refused as before. Each extra must be a fixed path
+under `/api/tenants/:tenantId/` with no other parameters, whose own handler
+checks grants. `index.ts` also exports the `RunTokenRoute`
+type so the host can type its list. One test in the `mountHubRoutes
+composition` block of `app.test.ts` builds the hub with an extra: a run token
+reaches the host route, a stock run-token route still reaches its own grant
+check, and an unlisted route is still refused.
+
+Allowed files:
+
+- `packages/hub-api/src/middleware/run-token-auth.ts`
+- `packages/hub-api/src/app.ts`
+- `packages/hub-api/src/app.test.ts`
+- `packages/hub-api/src/index.ts`
+
+Upstream reference: none (not proposed upstream; tracked in CL-11373).
+
+Remove when stock Interchange lets a host extend the run-token allowlist.
 
 ## Dropped deltas
 

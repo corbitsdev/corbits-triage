@@ -239,6 +239,81 @@ describe("mountHubRoutes composition", () => {
     const res = await thirdParty.request("/api/auth/anything");
     expect(res.status).toBe(404);
   });
+
+  test("a run token reaches a host route listed in extraRunTokenRoutes and no other", async () => {
+    const principal = {
+      id: "prn_run",
+      tenantId: "tnt_a",
+      kind: "workflow",
+      refId: "run_1",
+      status: "active",
+    };
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- only the run-token lookup and resolveTenantPrincipal touch the DB
+    const runTokenDb = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [
+              { id: "rtk_1", principalId: principal.id, consumer: "hub" },
+            ],
+          }),
+        }),
+      }),
+      query: {
+        tenant: { findFirst: async () => ({ id: "tnt_a" }) },
+        principal: { findFirst: async () => principal },
+      },
+    } as unknown as DB["db"];
+    const thirdParty = new Hono<AppEnv>();
+    thirdParty.use(
+      createHubContextMiddleware({ getSession: async () => null }),
+    );
+    mountHubRoutes(thirdParty, {
+      db: runTokenDb,
+      grantStore: createInMemoryGrantStore([]),
+      sidecarRouter,
+      sessionService,
+      eventCollectors,
+      assetService: null,
+      repoStore: null,
+      maxTarballBytes: 10_000_000,
+      extraRunTokenRoutes: [
+        { method: "GET", path: "/api/tenants/:tenantId/host/state" },
+      ],
+    });
+    thirdParty.get("/api/tenants/:tenantId/host/state", (c) =>
+      c.text(c.get("principal")?.id ?? ""),
+    );
+    const headers = { authorization: "Bearer itx_run_secret" };
+
+    const host = await thirdParty.request("/api/tenants/tnt_a/host/state", {
+      headers,
+    });
+    expect(host.status).toBe(200);
+    expect(await host.text()).toBe(principal.id);
+
+    // Past run-token auth, the stock route answers with its own grant check.
+    const stock = await thirdParty.request(
+      "/api/tenants/tnt_a/workflows/definitions",
+      { headers },
+    );
+    expect(await stock.json()).toEqual({
+      error: {
+        code: "forbidden",
+        message: "You do not have permission to perform this action",
+      },
+    });
+
+    const unlisted = await thirdParty.request("/api/tenants/tnt_a/grants", {
+      headers,
+    });
+    expect(await unlisted.json()).toEqual({
+      error: {
+        code: "forbidden",
+        message: "A workflow run token cannot use this route",
+      },
+    });
+  });
 });
 
 describe("stub-router default-deny", () => {
