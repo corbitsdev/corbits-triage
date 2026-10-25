@@ -20,7 +20,7 @@ export function hubErrorMessage(status: number, body: unknown): string {
   if (detail?.code === "github_rate_limited" && typeof detail.resetAt === "string") {
     return `GitHub limit reached, back at ${new Date(detail.resetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
   }
-  return typeof detail?.message === "string" ? detail.message : `HTTP ${status}`;
+  return typeof detail?.message === "string" ? detail.message : `The hub answered with an error (HTTP ${status}).`;
 }
 
 export function createHubTransport(): Transport {
@@ -43,11 +43,7 @@ function hubTransport(keepalive: boolean): Transport {
         }
         response = await fetch(`${requestOrigin()}${path}`, init);
       } catch {
-        throw new ApiError(
-          0,
-          "host_unreachable",
-          "The hub is unreachable. Auto-advance is denied.",
-        );
+        throw new ApiError(0, "host_unreachable", "The hub is unreachable.");
       }
       if (response.status === 204) return undefined as T;
       const text = await response.text();

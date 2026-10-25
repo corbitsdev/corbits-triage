@@ -1,6 +1,7 @@
 // Same calls as Solutions Builder. No local session record stands in for the hub cookie.
 import { ApiError } from "@intx/hub-client";
 import { requestOrigin } from "./hub-origin.ts";
+import { createHubTransport, hubErrorMessage } from "./hub-transport.ts";
 
 export type HubUser = {
   id: string;
@@ -21,11 +22,7 @@ async function hubAuth(path: string, init: RequestInit): Promise<{ response: Res
   try {
     response = await fetch(`${requestOrigin()}/api/auth${path}`, { ...init, credentials: "include" });
   } catch {
-    throw new ApiError(
-      0,
-      "host_unreachable",
-      "The hub is unreachable. Auto-advance is denied.",
-    );
+    throw new ApiError(0, "host_unreachable", "The hub is unreachable.");
   }
   const text = await response.text();
   let parsed: unknown;
@@ -58,7 +55,7 @@ export async function getHubSession(): Promise<HubSession> {
   const { response, parsed } = await hubAuth("/get-session", { method: "GET" });
   if (response.status === 401) return null;
   if (!response.ok) {
-    throw new ApiError(response.status, "unknown", messageOf(parsed, `HTTP ${response.status}`));
+    throw new ApiError(response.status, "unknown", messageOf(parsed, hubErrorMessage(response.status, parsed)));
   }
   const user = userOf(parsed);
   return user ? { user } : null;
@@ -106,11 +103,9 @@ export async function signOutHub(): Promise<void> {
 export type AuthMethods = { google: boolean; emailPassword: boolean; passwordReset: boolean; verificationEmail: boolean };
 
 export async function getAuthMethods(): Promise<AuthMethods> {
-  const response = await fetch(`${requestOrigin()}/api/integrations/auth-methods`, { credentials: "include" });
-  if (!response.ok) throw new ApiError(response.status, "unknown", `Could not load sign-in options (HTTP ${response.status}).`);
-  const body = await response.json() as Partial<AuthMethods>;
-  if (typeof body.google !== "boolean" || typeof body.emailPassword !== "boolean" || typeof body.passwordReset !== "boolean" || typeof body.verificationEmail !== "boolean") {
-    throw new ApiError(response.status, "unknown", "The hub returned malformed sign-in options.");
+  const body = await createHubTransport().fetch<Partial<AuthMethods> | undefined>("GET", "/api/integrations/auth-methods");
+  if (!body || typeof body.google !== "boolean" || typeof body.emailPassword !== "boolean" || typeof body.passwordReset !== "boolean" || typeof body.verificationEmail !== "boolean") {
+    throw new Error("The hub returned malformed sign-in options.");
   }
   return { google: body.google, emailPassword: body.emailPassword, passwordReset: body.passwordReset, verificationEmail: body.verificationEmail };
 }
