@@ -3,7 +3,7 @@ import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import type { PackState } from "./check-packs.ts";
 import { projectQueue, type OpenPulls, type PrItem } from "./hub-api.ts";
 import { groupInbox, regroupInbox } from "./inbox-view.ts";
-import { findRepo, mergeRepositories, packsPending, repoHealth, repoRows, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
+import { findRepo, hostedRepos, mergeRepositories, packsPending, repoHealth, repoRows, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   return {
@@ -46,7 +46,7 @@ describe("repository rows", () => {
       item("acme/api", 4, { state: "new", owner: "Author", updatedAt: "2026-10-02T00:00:00Z" }),
     ];
     const pile = regroupInbox(groupInbox(items, triageReadyRepos(repos, packs)), "repo").find((group) => group.key === "acme/api");
-    const [api] = repoRows(repos, packs, items, new Set(), new Set(), { repos: [{ repo: "acme/api", prs: [] }] }, null);
+    const [api] = repoRows(repos, packs, items, [], [], { repos: [{ repo: "acme/api", prs: [] }] }, null);
     expect(api).toMatchObject({
       href: "/repositories/acme/api",
       pulls: { open: 4, needsYou: pile?.items.length, awaiting: 1, owners: ["Maintainer", "Unassigned"], lastActivity: "2026-10-03T00:00:00Z" },
@@ -66,7 +66,7 @@ describe("repository rows", () => {
       item("acme/raw", 6, {}),
       item("acme/loading", 7, {}),
     ];
-    const rows = repoRows(all, states, items, new Set(), new Set(), undefined, null);
+    const rows = repoRows(all, states, items, [], [], undefined, null);
     expect(rows.map((row) => ("error" in row.pulls ? null : [row.pulls.awaiting, row.pulls.needsYou]))).toEqual([[2, 0], [0, 1], [0, 0], [0, 0], [0, 0]]);
     expect(groupInbox(items, triageReadyRepos(all, states)).awaiting).toBe(2);
     expect(triageReadyRepos(all, states)).toEqual(new Set(["acme/api"]));
@@ -75,10 +75,10 @@ describe("repository rows", () => {
 
   test("a GitHub failure replaces only the GitHub counts; setup still shows", () => {
     const listing = { repos: [{ repo: "acme/api", prs: [] }, { repo: "acme/web", prs: [], error: "rate limited" }] };
-    const [api, web] = repoRows(repos, packs, [], new Set(), new Set(), listing, null);
+    const [api, web] = repoRows(repos, packs, [], [], [], listing, null);
     expect(api?.pulls).toMatchObject({ open: 0 });
     expect(web).toMatchObject({ href: "/repositories/acme/web", pulls: { error: "rate limited" }, health: { label: "Needs setup" } });
-    const failed = repoRows(repos, packs, [], new Set(), new Set(["acme/api"]), undefined, new Error("offline"));
+    const failed = repoRows(repos, packs, [], [], [{ name: "acme/api" }], undefined, new Error("offline"));
     expect(failed.map((row) => row.pulls)).toEqual([{ error: "offline" }, { error: "offline" }]);
     expect(failed[0]?.health.label).toBe("Catching up");
   });
@@ -92,7 +92,7 @@ describe("repository rows", () => {
       ["acme/loading", { found: null, pending: true, error: null }],
     ]);
     const all = [...states.keys()].map((name) => ({ name, connected: true, enabled: true }));
-    const rows = repoRows(all, states, [], new Set(), new Set(), undefined, null);
+    const rows = repoRows(all, states, [], [], [], undefined, null);
     expect(rows.map((row) => [row.name, row.health.label === "Needs setup"])).toEqual([
       ["acme/file", false], ["acme/off", true], ["acme/refused", true], ["acme/none", true], ["acme/loading", false],
     ]);
@@ -139,7 +139,7 @@ describe("merged repositories", () => {
       const selection = selectedRepo({ owner, repo }, url.searchParams);
       return selection.redirect ?? findRepo(merged, selection.repo);
     }
-    const rows = repoRows(merged, new Map(), [], new Set(), new Set(), undefined, null);
+    const rows = repoRows(merged, new Map(), [], [], [], undefined, null);
     expect(rows.map((row) => opened(row.href))).toEqual(merged);
     expect(opened("/repositories/acme/api?source=gitlab")).toBe("/repositories");
   });
@@ -159,7 +159,18 @@ describe("merged repositories", () => {
       { name: "acme/api", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
     ];
     const items = projectQueue([], [], twoHosts([1], [2]));
-    const [, bitbucket] = repoRows(merged, new Map([["acme/api", policyFile("acme/api")]]), items, new Set(), new Set(), undefined, null);
+    const [, bitbucket] = repoRows(merged, new Map([["acme/api", policyFile("acme/api")]]), items, [], [], undefined, null);
     expect(bitbucket!.pulls).toMatchObject({ awaiting: 0 });
+  });
+
+  test("events and catching up show on the host they happened on, not on the same-named repository on the other host", () => {
+    const merged = [
+      { name: "acme/api", connected: true, source: "github" as const, enabled: true },
+      { name: "acme/api", connected: true, source: "bitbucket-datacenter" as const, enabled: true },
+    ];
+    const packs = new Map([["acme/api", policyFile("acme/api")]]);
+    const active = hostedRepos([{ repo: "acme/api", source: "github" }]);
+    const [github, bitbucket] = repoRows(merged, packs, [], active, [{ name: "acme/api", source: "bitbucket-datacenter" }], undefined, null);
+    expect([github!.health.label, bitbucket!.health.label]).toEqual(["Webhooks OK", "Catching up"]);
   });
 });

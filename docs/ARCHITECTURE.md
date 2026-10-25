@@ -665,7 +665,8 @@ read it, and passes the rest of the request to stock.
   recorded file is older than its own last one; the `@corbits/*` packages'
   migrations keep no record of their own.
 - Triage's tables, in the `corbits_triage` schema: `verdict` (verdicts per
-  head, with the outcomes of the actions their run executed) and
+  head, with the outcomes of the actions their run executed; a verdict's host
+  is its run's workflow's, and GitHub when that run is gone) and
   `device_code` (better-auth's device authorization, for agents a signed-in
   person approves), migrated from `apps/hub/migrations` by `db:migrate` in one
   transaction under an advisory lock. Nothing else is stored: GitHub App setup

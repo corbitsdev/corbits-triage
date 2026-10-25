@@ -2,11 +2,12 @@
 // copied from the live deployment's run log by the reconciler. The log holds
 // only the runs since the deployment last rotated, so this table is what a
 // window of stats reads, and what the portal shows of each pull request.
-import { and, asc, desc, eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gte, inArray, or, sql, type SQL } from "drizzle-orm";
 import { boolean, integer, jsonb, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
-import type { DB } from "@intx/db";
-import type { VerdictDetail } from "@corbits/triage-contracts";
+import { schema, type DB } from "@intx/db";
+import type { RepoSource, VerdictDetail } from "@corbits/triage-contracts";
 import { triageSchema } from "../triage-db.js";
+import { jobWorkflowsFor } from "./source-workflow.js";
 
 export type RecordedCheck = { check: string; result: string };
 /** `list` is the verdict's list the Do is on; Dos recorded before verdicts were words carry their action's id instead and are not counted. */
@@ -41,6 +42,14 @@ export type RecordedVerdict = Omit<typeof verdictRecord.$inferInsert, "tenantId"
 
 export type PullRef = { repo: string; number: number };
 
+/** A repository on its host; the same name can be on both. */
+export type HostedRepo = { repo: string; source: RepoSource };
+
+/** A pull request on its host; the same repository name and number can be on both. */
+export type HostedPull = PullRef & HostedRepo;
+
+export type HostedVerdict = VerdictRecord & { source: RepoSource };
+
 export function evidenceOf(verdict: Pick<VerdictRecord, "detail">, check: string): string[] | undefined {
   return verdict.detail?.checks?.find((row) => row.check === check)?.evidence;
 }
@@ -67,13 +76,31 @@ function ofPulls(pulls: readonly PullRef[]): SQL | undefined {
   return or(...pulls.map((pull) => and(eq(verdictRecord.repo, pull.repo), eq(verdictRecord.number, pull.number))));
 }
 
-/** The run started last read the newest head: a backlog run started before a push can make its verdict after the push's. */
-function latestOf(db: DB["db"], where: SQL | undefined): Promise<VerdictRecord[]> {
+/**
+ * A verdict's host is its run's workflow's. A verdict whose run is gone, or from a workflow from before hosts, is GitHub's:
+ * workflow runs go only with their tenant, and every workflow before hosts read GitHub.
+ */
+const verdictSource = sql<RepoSource>`case when ${inArray(schema.workflowDefinition.name, jobWorkflowsFor("bitbucket-datacenter"))} then 'bitbucket-datacenter' else 'github' end`;
+
+/** The verdicts `where` picks, each with its host, to group or pick from by host. */
+function hostedVerdicts(db: DB["db"], where: SQL | undefined) {
+  const { workflowRun, workflowDefinition } = schema;
   return db
-    .selectDistinctOn([verdictRecord.repo, verdictRecord.number])
+    .select({ ...getTableColumns(verdictRecord), source: verdictSource.as("source") })
     .from(verdictRecord)
+    .leftJoin(workflowRun, and(eq(workflowRun.id, verdictRecord.runId), eq(workflowRun.tenantId, verdictRecord.tenantId)))
+    .leftJoin(workflowDefinition, eq(workflowDefinition.id, workflowRun.definitionId))
     .where(where)
-    .orderBy(verdictRecord.repo, verdictRecord.number, desc(verdictRecord.startedAt), desc(verdictRecord.verdictAt));
+    .as("hosted");
+}
+
+/** The run started last read the newest head: a backlog run started before a push can make its verdict after the push's. */
+function latestOf(db: DB["db"], where: SQL | undefined): Promise<HostedVerdict[]> {
+  const hosted = hostedVerdicts(db, where);
+  return db
+    .selectDistinctOn([hosted.repo, hosted.number, hosted.source])
+    .from(hosted)
+    .orderBy(hosted.repo, hosted.number, hosted.source, desc(hosted.startedAt), desc(hosted.verdictAt));
 }
 
 export function createVerdictRecordStore(db: DB["db"]) {
@@ -107,37 +134,36 @@ export function createVerdictRecordStore(db: DB["db"]) {
       }
     },
 
-    latest(tenantId: string, pulls: readonly PullRef[]): Promise<VerdictRecord[]> {
+    /** The newest verdict of each pull request on each host. */
+    latest(tenantId: string, pulls: readonly PullRef[]): Promise<HostedVerdict[]> {
       if (pulls.length === 0) return Promise.resolve([]);
       return latestOf(db, and(eq(verdictRecord.tenantId, tenantId), ofPulls(pulls)));
     },
 
-    latestSince(tenantId: string, repos: readonly string[], from: Date): Promise<VerdictRecord[]> {
+    latestSince(tenantId: string, repos: readonly string[], from: Date): Promise<HostedVerdict[]> {
       if (repos.length === 0) return Promise.resolve([]);
       return latestOf(db, and(eq(verdictRecord.tenantId, tenantId), inArray(verdictRecord.repo, [...repos]), gte(verdictRecord.verdictAt, from)));
     },
 
-    async latestFor(tenantId: string, repo: string, number: number): Promise<VerdictRecord | undefined> {
-      const [latest] = await latestOf(db, and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, repo), eq(verdictRecord.number, number)));
-      return latest;
+    async latestFor(tenantId: string, pull: HostedPull): Promise<HostedVerdict | undefined> {
+      const latest = await latestOf(db, and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, pull.repo), eq(verdictRecord.number, pull.number)));
+      return latest.find((verdict) => verdict.source === pull.source);
     },
 
-    triggeredAt(tenantId: string, pulls: readonly PullRef[], triggers: readonly string[]): Promise<Array<PullRef & { at: Date }>> {
+    triggeredAt(tenantId: string, pulls: readonly PullRef[], triggers: readonly string[]): Promise<Array<HostedPull & { at: Date }>> {
       if (pulls.length === 0) return Promise.resolve([]);
+      const hosted = hostedVerdicts(db, and(eq(verdictRecord.tenantId, tenantId), ofPulls(pulls), inArray(verdictRecord.trigger, [...triggers])));
       return db
-        .select({ repo: verdictRecord.repo, number: verdictRecord.number, at: sql<Date>`max(${verdictRecord.startedAt})`.mapWith(verdictRecord.startedAt) })
-        .from(verdictRecord)
-        .where(and(eq(verdictRecord.tenantId, tenantId), ofPulls(pulls), inArray(verdictRecord.trigger, [...triggers])))
-        .groupBy(verdictRecord.repo, verdictRecord.number);
+        .select({ repo: hosted.repo, number: hosted.number, source: hosted.source, at: sql<Date>`max(${hosted.startedAt})`.mapWith(verdictRecord.startedAt) })
+        .from(hosted)
+        .groupBy(hosted.repo, hosted.number, hosted.source);
     },
 
-    async reposSince(tenantId: string, repos: readonly string[], from?: Date): Promise<string[]> {
-      if (repos.length === 0) return [];
-      const rows = await db
-        .selectDistinct({ repo: verdictRecord.repo })
-        .from(verdictRecord)
-        .where(and(eq(verdictRecord.tenantId, tenantId), inArray(verdictRecord.repo, [...repos]), from === undefined ? undefined : gte(verdictRecord.verdictAt, from)));
-      return rows.map((row) => row.repo);
+    /** The repositories, each on its host, with a verdict since `from`, or ever. */
+    reposSince(tenantId: string, repos: readonly string[], from?: Date): Promise<HostedRepo[]> {
+      if (repos.length === 0) return Promise.resolve([]);
+      const hosted = hostedVerdicts(db, and(eq(verdictRecord.tenantId, tenantId), inArray(verdictRecord.repo, [...repos]), from === undefined ? undefined : gte(verdictRecord.verdictAt, from)));
+      return db.selectDistinct({ repo: hosted.repo, source: hosted.source }).from(hosted);
     },
 
     async anyScored(tenantId: string): Promise<boolean> {

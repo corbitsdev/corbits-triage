@@ -13,7 +13,7 @@ import type { LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
 import { createRunRecorder } from "./run-recorder.js";
 import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
-import type { ApprovedDo, RecordedVerdict, VerdictRecord } from "./verdict-record-store.js";
+import type { ApprovedDo, HostedVerdict, RecordedVerdict } from "./verdict-record-store.js";
 import { createTriageReconciler, type ReconcileOutcome } from "./triage-reconciler.js";
 import { createReconcileLoop } from "./reconcile-loop.js";
 import { createRepoActivity, type RepoActivity } from "./repo-activity.js";
@@ -201,7 +201,7 @@ type HarnessOptions = {
   /** Stored triage state of the repository before the first pass. */
   rows?: PrTriageRow[];
   /** Verdicts recorded from runs no live log holds any more. */
-  recorded?: VerdictRecord[];
+  recorded?: HostedVerdict[];
   activity?: RepoActivity;
   /** Thrown by every listing of open pull requests while set. */
   listError?: Error;
@@ -388,7 +388,7 @@ describe("triage reconciler", () => {
 
   test("a head whose verdict waits on CI is queued again once CI finished, though the deployment that gave the verdict was replaced", async () => {
     const triaged: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: 1, runId: "run_gone", firstSeenAt: LONG_AGO, updatedAt: LONG_AGO };
-    const recorded: VerdictRecord = { tenantId: TENANT_ID, runId: "run_gone", repo: REPO, number: 1, headSha: "sha1", startedAt: new Date(LONG_AGO), verdictAt: new Date(LONG_AGO), settled: true, state: "awaiting-review", actor: "system", humanGated: false, degraded: null, checks: [{ check: "ci-green", result: "unconfirmed" }], dos: [], commented: false, detail: null, trigger: "pull_request:opened", runStatus: null };
+    const recorded: HostedVerdict = { tenantId: TENANT_ID, runId: "run_gone", repo: REPO, source: "github", number: 1, headSha: "sha1", startedAt: new Date(LONG_AGO), verdictAt: new Date(LONG_AGO), settled: true, state: "awaiting-review", actor: "system", humanGated: false, degraded: null, checks: [{ check: "ci-green", result: "unconfirmed" }], dos: [], commented: false, detail: null, trigger: "pull_request:opened", runStatus: null };
     const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
@@ -397,6 +397,14 @@ describe("triage reconciler", () => {
     const cancelled = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] });
     await cancelled.reconcile();
     expect(cancelled.delivered).toHaveLength(0);
+  });
+
+  test("a head waiting on CI under another host's verdict of the same repository, number and head is not queued again", async () => {
+    const triaged: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: 1, runId: "run_gone", firstSeenAt: LONG_AGO, updatedAt: LONG_AGO };
+    const recorded: HostedVerdict = { tenantId: TENANT_ID, runId: "run_bitbucket", repo: REPO, source: "bitbucket-datacenter", number: 1, headSha: "sha1", startedAt: new Date(LONG_AGO), verdictAt: new Date(LONG_AGO), settled: true, state: "awaiting-review", actor: "system", humanGated: false, degraded: null, checks: [{ check: "ci-green", result: "unconfirmed" }], dos: [], commented: false, detail: null, trigger: "pull_request:opened", runStatus: null };
+    const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    await run.reconcile();
+    expect(run.delivered).toHaveLength(0);
   });
 
   test("a head the reconciler holds for CI is mailed to be marked waiting once, where triage writes labels", async () => {
@@ -673,7 +681,7 @@ describe("triage reconciler", () => {
     const moved = NOW.getTime();
     const iso = (ms: number) => new Date(ms).toISOString();
     const row: PrTriageRow = { number: 7, headSha: "abc", status: "queued", attempts: 1, firstSeenAt: LONG_AGO, queuedAt: iso(moved + 50), staleBefore: iso(moved), updatedAt: iso(moved + 50) };
-    const run: ObservedRun = { runId: "run_after", status: "completed", startedAt: iso(moved + 50 - 500) };
+    const run: ObservedRun = { runId: "run_after", source: "github", status: "completed", startedAt: iso(moved + 50 - 500) };
     const pr = { number: 7, headSha: "abc", updatedAt: LONG_AGO, draft: false };
     const plans = planTenant({ repos: [{ name: REPO, prs: [pr], rows: [row] }], runs: new Map([[REPO, new Map([["7@abc", [run]]])]]), now: at(1), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined });
     expect(plans.get(REPO)!.rows[0]!.status).toBe("triaged");

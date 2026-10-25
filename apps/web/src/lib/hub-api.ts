@@ -1528,6 +1528,17 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
   };
 }
 
+/** The queue keys by repository and number alone, so where both hosts have one, the pull request with the newer verdict stands. */
+function newestPulls(pulls: PullTriage[]): Map<string, PullTriage> {
+  const newest = new Map<string, PullTriage>();
+  for (const pull of pulls) {
+    const key = `${pull.repo}#${pull.number}`;
+    const kept = newest.get(key)?.verdict;
+    if (!kept || (pull.verdict && pull.verdict.at > kept.at)) newest.set(key, pull);
+  }
+  return newest;
+}
+
 /**
  * Queue projection from the hub's latest verdict of each pull request. Pending github_mirror approvals only
  * overlay needs-human; they never decide the verdict. With the open pull requests, unseen ones join as "new"
@@ -1535,9 +1546,9 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
  */
 export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], openPulls: OpenPulls | undefined): PrItem[] {
   const items = new Map<string, PrItem>();
-  const triage = new Map(pulls.map((pull) => [`${pull.repo}#${pull.number}`, pull]));
-  for (const pull of pulls) {
-    if (pull.verdict) items.set(`${pull.repo}#${pull.number}`, verdictItem(pull, pull.verdict));
+  const triage = newestPulls(pulls);
+  for (const [key, pull] of triage) {
+    if (pull.verdict) items.set(key, verdictItem(pull, pull.verdict));
   }
   for (const approval of approvals) {
     if (!isGithubWriteApproval(approval) || approval.status !== "pending") continue;

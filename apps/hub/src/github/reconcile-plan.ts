@@ -1,6 +1,6 @@
 // Decides, from what GitHub and the run logs say now, which open pull requests
 // to queue again. Pure, so every recovery path is decided in one place.
-import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { CiState } from "@corbits/github-reads";
 import { MODEL_NOT_ASKED } from "@corbits/triage-workflows/logic/settled";
 import type { Judged } from "@corbits/triage-workflows/logic/item";
@@ -10,6 +10,8 @@ export type OpenPr = { number: number; headSha: string; updatedAt: string; draft
 
 export type ObservedRun = {
   runId: string;
+  /** The host its mail named. */
+  source: RepoSource;
   status: "running" | "completed" | "failed" | "cancelled";
   startedAt: string;
   /** Why a completed run does not settle the head: no verdict, a degraded one, one made on another commit, with unconfirmed checks or without asking the decision model. */

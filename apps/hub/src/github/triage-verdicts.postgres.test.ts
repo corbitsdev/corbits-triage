@@ -14,6 +14,7 @@ import type { RepoRecord } from "./tenant-config.js";
 import type { ObservedRun } from "./reconcile-plan.js";
 import { createTenantVersions, type TenantObservation } from "./tenant-observer.js";
 import { createTriageVerdicts } from "./triage-verdicts.js";
+import { triageWorkflowFor } from "./source-workflow.js";
 import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
 
 /** No deployment holds the credential in these tests. */
@@ -43,7 +44,7 @@ function verdict(runId: string, number: number, at: number, fields: Partial<Reco
 }
 
 function live(runId: string, status: ObservedRun["status"], startedAt: Date, trigger?: string): ObservedRun {
-  return { runId, status, startedAt: startedAt.toISOString(), ...(trigger !== undefined && { trigger }) };
+  return { runId, source: "github", status, startedAt: startedAt.toISOString(), ...(trigger !== undefined && { trigger }) };
 }
 
 /** The live deployment's runs: #8's newest run failed after its verdict, #9 and #10 are still running and #6's run failed early; #7 has no run, but waits for CI. */
@@ -158,12 +159,13 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     const byPull = new Map(body.pulls.map((pull) => [`${pull.repo}#${pull.number}`, pull]));
     // #5 is closed, #4 is in a repository no longer connected; where GitHub could not answer, only a recent verdict is listed.
     expect([...byPull.keys()]).toEqual([`${UNREAD}#2`, `${REPO}#6`, `${REPO}#7`, `${REPO}#8`, `${REPO}#9`, `${REPO}#10`]);
-    expect(body.triaged).toEqual([REPO, UNREAD]);
-    expect(body.active).toEqual([REPO, UNREAD]);
+    expect(body.triaged).toEqual([{ repo: REPO, source: "github" }, { repo: UNREAD, source: "github" }]);
+    expect(body.active).toEqual([{ repo: REPO, source: "github" }, { repo: UNREAD, source: "github" }]);
     expect(body.scored).toBe(false);
     expect(byPull.get(`${REPO}#8`)).toEqual({
       repo: REPO,
       number: 8,
+      source: "github",
       activityAt: minutes(4).toISOString(),
       verdict: {
         runId: "run_3", at: minutes(10).toISOString(), headSha: "sha_run_3", verdict: "unsure", settled: true, state: "awaiting-review", actor: "maintainer",
@@ -174,7 +176,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     expect(byPull.get(`${REPO}#7`)?.verdict?.detail).toBeNull();
     expect(byPull.get(`${REPO}#7`)?.run).toEqual({ status: "waiting-ci", since: minutes(-3).toISOString(), headSha: "sha_waiting" });
     expect(byPull.get(`${REPO}#9`)).toEqual({
-      repo: REPO, number: 9, activityAt: minutes(-5).toISOString(), verdict: null, run: { runId: "run_9", startedAt: minutes(-5).toISOString(), status: "running" },
+      repo: REPO, number: 9, source: "github", activityAt: minutes(-5).toISOString(), verdict: null, run: { runId: "run_9", startedAt: minutes(-5).toISOString(), status: "running" },
     });
     expect(byPull.get(`${REPO}#10`)?.run?.status).toBe("stuck");
     expect(byPull.get(`${REPO}#6`)?.run?.status).toBe("failed");
@@ -242,7 +244,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
     }
     const body = await listed();
     expect(body.pulls.map((pull) => `${pull.repo}#${pull.number}`).sort()).toEqual([`${off}#2`, `${REPO}#1`]);
-    expect(body.triaged).toEqual([REPO, off]);
+    expect(body.triaged).toEqual([{ repo: REPO, source: "github" }, { repo: off, source: "github" }]);
     await db.update(schema.tenant).set({ config: config(true) }).where(eq(schema.tenant.id, TENANT));
     expect((await listed()).pulls.map((pull) => `${pull.repo}#${pull.number}`).sort()).toEqual([`${off}#1`, `${off}#2`, `${REPO}#1`]);
   });
@@ -329,6 +331,99 @@ test("PostgreSQL: a re-triage started before a push and done after it does not r
       verdict("run_backlog", 8, 5, { headSha: "sha_old", startedAt: minutes(0) }),
       verdict("run_push", 8, 3, { headSha: "sha_new", startedAt: minutes(2) }),
     ]);
-    expect((await store.latestFor(TENANT, REPO, 8))?.headSha).toBe("sha_new");
+    expect((await store.latestFor(TENANT, { repo: REPO, number: 8, source: "github" }))?.headSha).toBe("sha_new");
   });
 });
+
+test("PostgreSQL: the same repository and number on both hosts come back separately, each with its own verdict, activity, approval and run", async () => {
+  await withDatabase(async function bothHosts(db) {
+    const off = "acme/off";
+    const only = "TRI/only";
+    const repos = [REPO, off].flatMap((name) => [{ name, connected: true, enabled: name === REPO }, { name, source: "bitbucket-datacenter", connected: true, enabled: name === REPO }]).concat({ name: only, source: "bitbucket-datacenter", connected: true, enabled: false });
+    await db.insert(schema.tenant).values({ id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config: { corbitsTriage: { repos } } });
+    await db.insert(schema.principal).values({ id: "prn_verdicts", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" });
+    await db.insert(schema.workflowDefinition).values([
+      { id: "wfd_github", tenantId: TENANT, name: triageWorkflowFor("github").id, status: "stopped" },
+      { id: "wfd_bitbucket", tenantId: TENANT, name: triageWorkflowFor("bitbucket-datacenter").id, status: "stopped" },
+    ]);
+    await db.insert(schema.workflowRun).values(["run_github", "run_github_off", "run_bitbucket", "run_bitbucket_off"].map((id) => ({
+      id, definitionId: id.startsWith("run_github") ? "wfd_github" : "wfd_bitbucket", anchorRunId: id, tenantId: TENANT, status: "completed" as const,
+    })));
+    await db.insert(schema.approval).values({
+      id: "apr_held", tenantId: TENANT, anchorRunId: "run_bitbucket_off", runId: "run_bitbucket_off", agentAddress: "pr-triage@verdicts.test", correlationId: "cor_held",
+      toolDefinition: { name: "bitbucket_datacenter_mirror" }, toolArguments: { repo: off, number: 2 },
+    });
+    const old = -20 * 24 * 60;
+    const store = createVerdictRecordStore(db);
+    await store.record(TENANT, [
+      verdict("run_github", 8, 0, { trigger: "pull_request:synchronize" }),
+      verdict("run_bitbucket", 8, old, { trigger: "issue_comment:created" }),
+      verdict("run_github_off", 2, old, { repo: off }),
+      verdict("run_bitbucket_off", 2, old, { repo: off }),
+    ]);
+    let observation: TenantObservation | undefined;
+    let listedAt = 0;
+    const openPulls = createOpenPullsCache(() => new Date(NOW + listedAt));
+    const triageVerdicts = createTriageVerdicts({
+      db,
+      cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
+      onKeyMoved: noKeyPush,
+      authorize: async () => true,
+      verdicts: store,
+      observer: { last: () => observation },
+      ready: () => true,
+      versions: createTenantVersions(),
+      openPulls,
+      list: () => async () => { throw new Error("the workspace has no host credential"); },
+      triageState: { load: async () => ({ rows: [], version: null }) },
+      now: () => minutes(0),
+    });
+    const grants: GrantRule[] = [{ id: "grt_runs", resource: "workflow-run:*", action: "read", effect: "allow", origin: "system", conditions: null, expiresAt: null, roleId: null, principalId: "prn_verdicts" }];
+    const app = guardedApp(db, async () => ({ user: { id: "usr_member" } }) as never, createInMemoryGrantStore(grants), { triageVerdicts });
+    async function get(query = ""): Promise<TriageVerdicts> {
+      return TriageVerdicts.assert(await (await app.request(`/api/integrations/triage-verdicts/${TENANT}${query}`, { headers: { "sec-fetch-site": "same-origin" } })).json());
+    }
+    async function listing(at: number, bitbucketError?: string): Promise<void> {
+      listedAt = at;
+      const pr = (number: number) => ({ ...OPEN[0]!.prs[0]!, number });
+      await openPulls.read(TENANT, async () => [REPO, off].flatMap((repo) => [
+        { repo, source: "github" as const, prs: [pr(8), pr(2)] },
+        { repo, source: "bitbucket-datacenter" as const, prs: bitbucketError === undefined ? [pr(8), pr(2)] : [], ...(bitbucketError !== undefined && { error: bitbucketError }) },
+      ]));
+    }
+    function rows(body: TriageVerdicts) {
+      return body.pulls.map((pull) => [pull.source, pull.repo, pull.number, pull.verdict?.runId, pull.activityAt, pull.run?.status ?? null]);
+    }
+
+    await listing(0);
+    const body = await get();
+    expect(rows(body)).toEqual([
+      ["bitbucket-datacenter", off, 2, "run_bitbucket_off", null, null],
+      ["bitbucket-datacenter", REPO, 8, "run_bitbucket", minutes(old - 1).toISOString(), null],
+      ["github", REPO, 8, "run_github", minutes(-1).toISOString(), null],
+    ]);
+    expect(body.active).toEqual([{ repo: REPO, source: "github" }]);
+    expect(body.triaged).toEqual([{ repo: REPO, source: "github" }, { repo: REPO, source: "bitbucket-datacenter" }, { repo: off, source: "github" }, { repo: off, source: "bitbucket-datacenter" }]);
+
+    // Bitbucket could not list: its pull requests come only from the recent window, which its old #8 verdict is outside.
+    await listing(1_000, "unreachable");
+    expect(rows(await get())).toEqual([["github", REPO, 8, "run_github", minutes(-1).toISOString(), null]]);
+
+    observation = {
+      deployments: [],
+      observed: [{ byRepo: new Map([[REPO, new Map([["8@sha_live", [{ ...live("run_bitbucket_live", "running", minutes(-1)), source: "bitbucket-datacenter" as const }]]])]]), runCount: 1, verdicts: [], approved: [] }],
+      workers: [],
+    };
+    await listing(2_000);
+    const running = await get();
+    expect(rows(running).filter((row) => row[1] === REPO).map((row) => [row[0], row[5]])).toEqual([["bitbucket-datacenter", "running"], ["github", null]]);
+    expect(running.active).toEqual([{ repo: REPO, source: "github" }, { repo: REPO, source: "bitbucket-datacenter" }]);
+    expect((await get(`?repo=${REPO}&number=8&source=bitbucket-datacenter`)).pulls.map((pull) => pull.verdict?.runId)).toEqual(["run_bitbucket"]);
+    expect((await get(`?repo=${REPO}&number=8`)).pulls.map((pull) => pull.verdict?.runId)).toEqual(["run_github"]);
+
+    // A name only Bitbucket holds is found without naming its host.
+    await db.insert(schema.workflowRun).values({ id: "run_bitbucket_only", definitionId: "wfd_bitbucket", anchorRunId: "run_bitbucket_only", tenantId: TENANT, status: "completed" });
+    await store.record(TENANT, [verdict("run_bitbucket_only", 3, 0, { repo: only })]);
+    expect((await get(`?repo=${only}&number=3`)).pulls.map((pull) => [pull.source, pull.verdict?.runId])).toEqual([["bitbucket-datacenter", "run_bitbucket_only"]]);
+  });
+}, 120_000);

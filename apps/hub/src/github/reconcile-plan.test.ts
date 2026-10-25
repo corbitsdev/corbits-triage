@@ -16,7 +16,7 @@ function pr(number: number, headSha = `sha${number}`): OpenPr {
 }
 
 function run(runId: string, status: ObservedRun["status"], startedMinute: number, workflowVersion = VERSION): ObservedRun {
-  return { runId, status, startedAt: at(startedMinute).toISOString(), workflowVersion };
+  return { runId, source: "github", status, startedAt: at(startedMinute).toISOString(), workflowVersion };
 }
 
 const REPO = "acme/widgets";

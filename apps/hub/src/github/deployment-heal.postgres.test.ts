@@ -257,9 +257,9 @@ test("PostgreSQL: a released worker's completed run records its verdict and sett
   await withHub(async (hub) => {
     await hub.anchor("run_listener", { status: "deployed", createdAt: ago(60 * MINUTE) });
     await hub.anchor("run_worker_old", { status: "cancelled", createdAt: ago(12 * MINUTE), endedAt: ago(10 * MINUTE), cancellationRequestedAt: ago(10 * MINUTE) }, true);
-    hub.runs.set("run_worker_old", workerRuns({ runId: "run_worker_old__events__0", status: "completed", startedAt: ago(11 * MINUTE).toISOString() }));
+    hub.runs.set("run_worker_old", workerRuns({ runId: "run_worker_old__events__0", source: "github", status: "completed", startedAt: ago(11 * MINUTE).toISOString() }));
     await hub.anchor("run_worker", { status: "cancelled", createdAt: ago(2 * MINUTE), endedAt: ago(MINUTE), cancellationRequestedAt: ago(MINUTE) }, true);
-    hub.runs.set("run_worker", workerRuns({ runId: "run_worker__events__0", status: "completed", startedAt: ago(90_000).toISOString() }));
+    hub.runs.set("run_worker", workerRuns({ runId: "run_worker__events__0", source: "github", status: "completed", startedAt: ago(90_000).toISOString() }));
     hub.rows.set(REPO, [QUEUED]);
     expect(await hub.reconcile()).toEqual({ retry: false });
     expect(hub.verdicts.map((verdict) => verdict.runId)).toEqual(["run_worker__events__0"]);
@@ -277,7 +277,7 @@ test("PostgreSQL: a released worker's failed run fails its head, which is sent a
   await withHub(async (hub) => {
     await hub.anchor("run_listener", { status: "deployed", createdAt: ago(60 * MINUTE) });
     await hub.anchor("run_worker", { status: "cancelled", createdAt: ago(2 * MINUTE), endedAt: ago(MINUTE), cancellationRequestedAt: ago(MINUTE) }, true);
-    hub.runs.set("run_worker", workerRuns({ runId: "run_worker__events__0", status: "failed", startedAt: ago(80_000).toISOString() }));
+    hub.runs.set("run_worker", workerRuns({ runId: "run_worker__events__0", source: "github", status: "failed", startedAt: ago(80_000).toISOString() }));
     hub.rows.set(REPO, [QUEUED]);
     expect(await hub.reconcile()).toEqual({ retry: false });
     expect(hub.verdicts).toEqual([]);

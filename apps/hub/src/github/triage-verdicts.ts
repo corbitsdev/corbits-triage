@@ -8,16 +8,18 @@
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
+import { asRecord } from "@corbits/common";
 import { schema } from "@intx/db";
-import { PR_TRIAGE_STUCK_RUN_MS, repoPolicy, TriageVerdicts, type PrTriageRow, type VerdictWord } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, REPO_SOURCES, repoPolicy, TriageVerdicts, type PrTriageRow, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import { bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
 import { listConnectedPulls, listingRefusal, refusedSources, type OpenPrsLister, type OpenPullsCache, type OpenPullsRead, type RepoPulls } from "./open-pulls.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { runKeyNumber, type ObservedRun } from "./reconcile-plan.js";
-import { repoRecords, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
+import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 import type { TenantObservation, TenantObserver, TenantVersions } from "./tenant-observer.js";
-import { type PullRef, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
+import { type HostedPull, type HostedRepo, type HostedVerdict, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_VERDICTS_PATH = "/api/integrations/triage-verdicts";
 
@@ -47,6 +49,7 @@ const LISTING_MS = 30_000;
 const PullQuery = type({
   "repo?": /^[\w.-]+\/[\w.-]+$/,
   "number?": type("string.integer.parse").to("1 <= number.integer <= 2147483647"),
+  "source?": type.enumerated(...REPO_SOURCES),
 });
 
 type Pull = TriageVerdicts["pulls"][number];
@@ -63,13 +66,17 @@ export type TriageVerdictsDeps = PortalCredentialDeps & {
   now: () => Date;
 };
 
-type LivePull = PullRef & { runs: ObservedRun[] };
+type LivePull = HostedPull & { runs: ObservedRun[] };
 
 /** A pull request whose newest head waits for CI, first seen `since`. */
-type WaitingPull = PullRef & { since: string; headSha: string };
+type WaitingPull = HostedPull & { since: string; headSha: string };
 
-function pullKey(pull: PullRef): string {
-  return `${pull.repo}#${pull.number}`;
+function hostKey({ repo, source }: HostedRepo): string {
+  return triageStateKey({ name: repo, source });
+}
+
+function pullKey(pull: HostedPull): string {
+  return `${hostKey(pull)}#${pull.number}`;
 }
 
 function livePulls(observation: TenantObservation | undefined): Map<string, LivePull> {
@@ -77,10 +84,12 @@ function livePulls(observation: TenantObservation | undefined): Map<string, Live
   for (const runs of observation ? [...observation.observed, ...observation.workers] : []) {
     for (const [repo, byHead] of runs.byRepo) {
       for (const [key, list] of byHead) {
-        const ref = { repo, number: runKeyNumber(key) };
-        const pull = byPull.get(pullKey(ref)) ?? { ...ref, runs: [] };
-        pull.runs.push(...list);
-        byPull.set(pullKey(ref), pull);
+        for (const run of list) {
+          const ref = { repo, source: run.source, number: runKeyNumber(key) };
+          const pull = byPull.get(pullKey(ref)) ?? { ...ref, runs: [] };
+          pull.runs.push(run);
+          byPull.set(pullKey(ref), pull);
+        }
       }
     }
   }
@@ -120,22 +129,33 @@ function newest(times: ReadonlyArray<string | undefined>): string | null {
   return times.reduce<string | null>((latest, at) => (at !== undefined && (latest === null || at > latest) ? at : latest), null);
 }
 
+/** The connected `repo` on `source`; without one, as a repository link resolves: the GitHub one, else the only one. */
+function connectedRecord(connected: readonly RepoRecord[], repo: string, source: RepoSource | undefined): RepoRecord | undefined {
+  const named = connected.filter((record) => record.name === repo);
+  if (source !== undefined) return named.find((record) => sourceOf(record) === source);
+  return named.find((record) => sourceOf(record) === "github") ?? (named.length === 1 ? named[0] : undefined);
+}
+
 /**
- * Open pull request numbers per listed repository among `repos`, plus the `held` ones elsewhere: an approval still needs a person
- * after triage is turned off. A repository GitHub could not list is left out.
+ * Open pull request numbers per listed repository on its host among `records`, plus the `held` ones elsewhere: an approval
+ * still needs a person after triage is turned off. A repository its host could not list is left out.
  */
-function openNumbers(listed: OpenPullsRead | undefined, repos: readonly string[], held: readonly PullRef[]): Map<string, Set<number>> {
+function openNumbers(listed: OpenPullsRead | undefined, records: readonly RepoRecord[], held: readonly HostedPull[]): Map<string, HostedRepo & { numbers: Set<number> }> {
   if (!listed) return new Map();
-  function numbersOf(row: RepoPulls): Array<readonly [string, Set<number>]> {
-    if (row.error !== undefined) return [];
-    const wanted = repos.includes(row.repo);
-    const numbers = row.prs.map((pr) => pr.number).filter((number) => wanted || held.some((pull) => pull.repo === row.repo && pull.number === number));
-    return wanted || numbers.length > 0 ? [[row.repo, new Set(numbers)]] : [];
+  function numbersOf({ repo, source, prs, error }: RepoPulls): Array<readonly [string, HostedRepo & { numbers: Set<number> }]> {
+    if (error !== undefined) return [];
+    const key = hostKey({ repo, source });
+    const wanted = records.some((record) => triageStateKey(record) === key);
+    const numbers = prs.map((pr) => pr.number).filter((number) => wanted || held.some((pull) => pullKey(pull) === pullKey({ repo, source, number })));
+    return wanted || numbers.length > 0 ? [[key, { repo, source, numbers: new Set(numbers) }]] : [];
   }
   return new Map(listed.repos.flatMap(numbersOf));
 }
 
 const ApprovalPull = type({ repo: "string", number: "number.integer" });
+
+/** A held approval's host is its tool's: Bitbucket Data Center's write tools, else GitHub's. */
+const BITBUCKET_WRITE_TOOLS: ReadonlySet<unknown> = new Set(bitbucketWrite.definitions.map((definition) => definition.name));
 
 type Body = { json: string; etag: string };
 
@@ -167,7 +187,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     return deps.openPulls.read(tenantId, () => listConnectedPulls(deps.list, tenantId, connected, refused));
   }
 
-  async function activityOf(tenantId: string, pulls: readonly PullRef[], live: Map<string, LivePull>): Promise<Map<string, string>> {
+  async function activityOf(tenantId: string, pulls: readonly HostedPull[], live: Map<string, LivePull>): Promise<Map<string, string>> {
     const recorded = await deps.verdicts.triggeredAt(tenantId, pulls, AUTHOR_ACTIVITY);
     const at = new Map(recorded.map((row) => [pullKey(row), row.at.toISOString()]));
     for (const pull of pulls) {
@@ -178,10 +198,11 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     return at;
   }
 
-  async function reposOf(tenantId: string, names: readonly string[], live: Map<string, LivePull>, since?: Date): Promise<string[]> {
-    const seen = new Set(await deps.verdicts.reposSince(tenantId, names, since));
-    for (const pull of live.values()) seen.add(pull.repo);
-    return names.filter((repo) => seen.has(repo));
+  /** The connected repositories, each on its host, with a verdict since `since`, or ever, or a run in a live log. */
+  async function reposOf(tenantId: string, connected: readonly RepoRecord[], live: Map<string, LivePull>, since?: Date): Promise<HostedRepo[]> {
+    const seen = new Set((await deps.verdicts.reposSince(tenantId, connected.map((record) => record.name), since)).map(hostKey));
+    for (const pull of live.values()) seen.add(hostKey(pull));
+    return connected.map((record) => ({ repo: record.name, source: sourceOf(record) })).filter((repo) => seen.has(hostKey(repo)));
   }
 
   async function waitingOf(tenantId: string, records: readonly RepoRecord[]): Promise<Map<string, WaitingPull>> {
@@ -191,25 +212,25 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       const newest = new Map<number, PrTriageRow>();
       for (const row of [...rows].sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt))) newest.set(row.number, row);
       for (const row of newest.values()) {
-        const pull = { repo: records[index]!.name, number: row.number };
+        const pull = { repo: records[index]!.name, source: sourceOf(records[index]!), number: row.number };
         if (row.status === "waiting") waiting.set(pullKey(pull), { ...pull, since: row.firstSeenAt, headSha: row.headSha });
       }
     }
     return waiting;
   }
 
-  async function build(tenantId: string, latest: readonly VerdictRecord[], live: Map<string, LivePull>, waiting: Map<string, WaitingPull>, wanted: (pull: PullRef) => boolean, names: readonly string[]): Promise<TriageVerdicts> {
+  async function build(tenantId: string, latest: readonly HostedVerdict[], live: Map<string, LivePull>, waiting: Map<string, WaitingPull>, wanted: (pull: HostedPull) => boolean, connected: readonly RepoRecord[]): Promise<TriageVerdicts> {
     const now = deps.now();
     const byPull = new Map(latest.map((verdict) => [pullKey(verdict), verdict]));
-    const refs = new Map<string, PullRef>();
+    const refs = new Map<string, HostedPull>();
     for (const ref of [...latest, ...live.values(), ...waiting.values()]) {
-      if (wanted(ref)) refs.set(pullKey(ref), { repo: ref.repo, number: ref.number });
+      if (wanted(ref)) refs.set(pullKey(ref), { repo: ref.repo, number: ref.number, source: ref.source });
     }
-    const pulls = [...refs.values()].sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number);
+    const pulls = [...refs.values()].sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number || a.source.localeCompare(b.source));
     const [activity, triaged, active, scored] = await Promise.all([
       activityOf(tenantId, pulls, live),
-      reposOf(tenantId, names, live),
-      reposOf(tenantId, names, live, new Date(now.getTime() - RECENT_MS)),
+      reposOf(tenantId, connected, live),
+      reposOf(tenantId, connected, live, new Date(now.getTime() - RECENT_MS)),
       deps.verdicts.anyScored(tenantId),
     ]);
     const ready = deps.ready(tenantId);
@@ -227,28 +248,29 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
   }
 
   /** The pull requests a pending approval names. */
-  async function heldPulls(tenantId: string): Promise<PullRef[]> {
-    const rows = await deps.db.select({ args: schema.approval.toolArguments }).from(schema.approval).where(and(eq(schema.approval.tenantId, tenantId), eq(schema.approval.status, "pending")));
-    function pullOf(row: { args: unknown }): PullRef[] {
+  async function heldPulls(tenantId: string): Promise<HostedPull[]> {
+    const rows = await deps.db.select({ args: schema.approval.toolArguments, tool: schema.approval.toolDefinition }).from(schema.approval).where(and(eq(schema.approval.tenantId, tenantId), eq(schema.approval.status, "pending")));
+    function pullOf(row: { args: unknown; tool: unknown }): HostedPull[] {
       const pull = ApprovalPull(row.args);
-      return pull instanceof type.errors ? [] : [{ repo: pull.repo, number: pull.number }];
+      const source = BITBUCKET_WRITE_TOOLS.has(asRecord(row.tool)?.["name"]) ? "bitbucket-datacenter" : "github";
+      return pull instanceof type.errors ? [] : [{ repo: pull.repo, number: pull.number, source }];
     }
     return rows.flatMap(pullOf);
   }
 
-  /** Lists the pull requests of `enabled` repositories and the `held` ones; `names`, every connected one, still decides which count as triaged. */
-  async function openList(tenantId: string, enabled: readonly RepoRecord[], held: readonly PullRef[], names: readonly string[], listed: OpenPullsRead | undefined, live: Map<string, LivePull>): Promise<TriageVerdicts> {
-    const enabledNames = enabled.map((record) => record.name);
-    const open = openNumbers(listed, enabledNames, held);
-    const unknown = enabledNames.filter((repo) => !open.has(repo));
-    const pairs = [...open].flatMap(([repo, numbers]) => [...numbers].map((number) => ({ repo, number })));
+  /** Lists the pull requests of `enabled` repositories and the `held` ones; `connected`, every connected one, still decides which count as triaged. */
+  async function openList(tenantId: string, enabled: readonly RepoRecord[], held: readonly HostedPull[], connected: readonly RepoRecord[], listed: OpenPullsRead | undefined, live: Map<string, LivePull>): Promise<TriageVerdicts> {
+    const open = openNumbers(listed, enabled, held);
+    const unknown = enabled.filter((record) => !open.has(triageStateKey(record)));
+    const unlisted = new Set(unknown.map(triageStateKey));
+    const pairs = [...open.values()].flatMap(({ repo, numbers }) => [...numbers].map((number) => ({ repo, number })));
     const since = new Date(deps.now().getTime() - RECENT_MS);
-    const [known, recent, waiting] = await Promise.all([deps.verdicts.latest(tenantId, pairs), deps.verdicts.latestSince(tenantId, unknown, since), waitingOf(tenantId, enabled)]);
-    function wanted(pull: PullRef): boolean {
-      const numbers = open.get(pull.repo);
-      return numbers === undefined ? unknown.includes(pull.repo) : numbers.has(pull.number);
+    const [known, recent, waiting] = await Promise.all([deps.verdicts.latest(tenantId, pairs), deps.verdicts.latestSince(tenantId, unknown.map((record) => record.name), since), waitingOf(tenantId, enabled)]);
+    function wanted(pull: HostedPull): boolean {
+      const listing = open.get(hostKey(pull));
+      return listing === undefined ? unlisted.has(hostKey(pull)) : listing.numbers.has(pull.number);
     }
-    return build(tenantId, [...known, ...recent], live, waiting, wanted, names);
+    return build(tenantId, [...known.filter((verdict) => open.has(hostKey(verdict))), ...recent], live, waiting, wanted, connected);
   }
 
   return async function handle(req: Request, member: Member): Promise<Response> {
@@ -259,24 +281,23 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
     const connected = repoRecords(triageNs(tenant.config)).filter((record) => record.connected);
-    const names = connected.map((record) => record.name);
     const live = livePulls(deps.observer.last(tenantId));
 
     if (query.repo !== undefined && query.number !== undefined) {
-      const pull = { repo: query.repo, number: query.number };
-      if (!names.includes(pull.repo)) return failure(404, "not_found", "That repository is not connected.");
-      const [latest, waiting] = await Promise.all([deps.verdicts.latestFor(tenantId, pull.repo, pull.number), waitingOf(tenantId, connected.filter((record) => record.name === pull.repo))]);
-      const one = await build(tenantId, latest ? [latest] : [], new Map([...live].filter(([key]) => key === pullKey(pull))), new Map([...waiting].filter(([key]) => key === pullKey(pull))), () => true, names);
+      const record = connectedRecord(connected, query.repo, query.source);
+      if (!record) return failure(404, "not_found", "That repository is not connected.");
+      const pull = { repo: query.repo, number: query.number, source: sourceOf(record) };
+      const [latest, waiting] = await Promise.all([deps.verdicts.latestFor(tenantId, pull), waitingOf(tenantId, [record])]);
+      const one = await build(tenantId, latest ? [latest] : [], new Map([...live].filter(([key]) => key === pullKey(pull))), new Map([...waiting].filter(([key]) => key === pullKey(pull))), () => true, connected);
       return respond(req, bodyOf(one.pulls.length > 0 ? one : { ...one, pulls: [{ ...pull, activityAt: null, verdict: null, run: runOf(undefined, deps.now(), deps.ready(tenantId)) }] }));
     }
 
     const enabled = connected.filter((record) => repoPolicy(record).enabled);
-    const enabledNames = enabled.map((record) => record.name);
     const [listed, held] = await Promise.all([listingOf(member, connected), heldPulls(tenantId)]);
-    const key = [deps.versions.get(tenantId), listed?.at, deps.ready(tenantId), Math.floor(deps.now().getTime() / REBUILD_MS), ...names, "--", ...enabledNames, "--", ...held.map(pullKey).sort()].join("\n");
+    const key = [deps.versions.get(tenantId), listed?.at, deps.ready(tenantId), Math.floor(deps.now().getTime() / REBUILD_MS), ...connected.map(triageStateKey), "--", ...enabled.map(triageStateKey), "--", ...held.map(pullKey).sort()].join("\n");
     const hit = kept.get(tenantId);
     if (hit?.key === key) return respond(req, hit.body);
-    const body = bodyOf(await openList(tenantId, enabled, held, names, listed, live));
+    const body = bodyOf(await openList(tenantId, enabled, held, connected, listed, live));
     kept.set(tenantId, { key, body });
     return respond(req, body);
   };

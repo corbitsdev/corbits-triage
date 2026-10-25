@@ -156,8 +156,8 @@ describe("createGithubPrTriage", () => {
   });
 
   test("refuses a head whose run is still going, but not one that is stuck", async () => {
-    const live: ObservedRun = { runId: "run-live", status: "running", startedAt: new Date(NOW.getTime() - 60_000).toISOString() };
-    const stuck: ObservedRun = { runId: "run-stuck", status: "running", startedAt: new Date(NOW.getTime() - 2 * DEFAULT_RECONCILE_POLICY.stuckAfterMs).toISOString() };
+    const live: ObservedRun = { runId: "run-live", source: "github", status: "running", startedAt: new Date(NOW.getTime() - 60_000).toISOString() };
+    const stuck: ObservedRun = { runId: "run-stuck", source: "github", status: "running", startedAt: new Date(NOW.getTime() - 2 * DEFAULT_RECONCILE_POLICY.stuckAfterMs).toISOString() };
     const s = stub();
     await refused(await handler(ENABLED, s, { observeRuns: observed([live]) })(request(), MEMBER), 409, "already_running");
     expect(s.delivered).toEqual([]);
@@ -166,7 +166,7 @@ describe("createGithubPrTriage", () => {
   });
 
   test("refuses a head still running on a replaced deployment or stored as running, but not one stored running past the stuck time", async () => {
-    const live: ObservedRun = { runId: "run-live", status: "running", startedAt: new Date(NOW.getTime() - 60_000).toISOString() };
+    const live: ObservedRun = { runId: "run-live", source: "github", status: "running", startedAt: new Date(NOW.getTime() - 60_000).toISOString() };
     const replaced = { ...ANCHOR, runId: "anchor-0", address: "anchor-0@tenant.example" };
     const onReplaced: GithubPrTriageDeps["observeRuns"] = async (anchorRunId, domain) => (anchorRunId === replaced.runId ? observed([live]) : observed([]))(anchorRunId, domain);
     const s = stub();
@@ -237,7 +237,7 @@ describe("createGithubPrTriage", () => {
 
   test("a second click before the run starts is refused once the hub has passed over the queued head", async () => {
     const at = (agoMs: number) => new Date(NOW.getTime() - agoMs).toISOString();
-    const oldVerdict: ObservedRun = { runId: "run-old", status: "completed", startedAt: at(3_600_000), workflowVersion: "0.1.0-sha-1" };
+    const oldVerdict: ObservedRun = { runId: "run-old", source: "github", status: "completed", startedAt: at(3_600_000), workflowVersion: "0.1.0-sha-1" };
     let rows: PrTriageRow[] = [{ number: 8, headSha: "abc123", status: "triaged", attempts: 1, runId: "run-old", workflowVersion: "0.1.0-sha-1", firstSeenAt: at(7_200_000), queuedAt: at(3_600_000), updatedAt: at(3_600_000) }];
     const s = stub();
     const store: GithubPrTriageDeps["store"] = { async load() { return { rows, version: VERSION }; }, async save(_t, _r, next) { rows = next; return VERSION; } };

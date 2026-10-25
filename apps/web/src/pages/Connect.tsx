@@ -19,6 +19,7 @@ import {
 import { useGithubSync } from "../lib/github-sync.ts";
 import { counted } from "../lib/plural.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { hostedRepos } from "../lib/repo-rows.ts";
 import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
@@ -71,7 +72,7 @@ export default function Connect() {
   const logs = useBacklogLogs();
   const verdicts = useTriageVerdicts();
   const runs = useRuns();
-  const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
+  const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const modelStored = snapshot?.decisionModel !== undefined;
 
   async function generateAndCopyWebhookSecret() {
@@ -205,7 +206,7 @@ export default function Connect() {
   }
 
   function renderInstallRow(repo: RepoRecord) {
-    const catchingUp = isRepoCatchingUp(logs, runs.rows, triaged, repo.name);
+    const catchingUp = isRepoCatchingUp(logs, runs.rows, triaged, repo);
     return <div key={repo.name} className="install-row"><strong className="mono">{repo.name}</strong>{catchingUp ? <span className="catching-up"><StatusDot label="In progress" live tone="emphasis" />Catching up open pull requests…</span> : <Badge tone="success">Connected</Badge>}</div>;
   }
 

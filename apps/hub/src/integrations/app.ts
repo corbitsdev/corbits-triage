@@ -9,7 +9,7 @@ import type { DB } from "@intx/db";
 import { getLogger } from "@intx/log";
 import { honoLogger, type HonoContext } from "@intx/log/hono";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
@@ -603,14 +603,15 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${TRIAGE_VERDICTS_PATH}/:tenantId`,
     describeRoute({
       summary: "Latest verdict of each open pull request",
-      description: "Needs `workflow-run:*` read, as reading run logs does. Reads only what the hub already recorded: verdicts (recorded within seconds of their step completing, by a loop over tenants with pr-triage runs in flight), the last read of the live logs and GitHub's last listing of open pull requests (the github-open-pulls listing, or one read as the App at most every 30 seconds when the caller holds `read` on the GitHub credential; without it, the last listing of any age). Each open pull request of a connected repository with a verdict or a live run, with its latest verdict, its latest run when that has not completed (`unknown` until the hub read the workspace's live logs since it started), and when author activity last started a run. Where GitHub's listing lacks a repository, those with a verdict in the last 14 days. With `repo` and `number`, that one pull request, open or not. Sends an ETag; a matching If-None-Match gets 304, answered from memory while nothing changed.",
+      description: "Needs `workflow-run:*` read, as reading run logs does. Reads only what the hub already recorded: verdicts (recorded within seconds of their step completing, by a loop over tenants with pr-triage runs in flight), the last read of the live logs and each host's last listing of open pull requests (the github-open-pulls listing, or one read at most every 30 seconds with each host's credential; a host with no credential lists none of its repositories; when the caller is barred from a host's credential, or no host has one, the last listing of any age). Each open pull request of a connected repository with a verdict or a live run, with its latest verdict, its latest run when that has not completed (`unknown` until the hub read the workspace's live logs since it started), and when author activity last started a run. Each pull request names its host as `source`: a verdict's is its run's workflow's, GitHub for a verdict whose run is gone, and a live run's is its mail's, so the same repository and number on both hosts are two pull requests. Where its host's listing lacks a repository, those with a verdict in the last 14 days. With `repo` and `number`, that one pull request on `source`, open or not; without `source`, on GitHub where a connected GitHub repository has that name, else on the only host that has it. Sends an ETag; a matching If-None-Match gets 304, answered from memory while nothing changed.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: false, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
         { in: "query", name: "number", required: false, schema: { type: "integer", minimum: 1, maximum: 2147483647 } },
+        { in: "query", name: "source", required: false, schema: { type: "string", enum: [...REPO_SOURCES] } },
       ],
       responses: {
-        200: json("Pull requests by repository and number", TriageVerdicts),
+        200: json("Pull requests by host, repository and number", TriageVerdicts),
         304: { description: "Unchanged since the ETag sent" },
         ...invalid,
         401: failures[401],
