@@ -8,10 +8,15 @@ on:
       - "tooling/vendor-diff-check.sh"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   vendor-diff:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Vendor-diff gate (fail on vendor/ drift from pinned stock)
         run: sh tooling/vendor-diff-check.sh
