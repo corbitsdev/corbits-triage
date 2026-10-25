@@ -1,5 +1,5 @@
 import { errorText } from "@corbits/common";
-import { customRuleId, emptyPack, repoPolicy, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { customRuleId, emptyPack, repoPolicy, VERDICTS, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { ExtendedPolicyError, StaleCheckPackError } from "./check-pack.ts";
 import { freshStepId, fromPack, packChanges, policyChanges, savable, stepEntries, storedStepKey, toPack, type RepoDraft } from "./pack-draft.ts";
 import { draftPolicy, type LoadedRepoPack, type PackRef, type RepoPackStore } from "./repo-pack-store.ts";
@@ -79,7 +79,7 @@ function checksFailed(cause: unknown): SaveFailure {
 }
 
 /** Writes what of the draft can be saved: the pack when it changed or the stored one is corrupt, then one config write when anything is left to point at or change. */
-export async function saveDraft(store: RepoPackStore, repo: string, session: PackSession, draft: RepoDraft): Promise<SaveOutcome> {
+export async function saveDraft(store: RepoPackStore, repo: string, source: RepoSource, session: PackSession, draft: RepoDraft): Promise<SaveOutcome> {
   let next: RepoDraft;
   let renamed: Record<string, string>;
   try {
@@ -100,7 +100,7 @@ export async function saveDraft(store: RepoPackStore, repo: string, session: Pac
   }
   if (!current.unlinked && policyChanges(current.saved.policy, next.policy) === 0) return { session: current, renamed, failure: null };
   try {
-    await store.writePolicy(repo, next.policy, current.corrupt === null && current.loaded !== null ? current.loaded.id : null);
+    await store.writePolicy(repo, source, next.policy, current.corrupt === null && current.loaded !== null ? current.loaded.id : null);
   } catch (cause) {
     const message = current.unlinked
       ? `The policy is saved and in effect, but could not be linked to the repository. ${errorText(cause)}`

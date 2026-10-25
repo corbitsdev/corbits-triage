@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "@corbits/common";
 import { queryOptions, skipToken, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { emptyPack, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
-import { isBitbucketDatacenterRepo, switchBitbucketDatacenterTriage } from "./bitbucket-datacenter.ts";
+import { switchBitbucketDatacenterTriage } from "./bitbucket-datacenter.ts";
 import { writeCheckPack } from "./check-pack.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import { loadRepoPolicy } from "./hub-api.ts";
@@ -21,9 +21,9 @@ export function hubRepoPackStore(queryClient: QueryClient, tenantId: string, tra
   const direct = transportRepoPackStore(transport, tenantId);
   return {
     ...direct,
-    async load(repo, fresh) {
+    async load(repo, source, fresh) {
       const pack = checkPackQuery(tenantId, repo);
-      const policy = queryOptions({ queryKey: [REPO_POLICY_QUERY_KEY, tenantId, repo], queryFn: () => loadRepoPolicy(transport, tenantId, repo) });
+      const policy = queryOptions({ queryKey: [REPO_POLICY_QUERY_KEY, tenantId, repo, source], queryFn: () => loadRepoPolicy(transport, tenantId, repo, source) });
       if (fresh) {
         await queryClient.invalidateQueries({ queryKey: [CHECK_PACK_INDEX_QUERY_KEY, tenantId] });
         await queryClient.invalidateQueries({ queryKey: pack.queryKey });
@@ -41,12 +41,12 @@ export function hubRepoPackStore(queryClient: QueryClient, tenantId: string, tra
      * A Bitbucket Data Center repository is recorded, enabled and disabled by the hub's routes, after the pack it runs is
      * saved. The policy file standing lists only enabled repositories, so it is read again.
      */
-    async writePolicy(repo, policy, packId) {
-      if (isBitbucketDatacenterRepo(queryClient, tenantId, repo)) {
-        const stored = await loadRepoPolicy(transport, tenantId, repo);
+    async writePolicy(repo, source, policy, packId) {
+      if (source === "bitbucket-datacenter") {
+        const stored = await loadRepoPolicy(transport, tenantId, repo, source);
         if (stored.enabled !== policy.enabled) await switchBitbucketDatacenterTriage(queryClient, transport, tenantId, repo, policy.enabled);
       }
-      await direct.writePolicy(repo, policy, packId);
+      await direct.writePolicy(repo, source, policy, packId);
       await queryClient.invalidateQueries({ queryKey: [POLICY_UPGRADES_QUERY_KEY, tenantId] });
     },
   };
@@ -91,9 +91,9 @@ function retryOnceIfTransient(failures: number, cause: unknown): boolean {
   return failures < 1 && !(cause instanceof ApiError && cause.status >= 400 && cause.status < 500);
 }
 
-export function repoPackSessionQuery(store: RepoPackStore | null, repo: string, attempt: number, load: (from: RepoPackStore, fresh: boolean) => Promise<LoadedRepoPack>) {
+export function repoPackSessionQuery(store: RepoPackStore | null, repo: string, source: RepoSource, attempt: number, load: (from: RepoPackStore, fresh: boolean) => Promise<LoadedRepoPack>) {
   return queryOptions({
-    queryKey: ["repo-pack-session", store?.tenantId, repo, attempt],
+    queryKey: ["repo-pack-session", store?.tenantId, repo, source, attempt],
     queryFn: store ? () => load(store, attempt > 0) : skipToken,
     staleTime: Infinity,
     gcTime: 0,
@@ -112,18 +112,18 @@ export function useRepoPack(store: RepoPackStore | null, repo: string, source: R
 
   async function loadPack(from: RepoPackStore, fresh: boolean): Promise<LoadedRepoPack> {
     try {
-      return await from.load(repo, fresh);
+      return await from.load(repo, source, fresh);
     } catch (cause) {
       signOutWhenRejected(cause);
       throw cause;
     }
   }
 
-  const loaded = useQuery(repoPackSessionQuery(store, repo, attempt, loadPack));
+  const loaded = useQuery(repoPackSessionQuery(store, repo, source, attempt, loadPack));
 
   async function writeDraft({ session, draft }: SaveInput) {
     if (!store) throw new Error("The workspace is not known yet.");
-    return saveDraft(store, repo, session, draft);
+    return saveDraft(store, repo, source, session, draft);
   }
 
   const save = useMutation({ mutationFn: writeDraft });

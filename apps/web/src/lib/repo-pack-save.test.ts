@@ -36,10 +36,10 @@ describe("saving the repository pack", () => {
   test("a pack that changed on the hub since it was loaded sets stale and skips the config write", async () => {
     const hub = fakeHub([{ id: "art_1", title, content: JSON.stringify(recommendedPack(repo)), version: 1, updatedAt: 1 }], config);
     const store = transportRepoPackStore(hub.transport, "t");
-    const session = openSession(repo, await store.load(repo, false));
+    const session = openSession(repo, await store.load(repo, "github", false));
     hub.artifacts[0]!.version = 2;
     hub.requests.length = 0;
-    const { session: after, failure } = await saveDraft(store, repo, session, fromPack(emptyPack(repo), session.saved.policy));
+    const { session: after, failure } = await saveDraft(store, repo, "github", session, fromPack(emptyPack(repo), session.saved.policy));
     expect(failure?.stale).toBe(true);
     expect(after).toBe(session);
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts/art_1/versions"]);
@@ -48,14 +48,14 @@ describe("saving the repository pack", () => {
   test("a failed config write after the pack write leaves it unlinked; saving again redoes only that write", async () => {
     const hub = fakeHub([], config);
     const store = transportRepoPackStore(failingPatchOnce(hub.transport), "t");
-    const session = openSession(repo, await store.load(repo, false));
+    const session = openSession(repo, await store.load(repo, "github", false));
     const draft = fromPack(recommendedPack(repo), session.saved.policy);
-    const first = await saveDraft(store, repo, session, draft);
+    const first = await saveDraft(store, repo, "github", session, draft);
     expect(first.failure?.message).toStartWith("The policy is saved and in effect, but could not be linked");
     expect(first.session.unlinked).toBe(true);
     expect(hub.artifacts).toHaveLength(1);
     hub.requests.length = 0;
-    const second = await saveDraft(store, repo, first.session, draft);
+    const second = await saveDraft(store, repo, "github", first.session, draft);
     expect(second.failure).toBeNull();
     expect(second.session.unlinked).toBe(false);
     expect(writes(hub)).toEqual(["PATCH /api/tenants/t"]);
@@ -65,19 +65,19 @@ describe("saving the repository pack", () => {
   test("a save with no changes writes nothing", async () => {
     const hub = fakeHub([{ id: "art_1", title, content: JSON.stringify(recommendedPack(repo)), version: 1, updatedAt: 1 }], config);
     const store = transportRepoPackStore(hub.transport, "t");
-    const session = openSession(repo, await store.load(repo, false));
+    const session = openSession(repo, await store.load(repo, "github", false));
     hub.requests.length = 0;
-    expect(await saveDraft(store, repo, session, session.saved)).toEqual({ session, renamed: {}, failure: null });
+    expect(await saveDraft(store, repo, "github", session, session.saved)).toEqual({ session, renamed: {}, failure: null });
     expect(hub.requests).toEqual([]);
   });
 
   test("a corrupt pack is replaced on save even with nothing edited", async () => {
     const hub = fakeHub([{ id: "art_1", title, content: "not a pack", version: 1, updatedAt: 1 }], config);
     const store = transportRepoPackStore(hub.transport, "t");
-    const session = openSession(repo, await store.load(repo, false));
+    const session = openSession(repo, await store.load(repo, "github", false));
     expect(session.corrupt).not.toBeNull();
     hub.requests.length = 0;
-    const { session: after, failure } = await saveDraft(store, repo, session, session.saved);
+    const { session: after, failure } = await saveDraft(store, repo, "github", session, session.saved);
     expect(failure).toBeNull();
     expect(after.corrupt).toBeNull();
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts/art_1/versions", "PATCH /api/tenants/t"]);
@@ -86,9 +86,9 @@ describe("saving the repository pack", () => {
   test("one config write carries the pack pointer and the triage switch", async () => {
     const hub = fakeHub([], config);
     const store = transportRepoPackStore(hub.transport, "t");
-    const session = openSession(repo, await store.load(repo, false));
+    const session = openSession(repo, await store.load(repo, "github", false));
     const policy = { enabled: true };
-    const { failure } = await saveDraft(store, repo, session, fromPack(recommendedPack(repo), policy));
+    const { failure } = await saveDraft(store, repo, "github", session, fromPack(recommendedPack(repo), policy));
     expect(failure).toBeNull();
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts", "PATCH /api/tenants/t"]);
     expect(repoRow(hub)).toEqual({ name: repo, connected: true, installationId: 9, ...policy, checkPack: { name: title, id: "art_1" } });
@@ -97,12 +97,12 @@ describe("saving the repository pack", () => {
   test("the saved copy takes on the normalised pack while the draft keeps what was typed, so nothing reads as unsaved", async () => {
     const hub = fakeHub([], config);
     const store = transportRepoPackStore(hub.transport, "t");
-    const session = openSession(repo, await store.load(repo, false));
+    const session = openSession(repo, await store.load(repo, "github", false));
     const pack = recommendedPack(repo);
     const untidy = { ...pack, checks: { ...pack.checks, "no-forbidden-paths": { enabled: true, forbiddenGlobs: [" dist/** "] } } };
     const policy = session.saved.policy;
     const draft = fromPack(untidy, policy);
-    const { session: after, failure } = await saveDraft(store, repo, session, draft);
+    const { session: after, failure } = await saveDraft(store, repo, "github", session, draft);
     expect(failure).toBeNull();
     expect(after.saved.pack.checks["no-forbidden-paths"]).toEqual({ enabled: true, forbiddenGlobs: ["dist/**"] });
     expect(draft.pack.checks["no-forbidden-paths"]?.forbiddenGlobs).toEqual([" dist/** "]);

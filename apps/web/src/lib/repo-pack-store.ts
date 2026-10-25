@@ -1,5 +1,5 @@
 import type { Transport } from "@intx/hub-client";
-import type { CheckPack, TriageStats } from "@corbits/triage-contracts";
+import type { CheckPack, RepoSource, TriageStats } from "@corbits/triage-contracts";
 import { writeCheckPack } from "./check-pack.ts";
 import { loadRepoCheckPack, loadRepoPolicy, loadTriageStats, saveRepoSettings, type CheckPackArtifact } from "./hub-api.ts";
 import type { DraftPolicy } from "./pack-draft.ts";
@@ -15,10 +15,10 @@ export type LoadedRepoPack = { artifact: PackArtifact | null; policy: DraftPolic
 export type RepoPackStore = {
   tenantId: string;
   /** `fresh` reads past any cache, which may predate the change that made a reload necessary. */
-  load: (repo: string, fresh: boolean) => Promise<LoadedRepoPack>;
+  load: (repo: string, source: RepoSource, fresh: boolean) => Promise<LoadedRepoPack>;
   /** Writes onto the artifact the pack was loaded from, or creates one when there was none; throws StaleCheckPackError otherwise. */
   writePack: (pack: CheckPack, loaded: PackRef | null) => Promise<PackRef>;
-  writePolicy: (repo: string, policy: DraftPolicy, packId: string | null) => Promise<void>;
+  writePolicy: (repo: string, source: RepoSource, policy: DraftPolicy, packId: string | null) => Promise<void>;
   loadStats: (repo: string, days: number) => Promise<TriageStats>;
 };
 
@@ -43,16 +43,16 @@ export function draftPolicy(policy: DraftPolicy): DraftPolicy {
 export function transportRepoPackStore(transport: Transport, tenantId: string): RepoPackStore {
   return {
     tenantId,
-    async load(repo) {
-      const [found, policy] = await Promise.all([loadRepoCheckPack(transport, tenantId, repo), loadRepoPolicy(transport, tenantId, repo)]);
+    async load(repo, source) {
+      const [found, policy] = await Promise.all([loadRepoCheckPack(transport, tenantId, repo), loadRepoPolicy(transport, tenantId, repo, source)]);
       return { artifact: packArtifact(found), policy: draftPolicy(policy) };
     },
     async writePack(pack, loaded) {
       const { id, version } = await writeCheckPack(transport, tenantId, pack.repo, pack, loaded);
       return { id, version };
     },
-    async writePolicy(repo, policy, packId) {
-      await saveRepoSettings(transport, tenantId, repo, policy, packId);
+    async writePolicy(repo, source, policy, packId) {
+      await saveRepoSettings(transport, tenantId, repo, source, policy, packId);
     },
     async loadStats(repo, days) {
       return loadTriageStats(transport, tenantId, repo, days);
