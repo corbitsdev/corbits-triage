@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { asRecord, asRepo } from "@corbits/common";
 import { AUTHOR_ASSOCIATIONS, type AuthorAssociation } from "./repo-policy.js";
+import type { RepoSource } from "./repo-source.js";
 import { compileGlob, PATTERN_LANGUAGES, PATTERN_PRESETS, type PatternRule } from "./code-patterns.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
@@ -569,10 +570,11 @@ const TRACKER_SET = new Set<string>(ISSUE_TRACKERS);
 
 export const CHECK_PACK_TITLE_PREFIX = "check-pack/";
 
-export function checkPackName(repo: string): string {
+/** GitHub's saved rules are titled by name alone; another host's are prefixed with the host. */
+export function checkPackName(repo: string, source: RepoSource): string {
   const clean = asRepo(repo);
   if (!clean) throw new Error("Repository must be owner/name.");
-  return `${CHECK_PACK_TITLE_PREFIX}${clean}`;
+  return source === "github" ? `${CHECK_PACK_TITLE_PREFIX}${clean}` : `${CHECK_PACK_TITLE_PREFIX}${source}/${clean}`;
 }
 
 export function emptyPack(repo: string): CheckPack {

@@ -40,7 +40,7 @@ test("a backlog request mails pr-triage-historical the bridge's payload as a bac
   const sent: unknown[] = [];
   const started = await backlog({ name: REPO, connected: true, enabled: true }, sent)({ repo: REPO }, MEMBER);
   expect(started.status).toBe(202);
-  expect(sent).toEqual([expect.objectContaining({ kind: "backlog", repo: REPO, pack: PACK, automatic: ["labels"], policy: expect.objectContaining({ checkPack: { name: checkPackName(REPO) }, source: SOURCE }) })]);
+  expect(sent).toEqual([expect.objectContaining({ kind: "backlog", repo: REPO, pack: PACK, automatic: ["labels"], policy: expect.objectContaining({ checkPack: { name: checkPackName(REPO, "github") }, source: SOURCE }) })]);
 
   const disabled = await backlog({ name: REPO, connected: true, enabled: false }, sent)({ repo: REPO }, MEMBER);
   expect(await disabled.json()).toMatchObject({ error: { code: "repo_not_enabled" } });

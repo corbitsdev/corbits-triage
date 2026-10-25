@@ -180,7 +180,7 @@ export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy:
     repo,
     // Absent on GitHub, so a deployment built before other hosts reads the mail unchanged.
     ...(repoSource !== "github" && { repoSource }),
-    policy: { ...policy, checkPack: { name: checkPackName(repo) }, source },
+    policy: { ...policy, checkPack: { name: checkPackName(repo, repoSource) }, source },
     checkPack: legacyCheckPack(pack),
     pack,
     automatic,

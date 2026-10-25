@@ -63,7 +63,7 @@ test("PostgreSQL: a repository's policy is read by its pinned id, else the newes
     const scope = { tenantId: TENANT, principalId: `prn_${TENANT}` };
     async function pin(id: string): Promise<void> {
       await patchCorbitsTriage(db, TENANT, function savePin(ns) {
-        return { ...ns, repos: repoRecords(ns).map((record) => ({ ...record, checkPack: { name: checkPackName(REPO), id } })) };
+        return { ...ns, repos: repoRecords(ns).map((record) => ({ ...record, checkPack: { name: checkPackName(REPO, "github"), id } })) };
       });
     }
     async function point(content: string): Promise<void> {
@@ -74,7 +74,7 @@ test("PostgreSQL: a repository's policy is read by its pinned id, else the newes
     }
 
     const sharedId = await create(db, TENANT, `${WORKSPACE_POLICY_TITLE_PREFIX}base`, JSON.stringify(SHARED));
-    const repoId = await create(db, TENANT, checkPackName(REPO), override(sharedId));
+    const repoId = await create(db, TENANT, checkPackName(REPO, "github"), override(sharedId));
     const before = await tenantConfig();
     const first = await loadCheckPack(deps, TENANT, REPO, "github");
     expect(first).toMatchObject({ status: "ok", source: { repo: { id: repoId, version: 1 }, shared: { id: sharedId, version: 1 } } });
@@ -83,7 +83,7 @@ test("PostgreSQL: a repository's policy is read by its pinned id, else the newes
 
     // The portal pins the policy it saves; a newer artifact with the same title is then ignored.
     await pin(repoId);
-    const newerId = await create(db, TENANT, checkPackName(REPO), JSON.stringify(emptyPack(REPO)));
+    const newerId = await create(db, TENANT, checkPackName(REPO, "github"), JSON.stringify(emptyPack(REPO)));
     await writeArtifactVersion(db, { scope, artifactId: sharedId, content: JSON.stringify({ ...SHARED, actions: { ...SHARED.actions, when: ["ready"] } }) });
     const second = await loadCheckPack(deps, TENANT, REPO, "github");
     expect(second).toMatchObject({ status: "ok", source: { repo: { id: repoId, version: 1 }, shared: { id: sharedId, version: 2 } } });
@@ -110,24 +110,24 @@ test("PostgreSQL: a repository's policy is read by its pinned id, else the newes
 }, 120_000);
 
 test("PostgreSQL: a GitHub and a Bitbucket Data Center repository sharing a name never read each other's policy", async () => {
-  const github = { name: REPO, connected: true, enabled: true, checkPack: { name: checkPackName(REPO) } };
-  const bitbucket = { name: REPO, source: "bitbucket-datacenter" as const, connected: true, enabled: true, checkPack: { name: checkPackName(REPO) } };
+  const github = { name: REPO, connected: true, enabled: true, checkPack: { name: checkPackName(REPO, "github") } };
+  const bitbucket = { name: REPO, source: "bitbucket-datacenter" as const, connected: true, enabled: true, checkPack: { name: checkPackName(REPO, "github") } };
   const { db, close } = await throwawayDatabase([github, bitbucket]);
   try {
     const deps = { db, artifacts: db, async automaticKinds() { return []; }, log() {} };
-    const titledId = await create(db, TENANT, checkPackName(REPO), JSON.stringify(emptyPack(REPO)));
+    const titledId = await create(db, TENANT, checkPackName(REPO, "github"), JSON.stringify(emptyPack(REPO)));
     expect(await loadCheckPack(deps, TENANT, REPO, "github")).toMatchObject({ status: "ok", source: { repo: { id: titledId } } });
     expect(await loadCheckPack(deps, TENANT, REPO, "bitbucket-datacenter")).toEqual({ status: "missing" });
 
     await patchCorbitsTriage(db, TENANT, function pinGithub(ns) {
-      return { ...ns, repos: [{ ...github, checkPack: { name: checkPackName(REPO), id: titledId } }, bitbucket] };
+      return { ...ns, repos: [{ ...github, checkPack: { name: checkPackName(REPO, "github"), id: titledId } }, bitbucket] };
     });
     expect(await loadCheckPack(deps, TENANT, REPO, "github")).toMatchObject({ status: "ok", source: { repo: { id: titledId } } });
     expect(await loadCheckPack(deps, TENANT, REPO, "bitbucket-datacenter")).toEqual({ status: "missing" });
 
-    const bitbucketId = await create(db, TENANT, checkPackName(REPO), JSON.stringify(emptyPack(REPO)));
+    const bitbucketId = await create(db, TENANT, checkPackName(REPO, "github"), JSON.stringify(emptyPack(REPO)));
     await patchCorbitsTriage(db, TENANT, function pinBitbucket(ns) {
-      return { ...ns, repos: [github, { ...bitbucket, checkPack: { name: checkPackName(REPO), id: bitbucketId } }] };
+      return { ...ns, repos: [github, { ...bitbucket, checkPack: { name: checkPackName(REPO, "github"), id: bitbucketId } }] };
     });
     expect(await loadCheckPack(deps, TENANT, REPO, "github")).toEqual({ status: "missing" });
     expect(await loadCheckPack(deps, TENANT, REPO, "bitbucket-datacenter")).toMatchObject({ status: "ok", source: { repo: { id: bitbucketId } } });

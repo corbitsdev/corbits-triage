@@ -85,7 +85,7 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
     await db.transaction(async function seedPack(tx) {
       await createArtifact(tx, {
         scope: { tenantId: TENANT, principalId: "prn_owner" }, ownerPrincipalId: "prn_owner", kind: "document",
-        title: checkPackName(REPO), content: JSON.stringify(emptyPack(REPO)), source: { origin: "user" },
+        title: checkPackName(REPO, "github"), content: JSON.stringify(emptyPack(REPO)), source: { origin: "user" },
       });
     });
 

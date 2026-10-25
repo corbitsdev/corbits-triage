@@ -422,7 +422,7 @@ export type CheckPackLookup = (repo: string) => Promise<boolean>;
 async function withPackPointers(repos: RepoRecord[], hasPack: CheckPackLookup): Promise<RepoRecord[]> {
   return Promise.all(repos.map(async function linkExistingPack(repo) {
     if (repo.checkPack?.name?.trim()) return repo;
-    return (await hasPack(repo.name)) ? { ...repo, checkPack: { name: checkPackName(repo.name) } } : repo;
+    return (await hasPack(repo.name)) ? { ...repo, checkPack: { name: checkPackName(repo.name, "github") } } : repo;
   }));
 }
 
@@ -445,7 +445,7 @@ export async function saveRepoSettings(
   const { enabled } = settings;
   /** So triage reads the same artifact. */
   function withSettings(row: RepoRecord): RepoRecord {
-    return { ...row, enabled, ...(packId !== null && { checkPack: { name: checkPackName(clean), id: packId } }) };
+    return { ...row, enabled, ...(packId !== null && { checkPack: { name: checkPackName(clean, "github"), id: packId } }) };
   }
   function isRepo(row: unknown): boolean {
     return rowName(row) === clean && repoSourceOf((row as { source?: unknown }).source) === source;

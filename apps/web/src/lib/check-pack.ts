@@ -41,7 +41,7 @@ async function versionCheckPack(transport: Transport, tenantId: string, repo: st
   const current = await loadRepoCheckPack(transport, tenantId, repo);
   if ((current?.kind !== "pack" && current?.kind !== "corrupt") || current.id !== loaded.id) throw new StaleCheckPackError();
   if (current.kind === "pack" && current.shared) throw new ExtendedPolicyError();
-  const title = checkPackName(repo);
+  const title = checkPackName(repo, "github");
   try {
     const revised = await transport.fetch<{ version?: number }>("POST", `${collection(tenantId)}/${enc(loaded.id)}/versions`, {
       content,
@@ -77,7 +77,7 @@ async function createCheckPack(transport: Transport, tenantId: string, title: st
 export async function writeCheckPack(transport: Transport, tenantId: string, repo: string, pack: CheckPack, loaded: LoadedCheckPack | null): Promise<StoredCheckPack> {
   const clean = validateRepo(repo);
   const parsed = readCheckPack(pack, clean);
-  const title = checkPackName(clean);
+  const title = checkPackName(clean, "github");
   const content = JSON.stringify(parsed);
   const stored = loaded
     ? { id: loaded.id, version: await versionCheckPack(transport, tenantId, clean, content, loaded) }

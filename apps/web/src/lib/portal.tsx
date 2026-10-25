@@ -212,7 +212,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const tenantId = access.workspace.tenantId;
       opened.current = { userId, tenantId };
       async function hasPack(repo: string) {
-        return (await queryClient.fetchQuery(checkPackIndexQuery(tenantId))).has(checkPackName(repo));
+        return (await queryClient.fetchQuery(checkPackIndexQuery(tenantId))).has(checkPackName(repo, "github"));
       }
       return await loadPortal(transport, access, hasPack);
     } catch (cause: unknown) {

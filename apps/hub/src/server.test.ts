@@ -668,7 +668,7 @@ test("a burst of webhook deliveries for one pull request queues its head once an
     const headers = await signedIn(origin);
     const tenantId = await createTenant(origin, headers);
     const providerId = await connectGithub(db, origin, headers, tenantId, github.origin);
-    const title = checkPackName(REPO);
+    const title = checkPackName(REPO, "github");
     const saved = await fetch(`${origin}/api/tenants/${tenantId}/artifacts`, {
       method: "POST", headers, body: JSON.stringify({ mode: "text", title, content: JSON.stringify(SAVED_PACK), metadata: { checkPack: title } }),
     });
