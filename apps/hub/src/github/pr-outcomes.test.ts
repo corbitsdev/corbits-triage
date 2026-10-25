@@ -165,3 +165,22 @@ test("a failed baseline read says so beside the triaged medians", async () => {
   const stats = await route([1, 2].map(verdict), { host: async () => ({ host, source: "github" }) })();
   expect(stats.outcomes).toMatchObject({ state: "measured", triaged: { prs: 2 }, baseline: null, baselineState: "source_failed" });
 });
+
+test("a name on both hosts is measured from the host named, never from the other host's kept reads", async () => {
+  const github = fakeHost();
+  const bitbucket = fakeHost();
+  const outcomes = createOutcomeReader({
+    enabledAt: async () => ENABLED,
+    now: () => NOW,
+    log: () => {},
+    async host(_tenantId, _principalId, _repo, source) {
+      return source === "bitbucket-datacenter" ? { host: bitbucket.host, source } : { host: github.host, source: "github" };
+    },
+  });
+  const member = { tenantId: TENANT, principalId: "prn_outcomes" } as Parameters<typeof outcomes.read>[0];
+  const triaged = [{ number: 1, verdictAt: new Date(at(0.5)) }];
+  await outcomes.read(member, REPO, "github", triaged);
+  await outcomes.read(member, REPO, "bitbucket-datacenter", triaged);
+  expect([github.reads.prTimes, bitbucket.reads.prTimes]).toEqual([1, 1]);
+  expect([github.reads.closedBefore, bitbucket.reads.closedBefore]).toEqual([1, 1]);
+});

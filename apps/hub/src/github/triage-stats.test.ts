@@ -65,3 +65,26 @@ test("a failed measurement stays measuring and is retried after a backoff", asyn
   expect(calls).toBe(2);
   expect(await stats()).toEqual(MEASURED);
 });
+
+test("a name on both hosts is measured once per host, with the grant and reads of the host named", async () => {
+  const asked: Array<string | undefined> = [];
+  const granted: Array<string | undefined> = [];
+  const handle = createTriageStats({
+    verdicts: { since: async () => [], earliest: async () => null },
+    outcomes: {
+      async refusal(_member, _repo, source) {
+        granted.push(source);
+        return undefined;
+      },
+      async read(_member, _repo, source) {
+        asked.push(source);
+        return MEASURED;
+      },
+    },
+    now: () => NOW,
+    log: () => {},
+  });
+  for (const source of ["github", "bitbucket-datacenter"]) await handle(new Request(`http://hub.test/api/integrations/triage-stats/t?repo=o/r&source=${source}`), { tenantId: "t", principalId: "p" });
+  expect(granted).toEqual(["github", "bitbucket-datacenter"]);
+  expect(asked).toEqual(["github", "bitbucket-datacenter"]);
+});
