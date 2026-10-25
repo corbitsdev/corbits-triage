@@ -48,7 +48,7 @@ done && rm .env.bak
 docker compose up -d
 ```
 
-Compose sets every other variable and pulls the published hub image; pulling needs no login. Run `docker compose logs hub` until it shows `Started server`. A pull that stops with `no space left on device` needs more free Docker disk.
+Compose sets every other variable and builds the hub image from the checkout. Run `docker compose logs hub` until it shows `Started server`. A build that stops with `no space left on device` needs about 3 GB of free Docker disk.
 
 **Their own Postgres** (`docs/DEV.md`). Run `bun install`, then create an empty database whose role has a password, as `docs/DEV.md` "2. Database" shows; the database setup refuses a URL without a password. Set `DATABASE_URL` in `.env`:
 
