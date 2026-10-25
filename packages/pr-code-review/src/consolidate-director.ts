@@ -26,9 +26,7 @@ interface Read {
   lines: number;
 }
 
-interface Window {
-  text: string;
-}
+const Window = type({ text: "string" });
 
 /** The findings the input lists between its <findings> tags. */
 function findingsIn(content: string): Finding[] {
@@ -161,8 +159,9 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
       if (asked.lines > 1) next.push(read({ ...asked, lines: half }), read({ path: asked.path, start: asked.start + half, lines: asked.lines - half }));
       return;
     }
-    const { text } = result.content as unknown as Window;
-    for (const row of text.split("\n")) {
+    const window = Window(result.content);
+    if (window instanceof type.errors) throw new Error(`${name}: ${READ_FILE_TOOL[checkout.source]} returned no window: ${window.summary}`);
+    for (const row of window.text.split("\n")) {
       const tab = row.indexOf("\t");
       const line = Number(row.slice(0, tab));
       if (tab > 0 && Number.isInteger(line)) linesOf(asked.path).set(line, row.slice(tab + 1));
