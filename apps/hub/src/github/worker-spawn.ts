@@ -10,7 +10,7 @@ import { schema, type DB } from "@intx/db";
 import { WorkflowProvisioningError, type WorkflowLifecycleService } from "@intx/hub-sessions";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { NO_LISTENER_REASON, WorkerDeferredError, WorkerOutdatedError, type WorkerSpawner, type TriageJob } from "./coordinator.js";
-import { DeploymentNotReadyError, liveWorkers, SenderRefusedError, resolveLiveDeployment, resolveLiveDeployments, WORKER_MARKER, type Redeployed } from "./deployment.js";
+import { DeploymentNotReadyError, liveWorkers, SenderRefusedError, resolveLiveDeployment, resolveLiveDeployments, retryUntilReady, WORKER_MARKER, type Redeployed } from "./deployment.js";
 
 const WORKER_RELEASE_REASON = "Triage worker finished its run";
 const RESTART_RELEASE_REASON = "Triage worker orphaned by a hub restart";
@@ -30,18 +30,11 @@ export type WorkerSpawnDeps = {
 
 export function createWorkerSpawner(deps: WorkerSpawnDeps): WorkerSpawner {
   async function fire(job: TriageJob, runId: string): Promise<void> {
-    const deadline = Date.now() + deps.fireTimeoutMs;
-    for (;;) {
+    await retryUntilReady(async function deliverToWorker() {
       const [worker] = (await resolveLiveDeployments(deps.db, job.tenantId, job.workflow, "worker")).filter((live) => live.runId === runId);
-      try {
-        if (!worker) throw new DeploymentNotReadyError();
-        await deps.deliver(job.tenantId, worker.address, job.payload);
-        return;
-      } catch (err) {
-        if (!(err instanceof DeploymentNotReadyError) || Date.now() >= deadline) throw err;
-      }
-      await deps.sleep(deps.pollMs);
-    }
+      if (!worker) throw new DeploymentNotReadyError();
+      await deps.deliver(job.tenantId, worker.address, job.payload);
+    }, { sleep: deps.sleep, pollMs: deps.pollMs, timeoutMs: deps.fireTimeoutMs });
   }
 
   async function spawn(job: TriageJob): Promise<string> {

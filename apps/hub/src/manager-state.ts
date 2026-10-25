@@ -45,6 +45,7 @@ type Pass = typeof PassState.infer;
 type Reviewer = typeof ReviewerState.infer;
 type Claim = typeof ClaimState.infer;
 type ManagerEvent = typeof EventState.infer;
+export type IntakeEvent = Pick<ManagerEvent, "type" | "head" | "payload">;
 export type PullRequestRef = { source: RepoSource; repo: string; number: number };
 type TakenEvent = { key: string; event: ManagerEvent };
 
@@ -122,7 +123,7 @@ function headOf(taken: readonly TakenEvent[], claim: Claim): string | undefined 
 }
 
 /** Records the event under its delivery id; false when it was recorded before, as on a redelivery. */
-export async function recordEvent(db: DB["db"], tenantId: string, pr: PullRequestRef, deliveryId: string, event: Pick<ManagerEvent, "type" | "head" | "payload">): Promise<boolean> {
+export async function recordEvent(db: DB["db"], tenantId: string, pr: PullRequestRef, deliveryId: string, event: IntakeEvent): Promise<boolean> {
   if (deliveryId.length === 0) throw new Error(`an event for ${claimKey(pr)} has no delivery id`);
   const key = eventKey(pr, deliveryId);
   const state = eventOf(key, asStored({ type: event.type, head: event.head, payload: event.payload, receivedAt: new Date().toISOString() }));
@@ -161,6 +162,17 @@ export async function markLive(db: DB["db"], tenantId: string, pr: PullRequestRe
   });
 }
 
+/** Starts the claim over under a new `claimId` once `runId`, its live manager, is gone; undefined when the claim moved on. */
+export async function restartClaim(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string): Promise<string | undefined> {
+  return db.transaction(async function restart(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!fencedTo(claim, runId)) return undefined;
+    const claimId = randomUUID();
+    await writeClaim(tx, tenantId, pr, { ...claim, status: "starting", claimId, claimedAt: new Date().toISOString(), runId: undefined });
+    return claimId;
+  });
+}
+
 /**
  * The open pass again, or a new one on the newest head over every pending event no other transaction holds. Reviewer
  * results for another head are consumed and left out.
@@ -178,15 +190,16 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
       .where(pending(tenantId, pr))
       .for("update", { skipLocked: true });
     const taken = eventsOf(rows);
-    if (taken.length === 0) return { outcome: "idle" };
+    const head = headOf(taken, claim);
+    // Reviewer results before any pass have no head to be judged against yet, so they stay pending.
+    if (taken.length === 0 || head === undefined) return { outcome: "idle" };
     const id = randomUUID();
     const takenAt = new Date().toISOString();
     await tx.update(managerState)
       .set({ state: sql`${managerState.state} || ${JSON.stringify({ consumedBy: id, consumedAt: takenAt })}::jsonb` })
       .where(and(eq(managerState.tenantId, tenantId), inArray(managerState.key, taken.map((row) => row.key))));
-    const head = headOf(taken, claim);
     const kept = taken.filter((row) => row.event.type === "webhook" || row.event.head === head);
-    if (head === undefined || kept.length === 0) return { outcome: "idle" };
+    if (kept.length === 0) return { outcome: "idle" };
     const pass = { id, head, events: kept.map((row) => row.key), takenAt, takes: 1 };
     await writeClaim(tx, tenantId, pr, { ...claim, pass });
     return { outcome: "pass", pass, events: kept, resumed: false };

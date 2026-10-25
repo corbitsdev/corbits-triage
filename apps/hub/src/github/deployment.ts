@@ -20,6 +20,22 @@ export class DeploymentNotReadyError extends Error {
   }
 }
 
+export type ReadyWait = { sleep: (ms: number) => Promise<void>; pollMs: number; timeoutMs: number };
+
+/** Retries `attempt` while the deployment it mails is still starting, until `timeoutMs` has passed. */
+export async function retryUntilReady(attempt: () => Promise<void>, { sleep, pollMs, timeoutMs }: ReadyWait): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      await attempt();
+      return;
+    } catch (err) {
+      if (!(err instanceof DeploymentNotReadyError) || Date.now() >= deadline) throw err;
+    }
+    await sleep(pollMs);
+  }
+}
+
 /** Interchange's sender gate refused the mail; a worker copied from a listener deployed before the gate keeps refusing until the listener is redeployed. */
 export class SenderRefusedError extends Error {
   readonly code = MAIL_ADMISSION_DENIED_CODE;

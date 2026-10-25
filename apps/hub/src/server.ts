@@ -32,6 +32,7 @@ import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
 import { createInterchangeHub } from "./interchange-hub.js";
+import { createManagerIntake } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
@@ -309,7 +310,17 @@ const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: HUB_CONDITION_REGISTRY,
 });
-mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, now });
+const managerIntake = createManagerIntake({
+  db: composition.db,
+  allocation: composition.workflowAllocationService,
+  launchSpecs: createWorkflowRunLaunchSpecStore(composition.db),
+  managers: {},
+  readCheckPack,
+  deliver: deliverToDeployment,
+  firstMail: { sleep: Bun.sleep, pollMs: WORKER_POLL_MS, timeoutMs: WORKER_FIRE_TIMEOUT_MS },
+  now,
+});
+mountTenantRoutes(composition.app, { db: composition.db, requireGrant, intake: managerIntake, log: logJson, now });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
     where: eq(schema.tenant.id, tenantId),

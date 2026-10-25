@@ -10,6 +10,7 @@ import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession 
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "./manager-routes.js";
+import { ManagerUnavailableError, type ManagerIntake } from "./manager-intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { claimForIntake, markLive, recordEvent, type PullRequestRef } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
@@ -62,13 +63,20 @@ function buildStock(db: Db) {
 
 function ignore(): void {}
 
-function routeDeps(db: Db) {
-  return { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), log: ignore };
+/** The intake records the event as the real one does; starting and nudging the manager is manager-intake's test. */
+function recordOnly(db: Db): ManagerIntake {
+  return async function intake(tenantId, pr, deliveryId, event) {
+    return { recorded: await recordEvent(db, tenantId, pr, deliveryId, event) };
+  };
 }
 
-function buildHub(db: Db) {
+function routeDeps(db: Db, intake: ManagerIntake = recordOnly(db)) {
+  return { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), intake, log: ignore };
+}
+
+function buildHub(db: Db, intake?: ManagerIntake) {
   const app = buildStock(db);
-  mountTenantRoutes(app, { ...routeDeps(db), now: () => new Date() });
+  mountTenantRoutes(app, { ...routeDeps(db, intake), now: () => new Date() });
   return app;
 }
 
@@ -184,6 +192,18 @@ test("PostgreSQL: a run the claim does not name, a session and a run without the
       expect((await post(app, route, body, ungranted)).status).toBe(403);
     }
     expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { takes: 1 } });
+  });
+}, 60_000);
+
+test("PostgreSQL: a reviewer result in a workspace with no manager to start is refused as unavailable", async () => {
+  await withDatabase(async function unavailable(db) {
+    const app = buildHub(db, async function noManager() {
+      throw new ManagerUnavailableError("No manager is published for github.");
+    });
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", true));
+    const response = await post(app, "reviewer-result", { ...GITHUB, head: "h1", result: { verdict: "pass" } }, reviewer);
+    expect(response.status).toBe(503);
+    expect(await errorCode(response)).toBe("manager_unavailable");
   });
 }, 60_000);
 
