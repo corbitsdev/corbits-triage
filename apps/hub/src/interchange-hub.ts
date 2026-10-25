@@ -10,9 +10,10 @@
 // pr-triage deployment rotation calls, and the deployment plugin registry code review's
 // placement asks; and the injected database config, auth config, credential
 // cipher and Interchange settings, whose defaults env.ts `interchangeSettings`
-// mirrors from upstream. The caller builds the cipher so sidecar provisioners
-// created before the hub share it. `resolveHubApiOrigin` is imported from
-// stock's hub app source, which is not a package export.
+// mirrors from upstream; and the injected extra run-token routes, none by
+// default. The caller builds the cipher so sidecar provisioners created before
+// the hub share it. `resolveHubApiOrigin` is imported from stock's hub app
+// source, which is not a package export.
 import {
   createDB,
   createGrantStore,
@@ -37,6 +38,7 @@ import {
   createApp,
   createCorrespondentGrantMinter,
   createMailTriggeredRunGrantsMaterializer,
+  type RunTokenRoute,
 } from "@intx/hub-api";
 import {
   attachSidecarProvisioners,
@@ -102,6 +104,8 @@ export type CreateHubServerOpts = {
   readonly sidecarOperationTimeoutMs?: number;
   /** Adapters every sidecar boots with; forwarded on each ensure request. */
   readonly adapterManifest?: AdapterManifest;
+  /** Corbits routes a workflow run token may reach beyond the stock allow-list. */
+  readonly extraRunTokenRoutes?: readonly RunTokenRoute[];
 };
 
 export async function createInterchangeHub({
@@ -117,6 +121,7 @@ export async function createInterchangeHub({
   probeSidecarCapabilityRules = [],
   sidecarAllocationConcurrency = DEFAULT_SIDECAR_ALLOCATION_CONCURRENCY,
   sidecarOperationTimeoutMs,
+  extraRunTokenRoutes = [],
 }: CreateHubServerOpts) {
   await setup();
 
@@ -533,6 +538,7 @@ export async function createInterchangeHub({
     assetService,
     repoStore: agentRepoStore.repoStore,
     maxTarballBytes: settings.maxTarballBytes,
+    extraRunTokenRoutes,
     sidecarWsHandler: upgradeWebSocket((_c) => {
       let handle: WsHandle;
       return {

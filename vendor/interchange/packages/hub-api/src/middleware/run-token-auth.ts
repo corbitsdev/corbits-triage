@@ -90,8 +90,12 @@ export function matchesRunTokenRoute(pattern: string, path: string): boolean {
   });
 }
 
-export function isRunTokenRoute(method: string, path: string): boolean {
-  return RUN_TOKEN_ROUTES.some(
+export function isRunTokenRoute(
+  method: string,
+  path: string,
+  routes: readonly RunTokenRoute[] = RUN_TOKEN_ROUTES,
+): boolean {
+  return routes.some(
     (route) =>
       route.method === method && matchesRunTokenRoute(route.path, path),
   );
@@ -100,6 +104,12 @@ export function isRunTokenRoute(method: string, path: string): boolean {
 export type CreateRunTokenAuthDeps = {
   db: DB["db"];
   runTokenStore: RunTokenStore;
+  /**
+   * Host routes a run token may also reach, beyond `RUN_TOKEN_ROUTES`. Each
+   * must be a fixed path under `/api/tenants/:tenantId/` with no other
+   * parameters, whose own handler checks grants.
+   */
+  extraRoutes?: readonly RunTokenRoute[];
 };
 
 /**
@@ -115,7 +125,9 @@ export type CreateRunTokenAuthDeps = {
 export function createRunTokenAuth({
   db,
   runTokenStore,
+  extraRoutes = [],
 }: CreateRunTokenAuthDeps): MiddlewareHandler<TenantEnv> {
+  const routes = [...RUN_TOKEN_ROUTES, ...extraRoutes];
   return createMiddleware<TenantEnv>(async (c, next) => {
     const secret = readRunToken(c.req.header("authorization"));
     if (secret === null) return await next();
@@ -173,7 +185,7 @@ export function createRunTokenAuth({
       return errorResponse(c, "unauthorized", "Authentication required");
     }
 
-    if (!isRunTokenRoute(c.req.method, c.req.path)) {
+    if (!isRunTokenRoute(c.req.method, c.req.path, routes)) {
       log.info("run-token auth: route refused {tokenId} {method} {path}", {
         tokenId: token.id,
         method: c.req.method,
