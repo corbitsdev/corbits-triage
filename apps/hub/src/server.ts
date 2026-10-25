@@ -24,11 +24,6 @@ import {
   type MailDeliverer,
 } from "@corbits/webhooks";
 import {
-  createArtifactRoutes,
-  InlineContentStore,
-} from "@corbits/artifacts";
-import {
-  createCronRoutes,
   createCronTicker,
   createRunTriggerCronDeliver,
   type CronTicker,
@@ -36,8 +31,9 @@ import {
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
-import { createArtifactGrants } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
+import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
+import { mountTenantRoutes } from "./tenant-routes.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
@@ -255,6 +251,7 @@ const composition = await createInterchangeHub({
   sidecarProvisioners,
   probeSidecarProvisioners: sidecarProvisioners,
   probeSidecarCapabilityRules: workloadProvisioners.length > 0 ? [{ capability: "isolation:workload", effect: "require" }] : [],
+  extraRunTokenRoutes: MANAGER_RUN_TOKEN_ROUTES,
 });
 const stock = composition.server;
 composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
@@ -312,13 +309,7 @@ const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: HUB_CONDITION_REGISTRY,
 });
-composition.app.route("/api/tenants/:tenantId", createArtifactRoutes({
-  db: composition.db,
-  contentStore: InlineContentStore,
-  requireGrant,
-  onArtifactCreated: createArtifactGrants(now),
-}));
-composition.app.route("/api/tenants/:tenantId/cron", createCronRoutes({ db: composition.db, requireGrant }));
+mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, now });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
     where: eq(schema.tenant.id, tenantId),

@@ -17,8 +17,8 @@ const managerState = triageSchema.table("manager_state", {
   state: jsonb("state").notNull(),
 }, (t) => [primaryKey({ columns: [t.tenantId, t.key] })]);
 
-const PassState = type({ id: "string > 0", head: "string > 0", events: "string[]", takenAt: "string.date.iso", takes: "number.integer >= 1" });
-const ReviewerState = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deadline: "string.date.iso", "result?": "string | number | boolean | object" });
+export const PassState = type({ id: "string > 0", head: "string > 0", events: "string[]", takenAt: "string.date.iso", takes: "number.integer >= 1" });
+export const ReviewerState = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deadline: "string.date.iso", "result?": "string | number | boolean | object" });
 const ClaimState = type({
   status: "'starting' | 'live' | 'ended'",
   claimId: "string > 0",
@@ -29,12 +29,13 @@ const ClaimState = type({
   history: PassState.and({ runId: "string > 0", doneAt: "string.date.iso" }).array(),
   starts: "number.integer >= 0",
 });
-const EventState = type({
+export const EventPayload = type("Record<string, unknown>").narrow(function plainObject(value) {
+  return !Array.isArray(value);
+});
+export const EventState = type({
   type: "'webhook' | 'reviewer-result'",
   head: "string > 0",
-  payload: type("Record<string, unknown>").narrow(function plainObject(value) {
-    return !Array.isArray(value);
-  }),
+  payload: EventPayload,
   receivedAt: "string.date.iso",
   "consumedBy?": "string > 0",
   "consumedAt?": "string.date.iso",

@@ -35,6 +35,7 @@ import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
 import { CodeReviewSendBody } from "../bitbucket-datacenter/code-review-send.js";
 import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, RepoWebhook, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
+import { body, Failure, json, refuseInvalid } from "../route-schema.js";
 import { SESSIONS_PATH } from "../sessions.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
@@ -111,7 +112,6 @@ function keptGithubReads(scope: ReadScope): string {
   return `GitHub's answer is shared by the workspace and kept until a webhook or the hub's own write says the repository changed, and at most ${KEPT_MS[scope] / 1000} seconds; another host's answer is not kept this way.`;
 }
 
-const Failure = type({ error: { code: "string", message: "string" } });
 const PolicyPullOpen = type({ error: { code: "'policy_pull_open'", message: "string", url: "string", number: "number" } });
 const ManifestFailure = type({ error: "string" });
 const AuthMethods = type({ google: "boolean", emailPassword: "boolean", passwordReset: "boolean", verificationEmail: "boolean" });
@@ -152,10 +152,6 @@ const MergeStates = type({
   }).array(),
 });
 
-function json(description: string, schema: Parameters<typeof resolver>[0]) {
-  return { description, content: { "application/json": { schema: resolver(schema) } } };
-}
-
 function html(description: string) {
   return { description, content: { "text/html": {} } };
 }
@@ -188,14 +184,6 @@ function fromPortal(req: Request, trustedOrigins: readonly string[]): boolean {
   if (req.headers.get("authorization")?.toLowerCase().startsWith("bearer ") && !req.headers.has("cookie")) return true;
   if (req.method === "GET") return req.headers.get("sec-fetch-site")?.toLowerCase() !== "cross-site";
   return validManifestMutationRequest(req, new Set([new URL(req.url).origin, ...trustedOrigins]));
-}
-
-function refuseInvalid(result: { success: true } | { success: false; error: ReadonlyArray<{ message: string }> }) {
-  if (!result.success) return failure(400, "invalid_request", result.error.map((issue) => issue.message).join("; "));
-}
-
-function body<S extends Parameters<typeof validator>[1]>(schema: S) {
-  return validator("json", schema, refuseInvalid);
 }
 
 function memberOf(c: Context<TenantEnv>): Member {
