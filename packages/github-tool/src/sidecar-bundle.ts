@@ -153,7 +153,7 @@ const MIRROR_FIELDS = {
   header: {
     ...obj({
       head: str,
-      policy: { type: ["object", "null"], properties: { repo: ARTIFACT_REF, shared: ARTIFACT_REF }, required: ["repo"] },
+      policy: { type: ["object", "null"], properties: { repo: ARTIFACT_REF }, required: ["repo"] },
       verdict: str,
     }),
     description: "What the comment is written for; an unchanged one is not written again",

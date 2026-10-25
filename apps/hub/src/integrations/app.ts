@@ -9,7 +9,7 @@ import type { DB } from "@intx/db";
 import { getLogger } from "@intx/log";
 import { honoLogger, type HonoContext } from "@intx/log/hono";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { CODE_REVIEW_PATH, CodeReviewQueued, CodeReviewRunBody } from "../code-review.js";
@@ -44,7 +44,6 @@ const POLICY_VALIDATE_PATH = `${INTEGRATIONS_PREFIX}policy/validate`;
 const PolicyValidateBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, text: "string" });
 const packSchemas = {
   checkPack: checkPackSchema.toJsonSchema(),
-  sharedPolicy: sharedPolicySchema.toJsonSchema(),
   policyOverride: policyOverrideSchema.toJsonSchema(),
   repoPolicy: repoPolicySchema.toJsonSchema(),
   policyFile: policyFileSchema.toJsonSchema(),
@@ -111,7 +110,7 @@ function keptGithubReads(scope: ReadScope): string {
 const PolicyPullOpen = type({ error: { code: "'policy_pull_open'", message: "string", url: "string", number: "number" } });
 const ManifestFailure = type({ error: "string" });
 const AuthMethods = type({ google: "boolean", emailPassword: "boolean", passwordReset: "boolean", verificationEmail: "boolean" });
-const PackSchemas = type({ checkPack: "Record<string, unknown>", sharedPolicy: "Record<string, unknown>", policyOverride: "Record<string, unknown>", repoPolicy: "Record<string, unknown>", policyFile: "Record<string, unknown>" });
+const PackSchemas = type({ checkPack: "Record<string, unknown>", policyOverride: "Record<string, unknown>", repoPolicy: "Record<string, unknown>", policyFile: "Record<string, unknown>" });
 const ManifestStart = type({ manifest: "Record<string, unknown>", state: "string" });
 const InstallationsSynced = type({ installations: "number", repos: "string[]" });
 const TriageQueued = type({ status: "'queued'", headSha: "string" });
@@ -240,8 +239,8 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.get(
     PACK_SCHEMA_PATH,
     describeRoute({
-      summary: "JSON Schemas of the policy, workspace policy, repository override, repository settings and policy file",
-      description: "`checkPack`, `sharedPolicy`, `policyOverride`, `repoPolicy` and `policyFile`, what `.corbits-triage.yml` holds.",
+      summary: "JSON Schemas of the policy, the part of a policy file that extends another repository's file, the repository settings and the policy file",
+      description: "`checkPack`, `policyOverride`, `repoPolicy` and `policyFile`, what `.corbits-triage.yml` holds.",
       tags: TAGS,
       responses: { 200: json("Policy and repository settings JSON Schemas", PackSchemas) },
     }),

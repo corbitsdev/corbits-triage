@@ -81,9 +81,9 @@ actions:
     expect(policy.actions).toEqual({ when: ["opened"], pass: [{ do: "approve", when: { author: ["OWNER", "MEMBER", "COLLABORATOR"] } }, { do: "merge" }], fail: [{ do: "close", when: { author: [{ team: "acme/core" }] } }], unsure: [] });
   });
 
-  test("a schema 3 file that extends a workspace policy holds only what it sets", () => {
+  test("a schema 3 file that extends another repository's file holds only what it sets", () => {
     const policy = readPolicyFile(`
-extends: shared-1
+extends: acme/shared
 rules:
   - check: ci-green
     text: CI passes.
@@ -92,7 +92,7 @@ rules:
 actions:
   on: [opened]
 `, REPO);
-    expect(policy).toMatchObject({ extends: "shared-1", checks: { "ci-green": { enabled: true, text: "CI passes." } }, custom: [], actions: { when: ["opened"] } });
+    expect(policy).toMatchObject({ extends: "acme/shared", checks: { "ci-green": { enabled: true, text: "CI passes." } }, custom: [], actions: { when: ["opened"] } });
   });
 
   test.each([
@@ -104,6 +104,8 @@ actions:
     ["rules: []\nactions:\n  pass: [{ do: approve, for: maintainers }]\n", "pass step 1 must say who it is for in when.author"],
     ["rules: []\nactions:\n  pass: [{ do: approve, when: { lines: { over: 10, atMost: 5 } } }]\n", "atMost must be more than over"],
     ["rules: []\nactions:\n  pass: [{ do: approve, when: {} }]\n", "must set a condition"],
+    ["extends: art_123\nrules: []\n", "`extends` must be a repository written owner/name"],
+    ["extends: art_123\n", "`extends` must be a repository written owner/name"],
   ])("refuses %#", (text, reason) => {
     expect(() => readPolicyFile(text, REPO)).toThrow(reason);
   });
@@ -119,10 +121,10 @@ actions:
     const files = "  - check: max-files-changed\n    text: At most 30 files.\n    max: 30\n    reason: Size is hygiene.\n    evidence: [maintainer-stated]\n";
     const labelled = readPolicyFile(`rules:\n${rule}    onFail: label\n${files}    onFail: label\n    label: big\n`, REPO) as CheckPack;
     expect([...labelRules(labelled)]).toEqual([["max-files-changed", "big"], ["docs", "docs: check"]]);
-    expect(readPolicyFile(exportPolicyFile(labelled, false).text, REPO)).toEqual(labelled);
+    expect(readPolicyFile(exportPolicyFile(labelled).text, REPO)).toEqual(labelled);
     const ask = readPolicyFile(`onFail: ask\nrules:\n${rule}${files}    onFail: fail\n`, REPO) as CheckPack;
     expect(askRules(ask)).toEqual(["docs"]);
-    expect(readPolicyFile(exportPolicyFile(ask, false).text, REPO)).toEqual(ask);
+    expect(readPolicyFile(exportPolicyFile(ask).text, REPO)).toEqual(ask);
     const shared = { repo: "acme/shared", policy: readPolicyFile(`rules:\n${rule}    onFail: ask\n${files}    onFail: label\n`, "acme/shared") };
     const extending = extendedFilePack(REPO, readPolicyFile(`extends: acme/shared\nrules:\n${rule}    onFail: fail\n${files}`, REPO), shared);
     expect([askRules(extending), [...labelRules(extending)]]).toEqual([[], [["max-files-changed", "size: large"]]]);

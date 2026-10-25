@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { ExtendedPolicyError, listCheckPacks, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
+import { listCheckPacks, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
 import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
 import { findArtifactByTitle, loadRepoCheckPack } from "./hub-api.ts";
 
@@ -34,13 +34,5 @@ describe("duplicate check-pack titles", () => {
     hub.artifacts.push(row("Y", 9, { content: JSON.stringify(older) }));
     await expect(writeCheckPack(hub.transport, "t", "acme/widgets", "github", newer, saved)).rejects.toBeInstanceOf(StaleCheckPackError);
     expect(hub.artifacts.map((item) => item.version)).toEqual([2, 1]);
-  });
-
-  test("a policy that extends a workspace policy is not saved over", async () => {
-    const hub = fakeHub([row("O", 1, { version: 4 })]);
-    hub.policies["acme/widgets"] = { status: "ok", pack: newer, source: { repo: { id: "O", version: 4 }, shared: { id: "S", version: 1 } }, automatic: [], decide: [], mergeRisks: [] };
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets", "github")).toEqual({ kind: "pack", id: "O", version: 4, pack: newer, automatic: [], decide: [], mergeRisks: [], shared: { id: "S", version: 1 } });
-    await expect(writeCheckPack(hub.transport, "t", "acme/widgets", "github", older, { id: "O", version: 4 })).rejects.toBeInstanceOf(ExtendedPolicyError);
-    expect(hub.artifacts.map((item) => item.version)).toEqual([4]);
   });
 });

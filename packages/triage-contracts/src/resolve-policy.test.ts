@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type } from "arktype";
-import { CHECK_PACK_KIND, policyOverrideSchema, readCheckPack, readPolicyOverride, readSharedPolicy, sharedPolicySchema, VERDICT_LABELS, type CustomCheck, type Step } from "./check-pack.ts";
-import { resolvePolicy, storedPolicyPack } from "./resolve-policy.ts";
+import { CHECK_PACK_KIND, policyOverrideSchema, readCheckPack, readPolicyOverride, readSharedPolicy, VERDICT_LABELS, type CustomCheck, type Step } from "./check-pack.ts";
+import { resolvePolicy } from "./resolve-policy.ts";
 
 const REPO = "acme/widgets";
 const HEADER = { kind: CHECK_PACK_KIND, schemaVersion: 2 } as const;
@@ -25,13 +25,12 @@ describe("resolvePolicy", () => {
     const override = {
       ...HEADER,
       repo: REPO,
-      extends: "art_shared",
+      extends: "acme/shared",
       checks: { "max-files-changed": { maxFiles: 50 }, "no-forbidden-paths": { forbiddenGlobs: ["dist/**"] }, "ci-green": { enabled: false }, docs: {} },
       custom: [{ ...SIZE, enabled: false }, TESTS],
       actions: { fail: [] },
       labels: { fail: "Needs work" },
     };
-    expect(sharedPolicySchema(SHARED)).not.toBeInstanceOf(type.errors);
     expect(policyOverrideSchema(override)).not.toBeInstanceOf(type.errors);
     expect(resolvePolicy(readSharedPolicy(SHARED), readPolicyOverride(JSON.stringify(override), REPO))).toEqual({
       ...HEADER,
@@ -48,18 +47,17 @@ describe("resolvePolicy", () => {
     });
   });
 
-  test("a stored override naming an author group reads as the kinds it held", () => {
-    const override = readPolicyOverride({ ...HEADER, repo: REPO, extends: "art_shared", actions: { fail: [{ do: "close", when: { author: ["external"] } }] } }, REPO);
+  test("a policy file override naming an author group reads as the kinds it held", () => {
+    const override = readPolicyOverride({ ...HEADER, repo: REPO, extends: "acme/shared", actions: { fail: [{ do: "close", when: { author: ["external"] } }] } }, REPO);
     expect(override.actions.fail).toEqual([{ do: "close", when: { author: ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", "MANNEQUIN"] } }]);
   });
 
-  test("refusals: past the custom rule cap, a shared policy that extends, unknown lists, a pack read alone, a target that is no workspace policy", () => {
+  test("refusals: past the custom rule cap, a shared policy that extends, unknown lists, a stored policy that extends", () => {
     const many = Array.from({ length: 7 }, (_, i): CustomCheck => ({ ...TESTS, id: `coverage-${i + 2}` }));
-    const override = readPolicyOverride({ ...HEADER, repo: REPO, extends: "art_shared", custom: many }, REPO);
+    const override = readPolicyOverride({ ...HEADER, repo: REPO, extends: "acme/shared", custom: many }, REPO);
     expect(() => resolvePolicy(readSharedPolicy(SHARED), override)).toThrow("at most 8 custom rules together");
-    expect(() => readSharedPolicy({ ...SHARED, extends: "art_other" })).toThrow("A shared policy must not extend another.");
-    expect(() => readPolicyOverride({ ...HEADER, repo: REPO, extends: "art_shared", actions: { always: [] } }, REPO)).toThrow("actions.always must be removed");
-    expect(() => readCheckPack({ ...HEADER, repo: REPO, extends: "art_shared" })).toThrow("extends a workspace policy");
-    expect(() => storedPolicyPack(REPO, { ...HEADER, repo: REPO, extends: "art_shared" }, { title: "check-pack/acme/other", content: SHARED })).toThrow("not a workspace policy");
+    expect(() => readSharedPolicy({ ...SHARED, extends: "acme/other" })).toThrow("A shared policy must not extend another.");
+    expect(() => readPolicyOverride({ ...HEADER, repo: REPO, extends: "acme/shared", actions: { always: [] } }, REPO)).toThrow("actions.always must be removed");
+    expect(() => readCheckPack({ ...HEADER, repo: REPO, extends: "acme/shared" })).toThrow("Only a policy file can extend another repository's policy.");
   });
 });

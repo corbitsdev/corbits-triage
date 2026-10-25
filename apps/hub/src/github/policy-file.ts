@@ -251,7 +251,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function startFile(member: Member, record: RepoRecord): Promise<Response> {
     const pull = await openPull(member.tenantId, record);
     if (pull) return Response.json({ status: "opened", ...pull });
-    return addFile(member, record, exportPolicyFile(starterPack(record.name), false).text, STARTER_BODY);
+    return addFile(member, record, exportPolicyFile(starterPack(record.name)).text, STARTER_BODY);
   }
 
   /**
@@ -286,7 +286,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       if (upgrade.state === "ok" || upgrade.state === "start" || !saved) return failure(409, "policy_settled", `${repo} has no saved rules apart from its policy file.`);
       if (upgrade.state === "differs" && !upgrade.fixable) return failure(409, "policy_file_full", `${repo}'s policy file already holds all of its saved rules that a file can; keep the file to settle it.`);
       const path = upgrade.state === "differs" ? upgrade.path : POLICY_FILE_PATH;
-      const { text, unexpressed } = exportPolicyFile(saved.pack, saved.source.shared !== undefined);
+      const { text, unexpressed } = exportPolicyFile(saved.pack);
       return await opened(member.tenantId, record, { path, text, title: `chore: keep the Corbits Triage rules in ${path}`, body: pullBody(upgrade.state, path, unexpressed) });
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_file_export_failed", tenantId: member.tenantId, repo, error: errorText(err) });

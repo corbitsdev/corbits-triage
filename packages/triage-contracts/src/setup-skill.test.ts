@@ -18,7 +18,7 @@ function yamlUnder(heading: string): string {
 
 test("the setup skill's starter file is the starter policy, and every other example is valid with it", () => {
   const starter = yamlUnder("Starter file");
-  const exported = checkPolicyFile(exportPolicyFile(starterPack(REPO), false).text, REPO);
+  const exported = checkPolicyFile(exportPolicyFile(starterPack(REPO)).text, REPO);
   expect(checkPolicyFile(starter, REPO)).toEqual(exported);
   for (const heading of ["Extras, written out", "Actions", "Labels", "Blocks and decide"]) {
     expect(checkPolicyFile(`${starter}${yamlUnder(heading)}`, REPO)).toMatchObject({ ok: true });

@@ -154,7 +154,7 @@ describe("policy file v4", () => {
     const checked = checkPolicyFile(`${RULES}pace: { perHead: 0x10 }\npauseLabel: ~\n`, REPO);
     expect(checked).toEqual({ ok: false, problems: [{ message: "`pauseLabel` must be a label of at most 50 characters.", line: 7 }] });
     const pack = readCheckPack(readPolicyFile(`${RULES}groups: { core: { users: [octocat] } }\nactions:\n  pass: [{ do: comment, target: { body: "~" }, when: { author: [core, maintainers] } }]\nlabels: { pass: "0x10" }\n`, REPO), REPO);
-    expect(readPolicyFile(exportPolicyFile(pack, false).text, REPO)).toEqual(pack);
+    expect(readPolicyFile(exportPolicyFile(pack).text, REPO)).toEqual(pack);
   });
 
   test.each([

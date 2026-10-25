@@ -6,9 +6,7 @@ import {
   readCheckPack,
   readPolicyFile,
   recommendedPack,
-  storedPolicyPack,
   VERDICTS,
-  WORKSPACE_POLICY_TITLE_PREFIX,
   type CheckPack,
 } from "@corbits/triage-contracts";
 import { evaluateActions } from "./actions.js";
@@ -80,16 +78,12 @@ const versionOne = readCheckPack({
   actions: { when: ["opened"], pass: [{ kind: "approve" }], fail: [{ kind: "labels", target: { from: "list", labels: ["needs work"] } }], unsure: [] },
 }, REPO);
 
-const shared = { title: `${WORKSPACE_POLICY_TITLE_PREFIX}acme`, content: JSON.stringify({ ...emptyPack(REPO), repo: undefined, checks: { focused: { enabled: true }, docs: { enabled: true } }, actions: { when: ["opened"], pass: [{ do: "approve" }], fail: [], unsure: [] } }) };
-const extended = storedPolicyPack(REPO, JSON.stringify({ kind: "corbits.triage.check-pack", schemaVersion: 2, repo: REPO, extends: "shared-1", checks: { docs: { enabled: false } }, actions: { fail: [{ do: "close" }] } }), shared);
-
 const STORED: Array<[string, CheckPack]> = [
   ["an empty policy", emptyPack(REPO)],
   ["the recommended policy", recommendedPack(REPO)],
   ["every step, target and condition", everyStep],
   ["corbitsdev/corbits-code's saved rules", corbitsCode],
   ["a version 1 policy", versionOne],
-  ["a policy over a workspace policy", extended],
 ];
 
 function runs(pack: CheckPack) {
@@ -98,14 +92,14 @@ function runs(pack: CheckPack) {
 
 describe("a saved policy exported as a policy file", () => {
   test.each(STORED)("%s reads back as the same rules, steps and effect ids", (_name, saved) => {
-    const { text, unexpressed } = exportPolicyFile(saved, saved === extended);
+    const { text, unexpressed } = exportPolicyFile(saved);
     const file = readPolicyFile(text, saved.repo) as CheckPack;
     expect(policyDifferences(saved, file)).toEqual([]);
     expect(file.actions).toEqual(saved.actions);
     expect(file.labels).toEqual(saved.labels);
     expect(runs(file)).toEqual(runs(saved));
     expect(runs(saved).flat().some((action) => "effectId" in action)).toBe(saved.actions.pass.length + saved.actions.fail.length + saved.actions.unsure.length > 0);
-    expect(unexpressed).toEqual(saved === extended ? ["Later changes to the workspace's shared rules stop reaching this repository."] : []);
+    expect(unexpressed).toEqual([]);
   });
 
   test("what a file cannot hold is listed and left out, never run in its place", () => {
@@ -118,7 +112,7 @@ describe("a saved policy exported as a policy file", () => {
         { id: "per-file", name: "Per file", group: "pull-request", kind: "model", shape: "is-true", claim: "Each file has a header.", scope: "file" },
       ],
     };
-    const { text, unexpressed } = exportPolicyFile(saved, false);
+    const { text, unexpressed } = exportPolicyFile(saved);
     expect(unexpressed).toEqual([
       "Flag pull requests over any number of lines changed stops after the merge; a policy file can't hold it without a value.",
       "Risk level is called Risk in the file.",
@@ -156,7 +150,7 @@ actions: { when: [opened, updated, checks, ready], pass: [], fail: [], unsure: [
     const skipping = { ...merging, checks: { "ci-green": { enabled: false } } };
     expect(policyDifferences(merging, skipping)).toEqual([{ rule: "CI must pass before merge", saved: ["merges wait for CI"], file: ["merges skip CI"], instead: "Merges will no longer wait for CI." }]);
     expect(policyDifferences(skipping, merging)).toEqual([{ rule: "CI must pass before merge", saved: ["merges skip CI"], file: ["merges wait for CI"], instead: "Failing CI will no longer fail pull requests; merges still wait for it." }]);
-    expect(policyDifferences(skipping, readPolicyFile(exportPolicyFile(skipping, false).text, REPO) as CheckPack)).toEqual([]);
+    expect(policyDifferences(skipping, readPolicyFile(exportPolicyFile(skipping).text, REPO) as CheckPack)).toEqual([]);
   });
 
   test("wording, reasons, evidence, list order within a rule and author order are not differences; a step's place is", () => {

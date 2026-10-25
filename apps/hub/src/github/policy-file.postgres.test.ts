@@ -353,7 +353,7 @@ test("PostgreSQL: a file already holding all a file can of the saved rules is no
     custom: [{ id: "risk-score", name: "Risk score", group: "pull-request", kind: "model", shape: "score", subject: "the risk", levels: ["high", "low"] }],
   };
   await writePolicy(FROM_FILE, JSON.stringify(saved));
-  onMain(FROM_FILE, YML, exportPolicyFile(saved, false).text);
+  onMain(FROM_FILE, YML, exportPolicyFile(saved).text);
   await policyFile.onPush(TENANT, FROM_FILE, "github");
   expect(await readPack(FROM_FILE)).toMatchObject({ status: "ok", source: { repo: { version: 1 } } });
   expect(await upgradeOf(FROM_FILE)).toMatchObject({ upgrade: { state: "differs", differences: [{ rule: "Risk score", file: [] }], fixable: false } });

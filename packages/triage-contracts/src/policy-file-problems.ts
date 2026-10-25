@@ -36,7 +36,7 @@ const LABEL_TEXT = `a label of at most ${LABEL_MAX} characters`;
  * The keys a mapping takes are the keys its entries name.
  */
 const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact"?]> = [
-  [["extends"], "a repository written owner/name, or a workspace policy's id"],
+  [["extends"], "a repository written owner/name"],
   [["onFail"], words(ON_FAILS)],
   [["rules"], "a list of rules", "exact"],
   [["actions"], MAPPING],

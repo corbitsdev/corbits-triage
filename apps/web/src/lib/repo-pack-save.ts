@@ -1,6 +1,6 @@
 import { errorText } from "@corbits/common";
 import { customRuleId, emptyPack, repoPolicy, VERDICTS, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
-import { ExtendedPolicyError, StaleCheckPackError } from "./check-pack.ts";
+import { StaleCheckPackError } from "./check-pack.ts";
 import { freshStepId, fromPack, packChanges, policyChanges, savable, stepEntries, storedStepKey, toPack, type RepoDraft } from "./pack-draft.ts";
 import { draftPolicy, type LoadedRepoPack, type PackRef, type RepoPackStore } from "./repo-pack-store.ts";
 
@@ -94,7 +94,6 @@ export async function saveDraft(store: RepoPackStore, repo: string, source: Repo
       current = { loaded, corrupt: null, saved: { ...session.saved, pack: next.pack, stepIds: next.stepIds }, unlinked: true };
     } catch (cause) {
       if (cause instanceof StaleCheckPackError) return { session, renamed: {}, failure: { message: cause.message, cause, stale: true } };
-      if (cause instanceof ExtendedPolicyError) return { session, renamed: {}, failure: { message: cause.message, cause, stale: false } };
       return { session, renamed: {}, failure: checksFailed(cause) };
     }
   }

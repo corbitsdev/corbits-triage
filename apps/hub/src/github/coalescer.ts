@@ -39,7 +39,7 @@ type SetTimer = (fire: () => Promise<void>, ms: number) => () => void;
 type ReadPolicy = {
   pack: CheckPack;
   automatic: ActionKind[];
-  /** Read with `pack` when the event was accepted, shared policy included, so the mail names the versions it carries. */
+  /** Read with `pack` when the event was accepted, the policy file it extends included, so the mail names the versions it carries. */
   source: PolicySource;
   policyWorkflow?: PolicyWorkflow;
   pauseLabel?: string;

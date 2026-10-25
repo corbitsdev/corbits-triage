@@ -279,7 +279,7 @@ the verdict there.
 A repository's policy is `.corbits-triage.yml` at the root of its default
 branch (`.corbits-triage.yaml` when there is no `.yml`), so policy changes are
 reviewed like code. It lists `rules`, `actions` and `labels`, and may
-`extends` another repository's policy file or a workspace policy. It may also
+`extends` another repository's policy file. It may also
 hold the v4 keys `groups`, `code-review`, `security`, `deslop`, `pace`,
 `pauseLabel` and `decide`. Any other key is refused, naming
 the key it was likely meant to be. A step's `when.author` may name a group.
@@ -379,27 +379,21 @@ A repository without the file offers **Start a policy file**: a pull request
 adding the starter rules (at most 30 files and 3,000 lines changed, no merge
 conflicts, CI green, sensitive paths and risk; no actions). Rules saved in the portal by earlier builds
 keep running until they move into the file through a pull request the portal
-opens; [the manual](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#moving-saved-rules-into-the-file)
+opens, and only their creator, the workspace's admins and its owners can change
+them; [the manual](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#moving-saved-rules-into-the-file)
 walks through it. Wording, reasons and evidence never count as a difference
 between the two.
 
 ### Shared policies
 
 `extends: owner/name` (`PROJECT/slug` on Bitbucket) starts from that
-repository's policy file on its default branch, merged as a workspace policy
-is below. The repository must be connected to the same workspace and its file
-must not extend another; otherwise triage refuses the file and says why. A
-push or merge to that file reaches every repository extending it from their
-next verdict. The pull request check validates the file itself, not the
-policy it extends.
-
-### Workspace policies
-
-A repository's policy may extend a workspace policy, an artifact titled
-`workspace-policy/<name>` written through the hub's artifact route. It is a
-default, not a floor: the repository may switch off or replace any of its
-rules, its When, any verdict's steps and any verdict's label. Only a policy's
-creator, the workspace's admins and its owners can change it.
+repository's policy file on its default branch. It is a default, not a floor:
+the extending file may switch off or replace any of its rules, its When, any
+verdict's steps and any verdict's label. The repository must be connected to the
+same workspace and its file must not extend another; otherwise triage refuses
+the file and says why. A push or merge to that file reaches every repository
+extending it from their next verdict. The pull request check validates the file
+itself, not the policy it extends.
 
 ## Code review
 

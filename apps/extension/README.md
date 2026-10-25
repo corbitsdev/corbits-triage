@@ -65,7 +65,7 @@ the block finds the review only with a saved token, which reads the reviews from
   clears every saved check and policy file.
 - Saved checks and policy files are cleared when a different account signs in to github.com, or the account signs
   out. Until a run has checked who is signed in, the page may briefly show the check saved for the previous account.
-- A policy file that extends a shared policy is not checked; only the hub holds the shared policy.
+- A policy file that extends another repository's policy is not checked; only the hub reads that repository's file.
 
 ## Test
 
