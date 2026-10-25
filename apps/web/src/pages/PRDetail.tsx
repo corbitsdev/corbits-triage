@@ -98,7 +98,7 @@ function CheckList({ source, repo, sha, checks, fallback }: { source: RepoSource
       {open.length > 0 ? <ul className="verdict-checks">{open.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} source={source} repo={repo} sha={sha} />)}</ul> : null}
       {passed.length > 0 ? (
         <details className="check-group">
-          <summary>{passed.length} checks passed</summary>
+          <summary>Checked and fine: {passed.length} {passed.length === 1 ? "rule" : "rules"}</summary>
           <ul className="verdict-checks">{passed.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} source={source} repo={repo} sha={sha} />)}</ul>
         </details>
       ) : null}

@@ -203,19 +203,21 @@
 .inbox .pop .pfoot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--rule); font-size: 12px; }
 .inbox .filter-scrim { display: none; }
 
-/* Rows: one grid for the whole list, so columns line up and titles take what the longest number, age and status leave. */
-.inbox .groups { display: grid; grid-template-columns: 10px auto minmax(0, 1fr) auto auto; align-content: start; column-gap: 10px; padding: 4px 8px 24px; }
-.inbox .groups.by-repo { grid-template-columns: 10px auto minmax(0, 1fr) auto auto auto; }
-.inbox .gh { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px; padding: 14px 8px 4px; font-size: 13px; font-weight: 700; position: sticky; top: 0; background: var(--white); z-index: 1; }
+/* A row stacks the title over its number, status and age, so the title has the full width and a long status never squeezes it. */
+.inbox .groups { padding: 4px 8px 24px; }
+.inbox .gh { display: flex; align-items: baseline; gap: 8px; padding: 14px 8px 4px; font-size: 13px; font-weight: 700; position: sticky; top: 0; background: var(--white); z-index: 1; }
 .inbox .gh .n { font: 700 12px var(--mono); }
-.inbox .row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; height: 38px; padding: 0 8px; border-radius: var(--r-sm); cursor: pointer; font-size: 13px; color: inherit; text-decoration: none; }
+.inbox .row { display: grid; grid-template-columns: 10px auto minmax(0, 1fr) auto auto; grid-template-areas: "dot tw tw tw tw" ". num st who age"; align-items: center; column-gap: 10px; row-gap: 2px; min-height: 52px; padding: 8px; border-radius: var(--r-sm); cursor: pointer; font-size: 13px; color: inherit; text-decoration: none; }
+.inbox .row .dot { grid-area: dot; align-self: start; margin-top: 6px; }
 .inbox .row:hover { background: var(--fill); }
 .inbox .row[aria-current="true"] { background: var(--fill-hover); box-shadow: inset 0 0 0 1px var(--rule-strong); }
-.inbox .row .num { font: 400 12px var(--mono); color: var(--ink-mute); white-space: nowrap; }
-.inbox .row .tw { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.inbox .row .who { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-mute); }
-.inbox .row .age { font: 400 11px var(--mono); }
-.inbox .row .st { font-size: 12px; white-space: nowrap; }
+.inbox .row .num { grid-area: num; max-width: 32ch; font: 400 12px var(--mono); color: var(--ink-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox .row .tw { grid-area: tw; font-weight: 600; font-size: 14px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.35; }
+.inbox .row .who { grid-area: who; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-mute); }
+.inbox .row .age { grid-area: age; font: 400 11px var(--mono); }
+.inbox .row .st { grid-area: st; display: flex; gap: 0.5ch; min-width: 0; font-size: 12px; white-space: nowrap; color: var(--ink-mute); }
+.inbox .row .st-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.inbox .row .st-more { flex: none; }
 .inbox .tag { display: inline-flex; align-items: center; gap: 3px; font: 600 11px var(--font); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
 .inbox .tag.quiet { font-weight: 500; border-color: var(--rule); color: var(--ink-mute); }
 .inbox .list-empty { display: grid; justify-items: start; gap: 4px; padding: 20px 16px; }
@@ -241,7 +243,7 @@
 .inbox .byline .who { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
 .inbox .byline .who .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .inbox .r3 .ph { margin-bottom: 28px; }
-.inbox .st3 { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 22px; font-size: 21px; line-height: 1.3; font-weight: 700; letter-spacing: -0.01em; text-wrap: pretty; }
+.inbox .st3 { display: flex; align-items: flex-start; gap: 12px; overflow-wrap: anywhere; margin: 0 0 22px; font-size: 21px; line-height: 1.3; font-weight: 700; letter-spacing: -0.01em; text-wrap: pretty; }
 .inbox .st3 .dot { width: 10px; height: 10px; margin-top: 9px; }
 .inbox .st3.t-ready .dot { background: var(--green); }
 .inbox .st3.t-you .dot { background: var(--orange); }
@@ -377,15 +379,11 @@
   .settings .place-steps > summary { padding: 13px 0; }
   .inbox :is(.search, .tbtn) { height: 44px; }
   .inbox .seg button { min-height: 36px; padding: 0 12px; }
-  /* A phone row stacks the title over its number, status and age, so the title is never cut to a few characters. */
-  .inbox .groups { display: block; padding: 4px 4px 24px; }
-  .inbox .row { grid-template-columns: 8px auto minmax(0, 1fr) auto; grid-template-areas: "dot tw tw tw" ". num st age"; column-gap: 10px; row-gap: 2px; height: auto; min-height: 56px; padding: 9px 8px; }
-  .inbox .row .dot { grid-area: dot; align-self: start; margin-top: 6px; }
-  .inbox .row .tw { grid-area: tw; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.35; }
-  .inbox .row .num { grid-area: num; }
-  .inbox .row .st { grid-area: st; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-mute); }
-  .inbox .row .age { grid-area: age; }
+  .inbox .groups { padding: 4px 4px 24px; }
+  .inbox .row { grid-template-columns: 8px auto minmax(0, 1fr) auto auto; min-height: 56px; padding: 9px 8px; }
   .inbox .row .who { display: none; }
+  /* A long repository name gives way before the status, so its count is never pushed over the age. */
+  .inbox .row .num { max-width: 16ch; }
   :is(.pulse, .settings) { padding: 24px 16px 100px; }
   :is(.pulse, .settings) h1 { font-size: 28px; }
   .settings nav.byline a { display: inline-block; padding: 12px 0; }

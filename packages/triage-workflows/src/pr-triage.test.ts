@@ -420,6 +420,13 @@ describe("pr-triage body", () => {
     expect((verdict as Verdict).request.comment).toContain(`Skipped:\n- makes one focused change: ${skipped}`);
   });
 
+  test("the verdict question keeps the rule names the judge was evaluated with, whatever the portal calls them", async () => {
+    const pack = emptyPack(REPO);
+    const { judged } = await triage({ ...pack, checks: { docs: { enabled: true }, "no-merge-conflicts": { enabled: true } } }, { files: [FLAG, { ...FLAG, filename: "docs/flag.md" }] });
+    const asked = judged.find((call) => call.questions.some((question) => question.id === "verdict"));
+    expect(asked?.state.policy?.rules.map((rule) => rule["name"])).toEqual(expect.arrayContaining(["No merge conflicts", "Not a draft", "No changes requested"]));
+  });
+
   test("a file list over several pages still shows the judge its docs changes", async () => {
     const sources = Array.from({ length: 150 }, (_, index) => ({ ...FLAG, filename: `src/modules/feature-${index}/index.ts` }));
     const files = [...sources, { ...FLAG, filename: "docs/flag.md" }];

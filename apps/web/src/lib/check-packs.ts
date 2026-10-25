@@ -31,7 +31,10 @@ export function checkPackQuery(tenantId: string | undefined, repo: string) {
 
 export function useRepoPack(repo: string): CheckPack | null {
   const { snapshot } = usePortal();
-  const found = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo)).data;
+  return packOf(useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo)).data);
+}
+
+export function packOf(found: CheckPackArtifact | null | undefined): CheckPack | null {
   return found && "pack" in found ? found.pack : null;
 }
 

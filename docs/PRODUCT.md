@@ -29,14 +29,18 @@ How to use the portal, screen by screen, is in the
 
 - **Inbox**: open pull requests across repositories with triage on, in three
   views, **Needs you**, **Ready** (passed on the latest commit, CI passed, no
-  conflicts, oldest first) and **All open**. A row is a state mark, the number
-  (with the repository's name, or the author when grouped by repository), the
-  title, its age and a short status. Each opens a reading pane: the status
-  line, the problems (failed rules, unsure answers, rules that could not run),
+  conflicts, oldest first) and **All open**. A row is a state mark and the
+  title, then the number (with the repository's name unless grouped by
+  repository), a short status, the author when grouped by repository, and its
+  age. Each opens a reading pane: the status line, which says what the bar's
+  main button does and which rules it is about (the row says the same,
+  shortened), the problems (failed rules, unsure answers and rules the policy
+  asks a maintainer about, rules that could not run, each named, then why),
   the description, and folded rows for the linked issue, the changed files and
-  the rules that passed. A bar at the bottom offers the next step; merging
-  from the portal is pinned to the commit Triage checked. Pull requests waiting
-  on the author, on CI or on Triage, and drafts, sit behind **Waiting**.
+  the rules that passed (**Checked and fine**). A bar at the bottom offers the
+  next step; merging from the portal is pinned to the commit Triage checked.
+  Pull requests waiting on the author, on CI or on Triage, and drafts, sit
+  behind **Waiting**.
 - **Pulse**: what changed since your last visit and what is stuck.
 - **Repositories**: per repository, the triage switch and **Triage open pull
   requests again**, its policy file read back as sentences, code review, the
@@ -66,7 +70,7 @@ The same pull request and policy give the same result. A rule is unconfirmed
 only while the host has not computed what it needs, such as mergeability or CI.
 
 Built in: Max files changed, Max lines changed, Linked issue (GitHub, Linear or
-either), No merge conflicts, CI green, No forbidden paths, Conventional commits
+either), Merge conflicts, CI green, Forbidden paths, Conventional commits
 (the title and each of the first 100 commits' first line start
 `type(scope)!: `, in any case; merges and reverts skipped), Hidden content
 (what cleaning the title, description, commits and paths removed carried
@@ -81,7 +85,7 @@ holds those characters; it names what it found and where, never the text, and
 misses paraphrased, look-alike-letter, entity-encoded or split instructions),
 Regression risk (a changed file with four or more commits titled as a fix or revert on the
 default branch in the last 30 days, or a migration; labels by default). Two always run:
-Not a draft, and No changes requested (a requested change fails and waits on
+Draft, and Requested changes (a requested change fails and waits on
 the author, then on the reviewer once the author pushes or replies). The
 recommended forbidden paths are `vendor/**`, `node_modules/**` and
 `.github/**`: an author who edits the workflows can change which checks run.

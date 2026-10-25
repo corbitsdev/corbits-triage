@@ -14,7 +14,7 @@ export function titleText(title: string | null): string {
 type HostBlock = "mergeability-unknown" | HeldBlock;
 
 /** `hostBlock` is known once the host's detail, or the list's read of the host, has loaded. */
-type PaneFacts = { title: string | null; author: string | null; draft: boolean | null; mergeable: boolean | null; hostBlock: HostBlock | null };
+export type PaneFacts = { title: string | null; author: string | null; draft: boolean | null; mergeable: boolean | null; hostBlock: HostBlock | null };
 
 const GITHUB_BLOCK: Partial<Record<string, HostBlock>> = { unknown: "mergeability-unknown", behind: "behind", blocked: "blocked" };
 
@@ -209,7 +209,7 @@ async function sendReply({ write, replySent }: PaneIo, item: NumberedItem, body:
   return sent(`Posted to GitHub on #${number}.`);
 }
 
-export function currentHead(item: Pick<PrItem, "headSha" | "verdictSha">): string | null {
+function currentHead(item: Pick<PrItem, "headSha" | "verdictSha">): string | null {
   return item.headSha ?? item.verdictSha;
 }
 

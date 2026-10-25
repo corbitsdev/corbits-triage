@@ -94,7 +94,7 @@ function derivedLabels(wanted: string[], owns: (label: string) => boolean, facts
 
 /**
  * The rule labels a labels step writes, and the only `rule: …` labels it takes back: those of the built-in rules and
- * the policy's own. A repository's other `rule: …` labels are its own. Not a draft and no changes requested say where
+ * the policy's own. A repository's other `rule: …` labels are its own. Draft and Requested changes say where
  * the pull request stands, not what to fix, so they get none.
  */
 function ruleLabels({ checks, pack, facts }: ActionInput): ResolvedTarget {

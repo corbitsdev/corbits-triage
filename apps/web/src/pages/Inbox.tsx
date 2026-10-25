@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type Ke
 import { Button } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import type { AuthorKind } from "@corbits/triage-contracts";
+import type { AuthorKind, CheckPack } from "@corbits/triage-contracts";
 import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
@@ -14,7 +14,7 @@ import { pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDoKeys } from "../lib/held-dos.ts";
 import { CodeReviewThreads } from "../components/CodeReviewThreads.tsx";
 import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
-import { approvedByTriage, endedText, heldChoices, paneBar, paneProblems, paneStatus, rowStatus, type BarEntry, type HeldChoice, type PaneBar } from "../lib/pane-report.ts";
+import { endedText, heldChoices, paneBar, paneProblems, paneStatus, moreText, rowStatus, statusText, type BarEntry, type HeldChoice, type PaneBar } from "../lib/pane-report.ts";
 import {
   COMPOSER_COPY,
   canRun,
@@ -75,7 +75,7 @@ import { packsPending, reposNeedingSetup, triageEnabledRepos, triageReadyRepos }
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
-import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
+import { packOf, useCheckPacks, useRepoPack, type PackState } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import PullToRefresh from "../components/PullToRefresh.tsx";
@@ -132,11 +132,12 @@ function repoName(repo: string): string {
   return repo.slice(repo.lastIndexOf("/") + 1);
 }
 
-type RowProps = { view: ListView; entry: OpenItem; byRepo: boolean; selected: boolean; search: string };
+type RowProps = { view: ListView; entry: OpenItem; pack: CheckPack | null; byRepo: boolean; selected: boolean; search: string };
 
 /** Grouped by repository the pile names it, so the row names the author instead. */
-function Row({ view, entry, byRepo, selected, search }: RowProps) {
+function Row({ view, entry, pack, byRepo, selected, search }: RowProps) {
   const { item, handled } = entry;
+  const status = rowStatus(item, handled, pack);
   return (
     <Link className="row" aria-current={selected} to={{ pathname: listHref(view, item), search }} data-inbox-row={item.key}>
       <span className={dotClass(item, listedAction(item))} />
@@ -144,18 +145,18 @@ function Row({ view, entry, byRepo, selected, search }: RowProps) {
       <b className="tw">{titleText(item.title)}</b>
       {byRepo ? <span className="who" title={item.author ?? undefined}>{item.author}</span> : null}
       <span className="age">{ageText(item.waitingSince)}</span>
-      <span className="st">{rowStatus(item, handled)}</span>
+      <span className="st" title={statusText(status)}><span className="st-text">{status.text}</span>{status.more > 0 ? <span className="st-more">{moreText(status.more)}</span> : null}</span>
     </Link>
   );
 }
 
-type PileProps = { view: ListView; byRepo: boolean; pile: OpenPile; selectedKey: string | undefined; search: string };
+type PileProps = { view: ListView; byRepo: boolean; pile: OpenPile; packs: Map<string, PackState>; selectedKey: string | undefined; search: string };
 
-function Pile({ view, byRepo, pile, selectedKey, search }: PileProps) {
+function Pile({ view, byRepo, pile, packs, selectedKey, search }: PileProps) {
   return (
     <>
       <div className="gh">{pile.label}<span className="n">{pile.items.length}</span></div>
-      {pile.items.map((entry) => <Row key={entry.item.key} view={view} byRepo={byRepo} entry={entry} selected={entry.item.key === selectedKey} search={search} />)}
+      {pile.items.map((entry) => <Row key={entry.item.key} view={view} byRepo={byRepo} entry={entry} pack={packOf(packs.get(entry.item.repo)?.found)} selected={entry.item.key === selectedKey} search={search} />)}
     </>
   );
 }
@@ -307,7 +308,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   const heldDoKeys = useHeldDoKeys();
   const doBlocked = writeBlocker(gate) !== null;
   const link = pullUrl(item);
-  const status = paneStatus({ item, detail: pull.data, handled, approved: approvedByTriage(item), primary: bar.primary });
+  const status = paneStatus({ item, detail: pull.data, handled, pack });
   const ended = endedText(item, pull.data, handled) !== null;
 
   // A new verdict replaces the drafted feedback and the last note; composer text and an edit made while a run is merely in flight stay.
@@ -421,7 +422,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
             <Byline item={item} author={facts.author} detail={pull.data} />
           </header>
           <StatusLine status={status} />
-          <Problems problems={paneProblems(item.checks)} pack={pack} item={item} />
+          <Problems problems={paneProblems(item.checks, pack)} pack={pack} item={item} authorsTurn={status.tone === "author"} />
           {hasNumber(item) ? <CodeReviewThreads item={item} /> : null}
           <Description pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} />
           {editing && draft !== null ? (
@@ -762,8 +763,8 @@ export default function Inbox({ view }: { view: ListView }) {
           {flat.length === 0 ? (
             <EmptyList view={view} waiting={waiting} waitingCount={waitingEntries.length} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} onShowWaiting={toggleWaiting} />
           ) : (
-            <div className={byRepo ? "groups by-repo" : "groups"}>
-              {piles.map((pile) => <Pile key={pile.key} view={view} byRepo={byRepo} pile={pile} selectedKey={selected?.key} search={search} />)}
+            <div className="groups">
+              {piles.map((pile) => <Pile key={pile.key} view={view} byRepo={byRepo} pile={pile} packs={packs} selectedKey={selected?.key} search={search} />)}
             </div>
           )}
         </PullToRefresh>

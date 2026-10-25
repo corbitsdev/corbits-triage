@@ -77,7 +77,7 @@ describe("the request-changes Do", () => {
 
   test("lists every failed rule that is the author's to fix, and stops wanting changes once they are fixed", () => {
     expect(suggested({ checks: "failure", failingChecks: ["build"], mergeable: false })).toEqual([
-      expect.objectContaining({ kind: "request-changes", list: "fail", target: { body: "Triage requests changes:\n- CI green: required checks are failing\n- No merge conflicts: merge conflicts with base" } }),
+      expect.objectContaining({ kind: "request-changes", list: "fail", target: { body: "Triage requests changes:\n- CI green: required checks are failing\n- Merge conflicts: merge conflicts with base" } }),
     ]);
     expect(changesWanted(input({}).input)).toBe(false);
   });
