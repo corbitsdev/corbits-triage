@@ -75,7 +75,7 @@ function usePulseState(open: OpenItem[]): PulseState {
       const saved = readSaved(storage);
       return saved === null ? null : resumeVisit(saved, Date.now());
     },
-    staleTime: Infinity,
+    staleTime: "static",
     gcTime: Infinity,
   });
   const entries = useMemo(() => allOpen(open, triageEnabledRepos(snapshot?.repos ?? [])), [open, snapshot]);

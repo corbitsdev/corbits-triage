@@ -78,6 +78,7 @@ import { findPrItem } from "../lib/triage-view.ts";
 import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
+import PullToRefresh from "../components/PullToRefresh.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
@@ -407,7 +408,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   return (
     <section ref={sectionRef} className="panel pane" aria-label="Selected pull request" tabIndex={-1}>
       <Button type="button" variant="ghost" size="sm" className="pane-back" onClick={onBack}>Back to {listTitle}</Button>
-      <div className="scroll">
+      <PullToRefresh className="scroll">
         <div className="pane-in r3">
           <header className="ph">
             <div className="crumb">
@@ -434,7 +435,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
           {done === null ? null : <p role="status" className="note">{done}</p>}
           <ReportRows item={item} pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} pack={pack} />
         </div>
-      </div>
+      </PullToRefresh>
       {!ended && <BottomBar
         bar={bar}
         draft={draft}
@@ -754,7 +755,7 @@ export default function Inbox({ view }: { view: ListView }) {
           ) : null}
           {searchable || activeFilters(filters).length > 0 ? <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} /> : null}
         </div>
-        <div className="scroll" id="main">
+        <PullToRefresh className="scroll" id="main">
           <RefusedPolicies repos={enabledNames} />
           <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
@@ -765,7 +766,7 @@ export default function Inbox({ view }: { view: ListView }) {
               {piles.map((pile) => <Pile key={pile.key} view={view} byRepo={byRepo} pile={pile} selectedKey={selected?.key} search={search} />)}
             </div>
           )}
-        </div>
+        </PullToRefresh>
       </section>
       {selected ? (
         <Pane

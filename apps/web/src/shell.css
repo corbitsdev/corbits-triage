@@ -72,6 +72,21 @@
 /* Shared by the inbox and the repositories table. Panels are scoped to those two because other pages still use the older .panel. */
 :is(.inbox, .repos) .panel { background: var(--white); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
 :is(.inbox, .repos) .scroll { flex: 1; min-height: 0; overflow: auto; }
+
+/* Pull to refresh: a mark drops in over the top of a list or pane, so the content and its scroll never move. */
+.pull-refresh { position: sticky; top: 0; z-index: 2; height: 0; pointer-events: none; }
+.pull-mark { position: absolute; top: -44px; left: calc(50% - 18px); display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--rule); border-radius: 50%; background: var(--white); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); color: var(--ink-mute); opacity: 0; transition: transform 200ms var(--ease-out), opacity 200ms var(--ease-out); }
+.pull-mark svg { transition: transform 200ms var(--ease-out); }
+.pull-mark:is([data-armed], [data-refreshing]) { color: var(--ink); }
+.pull-mark[data-refreshing] { opacity: 1; transform: translateY(64px); }
+.pull-mark[data-refreshing] svg { animation: pull-spin 600ms linear infinite; }
+@keyframes pull-spin { to { rotate: 360deg; } }
+@keyframes pull-pulse { to { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) {
+  .pull-mark { transform: translateY(64px); }
+  .pull-mark[data-refreshing] { animation: pull-pulse 600ms ease-in-out infinite alternate; }
+  .pull-mark[data-refreshing] svg { animation: none; }
+}
 :is(.inbox, .repos) .lh { padding: 16px 16px 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--rule); }
 :is(.inbox, .repos) .lh-top { display: flex; align-items: baseline; gap: 10px; }
 :is(.inbox, .repos) .lh-top h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }

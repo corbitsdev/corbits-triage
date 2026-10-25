@@ -21,7 +21,7 @@ function none(): string[] {
 }
 
 function useKeys(queryKey: unknown[]): string[] {
-  const { data } = useQuery({ queryKey, queryFn: none, staleTime: Infinity, gcTime: Infinity });
+  const { data } = useQuery({ queryKey, queryFn: none, staleTime: "static", gcTime: Infinity });
   return data ?? [];
 }
 

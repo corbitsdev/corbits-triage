@@ -46,7 +46,7 @@ function noSentReplies(): SentReplies {
 
 function useSentReplies(): SentReplies {
   const { snapshot } = usePortal();
-  const { data } = useQuery({ queryKey: sentRepliesKey(snapshot?.workspace.tenantId), queryFn: noSentReplies, staleTime: Infinity });
+  const { data } = useQuery({ queryKey: sentRepliesKey(snapshot?.workspace.tenantId), queryFn: noSentReplies, staleTime: "static" });
   return data ?? {};
 }
 
@@ -102,7 +102,7 @@ export function useActedPulls(): { acted: string[]; replace: (keys: string[]) =>
   const { snapshot } = usePortal();
   const queryClient = useQueryClient();
   const tenantId = snapshot?.workspace.tenantId;
-  const { data } = useQuery({ queryKey: actedKey(tenantId), queryFn: noneActed, staleTime: Infinity, gcTime: Infinity });
+  const { data } = useQuery({ queryKey: actedKey(tenantId), queryFn: noneActed, staleTime: "static", gcTime: Infinity });
   const replace = useCallback(function replaceActed(keys: string[]) {
     queryClient.setQueryData<string[]>(actedKey(tenantId), keys);
   }, [queryClient, tenantId]);
@@ -119,7 +119,7 @@ function noneHandled(): Handled {
 }
 
 function useHandledQuery(queryKey: Array<string | undefined>): Handled {
-  const { data } = useQuery({ queryKey, queryFn: noneHandled, staleTime: Infinity, gcTime: Infinity });
+  const { data } = useQuery({ queryKey, queryFn: noneHandled, staleTime: "static", gcTime: Infinity });
   return data ?? {};
 }
 

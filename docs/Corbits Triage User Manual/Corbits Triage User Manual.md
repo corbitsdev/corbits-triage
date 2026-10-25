@@ -395,7 +395,7 @@ When a newer version of Corbits Triage is released while the portal is open, a n
 
 Each view with pull requests in it has a search box and a **Filter** button. **Needs you** and **All open** add quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
 
-On a phone the strip becomes a bar at the bottom of the screen with **Needs you**, **Ready**, **All open**, **Repos** and **Settings**; tap the counters for Pulse. Each row shows the title on its own line, with the number, status and age beneath it.
+On a phone the strip becomes a bar at the bottom of the screen with **Needs you**, **Ready**, **All open**, **Repos** and **Settings**; tap the counters for Pulse. Each row shows the title on its own line, with the number, status and age beneath it. To refresh a list or an open pull request, pull it down from the top until the round arrow turns dark, then let go; it spins until the latest is in, and your place in the list stays where it was.
 
 ### Needs you
 
