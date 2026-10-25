@@ -27,7 +27,7 @@ function fakeRailway() {
     async readVariables(id, names) {
       const variables = sandboxes.get(id)?.variables;
       if (variables === undefined || !names.every((name) => name in variables)) return undefined;
-      return Object.fromEntries(names.map((name) => [name, variables[name] ?? ""]));
+      return Object.fromEntries(names.map((name) => [name, variables[name]!]));
     },
     async create(variables) {
       return add({ status: "RUNNING", variables });
@@ -83,7 +83,7 @@ describeProvisionerConformance("railway", async () => {
       return railway
         .live("hub_a")
         .filter((sandbox) => sandbox.variables["CORBITS_ALLOCATION"] === allocationId)
-        .map((sandbox) => ({ generation: Number(sandbox.variables["CORBITS_GENERATION"]), sidecarId: sandbox.variables["CORBITS_SIDECAR"] ?? "" }));
+        .map((sandbox) => ({ generation: Number(sandbox.variables["CORBITS_GENERATION"]), sidecarId: sandbox.variables["CORBITS_SIDECAR"]! }));
     },
     capabilityChecks: {
       async "isolation:workload"(allocationId) {

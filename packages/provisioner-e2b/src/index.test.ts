@@ -61,7 +61,7 @@ describeProvisionerConformance("e2b", async () => {
     async live(allocationId) {
       return sandboxesOf(allocationId).map((sandbox) => ({
         generation: Number(sandbox.metadata["corbits_generation"]),
-        sidecarId: sandbox.metadata["corbits_sidecar"] ?? "",
+        sidecarId: sandbox.metadata["corbits_sidecar"]!,
       }));
     },
     // Each sandbox is its own microVM with internet access; what the in-memory backend proves is one sandbox per sidecar.
