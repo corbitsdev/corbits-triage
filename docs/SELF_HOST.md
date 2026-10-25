@@ -53,16 +53,14 @@ docker compose up -d
 docker compose logs hub
 ```
 
-Compose pulls the hub image `ghcr.io/corbitsdev/corbits-triage-hub:main`, which
-every merge to `main` publishes; pulling needs no login. To run a fixed
-version, set `CORBITS_TRIAGE_TAG` to a commit SHA from `main` in your shell or
-in `.env`. To update, run `docker compose pull` and then `docker compose up -d`.
-To build the image from your checkout instead, run `docker compose up --build -d`;
-the first build needs about 3 GB of free Docker disk, and with less it stops with
-`no space left on device`. The `migrate` service runs to completion before the
-hub starts. The hub is ready when it logs `Started server: http://localhost:3000`;
-the portal is at that address. A `docker_sidecars_off` line is expected:
-triage needs no Docker, only code review does ([Where sidecars run](#where-sidecars-run)).
+Compose builds the hub image from your checkout. The first build needs about
+3 GB of free Docker disk, and with less it stops with `no space left on device`.
+To update, pull the new commits and run `docker compose up -d` again.
+
+The `migrate` service runs to completion before the hub starts. The hub is
+ready when it logs `Started server: http://localhost:3000`; the portal is at
+that address. A `docker_sidecars_off` line is expected: triage needs no Docker,
+only code review does ([Where sidecars run](#where-sidecars-run)).
 
 ### Railway
 
@@ -350,9 +348,8 @@ offers, with the `.env` lines and guide for each; code review uses the first
 ready one in the order shown and waits there when it is full.
 [provisioners/README.md](provisioners/README.md) covers each option.
 
-For Docker, a published hub has Docker pull its sidecar image the first time a
-code review needs it; a hub built from your checkout needs the sidecar image
-built before it starts ([Docker](provisioners/docker.md#set-up)).
+For Docker, the hub needs the sidecar image built before it starts
+([Docker](provisioners/docker.md#set-up)).
 The stock `compose.yml` mounts no Docker socket. For code review on the same
 machine's Docker under Compose, start it with `compose.docker.yml` as well:
 
@@ -360,18 +357,12 @@ machine's Docker under Compose, start it with `compose.docker.yml` as well:
 docker compose -f compose.yml -f compose.docker.yml up -d
 ```
 
-That mounts the Docker socket into the hub. With `--build`, first build the
-sidecar image from the same checkout:
-
-```sh
-docker build --target sidecar -t corbits-triage-sidecar .
-```
-
-The hub then controls that machine's Docker, which on Linux is root on the
-machine: whoever takes over the hub takes over the machine. For a socket
-elsewhere, such as rootless Docker's or Podman's, set `DOCKER_SOCKET` in
-`.env` to its path. Pass the same `-f` flags to
-later `docker compose` commands. Settings → Code review → **Where it runs**
+That builds the sidecar image from the same checkout before the hub starts,
+and mounts the Docker socket into the hub. The hub then controls that
+machine's Docker, which on Linux is root on the machine: whoever takes over
+the hub takes over the machine. For a socket elsewhere, such as rootless
+Docker's or Podman's, set `DOCKER_SOCKET` in `.env` to its path. Pass the
+same `-f` flags to later `docker compose` commands. Settings → Code review → **Where it runs**
 then shows **Docker on this machine** ready. Or set `DOCKER_HOST` in `.env` to
 [another machine](provisioners/docker-remote.md).
 

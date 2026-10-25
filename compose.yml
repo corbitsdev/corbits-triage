@@ -13,7 +13,8 @@ services:
     restart: unless-stopped
   migrate:
     build: .
-    image: ghcr.io/corbitsdev/corbits-triage-hub:${CORBITS_TRIAGE_TAG:-main}
+    image: corbits-triage-hub
+    pull_policy: build
     env_file: .env
     environment:
       DATABASE_URL: postgres://interchange:interchange@postgres:5432/interchange
@@ -21,7 +22,8 @@ services:
     depends_on: { postgres: { condition: service_healthy } }
   hub:
     build: .
-    image: ghcr.io/corbitsdev/corbits-triage-hub:${CORBITS_TRIAGE_TAG:-main}
+    image: corbits-triage-hub
+    pull_policy: build
     env_file: .env
     environment:
       DATABASE_URL: postgres://interchange:interchange@postgres:5432/interchange
