@@ -1,19 +1,39 @@
-// UPSTREAM-SYNC: vendor/interchange/apps/hub/src/server.ts
-// Keep the bootstrap below synchronized with upstream. Corbits deltas: the
-// function name; the return shape, which adds the Hono `app` (so extra tenant
-// routes mount on the same instance as `resolveTenant`), the live sidecar
-// router, the run token store and run credentials loader the hub's own
-// trigger mail and GitHub token renewal use, what those routes share
-// (database, credential cipher, principal key store, `getSession`, hoisted out
-// of `createApp` for reuse, and the better-auth instance invites send magic
-// links through) and the workflow allocation and lifecycle services the
-// pr-triage deployment rotation calls, and the deployment plugin registry code review's
-// placement asks; and the injected database config, auth config, credential
-// cipher and Interchange settings, whose defaults env.ts `interchangeSettings`
-// mirrors from upstream; and the injected extra run-token routes, none by
-// default. The caller builds the cipher so sidecar provisioners created before
-// the hub share it. `resolveHubApiOrigin` is imported from stock's hub app
-// source, which is not a package export.
+// UPSTREAM-SYNC: vendor/interchange/apps/hub/src/server.ts (createHubServer)
+// Keep the bootstrap below synchronized with upstream. Corbits deltas:
+// - The function name, and the injected database config (from DATABASE_URL;
+//   PG_SCHEMA is not supported), auth config (createHubAuth, stock createAuth
+//   plus Corbits sign-in), credential cipher and Interchange settings in place
+//   of process.env reads, because env.ts validates the hub's whole environment
+//   once at boot. The caller builds the cipher so sidecar provisioners created
+//   before the hub share it.
+// - env.ts `interchangeSettings` differs from stock in two defaults. Capacity
+//   retention is 0s for completed, failed and cancelled runs, and the
+//   WORKFLOW_DEFAULT_RETENTION_* variables are not read: run history lives on
+//   the hub, so an ended run's sidecar has nothing left to keep. `sidecarLink`
+//   is spread into createSidecarRouter with longer mail hold and ack retries
+//   than the router's defaults: triage mail is routed, not dispatched, so only
+//   those retries keep it alive while a pack receive holds the connection.
+// - `adapterManifest` replaces stock's `sidecarAdapterManifest` and has no
+//   SIDECAR_ADAPTER_MANIFEST fallback: the hub's adapters are fixed in
+//   sidecar-config.ts, not operator configuration.
+// - `extraRunTokenRoutes`, none by default, is passed to the vendored
+//   createApp (a carried change listed in VENDORED.md) so a workflow run can
+//   reach the Corbits hub routes it needs.
+// - The return shape: the Bun server options under `server`, plus the Hono
+//   `app` (so extra tenant routes mount on the same instance as
+//   `resolveTenant`), the live sidecar router, the run token store and run
+//   credentials loader the hub's own trigger mail and GitHub token renewal
+//   use, what those routes share (database, credential cipher, principal key
+//   store, `getSession` hoisted out of `createApp`, and the better-auth
+//   instance invites send magic links through), `runReader` (stock's
+//   `workflowRunReader`) wrapped by `withBlobOutputs` so step outputs spilled
+//   to blobs read back inline, the workflow allocation and lifecycle services
+//   the pr-triage deployment rotation calls, and the deployment plugin
+//   registry code review's placement asks.
+// - Named functions in place of inline callbacks, and `errorText(err)`, per
+//   this repository's code rules.
+// `resolveHubApiOrigin` is imported from stock's hub app source, which is not
+// a package export.
 import {
   createDB,
   createGrantStore,

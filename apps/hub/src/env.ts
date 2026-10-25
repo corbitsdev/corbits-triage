@@ -354,7 +354,7 @@ function numberOr(value: string | undefined, stock: number): number {
   return value === undefined ? stock : Number(value);
 }
 
-/** Unset values keep Interchange's stock defaults. */
+/** Unset values keep Interchange's stock defaults, except the sidecar link settings and capacity retention. */
 export function interchangeSettings(env: HubEnv): InterchangeSettings {
   const port = Number(env.PORT);
   return {
