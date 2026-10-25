@@ -226,9 +226,7 @@ rules:
 
 ```yaml
 name: Corbits Triage policy
-on:
-  pull_request:
-    paths: [".corbits-triage.yml", ".corbits-triage.yaml"]
+on: pull_request
 permissions:
   checks: read
   contents: read

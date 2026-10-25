@@ -30,7 +30,7 @@ Ask in one message together with the proposal from step 3, giving your suggested
 - Should pull requests never change these paths, even from maintainers? Only when step 1 found vendored or generated code; suggest yes.
 - Is a decision model set up in Corbits Triage (Settings → Triage → Decision model)? Only before adding `focused`, `docs` or a `model` rule.
 - Is the repository on GitHub or Bitbucket Data Center? Only when there is no remote.
-- On GitHub, add a pull request check that checks this file whenever it changes? Suggest yes.
+- On GitHub, add a pull request check that checks this file and runs its rules that need no model on every pull request? Suggest yes.
 
 If the user says to go ahead with defaults, use the suggested answers.
 
