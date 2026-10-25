@@ -282,7 +282,7 @@ export const PolicyUpgrade = type({ state: "'ok'" })
 export type PolicyUpgrade = typeof PolicyUpgrade.infer;
 
 /** Each enabled repository the member may read; `pull` is the open pull request writing the saved rules to the file, `error` why the repository could not be read. */
-export const PolicyUpgrades = type({ repos: type({ repo: "string", "upgrade?": PolicyUpgrade, "pull?": PolicyPull, "error?": "string" }).array() });
+export const PolicyUpgrades = type({ repos: type({ repo: "string", source: type.enumerated(...REPO_SOURCES), "upgrade?": PolicyUpgrade, "pull?": PolicyPull, "error?": "string" }).array() });
 export type PolicyUpgrades = typeof PolicyUpgrades.infer;
 
 export const BacklogStarted = type({ status: "'started'" });

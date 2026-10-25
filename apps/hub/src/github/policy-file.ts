@@ -14,7 +14,7 @@ import { defaultBranch, readRepo } from "../bitbucket-datacenter/client.js";
 import * as bitbucketPull from "../bitbucket-datacenter/policy-pull.js";
 import { splitName } from "../bitbucket-datacenter/records.js";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { checkPolicyFile, exportPolicyFile, POLICY_FILE_PATH, notAFileReason, POLICY_FILE_PATHS, policyFileReason, starterPack, type PolicyFileStatus, type PolicyUpgrades, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
+import { checkPolicyFile, exportPolicyFile, POLICY_FILE_PATH, notAFileReason, POLICY_FILE_PATHS, policyFileReason, REPO_SOURCES, starterPack, type PolicyFileStatus, type PolicyUpgrades, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
 import type { PolicySettled } from "./check-pack-store.js";
 import { forInstallation, type MemberOpenPulls, type OpenPullsRead } from "./open-pulls.js";
 import * as github from "./policy-pull.js";
@@ -25,7 +25,7 @@ import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-confi
 import { bitbucketFailed, githubFailed } from "./github-refusal.js";
 import type { Member } from "../integrations/app.js";
 
-export const PolicyFileBody = type({ repo: /^[\w.-]+\/[\w.-]+$/ });
+export const PolicyFileBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, "source?": type.enumerated(...REPO_SOURCES) });
 export const PolicyExportBody = PolicyFileBody.and({ "text?": "string" });
 
 const HOST_NAMES: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket" };
@@ -54,9 +54,9 @@ const CHOSEN_BODY = addBody(`Adds \`${POLICY_FILE_PATH}\`.`);
  * A starter's open pull request, found in the shared listing so a workspace of repositories without rules costs no host
  * calls on each load. A member the listing refuses is not told of one; opening the pull request answers it.
  */
-export function listedPolicyPull(listing: OpenPullsRead | Response, repo: string): github.PolicyPull | undefined {
+export function listedPolicyPull(listing: OpenPullsRead | Response, repo: string, source: RepoSource): github.PolicyPull | undefined {
   if (listing instanceof Response) return undefined;
-  const listed = listing.repos.find((row) => row.repo === repo);
+  const listed = listing.repos.find((row) => row.repo === repo && row.source === source);
   const pr = listed?.prs.find((row) => row.branch === github.POLICY_BRANCH);
   if (!pr?.url) return undefined;
   // Only a GitHub pull request is merged from the portal, at the head it was shown.
@@ -190,9 +190,9 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return record && cached(tenantId, record, 0);
   }
 
-  async function grantedRecord(member: Member, repo: string, action: "read" | "use"): Promise<RepoRecord | Response> {
-    const record = await connectedRecord(member.tenantId, repo, undefined);
-    if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace, or is connected from both hosts.`);
+  async function grantedRecord(member: Member, repo: string, source: RepoSource | undefined, action: "read" | "use"): Promise<RepoRecord | Response> {
+    const record = await connectedRecord(member.tenantId, repo, source);
+    if (!record) return failure(409, "repo_not_connected", source === undefined ? `${repo} is not connected to this workspace, or is connected from both hosts.` : `${repo} is not connected to this workspace.`);
     return (await sourceCredentialGrant(deps, member.principalId, member.tenantId, record, action)) ?? record;
   }
 
@@ -202,8 +202,8 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return state.file ? { ...state.file, problem: state.reason } : failure(422, "policy_file_invalid", state.reason);
   }
 
-  async function fileRoute({ repo }: typeof PolicyFileBody.infer, member: Member): Promise<Response> {
-    const record = await grantedRecord(member, repo, "read");
+  async function fileRoute({ repo, source }: typeof PolicyFileBody.infer, member: Member): Promise<Response> {
+    const record = await grantedRecord(member, repo, source, "read");
     if (record instanceof Response) return record;
     let state: PolicyFileState;
     try {
@@ -276,8 +276,8 @@ export function createPolicyFile(deps: PolicyFileDeps) {
    * Opens the pull request writing the saved rules to the policy file, or brings the open one up to date; an enabled
    * repository with neither gets a starter file instead, or `text` when sent (see `chosenFile`). Refused when nothing differs.
    */
-  async function exportRoute({ repo, text: chosen }: typeof PolicyExportBody.infer, member: Member): Promise<Response> {
-    const record = await grantedRecord(member, repo, "use");
+  async function exportRoute({ repo, source, text: chosen }: typeof PolicyExportBody.infer, member: Member): Promise<Response> {
+    const record = await grantedRecord(member, repo, source, "use");
     if (record instanceof Response) return record;
     try {
       if (chosen !== undefined) return await chosenFile(member, record, chosen);
@@ -297,18 +297,19 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   async function upgradeOf(member: Member, record: RepoRecord, listed: () => Promise<OpenPullsRead | Response>): Promise<PolicyUpgradeRow | undefined> {
     if (await sourceCredentialGrant(deps, member.principalId, member.tenantId, record, "read")) return undefined;
+    const row = { repo: record.name, source: sourceOf(record) };
     try {
-      const { upgrade } = await deps.settle(member.tenantId, record.name, sourceOf(record));
-      if (upgrade.state === "ok") return { repo: record.name, upgrade };
+      const { upgrade } = await deps.settle(member.tenantId, record.name, row.source);
+      if (upgrade.state === "ok") return { ...row, upgrade };
       if (upgrade.state === "start") {
-        const pull = listedPolicyPull(await listed(), record.name);
-        return { repo: record.name, upgrade, ...(pull && { pull }) };
+        const pull = listedPolicyPull(await listed(), record.name, row.source);
+        return { ...row, upgrade, ...(pull && { pull }) };
       }
       const pull = await openPull(member.tenantId, record);
-      return { repo: record.name, upgrade, ...(pull && { pull }) };
+      return { ...row, upgrade, ...(pull && { pull }) };
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_upgrade_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
-      return { repo: record.name, error: `Could not read ${record.name}'s policy from ${HOST_NAMES[sourceOf(record)]}.` };
+      return { ...row, error: `Could not read ${record.name}'s policy from ${HOST_NAMES[row.source]}.` };
     }
   }
 

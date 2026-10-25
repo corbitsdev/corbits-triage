@@ -7,6 +7,7 @@ import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { createArtifact, findArtifactByTitle, runArtifactMigrations } from "@corbits/artifacts";
 import { checkPackName, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, starterPack, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { PROVIDER, TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
 import { fileRefusal, settlePolicy } from "./check-pack-store.js";
 import { createPolicyFile, listedPolicyPull } from "./policy-file.js";
 import { POLICY_BRANCH } from "./policy-pull.js";
@@ -160,14 +161,18 @@ beforeAll(async () => {
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
     { id: "prn_github", tenantId: TENANT, kind: "user", refId: "github", status: "active" },
   ]);
-  await db.insert(schema.provider).values({ id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: githubApiOrigin });
+  await db.insert(schema.provider).values([
+    { id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: githubApiOrigin },
+    { id: "prv_bb", tenantId: TENANT, name: PROVIDER, plugin: "http", apiBaseUrl: "https://bitbucket.example" },
+  ]);
+  await db.insert(schema.credential).values({ id: "crd_bb", tenantId: TENANT, principalId: null, providerId: "prv_bb", oauthClientId: null, name: TOKEN_CREDENTIAL, type: "api_key", secret: "unused", status: "active" });
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
   await db.insert(schema.credential).values({
     id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
     secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "triage" },
   });
   async function authorize(principalId: string, _tenantId: string, resource: string, action: string) {
-    return resource === "credential:crd_github" && action === "use" && principalId === "prn_user";
+    return (resource === "credential:crd_github" || resource === "credential:crd_bb") && action === "use" && principalId === "prn_user";
   }
   const list = createTenantOpenPrs({ db, cipher, onKeyMoved: noKeyPush, githubApiOrigin, tenantBitbucket: async () => undefined });
   policyFile = createPolicyFile({
@@ -241,7 +246,7 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
   expect(read).toEqual({ status: "ok", pack: expect.anything(), automatic: [], source: { file: { path: YML, sha: "blob1" } } });
   expect(read.status === "ok" && read.pack.checks).toEqual({ "ci-green": { enabled: true, text: "CI passes.", reason: "Required by branch protection.", evidence: ["maintainer-stated"] } });
   expect(await fileOf(FROM_FILE)).toEqual({ path: YML, sha: "blob1", url: `https://github.com/${FROM_FILE}/blob/main/${YML}` });
-  expect(await upgradeOf(FROM_FILE)).toEqual({ repo: FROM_FILE, upgrade: { state: "ok" } });
+  expect(await upgradeOf(FROM_FILE)).toEqual({ repo: FROM_FILE, source: "github", upgrade: { state: "ok" } });
 
   const manyKeys = Array.from({ length: 7 }, (_, i) => `k${i}: 1`).join("\n");
   const refused: Array<[string | null, string]> = [
@@ -286,7 +291,7 @@ test("PostgreSQL: saved rules apply while the file runs differently or is refuse
   await writePolicy(SAVED, JSON.stringify(saved));
   const stored = await readPack(SAVED);
   expect(stored).toMatchObject({ status: "ok", source: { repo: { version: 1 } } });
-  expect(await upgradeOf(SAVED)).toEqual({ repo: SAVED, upgrade: { state: "upgrade", saved: { id: expect.any(String), version: 1 }, unexpressed: [] } });
+  expect(await upgradeOf(SAVED)).toEqual({ repo: SAVED, source: "github", upgrade: { state: "upgrade", saved: { id: expect.any(String), version: 1 }, unexpressed: [] } });
 
   onMain(SAVED, YAML, "checks:\n  no-forbidden-paths: { enabled: true, forbiddenGlobs: [node_modules/**] }\n");
   await policyFile.onPush(TENANT, SAVED, "github");
@@ -302,7 +307,7 @@ test("PostgreSQL: saved rules apply while the file runs differently or is refuse
   await policyFile.onPush(TENANT, SAVED, "github");
   expect(await readPack(SAVED)).toMatchObject({ status: "ok", source: { file: { path: YAML } } });
   expect(await findArtifactByTitle(handle.db, TENANT, checkPackName(SAVED, "github"))).toBeNull();
-  expect(await upgradeOf(SAVED)).toEqual({ repo: SAVED, upgrade: { state: "ok" } });
+  expect(await upgradeOf(SAVED)).toEqual({ repo: SAVED, source: "github", upgrade: { state: "ok" } });
 
   // With the saved rules gone, an edit to the file is the policy.
   onMain(SAVED, YAML, "checks:\n  ci-green: { enabled: true }\n");
@@ -337,7 +342,7 @@ test("PostgreSQL: writing the saved rules to the file opens one pull request, up
   pull!.open = false;
   await policyFile.onPush(TENANT, EXPORTED, "github");
   expect(await readPack(EXPORTED)).toMatchObject({ status: "ok", source: { file: { path: YML } } });
-  expect(await upgradeOf(EXPORTED)).toEqual({ repo: EXPORTED, upgrade: { state: "ok" } });
+  expect(await upgradeOf(EXPORTED)).toEqual({ repo: EXPORTED, source: "github", upgrade: { state: "ok" } });
   expect(await exportOf(EXPORTED)).toMatchObject({ http: 409 });
 }, 60_000);
 
@@ -356,7 +361,7 @@ test("PostgreSQL: a file already holding all a file can of the saved rules is no
 }, 60_000);
 
 test("PostgreSQL: an enabled repository with no rules and no file is offered a starter file through the same pull request, left as edited and run once merged", async () => {
-  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "start" } });
+  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, source: "github", upgrade: { state: "start" } });
   expect(await exportOf(OFF)).toMatchObject({ http: 409, error: { code: "policy_settled" } });
 
   const number = pulls.length + 1;
@@ -364,7 +369,7 @@ test("PostgreSQL: an enabled repository with no rules and no file is offered a s
   expect(pulls.filter((row) => row.repo === STARTER)).toMatchObject([{ head: POLICY_BRANCH, base: "main", title: `chore: add a Corbits Triage policy in ${YML}` }]);
   // Opening it lists the workspace's pull requests again; a reload then finds it in that listing without asking GitHub.
   requests.length = 0;
-  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "start" }, pull: { url: `https://github.com/${STARTER}/pull/${number}`, number, headSha: "head-sha" } });
+  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, source: "github", upgrade: { state: "start" }, pull: { url: `https://github.com/${STARTER}/pull/${number}`, number, headSha: "head-sha" } });
   expect(requests.filter((request) => request.includes(STARTER))).toEqual([]);
 
   // Asking again answers the open pull request and keeps the maintainer's edit on its branch.
@@ -381,7 +386,7 @@ test("PostgreSQL: an enabled repository with no rules and no file is offered a s
   const read = await readPack(STARTER);
   expect(read).toMatchObject({ status: "ok", source: { file: { path: YML } } });
   expect(read.status === "ok" && policyDifferences(starterPack(STARTER), read.pack)).toMatchObject([{ rule: "Most files changed", saved: ["30", "on fail, labels size: large"], file: ["40", "on fail, labels size: large"] }]);
-  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, upgrade: { state: "ok" } });
+  expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, source: "github", upgrade: { state: "ok" } });
   expect(await exportOf(STARTER)).toMatchObject({ http: 409, error: { code: "policy_settled" } });
 }, 60_000);
 
@@ -440,11 +445,13 @@ test("PostgreSQL: a policy file extending another repository runs over that repo
   expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 1: The policy file is not YAML`), automatic: [] });
 });
 
-test("PostgreSQL: a name both hosts hold is read only for the host asked, and a route naming no host refuses it", async () => {
+test("PostgreSQL: a name both hosts hold is read only for the host asked, a route naming the host reads it, one naming no host refuses it, and its upgrade row names its host", async () => {
   onMain(BOTH, YML, FILE, "both1");
   await policyFile.onPush(TENANT, BOTH, "github");
   expect(await readPack(BOTH)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "both1" } } });
   expect((await policyFile.fileRoute({ repo: BOTH }, MEMBER)).status).toBe(409);
+  expect((await (await policyFile.fileRoute({ repo: BOTH, source: "github" }, MEMBER)).json()) as unknown).toMatchObject({ file: { path: YML, sha: "both1" } });
+  expect(await upgrades()).toContainEqual(expect.objectContaining({ repo: BOTH, source: "bitbucket-datacenter" }));
 });
 
 test("PostgreSQL: where no webhook is heard a merged policy file is read within a minute without a push, and kept while the webhook is heard", async () => {
@@ -474,9 +481,10 @@ test("PostgreSQL: where no webhook is heard a merged policy file is read within 
   }
 });
 
-test("a Bitbucket policy pull request carries no head, so it is merged on Bitbucket", () => {
+test("a Bitbucket policy pull request carries no head, so it is merged on Bitbucket, and each host's is found only for its own repository", () => {
   const pr = { number: 4, title: "Add the policy file", author: "triage", draft: false, sha: "bb-head", branch: POLICY_BRANCH, updatedAt: "2026-10-17T00:00:00Z", labels: [], url: "https://bitbucket.example/pr/4" };
   const listing = (source: RepoSource) => ({ at: 0, repos: [{ repo: "PROJ/widgets", source, prs: [pr] }] });
-  expect(listedPolicyPull(listing("bitbucket-datacenter"), "PROJ/widgets")).toEqual({ url: pr.url, number: 4 });
-  expect(listedPolicyPull(listing("github"), "PROJ/widgets")).toEqual({ url: pr.url, number: 4, headSha: "bb-head" });
+  expect(listedPolicyPull(listing("bitbucket-datacenter"), "PROJ/widgets", "bitbucket-datacenter")).toEqual({ url: pr.url, number: 4 });
+  expect(listedPolicyPull(listing("github"), "PROJ/widgets", "github")).toEqual({ url: pr.url, number: 4, headSha: "bb-head" });
+  expect(listedPolicyPull(listing("github"), "PROJ/widgets", "bitbucket-datacenter")).toBeUndefined();
 });
