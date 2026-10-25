@@ -38,7 +38,18 @@ for (const file of ["Dockerfile", "packages/provisioner-e2b/template.ts"]) {
   }
 }
 
+type ComposeService = { image?: string; build?: unknown };
+
+// A service with `build` runs the image built from this checkout; every other image is pulled as named.
+for await (const file of new Glob("compose*.yml").scan(".")) {
+  const { services } = Bun.YAML.parse(await Bun.file(file).text()) as { services: Record<string, ComposeService> };
+  for (const [name, service] of Object.entries(services)) {
+    if (service.image === undefined || service.build !== undefined) continue;
+    if (!/:\d+\.\d+[^@]*@sha256:[0-9a-f]{64}$/.test(service.image)) offenders.push(`${file} ${name} image ${service.image}`);
+  }
+}
+
 if (offenders.length > 0) {
-  console.error(`Dependencies must be exact versions, base images pinned by digest:\n${offenders.join("\n")}`);
+  console.error(`Dependencies must be exact versions, images pinned by version and digest:\n${offenders.join("\n")}`);
   process.exit(1);
 }
