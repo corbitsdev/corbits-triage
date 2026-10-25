@@ -343,7 +343,7 @@ test("composed hub documents the integration routes and still answers an invalid
   });
 
   const Parameters = type({ get: { parameters: type({ in: "string", name: "string", "required?": "boolean" }).array() } });
-  for (const path of ["/api/integrations/github-triage/{tenantId}/policy", "/api/integrations/github-triage/{tenantId}/policy/file"]) {
+  for (const path of ["/api/integrations/github-triage/{tenantId}/policy", "/api/integrations/github-triage/{tenantId}/policy/file", "/api/integrations/triage-stats/{tenantId}"]) {
     const source = Parameters.assert(paths[path]).get.parameters.find((parameter) => parameter.name === "source");
     expect(source).toMatchObject({ in: "query" });
     expect(source?.required).not.toBe(true);

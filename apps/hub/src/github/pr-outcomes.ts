@@ -37,7 +37,8 @@ export type Host = {
 type HostRead = { host: Host; source: RepoSource } | { state: "no_credential" } | undefined;
 
 export type OutcomeReaderDeps = {
-  host: (tenantId: string, principalId: string, repo: string) => Promise<HostRead>;
+  /** `source` undefined reads the first connected repository of that name. */
+  host: (tenantId: string, principalId: string, repo: string, source: RepoSource | undefined) => Promise<HostRead>;
   /** When the repository's policy was first saved; undefined without one. */
   enabledAt: (tenantId: string, repo: string, source: RepoSource) => Promise<Date | undefined>;
   now: () => Date;
@@ -51,8 +52,8 @@ type Refusal = { state: "no_credential" } | null | undefined;
 export type Triaged = { number: number; verdictAt: Date };
 
 export type OutcomeReader = {
-  refusal: (member: Member, repo: string) => Promise<Refusal>;
-  read: (member: Member, repo: string, triaged: readonly Triaged[]) => Promise<TriageOutcomes | null>;
+  refusal: (member: Member, repo: string, source: RepoSource | undefined) => Promise<Refusal>;
+  read: (member: Member, repo: string, source: RepoSource | undefined, triaged: readonly Triaged[]) => Promise<TriageOutcomes | null>;
 };
 
 type Outcome = OutcomeTimes & { closed: boolean; humans: string[] };
@@ -201,8 +202,8 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
     });
   }
 
-  async function read(tenantId: string, principalId: string, repo: string, triaged: readonly Triaged[]): Promise<TriageOutcomes | null> {
-    const reached = await deps.host(tenantId, principalId, repo);
+  async function read(tenantId: string, principalId: string, repo: string, asked: RepoSource | undefined, triaged: readonly Triaged[]): Promise<TriageOutcomes | null> {
+    const reached = await deps.host(tenantId, principalId, repo, asked);
     if (reached === undefined) return null;
     if ("state" in reached) return reached;
     const { host, source } = reached;
@@ -210,29 +211,29 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
     const at = now.getTime();
     const enabledAt = await deps.enabledAt(tenantId, repo, source);
     const [{ outcomes, failed }, [baselineRead]] = await Promise.all([
-      settledOutcomes(triaged.map((pr) => triagedOutcome(host, `${tenantId}\n${repo}\n${pr.number}\n${pr.verdictAt.toISOString()}`, pr, at))),
-      Promise.allSettled(enabledAt === undefined ? [] : [baselineOf(host, `${tenantId}\n${repo}\n${utcDay(now)}\n${enabledAt.toISOString()}`, enabledAt, at)]),
+      settledOutcomes(triaged.map((pr) => triagedOutcome(host, `${tenantId}\n${source}\n${repo}\n${pr.number}\n${pr.verdictAt.toISOString()}`, pr, at))),
+      Promise.allSettled(enabledAt === undefined ? [] : [baselineOf(host, `${tenantId}\n${source}\n${repo}\n${utcDay(now)}\n${enabledAt.toISOString()}`, enabledAt, at)]),
     ]);
     const baseline = baselineRead?.status === "fulfilled" ? baselineRead.value : undefined;
     const baselineFailed = baselineRead?.status === "rejected";
     const failedReads = failed + (baselineFailed ? 1 : (baseline?.failed ?? 0));
-    if (failedReads > 0) deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId, repo, failed: failedReads });
+    if (failedReads > 0) deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId, repo, source, failed: failedReads });
     if (failed > 0 && outcomes.length === 0 && (enabledAt === undefined || baselineFailed)) return { state: "source_failed" };
     return { state: "measured", triaged: medians(outcomes), humans: new Set(outcomes.flatMap((outcome) => outcome.humans)).size, ...baselineOutcome(enabledAt, baselineRead) };
   }
 
-  async function refusal({ tenantId, principalId }: Member, repo: string): Promise<Refusal> {
-    const source = await deps.host(tenantId, principalId, repo);
-    if (source === undefined) return null;
-    if ("state" in source) return source;
+  async function refusal({ tenantId, principalId }: Member, repo: string, source: RepoSource | undefined): Promise<Refusal> {
+    const reached = await deps.host(tenantId, principalId, repo, source);
+    if (reached === undefined) return null;
+    if ("state" in reached) return reached;
     return undefined;
   }
 
-  async function outcomes({ tenantId, principalId }: Member, repo: string, triaged: readonly Triaged[]): Promise<TriageOutcomes | null> {
+  async function outcomes({ tenantId, principalId }: Member, repo: string, source: RepoSource | undefined, triaged: readonly Triaged[]): Promise<TriageOutcomes | null> {
     try {
-      return await read(tenantId, principalId, repo, triaged);
+      return await read(tenantId, principalId, repo, source, triaged);
     } catch (error) {
-      deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId, repo, error: errorText(error) });
+      deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId, repo, source, error: errorText(error) });
       return { state: "source_failed" };
     }
   }
@@ -246,10 +247,10 @@ type HostReadsDeps = SourceFetchDeps & { artifacts: ArtifactDb };
 export function createHostReads(deps: HostReadsDeps): Pick<OutcomeReaderDeps, "host" | "enabledAt"> {
   const sourceFetch = createSourceFetch(deps);
 
-  async function host(tenantId: string, principalId: string, repo: string): Promise<HostRead> {
+  async function host(tenantId: string, principalId: string, repo: string, asked: RepoSource | undefined): Promise<HostRead> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
     const ns = triageNs(tenant?.config);
-    const record = repoRecords(ns).find((row) => row.name === repo && row.connected);
+    const record = repoRecords(ns).find((row) => row.name === repo && row.connected && (asked === undefined || sourceOf(row) === asked));
     if (!record) return undefined;
     if (await sourceCredentialGrant(deps, principalId, tenantId, record, "read")) return { state: "no_credential" };
     const source = await sourceFetch(tenantId, principalId, record);

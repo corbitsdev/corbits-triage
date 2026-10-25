@@ -3,7 +3,7 @@
 // and cached, so the portal and the extension can ask for it on every view.
 import { type } from "arktype";
 import { errorText } from "@corbits/common";
-import { currentRows, parseCheckOutput, TriageStats, type TriageOutcomes } from "@corbits/triage-contracts";
+import { currentRows, parseCheckOutput, REPO_SOURCES, TriageStats, type RepoSource, type TriageOutcomes } from "@corbits/triage-contracts";
 import { failure } from "./portal-credential.js";
 import type { OutcomeReader, Triaged } from "./pr-outcomes.js";
 import { runKey } from "./reconcile-plan.js";
@@ -21,6 +21,7 @@ const RETRY_MS = 10_000;
 
 const StatsQuery = type({
   repo: /^[\w.-]+\/[\w.-]+$/,
+  "source?": type.enumerated(...REPO_SOURCES),
   "days?": type("string.integer.parse").to("1 <= number.integer <= 30"),
 });
 
@@ -160,21 +161,21 @@ export function createTriageStats(deps: TriageStatsDeps) {
   const cache = new Map<string, Aggregate & { at: number }>();
   const measurements = new Map<string, Measurement>();
 
-  async function measure(entry: Measurement, member: Member, repo: string, triaged: readonly Triaged[]): Promise<void> {
+  async function measure(entry: Measurement, member: Member, repo: string, source: RepoSource | undefined, triaged: readonly Triaged[]): Promise<void> {
     entry.reading = true;
     try {
-      entry.answer = { outcomes: await deps.outcomes.read(member, repo, triaged), at: deps.now().getTime() };
+      entry.answer = { outcomes: await deps.outcomes.read(member, repo, source, triaged), at: deps.now().getTime() };
       entry.failedAt = undefined;
     } catch (error) {
       entry.failedAt = deps.now().getTime();
-      deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId: member.tenantId, repo, error: errorText(error) });
+      deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId: member.tenantId, repo, source, error: errorText(error) });
     } finally {
       entry.reading = false;
     }
   }
 
-  function outcomes(member: Member, repo: string, days: number, triaged: readonly Triaged[], now: number): TriageOutcomes | null {
-    const key = `${member.tenantId}\n${repo}\n${days}`;
+  function outcomes(member: Member, repo: string, source: RepoSource | undefined, days: number, triaged: readonly Triaged[], now: number): TriageOutcomes | null {
+    const key = `${member.tenantId}\n${source}\n${repo}\n${days}`;
     let entry = measurements.get(key);
     if (entry === undefined) {
       if (measurements.size >= CACHE_ENTRIES) measurements.delete(measurements.keys().next().value!);
@@ -182,7 +183,7 @@ export function createTriageStats(deps: TriageStatsDeps) {
       measurements.set(key, entry);
     }
     const due = entry.failedAt === undefined ? entry.answer === undefined || now - entry.answer.at >= CACHE_MS : now - entry.failedAt >= RETRY_MS;
-    if (due && !entry.reading) void measure(entry, member, repo, triaged);
+    if (due && !entry.reading) void measure(entry, member, repo, source, triaged);
     return entry.answer === undefined ? { state: "measuring" } : entry.answer.outcomes;
   }
 
@@ -206,9 +207,9 @@ export function createTriageStats(deps: TriageStatsDeps) {
   return async function handle(req: Request, member: Member): Promise<Response> {
     const query = StatsQuery(Object.fromEntries(new URL(req.url).searchParams));
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
-    const { repo, days = DEFAULT_DAYS } = query;
+    const { repo, source, days = DEFAULT_DAYS } = query;
     const now = deps.now();
-    const [{ stats, triaged }, refused] = await Promise.all([aggregated(member.tenantId, repo, days, now), deps.outcomes.refusal(member, repo)]);
-    return Response.json({ ...stats, outcomes: refused === undefined ? outcomes(member, repo, days, triaged, now.getTime()) : refused } satisfies TriageStats);
+    const [{ stats, triaged }, refused] = await Promise.all([aggregated(member.tenantId, repo, days, now), deps.outcomes.refusal(member, repo, source)]);
+    return Response.json({ ...stats, outcomes: refused === undefined ? outcomes(member, repo, source, days, triaged, now.getTime()) : refused } satisfies TriageStats);
   };
 }
