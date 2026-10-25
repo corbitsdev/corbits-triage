@@ -9,15 +9,14 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute } from "hono-openapi";
 import { schema, type DB } from "@intx/db";
 import type { RequireGrant, RunTokenRoute, TenantEnv } from "@intx/hub-api";
-import { REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
+import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
-import { ManagerUnavailableError, type ManagerIntake } from "./manager-intake.js";
+import type { ManagerIntake } from "./manager-intake.js";
+import { ManagerUnavailableError } from "./manager-unavailable.js";
 import { done, EventState, PassState, ReviewerState, take } from "./manager-state.js";
 
-export const MANAGER_STATE_RESOURCE = "triage-manager:state";
-export const MANAGER_STATE_ACTION = "write";
 
 const TAKE_PATH = "/manager/take";
 const DONE_PATH = "/manager/done";

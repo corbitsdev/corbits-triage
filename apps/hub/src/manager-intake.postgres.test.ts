@@ -6,8 +6,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { createDB, createWorkflowRunLaunchSpecStore, runMigrations, schema } from "@intx/db";
 import { emptyPack } from "@corbits/triage-contracts";
 import { triageWorkflowFor } from "./github/source-workflow.js";
-import { createManagerIntake, ManagerUnavailableError, type ManagerDefinition } from "./manager-intake.js";
-import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "./manager-routes.js";
+import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
+import { createManagerIntake, type ManagerDefinition } from "./manager-intake.js";
+import { ManagerUnavailableError } from "./manager-unavailable.js";
 import type { IntakeEvent, PullRequestRef } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -120,7 +121,7 @@ test("PostgreSQL: two simultaneous intakes deploy one manager as the listener's 
 
     expect(deployed).toEqual([{ runId: "run_manager_1", entry: MANAGER.entry, pin: MANAGER.pin, definitionAssetId: "ast_manager", deployer: "prn_admin", registry: "ast_registry" }]);
     expect(await claimOf(db)).toMatchObject({ status: "live", runId: "run_manager_1", starts: 1 });
-    expect(mailed[0]).toMatchObject({ address: `run_manager_1@${DOMAIN}`, payload: { kind: "pr", repo: PR.repo, prNumber: 7, headSha: "h1" } });
+    expect(mailed[0]).toMatchObject({ address: `run_manager_1@${DOMAIN}`, payload: { kind: "pr", repo: PR.repo, tenantId: TENANT, prNumber: 7, headSha: "h1" } });
     const granted = await db.select({ origin: schema.grant.origin }).from(schema.grant)
       .where(and(eq(schema.grant.principalId, "prn_publisher"), eq(schema.grant.resource, MANAGER_STATE_RESOURCE), eq(schema.grant.action, MANAGER_STATE_ACTION), eq(schema.grant.effect, "allow")));
     expect(granted).toEqual([{ origin: "creator" }]);

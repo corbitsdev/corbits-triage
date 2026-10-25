@@ -1,14 +1,11 @@
 import { action, defineWorkflow, gate, onTrigger, SELF_RUN_RESOURCE, type Selector } from "@intx/workflow";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import { TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
+import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
 import { credentialBindingsFor, type Sources } from "@corbits/triage-workflows/agents";
 import { triageSteps } from "@corbits/triage-workflows/triage-steps";
 import { HUB_WRITE } from "./actions/manager.js";
 
 const TRIAGE_MANAGER_ADDRESS = "triage-manager";
-
-/** The hub's grant on a pull request's claim and events, which the take and done routes require. */
-const MANAGER_STATE_RESOURCE = "triage-manager:state";
 
 /** Done reads whether take found the run refused, besides the mail. */
 const TAKEN = { merge: [{ project: { from: "trigger" }, fields: ["payload"] }, { project: { from: "steps" }, fields: ["take"] }] } as const;
@@ -43,7 +40,7 @@ export function triageManager({ id = TRIAGE_MANAGER_ADDRESS, sources }: { id?: s
     id,
     credentialBindings: credentialBindingsFor(sources).filter((binding) => binding.action !== "execute"),
     grantRequirements: [
-      { resource: MANAGER_STATE_RESOURCE, action: "write", source: "creator" },
+      { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION, source: "creator" },
       { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
     ],
     mailAccept: TRIAGE_MAIL_ACCEPT,

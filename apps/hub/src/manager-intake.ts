@@ -6,21 +6,18 @@ import { schema, type DB, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { WorkflowAllocationService } from "@intx/hub-sessions";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
-import { repoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { allowCreator } from "./github/admin-github-grant.js";
 import { mailPayload, triagePolicy, unreadablePayload } from "./github/bridge.js";
 import type { PolicyReader } from "./github/check-pack-store.js";
 import { resolveLiveDeployment, retryUntilReady, type ReadyWait } from "./github/deployment.js";
 import { triageWorkflowFor } from "./github/source-workflow.js";
 import { repoRecords, sourceOf, triageNs } from "./github/tenant-config.js";
-import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "./manager-routes.js";
+import { ManagerUnavailableError } from "./manager-unavailable.js";
 import { claimForIntake, markLive, recordEvent, restartClaim, type IntakeEvent, type PullRequestRef } from "./manager-state.js";
 
 /** A host's published manager: its workflow asset's name, and the package entry and pin it is deployed from. */
 export type ManagerDefinition = { assetName: string; entry: string; pin: string };
-
-/** The workspace has no manager to start: none is published for the host, or its pr-triage listener is not running. */
-export class ManagerUnavailableError extends Error {}
 
 export type ManagerIntakeDeps = {
   db: DB["db"];
@@ -64,7 +61,7 @@ export function createManagerIntake(deps: ManagerIntakeDeps): ManagerIntake {
     const stored = await triagePolicy(deps.readCheckPack, tenantId, pr.repo, pr.source);
     if (!stored) throw new Error(`${pr.repo} has no policy`);
     const policy = repoPolicy(record);
-    const extra = { prNumber: pr.number, headSha: head };
+    const extra = { tenantId, prNumber: pr.number, headSha: head };
     return "pack" in stored ? mailPayload(record, policy, stored, extra) : unreadablePayload(record, policy, stored, extra);
   }
 
