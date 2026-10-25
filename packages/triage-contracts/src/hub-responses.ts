@@ -89,9 +89,15 @@ const Run = type({
   .or({ status: "'unknown'" })
   .or({ status: "'waiting-ci'", since: "string", headSha: "string" });
 
+const Source = type.enumerated(...REPO_SOURCES);
+
+const HostedRepo = type({ repo: "string", source: Source });
+
 const Pull = type({
   repo: "string",
   number: "number",
+  /** The host the pull request is on. */
+  source: Source,
   /** When the newest run started by author activity started. */
   activityAt: "string | null",
   verdict: Verdict.or("null"),
@@ -100,9 +106,9 @@ const Pull = type({
 
 export const TriageVerdicts = type({
   pulls: Pull.array(),
-  triaged: "string[]",
-  /** Connected repositories with a verdict in the last 14 days or a run in a live log. */
-  active: "string[]",
+  triaged: HostedRepo.array(),
+  /** Connected repositories with a verdict in the last 14 days or a run in a live log, each on its host. */
+  active: HostedRepo.array(),
   scored: "boolean",
 });
 export type TriageVerdicts = typeof TriageVerdicts.infer;

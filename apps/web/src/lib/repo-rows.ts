@@ -30,10 +30,15 @@ export function packsPending(packs: ReadonlyMap<string, PackState>): boolean {
 }
 
 /** A repository is its host and its name; the same name can be connected from both hosts, and no host means GitHub. */
-type RepoId = { name: string; source?: RepoSource };
+export type RepoId = { name: string; source?: RepoSource };
 
-function sameRepo(a: RepoId, b: RepoId): boolean {
+export function sameRepo(a: RepoId, b: RepoId): boolean {
   return a.name === b.name && repoSourceOf(a.source) === repoSourceOf(b.source);
+}
+
+/** The hub names a repository on its host as `{ repo, source }`. */
+export function hostedRepos(rows: ReadonlyArray<{ repo: string; source: RepoSource }>): RepoId[] {
+  return rows.map(({ repo, source }) => ({ name: repo, source }));
 }
 
 /** A GitHub repository's link carries no host, so links from before Bitbucket Data Center still open it. */
@@ -108,8 +113,8 @@ export function repoRows(
   repos: RepoRecord[],
   packs: ReadonlyMap<string, PackState>,
   items: PrItem[],
-  active: ReadonlySet<string>,
-  catchingUp: Set<string>,
+  active: readonly RepoId[],
+  catchingUp: readonly RepoId[],
   openPulls: OpenPulls | undefined,
   pullsError: Error | null,
 ): RepoRow[] {
@@ -124,7 +129,7 @@ export function repoRows(
       source: repo.source,
       href: repoHref(repo),
       pulls: error === undefined ? pullsOf(open, enabled && policyRuns(packs.get(repo.name))) : { error },
-      health: repoHealth({ needsSetup: needsSetup.has(repo.name), enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: active.has(repo.name) }),
+      health: repoHealth({ needsSetup: needsSetup.has(repo.name), enabled, catchingUp: catchingUp.some((row) => sameRepo(row, repo)), receivingEvents: active.some((row) => sameRepo(row, repo)) }),
     };
   });
 }

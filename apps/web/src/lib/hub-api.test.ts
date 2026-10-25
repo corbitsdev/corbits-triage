@@ -29,7 +29,7 @@ function verdict(runId: string, state: string, detail: Record<string, unknown> |
 }
 
 function pull(number: number, fields: Partial<PullTriage> = {}): PullTriage {
-  return { repo: "acme/widgets", number, activityAt: null, verdict: null, run: null, ...fields };
+  return { repo: "acme/widgets", number, source: "github", activityAt: null, verdict: null, run: null, ...fields };
 }
 
 const decided = pull(8, {
@@ -163,6 +163,14 @@ describe("projectQueue from the hub's verdicts", () => {
       { key: "acme/widgets#9", state: "new", running: false, failure: "stuck", activityAt: null },
       { key: "acme/widgets#10", state: "new", running: false, failure: "failed", activityAt: null },
     ]);
+  });
+
+  test("the same repository and number on both hosts shows the one with the newer verdict, in either order", () => {
+    const older = pull(8, { source: "bitbucket-datacenter", verdict: verdict("run-bitbucket", "needs-decision", null, { at: "2026-10-01T00:00:00.000Z" }) });
+    const newer = pull(8, { verdict: verdict("run-github", "awaiting-review", null) });
+    const runIds = (pulls: PullTriage[]) => projectQueue(pulls, [], undefined).map((item) => item.runId);
+    expect(runIds([newer, older])).toEqual(["run-github"]);
+    expect(runIds([older, newer])).toEqual(["run-github"]);
   });
 });
 

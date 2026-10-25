@@ -2,7 +2,7 @@
 // and keyed by the pull request head their trigger named.
 import { and, eq, inArray } from "drizzle-orm";
 import { type } from "arktype";
-import { APPROVE_DO_KIND, isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, isFromTriageSender, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
@@ -18,7 +18,7 @@ import { type ApprovedDo, type RecordedDo, type RecordedVerdict } from "./verdic
 const INLINE_PREFIX = "inline:";
 const NO_VERDICT = "run completed without a verdict";
 
-type Trigger = { repo: string; number: number; headSha: string; startedAt: string; event?: string };
+type Trigger = { repo: string; source: RepoSource; number: number; headSha: string; startedAt: string; event?: string };
 type Unsettled = Pick<ObservedRun, "unsettled" | "unconfirmed" | "heldForCi">;
 type Terminal = Unsettled & { status: Exclude<ObservedRun["status"], "running"> };
 type Summary = Omit<RecordedVerdict, "runId" | "repo" | "number" | "headSha" | "startedAt">;
@@ -68,11 +68,11 @@ function parseJson(value: unknown): unknown {
   }
 }
 
-function headOf(item: unknown, repo: string, startedAt: string, event: string | undefined): Trigger[] {
+function headOf(item: unknown, repo: string, source: RepoSource, startedAt: string, event: string | undefined): Trigger[] {
   const number = asRecord(item)?.["prNumber"];
   const headSha = asRecord(item)?.["headSha"];
   if (typeof number !== "number" || typeof headSha !== "string" || headSha === "") return [];
-  return [{ repo, number, headSha, startedAt, ...(event !== undefined && { event }) }];
+  return [{ repo, source, number, headSha, startedAt, ...(event !== undefined && { event }) }];
 }
 
 /** A webhook mail's `event:action`; catch-up and portal mails name none. */
@@ -92,7 +92,8 @@ function triggersOf(started: Record<string, unknown>): Trigger[] {
   const startedAt = started["at"];
   if (payload?.["kind"] !== "pr" || typeof repo !== "string" || typeof startedAt !== "string") return [];
   const items = payload["items"];
-  return (Array.isArray(items) ? items : [payload]).flatMap((item) => headOf(item, repo, startedAt, eventOf(payload)));
+  const source = repoSourceOf(payload["repoSource"]);
+  return (Array.isArray(items) ? items : [payload]).flatMap((item) => headOf(item, repo, source, startedAt, eventOf(payload)));
 }
 
 /** The pull request an approval mail from the hub's sender names a Do of; pr-triage takes any other mail as no approval. */
@@ -327,10 +328,12 @@ function mailPairs(started: Record<string, unknown>, verdicts: ReadonlyArray<Rec
 
 /** A backlog mail names no heads: they are the pull requests its run made a verdict for, each paired with its own. */
 function backlogPairs(started: Record<string, unknown>, verdicts: ReadonlyArray<Record<string, unknown> | undefined>): Paired[] {
-  const repo = triggerRequestOf(asRecord(started["trigger"])?.["payload"])?.["repo"];
+  const payload = triggerRequestOf(asRecord(started["trigger"])?.["payload"]);
+  const repo = payload?.["repo"];
   const startedAt = started["at"];
   if (typeof repo !== "string" || typeof startedAt !== "string") return [];
-  return verdicts.flatMap((verdict) => headOf({ prNumber: verdict?.["number"], headSha: verdict?.["headSha"] }, repo, startedAt, undefined).map((trigger) => ({ trigger, verdict })));
+  const source = repoSourceOf(payload?.["repoSource"]);
+  return verdicts.flatMap((verdict) => headOf({ prNumber: verdict?.["number"], headSha: verdict?.["headSha"] }, repo, source, startedAt, undefined).map((trigger) => ({ trigger, verdict })));
 }
 
 function headsOf(events: readonly WorkflowRunEvent[], started: Record<string, unknown>): Head[] {
@@ -469,6 +472,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
         const key = runKey(number, headSha);
         const seen: ObservedRun = {
           runId,
+          source: trigger.source,
           status: terminal?.status ?? "running",
           startedAt,
           ...(terminal?.unsettled !== undefined && { unsettled: terminal.unsettled }),

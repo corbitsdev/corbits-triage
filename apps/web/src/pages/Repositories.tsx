@@ -18,7 +18,7 @@ import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
-import { findRepo, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
+import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
 import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
@@ -80,8 +80,8 @@ export default function Repositories() {
   const names = useMemo(() => repos.map((repo) => repo.name), [repos]);
   const packs = useCheckPacks(names);
   const upgrades = usePolicyUpgrades();
-  const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
-  const active = useMemo(() => new Set(verdicts.data?.active), [verdicts.data]);
+  const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
+  const active = useMemo(() => hostedRepos(verdicts.data?.active ?? []), [verdicts.data]);
   const catchingUp = useMemo(() => catchingUpRepos(logs, runs.rows, triaged), [logs, runs.rows, triaged]);
   const rows = useMemo(
     () => repoRows(repos, packs, items, active, catchingUp, openPulls, pullsError),

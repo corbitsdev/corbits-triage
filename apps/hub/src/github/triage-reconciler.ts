@@ -176,7 +176,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const name = repo.record.name;
     const now = deps.now().getTime();
     const triaged = plan.rows.filter((row) => row.status === "triaged");
-    const recorded = await deps.verdicts.latest(pass.tenantId, triaged.map((row) => ({ repo: name, number: row.number })));
+    const recorded = (await deps.verdicts.latest(pass.tenantId, triaged.map((row) => ({ repo: name, number: row.number })))).filter((verdict) => verdict.source === deps.source);
     for (const row of triaged) {
       const key = `${pass.tenantId}\n${name}\n${runKey(row.number, row.headSha)}`;
       const verdict = latestVerdict(pass, recorded, name, row);
