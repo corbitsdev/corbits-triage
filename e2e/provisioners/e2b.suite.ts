@@ -27,7 +27,7 @@ function subject() {
     await Bun.sleep(LISTING_LAG_MS);
     return (await e2b.list({ corbits_hub: sidecars.hubId, corbits_allocation: allocationId })).map((sandbox) => ({
       generation: Number(sandbox.metadata["corbits_generation"]),
-      sidecarId: sandbox.metadata["corbits_sidecar"] ?? "",
+      sidecarId: sandbox.metadata["corbits_sidecar"]!,
     }));
   }
   async function one(allocationId: string): Promise<void> {

@@ -18,7 +18,7 @@ async function labelled(railway: RailwaySandboxes, hubId: string, allocationId: 
     if (sandbox.status !== "RUNNING") continue;
     const variables = await railway.readVariables(sandbox.id, ["CORBITS_HUB", "CORBITS_ALLOCATION", "CORBITS_GENERATION", "CORBITS_SIDECAR"]);
     if (variables?.["CORBITS_HUB"] !== hubId || variables["CORBITS_ALLOCATION"] !== allocationId) continue;
-    found.push({ generation: Number(variables["CORBITS_GENERATION"]), sidecarId: variables["CORBITS_SIDECAR"] ?? "" });
+    found.push({ generation: Number(variables["CORBITS_GENERATION"]), sidecarId: variables["CORBITS_SIDECAR"]! });
   }
   return found;
 }
