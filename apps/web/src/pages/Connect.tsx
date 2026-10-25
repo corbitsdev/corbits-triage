@@ -144,7 +144,7 @@ export default function Connect() {
         if (window.confirm("A GitHub App is already connected. Replace the GitHub App and webhook secrets?")) await saveManual(true);
         return;
       }
-      setError(`Could not save the existing GitHub App. ${errorText(cause)}`);
+      setError(`Could not save the existing GitHub App. ${errorText(cause)} Try again.`);
     } finally {
       setBusy(false);
     }

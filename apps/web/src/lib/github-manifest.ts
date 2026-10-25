@@ -79,21 +79,13 @@ export async function saveExistingGithubApp(input: {
   );
   if (exists && !input.replace) throw new ManifestStartError("replacement_confirmation_required");
   await ensureGitHubProvider(transport, input.tenantId);
-  await connectGithubApp(input.tenantId, { appId: input.appId.trim(), privateKey: input.privateKey });
+  await connectGithubApp(transport, input.tenantId, { appId: input.appId.trim(), privateKey: input.privateKey });
   await configureGithubHook(transport, input.tenantId, input.webhookSecret);
 }
 
 /** The hub checks the App with GitHub and keeps its key out of the credential triage's workflows use. */
-export async function connectGithubApp(tenantId: string, app: { appId: string; privateKey: string }): Promise<void> {
-  const response = await fetch(`${requestOrigin()}/api/integrations/github-app/${encodeURIComponent(tenantId)}`, {
-    method: "PUT",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(app),
-  });
-  if (response.ok) return;
-  const body = await response.json() as { error?: { message?: unknown } };
-  throw new Error(typeof body.error?.message === "string" ? body.error.message : `HTTP ${response.status}`);
+export async function connectGithubApp(transport: Transport, tenantId: string, app: { appId: string; privateKey: string }): Promise<void> {
+  await transport.fetch("PUT", `/api/integrations/github-app/${encodeURIComponent(tenantId)}`, app);
 }
 
 const SyncResult = type({ repos: "string[]" });
