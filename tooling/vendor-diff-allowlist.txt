@@ -1,12 +1,10 @@
-# Vendor-diff allowlist (repo-relative path fragments, one per line).
+# Vendor-diff allowlist (paths relative to vendor/interchange, one per line).
 #
 # The CI vendor-diff gate (tooling/vendor-diff-check.sh) diffs
 # vendor/interchange against the pinned stock commit and fails on any
-# difference whose diff line does NOT contain one of these fragments.
-# Fragments must be full repo-relative paths: a bare filename would mask
-# same-named files elsewhere. Lines starting with `#` and blank lines are
-# ignored. Keep entries justified: each must cite the tracking issue for
-# its upstream resolution.
+# differing or added file whose path is not exactly one of these entries.
+# Lines starting with `#` and blank lines are ignored. Keep entries
+# justified: each must cite the tracking issue for its upstream resolution.
 #
 # Composite pin: stock b1ca01f0d9bc2eb203e95b1780a6f685c5da8215 plus the
 # allowlisted deltas below. Full rationale is in vendor/interchange/VENDORED.md.
