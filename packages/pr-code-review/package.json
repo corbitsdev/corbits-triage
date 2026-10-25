@@ -7,10 +7,8 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@corbits/bitbucket-datacenter-reads": "workspace:*",
     "@corbits/bitbucket-datacenter-tool": "workspace:*",
     "@corbits/common": "workspace:*",
-    "@corbits/github-reads": "workspace:*",
     "@corbits/github-tool": "workspace:*",
     "@corbits/repo-read-tool": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",

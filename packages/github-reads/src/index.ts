@@ -298,7 +298,6 @@ interface CheckRunRow {
   status: string;
   conclusion: string | null;
   started_at: string | null;
-  output: { annotations_count: number };
 }
 
 // A run not started yet is the newest, so a queued re-run keeps CI pending.
@@ -333,27 +332,6 @@ export async function getChecks(gh: GithubFetch, repo: string, sha: string): Pro
     status: c.status,
     conclusion: c.conclusion,
   }));
-}
-
-const CheckAnnotation = type({
-  path: "string",
-  start_line: "number.integer",
-  annotation_level: "'notice' | 'warning' | 'failure'",
-  message: "string",
-  "title?": "string | null",
-});
-
-export type CheckAnnotation = typeof CheckAnnotation.infer & { check: string };
-
-/** The annotations of the latest run of each check on the head. */
-export async function getCheckAnnotations(gh: GithubFetch, repo: string, sha: string): Promise<CheckAnnotation[]> {
-  const annotated = (await latestCheckRuns(gh, repo, sha)).filter((run) => run.output.annotations_count > 0);
-  const annotations: CheckAnnotation[] = [];
-  for (const run of annotated) {
-    const rows = await jsonAll(gh, `/repos/${repo}/check-runs/${run.id}/annotations?per_page=100`);
-    annotations.push(...rows.map((row) => ({ ...CheckAnnotation.assert(row), check: run.name })));
-  }
-  return annotations;
 }
 
 const FAILED = new Set(["failure", "timed_out", "action_required"]);

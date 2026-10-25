@@ -32,7 +32,7 @@ export interface CodeReviewPlace {
 }
 
 /**
- * reviewInput → plan ‖ checkout (→ lint) ‖ ciAnnotations → findDiff ‖ findRepo → candidates (fold exact duplicates) → consolidate (read the cited
+ * reviewInput → plan ‖ checkout (→ lint) → findDiff ‖ findRepo → candidates (fold exact duplicates) → consolidate (read the cited
  * lines at the head, group findings by defect) → checks (every group, by severity then agreement) → check (one call per group,
  * only when the request asks for it) → writeInput → write → review (the review to post).
  * Each model step's effort comes from the request, else the profile; its model is the one the profile names for it.
@@ -60,7 +60,6 @@ export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { pr
       after: [id("checkout")],
       timeout: TIMEOUT,
     }),
-    [id("ciAnnotations")]: action({ handler: "ciAnnotations", input: outputOf("reviewInput", "request.checkout"), after: [id("reviewInput")], credentials: sources, effect: { requires: [READ_REPOSITORY] }, timeout: TIMEOUT }),
     [id("findersInput")]: action({ handler: "findersInput", input: stepsOf("reviewInput", "plan"), after: [id("plan")] }),
     [id("findDiff")]: step({ agent: finderAgent(), input: outputOf("findersInput", "diff"), inference: outputOf("reviewInput", "inference.diffFinder"), after: [id("findersInput")], timeout: TIMEOUT, retry: MODEL_RETRY }),
     [id("findRepo")]: step({ agent: repoFinderAgent(), input: outputOf("findersInput", "repo"), inference: outputOf("reviewInput", "inference.repoFinder"), after: [id("findersInput"), id("checkout")], timeout: TIMEOUT, retry: MODEL_RETRY }),
