@@ -4,6 +4,7 @@
 // its offerings when deployed).
 import { ApiError, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { requestOrigin } from "./hub-origin.ts";
+import { hubErrorMessage } from "./hub-transport.ts";
 import { currentDeployment, isLiveDeployment, listDeployedWorkflows, type DeployedWorkflow } from "./hub-api.ts";
 import { offeringsFor } from "./model-catalog.ts";
 import { tarballFilename, type CodeReviewProvider, type RepoSource } from "@corbits/triage-contracts";
@@ -36,7 +37,7 @@ async function putTarball(fetchRaw: typeof fetch, tenantId: string, registryId: 
   if (response.ok) return;
   let detail: { error?: { code?: string; message?: string } } = {};
   try { detail = await response.json() as typeof detail; } catch { /* generic error below */ }
-  throw new ApiError(response.status, detail.error?.code ?? "unknown", detail.error?.message ?? `HTTP ${response.status}`);
+  throw new ApiError(response.status, detail.error?.code ?? "unknown", hubErrorMessage(response.status, detail));
 }
 
 function tarballPath(tenantId: string, registryId: string, filename?: string): string {
