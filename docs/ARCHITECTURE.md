@@ -222,6 +222,14 @@ any other tenant or an unknown sender.
   triage, then code review behind a gate, in one run ([PR workflow](#pr-workflow)).
   The portal deploys a host's while a repository's policy file needs it; the
   hub picks it per pull request.
+- `triage-manager-github` and `triage-manager-bitbucket-datacenter`
+  (`@corbits/triage-manager`): one live run per pull request, which runs only
+  while it has work. Each hub mail is pr-triage's plus `tenantId`. Its body takes
+  the pull request's pending events, runs pr-triage's facts, rules, evaluate and
+  mirror on the mail when there are any (rules that need the judge post nothing
+  yet), then calls done. When done ends the claim, the run stops itself through
+  the stop-run route, under a `manage` grant on its own run. Not deployed by
+  anything yet.
 
 ## Triage pipeline
 
