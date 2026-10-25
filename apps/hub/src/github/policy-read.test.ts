@@ -43,3 +43,17 @@ test("forbidding one spelling or one workflow file leaves CI changes open", asyn
   expect(await risks({ globs: [".github/workflows/*.yaml"], pass, automatic: ["merge"] })).toEqual(["ci-config"]);
   expect(await risks({ globs: [".github/workflows/ci.yml"], pass, automatic: ["merge"] })).toEqual(["ci-config"]);
 });
+
+test("the policy is read for the host named, GitHub when none is", async () => {
+  const asked: string[] = [];
+  const handle = createGithubPolicyRead({
+    async readCheckPack(_tenantId, _repo, source) {
+      asked.push(source);
+      return { status: "missing" };
+    },
+  });
+  const member = { tenantId: "t", principalId: "p" } as Parameters<typeof handle>[1];
+  await handle({ repo: "acme/app", source: "bitbucket-datacenter" }, member);
+  await handle({ repo: "acme/app" }, member);
+  expect(asked).toEqual(["bitbucket-datacenter", "github"]);
+});

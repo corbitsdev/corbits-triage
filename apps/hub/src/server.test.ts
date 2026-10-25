@@ -342,6 +342,13 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/bitbucket-datacenter/{tenantId}/repositories/{project}/{slug}/disable": ["post"],
   });
 
+  const Parameters = type({ get: { parameters: type({ in: "string", name: "string", "required?": "boolean" }).array() } });
+  for (const path of ["/api/integrations/github-triage/{tenantId}/policy", "/api/integrations/github-triage/{tenantId}/policy/file"]) {
+    const source = Parameters.assert(paths[path]).get.parameters.find((parameter) => parameter.name === "source");
+    expect(source).toMatchObject({ in: "query" });
+    expect(source?.required).not.toBe(true);
+  }
+
   const headers = await signedIn(origin);
   const id = await createTenant(origin, headers);
 

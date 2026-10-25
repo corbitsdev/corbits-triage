@@ -50,12 +50,14 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     `GET …/policy/file` (the file and why it is refused),
     `POST /api/integrations/policy/validate` (open, reads only its body),
     `GET …/policy/upgrades` (`start`, `upgrade`, `differs` or `ok` per enabled
-    repository) and `POST …/policy/export`, which opens or updates one pull
-    request on `corbits-triage/policy` writing the stored policy, or the
-    starter policy for `start`, as a schema 3 file. For a repository with
-    no file, no stored policy and no policy pull request open it can
-    instead write a chosen `text`, refused when triage would refuse it once
-    merged, `extends` resolved.
+    repository, each naming its host as `source`) and `POST …/policy/export`,
+    which opens or updates one pull request on `corbits-triage/policy`
+    writing the stored policy, or the starter policy for `start`, as a
+    schema 3 file. For a repository with no file, no stored policy and no
+    policy pull request open it can instead write a chosen `text`, refused
+    when triage would refuse it once merged, `extends` resolved. The file
+    and export routes take the repository's host as `source`; without it,
+    a name connected on both hosts is refused.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live pr-triage deployment for the repository's host,
     as the tenant system sender, the same path cron uses, naming the host as
@@ -119,10 +121,11 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     and single pull request triage, verdicts, stats and timeline, the policy
     schemas and routes above, invitations, workflow deploy and versions,
     Bitbucket Data Center, and code review.
-    `GET …/github-triage/{tenantId}/policy?repo=` answers a repository's
-    policy as triage reads it, with the merge risks of its automatic approve
-    or merge computed there, which the portal shows for GitHub repositories, and `POST …/github-triage/{tenantId}/backlog`
-    starts backlog triage, so only the hub resolves policies and builds
+    `GET …/github-triage/{tenantId}/policy?repo=&source=` answers a
+    repository's policy as triage reads it on that host (GitHub without
+    `source`), with the merge risks of its automatic approve or merge
+    computed there, which the portal shows for GitHub repositories, and
+    `POST …/github-triage/{tenantId}/backlog` starts backlog triage, so only the hub resolves policies and builds
     trigger mail. `GET …/merge-states/{tenantId}?repo=&numbers=` (at most
     100) says whether the host would merge those pull requests now: one
     GraphQL query on GitHub, each one's merge checks on Bitbucket Data

@@ -1,11 +1,11 @@
 // A repository's policy as triage reads it, so the portal shows and edits the same artifact the hub mails.
 import { type } from "arktype";
-import { ACTION_KINDS, alwaysHeld, AUTHOR_GROUPS, authorGroupsOf, catalogCheckEnabled, kindsOf, ruleVerdicts, VERDICTS, whenHolds, type ActionKind, type AuthorKind, type CheckPack, type DecideRule, type MergeRisk, type StepWhen, type VerdictWord } from "@corbits/triage-contracts";
+import { ACTION_KINDS, alwaysHeld, AUTHOR_GROUPS, authorGroupsOf, catalogCheckEnabled, kindsOf, REPO_SOURCES, ruleVerdicts, VERDICTS, whenHolds, type ActionKind, type AuthorKind, type CheckPack, type DecideRule, type MergeRisk, type StepWhen, type VerdictWord } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import type { PolicyReader } from "./check-pack-store.js";
 import type { Member } from "../integrations/app.js";
 
-export const PolicyQuery = type({ repo: /^[\w.-]+\/[\w.-]+$/ });
+export const PolicyQuery = type({ repo: /^[\w.-]+\/[\w.-]+$/, "source?": type.enumerated(...REPO_SOURCES) });
 
 const LANDING: readonly ActionKind[] = ["approve", "merge"];
 const FIRST_TIMERS: readonly AuthorKind[] = AUTHOR_GROUPS["first-timers"];
@@ -63,8 +63,8 @@ function mergeRisks(pack: CheckPack, decide: readonly DecideRule[], automatic: r
 }
 
 export function createGithubPolicyRead(deps: { readCheckPack: PolicyReader }) {
-  return async function handle({ repo }: typeof PolicyQuery.infer, { tenantId }: Member): Promise<Response> {
-    const read = await deps.readCheckPack(tenantId, repo, "github");
+  return async function handle({ repo, source }: typeof PolicyQuery.infer, { tenantId }: Member): Promise<Response> {
+    const read = await deps.readCheckPack(tenantId, repo, source ?? "github");
     if (read.status === "missing") return Response.json(read);
     if (read.status !== "ok") {
       const { automatic: _automatic, ...unreadable } = read;
