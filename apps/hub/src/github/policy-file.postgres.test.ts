@@ -301,7 +301,7 @@ test("PostgreSQL: saved rules apply while the file runs differently or is refuse
   onMain(SAVED, YAML, "checks:\n  no-forbidden-paths: { enabled: true, forbiddenGlobs: [node_modules/**, vendor/**] }\n");
   await policyFile.onPush(TENANT, SAVED, "github");
   expect(await readPack(SAVED)).toMatchObject({ status: "ok", source: { file: { path: YAML } } });
-  expect(await findArtifactByTitle(handle.db, TENANT, checkPackName(SAVED))).toBeNull();
+  expect(await findArtifactByTitle(handle.db, TENANT, checkPackName(SAVED, "github"))).toBeNull();
   expect(await upgradeOf(SAVED)).toEqual({ repo: SAVED, upgrade: { state: "ok" } });
 
   // With the saved rules gone, an edit to the file is the policy.
@@ -415,7 +415,7 @@ test("PostgreSQL: a file chosen for a repository with no file, saved rules or op
 
 async function writePolicy(repo: string, content: string): Promise<void> {
   await handle.db.transaction(function createPolicy(tx) {
-    return createArtifact(tx, { scope: { tenantId: TENANT, principalId: "prn_user" }, ownerPrincipalId: null, kind: "document", title: checkPackName(repo), content, source: { origin: "manual" } });
+    return createArtifact(tx, { scope: { tenantId: TENANT, principalId: "prn_user" }, ownerPrincipalId: null, kind: "document", title: checkPackName(repo, "github"), content, source: { origin: "manual" } });
   });
 }
 

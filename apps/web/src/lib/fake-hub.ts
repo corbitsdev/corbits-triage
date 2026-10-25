@@ -30,7 +30,7 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
   function policyRead(repo: string): unknown {
     const row = [...hub.artifacts]
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .find((item) => item.archivedAt === undefined && item.title === checkPackName(repo));
+      .find((item) => item.archivedAt === undefined && item.title === checkPackName(repo, "github"));
     if (!row) return { status: "missing" };
     try {
       return { status: "ok", pack: readCheckPack(row.content, repo), source: { repo: { id: row.id, version: row.version } }, automatic: [], decide: [], mergeRisks: [] };

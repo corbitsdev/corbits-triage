@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   applyRecommended,
   catalogCheckEnabled,
+  checkPackName,
   checkPackSchema,
   customRuleId,
   defaultActions,
@@ -34,6 +35,11 @@ const ACTIONS: PolicyActions = {
 };
 
 describe("check pack contract", () => {
+  test("a GitHub repository's saved rules are titled by its name, a Bitbucket Data Center one's by its host and name", () => {
+    expect(checkPackName(REPO, "github")).toBe("check-pack/acme/payments-api");
+    expect(checkPackName(REPO, "bitbucket-datacenter")).toBe("check-pack/bitbucket-datacenter/acme/payments-api");
+  });
+
   test("add one catalog check; unknown ids ignored; absent keys empty", () => {
     const parsed = parseCheckPack({
       kind: "corbits.triage.check-pack",

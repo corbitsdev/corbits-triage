@@ -66,12 +66,15 @@ async function usablePolicy(artifacts: ArtifactDb, tenantId: string, id: string 
   return row && row.tenantId === tenantId && row.archivedAt === null ? row : undefined;
 }
 
-/** Saved rules are titled by name alone, so a policy found by its title is never one a namesake on another host pins. */
+/**
+ * GitHub's saved rules are titled by name alone, and so are Bitbucket Data Center ones saved before titles named the host,
+ * so the title fallback skips any id a namesake on another host pins.
+ */
 export async function repoPolicyRow({ db, artifacts }: Pick<CheckPackStoreDeps, "db" | "artifacts">, tenantId: string, repo: string, source: RepoSource): Promise<ArtifactRow | undefined> {
   const pins = await policyPins(db, tenantId, repo, source);
   const pinned = await usablePolicy(artifacts, tenantId, pins.own);
   if (pinned || !pins.titled) return pinned;
-  const titled = (await findArtifactByTitle(artifacts, tenantId, checkPackName(repo)))?.artifactId;
+  const titled = (await findArtifactByTitle(artifacts, tenantId, checkPackName(repo, "github")))?.artifactId;
   return titled === undefined || pins.others.includes(titled) ? undefined : usablePolicy(artifacts, tenantId, titled);
 }
 
@@ -96,7 +99,7 @@ function corrupt(row: ArtifactRow, error: unknown, automatic: ActionKind[]): Sav
 
 export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, repo: string, source: RepoSource): Promise<SavedRead> {
   try {
-    checkPackName(repo);
+    checkPackName(repo, source);
   } catch {
     return { status: "missing" };
   }

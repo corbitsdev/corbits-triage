@@ -111,7 +111,7 @@ describe("createGithubPrTriage", () => {
       repo: REPO,
       prNumber: 8,
       headSha: "abc123",
-      policy: { enabled: true, checkPack: { name: checkPackName(REPO) } },
+      policy: { enabled: true, checkPack: { name: checkPackName(REPO, "github") } },
     });
     expect((s.delivered[0]!.payload as { pack: unknown }).pack).toEqual(PACK);
     const at = NOW.toISOString();
