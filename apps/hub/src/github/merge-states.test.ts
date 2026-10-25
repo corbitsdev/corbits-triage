@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { createMergeStates, MAX_MERGE_STATES } from "./merge-states.js";
+import { MAX_MERGE_STATES } from "@corbits/triage-contracts";
+import { createMergeStates } from "./merge-states.js";
 
 // Refused before the workspace is read, so no database is needed.
 const handle = createMergeStates({ githubApiOrigin: "https://api.github.test", log() {} } as unknown as Parameters<typeof createMergeStates>[0]);

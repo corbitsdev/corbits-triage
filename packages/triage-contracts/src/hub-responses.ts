@@ -4,6 +4,9 @@ import { ACTION_KINDS, VERDICTS } from "./check-pack.js";
 import { policyWorkflowSchema } from "./policy-workflow.js";
 import { REPO_SOURCES } from "./repo-source.js";
 
+/** The most pull requests one merge-states read asks about. */
+export const MAX_MERGE_STATES = 100;
+
 const VerdictWord = type.enumerated(...VERDICTS);
 
 const DetailCheck = type({
