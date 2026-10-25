@@ -18,7 +18,7 @@ import {
 } from "./hub-api.ts";
 
 /** The models Triage's workflows name, each with the catalog provider that serves it. */
-export const DECLARED_MODELS = [
+const DECLARED_MODELS = [
   { model: DECISION_MODEL_ALIAS, provider: INFERENCE_PROVIDER },
   { model: CODE_REVIEW_PROVIDERS.anthropic.models.diffFinder, provider: ANTHROPIC_PROVIDER },
   { model: CODE_REVIEW_PROVIDERS.anthropic.models.other, provider: ANTHROPIC_PROVIDER },
