@@ -1,0 +1,56 @@
+# Upstream paths not vendored (relative to vendor/interchange, one per line):
+# only the paths a re-vendor excludes. Any other drift goes in
+# tooling/vendor-diff-allowlist.txt.
+#
+# The vendor-diff gate (tooling/vendor-diff-check.sh) reports a stock path
+# missing from vendor/interchange as information only when it is exactly an
+# entry here, or sits under an entry ending in `/`. Any other missing stock
+# path fails, and so does an entry that covers a vendored path or no missing
+# stock path. Lines starting with `#` and blank lines are ignored.
+
+.env.sidecar
+Makefile
+apps/admin-ui/
+bin/
+bun.lock
+bunfig.toml
+db/
+docs/
+eslint.config.ts
+examples/
+package.json
+packages/inference-catalog/
+packages/inference-discovery-anthropic/
+packages/inference-discovery-google-genai/
+packages/inference-discovery-openai/
+skills/
+tests/admin-ui-e2e/.gitignore
+tests/admin-ui-e2e/login.spec.ts
+tests/admin-ui-e2e/playwright.config.ts
+tests/admin-ui-e2e/shared-sidecar-deploy.spec.ts
+tests/admin-ui-e2e/storage-isogit.playwright.config.ts
+tests/admin-ui-e2e/storage-isogit/
+tests/admin-ui-e2e/workflow-deploy-live.spec.ts
+tests/admin-ui-e2e/workflow-deploy-picker.spec.ts
+tests/agent-audit-log/
+tests/agent-blob-spill/
+tests/agent-common/
+tests/agent-multi-provider/
+tests/agent-quickstart/
+tests/agent-resume/
+tests/agent-rewind/
+tests/agent-rich-tool/
+tests/agent-structured-payload/
+tests/agent/
+tests/coding-agent/
+tests/db/
+tests/hub-agent/
+tests/hub-api/
+tests/inference-testing/
+tests/inference/
+tests/lib/
+tests/tool-packaging/
+tests/workflow-deploy/
+tests/workflow-quickstart/
+tests/workflow/
+tsconfig.eslint.json

@@ -12,8 +12,9 @@
 - Health command: `bun run vendor:health`
 
 The checkout is intentionally pruned, but includes the complete stock package
-dependency closure needed by its declared workspaces. Other paths absent from
-this checkout but present upstream are informational in the drift gate. Local
+dependency closure needed by its declared workspaces. Upstream paths absent
+from this checkout are informational in the drift gate only when they are
+listed in `tooling/vendor-diff-pruned.txt`; any other absent path fails. Local
 build artifacts and environment files are ignored; they are not vendor
 patches. Tracked `.env*.example` templates are checked like any other file.
 
@@ -24,7 +25,8 @@ Re-vendoring: check out the stock ref and `rsync -a --delete` it over
 `packages/inference-discovery-*`, `skills`, `tsconfig.eslint.json`, every
 `tests/*` except `tests/admin-ui-e2e/{harness,package.json,tsconfig.json}`),
 `node_modules`, `*.tsbuildinfo`, `.DS_Store` and this file. Then re-apply the
-allowed deltas and update the gate's default ref and the allowlist.
+allowed deltas and update the gate's default ref and the allowlist. A
+re-vendor whose excluded paths change updates `tooling/vendor-diff-pruned.txt`.
 
 ## Allowed deltas
 
