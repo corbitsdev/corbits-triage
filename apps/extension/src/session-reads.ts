@@ -13,6 +13,7 @@ export type Session = { page(path: string): Promise<string | null>; site(url: st
 
 const FILES = /^\/repos\/([\w.-]+\/[\w.-]+)\/pulls\/(\d+)\/files$/;
 const PULL = /^\/repos\/[\w.-]+\/[\w.-]+\/pulls\/\d+$/;
+const REVIEWS = /^\/repos\/[\w.-]+\/[\w.-]+\/pulls\/\d+\/reviews$/;
 const COMMITS = /^\/repos\/([\w.-]+\/[\w.-]+)\/pulls\/(\d+)\/commits$/;
 const CONTENTS = /^\/repos\/([\w.-]+\/[\w.-]+)\/contents\/(.+)$/;
 const ROOT = /^\/repos\/([\w.-]+\/[\w.-]+)\/contents$/;
@@ -160,6 +161,8 @@ export function sessionGithub(session: Session, fallback: GithubFetch | null): S
     const file = CONTENTS.exec(pathname);
     if (file) return contents(path, file[1]!, file[2]!, searchParams.get("ref"));
     if (ROOT.test(pathname)) return folder(path);
+    // The page gives no review's body, where the App's posted code review carries its marker.
+    if (fallback && REVIEWS.test(pathname)) return null;
     const body = await session.page(path);
     if (body === null) return null;
     // The page gives the description as written, not GitHub's rendering of it, which hidden-content reads.

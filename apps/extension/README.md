@@ -45,7 +45,8 @@ the policy's `pauseLabel`, the block says it is paused and checks nothing, as th
 
 When the Corbits Triage App has sent a code review to the pull request, the block links to the newest one and lists
 its inline comments by title, file and line. A review counts only when it carries code review's marker and was written
-by a GitHub App's bot account, which the account name shows.
+by a GitHub App's bot account, which the account name shows. github.com's page does not give a review's text, so
+the block finds the review only with a saved token, which reads the reviews from the REST API.
 
 ### Limits
 
