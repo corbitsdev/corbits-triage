@@ -9,7 +9,7 @@ import {
   type OpenPulls,
 } from "./hub-api.ts";
 import { hubOrigin, requestOrigin } from "./hub-origin.ts";
-import { createHubTransport, hubErrorMessage, type Transport } from "./hub-transport.ts";
+import { createHubTransport, type Transport } from "./hub-transport.ts";
 
 export const GITHUB_MANIFEST_URL = "https://github.com/settings/apps/new";
 export const GITHUB_APP_PICKER_UNAVAILABLE =
@@ -92,25 +92,11 @@ const SyncResult = type({ repos: "string[]" });
 export type SyncResult = typeof SyncResult.infer;
 
 export async function syncGithubInstallations(tenantId: string): Promise<SyncResult> {
-  const response = await fetch(`${requestOrigin()}/api/integrations/github-installations/${encodeURIComponent(tenantId)}/sync`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-  });
-  const body: unknown = await response.json();
-  if (!response.ok) throw new Error(hubErrorMessage(response.status, body));
-  return SyncResult.assert(body);
+  return SyncResult.assert(await createHubTransport().fetch<unknown>("POST", `/api/integrations/github-installations/${encodeURIComponent(tenantId)}/sync`, {}));
 }
 
 export async function loadOpenPulls(tenantId: string): Promise<OpenPulls> {
-  const response = await fetch(`${requestOrigin()}/api/integrations/github-open-pulls/${encodeURIComponent(tenantId)}`, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-  });
-  const body: unknown = await response.json();
-  if (!response.ok) throw new Error(hubErrorMessage(response.status, body));
-  return body as OpenPulls;
+  return createHubTransport().fetch<OpenPulls>("GET", `/api/integrations/github-open-pulls/${encodeURIComponent(tenantId)}`);
 }
 
 export function githubAppPickerUrl(slug: string | null): string | null {
