@@ -7,6 +7,7 @@ import { runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, typ
 import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, WAITING_KIND, WAITING_LABEL, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serve";
+import { judgeKey } from "@corbits/triage-workflows/logic/quality";
 import { delivered, grantsFor, type Bindings, type Fetch } from "@corbits/triage-workflows/local-credentials";
 import { recordingGithub, type Write } from "@corbits/triage-workflows/run-local";
 import * as actions from "./actions/index.js";
@@ -43,6 +44,7 @@ const BB_PULL = "/rest/api/1.0/projects/ACME/repos/widgets/pull-requests/8";
 const BB_BUILDS = "/rest/build-status/1.0/commits/abc";
 
 const RELEASE = { workflow: { assetId: "ast_review", commitSha: "c0ffee", packageName: "@corbits/pr-code-review-anthropic", entry: "./pr-code-review-reviewer-github.mjs" }, offerings: { ids: ["off_a"], defaultId: "off_a" } };
+const JUDGE_RELEASE = { workflow: { assetId: "ast_judge", commitSha: "c0ffee", packageName: "@corbits/triage-judge-github-workflow", entry: "./triage-judge-github.mjs" }, offerings: { ids: ["off_d"], defaultId: "off_d" } };
 const CODE_REVIEW = { codeReview: { on: true, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "any" } };
 const REVIEW_REQUEST = { codeReviewRequest: { kind: "code-review", number: PR.number, title: PR.title, description: PR.body, diff: "diff --git a/src/flag.ts b/src/flag.ts", checkout: { source: "github", repo: PR.repo, sha: HEAD } } };
 const REVIEW = { summary: "One bug.", comments: [{ path: "src/flag.ts", start: 1, end: 1, title: "Always true", body: "The flag can never be off." }], budgetExhausted: false };
@@ -101,7 +103,7 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
 
 /** The host's credentials as triage-workflows wires them, plus the hub credential deploy binds to the hub actions. */
 function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init?: RequestInit) => Promise<Response>) {
-  const consumers = ["take", "done", "deployReview", "forward", "stop"].map(actionConsumer);
+  const consumers = ["take", "done", "deployReview", "deployJudge", "forward", "stop"].map(actionConsumer);
   const cell = delivered(bindings, [{ credentialId: "hub", providerKey: "http", origin: HUB_ORIGIN, secret: "run-token" }]);
   cell.current = { ...cell.current, bindings: [...cell.current.bindings, ...consumers.map((consumer) => ({ handle: HUB_CREDENTIAL_HANDLE, credentialId: "hub", consumer }))] };
   const hubGrants: GrantRule[] = consumers.map((tool, index) => ({ id: `hub-${index}`, resource: "credential:hub", action: "use", effect: "allow", origin: "system", conditions: { tool }, expiresAt: null, roleId: null, principalId: null }));
@@ -157,7 +159,7 @@ function githubHost(head = HEAD) {
 
 const TAKE = { method: "POST", path: `${TENANT_PATH}/manager/take`, body: PULL };
 const DONE = { method: "POST", path: `${TENANT_PATH}/manager/done`, body: { ...PULL, reviewers: [] } };
-const STAGE_1 = ["approvals", "done", "evaluateRules", "executeRules", "facts", "held", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "take", "triaged", "unready", "waiting"];
+const STAGE_1 = ["approvals", "done", "evaluateRules", "executeRules", "facts", "held", "mirrorRules", "paused", "postReview", "posting", "ran", "recall", "reviewScope", "reviewing", "route", "rules", "take", "triaged", "unready", "waiting"];
 
 /** Publishes `release` as the release.json the portal writes beside the workflows; the repository's own holds none. */
 function publish(release: Record<string, unknown>): void {
@@ -216,7 +218,7 @@ describe("triage-manager", () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] });
     const { ran } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).toEqual(["approvals", "done", "facts", "held", "paused", "ran", "route", "rules", "take", "triaged", "unready", "waiting"]);
+    expect(ran).toEqual(["approvals", "done", "facts", "held", "judgeScope", "judgeWait", "judging", "paused", "ran", "recall", "route", "rules", "take", "triaged", "unready", "waiting"]);
     expect(writes).toEqual([]);
   });
 
@@ -352,6 +354,95 @@ describe("triage-manager with code review", () => {
   });
 });
 
+/** A decisive answer for one question id, reusable by a later rules run of the same chunk. */
+function answerFor(id: string): string {
+  if (id === "instructed") return JSON.stringify({ id, type: "noul", noul: 0.1 });
+  if (id === "verdict") return JSON.stringify({ id, type: "choice", choice: "pass", probabilities: { pass: 0.9, fail: 0.05, cant_tell: 0.05 }, confidence: 0.9 });
+  if (id === "focused") return JSON.stringify({ id, type: "choice", choice: "one_thing", probabilities: { one_thing: 0.9, more_than_one_thing: 0.05, cant_tell: 0.05 }, confidence: 0.9 });
+  return JSON.stringify({ id, type: "choice", choice: "serves_purpose", probabilities: { serves_purpose: 0.9, separate_change: 0.05, cant_tell: 0.05 }, confidence: 0.9 });
+}
+
+function judgedFrom(rules: { chunks?: { state: unknown; questions: { id: string }[] }[] }): Record<string, string> {
+  const judged: Record<string, string> = {};
+  for (const chunk of rules.chunks ?? []) judged[judgeKey(chunk)] = chunk.questions.map((question) => answerFor(question.id)).join("");
+  return judged;
+}
+
+/** A pass on which the manager's judge reported `judged` for this head. */
+function judgeReported(judged: Record<string, string>, request = hubRequest(JUDGED)) {
+  return { ...PASS, request, events: [{ key: `evt:github:${PR.repo}#8:${DEPLOYED}`, event: { type: "reviewer-result", head: HEAD, payload: { kind: "judge", result: { verdict: "pass", reasons: ["Every rule passed."], judged } } } }], reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN, deadline: LATER }] };
+}
+
+describe("triage-manager with a judge", () => {
+  beforeEach(() => publish({ github: { judge: JUDGE_RELEASE } }));
+
+  test("the first pass deploys the judge and mails it the rules, posting nothing; the pass that collects its answers posts the verdict", async () => {
+    const { writes, host } = githubHost();
+    const mailed: unknown[] = [];
+    const first = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] });
+    expect((await runMail(github, wake(), host, first.hub, mailed)).ran).toContain("doneJudging");
+    expect(writes).toEqual([]);
+    expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_judge", package: { format: "source", commitSha: "c0ffee", packageName: JUDGE_RELEASE.workflow.packageName } }, entry: JUDGE_RELEASE.workflow.entry, sourceOfferingIds: ["off_d"], defaultSourceOfferingId: "off_d" } });
+    expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
+    const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
+    const content = JSON.parse(mail.content) as { kind: string; rules: { chunks: { state: unknown; questions: { id: string }[] }[] }; reply: { to: string } };
+    expect(content.kind).toBe("judge");
+    expect(content.rules.chunks.length).toBeGreaterThan(0);
+    expect(content.reply.to).toBe(RUN);
+    expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
+
+    const second = fakeHub({ takes: [judgeReported(judgedFrom(content.rules))], dones: [ENDED] });
+    const { ran } = await runMail(github, wake(), host, second.hub, mailed);
+    expect(ran).toContain("mirrorRules");
+    expect(ran).not.toContain("deployJudge");
+    expect(writes.length).toBeGreaterThan(0);
+    expect(second.calls[1]).toEqual(DONE);
+    expect(mailed).toHaveLength(1);
+  });
+
+  test.each([
+    ["the judge reported a failure", { ...PASS, request: hubRequest(JUDGED), events: [{ key: `evt:github:${PR.repo}#8:${DEPLOYED}`, event: { type: "reviewer-result", head: HEAD, payload: { kind: "judge", failed: "the judge did not finish" } } }], reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN, deadline: LATER }] }, [TAKE, DONE, END]],
+    ["the judge ran past its deadline, which is stopped,", { ...PASS, request: hubRequest(JUDGED), reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN, deadline: "2000-01-01T00:00:00.000Z" }] }, [TAKE, DONE, STOP_REVIEW, END]],
+  ])("when %s the machine verdict goes up and the judge is not deployed again", async (_name, taken, calls) => {
+    const { writes, host } = githubHost();
+    const hub = fakeHub({ takes: [taken], dones: [ENDED] });
+    const { ran } = await runMail(github, wake(), host, hub.hub);
+    expect(ran).toContain("mirrorRules");
+    expect(ran).not.toContain("deployJudge");
+    expect(writes.length).toBeGreaterThan(0);
+    expect(hub.calls).toEqual(calls);
+  });
+});
+
+describe("triage-manager with a judge and code review", () => {
+  beforeEach(() => publish({ github: { judge: JUDGE_RELEASE, codeReview: RELEASE } }));
+
+  test("posts the verdict and the review together once both have reported", async () => {
+    const { writes, host } = githubHost();
+    const mailed: unknown[] = [];
+    const request = hubRequest(JUDGED, { ...CODE_REVIEW, ...REVIEW_REQUEST });
+    const first = fakeHub({ takes: [{ ...PASS, request }], dones: [{ outcome: "more", wait: true }] });
+    expect((await runMail(github, wake(), host, first.hub, mailed)).ran).toContain("doneJudging");
+    expect(writes).toEqual([]);
+    const rules = JSON.parse((mailed[0] as { content: string }).content).rules as { chunks: { state: unknown; questions: { id: string }[] }[] };
+
+    const second = fakeHub({ takes: [judgeReported(judgedFrom(rules), request)], dones: [{ outcome: "more", wait: true }] });
+    const again = await runMail(github, wake(), host, second.hub, mailed);
+    expect(again.ran).toContain("deployReview");
+    expect(again.ran).not.toContain("mirrorRules");
+    expect(writes).toEqual([]);
+    expect(second.calls[2]).toMatchObject({ body: { reviewers: expect.arrayContaining([expect.objectContaining({ kind: "judge", result: expect.anything() }), expect.objectContaining({ kind: "code-review", runId: DEPLOYED })]) } });
+
+    const judged = judgedFrom(rules);
+    const third = fakeHub({ takes: [{ ...reported({ result: REVIEW }, request), reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN, deadline: LATER, result: { verdict: "pass", reasons: ["Every rule passed."], judged } }, reviewer()] }], dones: [ENDED] });
+    const { ran } = await runMail(github, wake(), host, third.hub, mailed);
+    expect(ran).toContain("postReview");
+    expect(ran).not.toContain("deployJudge");
+    expect(writes).toContainEqual(POSTED_REVIEW);
+    expect(third.calls[1]).toEqual(DONE);
+  });
+});
+
 describe("triage-listener", () => {
   beforeEach(() => publish({ github: { manager: RELEASE } }));
 
@@ -398,5 +489,10 @@ describe("grants", () => {
   test("a manager built with the release's code review declares the grants to deploy exactly that asset, and one built without declares no asset read", () => {
     expect(triageManager({ id: "triage-manager-github", sources: ["github"], codeReview: RELEASE }).grantRequirements).toEqual([...MANAGER_GRANTS, ...DEPLOY_GRANTS]);
     expect(triageManager({ id: "triage-manager-github", sources: ["github"], codeReview: undefined }).grantRequirements).toEqual(MANAGER_GRANTS);
+  });
+
+  test("a manager built with the release's judge declares the grants to deploy exactly that asset", () => {
+    const judgeGrants = [{ resource: "workflow:*", action: "create", source: "creator" }, { resource: "asset:ast_judge", action: "read", source: "creator" }, { resource: "workflow-run:*", action: "read", source: "creator" }];
+    expect(triageManager({ id: "triage-manager-github", sources: ["github"], codeReview: undefined, judge: JUDGE_RELEASE }).grantRequirements).toEqual([...MANAGER_GRANTS, ...judgeGrants]);
   });
 });

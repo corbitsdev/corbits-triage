@@ -33,7 +33,12 @@ const Input = type({
 
 function ruled(it: RulesItem): { item: Item; requests: JudgeRequest[] } {
   if ("error" in it) return { item: degradedItem(it), requests: [] };
-  const item = { facts: it.facts, det: deriveState(it.facts, undefined, it.pack), automatic: it.automatic, pack: it.pack, judged: it.judged, source: it.source, ...(it.repoSource && { repoSource: it.repoSource }), ...(it.noWait && { noWait: it.noWait }), ...(it.blocksOn && { blocksOn: it.blocksOn }), ...(it.appLogin && { appLogin: it.appLogin }) };
+  // Absent optionals stay off the object: an effect key is canonical JSON, which has no undefined.
+  const item = {
+    facts: it.facts, det: deriveState(it.facts, undefined, it.pack), pack: it.pack,
+    ...(it.automatic !== undefined && { automatic: it.automatic }), ...(it.judged !== undefined && { judged: it.judged }), ...(it.source !== undefined && { source: it.source }),
+    ...(it.repoSource && { repoSource: it.repoSource }), ...(it.noWait && { noWait: it.noWait }), ...(it.blocksOn && { blocksOn: it.blocksOn }), ...(it.appLogin && { appLogin: it.appLogin }),
+  };
   if (!item.det.needsJudgment) return { item, requests: [] };
   const evaluation = prepareQualityEvaluation(item.facts, item.det.sources);
   const { requests, judgeError } = evaluation;

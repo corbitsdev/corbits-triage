@@ -55,6 +55,8 @@ export const VerdictDetail = type({
   "automatic?": "string[]",
   /** Why the run's mirror posted nothing on the host: `stale`, `waiting`, `no_request` or `no_grants`. */
   "notPosted?": "string",
+  /** Answers a later pass of the same head replays, so the judge is not asked again. */
+  "judged?": "Record<string, string>",
   "facts?": { "+": "delete", "title?": "string", "author?": "string", "draft?": "boolean", "mergeable?": "boolean | null", "checks?": "string", "reviewAnswered?": "boolean" },
 });
 export type VerdictDetail = typeof VerdictDetail.infer;

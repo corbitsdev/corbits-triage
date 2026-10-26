@@ -226,40 +226,48 @@ function chainTree(workflow: string, release: boolean): SourceTree {
 test("each chain workflow carries the release of the one it deploys, and its asset name changes with that release", async () => {
   const builds = [
     { workflow: "pr-code-review-reviewer-github", hash: "aaaaaaaa", tree: chainTree("pr-code-review-reviewer-github", false) },
+    { workflow: "triage-judge-github", hash: "11111111", tree: chainTree("triage-judge-github", false) },
     { workflow: "triage-manager-github", hash: "bbbbbbbb", tree: chainTree("triage-manager-github", true) },
     { workflow: "triage-listener-github", hash: "cccccccc", tree: chainTree("triage-listener-github", true) },
   ];
   const offerings = { ...OFFERINGS };
   const hub = fakeHub([], offerings);
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "chain") };
-  const [reviewer, manager, listener] = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
+  const [reviewer, judge, manager, listener] = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
   const assets = await hub.transport.fetch<Array<{ id: string; name: string }>>("GET", "/api/tenants/t/assets?kind=workflow");
   function nameOf(id: string): string {
     return assets.find((asset) => asset.id === id)!.name;
   }
   expect(nameOf(reviewer!.assetId)).toBe(`pr-code-review-reviewer-github-${OWNER}-aaaaaaaa`);
+  expect(nameOf(judge!.assetId)).toBe(`triage-judge-github-${OWNER}-11111111`);
   expect(nameOf(listener!.assetId)).toMatch(new RegExp(`^triage-listener-github-${OWNER}-[0-9a-f]{8}$`));
   expect(nameOf(listener!.assetId)).not.toBe(`triage-listener-github-${OWNER}-cccccccc`);
   function releaseOf(entry: { assetId: string }, workflow: string): unknown {
     return JSON.parse(gitIn(nameOf(entry.assetId), "show", `main:packages/${workflow}/release.json`));
   }
+  const judgeRelease = { workflow: { assetId: judge!.assetId, commitSha: judge!.commitSha, packageName: "@corbits/triage-judge-github-workflow", entry: "./triage-judge-github.mjs" }, offerings: { ids: ["mof_decision"], defaultId: "mof_decision" } };
   expect(releaseOf(manager!, "triage-manager-github")).toEqual({
-    github: { codeReview: { workflow: { assetId: reviewer!.assetId, commitSha: reviewer!.commitSha, packageName: "@corbits/pr-code-review-reviewer-github-workflow", entry: "./pr-code-review-reviewer-github.mjs" }, offerings: { ids: ["mof_opus", "mof_haiku"], defaultId: "mof_opus" } } },
+    github: {
+      codeReview: { workflow: { assetId: reviewer!.assetId, commitSha: reviewer!.commitSha, packageName: "@corbits/pr-code-review-reviewer-github-workflow", entry: "./pr-code-review-reviewer-github.mjs" }, offerings: { ids: ["mof_opus", "mof_haiku"], defaultId: "mof_opus" } },
+      judge: judgeRelease,
+    },
   });
   expect(releaseOf(listener!, "triage-listener-github")).toEqual({
     github: { manager: { workflow: { assetId: manager!.assetId, commitSha: manager!.commitSha, packageName: "@corbits/triage-manager-github-workflow", entry: "./triage-manager-github.mjs" }, offerings: { ids: ["mof_decision"], defaultId: "mof_decision" } } },
   });
 
   offerings.decision = ["mof_decision_2", "corbits-system-one"];
-  const [, managerAgain, listenerAgain] = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
-  const rekeyed = await hub.transport.fetch<Array<{ id: string; name: string }>>("GET", "/api/tenants/t/assets?kind=workflow");
-  expect(managerAgain).toEqual(manager!);
-  expect(rekeyed.find((asset) => asset.id === listenerAgain!.assetId)!.name).not.toBe(nameOf(listener!.assetId));
+  const [reviewerAgain, judgeAgain, managerAgain, listenerAgain] = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
+  expect(reviewerAgain).toEqual(reviewer!);
+  expect(judgeAgain).toEqual(judge!);
+  expect(managerAgain!.assetId).not.toBe(manager!.assetId);
+  expect(listenerAgain!.assetId).not.toBe(listener!.assetId);
 });
 
 test("without code review's model the manager publishes with no code review, and setting it up later republishes the manager", async () => {
   const builds = [
     { workflow: "pr-code-review-reviewer-github", hash: "dddddddd", tree: chainTree("pr-code-review-reviewer-github", false) },
+    { workflow: "triage-judge-github", hash: "22222222", tree: chainTree("triage-judge-github", false) },
     { workflow: "triage-manager-github", hash: "eeeeeeee", tree: chainTree("triage-manager-github", true) },
     { workflow: "triage-listener-github", hash: "ffffffff", tree: chainTree("triage-listener-github", true) },
   ];
@@ -268,18 +276,22 @@ test("without code review's model the manager publishes with no code review, and
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "no-review") };
   const published = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
 
-  expect(published.map((row) => row.workflow)).toEqual(["triage-manager-github", "triage-listener-github"]);
-  expect(gitIn(`triage-manager-github-${OWNER}-eeeeeeee`, "show", "main:packages/triage-manager-github/release.json")).toBe("{}");
-  const [manager, listener] = published;
+  expect(published.map((row) => row.workflow)).toEqual(["triage-judge-github", "triage-manager-github", "triage-listener-github"]);
+  const [judge, manager, listener] = published;
   const assets = await hub.transport.fetch<Array<{ id: string; name: string }>>("GET", "/api/tenants/t/assets?kind=workflow");
+  const managerAsset = assets.find((asset) => asset.id === manager!.assetId)!.name;
+  expect(JSON.parse(gitIn(managerAsset, "show", "main:packages/triage-manager-github/release.json"))).toEqual({
+    github: { judge: { workflow: { assetId: judge!.assetId, commitSha: judge!.commitSha, packageName: "@corbits/triage-judge-github-workflow", entry: "./triage-judge-github.mjs" }, offerings: { ids: ["mof_decision"], defaultId: "mof_decision" } } },
+  });
   const listenerAsset = assets.find((asset) => asset.id === listener!.assetId)!.name;
   expect(JSON.parse(gitIn(listenerAsset, "show", "main:packages/triage-listener-github/release.json")).github.manager.workflow.assetId).toBe(manager!.assetId);
 
   Object.assign(offerings, OFFERINGS);
   const reviewed = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
-  expect(reviewed.map((row) => row.workflow)).toEqual(["pr-code-review-reviewer-github", "triage-manager-github", "triage-listener-github"]);
-  expect(reviewed[1]!.assetId).not.toBe(manager!.assetId);
-  expect(reviewed[2]!.assetId).not.toBe(listener!.assetId);
+  expect(reviewed.map((row) => row.workflow)).toEqual(["pr-code-review-reviewer-github", "triage-judge-github", "triage-manager-github", "triage-listener-github"]);
+  expect(reviewed[1]!.assetId).toBe(judge!.assetId);
+  expect(reviewed[2]!.assetId).not.toBe(manager!.assetId);
+  expect(reviewed[3]!.assetId).not.toBe(listener!.assetId);
 });
 
 test("two publishers of one release each get their own assets", async () => {

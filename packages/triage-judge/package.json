@@ -1,0 +1,31 @@
+{
+  "name": "@corbits/triage-judge",
+  "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "interchange": {
+    "workflow": "./src/triage-judge-github.ts",
+    "directors": "./src/directors.ts",
+    "actions": "./src/actions/index.ts",
+    "workflows": {
+      "triage-judge-github": "./src/triage-judge-github.ts",
+      "triage-judge-bitbucket-datacenter": "./src/triage-judge-bitbucket-datacenter.ts"
+    }
+  },
+  "dependencies": {
+    "@corbits/triage-contracts": "workspace:*",
+    "@corbits/triage-manager": "workspace:*",
+    "@corbits/triage-workflows": "workspace:*",
+    "@intx/agent": "workspace:*",
+    "@intx/types": "workspace:*",
+    "@intx/workflow": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "@intx/authz": "workspace:*",
+    "@intx/harness": "workspace:*"
+  }
+}
