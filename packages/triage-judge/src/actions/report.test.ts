@@ -9,7 +9,7 @@ const MAIL = {
   headers: { from: "run_manager@acme.test", to: ["run_judge@acme.test"] },
   parts: [{ contentType: "text/plain", text: JSON.stringify({ kind: "judge", tenantId: "tnt_acme", number: 8, checkout: CHECKOUT, rules: RULES, reply: REPLY }) }],
 };
-const VERDICT = { repo: "acme/widgets", number: 8, headSha: "h1", verdict: "pass", reasons: ["Every rule passed."], checks: [], request: { comment: "Ready." }, automatic: ["labels"], actions: [] };
+const VERDICT = { repo: "acme/widgets", number: 8, headSha: "h1", verdict: "pass", reasons: ["Every rule passed."], checks: [], request: { repo: "acme/widgets", number: 8, comment: "Ready." }, automatic: ["labels"], actions: [] };
 
 /** Each effect runs once against a hub that records its calls and records the result. */
 function hubContext() {

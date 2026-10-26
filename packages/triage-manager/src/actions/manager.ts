@@ -1,6 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
 import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, WAITING_KIND } from "@corbits/triage-contracts";
+import { decided } from "@corbits/triage-workflows/logic/settled";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
 export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "result?": "unknown" });
@@ -62,12 +63,12 @@ function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: 
   return reported;
 }
 
-/** The verdict a judge of `head` reported on an earlier pass, stored on its reviewer. */
+/** The decided verdict a judge of `head` reported on an earlier pass, stored on its reviewer. */
 function storedVerdict(reviewers: readonly Reviewer[], head: string): JudgeVerdict | undefined {
   for (const reviewer of reviewers) {
     if (reviewer.kind !== "judge" || reviewer.head !== head) continue;
     const verdict = JudgeVerdict(reviewer.result);
-    if (!(verdict instanceof type.errors)) return verdict;
+    if (!(verdict instanceof type.errors) && decided(verdict, head)) return verdict;
   }
   return undefined;
 }
@@ -125,14 +126,31 @@ function remembered(take: TakeOutput): Reviewer[] {
   });
 }
 
+/** The most one stored result takes of done's body, which the route caps at 1 MiB and holds a judge's and a review's. */
+const MAX_STORED_BYTES = 256 * 1024;
+
+function storable(reviewer: Reviewer): boolean {
+  return reviewer.result === undefined || Buffer.byteLength(JSON.stringify(reviewer.result)) <= MAX_STORED_BYTES;
+}
+
+/** A result a later pass on `head` posts as it is: a decided verdict, or a code review. */
+function lasting(reviewer: Reviewer, head: string): boolean {
+  if (reviewer.kind === "code-review") return !(CodeReviewOutput(reviewer.result) instanceof type.errors);
+  const verdict = JudgeVerdict(reviewer.result);
+  return reviewer.kind === "judge" && !(verdict instanceof type.errors) && decided(verdict, head);
+}
+
 /**
- * The reviewers of the pass's head, each with its result once it has one, so a later pass on that head posts what they
- * reported and deploys no other. Without a head, the settled ones are dropped once nothing is waiting. Plus one mailed now.
+ * The reviewers to wait for. A result stays on its reviewer while another of this head is still out, so a judge that
+ * reported before code review is not lost. Once nothing is waiting, only the lasting results of the pass's head stay, so
+ * a later pass on it posts them and deploys no other; a degraded, undecided, failed or late one is dropped, so the next
+ * event deploys its reviewer again. A result too large to store is dropped. Plus one mailed now.
  */
 function reviewersAfter(take: TakeOutput, mailed: Reviewer | undefined): Reviewer[] {
-  let current = remembered(take);
+  const { head } = take;
+  let current = remembered(take).filter(storable);
   const waiting = current.some((reviewer) => reviewer.result === undefined) || (mailed !== undefined && mailed.result === undefined);
-  if (!waiting && take.head === undefined) current = current.filter((reviewer) => reviewer.result === undefined);
+  if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined || (head !== undefined && lasting(reviewer, head)));
   return mailed ? [...current, mailed] : current;
 }
 

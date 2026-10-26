@@ -11,15 +11,16 @@ A workspace's listener and a pull request's manager.
   steps run on the newest mail the hub recorded for the head. A policy of only deterministic rules posts on that pass.
   One whose rules need the judge, or that asks for code review, posts once, after each of those has reported or given
   up. The next pass runs at once while an event is pending, or every 30 seconds while it waits for a reviewer. With a
-  published judge, a pass deploys [`@corbits/triage-judge`](../triage-judge) and mails it the rules output; the pass
-  that collects its report posts the judge's verdict as the judge made it, and so does every later pass on that head,
-  which deploys no other judge. With code review, a pass then deploys the review and mails it the head's
-  request; the pass that collects its report mirrors the verdict and posts the review together, and a later pass on
-  that head posts the stored review again without deploying another. A reviewer that could
-  not be mailed, failed or ran past its one-hour deadline leaves the verdict to go up alone; a judge the release does
-  not publish posts nothing. `done` stops a reviewer this run deployed that is on an older head or past its deadline.
-  The run's last step is its only end: it stops the run once `done` ends the pull request's claim, take is refused
-  because another run holds it, or the passes fail or run out.
+  published judge, a pass deploys [`@corbits/triage-judge`](../triage-judge) once the host's checks have finished and
+  mails it the rules output; while they run the head waits. The pass that collects its report posts the judge's
+  verdict as the judge made it while the rules still need the judge, and so does every later pass on that head once
+  the verdict is decided, deploying no other judge. With code review, a pass then deploys the review and mails it the
+  head's request; the pass that collects its report mirrors the verdict and posts the review together, and a later
+  pass on that head posts the stored review again without deploying another. A reviewer that could not be mailed,
+  failed or ran past its one-hour deadline leaves the verdict to go up alone and is deployed again on the next event;
+  a judge the release does not publish posts nothing. `done` stops a reviewer this run deployed that is on an older
+  head or past its deadline. The run's last step is its only end: it stops the run once `done` ends the pull
+  request's claim, take is refused because another run holds it, or the passes fail or run out.
 
 What each deploys next, a published workflow's source asset at one commit and the offerings it runs on (`Release`), is
 read per host from `src/release.json`, which the portal writes into each published tree and the bundle keeps external,

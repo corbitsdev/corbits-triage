@@ -1,4 +1,5 @@
 import { isRecord } from "@corbits/common";
+import { ciRefusal } from "@corbits/github-reads";
 import { hardFailures, NOT_A_DRAFT } from "@corbits/triage-contracts";
 import type { CheckResult } from "./checks.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR } from "./quality.js";
@@ -67,4 +68,17 @@ function modelUnanswered(verdict: VerdictFields, checks: Array<Record<string, un
 /** Only a verdict that settles its head with every model check answered runs Dos unattended. */
 export function decidesDos(verdict: VerdictFields): boolean {
   return unsettledBy(verdict).unsettled === undefined && !modelUnanswered(verdict, checksOf(verdict));
+}
+
+const PENDING_CI = `${ciRefusal("pending")}.`;
+
+/**
+ * A verdict made on `headSha` that nothing on the host can still change: it does not wait, settles its head with every
+ * model check answered, confirmed every machine check, CI included, and holds no Do for checks still running.
+ */
+export function decided(verdict: VerdictFields & { actions?: unknown }, headSha: string): boolean {
+  const actions = Array.isArray(verdict.actions) ? verdict.actions.filter(isRecord) : [];
+  return verdict.headSha === headSha && verdict.waiting !== true && decidesDos(verdict)
+    && !checksOf(verdict).some((check) => check["kind"] === "machine" && check["result"] === "unconfirmed")
+    && !actions.some((action) => action["reason"] === PENDING_CI);
 }

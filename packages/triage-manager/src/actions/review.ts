@@ -23,7 +23,7 @@ const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, eval
  * reported a failure or ran past its deadline posts the verdict alone. A later pass on a head whose review settled posts
  * again and deploys no other.
  */
-export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean }> {
+export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean; reviewed: boolean }> {
   const parsed = ScopeInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewScope: ${parsed.summary}`);
   const { taken, head, review, reviewFailed, reviewers } = parsed.take.output;
@@ -32,8 +32,8 @@ export async function reviewScope(input: unknown): Promise<{ deploy: boolean; po
   const published = publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") !== undefined;
   const own = reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);
   const settled = own.some((reviewer) => reviewer.result !== undefined || Date.parse(reviewer.deadline) <= Date.now());
-  if (!reviewed || !published || review || reviewFailed || settled || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true };
-  return { deploy: own.length === 0, post: false };
+  if (!reviewed || !published || review || reviewFailed || settled || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true, reviewed };
+  return { deploy: own.length === 0, post: false, reviewed };
 }
 
 const DeployInput = type({ payload: "unknown", take: { output: TakeOutput } });
@@ -70,7 +70,7 @@ export async function reviewMailed(input: unknown): Promise<{ reviewer?: Reviewe
   return mailed.mailed ? { reviewer: parsed.deployReview.output.reviewer, post: false } : { post: true };
 }
 
-const PostInput = type({ payload: "unknown", take: { output: TakeOutput } });
+const PostInput = type({ payload: "unknown", take: { output: TakeOutput }, reviewScope: { output: { reviewed: "boolean" } } });
 
 /** The review a code review of `head` reported on an earlier pass, stored on its reviewer. */
 function storedReview(reviewers: readonly Reviewer[], head: string): CodeReviewOutput | undefined {
@@ -83,15 +83,15 @@ function storedReview(reviewers: readonly Reviewer[], head: string): CodeReviewO
 }
 
 /**
- * Posts the code review reported on its head, on this pass or an earlier one, after the verdict; the host writes nothing
- * for a review already there.
+ * Posts the code review reported on its head after the verdict: this pass's, or one an earlier pass stored when this
+ * pass's rules still let code review past. The host writes nothing for a review already there.
  */
 export async function postReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ posted: boolean }> {
   const parsed = PostInput(input);
   if (parsed instanceof type.errors) throw new Error(`postReview: ${parsed.summary}`);
   const { head, taken, reviewers } = parsed.take.output;
   if (head === undefined || !taken) return { posted: false };
-  const review = parsed.take.output.review ?? storedReview(reviewers, head);
+  const review = parsed.take.output.review ?? (parsed.reviewScope.output.reviewed ? storedReview(reviewers, head) : undefined);
   if (!review) return { posted: false };
   const summary = codeReviewSummary(review);
   if (!summary && review.comments.length === 0) return { posted: false };

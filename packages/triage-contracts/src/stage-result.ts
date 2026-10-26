@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { VERDICTS } from "./check-pack.js";
 import { CodeReviewOutput } from "./code-review.js";
+import { REPO_SOURCES } from "./repo-source.js";
 
 /** The grant on a pull request's manager claim and events that the hub's manager routes require. */
 export const MANAGER_STATE_RESOURCE = "triage-manager:state";
@@ -20,9 +21,10 @@ export const JudgeVerdict = type({
   repo: "string",
   number: "number",
   headSha: "string | null",
+  "repoSource?": type.enumerated(...REPO_SOURCES),
   verdict: type.enumerated(...VERDICTS),
   checks: "object[]",
-  request: "object",
+  request: { repo: "string", number: "number" },
   automatic: "string[]",
   actions: "object[]",
 });

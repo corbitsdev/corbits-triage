@@ -535,6 +535,11 @@ function hostPending(c: CheckResult): boolean {
   return unsettledMachine(c) && c.output.kind === "could-not-check";
 }
 
+/** Whether a rule waits on the host's own checks, which the hub waits for unless it waits no longer (`noWait`). */
+export function hostChecksPending(det: Pick<DeterministicResult, "checks">, noWait: boolean | undefined): boolean {
+  return !noWait && det.checks.some(hostPending);
+}
+
 /** A labelling rule's result that labels and notes the pull request. */
 export function isLabelledFinding(c: CheckResult): boolean {
   return c.result === "fail" || unsure(c);
@@ -745,6 +750,8 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
   const waitsOnHost = !noWait && unconfirmed.length > 0 && unconfirmed.every(hostPending);
   if (evaluated.instructed) return unsureOf(INSTRUCTED_REASON);
+  // A judge held back for the host's checks has not decided anything yet, so the head waits for them.
+  if (judgeSkipped === true && hostChecksPending(det, noWait)) return waitingOf(null);
   if (!decidesByModel(det)) {
     if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
     if (waitsOnHost) return waitingOf(null);

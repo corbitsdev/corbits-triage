@@ -10,7 +10,10 @@ export interface Item {
   judgeError?: string;
   /** The quality evaluation exceeds the System One budget, so the judge is not asked and a human decides. */
   judgeLimitExceeded?: true;
-  /** A preview does not run the judge, so the checks it would answer wait on it and a human decides. */
+  /**
+   * A preview, or a manager holding its judge until the host's checks finish, does not run the judge: the checks it would
+   * answer wait on it, and the head waits for those checks or a human decides.
+   */
   judgeSkipped?: true;
   judged?: Judged;
   automatic?: ActionKind[];
