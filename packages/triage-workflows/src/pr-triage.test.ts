@@ -51,11 +51,11 @@ const RUNS: Record<Ci, unknown[]> = {
   success: [{ name: "build", status: "completed", conclusion: "success" }],
   failure: [{ name: "build", status: "completed", conclusion: "failure" }],
 };
-/** `stacked` is corbitsdev/corbits-code#1520's shape, with #9 to #13 merged into its branch and #14 closed unmerged; the branch is based on open #7's. */
+/** `stacked` bases the branch on open #7's; `merged` is corbitsdev/corbits-code#1520's shape, with #9 to #13 also merged into its branch and #14 closed unmerged. */
 /** `history` is the commit messages each changed file's recent history holds, or `unread` when GitHub fails to list them. */
-type GithubSeed = { history?: string[] | "unread"; missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: boolean; title?: string; body?: string; bodyHtml?: string; commits?: string[]; contents?: Record<string, string> };
+type GithubSeed = { history?: string[] | "unread"; missing?: boolean; unreadFiles?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean; stacked?: "onto" | "merged"; title?: string; body?: string; bodyHtml?: string; commits?: string[]; contents?: Record<string, string> };
 
-function fakeGithub({ history = [], missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked = false, title = "Fix #3", body, bodyHtml, commits = [], contents = {} }: GithubSeed = {}) {
+function fakeGithub({ history = [], missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked, title = "Fix #3", body, bodyHtml, commits = [], contents = {} }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
@@ -65,7 +65,7 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
     requests.push({ method, path });
     if (missing && path.includes("/pulls/8")) return Response.json({ message: "Not Found" }, { status: 404 });
     const base = stacked ? { ref: "parent", repo: { id: 1 } } : { ref: "main", repo: { id: 1 } };
-    if (stacked && path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix&per_page`)) return Response.json([9, 10, 11, 12, 13, 14].map((number) => ({ number, merged_at: number === 14 ? null : "2026-10-19T00:43:02Z", base: { ref: "fix" } })));
+    if (stacked === "merged" && path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix&per_page`)) return Response.json([9, 10, 11, 12, 13, 14].map((number) => ({ number, merged_at: number === 14 ? null : "2026-10-19T00:43:02Z", base: { ref: "fix" } })));
     if (stacked && path.startsWith(`/repos/${REPO}/pulls?state=open&head=acme%3Aparent&`)) return Response.json([{ number: 7, head: { ref: "parent", repo: { id: 1 } } }]);
     const content = Object.entries(contents).find(([file]) => path === `/repos/${REPO}/contents/${file}?ref=${pr.head}`);
     if (content) return new Response(content[1]);
@@ -411,8 +411,16 @@ describe("pr-triage body", () => {
     ]);
   });
 
-  test("a stacked branch skips focused, saying why, and the other rules run as usual", async () => {
-    const { judged, verdict } = await triage(recommendedPack(REPO), { stacked: true });
+  test("a branch based on another open pull request's is asked focused about its own changes, and the comment says what it is stacked on", async () => {
+    const { judged, verdict } = await triage(recommendedPack(REPO), { stacked: "onto" });
+    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toContain("focused");
+    expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.result).toBe("fail");
+    expect((verdict as Verdict).request.comment).toContain("Stacked on #7: only this pull request's own changes were checked.");
+    expect((verdict as Verdict).request.comment).not.toContain("Skipped:");
+  });
+
+  test("a branch other pull requests were merged into skips focused, saying why, and the other rules run as usual", async () => {
+    const { judged, verdict } = await triage(recommendedPack(REPO), { stacked: "merged" });
     const skipped = "stacked branch, based on #7, includes #9, #10, #11 and 2 more";
     expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001", "instructed"]]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "pass"], ["docs", "fail"]]);

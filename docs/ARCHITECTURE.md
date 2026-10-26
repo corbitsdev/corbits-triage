@@ -360,6 +360,13 @@ label off that head, so it never stands on a head not yet triaged.
    fix, bugfix, hotfix or revert (`fixes`); a history that fails, runs past
    one page or is past the 300 is kept as unread, which leaves only that rule
    unconfirmed.
+   With the focused rule on, it also reads the stack (`get_stack`): the pull
+   requests merged into the branch, and the open pull request whose branch it
+   is based on. The host lists a pull request's files against its base
+   branch, so one based on another open pull request's branch shows only its
+   own changes and focused runs on them, the comment noting what it is
+   stacked on. A branch other pull requests were merged into holds their
+   changes too, so focused is skipped and the comment says why.
 2. **rules**: runs the hard rules (built-in rules over host data, text
    rules and code-pattern rules) and, unless one failed or the pull request is a draft or closed,
    builds the judged rules' questions, or the verdict question when there are

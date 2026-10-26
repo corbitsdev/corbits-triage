@@ -177,7 +177,6 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     return toolName(stamp.repoSource, name);
   }
   const teams = namedTeams(pack, repo);
-  // Focused is skipped on a stacked branch, so only a pack that asks it reads the stack.
   const focused = catalogCheckEnabled(pack, "focused");
   const risk = catalogCheckEnabled(pack, "regression-risk");
   const listed = new Map<number, ListedFiles>();

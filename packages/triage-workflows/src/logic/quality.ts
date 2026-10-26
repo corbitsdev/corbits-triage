@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
-import type { DeterministicResult, PrFacts, PrFileFacts } from "./checks.js";
+import { holdsOthersChanges, type DeterministicResult, type PrFacts, type PrFileFacts } from "./checks.js";
 import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
 import { globMatch } from "./glob.js";
 import type { BooleanQuestion, ChoiceQuestion, ScoreQuestion } from "@corbits/system-one";
@@ -373,8 +373,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const changed = facts.files.filter((file) => file.status !== "removed" && isDocPath(file.path));
     plan.docs = { changed: changed.map((file) => file.path), asked: {}, unread: [] };
   }
-  // A stacked branch's diff holds the changes of the pull requests it includes, so focused is skipped rather than asked.
-  const focused: FocusedPlan | undefined = isFocused(sources) && !facts.stack ? { purpose: facts.title, slices: {}, unread: [], parts: {} } : undefined;
+  const focused: FocusedPlan | undefined = isFocused(sources) && !holdsOthersChanges(facts.stack) ? { purpose: facts.title, slices: {}, unread: [], parts: {} } : undefined;
   const scoped = sources.custom.filter(isScoped);
   for (const row of scoped) plan[row.id] = { changed: [], asked: {}, unread: [] };
   const listed = pathList(facts, focused !== undefined);
