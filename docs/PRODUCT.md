@@ -43,12 +43,14 @@ How to use the portal, screen by screen, is in the
   behind **Waiting**.
 - **Pulse**: what changed since your last visit and what is stuck.
 - **Repositories**: per repository, the triage switch and **Triage open pull
-  requests again**, its policy file read back as sentences, code review, the
-  actions Triage takes on its own, and outcomes before and after Triage.
+  requests again**, its policy file read back as sentences, where code review
+  runs when the server has no place for it (the policy file turns code review
+  on), the actions Triage takes on its own, and outcomes before and after
+  Triage.
 - **Settings**: Triage (sources, policy files, the decision model key, and
   one switch per action kind for every repository), Code review (the
   provider's key and where reviews run), people and invitations, the account,
-  and the deployed versions for support. Roles and grants change only through
+  and each host's listener version for support. Roles and grants change only through
   the hub routes.
 
 The portal shows the verdict, its score and the reasons. Evidence for a file

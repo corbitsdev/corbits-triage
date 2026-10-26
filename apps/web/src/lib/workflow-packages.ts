@@ -1,10 +1,7 @@
 import type { CodeReviewProvider, RepoSource } from "@corbits/triage-contracts";
 import type { DeclaredModel } from "./model-catalog.ts";
 
-/**
- * Triage deploys once its host is connected; code review deploys only while a repository of its host has it on; the PR
- * workflow, triage then code review, while a connected repository's policy file needs it and its provider's key is stored.
- */
+/** The workflows from before the listener, which the build still packs. */
 export type WorkflowKind = "triage" | "code-review" | "pr-workflow";
 
 /** `workspace` is the package under packages/ its source lives in; code review and the PR workflow have one per provider, and a workspace deploys its provider's. */

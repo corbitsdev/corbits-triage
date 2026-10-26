@@ -161,10 +161,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   policies, or null, and lists every place the hub's provisioner packages
   describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`, `RAILWAY_PLACE`) with the state the hub
   found at boot, for Settings → Code review. The hub's own machine is never
-  one. While it is null the switch and **Review again** refuse
-  (`no_isolated_place`), nothing is mailed, the host's code review
-  deployments are released, and the portal links Settings → Code review in
-  place of the switch.
+  one. While it is null **Review again** refuses (`no_isolated_place`),
+  nothing is mailed, and the repository page links Settings → Code review.
 - **Portal** (`apps/web`): owns setup. It writes the tenant, credentials and
   inference offerings over stock hub routes, and **Upgrade to new version**
   publishes the workflow sources and deploys the listeners. The hub seeds nothing for it. It is a wrapper over the
@@ -483,8 +481,9 @@ operation has one implementation.
 
 ## Code review pipeline
 
-`POST /api/integrations/code-review/{tenantId}` switches code review on per
-repository; it needs the host connected and a code review provider's key. A
+A repository's policy file turns code review on with its `code-review` block,
+and **Review again** asks for one whatever the file says; both need a code
+review provider's key. A
 workspace runs one provider, the one whose key it stores in Settings → Code
 review
 (`CODE_REVIEW_PROVIDERS` in `triage-contracts`; only Anthropic today). A

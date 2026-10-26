@@ -7,9 +7,8 @@ import { createSidecarPluginRegistry, type SidecarProvisioner } from "@intx/hub-
 import type { SidecarCapabilityDeclaration } from "@intx/types";
 import { DOCKER_PLACE, DOCKER_REMOTE_PLACE } from "@corbits/provisioner-docker";
 import { emptyPack, type CodeReviewPlace } from "@corbits/triage-contracts";
-import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
+import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun } from "./code-review.js";
 import { NoLiveDeploymentError } from "./github/deployment.js";
-import { repoRecords, triageNs } from "./github/tenant-config.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_review";
@@ -24,7 +23,7 @@ function provisioner(id: string, capabilities: SidecarCapabilityDeclaration[]): 
 const LOCAL = provisioner("local-process", []);
 const DOCKER = provisioner("docker", [{ capability: "isolation:workload", state: "available" }]);
 
-test("PostgreSQL: code review turns on only with an isolated place to run, the host connected and the Anthropic key stored, and the hosts it reviews follow it", async () => {
+test("PostgreSQL: code review runs again only with an isolated place to run and the Anthropic key stored", async () => {
   const database = `corbits_review_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
   await admin.db.execute(sql.raw(`create database ${database}`));
@@ -54,7 +53,7 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
       { guide: { ...DOCKER_PLACE, id: "unset" }, found: undefined },
     ];
     async function statesOf(tenantId: string, manages: boolean) {
-      const codeReviewPlace = createCodeReviewPlace({ authorize: async () => manages, place, probes, prWorkflowSources: async () => [] });
+      const codeReviewPlace = createCodeReviewPlace({ authorize: async () => manages, place, probes });
       const body = await (await codeReviewPlace({ tenantId, principalId: "prn_member" })).json() as CodeReviewPlace;
       return body.places.map(({ id, state, reason }) => ({ id, state, reason }));
     }
@@ -66,39 +65,6 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
     ]);
     expect((await statesOf(TENANT, false))[1]).toEqual({ id: "docker-remote", state: "failing", reason: undefined });
     expect((await statesOf("tnt_blocked", true))[0]?.state).toBe("ready");
-    const changed: string[] = [];
-    const setCodeReview = createCodeReviewSwitch({
-      db,
-      authorize: async () => true,
-      async onChanged(tenantId) {
-        changed.push(tenantId);
-      },
-      place,
-      inPrWorkflow: async (_tenantId, repo) => repo === "acme/decided",
-    });
-    async function answer(body: Parameters<typeof setCodeReview>[0]) {
-      const response = await setCodeReview(body, MEMBER);
-      return { status: response.status, body: await response.json() as { repo?: string; source?: string; codeReview?: boolean; error?: { code: string; message: string } } };
-    }
-
-    expect(await answer({ repo: "acme/widgets", enabled: true })).toEqual({
-      status: 409,
-      body: { error: { code: "anthropic_key_missing", message: "Save an Anthropic key in Settings before turning on code review." } },
-    });
-    await db.insert(schema.credential).values({ id: "crd_anthropic", tenantId: TENANT, principalId: null, providerId: "prv_anthropic", oauthClientId: null, name: "anthropic", type: "api_key", secret: "unused", status: "active" });
-    expect((await answer({ repo: "acme/decided", enabled: true })).body.error?.code).toBe("policy_file_decides");
-    const switchNowhere = createCodeReviewSwitch({ db, authorize: async () => true, onChanged: async () => {}, place: nowhere, inPrWorkflow: async () => false });
-    expect((await (await switchNowhere({ repo: "acme/widgets", enabled: true }, MEMBER)).json() as { error: { code: string } }).error.code).toBe("no_isolated_place");
-    expect((await answer({ repo: "TRI/widgets", source: "bitbucket-datacenter", enabled: true })).body.error?.code).toBe("source_not_connected");
-    expect((await answer({ repo: "acme/missing", enabled: true })).status).toBe(404);
-    expect((await answer({ repo: "acme/gone", enabled: true })).body.error?.code).toBe("repo_not_connected");
-    expect(await answer({ repo: "acme/widgets", enabled: true })).toEqual({ status: 200, body: { repo: "acme/widgets", source: "github", codeReview: true } });
-
-    expect((await answer({ repo: "acme/widgets", enabled: false })).body.codeReview).toBe(false);
-    const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, TENANT) });
-    expect(repoRecords(triageNs(tenant?.config)).map((record) => [record.name, record.codeReview])).toEqual([["acme/widgets", false], ["TRI/widgets", undefined], ["acme/gone", undefined]]);
-    expect(changed).toEqual([TENANT, TENANT]);
-
     await db.update(schema.tenant).set({ config: { corbitsTriage: { repos: repos.map((record) => ({ ...record, enabled: true })) } } }).where(eq(schema.tenant.id, TENANT));
     const heads: Array<{ open: boolean; draft: boolean } | Error> = [{ open: true, draft: false }, { open: true, draft: true }, { open: false, draft: false }, new Error("github GET /repos/acme/widgets/pulls/7 -> 404")];
     const sent: unknown[] = [];
@@ -124,6 +90,8 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
       const response = await runner({ repo, number: 7 }, MEMBER);
       return [response.status, ((await response.json()) as { status?: string; error?: { code: string } }).error?.code ?? "queued"];
     }
+    expect(await run("acme/widgets")).toEqual([409, "anthropic_key_missing"]);
+    await db.insert(schema.credential).values({ id: "crd_anthropic", tenantId: TENANT, principalId: null, providerId: "prv_anthropic", oauthClientId: null, name: "anthropic", type: "api_key", secret: "unused", status: "active" });
     expect(await run("acme/missing")).toEqual([404, "repo_not_found"]);
     expect(await run("acme/widgets")).toEqual([202, "queued"]);
     expect(sent).toEqual([expect.objectContaining({ kind: "pr", prNumber: 7, headSha: "sha1", noWait: true, codeReview: { on: true, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "any", again: expect.any(String) } })]);

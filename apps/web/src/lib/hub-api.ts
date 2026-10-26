@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -66,7 +66,6 @@ export type RepoRecord = {
   installationUrl?: string;
   selection?: "all" | "selected";
   enabled?: boolean;
-  codeReview?: boolean;
   checks?: RepoCheckFlags;
   checkPack?: { name: string; id?: string };
 };
@@ -321,7 +320,6 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
     const account = (row as { account?: unknown }).account;
     const installationUrl = (row as { installationUrl?: unknown }).installationUrl;
     const selection = (row as { selection?: unknown }).selection;
-    const codeReview = (row as { codeReview?: unknown }).codeReview;
     const source = repoSourceOf((row as { source?: unknown }).source);
     parsed.push({
       name,
@@ -332,7 +330,6 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
       ...(typeof account === "string" ? { account } : {}),
       ...(typeof installationUrl === "string" ? { installationUrl } : {}),
       ...(selection === "all" || selection === "selected" ? { selection } : {}),
-      ...(codeReview === true && { codeReview }),
     });
   }
   return parsed;
@@ -890,11 +887,6 @@ export async function latestCodeReview(transport: Transport, tenantId: string, r
 
 export async function reviewAgain(transport: Transport, tenantId: string, repo: Pick<RepoRecord, "name" | "source">, number: number): Promise<void> {
   await transport.fetch("POST", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}/run`, { repo: validateRepo(repo.name), source: repo.source, number });
-}
-
-/** The provider the workspace runs code review on: the one whose key it stores in Settings → Code review. */
-export function codeReviewProvider(credentials: readonly HubCredential[]): CodeReviewProvider | undefined {
-  return codeReviewProviderOf(credentials.filter(isActiveCredential).map((credential) => credential.name));
 }
 
 export type OpenPulls = {

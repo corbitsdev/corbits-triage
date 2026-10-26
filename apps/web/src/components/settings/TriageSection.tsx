@@ -17,9 +17,9 @@ import { KeyRow } from "./KeyRow.tsx";
 import { PolicyFiles } from "./PolicyFiles.tsx";
 import { TriageUpgrade } from "./TriageUpgrade.tsx";
 
-/** The connected hosts with neither a listener up nor a pr-triage workflow deployed. */
+/** The connected hosts without a listener up. */
 function undeployedSources(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): RepoSource[] {
-  return sources.filter((source) => currentDeployment(deployments, TRIAGE_LISTENERS[source])?.live !== true && currentDeployment(deployments, `pr-triage-${source}`) === undefined);
+  return sources.filter((source) => currentDeployment(deployments, TRIAGE_LISTENERS[source])?.live !== true);
 }
 
 type Status = { sources: RepoSource[]; undeployed: RepoSource[]; model: boolean; triaging: number; total: number };

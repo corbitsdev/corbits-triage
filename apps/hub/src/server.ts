@@ -58,7 +58,7 @@ import { codeReviewWorkflowFor, connectedSources, createHostRelease, TRIAGE_WORK
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
-import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
+import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun } from "./code-review.js";
 import { createPullRequestReader } from "./pull-request-reader.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
@@ -105,15 +105,14 @@ import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, creat
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved, type TriageJob } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs } from "./github/tenant-config.js";
+import { prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead } from "@corbits/github-tool";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 
-// Per host: a workspace deploys a host's workflow and tools once that host's credential exists; pr-triage-historical
-// reads GitHub only. A workspace with both hosts runs both pr-triage workflows. A host's code review deploys while a
-// repository of it has code review on.
+// Per host, the workflows from before the listener that the hub still names, and the tools a workspace runs once that
+// host's credential exists.
 function variantsOf(source: RepoSource) {
   return PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === source).map((variant) => ({ address: variant.id, id: variant.id }));
 }
@@ -456,9 +455,6 @@ async function sendToListener(tenantId: string, payload: unknown): Promise<void>
   if (!(await toListener(tenantId, payload))) throw new TriageStoppedError(repoSourceOf(asRecord(payload)?.["repoSource"]));
 }
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
-async function codeReviewPlaced(tenantId: string): Promise<boolean> {
-  return (await placeCodeReview(tenantId)) !== null;
-}
 const pauseGate = createPauseGate({ readHead: pullRequests.head, log: logJson });
 const tenantSources = { ...credentialDeps, githubApiOrigin: githubOrigin, tenantBitbucket };
 const tenantOpenPrs = keptOpenPrs(createTenantOpenPrs(tenantSources), repoReads);
@@ -489,21 +485,6 @@ function chosenFileRefusal(tenantId: string, repo: string, source: RepoSource, p
 }
 async function readCheckPack(tenantId: string, repo: string, source: RepoSource) {
   return (await settleRepoPolicy(tenantId, repo, source)).read;
-}
-/** Whether the repository's policy file decides code review. */
-async function inPrWorkflow(tenantId: string, repo: string, source: RepoSource): Promise<boolean> {
-  const read = await readCheckPack(tenantId, repo, source);
-  return read.status === "ok" && read.policyWorkflow !== undefined;
-}
-/** The hosts with a connected repository whose policy file decides code review, while code review has a place to run. */
-async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
-  if (!(await codeReviewPlaced(tenantId))) return [];
-  const tenant = await composition.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
-  const sources = new Set<RepoSource>();
-  for (const record of repoRecords(triageNs(tenant?.config)).filter((row) => row.connected)) {
-    if (await inPrWorkflow(tenantId, record.name, sourceOf(record))) sources.add(sourceOf(record));
-  }
-  return [...sources];
 }
 /** A push that lands a file matching the saved rules retires them now, so an edit after it is not taken for a difference. */
 async function refreshPolicyFile(tenantId: string, repo: string, source: RepoSource) {
@@ -785,8 +766,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
       return deploymentUp(composition.db, anchorRunId);
     },
   }),
-  codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview, inPrWorkflow }),
-  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, prWorkflowSources, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
+  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, place: placeCodeReview, readCheckPack, readHead: pullRequests.head, send: sendToListener }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({
