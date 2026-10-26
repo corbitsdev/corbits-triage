@@ -115,10 +115,10 @@ function passOf(id: string, sources: Sources) {
 /**
  * A pull request's manager under `id`, also its mail address, for the given hosts: the only workflow that writes to the
  * pull request, one live run per pull request, which runs only while it has work. A mail wakes it to run passes until
- * done ends the claim, when the run stops itself, or another run holds the claim. When the host's release publishes a
- * code review or a judge, each runs as its own deployment, which reports back; `codeReview` and `judge`, the ones
- * published as the definition loads, name the assets it declares the grants to deploy. Mail comes from the hub, the
- * listener that deployed it, and the judge and the reviews it mailed.
+ * done ends the claim or another run holds the claim, after which its last step stops it. When the host's release
+ * publishes a code review or a judge, each runs as its own deployment, which reports back; `codeReview` and `judge`, the
+ * ones published as the definition loads, name the assets it declares the grants to deploy. Mail comes from the hub,
+ * the listener that deployed it, and the judge and the reviews it mailed.
  */
 export function triageManager({ id, sources, codeReview, judge }: { id: string; sources: Sources; codeReview: Release | undefined; judge?: Release }) {
   const perMail = defineWorkflow({
@@ -134,7 +134,7 @@ export function triageManager({ id, sources, codeReview, judge }: { id: string; 
         onExhausted: "exhausted",
       }),
       // Stock prunes a loop's onExhausted when the loop converges; stop joins both branches so it runs once on every outcome.
-      exhausted: sleep({ duration: 0, after: ["passes"] }),
+      exhausted: sleep({ duration: 0, drainBehavior: "wait", after: ["passes"] }),
       // The run's only end, its last step, so a manager that cannot finish never keeps the claim and no step runs after it.
       stop: hubAction("stop", { from: "trigger.payload" }, ["passes", "exhausted"]),
     },

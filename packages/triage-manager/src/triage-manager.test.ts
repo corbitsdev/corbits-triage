@@ -204,6 +204,14 @@ describe("triage-manager", () => {
     expect(live.calls).toEqual([TAKE, DONE, TAKE, DONE, END]);
   });
 
+  test("passes that run out are stopped once, by the run's last step", async () => {
+    const { host } = githubHost();
+    const passes = 280;
+    const hub = fakeHub({ takes: Array.from({ length: passes }, () => IDLE), dones: Array.from({ length: passes }, () => MORE) });
+    expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes });
+    expect(hub.calls.filter((call) => call.method === "DELETE")).toEqual([END]);
+  }, 120_000);
+
   test("the verdict's automatic Dos run after its mirror, as pr-triage runs them", async () => {
     const { writes, host } = githubHost();
     const welcome: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: [{ do: "comment", target: { body: "Welcome" } }] } };
