@@ -398,11 +398,14 @@ function carries(review: any, marker: string): boolean {
   return typeof review.body === "string" && review.body.includes(marker);
 }
 
-/** `login` names the App's bot account, as only the App's marked reviews are triage's own. */
+/**
+ * `login` names the App's bot account, as only the App's marked reviews are triage's own; without it, as with a job
+ * token, a marked review from any App account is.
+ */
 export async function getReviews(gh: GithubFetch, repo: string, number: number, login?: string): Promise<Review[]> {
   const reviews = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
   function reviewOf(v: any): Review {
-    const own = login !== undefined && v.user?.login === login;
+    const own = login === undefined ? v.user?.type === "Bot" : v.user?.login === login;
     return {
       reviewer: v.user?.login,
       state: v.state,

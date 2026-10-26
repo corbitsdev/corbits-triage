@@ -645,7 +645,10 @@ revoked ones.
 Hub routes that reach GitHub for the portal sign with the App key on the hub.
 Each GitHub mail names the App's bot account (`<slug>[bot]`, the slug GitHub
 answers for `GET /app`, refreshed on every renewal) as `appLogin`, and only
-that account's comments and reviews are triage's own. Routes that read the host check the caller's `read`
+that account's comments and reviews are triage's own. Reads without a login (the
+policy check Action, the extension and the local CLI check) take a marked review
+from any App account as triage's own, so another App on the repository could mark
+its review that way. Routes that read the host check the caller's `read`
 (or `use`) grant on `github` and never return a secret; routes that write
 check `use`. A pull request action of a kind triage can run also checks
 `invoke` on `triage-do:<kind>:<owner>/<name>` (the repository name in

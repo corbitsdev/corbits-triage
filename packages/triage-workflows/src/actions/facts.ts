@@ -434,7 +434,7 @@ async function fetchHistory(read: Host, repo: string, limit: number): Promise<Fa
 export async function readFacts(input: unknown, hostFor: (source: RepoSource) => HostCall): Promise<FactsOutput> {
   const { request, trusted } = trustedRequestOf(input);
   const repo = request?.repo;
-  // Only the hub's mail names whose reviews are triage's own, so no other mail can pass a person's off as triage's.
+  // Only the hub's mail names the App's account; without it a marked review from any App account is triage's own, never a person's.
   const appLogin = trusted && typeof request?.appLogin === "string" ? { appLogin: request.appLogin } : {};
   if (request?.kind === "history") {
     const limit = request.limit ?? HISTORY_LIMIT;
