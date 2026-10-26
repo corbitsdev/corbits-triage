@@ -1,7 +1,8 @@
 // Brings every open pull request on an enabled repository to a triaged head
 // without relying on any webhook, sidecar or portal visit having survived:
 // reads GitHub's open pull requests, the live deployments' run logs and the
-// stored state, then queues what the plan says, each head to a worker of its own.
+// stored state, then queues what the plan says, each head to a worker of its own,
+// or to the host's listener while one is live.
 // A head waiting for CI is released here once its CI finished or its wait ran
 // out, on hosts and pull requests whose CI results send no webhook.
 import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
@@ -43,6 +44,11 @@ export type TriageReconcilerDeps = {
   rotationKey: string;
   tenants: () => Promise<ReconcileTenant[]>;
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
+  /**
+   * The host's live listener, whose managers run its pull requests: the pass then needs no pr-triage deployment, and
+   * neither rotates nor heals one. A listener names no workflow version, so no head starts over for one.
+   */
+  listener: (tenantId: string) => Promise<LiveDeployment | null>;
   latestDeployments: (tenantId: string, limit: number) => Promise<DeploymentRecord[]>;
   rotation: DeploymentRotation;
   /** Undefined when the tenant holds no credential for any pull request host. */
@@ -457,8 +463,9 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const repos = enabledRepos(tenant.config, deps.source);
     if (repos.length === 0) return false;
     // Only live deployments' and recent workers' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
+    const listener = await deps.listener(tenant.id);
     const { deployments, observed, workers } = await deps.observeTenant(tenant.id, tenant.domain);
-    if (deployments.length === 0) {
+    if (!listener && deployments.length === 0) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
       return heal(tenant.id);
     }
@@ -475,11 +482,13 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       return false;
     }
     const runs = mergeObservedRuns([...observed, ...workers]);
-    let deployment = newestLive(deployments);
-    try {
-      deployment = await route(tenant, deployments, observed);
-    } catch (err) {
-      deps.log({ level: "error", msg: "triage_rotation_failed", tenantId: tenant.id, error: String(err) });
+    let deployment = listener ?? newestLive(deployments);
+    if (!listener) {
+      try {
+        deployment = await route(tenant, deployments, observed);
+      } catch (err) {
+        deps.log({ level: "error", msg: "triage_rotation_failed", tenantId: tenant.id, error: String(err) });
+      }
     }
     if (!deployment) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });

@@ -188,6 +188,8 @@ type HarnessOptions = {
   rotateAfterRuns?: number;
   now?: () => Date;
   deployments?: LiveDeployment[];
+  /** The host's live listener. */
+  listener?: LiveDeployment;
   whileRedeploying?: (deployments: LiveDeployment[]) => void;
   rotation?: RotationRecord;
   sameSource?: boolean;
@@ -259,6 +261,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       return [tenant()];
     },
     liveDeployments,
+    listener: async () => options.listener ?? null,
     latestDeployments: async () => [],
     rotation: {
       afterRuns: options.rotateAfterRuns ?? 1_000,
@@ -347,6 +350,12 @@ function rotationLogs(logged: ReadonlyArray<Record<string, unknown>>): unknown[]
 }
 
 describe("triage reconciler", () => {
+  test("a host whose listener is live is caught up with no pr-triage deployment", async () => {
+    const run = harness({}, [head(1)], { deployments: [], listener: deployment("run_listener", new Date(LONG_AGO)) });
+    await run.reconcile();
+    expect(mailedNumbers(run.delivered)).toEqual([1]);
+  });
+
   test("a host without build webhooks: a head whose verdict waits on CI is queued again once its builds stop pending", async () => {
     const waiting = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }] };
     const logs: Logs = { [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(waiting), completed] } };

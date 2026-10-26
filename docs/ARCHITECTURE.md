@@ -88,7 +88,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     workflow version and decision-model offering. It also replaces a pr-triage
     deployment once its run log grows past `TRIAGE_ROTATE_AFTER_RUNS`, and
     redeploys one Interchange failed, after two minutes and at most three
-    times an hour.
+    times an hour. While the host's listener is live, a pass needs no
+    pr-triage deployment, neither replaces nor redeploys one, carries no
+    answers, and mails its heads through the manager intake.
   - **Coordinator**: every triage mail (webhook, retry, reconciler) and every
     code review mail is a job in one in-memory queue keyed per lane (triage or
     code review), host and pull request. Each job runs in a worker deployment

@@ -73,6 +73,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
     pullHead: async (_tenantId, _record, number) => (number === 8 ? "abc123" : undefined),
     readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
     liveDeployments: async () => [ANCHOR],
+    listener: async () => undefined,
     observeRuns: observed([]),
     managerRuns: async () => ({ byRepo: new Map(), runCount: 0, verdicts: [], approved: [] }),
     store: stored([], s.saved),
@@ -164,6 +165,17 @@ describe("createGithubPrTriage", () => {
     expect(s.delivered).toEqual([]);
     expect((await handler(ENABLED, s, { observeRuns: observed([stuck]) })(request(), MEMBER)).status).toBe(202);
     expect(s.delivered).toHaveLength(1);
+  });
+
+  test("with the host's listener live, mails with no pr-triage deployment and refuses a pull request whose manager is up", async () => {
+    const s = stub();
+    const listening: Partial<GithubPrTriageDeps> = { listener: async () => "listener-1@tenant.example", liveDeployments: async () => [] };
+    expect((await handler(ENABLED, s, listening)(request(), MEMBER)).status).toBe(202);
+    expect(s.delivered).toHaveLength(1);
+    const managed = stub();
+    const running: ObservedRun = { runId: "run-manager", source: "github", status: "running", startedAt: NOW.toISOString() };
+    await refused(await handler(ENABLED, managed, { ...listening, managerRuns: observed([running]) })(request(), MEMBER), 409, "already_running");
+    expect(managed.delivered).toEqual([]);
   });
 
   test("refuses a head still running on a replaced deployment or stored as running, but not one stored running past the stuck time", async () => {

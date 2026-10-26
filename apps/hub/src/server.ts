@@ -654,6 +654,9 @@ function triageStack(triage: TriageWorkflow) {
     rotationKey: triage.rotationKey,
     tenants: reconcileTenants,
     liveDeployments,
+    listener: function liveTriageListener(tenantId) {
+      return resolveLiveDeployment(composition.db, tenantId, TRIAGE_LISTENERS[triage.source]);
+    },
     headChecks: tenantHeadChecks,
     verdicts: verdictRecordStore,
     latestDeployments: function latestTriageDeployments(tenantId, limit) {
@@ -718,6 +721,7 @@ const githubPrTriage = createGithubPrTriage({
   },
   readCheckPack,
   liveDeployments: liveTriageDeployments,
+  listener: liveListener,
   observeRuns: observeTriageRuns,
   managerRuns,
   store: triageStateStore,
