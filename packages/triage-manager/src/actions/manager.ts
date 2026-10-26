@@ -62,16 +62,17 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   if (answer === undefined) return { ...nothing, refused: true, reviewers: [] };
   const { request, reviewers } = answer;
   const head = answer.outcome === "pass" ? answer.pass.head : request?.["headSha"];
-  if (!request || typeof head !== "string") return { ...nothing, reviewers };
+  if (typeof head !== "string") return { ...nothing, reviewers };
   const events = answer.outcome === "pass" ? answer.events : [];
   const mails = events.filter(({ event }) => event.type === "webhook").map(({ event }) => event);
   const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
   const report = reportOf(events, head, reviewers);
   const overdue = !report.review && !report.reviewFailed && reviewers.some((reviewer) => isOwnReview(reviewer, head) && Date.parse(reviewer.deadline) <= Date.now());
-  const triage = forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || overdue;
+  // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage.
+  const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || overdue);
   const taken = forHead?.payload["kind"] === WAITING_KIND ? forHead.payload : request;
-  return { run: answer.outcome === "pass" || overdue, approvals, triage, taken, head, ...report, overdue, reviewers };
+  return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, overdue, reviewers };
 }
 
 const DoneInput = type({ payload: "unknown", take: { output: TakeOutput }, "reviewMailed?": { output: { "reviewer?": Reviewer } } });

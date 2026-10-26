@@ -123,9 +123,17 @@ function eventsOf(rows: readonly { key: string; state: unknown }[]): TakenEvent[
 }
 
 /** The newest webhook's head; with none taken, the head the last pass ran on, which a reviewer result must name. */
-/** A held Do's approval names the head it was held on, which a newer push may have moved past, so it never names the pass's head. */
-function headOf(taken: readonly TakenEvent[], claim: Claim): string | undefined {
-  return taken.findLast((row) => row.event.type === "webhook" && row.event.payload["kind"] !== APPROVE_DO_KIND)?.event.head ?? claim.history.at(-1)?.head;
+/**
+ * The head a pass over `taken` works on, or undefined when there is none or none of them is usable yet: the newest mail's, else the head
+ * the last pass ran on, else an approval's. A held Do's approval names the head it was held on, which a newer push may
+ * have moved past, so it names the pass's head only when nothing else does; its execute checks the current head. A
+ * reviewer result alone, before any pass, has no head to be judged against and stays pending. Take and done share it,
+ * so done never waits on events take would leave pending.
+ */
+function passHeadOf(taken: readonly TakenEvent[], history: Claim["history"]): string | undefined {
+  if (taken.length === 0) return undefined;
+  const mails = taken.filter((row) => row.event.type === "webhook");
+  return mails.findLast((row) => row.event.payload["kind"] !== APPROVE_DO_KIND)?.event.head ?? history.at(-1)?.head ?? mails.at(-1)?.event.head;
 }
 
 /** Records the event under its delivery id; false when it was recorded before, as on a redelivery. */
@@ -197,9 +205,8 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
       .where(pending(tenantId, pr))
       .for("update", { skipLocked: true });
     const taken = eventsOf(rows);
-    const head = headOf(taken, claim);
-    // Reviewer results before any pass have no head to be judged against yet, so they stay pending.
-    if (taken.length === 0 || head === undefined) return { outcome: "idle", ...(await latest(tx, tenantId, pr, claim)) };
+    const head = passHeadOf(taken, claim.history);
+    if (head === undefined) return { outcome: "idle", ...(await latest(tx, tenantId, pr, claim)) };
     const id = randomUUID();
     const takenAt = new Date().toISOString();
     await tx.update(managerState)
@@ -228,7 +235,8 @@ export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     const history = claim.pass ? [...claim.history, { ...claim.pass, runId, doneAt: now.toISOString() }] : claim.history;
     const head = history.at(-1)?.head;
     const due = recorded.some((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime());
-    const waiting = (await tx.select({ key: managerState.key }).from(managerState).where(pending(tenantId, pr)).limit(1)).length > 0;
+    const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState).where(pending(tenantId, pr));
+    const waiting = passHeadOf(eventsOf(rows), history) !== undefined;
     const closed = { claimId: claim.claimId, claimedAt: claim.claimedAt, reviewers: recorded, history, starts: claim.starts };
     if (due || waiting) {
       await writeClaim(tx, tenantId, pr, { ...closed, status: "live", runId });

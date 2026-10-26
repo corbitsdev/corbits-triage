@@ -730,8 +730,10 @@ read it, and passes the rest of the request to stock.
   (`evt:<source>:<repo>#<n>:<deliveryId>`), each change one short
   transaction. Recording an event is a no-op on a redelivery; the database
   stamps `receivedAt` to the microsecond as it inserts the row, so events
-  sort in the order they were recorded. A held Do's approval never names the
-  pass's head. Take claims
+  sort in the order they were recorded. A held Do's approval names the
+  pass's head only when no mail or earlier pass does, so approvals alone on a
+  fresh claim are a pass; a reviewer result alone before any pass has no head
+  and stays pending, and done waits only on events take can use. Take claims
   the pull request for the calling run when no live run holds it: the
   claim is missing or ended, or the run it names has gone, whose open pass
   the caller resumes. Concurrent takes queue on the claim's row lock, so one

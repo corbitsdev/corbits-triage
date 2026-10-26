@@ -154,6 +154,24 @@ test.each([["after"], ["before"]])("PostgreSQL: an approval for an older head re
   });
 }, 120_000);
 
+test("PostgreSQL: on a fresh claim an approval alone is a pass, and done then ends the claim", async () => {
+  await withDatabase(async function approvalOnly(db) {
+    await recordEvent(db, TENANT, GITHUB, "a1", { type: "webhook", head: "h1", payload: { kind: "approve-do", step: { headSha: "h1" } } });
+    await startManager(db, GITHUB, "run_a");
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1", events: ["evt:github:acme/widgets#7:a1"] } });
+    expect(await done(db, TENANT, GITHUB, "run_a", [])).toEqual({ outcome: "ended" });
+  });
+}, 120_000);
+
+test("PostgreSQL: done does not wait on a reviewer result take leaves pending for want of a head", async () => {
+  await withDatabase(async function headless(db) {
+    await recordEvent(db, TENANT, GITHUB, "r1", { type: "reviewer-result", head: "h1", payload: { verdict: "pass" } });
+    await startManager(db, GITHUB, "run_a");
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "idle" });
+    expect(await done(db, TENANT, GITHUB, "run_a", [])).toEqual({ outcome: "ended" });
+  });
+}, 120_000);
+
 test("PostgreSQL: a take finds the claim's run gone, takes the claim over and resumes its open pass", async () => {
   await withDatabase(async function takeover(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));

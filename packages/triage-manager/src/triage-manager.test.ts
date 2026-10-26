@@ -156,6 +156,19 @@ const STAGE_1 = ["approvals", "done", "evaluateRules", "executeRules", "facts", 
 const READY = { method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: ["Triage: Ready"] } };
 const POSTED_REVIEW = expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/pulls/${PR.number}/reviews` });
 
+/** A Do the verdict on the fixture's head holds for approval, and the hub's mail approving it. */
+async function heldApproval() {
+  const hi = [{ do: "comment" as const, target: { body: "hi" } }];
+  const held: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: hi } };
+  const automatic = ACTION_KINDS.filter((kind) => kind !== "comment");
+  const hub = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, hubRequest(held, {}, automatic))], request: hubRequest(held, {}, automatic) }], dones: [ENDED] });
+  const verdict = (await runMail(github, wake(), githubHost().host, hub.hub)).outputs["evaluateRules"] as { request: unknown; headSha: string; actions: { list: string; index: number; effectId: string; kind: string; target: unknown }[] };
+  const [step] = verdict.actions;
+  if (step?.kind !== "comment") throw new Error("the verdict holds no comment");
+  const approval = { kind: APPROVE_DO_KIND, runId: "run_old", principalId: "prn_ann", list: step.list, index: step.index, request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha, kind: step.kind, target: step.target }, appLogin: REQUEST["appLogin"] };
+  return { approval, effectId: step.effectId, held, automatic };
+}
+
 describe("triage-manager", () => {
   test.each([["new", PASS], ["resumed", RESUMED]])("a %s pass runs stage 1 on the mail the hub recorded, and the run stops itself when done ends its claim", async (_name, pass) => {
     const { writes, host } = githubHost();
@@ -211,16 +224,21 @@ describe("triage-manager", () => {
     expect(writes).toEqual([]);
   });
 
+  test("a pass of an approval alone, before any pull request mail was recorded, runs it and triages nothing", async () => {
+    const { approval, effectId } = await heldApproval();
+    const { writes, host } = githubHost();
+    const hub = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, approval, "evt_approval")], request: undefined }], dones: [ENDED] });
+    const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
+    expect(ran).toEqual(["approvals", "done", "paused", "ran", "take", "triaged"]);
+    expect(outputs["approvals"]).toEqual({ results: [{ dos: [expect.objectContaining({ effectId, status: "done" })] }] });
+    expect(writes).toEqual([expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringMatching(/\nhi$/) } })]);
+    expect(hub.calls).toEqual([TAKE, DONE, END]);
+  });
+
   test.each([["after"], ["before"]])("an approval for an older head arriving %s a push runs as pr-triage runs a stale one, and triage runs on the push", async (order) => {
     const NEWER = "0e0e".repeat(10);
-    const hi = [{ do: "comment" as const, target: { body: "hi" } }];
-    const held: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: hi } };
-    const automatic = ACTION_KINDS.filter((kind) => kind !== "comment");
-    const first = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, hubRequest(held, {}, automatic))], request: hubRequest(held, {}, automatic) }], dones: [ENDED] });
-    const verdict = (await runMail(github, wake(), githubHost().host, first.hub)).outputs["evaluateRules"] as { request: unknown; headSha: string; actions: { list: string; index: number; effectId: string; kind: string; target: unknown }[] };
-    const [step] = verdict.actions;
-    expect(step).toMatchObject({ kind: "comment" });
-    const approval = { kind: APPROVE_DO_KIND, runId: "run_old", principalId: "prn_ann", list: step!.list, index: step!.index, request: verdict.request, step: { effectId: step!.effectId, headSha: verdict.headSha, kind: step!.kind, target: step!.target }, appLogin: REQUEST["appLogin"] };
+    const { approval, effectId, held, automatic } = await heldApproval();
+    const step = { effectId };
 
     const { writes, host } = githubHost(NEWER);
     const pushed = { ...hubRequest(held, {}, automatic), headSha: NEWER };
@@ -229,7 +247,7 @@ describe("triage-manager", () => {
     const hub = fakeHub({ takes: [{ ...PASS, pass: { ...PASS.pass, head: NEWER }, events: order === "after" ? [push, approved] : [approved, push], request: pushed }], dones: [ENDED] });
     const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
     expect(ran).toContain("facts");
-    expect(outputs["approvals"]).toEqual({ results: [{ dos: [expect.objectContaining({ effectId: step!.effectId, status: "skipped", error: expect.stringContaining("new commits since this verdict") })] }] });
+    expect(outputs["approvals"]).toEqual({ results: [{ dos: [expect.objectContaining({ effectId: step.effectId, status: "skipped", error: expect.stringContaining("new commits since this verdict") })] }] });
     expect(writes.filter((write) => JSON.stringify(write.body).includes("\"hi\""))).toEqual([]);
   });
 
