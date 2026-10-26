@@ -21,6 +21,13 @@ export const UNVERIFIED_FINDING = "Not checked against the file";
 export const CodeReviewComment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", "priority?": "number", "quoted?": "string", "unverified?": "true" });
 export type CodeReviewComment = typeof CodeReviewComment.infer;
 
+/** A diff cut to its first `lines` of `of` lines for size, with the files it cut part-way or left out. */
+export const DiffCut = type({ lines: "number", of: "number", "unread?": "string[]" });
+
+/** What a code review run answers: its summary, its findings, whether its reader stopped early and how its diff was cut. */
+export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), budgetExhausted: "boolean", "cut?": DiffCut });
+export type CodeReviewOutput = typeof CodeReviewOutput.infer;
+
 /** A finding's title as people read it, after its priority when it has one. */
 export function findingTitle({ title, priority }: Pick<CodeReviewComment, "title" | "priority">): string {
   return priority === undefined ? title : `P${priority} · ${title}`;

@@ -12,6 +12,7 @@
     "@corbits/github-tool": "workspace:*",
     "@corbits/repo-read-tool": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
+    "@corbits/triage-manager": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/log": "workspace:*",
     "@intx/types": "workspace:*",

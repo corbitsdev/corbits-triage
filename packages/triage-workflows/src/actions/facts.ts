@@ -1,7 +1,7 @@
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, triggerRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, trustedRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
 import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
@@ -364,9 +364,8 @@ async function fetchHistory(read: Host, repo: string, limit: number): Promise<Fa
 
 /** Reads what the trigger mail asks for from the pull request's host through `hostFor`. */
 export async function readFacts(input: unknown, hostFor: (source: RepoSource) => HostCall): Promise<FactsOutput> {
-  const request = triggerRequestOf(input);
+  const { request, trusted } = trustedRequestOf(input);
   const repo = request?.repo;
-  const trusted = isFromTriageSender(input);
   // Only the hub's mail names whose reviews are triage's own, so no other mail can pass a person's off as triage's.
   const appLogin = trusted && typeof request?.appLogin === "string" ? { appLogin: request.appLogin } : {};
   if (request?.kind === "history") {

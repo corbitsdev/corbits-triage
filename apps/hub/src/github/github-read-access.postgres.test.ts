@@ -344,6 +344,7 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
     verdicts: { async forPull() { return recorded as VerdictRecord[]; } },
     async liveDeployments() { return [{ runId: "wfr_anchor", address: "wfr_anchor@read-access.test", createdAt: new Date(), cancelling: false }]; },
     async deliver(_tenantId, address, payload) { mailed.push({ address, payload }); },
+    async toListener() { return false; },
     log() {},
   });
   async function approve(user: string, step: { effectId: string; kind: ActionKind }, runId = "wfr_verdict") {

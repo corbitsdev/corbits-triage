@@ -9,14 +9,11 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute } from "hono-openapi";
 import { schema, type DB } from "@intx/db";
 import type { RequireGrant, RunTokenRoute, TenantEnv } from "@intx/hub-api";
-import { REPO_SOURCES } from "@corbits/triage-contracts";
+import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
-import { done, EventPayload, EventState, PassState, recordEvent, ReviewerState, take } from "./manager-state.js";
-
-export const MANAGER_STATE_RESOURCE = "triage-manager:state";
-export const MANAGER_STATE_ACTION = "write";
+import { done, EventState, PassState, recordEvent, ReviewerState, take } from "./manager-state.js";
 
 const TAKE_PATH = "/manager/take";
 const DONE_PATH = "/manager/done";
@@ -30,10 +27,11 @@ export const MANAGER_RUN_TOKEN_ROUTES: readonly RunTokenRoute[] = [
 
 const PullRequest = type({ source: type.enumerated(...REPO_SOURCES), repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" });
 const DoneBody = PullRequest.and({ reviewers: ReviewerState.array() });
-const ReviewerResultBody = PullRequest.and({ head: "string > 0", result: EventPayload });
+const ReviewerResultBody = PullRequest.and(StageResult);
 
-const Taken = type({ outcome: "'idle'" }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean" });
-const Done = type({ outcome: "'ended' | 'more'" });
+const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array() } as const;
+const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean", ...Latest });
+const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 const Recorded = type({ recorded: "boolean" });
 
 const TAGS = ["manager"];
@@ -74,12 +72,13 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     await next();
   });
   const granted = requireGrant(MANAGER_STATE_RESOURCE, MANAGER_STATE_ACTION);
+  const reports = requireGrant(MANAGER_RESULT_RESOURCE, MANAGER_RESULT_ACTION);
 
   app.post(
     TAKE_PATH,
     describeRoute({
       summary: "Take the pull request's pending events as its manager",
-      description: `Run token only. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`. ${NOT_MANAGER}`,
+      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded and \`request\`, the newest pull request mail the hub recorded. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("The pass to work on, or idle", Taken), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),
@@ -98,7 +97,7 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     DONE_PATH,
     describeRoute({
       summary: "Close the manager's pass and record its reviewers",
-      description: `Run token only. \`ended\`: no event is pending and no reviewer of the current head is due, so the claim ended and the run should end. \`more\`: the manager waits for its next mail. ${NOT_MANAGER}`,
+      description: `Run token only. \`ended\`: no event is pending and no reviewer of the current head is due, so the claim ended and the run should end. \`more\`: the manager takes again at once, or with \`wait\` after waiting for its reviewer. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("Whether the manager is done", Done), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),
@@ -118,17 +117,17 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     REVIEWER_RESULT_PATH,
     describeRoute({
       summary: "Record a reviewer's result for the pull request's manager",
-      description: "Run token only. The event is recorded under the calling run's id, so `recorded` is false when that run reported before.",
+      description: "Run token only, for a reviewer granted `create` on `triage-manager:result`, which reaches no other manager route. The body is a `StageResult`. The event is recorded under the calling run's id, so `recorded` is false when that run reported before. The reviewer then mails the manager that deployed it, which collects the result on its next take.",
       tags: TAGS,
-      responses: { 200: json("Whether the result was recorded now", Recorded), ...refusals },
+      responses: { 200: json("Whether the result was recorded now", Recorded), ...refusals, 403: json("Not a workflow run, or the run lacks `create` on `triage-manager:result`", Failure) },
     }),
     limited,
     asRun,
-    granted,
+    reports,
     body(ReviewerResultBody),
     async function reviewerResult(c) {
-      const valid = c.req.valid("json");
-      const recorded = await recordEvent(db, c.get("tenant").id, valid, c.get("runId"), { type: "reviewer-result", head: valid.head, payload: valid.result });
+      const { source, repo, number, head, ...reported } = c.req.valid("json");
+      const recorded = await recordEvent(db, c.get("tenant").id, { source, repo, number }, c.get("runId"), { type: "reviewer-result", head, payload: reported });
       return c.json({ recorded });
     },
   );

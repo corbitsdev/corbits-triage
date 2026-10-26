@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { ACTION_KINDS, isFromTriageSender, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, triggerRequestOf, WAITING_KIND, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_KIND, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import type { MarkArgs, WaitingMark } from "../logic/render.js";
 
 /** `mark` is absent when triage does not write the verdict on this host, so nothing is written either. */
@@ -34,9 +34,9 @@ export function waitingMark(source: RepoSource, { repo, number, headSha }: { rep
  * to triage once Ready is off its head on GitHub; Bitbucket's build status is per commit already. Any other mail goes on to triage.
  */
 export async function waiting(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<WaitingOutput> {
-  const request = triggerRequestOf(input);
+  const { request, trusted } = trustedRequestOf(input);
   const held = request?.["kind"] === WAITING_KIND;
-  if (!request || !isFromTriageSender(input) || (!held && request["kind"] !== "pr")) return { waiting: false };
+  if (!request || !trusted || (!held && request["kind"] !== "pr")) return { waiting: false };
   const source = repoSourceOf(request["repoSource"]);
   const { repo, prNumber, headSha, automatic } = request;
   const pack = parseCheckPack(request["pack"] ?? request["checkPack"]);

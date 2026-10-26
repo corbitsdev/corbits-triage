@@ -1,5 +1,7 @@
-import { action, defineWorkflow, map, onTrigger, step, type Primitive, type Selector } from "@intx/workflow";
-import { TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
+import { action, defineWorkflow, map, onTrigger, SELF_RUN_RESOURCE, step, type Primitive, type Selector } from "@intx/workflow";
+import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
+import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
+import { HUB_WRITE } from "@corbits/triage-manager/actions/hub";
 import { READ_REPOSITORY } from "./actions/checkout.js";
 import { credentialBindingsFor, type CodeReviewAgents, type Sources } from "./agents.js";
 import { MODEL_ATTEMPTS } from "./failures.js";
@@ -93,6 +95,43 @@ export function codeReviewWorkflow(agents: CodeReviewAgents) {
       id,
       credentialBindings: credentialBindingsFor(sources),
       mailAccept: TRIAGE_MAIL_ACCEPT,
+      sidecarPlacement: CODE_REVIEW_PLACEMENT,
+      steps: { events: onTrigger({ on: { type: "mail", to: id }, body, onBodyFailure: "tolerate" }) },
+    });
+  };
+}
+
+function hubAction(handler: string, input: Selector, after: readonly string[]) {
+  return action({ handler, input, after, credentials: [HUB_CREDENTIAL_HANDLE], effect: { requires: [HUB_WRITE] } });
+}
+
+/**
+ * The review a pull request's manager deploys, under `id`, also its mail address: it reviews the request the manager
+ * mails it, reports the review through the hub, or that it did not finish, replies so the manager collects it, then
+ * stops, whatever failed before. It posts nothing to the pull request. Only the manager that deployed it may mail it.
+ */
+export function codeReviewReviewer(agents: CodeReviewAgents) {
+  return function prCodeReviewReviewer({ id, sources }: { id: string; sources: Sources }) {
+    const body = defineWorkflow({
+      id: `${id}-run`,
+      trigger: { type: "manual" },
+      steps: {
+        reviewRequest: action({ handler: "reviewRequest", input: { from: "trigger.payload" } }),
+        ...codeReviewSteps(agents, sources, { prefix: "", request: { from: "steps.reviewRequest.output.request" }, after: ["reviewRequest"] }),
+        // Stock runs a step whose dependencies failed, so the report, the reply and the stop run however the review ended.
+        report: hubAction("report", { merge: [{ from: "steps" }, { project: { from: "trigger" }, fields: ["payload"] }] }, ["review"]),
+        reply: step({ agent: agents.mailAgent, input: { from: "steps.report.output.mail" }, after: ["report"] }),
+        stop: hubAction("stop", { from: "trigger.payload" }, ["reply"]),
+      },
+    });
+    return defineWorkflow({
+      id,
+      credentialBindings: credentialBindingsFor(sources),
+      grantRequirements: [
+        { resource: MANAGER_RESULT_RESOURCE, action: MANAGER_RESULT_ACTION, source: "creator" },
+        { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
+      ],
+      mailAccept: { invoker: true },
       sidecarPlacement: CODE_REVIEW_PLACEMENT,
       steps: { events: onTrigger({ on: { type: "mail", to: id }, body, onBodyFailure: "tolerate" }) },
     });

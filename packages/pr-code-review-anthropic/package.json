@@ -13,13 +13,16 @@
     "workflows": {
       "pr-code-review": "./src/pr-code-review.ts",
       "pr-code-review-github": "./src/pr-code-review-github.ts",
-      "pr-code-review-bitbucket-datacenter": "./src/pr-code-review-bitbucket-datacenter.ts"
+      "pr-code-review-bitbucket-datacenter": "./src/pr-code-review-bitbucket-datacenter.ts",
+      "pr-code-review-reviewer-github": "./src/pr-code-review-reviewer-github.ts",
+      "pr-code-review-reviewer-bitbucket-datacenter": "./src/pr-code-review-reviewer-bitbucket-datacenter.ts"
     }
   },
   "dependencies": {
     "@corbits/pr-code-review": "workspace:*",
     "@corbits/repo-read-tool": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
+    "@corbits/triage-manager": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/types": "workspace:*",
     "@intx/workflow": "workspace:*",

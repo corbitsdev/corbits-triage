@@ -1,0 +1,34 @@
+{
+  "name": "@corbits/triage-manager",
+  "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "interchange": {
+    "workflow": "./src/triage-manager-github.ts",
+    "directors": "./src/directors.ts",
+    "actions": "./src/actions/index.ts",
+    "loops": "./src/loops.ts",
+    "workflows": {
+      "triage-manager-github": "./src/triage-manager-github.ts",
+      "triage-manager-bitbucket-datacenter": "./src/triage-manager-bitbucket-datacenter.ts",
+      "triage-listener-github": "./src/triage-listener-github.ts",
+      "triage-listener-bitbucket-datacenter": "./src/triage-listener-bitbucket-datacenter.ts"
+    }
+  },
+  "dependencies": {
+    "@corbits/common": "workspace:*",
+    "@corbits/triage-contracts": "workspace:*",
+    "@corbits/triage-workflows": "workspace:*",
+    "@intx/agent": "workspace:*",
+    "@intx/types": "workspace:*",
+    "@intx/workflow": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "@intx/authz": "workspace:*",
+    "@intx/harness": "workspace:*"
+  }
+}

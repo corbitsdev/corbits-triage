@@ -21,7 +21,7 @@ import { cachedLoads, checkTarget } from "@corbits/repo-read-tool/host-reads";
 import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
-import { BitbucketRefusal, mirror, readPr, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
+import { BitbucketRefusal, mirror, readPr, sendCodeReview, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
 
 export const CREDENTIAL_HANDLE = "bitbucket-datacenter";
 
@@ -100,6 +100,11 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
       "Run one resolved triage action on a Bitbucket Data Center pull request without waiting for a human approval, unless Bitbucket already shows it: add reviewers (code owners are the default reviewers), post a comment, approve, mark needs work (with the body as a comment), decline, or merge. Labels and assignees do not exist there and are skipped with a reason. A decline also upserts the triage comment. A decline, merge, comment or review is refused once the pull request has moved past headSha. Returns { status } as done, satisfied (already on Bitbucket) or skipped with a reason. Merges only for a merge action.",
     inputSchema: obj({ request: MIRROR_INPUT, step: obj({ effectId: str, headSha: str, kind: str, target: { type: "object" } }) }),
   },
+  {
+    name: "bitbucket_datacenter_send_code_review",
+    description: "Post a code review on sha: an inline comment for each finding the diff shows and one summary comment holding the rest. Writes only what is not there yet, and nothing once the pull request has moved past sha. Never merges.",
+    inputSchema: obj({ repo, number: { type: "integer" }, sha: str, summary: str, comments: { type: "array", items: { type: "object" } } }),
+  },
 ];
 
 interface Env extends BaseEnv {
@@ -177,6 +182,8 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
     }
     case "bitbucket_datacenter_execute_action_auto":
       return runAction(bb, a, user);
+    case "bitbucket_datacenter_send_code_review":
+      return sendCodeReview(bb, { repo: a.repo, number: a.number, sha: a.sha, summary: a.summary, comments: a.comments }, user);
     default:
       throw new Error(`unknown tool ${call.name}`);
   }
@@ -228,4 +235,4 @@ function defineBitbucketTool(id: string, definitions: ToolDefinition[], ask: rea
 
 // Read and write are separate bundles, as the GitHub tool's are, so each gets its own credential grant.
 export const bitbucketRead = defineBitbucketTool("@corbits/bitbucket-datacenter-tool/sidecar-bundle", READ_DEFINITIONS, []);
-export const bitbucketWrite = defineBitbucketTool("@corbits/bitbucket-datacenter-write-tool/sidecar-bundle", WRITE_DEFINITIONS, ["bitbucket_datacenter_mirror"]);
+export const bitbucketWrite = defineBitbucketTool("@corbits/bitbucket-datacenter-write-tool/sidecar-bundle", WRITE_DEFINITIONS, ["bitbucket_datacenter_mirror", "bitbucket_datacenter_send_code_review"]);

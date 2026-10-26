@@ -30,8 +30,9 @@ import {
 } from "@corbits/cron";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
+import { TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
 import { createInterchangeHub } from "./interchange-hub.js";
+import { createManagerIntake } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
@@ -309,6 +310,26 @@ const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: HUB_CONDITION_REGISTRY,
 });
+/** A workspace with a host's listener live runs that host's pull requests in managers. */
+async function liveListener(tenantId: string, source: RepoSource): Promise<string | undefined> {
+  return (await resolveLiveDeployment(composition.db, tenantId, TRIAGE_LISTENERS[source]))?.address;
+}
+const toListener = createManagerIntake({
+  db: composition.db,
+  listener: liveListener,
+  readPull: function readPull(tenantId, record, number) {
+    return pullRequests.withDiff(tenantId, record, number);
+  },
+  withAppLogin: function appLoginOf(tenantId, payload) {
+    return withAppLogin(composition.db, tenantId, payload);
+  },
+  openHeads: async function openHeads(tenantId, record) {
+    const read = await tenantOpenHeads(tenantId);
+    if (!read) throw new Error("no active source credential");
+    return read(record);
+  },
+  deliver: deliverToDeployment,
+});
 mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, now });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
@@ -456,10 +477,10 @@ function workflowIdFor(name: string): string {
 async function sendToWorker(job: TriageJob): Promise<void> {
   coordinator!.enqueue(job);
 }
-/** A paused pull request's job is dropped; the reconciler leaves it alone until its label comes off. */
+/** A paused pull request's job is dropped; the reconciler leaves it alone until its label comes off. A workspace with a listener runs its pull requests in managers. */
 async function sendTriageMail(job: TriageJob): Promise<void> {
   const routed = await routePrWorkflow({ ...job, workflow: workflowIdFor(job.workflow) });
-  if (routed) await sendToWorker(routed);
+  if (routed && !(await toListener(routed.tenantId, routed.payload))) await sendToWorker(routed);
 }
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
 async function codeReviewPlaced(tenantId: string): Promise<boolean> {
@@ -470,9 +491,9 @@ async function inPrWorkflow(tenantId: string, repo: string, source: RepoSource):
   const read = await readCheckPack(tenantId, repo, source);
   return read.status === "ok" && read.policyWorkflow !== undefined;
 }
-// Repositories left switched on send nothing while code review has nowhere to run, nor one the PR workflow reviews.
+// Repositories left switched on send nothing while code review has nowhere to run, nor one the PR workflow or a manager reviews.
 async function reviewedSources(tenantId: string, record: RepoRecord) {
-  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name, sourceOf(record)))) return [];
+  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name, sourceOf(record))) || (await liveListener(tenantId, sourceOf(record)))) return [];
   return codeReviewSources(composition.db, tenantId);
 }
 /** The hosts whose PR workflow deploys: a connected repository's policy file needs it, and code review has a place to run. */
@@ -706,6 +727,7 @@ const githubHeldDos = createGithubHeldDos({
   verdicts: verdictRecordStore,
   liveDeployments: liveTriageDeployments,
   deliver: deliverToDeployment,
+  toListener,
   log: logJson,
 });
 const reconcileSourceDeployments = createSourceDeployments({
@@ -790,8 +812,8 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number |
   if (due > 0) kickTriage();
   return due;
 }
-function sendBacklogMail(tenantId: string, payload: unknown) {
-  return sendBridgeMail(tenantId, prTriageHistoricalWorkflow.id, payload);
+async function sendBacklogMail(tenantId: string, payload: unknown) {
+  if (!(await toListener(tenantId, payload))) await sendBridgeMail(tenantId, prTriageHistoricalWorkflow.id, payload);
 }
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
