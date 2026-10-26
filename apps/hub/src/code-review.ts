@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { type } from "arktype";
 import { resolveTenantSidecarCapabilityPolicies, type DB } from "@intx/db";
 import type { SidecarPluginRegistry } from "@intx/hub-sessions";
 import { CODE_REVIEW_PLACEMENT } from "@corbits/pr-code-review/pr-code-review";
 import { errorText } from "@corbits/common";
-import { EVERYONE, REPO_SOURCES, TRIAGE_LISTENERS, VERDICTS, type CodeReviewPlace, type CodeReviewPlaceOption, type PlaceGuide, type RepoSource } from "@corbits/triage-contracts";
+import { EVERYONE, REPO_SOURCES, triageStopped, VERDICTS, type CodeReviewPlace, type CodeReviewPlaceOption, type PlaceGuide, type RepoSource } from "@corbits/triage-contracts";
 import { githubLimited } from "./github/github-refusal.js";
 import { failure } from "./github/portal-credential.js";
 import { connectedSources, hasCodeReviewKey } from "./github/source-workflow.js";
@@ -122,8 +123,10 @@ type CodeReviewRunDeps = Pick<CodeReviewDeps, "db" | "authorize" | "place"> & {
   send: (tenantId: string, payload: unknown) => Promise<void>;
 };
 
-/** Code review as "Review again" asks for it: on, whatever the policy's own scope says. */
-const REVIEW_NOW = { on: true, for: [EVERYONE], triage: [...VERDICTS], rules: "any" };
+/** Code review as "Review again" asks for it: on, whatever the policy's own scope says, and named as a review of its own. */
+function reviewNow() {
+  return { on: true, for: [EVERYONE], triage: [...VERDICTS], rules: "any", again: randomUUID() };
+}
 
 /** "Review again": triages the pull request's current head with code review on, so its manager reviews it once more. */
 export function createCodeReviewRun(deps: CodeReviewRunDeps) {
@@ -143,9 +146,9 @@ export function createCodeReviewRun(deps: CodeReviewRunDeps) {
       if (!pull.open) return failure(409, "not_open", "The pull request is not open.");
       if (pull.draft) return failure(409, "draft", "The pull request is a draft; code review starts once it is ready.");
       const payload = mailPayload(record, inputs.policy, inputs.pack, { prNumber: body.number, headSha: pull.headSha, noWait: true });
-      await deps.send(tenantId, { ...payload, codeReview: REVIEW_NOW });
+      await deps.send(tenantId, { ...payload, codeReview: reviewNow() });
     } catch (err) {
-      if (err instanceof NoLiveDeploymentError) return failure(503, "service_not_running", `The ${TRIAGE_LISTENERS[source]} service is not running. Upgrade Triage in Settings.`);
+      if (err instanceof NoLiveDeploymentError) return failure(503, "service_not_running", triageStopped(source));
       return githubLimited(err) ?? failure(502, "code_review_unavailable", `Could not send the pull request to code review: ${errorText(err)}`);
     }
     return Response.json({ status: "queued" }, { status: 202 });

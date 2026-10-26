@@ -30,7 +30,7 @@ import {
 } from "@corbits/cron";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
+import { repoSourceOf, TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake } from "./manager-intake.js";
@@ -76,7 +76,7 @@ import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployments, withWorkflowVersions, type LiveDeployment } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployments, TriageStoppedError, withWorkflowVersions, type LiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
@@ -110,7 +110,7 @@ import { createSettledStatusReader, createTriageRuns } from "./github/triage-run
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { failHead, markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs, type RepoRecord } from "./github/tenant-config.js";
+import { prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead } from "@corbits/github-tool";
@@ -334,6 +334,9 @@ const toListener = createManagerIntake({
     if (!read) throw new Error("no active source credential");
     return read(record);
   },
+  gate: function gateOf(tenantId, record, number, request) {
+    return pauseGate(tenantId, record, number, request);
+  },
   deliver: deliverToDeployment,
   log: logJson,
 });
@@ -471,14 +474,16 @@ async function readyWorkerCredentials(job: TriageJob): Promise<void> {
 async function sendToWorker(job: TriageJob): Promise<void> {
   coordinator!.enqueue(job);
 }
-/** A paused pull request's job is dropped; the reconciler leaves it alone until its label comes off. The rest go to the host's listener. */
 async function sendTriageMail(job: TriageJob): Promise<void> {
-  const gated = await pauseGate(job);
-  if (gated) await sendToListener(gated.tenantId, gated.payload);
+  await sendToListener(job.tenantId, job.payload);
 }
-/** A workspace's pull requests run in managers its listener deploys; one without a listener runs none. */
+/**
+ * A workspace's pull requests run in managers its listener deploys; one without a listener runs none. Each pull request
+ * passes the pause gate at intake, whatever sent it: a paused one is dropped, and the reconciler leaves it alone until its
+ * label comes off.
+ */
 async function sendToListener(tenantId: string, payload: unknown): Promise<void> {
-  if (!(await toListener(tenantId, payload))) throw new NoLiveDeploymentError(TRIAGE_LISTENERS[repoSourceOf(asRecord(payload)?.["repoSource"])]);
+  if (!(await toListener(tenantId, payload))) throw new TriageStoppedError(repoSourceOf(asRecord(payload)?.["repoSource"]));
 }
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
 async function codeReviewPlaced(tenantId: string): Promise<boolean> {
@@ -489,10 +494,9 @@ async function inPrWorkflow(tenantId: string, repo: string, source: RepoSource):
   const read = await readCheckPack(tenantId, repo, source);
   return read.status === "ok" && read.policyWorkflow !== undefined;
 }
-// Repositories left switched on send nothing while code review has nowhere to run, nor one the PR workflow or a manager reviews.
-async function reviewedSources(tenantId: string, record: RepoRecord) {
-  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name, sourceOf(record))) || (await listenerAddress(tenantId, sourceOf(record)))) return [];
-  return codeReviewSources(composition.db, tenantId);
+// Code review runs in the managers a listener deploys, and nothing runs without one, so the feed sends nothing.
+async function reviewedSources(): Promise<RepoSource[]> {
+  return [];
 }
 /** The hosts whose PR workflow deploys: a connected repository's policy file needs it, and code review has a place to run. */
 async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {

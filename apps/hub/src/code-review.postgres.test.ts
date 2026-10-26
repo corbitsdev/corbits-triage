@@ -129,7 +129,7 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
     }
     expect(await run("acme/missing")).toEqual([404, "repo_not_found"]);
     expect(await run("acme/widgets")).toEqual([202, "queued"]);
-    expect(sent).toEqual([expect.objectContaining({ kind: "pr", prNumber: 7, headSha: "sha1", noWait: true, codeReview: { on: true, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "any" } })]);
+    expect(sent).toEqual([expect.objectContaining({ kind: "pr", prNumber: 7, headSha: "sha1", noWait: true, codeReview: { on: true, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "any", again: expect.any(String) } })]);
     expect(await run("acme/widgets")).toEqual([409, "draft"]);
     expect(await run("acme/widgets")).toEqual([409, "not_open"]);
     expect(await run("acme/widgets")).toEqual([502, "code_review_unavailable"]);

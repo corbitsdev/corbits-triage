@@ -4,7 +4,8 @@ import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, VerdictFa
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
-export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "result?": "unknown" });
+/** `again` names the Review again a code review was deployed for. */
+export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "again?": "string > 0", "result?": "unknown" });
 export type Reviewer = typeof Reviewer.infer;
 
 const TakenEvent = type({ key: "string", event: { type: "string", head: "string", payload: "Record<string, unknown>" } });

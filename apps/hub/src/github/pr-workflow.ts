@@ -1,10 +1,8 @@
 // The policy file's v4 keys as a pull request's mail carries them, and the gate every pull request mail passes before
 // the listener: a paused pull request starts no run, and in doubt nothing approves or merges unattended.
 import { isDeepStrictEqual } from "node:util";
-import { asRecord } from "@corbits/common";
 import { BLOCK_KINDS, decideOf, EVERYONE, repoSourceOf, VERDICTS, type BlockKind, type CheckPack, type CodeReviewProvider, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
 import type { PullRequestHead } from "../code-review-feed.js";
-import type { TriageJob } from "./coordinator.js";
 import type { RepoRecord } from "./tenant-config.js";
 
 /** `blocks` are those the variant runs; a policy turning any other on runs nowhere yet. */
@@ -55,22 +53,24 @@ export type PauseGateDeps = {
   log: (entry: Record<string, unknown>) => void;
 };
 
-/** Undefined when the pull request carries the policy's pause label: no run starts. A head whose labels can't be read throws, to be retried. */
+/**
+ * One pull request's mail as the listener gets it, or undefined when the pull request carries the policy's pause label:
+ * no run starts. A head whose labels can't be read throws, to be retried. Only `pr` mails are gated.
+ */
 export function createPauseGate(deps: PauseGateDeps) {
-  return async function gate(job: TriageJob): Promise<TriageJob | undefined> {
-    const request = asRecord(job.payload);
-    if (!request || request["kind"] !== "pr") return job;
+  return async function gate(tenantId: string, record: RepoRecord, number: number, request: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+    if (request["kind"] !== "pr") return request;
     const pauseLabel = request["pauseLabel"];
     // Only GitHub heads carry labels, so only there can a pause fire.
-    if (typeof pauseLabel === "string" && repoSourceOf(request["repoSource"]) === "github" && job.record) {
-      const pull = await deps.readHead(job.tenantId, job.record, job.number);
+    if (typeof pauseLabel === "string" && repoSourceOf(request["repoSource"]) === "github") {
+      const pull = await deps.readHead(tenantId, record, number);
       if (pull.labels?.includes(pauseLabel)) {
-        deps.log({ level: "info", msg: "pr_paused", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, label: pauseLabel });
+        deps.log({ level: "info", msg: "pr_paused", tenantId, repo: record.name, pr: number, headSha: request["headSha"], label: pauseLabel });
         return undefined;
       }
     }
-    if (request["decide"] === undefined) return job;
+    if (request["decide"] === undefined) return request;
     const automatic = Array.isArray(request["automatic"]) ? request["automatic"].filter((kind) => !HELD_UNDER_DECIDE.has(kind)) : [];
-    return { ...job, payload: { ...request, automatic } };
+    return { ...request, automatic };
   };
 }

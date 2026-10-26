@@ -367,7 +367,7 @@ test("a paused-label head whose pull request cannot be read is left failed, and 
   const route = createPauseGate({ readHead: async () => Promise.reject(new Error("502 Bad Gateway")), log() {} });
   const { clock, state, mails, coalescer } = harness([], {
     async sendMail(job) {
-      if (await route(job)) mails.push(job.payload as Record<string, unknown>);
+      if (await route(job.tenantId, job.record!, job.number, job.payload as Record<string, unknown>)) mails.push(job.payload as Record<string, unknown>);
     },
   });
   await coalescer.accept({ ...delivery("opened", "sha1"), pauseLabel: "hold" });

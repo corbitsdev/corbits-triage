@@ -29,7 +29,7 @@ import type { PrMail } from "./normalize.js";
 import { sourceOf, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader, OpenHeadReader } from "./tenant-open-heads.js";
 import { inFlight, waitedOut, waitsForCi, type ReconcilePolicy } from "./reconcile-plan.js";
-import { failHead, queueHead, restoreHead, waitHead, type QueuedHead, type Remembered } from "./triage-queue.js";
+import { deliveryFailure, failHead, queueHead, restoreHead, waitHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 
 export type CoalesceWindow = { quietMs: number; maxWaitMs: number; burstMs: number };
@@ -266,7 +266,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     } catch (err) {
       if (err instanceof GithubRateLimited) return drop({ ...open, remembered }, entry, "github_rate_limited");
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
-      await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());
+      await failHead(deps.store, head, deliveryFailure(err), deps.now());
       return;
     }
     deps.log({ level: "info", msg: "forwarded", ...entry, events, workflow: latest.workflow });

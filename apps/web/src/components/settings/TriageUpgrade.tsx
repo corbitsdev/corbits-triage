@@ -20,7 +20,7 @@ function publisherName(principalId: string | null, people: readonly HubPrincipal
 /** One sentence per connected host; the host is named only when there are several. */
 function hostText(release: TriageRelease, host: HostRelease, people: readonly HubPrincipal[], named: boolean): string {
   const on = named ? ` on ${hostFullName(host.source)}` : "";
-  if (!host.running) return `Triage${on} runs on its old workflow, which is being retired. Upgrade to keep it working.`;
+  if (!host.running) return `Triage is stopped${on} until it is upgraded.`;
   const what = host.running.version === undefined ? "the new workflow" : `version ${host.running.version}`;
   const ran = `Triage${on} runs ${what}, published by ${publisherName(host.running.publisherPrincipalId, people)}.`;
   if (host.live > 1) return `${ran} Another copy is still running too; upgrade to stop it.`;

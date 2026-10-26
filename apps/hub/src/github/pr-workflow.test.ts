@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import type { WorkflowRunEvent } from "@intx/hub-sessions";
 import { decideOf, defaultActions, WAITING_KIND, type PolicyWorkflow } from "@corbits/triage-contracts";
-import type { TriageJob } from "./coordinator.js";
 import type { PullRequestToReview } from "../code-review-feed.js";
 import { createPauseGate, prWorkflowKeys, workflowPart } from "./pr-workflow.js";
 import type { RepoRecord } from "./tenant-config.js";
@@ -15,7 +14,7 @@ type Read = () => Promise<PullRequestToReview>;
 
 function gate(read: Read = async () => PULL) {
   const logged: Array<Record<string, unknown>> = [];
-  const route = createPauseGate({
+  const pass = createPauseGate({
     async readHead() {
       const { diff: _diff, ...head } = await read();
       return head;
@@ -24,12 +23,14 @@ function gate(read: Read = async () => PULL) {
       logged.push(entry);
     },
   });
+  function route(request: Record<string, unknown>) {
+    return pass("tnt", RECORD, 8, request);
+  }
   return { route, logged };
 }
 
-function job(policyWorkflow: PolicyWorkflow | undefined, kind = "pr", pauseLabel?: string): TriageJob {
-  const payload = { kind, repo: "acme/widgets", automatic: ["comment", "approve", "merge"], ...workflowPart(policyWorkflow), ...(pauseLabel && { pauseLabel }) };
-  return { tenantId: "tnt", workflow: "pr-triage-github", repo: "acme/widgets", number: 8, headSha: "abc", source: "event", record: RECORD, payload };
+function job(policyWorkflow: PolicyWorkflow | undefined, kind = "pr", pauseLabel?: string): Record<string, unknown> {
+  return { kind, repo: "acme/widgets", headSha: "abc", automatic: ["comment", "approve", "merge"], ...workflowPart(policyWorkflow), ...(pauseLabel && { pauseLabel }) };
 }
 
 test("only a block on, or a decide other than the actions', needs the PR workflow, whose trigger carries the blocks, decide and code review's block", () => {
@@ -53,13 +54,13 @@ test("a pull request carrying the pause label on GitHub starts no run, and one w
   const unread = gate(async () => Promise.reject(new Error("502 Bad Gateway")));
   await expect(unread.route(job(undefined, "pr", "bug"))).rejects.toThrow("502 Bad Gateway");
   const bitbucket = job(undefined, "pr", "bug");
-  const unlabelled = { ...bitbucket, payload: { ...(bitbucket.payload as object), repoSource: "bitbucket-datacenter" } };
+  const unlabelled = { ...bitbucket, repoSource: "bitbucket-datacenter" };
   expect(await unread.route(unlabelled)).toEqual(unlabelled);
 });
 
 test("a policy writing its own decide leaves approve and merge to a person; code review alone, or a waiting mail, leaves the job as it is", async () => {
   const { route } = gate();
-  expect((await route(job({ decide: DECIDE })))?.payload).toMatchObject({ automatic: ["comment"] });
+  expect(await route(job({ decide: DECIDE }))).toMatchObject({ automatic: ["comment"] });
   for (const sent of [job(undefined), job({ "code-review": { on: true } }), job({ decide: DECIDE }, WAITING_KIND)]) {
     expect(await route(sent)).toEqual(sent);
   }

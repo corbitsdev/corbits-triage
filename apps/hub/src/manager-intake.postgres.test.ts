@@ -6,6 +6,7 @@ import { createDB, runMigrations, schema } from "@intx/db";
 import { APPROVE_DO_KIND, emptyPack, repoPolicy } from "@corbits/triage-contracts";
 import type { PullRequestToReview } from "./code-review-feed.js";
 import { mailPayload, waitingPayload } from "./github/bridge.js";
+import { createPauseGate } from "./github/pr-workflow.js";
 import { createManagerIntake } from "./manager-intake.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -38,7 +39,13 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
   }
 }
 
-function stack(db: Db, listener: string | undefined, pull = PULL) {
+type Gate = Parameters<typeof createManagerIntake>[0]["gate"];
+
+async function passed(_tenantId: string, _record: unknown, _number: number, request: Record<string, unknown>) {
+  return request;
+}
+
+function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = passed) {
   const mailed: { address: string; payload: unknown }[] = [];
   const logged: Record<string, unknown>[] = [];
   const toListener = createManagerIntake({
@@ -50,6 +57,7 @@ function stack(db: Db, listener: string | undefined, pull = PULL) {
     async deliver(_tenantId, address, payload) {
       mailed.push({ address, payload });
     },
+    gate,
     log: (entry) => logged.push(entry),
   });
   return { toListener, mailed, logged };
@@ -153,3 +161,19 @@ test("PostgreSQL: with code review on, a head that moved before intake is record
     expect(logged).toEqual([expect.objectContaining({ msg: "code_review_head_moved", pr: 7, headSha: "h1", hostHeadSha: "h2" })]);
   });
 }, 60_000);
+
+test("PostgreSQL: every pull request a mail names passes the gate, whatever sent it: a paused one is not recorded or mailed, and the rest are recorded as the gate leaves them", async () => {
+  await withDatabase(async function gated(db) {
+    const gate = createPauseGate({ readHead: async (_tenantId, _record, number) => ({ ...PULL, labels: number === 9 ? ["hold"] : [] }), log() {} });
+    const { toListener, mailed } = stack(db, LISTENER, PULL, gate);
+    const decided = { ...mailPayload(RECORD, POLICY, STORED, {}), pauseLabel: "hold", automatic: ["comment", "approve", "merge"], decide: [{ if: { triage: "fail" }, do: "request-changes" }] };
+    // The reconciler's catch-up names its heads as items; Review again and Triage again name one; a backlog names every open one.
+    expect(await toListener(TENANT, { ...decided, items: [{ prNumber: 7, headSha: "h1" }, { prNumber: 9, headSha: "h9" }] })).toBe(true);
+    expect(await toListener(TENANT, { ...decided, prNumber: 9, headSha: "h9", codeReview: { on: true, rules: "any" } })).toBe(true);
+    expect(await toListener(TENANT, { ...decided, kind: "backlog" })).toBe(true);
+    const recorded = await events(db);
+    expect(recorded.map((row) => row.state.head)).toEqual(["h1", "h1"]);
+    expect(recorded.every((row) => JSON.stringify(row.state.payload["automatic"]) === JSON.stringify(["comment"]))).toBe(true);
+    expect(mailed.flatMap((mail) => (mail.payload as { items: { prNumber: number }[] }).items.map((item) => item.prNumber))).toEqual([7, 7]);
+  });
+}, 120_000);

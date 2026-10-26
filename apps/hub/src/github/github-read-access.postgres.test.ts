@@ -6,7 +6,7 @@ import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { TRIAGE_ROLE, triageStopped, type ActionKind } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { guardedApp } from "../integrations/test-app.js";
 import { createAuditLog } from "../audit-log.js";
@@ -373,7 +373,7 @@ test("PostgreSQL: approving a held Do needs its kind's grant and hands the liste
   expect(mailed).toHaveLength(2);
   recorded.pop();
   listening = false;
-  expect(await approve("usr_approver", ship)).toMatchObject({ status: 503, body: { error: { code: "service_not_running" } } });
+  expect(await approve("usr_approver", ship)).toMatchObject({ status: 503, body: { error: { code: "service_not_running", message: triageStopped("github") } } });
 });
 
 test("PostgreSQL: a held Do of a verdict a manager reported is approved from the recorded verdict and the mirror request its pass kept, and goes to the listener; once the run's newer verdict replaced it, it is superseded", async () => {

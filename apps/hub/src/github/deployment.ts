@@ -5,11 +5,20 @@ import { MAIL_ADMISSION_DENIED_CODE, type WorkflowAllocationService, type Workfl
 import type { RunTriggerMaterialize } from "@corbits/webhooks";
 import type { ToolPackageManifest } from "@intx/types/tool-packages";
 import type { FrozenApprovalBundle } from "@intx/types/sidecar";
+import { TRIAGE_LISTENERS, triageStopped, type RepoSource } from "@corbits/triage-contracts";
 import { claimRotation, clearRotation, type RotationRecord } from "./tenant-config.js";
 
 export class NoLiveDeploymentError extends Error {
   constructor(readonly workflow: string) {
     super(`no live ${workflow} deployment`);
+  }
+}
+
+/** A workspace runs no listener for the host, so its pull requests wait for an upgrade; the message says what to press. */
+export class TriageStoppedError extends NoLiveDeploymentError {
+  constructor(source: RepoSource) {
+    super(TRIAGE_LISTENERS[source]);
+    this.message = triageStopped(source);
   }
 }
 

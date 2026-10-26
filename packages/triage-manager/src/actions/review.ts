@@ -12,7 +12,7 @@ import { Reviewer, TakeOutput } from "./manager.js";
 /** How long the manager waits for a code review it deployed, from its deploy to its report. */
 export const REVIEW_DEADLINE_MS = 60 * 60_000;
 
-const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES) });
+const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "again?": "string > 0" });
 const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, evaluateRules: { output: "unknown" } });
 
 /**
@@ -21,18 +21,22 @@ const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, eval
  * a code review for the host. The pass that deploys
  * it, and every pass before its review is in, posts nothing, so the verdict and the review go up together; one that
  * reported a failure or ran past its deadline posts the verdict alone. A later pass on a head whose review settled posts
- * again and deploys no other.
+ * again and deploys no other. A Review again names itself as `again`, so its head is reviewed once more for it, whatever
+ * earlier reviews of the head said.
  */
 export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean; reviewed: boolean }> {
   const parsed = ScopeInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewScope: ${parsed.summary}`);
   const { taken, head, review, reviewFailed, reviewers } = parsed.take.output;
   const part = CodeReviewPart(taken?.["codeReview"]);
+  const again = part instanceof type.errors ? undefined : part.again;
   const reviewed = !(part instanceof type.errors) && part.on && rulesGate(part.rules, asRecord(parsed.evaluateRules.output)?.["checks"]).open;
   const published = publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") !== undefined;
-  const own = reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);
+  const own = reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.head === head && (again === undefined || reviewer.again === again));
   const settled = own.some((reviewer) => reviewer.result !== undefined || Date.parse(reviewer.deadline) <= Date.now());
-  if (!reviewed || !published || review || reviewFailed || settled || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true, reviewed };
+  // A report on this pass is from an earlier review until the one deployed for this Review again is out.
+  const reported = (review !== undefined || reviewFailed !== undefined) && (again === undefined || own.length > 0);
+  if (!reviewed || !published || reported || settled || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true, reviewed };
   return { deploy: own.length === 0, post: false, reviewed };
 }
 
@@ -50,10 +54,11 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   if (head === undefined || !taken) throw new Error("deployReview: the pass names no head");
   const release = publishedFor(repoSourceOf(pullRequest.source), "codeReview");
   if (!release) throw new Error("deployReview: release.json publishes no code review for the host");
+  const again = asRecord(taken["codeReview"])?.["again"];
   const reviewRun = await deploy(ctx, "deploy", tenantId, release);
   const deadline = new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString();
   const content = JSON.stringify({ ...asRecord(taken["codeReviewRequest"]), tenantId, reply: { to: runId, content: manageMail(tenantId, pullRequest) } });
-  return { reviewer: { kind: "code-review", head, runId: reviewRun, deployedBy: runId, deadline }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
+  return { reviewer: { kind: "code-review", head, runId: reviewRun, deployedBy: runId, deadline, ...(typeof again === "string" && { again }) }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
 }
 
 const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mailReview: { output: { reply: "string" } } });

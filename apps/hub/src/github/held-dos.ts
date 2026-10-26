@@ -5,7 +5,7 @@
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
-import { ACTION_KINDS, AGENT_DO, APPROVE_DO_KIND, DoList, repoPolicy, TRIAGE_LISTENERS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, AGENT_DO, APPROVE_DO_KIND, DoList, repoPolicy, triageStopped, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -137,7 +137,7 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     // A held merge on a Fail or Unsure list may still be approved, and the person approving it is told so.
     const warning = approval.step.kind === "merge" && approval.list !== "pass" ? `The verdict on this head was ${approval.list}, not pass.` : undefined;
     try {
-      if (!(await deps.toListener(tenantId, mailed))) return failure(503, "service_not_running", `The ${TRIAGE_LISTENERS[repoSource]} service is not running. Upgrade Triage in Settings.`);
+      if (!(await deps.toListener(tenantId, mailed))) return failure(503, "service_not_running", triageStopped(repoSource));
     } catch (err) {
       deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);

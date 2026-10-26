@@ -5,7 +5,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { hasEnabledRules, repoPolicy, TRIAGE_LISTENERS, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy, triageStopped, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
@@ -93,8 +93,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     if (ready instanceof Response) return ready;
     const { record, policy, pack } = ready;
     const triage = triageWorkflowFor(sourceOf(record));
-    const listener = TRIAGE_LISTENERS[sourceOf(record)];
-    if (!(await deps.listener(tenantId, sourceOf(record)))) return failure(503, "service_not_running", `The ${listener} service is not running. Upgrade Triage in Settings.`);
+    if (!(await deps.listener(tenantId, sourceOf(record)))) return failure(503, "service_not_running", triageStopped(sourceOf(record)));
 
     let openHead: string | undefined;
     try {

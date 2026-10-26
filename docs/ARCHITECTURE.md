@@ -61,11 +61,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live listener for the repository's host, as the
     tenant system sender, the same path cron uses, naming the host as
-    `repoSource`. Every pull request mail passes one gate first: on GitHub, a
-    pull request carrying the policy's pause label starts no run, and a policy
-    file that writes its own `decide` leaves approve and merge to a person,
-    since no workflow carries it out. A workspace with no live listener runs
-    nothing: the mail fails its head with the listener's name. When the policy depends on CI, a head whose CI is still
+    `repoSource`. A workspace with no live listener runs nothing: the head
+    fails with what to press, **Upgrade to new version** in Settings. When the policy depends on CI, a head whose CI is still
     running is not mailed: its triage-state row turns `waiting` and keeps the
     window's events (`triage_waiting_ci`). The window that sees CI finish, or
     its first check fail, mails the head once with those events; a head with
@@ -517,8 +514,9 @@ to GitHub lists them. The title and description are read as the facts step
 reads them (`shownBody` and `visibleText` in `@corbits/triage-contracts`), so
 hidden text never reaches the review. `…/run` (Review again) records a pull
 request mail for the current head with code review on for everyone, on any
-verdict and whatever the rules say, so the manager reviews it again even where
-the policy file decides code review.
+verdict and whatever the rules say, and names it with an `again` id. The
+manager deploys one more review of a head for each `again` it has not
+reviewed, even where an earlier review of the head settled.
 Code review only reads: a checkout action downloads the head through the host
 credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>`, and
 its tools are the host read bundle and repository reads confined to that
@@ -871,9 +869,13 @@ read it, and passes the rest of the request to stock.
   code review's output or a judge's whole verdict, or `failed` with why it
   has none.
 - Pull request, waiting, held-Do approval and backlog mail goes to the
-  host's listener (`apps/hub/src/manager-intake.ts`). The hub records one webhook event per
-  pull request the mail names (a reconciler's `items`, a backlog's open
-  pull requests), with the head's code review request when the policy turns
+  host's listener (`apps/hub/src/manager-intake.ts`), on both hosts. Each
+  pull request the mail names (a reconciler's `items`, a backlog's open pull
+  requests) passes one gate first, whatever sent the mail: on GitHub, a pull
+  request carrying the policy's pause label is dropped, and a policy file
+  that writes its own `decide` leaves approve and merge to a person, since no
+  workflow carries it out. The hub records one webhook event per pull request
+  that passed, with the head's code review request when the policy turns
   code review on and the App's login on GitHub, then mails the listener the
   heads. When the host's head moved past the mail's, the event goes without
   a review request and the hub logs `code_review_head_moved`; the new head's
@@ -881,11 +883,11 @@ read it, and passes the rest of the request to stock.
   the coalescer's mail carries, so a redelivery records nothing new; any
   other mail is a new
   event, so a head mailed again, as after its base moved or its CI settled,
-  is triaged again. The code review feed sends nothing
-  for that host. A workspace with no live listener for the host mails
-  nothing: Triage again, a held Do's approval and backlog triage answer 503
-  `service_not_running` naming the listener, and a webhook's head fails with
-  that name until Upgrade deploys it.
+  is triaged again. The code review feed sends nothing. A workspace with no
+  live listener for the host mails nothing: Triage again, Review again, a
+  held Do's approval and backlog triage answer 503 `service_not_running`, and
+  a webhook's head fails, each saying Triage is stopped on that host until
+  someone presses **Upgrade to new version** in Settings.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 
