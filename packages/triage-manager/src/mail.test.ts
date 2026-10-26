@@ -58,3 +58,17 @@ test("the mail tool waits until a just-deployed run publishes its public key, th
   const late = { ...call, arguments: { ...call.arguments, readyBy: new Date(Date.now() - 1).toISOString() } };
   expect(await tools.run(late, new AbortController().signal)).toMatchObject({ isError: true, content: expect.stringContaining("public key was not published") });
 }, 20_000);
+
+test("a cancelled step stops the mail tool's wait for a public key at once", async () => {
+  async function fetch(): Promise<Response> {
+    return Response.json({ publicKey: null });
+  }
+  const env = { address: "run_listener@acme.test", capabilities: { resolve: () => ({ resolve: async () => ({ kind: "http", fetch }) }) }, transport: { send: async () => ({ messageId: "m1", status: "sent" }) } };
+  const [factory] = mailAgentOf(mailDirector, { sources: [{ provider: "corbits-system-one", model: "decision" }] }, { tolerate: false }).toolFactories;
+  const readyBy = new Date(Date.now() + 60_000).toISOString();
+  const call = { id: "mail", name: "mail", arguments: { tenantId: "tnt_acme", to: "run_manager", content: "{}", readyBy } };
+  const step = new AbortController();
+  const result = factory!(env as never).run(call, step.signal);
+  step.abort();
+  expect(await result).toMatchObject({ isError: true });
+}, 1_000);

@@ -5,6 +5,7 @@ import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import type { ReactorDirector } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { type } from "arktype";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const MAIL_TOOL = "mail";
 const READY_POLL_MS = 2_000;
@@ -27,18 +28,16 @@ interface MailEnv extends BaseEnv {
 }
 
 /** Waits until the hub shows the run published a non-empty public key, the deploy ack. Stock never writes sidecarId. */
-async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: string): Promise<void> {
+async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: string, signal: AbortSignal): Promise<void> {
   const hub = await env.capabilities.resolve("credentials").resolve(HUB_CREDENTIAL_HANDLE);
   if (hub.kind !== "http") throw new Error(`${HUB_CREDENTIAL_HANDLE} is ${hub.kind}, not http`);
   while (Date.now() < Date.parse(readyBy)) {
-    const response = await hub.fetch(`/api/tenants/${encodeURIComponent(tenantId)}/workflows/runs/${encodeURIComponent(to)}`);
+    const response = await hub.fetch(`/api/tenants/${encodeURIComponent(tenantId)}/workflows/runs/${encodeURIComponent(to)}`, { signal });
     if (!response.ok) throw new Error(`reading run ${to} answered ${response.status}: ${await response.text()}`);
     const run = Run(await response.json());
     if (run instanceof type.errors) throw new Error(`run ${to}: ${run.summary}`);
     if (run.publicKey) return;
-    await new Promise(function wait(resolve) {
-      setTimeout(resolve, READY_POLL_MS);
-    });
+    await sleep(READY_POLL_MS, undefined, { signal });
   }
   throw new Error(`run ${to}: public key was not published by ${readyBy}`);
 }
@@ -54,7 +53,7 @@ function mailBundle(env: MailEnv): ToolBundle {
       const input = MailInput(call.arguments);
       if (input instanceof type.errors) return { callId: call.id, content: `mail: ${input.summary}`, isError: true };
       try {
-        if (input.readyBy) await untilReady(env, input, input.readyBy);
+        if (input.readyBy) await untilReady(env, input, input.readyBy, signal);
         const domain = env.address.slice(env.address.indexOf("@") + 1);
         const sent = await env.transport.send({ to: `${input.to}@${domain}`, type: "conversation.message", content: input.content }, signal);
         return { callId: call.id, content: { to: input.to, mailed: true, ...sent } };
