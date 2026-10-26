@@ -47,6 +47,9 @@ function isOwn(reviewer: Reviewer, kind: string, head: string): boolean {
   return reviewer.kind === kind && reviewer.head === head;
 }
 
+/** A judge whose evaluate could not read the pull request reports a verdict that names no head, which decides nothing. */
+const NO_HEAD = "the judge's verdict names no head";
+
 /** What one of the manager's own reviewers reported on `head`. */
 function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: readonly Reviewer[]): Pick<TakeOutput, "review" | "reviewFailed" | "judge" | "judgeFailed"> {
   const reported: Pick<TakeOutput, "review" | "reviewFailed" | "judge" | "judgeFailed"> = {};
@@ -58,6 +61,7 @@ function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: 
       if ("failed" in result) reported.reviewFailed = result.failed;
       else reported.review = result.result;
     } else if ("failed" in result) reported.judgeFailed = result.failed;
+    else if (result.result.headSha === null) reported.judgeFailed = NO_HEAD;
     else reported.judge = result.result;
   }
   return reported;

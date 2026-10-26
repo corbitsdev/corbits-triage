@@ -230,9 +230,12 @@ export function evaluateActions(input: ActionInput): SuggestedAction[] {
  * Why an approval cannot stand on this head, if it cannot: it says the pull request may merge, so the verdict must pass
  * and CI must have finished green. A head without CI cannot be told apart from one whose CI has not started yet, so it is not approved either.
  */
+/** Why an approve Do is skipped on a passing verdict whose head's CI has not passed. */
+export const CI_NOT_PASSED = "CI has not passed on this head.";
+
 export function approvalHeldBy(verdict: VerdictWord, ci: PrFacts["checks"]): string | undefined {
   if (verdict !== "pass") return "The pull request does not pass its policy.";
-  if (ci !== "success") return "CI has not passed on this head.";
+  if (ci !== "success") return CI_NOT_PASSED;
   return undefined;
 }
 

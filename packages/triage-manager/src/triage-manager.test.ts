@@ -473,6 +473,27 @@ describe("triage-manager with a judge", () => {
     expect(writes).not.toContainEqual(JUDGE_POSTED);
   });
 
+  test("a judge's verdict that names no head goes up as a failed judge, and the pass still ends", async () => {
+    const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail()).content).rules);
+    const { writes, host } = githubHost();
+    const hub = fakeHub({ takes: [judgeReported({ ...verdict, headSha: null })], dones: [ENDED] });
+    const { terminalStatus, ran } = await runMail(github, wake(), host, hub.hub);
+    expect(terminalStatus).toBe("completed");
+    expect(ran).toContain("mirrorRules");
+    expect(writes).not.toContainEqual(JUDGE_POSTED);
+    expect(hub.calls).toEqual([TAKE, DONE, END]);
+  });
+
+  test.each([
+    ["an approve skipped until CI passes", { kind: "approve", list: "pass", index: 0, skipped: true, reason: "CI has not passed on this head." }],
+    ["a merge held for failing CI", { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has failed on this head." }],
+  ])("a stored verdict with %s is judged again, since CI on the same head can still change it", async (_name, action) => {
+    const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail()).content).rules);
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED), reviewers: [{ ...JUDGE, result: { ...verdict, actions: [action] } }] }], dones: [ENDED] });
+    expect((await runMail(github, wake(), host, hub.hub)).ran).toContain("deployJudge");
+  });
+
   test("a judge's verdict for another pull request fails the pass instead of being posted", async () => {
     const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail()).content).rules);
     const { writes, host } = githubHost();
