@@ -10,7 +10,7 @@ import { failure } from "./github/portal-credential.js";
 import { connectedSources, hasCodeReviewKey } from "./github/source-workflow.js";
 import { mailPayload, tenantConfigOf } from "./github/bridge.js";
 import { patchCorbitsTriage, repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
-import type { PullRequestHead } from "./code-review-feed.js";
+import type { PullRequestHead } from "./pull-request-reader.js";
 import type { PolicyReader } from "./github/check-pack-store.js";
 import { NoLiveDeploymentError } from "./github/deployment.js";
 import { triageInputs } from "./github/pr-triage.js";

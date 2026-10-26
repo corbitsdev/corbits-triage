@@ -3,11 +3,11 @@
 import type { DB } from "@intx/db";
 import type { CredentialCipher } from "@intx/types";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
+import { repoSourceOf } from "@corbits/triage-contracts";
+import { asRecord } from "@corbits/common";
 import { tenantConfigOf } from "../github/bridge.js";
 import { activeCredential, credentialSecret } from "../github/portal-credential.js";
 import { triageNs } from "../github/tenant-config.js";
-import type { TriageJob, WorkerSpawner } from "../github/coordinator.js";
-import { jobWorkflowsFor } from "../github/source-workflow.js";
 import { bitbucketFetch, lookupAddresses, resolveInstance, type AddressLookup } from "./client.js";
 import { bitbucketConnection, TOKEN_CREDENTIAL } from "./records.js";
 
@@ -36,15 +36,14 @@ export function createTenantBitbucket(deps: TenantBitbucketDeps): TenantBitbucke
   };
 }
 
-const BITBUCKET_WORKFLOWS = new Set(jobWorkflowsFor("bitbucket-datacenter"));
+export type Deliver = (tenantId: string, address: string, payload: unknown) => Promise<void>;
 
-/** A Bitbucket run sends the token to the stored instance, so its worker is spawned only while that host passes the check. */
-export function checkedBitbucketSpawner(spawner: WorkerSpawner, tenantBitbucket: TenantBitbucket): WorkerSpawner {
-  async function spawn(job: TriageJob): Promise<string> {
-    if (BITBUCKET_WORKFLOWS.has(job.workflow) && (await tenantBitbucket(job.tenantId)) === undefined) {
+/** A Bitbucket run sends the token to the stored instance, so its mail goes out only while that host passes the check. */
+export function checkedBitbucketDelivery(deliver: Deliver, tenantBitbucket: TenantBitbucket): Deliver {
+  return async function deliverChecked(tenantId, address, payload) {
+    if (repoSourceOf(asRecord(payload)?.["repoSource"]) === "bitbucket-datacenter" && (await tenantBitbucket(tenantId)) === undefined) {
       throw new Error("Bitbucket is not connected, has no active token, or its host is refused");
     }
-    return spawner.spawn(job);
-  }
-  return { ...spawner, spawn };
+    await deliver(tenantId, address, payload);
+  };
 }

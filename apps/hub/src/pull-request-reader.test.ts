@@ -1,70 +1,16 @@
 import { expect, test } from "bun:test";
-import type { RepoSource } from "@corbits/triage-contracts";
-import { createCodeReviewFeed, createPullRequestReader, cutDiff, diffHash, type PullRequestToReview } from "./code-review-feed.js";
-import type { TriageJob } from "./github/coordinator.js";
-import type { PrMail } from "./github/normalize.js";
+import { createPullRequestReader, cutDiff, diffHash, reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import type { RepoRecord } from "./github/tenant-config.js";
 
 const RECORD: RepoRecord = { name: "acme/widgets", connected: true, codeReview: true };
 const PULL: PullRequestToReview = { title: "Fix", description: "Body", headSha: "sha1", draft: false, open: true, diff: "diff --git a/x b/x\nindex 1111111..2222222 100644\n+1\n" };
 
-function mail(action: string, fields: Partial<PrMail> = {}): PrMail {
-  return { kind: "pr", repo: RECORD.name, prNumber: 7, deliveryId: "d", event: "pull_request", action, headSha: "sha1", author: "a", title: "Fix", body: "Body", draft: false, review: null, ...fields };
-}
-
-function harness(reviewed: RepoSource[] = ["github"], pull = PULL, carries = false) {
-  const sent: TriageJob[] = [];
-  const feed = createCodeReviewFeed({
-    reviewed: async () => reviewed,
-    read: async () => pull,
-    carries: async () => carries,
-    async send(job) {
-      sent.push(job);
-    },
-    log() {},
-  });
-  return { feed, sent };
-}
-
-test("each new non-draft head is sent to its host's code review once; Review again sends it anyway", async () => {
-  const { feed, sent } = harness();
-  await feed.offer("t", RECORD, mail("synchronize"));
-  await feed.offer("t", RECORD, mail("synchronize"));
-  await feed.offer("t", RECORD, mail("labeled"));
-  await feed.offer("t", RECORD, mail("opened", { draft: true }));
-  expect(sent).toEqual([{
-    tenantId: "t",
-    workflow: "pr-code-review-github",
-    repo: "acme/widgets",
-    number: 7,
-    headSha: "sha1",
-    source: "event",
-    payload: { kind: "code-review", number: 7, title: "Fix", description: "Body", diff: PULL.diff, diffHash: diffHash(PULL.diff), checkout: { source: "github", repo: "acme/widgets", sha: "sha1" } },
-  }]);
-});
-
-test("a head that takes the newest review over is not sent", async () => {
-  const { feed, sent } = harness(["github"], PULL, true);
-  await feed.offer("t", RECORD, mail("synchronize"));
-  expect(sent).toEqual([]);
-});
-
-test("a diff's hash changes with any blob id, and a diff with none, as GitHub rebuilds from the file list, has none and is sent unhashed", async () => {
+test("a diff's hash changes with any blob id, and a diff with none, as GitHub rebuilds from the file list, has none and is requested unhashed", () => {
   const binary = (blob: string) => `diff --git a/logo.png b/logo.png\nindex 5555555..${blob} 100644\nBinary files a/logo.png and b/logo.png differ\n`;
   expect(diffHash(binary("6666666"))).not.toBe(diffHash(binary("7777777")));
   const rebuilt = { ...PULL, diff: "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n" };
   expect(diffHash(rebuilt.diff)).toBeUndefined();
-  const { feed, sent } = harness(["github"], rebuilt);
-  await feed.offer("t", RECORD, mail("synchronize"));
-  expect(sent[0]?.payload).not.toHaveProperty("diffHash");
-});
-
-test("nothing is sent while code review is off, the key is missing or the pull request turned draft", async () => {
-  for (const [reviewed, record, pull] of [[[], RECORD, PULL], [["github"], { ...RECORD, codeReview: false }, PULL], [["github"], RECORD, { ...PULL, draft: true }]] as const) {
-    const { feed, sent } = harness([...reviewed], pull);
-    await feed.offer("t", record, mail("synchronize"));
-    expect(sent).toEqual([]);
-  }
+  expect(reviewRequestOf(RECORD, 7, rebuilt)).not.toHaveProperty("diffHash");
 });
 
 test("a diff over the limit is cut at a line boundary and names the files it cut part-way or left out", () => {
@@ -91,37 +37,6 @@ test("a cut names files as git writes them with or without prefixes and quotes, 
   expect(cutDiff(`${diff}diff --git a/p q b/r s\n`, sections[0]!.length).cut).toEqual({ lines: 6, of: 37 });
 });
 
-test("a host answer that is not a unified diff is refused, not reviewed", async () => {
-  const { feed, sent } = harness(["github"], { ...PULL, diff: "{\"url\":\"…\"}" });
-  await feed.offer("t", RECORD, mail("synchronize"));
-  expect(sent).toEqual([]);
-});
-
-test("two deliveries of one push in flight together send it once, and a head whose worker failed is sent again", async () => {
-  const sent: TriageJob[] = [];
-  let release = () => {};
-  const held = new Promise<void>((resolve) => (release = resolve));
-  const feed = createCodeReviewFeed({
-    reviewed: async () => ["github"],
-    read: async () => PULL,
-    carries: async () => false,
-    async send(job) {
-      sent.push(job);
-      await held;
-    },
-    log() {},
-  });
-  const first = feed.offer("t", RECORD, mail("synchronize", { headSha: null }));
-  const second = feed.offer("t", RECORD, mail("synchronize", { headSha: null }));
-  release();
-  await Promise.all([first, second]);
-  expect(sent).toHaveLength(1);
-
-  feed.forget(sent[0]!);
-  await feed.offer("t", RECORD, mail("synchronize"));
-  expect(sent).toHaveLength(2);
-});
-
 test("code review reads a GitHub description as GitHub shows it, without hidden text", async () => {
   const diff = "diff --git a/x b/x\n+1\n";
   async function github(_path: string, init?: RequestInit): Promise<Response> {
@@ -135,4 +50,8 @@ test("code review reads a GitHub description as GitHub shows it, without hidden 
   const read = createPullRequestReader({ tenantGithub: async () => github, tenantBitbucket: async () => undefined });
   expect(await read.withDiff("t", RECORD, 7)).toEqual({ title: "Fix", description: "Fixes it.", headSha: "sha1", draft: false, open: true, diff, labels: [] });
   expect(await read.head("t", RECORD, 7)).toEqual({ title: "Fix", description: "Fixes it.", headSha: "sha1", draft: false, open: true, labels: [] });
+});
+
+test("a host answer that is not a unified diff is refused, not reviewed", () => {
+  expect(() => reviewRequestOf(RECORD, 7, { ...PULL, diff: "{\"url\":\"…\"}" })).toThrow("no unified diff");
 });

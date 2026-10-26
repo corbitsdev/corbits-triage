@@ -9,7 +9,6 @@ import { DOCKER_PLACE, DOCKER_REMOTE_PLACE } from "@corbits/provisioner-docker";
 import { emptyPack, type CodeReviewPlace } from "@corbits/triage-contracts";
 import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
 import { NoLiveDeploymentError } from "./github/deployment.js";
-import { codeReviewSources } from "./github/source-workflow.js";
 import { repoRecords, triageNs } from "./github/tenant-config.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -94,10 +93,8 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
     expect((await answer({ repo: "acme/missing", enabled: true })).status).toBe(404);
     expect((await answer({ repo: "acme/gone", enabled: true })).body.error?.code).toBe("repo_not_connected");
     expect(await answer({ repo: "acme/widgets", enabled: true })).toEqual({ status: 200, body: { repo: "acme/widgets", source: "github", codeReview: true } });
-    expect(await codeReviewSources(db, TENANT)).toEqual(["github"]);
 
     expect((await answer({ repo: "acme/widgets", enabled: false })).body.codeReview).toBe(false);
-    expect(await codeReviewSources(db, TENANT)).toEqual([]);
     const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, TENANT) });
     expect(repoRecords(triageNs(tenant?.config)).map((record) => [record.name, record.codeReview])).toEqual([["acme/widgets", false], ["TRI/widgets", undefined], ["acme/gone", undefined]]);
     expect(changed).toEqual([TENANT, TENANT]);

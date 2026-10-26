@@ -1,5 +1,6 @@
 // Switching a workspace to the per-pull-request manager: publish this portal's release as the person upgrading, deploy
-// each connected host's listener from it, and once it is up stop that host's listeners deployed before it.
+// each connected host's listener from it, and once it is up stop that host's listeners deployed before it and every
+// deployment of the workflows the listener replaced.
 import { skipToken, useMutation, useQuery } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { deployWorkflow, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
@@ -11,7 +12,7 @@ import { offeringsFor } from "./model-catalog.ts";
 import { hostFullName } from "./pull-link.ts";
 import { TRIAGE_RELEASE_QUERY_KEY, usePortal } from "./portal.tsx";
 import { usePrincipals, useRoles } from "./tenant-entities.ts";
-import { cancelDeployment, portalPackage } from "./workflow-deploy.ts";
+import { cancelDeployment, ensureKeepDeployedLifetime, portalPackage } from "./workflow-deploy.ts";
 import { CHAIN_PACKAGES, type SourceIndexEntry } from "./workflow-packages.ts";
 import { publishSources, type PublishedSource, type Publisher } from "./workflow-sources.ts";
 
@@ -24,6 +25,12 @@ export const UPGRADE_STEP_LABEL: Record<UpgradeStep, string> = { publishing: "Pu
 const START_DEADLINE_MS = 5 * 60_000;
 const START_POLL_MS = 2_000;
 const FAILED_STATUSES = new Set(["failed", "cancelled", "released"]);
+
+/** Each host's workflows from before the listener, which nothing mails any more. */
+const REPLACED: Record<RepoSource, readonly string[]> = {
+  github: ["pr-triage", "pr-triage-github", "pr-triage-historical", "pr-code-review-github", "pr-workflow-anthropic-github"],
+  "bitbucket-datacenter": ["pr-triage-bitbucket-datacenter", "pr-code-review-bitbucket-datacenter", "pr-workflow-anthropic-bitbucket-datacenter"],
+};
 
 type Asset = { id: string; name: string; creatorPrincipalId: string | null };
 
@@ -67,9 +74,14 @@ function olderThan(deployment: { id: string; createdAt: string }, newer: Workflo
 }
 
 /** Only listeners deployed before this one, whoever published them, so of two upgrades at once the newer stays. */
-async function stopOlderListeners(transport: Transport, tenantId: string, source: RepoSource, started: WorkflowDeployment): Promise<void> {
+function isOlderListener(deployment: DeployedWorkflow, source: RepoSource, started: WorkflowDeployment): boolean {
+  return deployment.workflow === TRIAGE_LISTENERS[source] && olderThan(deployment, started) && !deployment.worker;
+}
+
+async function stopOldDeployments(transport: Transport, tenantId: string, source: RepoSource, started: WorkflowDeployment): Promise<void> {
   for (const deployment of await listDeployedWorkflows(transport, tenantId)) {
-    if (deployment.workflow === TRIAGE_LISTENERS[source] && olderThan(deployment, started) && !deployment.cancelling && !deployment.worker) await cancelDeployment(transport, tenantId, deployment.id);
+    if (deployment.cancelling) continue;
+    if (isOlderListener(deployment, source, started) || REPLACED[source].includes(deployment.workflow)) await cancelDeployment(transport, tenantId, deployment.id);
   }
 }
 
@@ -81,21 +93,27 @@ async function newerLive(transport: Transport, tenantId: string, source: RepoSou
 /** "superseded" when another upgrade's newer listener replaced this one. */
 async function upgradeHost(transport: Transport, tenantId: string, source: RepoSource, published: readonly PublishedSource[], onStep: (step: UpgradeStep) => void): Promise<"upgraded" | "superseded"> {
   onStep("starting");
-  const deployment = await deployListener(transport, tenantId, source, published);
+  return replaceListener(transport, tenantId, source, await deployListener(transport, tenantId, source, published), onStep);
+}
+
+async function replaceListener(transport: Transport, tenantId: string, source: RepoSource, deployment: WorkflowDeployment, onStep: (step: UpgradeStep) => void): Promise<"upgraded" | "superseded"> {
   if (!(await waitUntilStarted(transport, tenantId, deployment.id))) {
     if (await newerLive(transport, tenantId, source, deployment)) return "superseded";
     throw new Error("The new version did not start, so the current one keeps running.");
   }
   onStep("stopping");
-  await stopOlderListeners(transport, tenantId, source, deployment);
+  await stopOldDeployments(transport, tenantId, source, deployment);
   return (await newerLive(transport, tenantId, source, deployment)) ? "superseded" : "upgraded";
 }
 
 async function deployListener(transport: Transport, tenantId: string, source: RepoSource, published: readonly PublishedSource[]): Promise<WorkflowDeployment> {
-  const workflow = TRIAGE_LISTENERS[source];
-  const listener = published.find((row) => row.workflow === workflow);
+  const listener = published.find((row) => row.workflow === TRIAGE_LISTENERS[source]);
   if (!listener) throw new Error("Add a decision model before upgrading.");
-  const chain = chainOf(workflow);
+  return deployFrom(transport, tenantId, source, listener);
+}
+
+async function deployFrom(transport: Transport, tenantId: string, source: RepoSource, listener: { assetId: string; commitSha: string }): Promise<WorkflowDeployment> {
+  const chain = chainOf(TRIAGE_LISTENERS[source]);
   const offerings = await offeringsFor(transport, tenantId, chain.models);
   return deployWorkflow(transport, tenantId, {
     source: { kind: "asset", assetId: listener.assetId, package: { format: "source", commitSha: listener.commitSha, packageName: chain.packageName } },
@@ -103,6 +121,17 @@ async function deployListener(transport: Transport, tenantId: string, source: Re
     sourceOfferingIds: offerings.ids,
     defaultSourceOfferingId: offerings.defaultId,
   });
+}
+
+/**
+ * A running listener holds the credentials it launched with, so after one is replaced its newest listener is deployed
+ * again from the same source and the older ones stop; a host with no listener is left for Upgrade.
+ */
+export async function restartListener(transport: Transport, tenantId: string, source: RepoSource): Promise<void> {
+  const listeners = (await listDeployedWorkflows(transport, tenantId)).filter((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling && !row.worker);
+  const [newest] = listeners.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+  if (!newest?.source) return;
+  await replaceListener(transport, tenantId, source, await deployFrom(transport, tenantId, source, newest.source), function quiet() {});
 }
 
 /** The hosts where another person's upgrade finished first. */
@@ -114,6 +143,7 @@ export async function upgradeTriage(
   publish: (transport: Transport, publisher: Publisher) => Promise<PublishedSource[]> = publishSources,
 ): Promise<RepoSource[]> {
   onStep("publishing");
+  await ensureKeepDeployedLifetime(transport, publisher.tenantId);
   const published = await publish(transport, publisher);
   const superseded: RepoSource[] = [];
   for (const source of sources) {

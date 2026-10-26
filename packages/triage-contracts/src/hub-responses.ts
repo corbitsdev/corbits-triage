@@ -206,6 +206,8 @@ export const DeployedVersions = type({
     worker: "boolean",
     package: PackageVersion.or("null"),
     tools: PackageVersion.array(),
+    /** The source asset commit a source-format deployment runs, so it can be deployed again as it is. */
+    source: type({ assetId: "string", commitSha: "string" }).or("null"),
   }).array(),
 });
 export type DeployedVersions = typeof DeployedVersions.infer;

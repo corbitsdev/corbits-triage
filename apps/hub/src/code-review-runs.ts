@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
 import { CodeReviewComment, DiffCut, REPO_SOURCES, repoSourceOf, StageResult, type RepoSource } from "@corbits/triage-contracts";
-import { diffHash, type PullRequestToReview } from "./code-review-feed.js";
+import { diffHash, type PullRequestToReview } from "./pull-request-reader.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import type { Member } from "./integrations/app.js";
 import { codeReviews, type CodeReviewRecord } from "./manager-state.js";
@@ -132,22 +132,11 @@ export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
     return { ...reviews, carriedTo: await carriedTo(tenantId, tenant.config, query, reviews) };
   }
 
-  /** Whether `pull`'s head takes the newest review over rather than being reviewed; false when that can't be told. */
-  async function carries(tenantId: string, record: RepoRecord, number: number, pull: PullRequestToReview): Promise<boolean> {
-    try {
-      const completed = carriable(await reviewsOf(tenantId, sourceOf(record), record.name, number), pull.headSha);
-      return completed !== undefined && sameDiff(tenantId, record, number, completed, pull);
-    } catch (err) {
-      deps.log({ level: "warn", msg: "code_review_carry_unread", tenantId, repo: record.name, pr: number, error: String(err) });
-      return false;
-    }
-  }
-
   async function latestCodeReview(query: typeof CodeReviewQuery.infer, { tenantId }: Member): Promise<Response> {
     return Response.json(await latest(tenantId, query));
   }
 
-  return { latest, carries, latestCodeReview };
+  return { latest, latestCodeReview };
 }
 
 export type CodeReviewRuns = ReturnType<typeof createCodeReviewRuns>;

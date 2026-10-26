@@ -27,7 +27,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/audit-log.ts` | The audit list, read from what the workspace already recorded. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
-| `src/code-review.ts`, `src/code-review-feed.ts`, `src/code-review-runs.ts` | The code review switch; `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; the feed that mails each new head; the latest review, read from the manager's state, and whether a head takes it over. |
+| `src/code-review.ts`, `src/pull-request-reader.ts`, `src/code-review-runs.ts` | The code review switch; `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; reading a pull request and building its review request; the latest review, read from the manager's state, and whether a head takes it over. |
 | `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and Docker registration (`docker.ts`). |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider). |
 | `src/bitbucket-datacenter/` | Bitbucket Data Center connection, repository and webhook routes, payload normalizing. |
@@ -36,8 +36,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/policy-file.ts`, `check-pack-store.ts`, `policy-read.ts`, `policy-pull.ts` | The policy file (read again when a push touches it or a pull request merges into the default branch, and at most a minute old while the repository's webhook (the App's, on GitHub) has been silent for half an hour), the stored policy and which applies, the policy route, and the one `corbits-triage/policy` pull request. |
 | `src/github/automation.ts` | Which action kinds triage writes unattended, from the `pr-triage` role's grants. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
-| `src/github/coordinator.ts`, `worker-spawn.ts` | The job queue and one worker deployment per job. |
-| `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates deployments and redeploys failed ones. |
+| `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads through the listener. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
 | `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads run logs and records verdicts. |
 | `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts`, `pr-outcomes.ts` | Verdict records and the routes that serve them, including outcomes before and after Triage. Outcomes read at most the 50 newest-created pull requests on GitHub, or the newest page holding any (at most 8 pages of 50) on Bitbucket Data Center, with at most 8 reads at once, cached per pull request and per UTC day. |
@@ -50,19 +49,14 @@ with the `intx-src` export condition, so every hub command runs with
 
 ## Portal (`apps/web`)
 
-- `src/lib/portal.tsx`: convergence on sign-in.
+- `src/lib/portal.tsx`: the workspace snapshot and the Settings actions.
 - `src/lib/hub-api.ts`: typed calls over the hub routes.
 - `src/lib/model-catalog.ts`: the models the workflows name (`decision` on
   `corbits-system-one`, `claude-opus-5-5` and `claude-haiku-5-5` on
   `anthropic`); adds what the tenant catalog lacks through the stock catalog
   routes, and picks each deploy's offerings.
-- `src/lib/workflow-deploy.ts`: publishes the tool and workflow tarballs to the
-  tenant's `corbits` package registry and deploys each workflow pinned to its
-  version, redeploying only when the version or its model's key changed. Code
-  review deploys only while a connected repository has it on and a provider
-  key is stored. Before publishing it removes tarballs neither this build nor
-  a live deployment pins, since Interchange delivers the registry's whole tree
-  under a 32 MiB cap.
+- `src/lib/workflow-deploy.ts`: workflow assets, the build's files, the
+  tenant's deployment lifetime and cancelling a deployment.
 - `src/lib/workflow-sources.ts`: publishes each workflow as a source-format
   `workflow` asset, through the stock git smart-HTTP route with a short-lived
   personal git token that is revoked afterwards, and returns each asset id and
@@ -99,10 +93,8 @@ with the `intx-src` export condition, so every hub command runs with
 The workflows name one decision model, `corbits-system-one:decision`, so their
 source is the same for every tenant. Saving a model key stores it in the vault
 and writes the `decision` offering (endpoint as the provider's `baseURL`, the
-provider's own model as `quirks.model`), then redeploys, because a deployment
-resolves its offering when deployed. Removing a key first releases the
-workflows that use it, then deletes its catalog provider and offerings, since
-the vault keeps a key a catalog provider uses.
+provider's own model as `quirks.model`). Removing a key deletes its catalog
+provider and offerings, since the vault keeps a key a catalog provider uses.
 
 The portal reads two build-time variables: `VITE_HUB_URL` (the hub's origin
 when the portal is hosted apart) and `VITE_GITHUB_API_ORIGIN` (the GitHub

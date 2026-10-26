@@ -1,12 +1,10 @@
 import { and, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { schema, type DB, type ResolvedSenderPrincipal, type WorkflowRunLaunchSpecStore } from "@intx/db";
-import { generateId } from "@intx/hub-common";
-import { MAIL_ADMISSION_DENIED_CODE, type WorkflowAllocationService, type WorkflowLifecycleService } from "@intx/hub-sessions";
+import { MAIL_ADMISSION_DENIED_CODE } from "@intx/hub-sessions";
 import type { RunTriggerMaterialize } from "@corbits/webhooks";
 import type { ToolPackageManifest } from "@intx/types/tool-packages";
 import type { FrozenApprovalBundle } from "@intx/types/sidecar";
 import { TRIAGE_LISTENERS, triageStopped, type RepoSource } from "@corbits/triage-contracts";
-import { claimRotation, clearRotation, type RotationRecord } from "./tenant-config.js";
 
 export class NoLiveDeploymentError extends Error {
   constructor(readonly workflow: string) {
@@ -63,10 +61,9 @@ export type TenantDeployment = LiveDeployment & { workflow: string };
 
 /**
  * A worker deployment carries this key in its deploy content, so the hub can tell it from the listener it was copied
- * from: a worker is spawned for one mail and released when that run ends, and nothing else may mail it or count it as a
- * rotation.
+ * from: a worker ran one mail and was released when that run ended.
  */
-export const WORKER_MARKER = "corbitsTriageWorker";
+const WORKER_MARKER = "corbitsTriageWorker";
 
 export type DeploymentKind = "listener" | "worker";
 
@@ -124,19 +121,9 @@ export function resolveLiveDeployments(db: DB["db"], tenantId: string, definitio
   return deploymentsWhere(db, { tenantId, definitionName, kind });
 }
 
-/** Workers live or released since `endedSince`: a worker's one body run lands in its log before the coordinator cancels the anchor, so the log outlives the deployment. */
+/** Workers live or released since `endedSince`: a worker's one body run landed in its log before its anchor was cancelled, so the log outlives the deployment. */
 export function recentWorkers(db: DB["db"], tenantId: string, definitionName: string, endedSince: Date): Promise<TenantDeployment[]> {
   return deploymentsWhere(db, { tenantId, definitionName, kind: "worker", endedSince });
-}
-
-/** Every tenant's live worker deployments, for the release of workers a hub restart orphaned. */
-export async function liveWorkers(db: DB["db"]): Promise<{ tenantId: string; runId: string }[]> {
-  const { workflowRun, workflowRunLaunchSpec, liveWorkflowRunStatuses } = schema;
-  return db
-    .select({ tenantId: workflowRun.tenantId, runId: workflowRun.id })
-    .from(workflowRun)
-    .innerJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
-    .where(and(eq(workflowRun.id, workflowRun.anchorRunId), inArray(workflowRun.status, [...liveWorkflowRunStatuses]), markedAs("worker")));
 }
 
 export type ActiveTenant = { id: string; domain: string };
@@ -228,101 +215,17 @@ export async function withWorkflowVersions<T extends LiveDeployment>(
   return versioned;
 }
 
-export type DeploymentRotationDeps = {
-  db: DB["db"];
-  launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">;
-  allocation: WorkflowAllocationService;
-  lifecycle: WorkflowLifecycleService;
-  /** As the stock deploy route requires. */
-  mayDeploy: (principalId: string, tenantId: string) => Promise<boolean>;
-  /** Where the tenant config records this deployment's rotation; the GitHub one keeps the original key. */
-  rotationKey?: string;
-};
-
+/** The reason the hub gave when it replaced a busy deployment with a fresh copy, which earlier audit entries carry. */
 export const ROTATION_REASON = "Replaced by a fresh deployment of the same workflow";
 
-export type Redeployed = { status: "deployed"; runId: string } | { status: "skipped"; reason: string };
-
-/**
- * A deployment's run log grows with every run and the stock hub validates each
- * received commit against all of it, so a busy deployment is replaced by a
- * fresh one. The copy is what the stock deploy route would create from the same
- * request, read from the deployment's launch spec: its source and commit,
- * entry, offerings, deploy content and the principal that deployed it. The
- * copy keeps that principal because the workflow runs as it; it is used only
- * while the stock route would still accept it: an active member holding the
- * route's grant. `content` is added to the copy's deploy content; a worker is
- * marked that way.
- */
-export function createDeploymentRotation(deps: DeploymentRotationDeps) {
-  /** A tarball source is the shared package registry, so the workflow asset is read from the run's definition. */
-  async function definitionAssetId(tenantId: string, anchorRunId: string): Promise<string> {
-    const { workflowRun, workflowDefinition } = schema;
-    const [row] = await deps.db
-      .select({ assetId: workflowDefinition.assetId })
-      .from(workflowRun)
-      .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
-      .where(and(eq(workflowRun.id, anchorRunId), eq(workflowRun.tenantId, tenantId)));
-    if (!row?.assetId) throw new Error(`deployment ${anchorRunId} has no workflow definition asset`);
-    return row.assetId;
-  }
-
-  async function redeploy(tenantId: string, anchorRunId: string, content: Record<string, unknown> = {}): Promise<Redeployed> {
-    const spec = await deps.launchSpecs.get(anchorRunId);
-    if (!spec) throw new Error(`deployment ${anchorRunId} has no launch spec`);
-    const { source, entry } = spec.frozenApprovalBundle;
-    if (source.kind !== "asset") throw new Error(`deployment ${anchorRunId} is not deployed from a workflow asset`);
-    const pin = pinFor(spec.frozenApprovalBundle);
-    const systemPrompt = spec.deployContent["systemPrompt"];
-    if (typeof systemPrompt !== "string") throw new Error(`deployment ${anchorRunId} has no system prompt in its deploy content`);
-    const deployer = await deps.db.query.principal.findFirst({
-      where: and(eq(schema.principal.id, spec.sourceAuthorityPrincipalId), eq(schema.principal.tenantId, tenantId)),
-      columns: { status: true },
-    });
-    if (deployer?.status !== "active") return { status: "skipped", reason: "deployer_inactive" };
-    if (!await deps.mayDeploy(spec.sourceAuthorityPrincipalId, tenantId)) {
-      return { status: "skipped", reason: "deployer_not_authorized" };
-    }
-    const definition = pin === undefined ? source.assetId : await definitionAssetId(tenantId, anchorRunId);
-    const prepared = await deps.allocation.prepareProvisionedDeployment({
-      tenantId,
-      anchorRunId: generateId("workflowRun"),
-      deploymentDomain: spec.deploymentDomain,
-      source,
-      entry,
-      ...(pin !== undefined ? { pin } : {}),
-      definitionAssetId: definition,
-      sessionId: generateId("session"),
-      sourceAuthorityPrincipalId: spec.sourceAuthorityPrincipalId,
-      sourceOfferingIds: spec.sourceOfferingIds,
-      defaultSourceOfferingId: spec.defaultSourceOfferingId,
-      deployContent: { ...spec.deployContent, ...content, systemPrompt },
-    });
-    return { status: "deployed", runId: prepared.anchorRunId };
-  }
-
-  async function sameSource(anchorRunId: string, otherAnchorRunId: string): Promise<boolean> {
-    const [spec, other] = await Promise.all([deps.launchSpecs.get(anchorRunId), deps.launchSpecs.get(otherAnchorRunId)]);
-    if (!spec || !other) return false;
-    const a = spec.frozenApprovalBundle;
-    const b = other.frozenApprovalBundle;
-    if (a.source.kind !== "asset" || b.source.kind !== "asset" || a.entry !== b.entry) return false;
-    return a.source.assetId === b.source.assetId
-      && JSON.stringify(a.source.package) === JSON.stringify(b.source.package)
-      && pinFor(a) === pinFor(b);
-  }
-
-  async function release(tenantId: string, anchorRunId: string): Promise<void> {
-    await deps.lifecycle.requestCancellation(tenantId, anchorRunId, ROTATION_REASON);
-  }
-
-  function claim(tenantId: string, record: RotationRecord): Promise<boolean> {
-    return claimRotation(deps.db, tenantId, record, deps.rotationKey);
-  }
-
-  function clear(tenantId: string, record: RotationRecord): Promise<void> {
-    return clearRotation(deps.db, tenantId, record, deps.rotationKey);
-  }
-
-  return { redeploy, sameSource, release, claim, clear };
+/** Whether two deployments were made from the same request: one source, package, pin and entry. */
+export async function sameSource(launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">, anchorRunId: string, otherAnchorRunId: string): Promise<boolean> {
+  const [spec, other] = await Promise.all([launchSpecs.get(anchorRunId), launchSpecs.get(otherAnchorRunId)]);
+  if (!spec || !other) return false;
+  const a = spec.frozenApprovalBundle;
+  const b = other.frozenApprovalBundle;
+  if (a.source.kind !== "asset" || b.source.kind !== "asset" || a.entry !== b.entry) return false;
+  return a.source.assetId === b.source.assetId
+    && JSON.stringify(a.source.package) === JSON.stringify(b.source.package)
+    && pinFor(a) === pinFor(b);
 }

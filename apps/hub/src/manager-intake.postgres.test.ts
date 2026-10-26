@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { APPROVE_DO_KIND, emptyPack, repoPolicy } from "@corbits/triage-contracts";
-import type { PullRequestToReview } from "./code-review-feed.js";
+import type { PullRequestToReview } from "./pull-request-reader.js";
 import { mailPayload, waitingPayload } from "./github/bridge.js";
 import { createPauseGate } from "./github/pr-workflow.js";
 import { createManagerIntake } from "./manager-intake.js";
@@ -45,14 +45,16 @@ async function passed(_tenantId: string, _record: unknown, _number: number, requ
   return request;
 }
 
-function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = passed) {
+const OPEN = [{ number: 7, headSha: "h1", draft: false }, { number: 9, headSha: "h9", draft: true }];
+
+function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = passed, open = OPEN) {
   const mailed: { address: string; payload: unknown }[] = [];
   const logged: Record<string, unknown>[] = [];
   const toListener = createManagerIntake({
     db,
     listener: async () => listener,
     readPull: async () => pull,
-    openHeads: async () => [{ number: 7, headSha: "h1", draft: false }, { number: 9, headSha: "h9", draft: true }],
+    openHeads: async () => open,
     withAppLogin: async (_tenantId, payload) => ({ ...payload, appLogin: "triage[bot]" }),
     async deliver(_tenantId, address, payload) {
       mailed.push({ address, payload });
@@ -175,5 +177,22 @@ test("PostgreSQL: every pull request a mail names passes the gate, whatever sent
     expect(recorded.map((row) => row.state.head)).toEqual(["h1", "h1"]);
     expect(recorded.every((row) => JSON.stringify(row.state.payload["automatic"]) === JSON.stringify(["comment"]))).toBe(true);
     expect(mailed.flatMap((mail) => (mail.payload as { items: { prNumber: number }[] }).items.map((item) => item.prNumber))).toEqual([7, 7]);
+  });
+}, 120_000);
+
+test("PostgreSQL: a backlog with no open pull request is taken with nothing recorded, and a failing gate read still leaves the heads recorded before it mailed", async () => {
+  await withDatabase(async function partial(db) {
+    const drafts = stack(db, LISTENER, PULL, passed, [{ number: 9, headSha: "h9", draft: true }]);
+    expect(await drafts.toListener(TENANT, { ...mailPayload(RECORD, POLICY, STORED, {}), kind: "backlog" })).toBe(true);
+    expect(drafts.mailed).toEqual([]);
+
+    const { toListener, mailed } = stack(db, LISTENER, PULL, async function failOn9(_tenantId, _record, number, request) {
+      if (number === 9) throw new Error("head read failed");
+      return request;
+    });
+    const catchUp = mailPayload(RECORD, POLICY, STORED, { items: [{ prNumber: 7, headSha: "h1" }, { prNumber: 9, headSha: "h9" }] });
+    await expect(toListener(TENANT, catchUp)).rejects.toThrow("head read failed");
+    expect((await events(db)).map((row) => row.state.head)).toEqual(["h1"]);
+    expect(mailed.map((mail) => (mail.payload as { items: { prNumber: number }[] }).items.map((item) => item.prNumber))).toEqual([[7]]);
   });
 }, 120_000);

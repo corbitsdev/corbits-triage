@@ -23,7 +23,7 @@
 import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type PolicySource, type PolicyWorkflow, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import { summarizeChecks, type CheckRun } from "@corbits/github-reads";
 import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
-import type { TriageJob } from "./coordinator.js";
+import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
 import type { PrMail } from "./normalize.js";
 import { sourceOf, triageStateKey, type RepoRecord } from "./tenant-config.js";
@@ -207,7 +207,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
   async function markWaiting({ latest, head }: Open, noCi: boolean): Promise<void> {
     if (!("pack" in latest) || !marksWaiting(sourceOf(latest.record), latest.automatic)) return;
     try {
-      await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", payload: waitingPayload(latest.record, latest.policy, latest, head, noCi) });
+      await deps.sendMail({ ...head, payload: waitingPayload(latest.record, latest.policy, latest, head, noCi) });
     } catch (err) {
       deps.log({ level: "warn", msg: "waiting_mail_failed", tenantId: head.tenantId, repo: latest.record.name, pr: head.number, headSha: head.headSha, error: String(err) });
     }
@@ -262,7 +262,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       const noWait = waitedOut(firstSeenAt, deps.now(), deps.ciWait);
       const extra = { ...latest.mail, headSha: head.headSha, events, ...(noWait && { noWait }) };
       const payload = "pack" in latest ? mailPayload(latest.record, latest.policy, latest, extra) : unreadablePayload(latest.record, latest.policy, latest, extra);
-      await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", record: latest.record, payload });
+      await deps.sendMail({ ...head, record: latest.record, payload });
     } catch (err) {
       if (err instanceof GithubRateLimited) return drop({ ...open, remembered }, entry, "github_rate_limited");
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });

@@ -90,25 +90,6 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     within the last two minutes; one deployed without a sidecar past that is
     released, so the next Upgrade deploys it again. The workflow-versions route
     reports each deployment's `live` the same way, which Settings reads.
-  - **Coordinator**: every standalone code review mail is a job in one in-memory queue keyed per lane (triage or
-    code review), host and pull request. Each job runs in a worker deployment
-    of its own, copied from the host's live deployment, which only seeds
-    workers, and released once its run ends. How many run at once is the
-    provisioner's call: a placement it declines for want of room waits and is
-    retried with backoff. A job with no live deployment to copy, or whose
-    worker the sender gate refuses (a copy of a deployment made before its
-    workflow declared who may mail it, which is released), is retried the same
-    way five times between them, enough for the portal reload after a hub
-    deploy and usually enough for a failed deployment's heal; then the head
-    fails with "this repository's Triage deployment is not running; open the
-    portal to redeploy it" or "this repository's Triage deployment is out of
-    date; open the portal to redeploy it", and the reconciler queues it again
-    once a deployment is live. A worker not finished an hour after its spawn
-    began, stuck readying, delivering or running, is cancelled and its slot
-    freed; the reconciler retries its head as a cancelled run. The queue, like
-    the coalescer's windows, lives in memory, so the hub runs as one replica.
-    A restart loses only queue order: the hub releases orphaned workers on
-    start and the reconciler queues their heads again.
   - **Run recorder**: reads the live logs of tenants with a run in flight and
     records each verdict and executed action.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
@@ -185,9 +166,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   (`no_isolated_place`), nothing is mailed, the host's code review
   deployments are released, and the portal links Settings → Code review in
   place of the switch.
-- **Portal** (`apps/web`): owns setup. After sign-in it converges the tenant,
-  credentials, inference offerings, workflow sources and deployments over
-  stock hub routes. The hub seeds nothing for it. It is a wrapper over the
+- **Portal** (`apps/web`): owns setup. It writes the tenant, credentials and
+  inference offerings over stock hub routes, and **Upgrade to new version**
+  publishes the workflow sources and deploys the listeners. The hub seeds nothing for it. It is a wrapper over the
   routes; nothing is possible only through it. Each minute and on focus it
   reads the served `index.html`; once its hashed entry script differs from the
   one the tab loaded, it offers a reload, since a stale tab would deploy the
@@ -204,10 +185,8 @@ any other tenant or an unknown sender.
 
 - `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
   pull request and triages it. Both are built by `prTriage({ sources })` in
-  `@corbits/triage-workflows`. Each binds only its host's credential, since an
-  unresolved binding fails a deployment, so a workspace deploys one per
-  connected host. A deployment of the earlier `pr-triage` workflow is released
-  once `pr-triage-github` is live.
+  `@corbits/triage-workflows`. Nothing deploys them; Upgrade cancels any
+  still live.
 - `pr-triage-historical`: one run that triages every open pull request of a
   GitHub repository, skipping drafts. The hub no longer mails it: its backlog
   route, run when triage is turned on, when a push to the default branch
@@ -221,8 +200,7 @@ any other tenant or an unknown sender.
   names one pull request and the run returns a review.
 - `pr-workflow-anthropic-github` and `pr-workflow-anthropic-bitbucket-datacenter`:
   triage, then code review behind a gate, in one run ([PR workflow](#pr-workflow)).
-  The portal deploys a host's while a repository's policy file needs it; the
-  hub picks it per pull request.
+  Nothing deploys them; Upgrade cancels any still live.
 - `triage-listener-github` and `triage-listener-bitbucket-datacenter`
   (`triageListener` in `@corbits/triage-manager`): a workspace's listener for
   one host. The hub mails it the pull requests it recorded that have no
@@ -242,14 +220,25 @@ any other tenant or an unknown sender.
   deploy route from that person's source asset, waits for it to be live
   (cancelling it after five minutes), then cancels the host's live listeners
   created before it, found by workflow name, so of two upgrades at once the
-  newer stays. Settings offers Upgrade again while a host has more than one
+  newer stays, and every live deployment of the workflows the listener
+  replaced: pr-triage, pr-triage-historical, the standalone code review and
+  the PR workflow variants. Settings offers Upgrade again while a host has more than one
   live listener. A
   published workflow's asset, and so its definition, is named for its
   publisher and release, so the hub finds a deployment by the workflow id in
   its frozen projection (`apps/hub/src/github/deployment.ts`), and the
-  workflow-versions route reports a source deployment's package from its
+  workflow-versions route reports a source deployment's asset, commit and package from its
   closure. Onboarding runs the same upgrade once the decision model is saved,
-  for an owner or Deployer.
+  for an owner or Deployer. The upgrade also sets the tenant's
+  `lifecycle.maxLifetime` to the longest Interchange accepts, so a listener
+  lives until a newer one replaces it. A host's listener and its managers are
+  released once the host is disconnected: right away when Bitbucket Data
+  Center is disconnected through its route, and on the next reconcile pass
+  when the GitHub App credential is removed. A running listener keeps the
+  credentials it launched with, so after a host's credential is replaced the
+  portal deploys that host's newest listener again from the same asset
+  commit, which the workflow-versions route reports, and cancels the older
+  ones, as Upgrade does; managers and judges launch with the current value.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes
@@ -500,14 +489,11 @@ operation has one implementation.
 repository; it needs the host connected and a code review provider's key. A
 workspace runs one provider, the one whose key it stores in Settings → Code
 review
-(`CODE_REVIEW_PROVIDERS` in `triage-contracts`; only Anthropic today). The
-portal deploys that host's `pr-code-review-<host>` from the provider's
-package, and the hub releases it once no repository has code review on, the
-host is disconnected or the key is gone.
-
-Each new non-draft head of a pull request in such a repository is mailed once,
-whether or not triage is on, with the host's unified diff cut at a line
-boundary past 100,000 characters; on GitHub a diff too large for the diff API
+(`CODE_REVIEW_PROVIDERS` in `triage-contracts`; only Anthropic today). A
+pull request's code review runs in its manager: the hub attaches the review
+request to a pull request mail whose `codeReview` is on, which the policy
+file's `code-review` block or Review again sets, with the host's unified diff
+cut at a line boundary past 100,000 characters; on GitHub a diff too large for the diff API
 is built from the files' patches. The files a cut leaves unread, read from the
 diff's headers, ride as `cut.unread` and never reach a prompt; the review sent
 to GitHub lists them. The title and description are read as the facts step
@@ -543,10 +529,9 @@ Each request carries `diffHash`, a SHA-256 of the full diff, `index` lines
 included, so a base change to a file the diff touches, or a binary change,
 changes it. A diff with no `index` line, as GitHub's rebuilt from the file
 list, is sent unhashed. A manager's code review reports the hash with its
-review, so carrying over works after a restart: a new head whose diff hashes the same as the newest review's,
-when that review finished, is not mailed but takes the review over (`carries`
-in `code-review-runs.ts`). `GET …/code-review` with `head` answers `carriedTo`,
-reading that head's diff once; a failed read is not retried for five minutes.
+review. `GET …/code-review` with `head` answers `carriedTo` when that head's
+diff hashes the same as the newest finished review's, reading that head's diff
+once; a failed read is not retried for five minutes.
 The review is then sent to GitHub at that head, unless it was sent on its own,
 whose comments stay on the same lines. A diff that can't be read and `…/run`
 review the head instead.
@@ -701,9 +686,8 @@ token, never the App key. The vault holds the App as
 webhook secret under `github-hook`. The manifest callback and
 `PUT /api/integrations/github-app/:tenantId` write the key and the token minted
 from it in one transaction; App JSON a stock credential write leaves in
-`github` is moved to `github-app` when the hub next reads the key: the next worker deploy, portal read, installation sync or token loop pass, so at most 45 minutes later; until then that credential holds App JSON and a deployment launched from it is handed the key. The hub
-mints the token before it deploys a GitHub worker (when under 15 minutes are
-left) and renews it on boot and every 45 minutes. Every write holds the
+`github` is moved to `github-app` when the hub next reads the key: the next portal read, installation sync or token loop pass, so at most 45 minutes later; until then that credential holds App JSON and a deployment launched from it is handed the key. The hub
+mints the token on boot and renews it every 45 minutes. Every write holds the
 tenant's advisory lock, and a renewal stores its token only while the key it
 minted from is still the workspace's, so a replaced App is never overwritten
 with the old one's token. Each renewal then calls stock
@@ -716,7 +700,7 @@ key whose `github` credential was deleted is dropped by the renewal loop. A
 failed renewal keeps its reason as `tokenError` on the credential's metadata,
 shown on the portal's GitHub App row; once the token is past its expiry the
 credential is marked `expired`, which stock launch resolution skips, so no
-worker deploys with it. The next good renewal sets it `active` again; running
+deployment launches with it. The next good renewal sets it `active` again; running
 deployments still re-resolve an expired credential, as stock drops only
 revoked ones.
 Hub routes that reach GitHub for the portal sign with the App key on the hub.
@@ -883,11 +867,11 @@ read it, and passes the rest of the request to stock.
   the coalescer's mail carries, so a redelivery records nothing new; any
   other mail is a new
   event, so a head mailed again, as after its base moved or its CI settled,
-  is triaged again. The code review feed sends nothing. A workspace with no
-  live listener for the host mails nothing: Triage again, Review again, a
-  held Do's approval and backlog triage answer 503 `service_not_running`, and
-  a webhook's head fails, each saying Triage is stopped on that host until
-  someone presses **Upgrade to new version** in Settings.
+  is triaged again. A workspace with no live listener for the host mails
+  nothing: Triage again, Review again, a held Do's approval and backlog
+  triage answer 503 `service_not_running`, and a webhook's head fails, each
+  saying Triage is stopped on that host until someone presses **Upgrade to new
+  version** in Settings.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

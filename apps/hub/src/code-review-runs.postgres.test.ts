@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { diffHash, type PullRequestToReview } from "./code-review-feed.js";
+import { diffHash, type PullRequestToReview } from "./pull-request-reader.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { recordEvent, type PullRequestRef } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
@@ -100,26 +100,27 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
     // A finished review names its diff's hash, so a later head with the same diff takes it over.
     await recordEvent(db, TENANT, GITHUB, "run_live", { type: "reviewer-result", head: "sha4", payload: { kind: "code-review", result: OUTPUT, diffHash: diffHash(DIFF) } });
     const hashed = { ...finished, headSha: "sha4", diffHash: diffHash(DIFF) };
-    expect(await runs.carries(TENANT, RECORD, 7, head)).toBe(true);
     expect(await reviewsOf(GITHUB, "sha5")).toEqual({ review: hashed, completed: hashed, carriedTo: "sha5" });
-    expect(hostReads).toBe(0);
+    expect(await reviewsOf(GITHUB, "sha5")).toMatchObject({ carriedTo: "sha5" });
+    expect(hostReads).toBe(1);
     expect(await reviewsOf(GITHUB, "sha4")).toMatchObject({ carriedTo: null });
 
-    expect(await runs.carries(TENANT, RECORD, 7, { ...head, headSha: "sha6", diff: BASE_EDITED })).toBe(false);
-    expect(await runs.carries(TENANT, RECORD, 7, { ...head, headSha: "sha7", diff: REBUILT })).toBe(false);
-    expect(await runs.carries(TENANT, RECORD, 7, { ...head, headSha: "sha8", diff: `${DIFF}+c\n` })).toBe(false);
+    for (const [headSha, diff] of [["sha6", BASE_EDITED], ["sha7", REBUILT], ["sha8", `${DIFF}+c\n`]] as const) {
+      head = { ...head, headSha, diff };
+      expect(await reviewsOf(GITHUB, headSha)).toMatchObject({ carriedTo: null });
+    }
 
-    head = { ...head, headSha: "sha10" };
+    head = { ...head, headSha: "sha10", diff: DIFF };
     expect(await reviewsOf(GITHUB, "sha10")).toMatchObject({ carriedTo: "sha10" });
     expect(await reviewsOf(GITHUB, "sha11")).toMatchObject({ carriedTo: null });
-    expect(hostReads).toBe(2);
+    expect(hostReads).toBe(6);
 
     // A read that fails, or finds another head, is not tried again on every poll.
     hostDown = true;
     expect(await reviewsOf(GITHUB, "sha12")).toMatchObject({ carriedTo: null });
     expect(await reviewsOf(GITHUB, "sha12")).toMatchObject({ carriedTo: null });
     expect(await reviewsOf(GITHUB, "sha11")).toMatchObject({ carriedTo: null });
-    expect(hostReads).toBe(3);
+    expect(hostReads).toBe(7);
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

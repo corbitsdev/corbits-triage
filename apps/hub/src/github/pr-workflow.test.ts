@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { WorkflowRunEvent } from "@intx/hub-sessions";
 import { decideOf, defaultActions, WAITING_KIND, type PolicyWorkflow } from "@corbits/triage-contracts";
-import type { PullRequestToReview } from "../code-review-feed.js";
+import type { PullRequestToReview } from "../pull-request-reader.js";
 import { createPauseGate, prWorkflowKeys, workflowPart } from "./pr-workflow.js";
 import type { RepoRecord } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
