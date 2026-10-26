@@ -10,6 +10,8 @@ export const WORKFLOW_VERSIONS_PATH = "/api/integrations/workflow-versions";
 export type WorkflowVersionsDeps = {
   db: DB["db"];
   launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">;
+  /** Whether the deployment is up as the hub counts a listener or a manager. */
+  up: (anchorRunId: string) => Promise<boolean>;
 };
 
 export function createWorkflowVersions(deps: WorkflowVersionsDeps) {
@@ -28,6 +30,7 @@ export function createWorkflowVersions(deps: WorkflowVersionsDeps) {
           workflow: live.workflow,
           createdAt: live.createdAt.toISOString(),
           cancelling: live.cancelling,
+          live: await deps.up(live.runId),
           worker: kind === "worker",
           package: versions?.workflow ?? null,
           tools: versions?.tools ?? [],

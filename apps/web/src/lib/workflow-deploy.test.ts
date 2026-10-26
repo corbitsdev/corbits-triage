@@ -45,11 +45,12 @@ function fakeHub(tarballSeed: Record<string, string> = {}, unconnected: readonly
         workflow: assets.find((asset) => asset.id === row.definitionAssetId)?.name,
         createdAt: row.createdAt,
         cancelling: false,
+        live: true,
         worker: false,
         package: packageOf(pins.get(row.id)!),
         tools: [{ name: INDEX[0]!.name, version: INDEX[0]!.version }],
       }));
-      const running = workers.map((row, n) => ({ ...row, id: `worker_${n}`, workflow: "pr-triage-github", createdAt: "2026-10-09T00:00:00.000Z", cancelling: false, worker: true }));
+      const running = workers.map((row, n) => ({ ...row, id: `worker_${n}`, workflow: "pr-triage-github", createdAt: "2026-10-09T00:00:00.000Z", cancelling: false, live: true, worker: true }));
       return { deployments: [...listeners, ...running] } as T;
     }
     if (method === "GET" && url.pathname === "/api/tenants/t/assets") {

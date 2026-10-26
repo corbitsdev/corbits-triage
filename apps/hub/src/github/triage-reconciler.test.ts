@@ -5,7 +5,7 @@ import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type ActionKind, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import type { CheckRun } from "@corbits/github-reads";
-import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
+import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 import { createRunTriggerDeliverer } from "@corbits/webhooks";
@@ -34,6 +34,8 @@ const LONG_AGO = "2026-10-07T00:00:00.000Z";
 const VERSION = "0.1.0-sha-11111111";
 const OFFERING = "off_decision";
 const LIVE = deployment("run_live", new Date(LONG_AGO));
+/** A listener names no workflow version or offering. */
+const LISTENER = { runId: "run_listener", address: formatRunAddress("run_listener", DOMAIN), createdAt: new Date(LONG_AGO), cancelling: false };
 const MINUTE = 60_000;
 const BASE_MOVE_WINDOW = DEFAULT_RECONCILE_POLICY.baseMoveWindowMs / MINUTE;
 
@@ -188,6 +190,9 @@ type HarnessOptions = {
   rotateAfterRuns?: number;
   now?: () => Date;
   deployments?: LiveDeployment[];
+  listener?: LiveDeployment;
+  /** The managers' runs by head, read on each pass. */
+  managed?: () => Record<string, ObservedRun[]>;
   whileRedeploying?: (deployments: LiveDeployment[]) => void;
   rotation?: RotationRecord;
   sameSource?: boolean;
@@ -259,6 +264,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       return [tenant()];
     },
     liveDeployments,
+    listener: async () => options.listener,
     latestDeployments: async () => [],
     rotation: {
       afterRuns: options.rotateAfterRuns ?? 1_000,
@@ -295,7 +301,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     },
     activity: options.activity ?? { stale: () => true },
     observeTenant: observer.observe,
-    managerRuns: async () => ({ byRepo: new Map(), runCount: 0, verdicts: [], approved: [] }),
+    managerRuns: async () => ({ byRepo: new Map(options.managed ? [[REPO, new Map(Object.entries(options.managed()))]] : []), runCount: 0, verdicts: [], approved: [] }),
     headChecks: async () => options.headChecks ?? [],
     verdicts: { latest: async () => options.recorded ?? [] },
     store: store(),
@@ -347,6 +353,24 @@ function rotationLogs(logged: ReadonlyArray<Record<string, unknown>>): unknown[]
 }
 
 describe("triage reconciler", () => {
+  test("a host whose listener is live is caught up with no pr-triage deployment", async () => {
+    const run = harness({}, [head(1)], { deployments: [], listener: LISTENER });
+    await run.reconcile();
+    expect(mailedNumbers(run.delivered)).toEqual([1]);
+  });
+
+  test("a head mailed through the listener is mailed once while its manager runs and once it reported", async () => {
+    let minutes = 0;
+    let managed: Record<string, ObservedRun[]> = {};
+    const run = harness({}, [head(1)], { deployments: [], listener: LISTENER, now: () => at(minutes), managed: () => managed });
+    await run.reconcile();
+    managed = { [runKey(1, "sha1")]: [{ runId: "run_manager", source: "github", status: "running", startedAt: at(1).toISOString() }] };
+    for (minutes = 1; minutes <= 3; minutes++) await run.reconcile();
+    managed = { [runKey(1, "sha1")]: [{ runId: "run_manager", source: "github", status: "completed", startedAt: at(1).toISOString() }] };
+    for (minutes = 4; minutes <= 60; minutes += 14) await run.reconcile();
+    expect(mailedNumbers(run.delivered)).toEqual([1]);
+  });
+
   test("a host without build webhooks: a head whose verdict waits on CI is queued again once its builds stop pending", async () => {
     const waiting = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }] };
     const logs: Logs = { [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(waiting), completed] } };

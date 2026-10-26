@@ -200,6 +200,8 @@ export const DeployedVersions = type({
     workflow: "string",
     createdAt: "string",
     cancelling: "boolean",
+    /** Up as the hub counts a listener or a manager: running, on its sidecar, or just deployed. */
+    live: "boolean",
     /** A worker runs one triage job on a copy of a listener; it still pins that listener's versions. */
     worker: "boolean",
     package: PackageVersion.or("null"),

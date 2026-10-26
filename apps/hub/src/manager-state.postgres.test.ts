@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { Tx } from "./github/admin-github-grant.js";
-import { done, recordEvent, take, type PullRequestRef } from "./manager-state.js";
+import { done, liveListener, recordEvent, take, type PullRequestRef } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -393,6 +393,20 @@ test("PostgreSQL: a manager deployed inside the startup window, or one with a si
     expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
     const [heldRun] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_fresh'`);
     expect(heldRun?.cancellationRequestedAt).toBeNull();
+  });
+}, 120_000);
+
+test("PostgreSQL: a listener counts as live as a manager does, and one deployed without a sidecar past the startup window is released", async () => {
+  await withDatabase(async function listener(db) {
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: "triage-listener-github" });
+    await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date() });
+    expect(await liveListener(db, TENANT, "github")).toMatchObject({ runId: "run_listener" });
+    expect(await liveListener(db, TENANT, "bitbucket-datacenter")).toBeUndefined();
+    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 3 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    expect(await liveListener(db, TENANT, "github")).toBeUndefined();
+    const [left] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt, cancellationReason: schema.workflowRun.cancellationReason }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    expect(left?.cancellationRequestedAt).toBeInstanceOf(Date);
+    expect(left?.cancellationReason).toBe("listener deployed without a sidecar");
   });
 }, 120_000);
 

@@ -29,7 +29,7 @@ function fakeHub() {
     }
     if (path === "/api/tenants/t/workflows/deployments") return deployments as T;
     if (path === "/api/integrations/workflow-versions/t") {
-      return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: workflows[row.id], createdAt: row.createdAt, cancelling: false, worker: false, package: null, tools: [] })) } as T;
+      return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: workflows[row.id], createdAt: row.createdAt, cancelling: false, live: true, worker: false, package: null, tools: [] })) } as T;
     }
     if (method === "DELETE" && path.startsWith("/api/tenants/t/workflows/runs/")) {
       deployments.find((row) => path.endsWith(row.id))!.status = "cancelled";
@@ -74,7 +74,7 @@ function sharedHub() {
       }
       if (path === "/api/tenants/t/workflows/deployments") return deployments.map((row) => ({ ...row })) as T;
       if (path === "/api/integrations/workflow-versions/t") {
-        return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: "triage-listener-github", createdAt: row.createdAt, cancelling: false, worker: false, package: null, tools: [] })) } as T;
+        return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: "triage-listener-github", createdAt: row.createdAt, cancelling: false, live: true, worker: false, package: null, tools: [] })) } as T;
       }
       if (method === "DELETE" && path.startsWith("/api/tenants/t/workflows/runs/")) {
         deployments.find((row) => path.endsWith(row.id))!.status = "cancelled";

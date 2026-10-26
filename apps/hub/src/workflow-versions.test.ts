@@ -52,7 +52,7 @@ function db() {
 }
 
 function handler() {
-  return createWorkflowVersions({ db: db(), launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId.replace("_worker", "")] ?? null) as never } });
+  return createWorkflowVersions({ db: db(), up: async (anchorRunId) => anchorRunId !== "run_source", launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId.replace("_worker", "")] ?? null) as never } });
 }
 
 describe("createWorkflowVersions", () => {
@@ -61,9 +61,9 @@ describe("createWorkflowVersions", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       deployments: [
-        { id: "run_tarball", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, worker: false, package: WORKFLOW, tools: [TOOL] },
-        { id: "run_source", workflow: "pr-triage-historical", createdAt: CREATED_AT.toISOString(), cancelling: true, worker: false, package: SOURCE_WORKFLOW, tools: [] },
-        { id: "run_tarball_worker", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, worker: true, package: WORKFLOW, tools: [TOOL] },
+        { id: "run_tarball", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, live: true, worker: false, package: WORKFLOW, tools: [TOOL] },
+        { id: "run_source", workflow: "pr-triage-historical", createdAt: CREATED_AT.toISOString(), cancelling: true, live: false, worker: false, package: SOURCE_WORKFLOW, tools: [] },
+        { id: "run_tarball_worker", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, live: true, worker: true, package: WORKFLOW, tools: [TOOL] },
       ],
     });
   });

@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { presetFor, type RepoSource } from "@corbits/triage-contracts";
+import { presetFor, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import { useCheckPacks } from "../../lib/check-packs.ts";
 import { modelSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
@@ -17,9 +17,9 @@ import { KeyRow } from "./KeyRow.tsx";
 import { PolicyFiles } from "./PolicyFiles.tsx";
 import { TriageUpgrade } from "./TriageUpgrade.tsx";
 
-/** The connected hosts whose pr-triage workflow has no deployment. */
+/** The connected hosts with neither a listener up nor a pr-triage workflow deployed. */
 function undeployedSources(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): RepoSource[] {
-  return sources.filter((source) => currentDeployment(deployments, `pr-triage-${source}`) === undefined);
+  return sources.filter((source) => currentDeployment(deployments, TRIAGE_LISTENERS[source])?.live !== true && currentDeployment(deployments, `pr-triage-${source}`) === undefined);
 }
 
 type Status = { sources: RepoSource[]; undeployed: RepoSource[]; model: boolean; triaging: number; total: number };

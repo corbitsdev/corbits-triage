@@ -1,6 +1,7 @@
-// Queues one open pull request's head for the live pr-triage deployment at a
-// maintainer's request. The row is marked queued before the mail goes out so
-// repeated clicks and reconcile passes see it; a failed mail puts it back.
+// Queues one open pull request's head at a maintainer's request, for the host's
+// listener while one is live and the live pr-triage deployment otherwise. The
+// row is marked queued before the mail goes out so repeated clicks and reconcile
+// passes see it; a failed mail puts it back.
 // Attempts are left alone: a head the hub gave up on is only ever retried here.
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
@@ -32,6 +33,8 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   readCheckPack: PolicyReader;
   /** The named workflow's, newest first; mail goes to the first, and a head may still be running on a replaced one. */
   liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
+  /** The workspace's live listener for the host, if it has one; its managers then run the pull requests. */
+  listener: (tenantId: string, source: RepoSource) => Promise<LiveDeployment | undefined>;
   observeRuns: ObserveRuns;
   managerRuns: ManagerRuns;
   store: TriageStateStore;
@@ -94,9 +97,9 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     if (ready instanceof Response) return ready;
     const { tenant, record, policy, pack } = ready;
     const triage = triageWorkflowFor(sourceOf(record));
-    const deployments = await deps.liveDeployments(tenantId, triage.id);
-    const deployment = newestLive(deployments);
-    if (!deployment) return failure(503, "service_not_running", `The ${triage.id} service is not running.`);
+    const listening = (await deps.listener(tenantId, sourceOf(record))) !== undefined;
+    const deployments = listening ? [] : await deps.liveDeployments(tenantId, triage.id);
+    if (!listening && !newestLive(deployments)) return failure(503, "service_not_running", `The ${triage.id} service is not running.`);
 
     let openHead: string | undefined;
     try {
