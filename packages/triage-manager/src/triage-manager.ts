@@ -5,6 +5,7 @@ import { credentialBindingsFor, judgeAgent, type Sources } from "@corbits/triage
 import { WRITE_PULL_REQUEST } from "@corbits/triage-workflows/logic/host";
 import { hostAction, triageSteps } from "@corbits/triage-workflows/triage-steps";
 import { HUB_WRITE } from "./actions/hub.js";
+import { JUDGE_DEADLINE_MS } from "./actions/judge.js";
 import { REVIEW_DEADLINE_MS } from "./actions/review.js";
 import { mailDirector } from "./directors.js";
 import { mailAgentOf } from "./mail.js";
@@ -13,8 +14,8 @@ import { deployGrants, type Release } from "./release.js";
 /** How often a manager waiting for its code review asks the hub whether the review reported. */
 const POLL_MS = 30_000;
 
-/** Enough passes to wait out a code review's deadline, and the events that arrive meanwhile. */
-const PASSES = Math.ceil(REVIEW_DEADLINE_MS / POLL_MS) + 40;
+/** Enough passes to wait out a judge and then a code review, and the events that arrive meanwhile. */
+const PASSES = Math.ceil((JUDGE_DEADLINE_MS + REVIEW_DEADLINE_MS) / POLL_MS) + 40;
 
 const PAYLOAD = { project: { from: "trigger" }, fields: ["payload"] } as const;
 
@@ -54,10 +55,30 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
 }
 
 /**
+ * The judge between the rules and the verdict. A pass that deploys it mails the rules output and posts nothing. The
+ * pass that has its answers runs the verdict, and code review when the policy asks for it, still posting nothing while
+ * a review is out. A judge the release does not publish posts nothing. One that failed, could not be mailed, or ran
+ * past its deadline goes on to the verdict and is not deployed again.
+ */
+function judgeSteps(): Record<string, Primitive> {
+  return {
+    judgeScope: action({ handler: "judgeScope", input: { merge: [MAIL, stepsOf("take", "rules")] }, after: ["route"] }),
+    judging: gate({ when: { from: "steps.judgeScope.output.deploy" }, then: "deployJudge", else: "judgeWait", after: ["judgeScope"] }),
+    deployJudge: hubAction("deployJudge", { merge: [MAIL, stepsOf("take", "rules")] }, ["judging"]),
+    mailJudge: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployJudge.output.mail" }, after: ["deployJudge"] }),
+    judgeMailed: action({ handler: "judgeMailed", input: stepsOf("deployJudge", "mailJudge"), after: ["mailJudge"] }),
+    judgeSent: gate({ when: { from: "steps.judgeMailed.output.post" }, then: "evaluateRules", else: "doneJudging", after: ["judgeMailed"] }),
+    // A pass that mailed its judge records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
+    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "judgeMailed")] }, ["judgeSent"]),
+    judgeWait: gate({ when: { from: "steps.judgeScope.output.post" }, then: "evaluateRules", else: "done", after: ["judging"] }),
+  };
+}
+
+/**
  * One pass: take claims the pull request and its pending events. Each held Do approved since runs; then, when the head
- * is triaged, pr-triage's own steps run on the newest mail the hub recorded for it, so a head held for CI is marked
- * waiting and anything else is triaged and its automatic Dos run, posting nothing for rules that need the judge yet;
- * then done. A pass after one that waits for its code review first waits `POLL_MS`.
+ * is triaged, pr-triage's own steps run on the newest mail the hub recorded for it. A head held for CI is marked
+ * waiting. A policy of only deterministic rules is triaged on this pass. One that asks the judge or for code review
+ * posts once both have reported or given up. A pass after one that waits for a reviewer first waits `POLL_MS`.
  */
 function passOf(id: string, sources: Sources) {
   const { waiting, held, markWaiting, unready, rules, evaluateRules, mirrorRules, executeRules } = triageSteps(sources);
@@ -77,14 +98,16 @@ function passOf(id: string, sources: Sources) {
       markWaiting,
       unready,
       facts: hostAction("facts", sources, TAKEN, ["unready"]),
-      rules,
-      route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "done", else: "evaluateRules", after: ["rules"] }),
-      evaluateRules,
+      recall: action({ handler: "recall", input: { merge: [stepsOf("facts", "take")] }, after: ["facts"] }),
+      rules: { ...rules, input: { from: "steps.recall.output" }, after: ["recall"] },
+      route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "judgeScope", else: "evaluateRules", after: ["rules"] }),
+      ...judgeSteps(),
+      evaluateRules: { ...evaluateRules, after: ["route", "judgeWait", "judgeSent"] },
       ...reviewSteps(sources),
       mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] },
       // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.
       executeRules: { ...executeRules, after: ["postReview"] },
-      done: hubAction("done", { merge: [MAIL, stepsOf("take")] }, ["ran", "triaged", "markWaiting", "route", "posting", "executeRules"]),
+      done: hubAction("done", { merge: [MAIL, stepsOf("take")] }, ["ran", "triaged", "markWaiting", "judgeWait", "posting", "executeRules"]),
     },
   });
 }
@@ -93,11 +116,11 @@ function passOf(id: string, sources: Sources) {
  * A pull request's manager under `id`, also its mail address, for the given hosts: the only workflow that writes to the
  * pull request, one live run per pull request, which runs only while it has work. A mail wakes it to run passes until
  * done ends the claim, when the run stops itself, or another run holds the claim. When the host's release publishes a
- * code review, it runs as its own deployment, which reports back; `codeReview`, the one published as the definition
- * loads, names the asset it declares the grants to deploy. Mail comes from the hub, the listener that deployed it and
- * the reviews it mailed.
+ * code review or a judge, each runs as its own deployment, which reports back; `codeReview` and `judge`, the ones
+ * published as the definition loads, name the assets it declares the grants to deploy. Mail comes from the hub, the
+ * listener that deployed it, and the judge and the reviews it mailed.
  */
-export function triageManager({ id, sources, codeReview }: { id: string; sources: Sources; codeReview: Release | undefined }) {
+export function triageManager({ id, sources, codeReview, judge }: { id: string; sources: Sources; codeReview: Release | undefined; judge?: Release }) {
   const perMail = defineWorkflow({
     id: `${id}-run`,
     trigger: { type: "manual" },
@@ -122,6 +145,7 @@ export function triageManager({ id, sources, codeReview }: { id: string; sources
       { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION, source: "creator" },
       { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
       ...(codeReview ? deployGrants(codeReview) : []),
+      ...(judge ? deployGrants(judge) : []),
     ],
     mailAccept: { invoker: true, correspondent: true, tenant: true },
     steps: {

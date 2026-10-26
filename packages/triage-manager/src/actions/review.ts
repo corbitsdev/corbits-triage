@@ -25,11 +25,12 @@ const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, eval
 export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean }> {
   const parsed = ScopeInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewScope: ${parsed.summary}`);
-  const { taken, head, review, reviewFailed, overdue, reviewers } = parsed.take.output;
+  const { taken, head, review, reviewFailed, reviewers } = parsed.take.output;
   const part = CodeReviewPart(taken?.["codeReview"]);
   const reviewed = !(part instanceof type.errors) && part.on && rulesGate(part.rules, asRecord(parsed.evaluateRules.output)?.["checks"]).open;
   const published = publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") !== undefined;
-  if (!reviewed || !published || review || reviewFailed || overdue || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true };
+  const reviewLate = reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
+  if (!reviewed || !published || review || reviewFailed || reviewLate || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true };
   const pending = reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);
   return { deploy: !pending, post: false };
 }

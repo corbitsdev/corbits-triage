@@ -237,7 +237,8 @@ export async function packWorkflows(outDir: string, native = NPM_NATIVE): Promis
     }
     for (const workflow of CHAIN_PACKAGES) {
       const built = await packWorkflow(workflow, tools, members, join(stage, workflow.name), outDir);
-      if ("deploys" in workflow && !built.release) throw new Error(`${workflow.packageName} deploys ${workflow.deploys.workflow} but does not read its release.`);
+      const slots = "deploys" in workflow ? workflow.deploys : undefined;
+      if (slots?.length && !built.release) throw new Error(`${workflow.packageName} deploys ${slots.map((slot) => slot.workflow).join(", ")} but does not read its release.`);
       sources.push(built.source);
     }
     const index = packed.map(({ name, version, filename, integrity }) => ({ name, version, filename, integrity }));

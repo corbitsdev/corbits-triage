@@ -16,6 +16,9 @@ import { workflow as triage } from "../packages/triage-workflows/src/pr-triage";
 import { workflow as triageBitbucket } from "../packages/triage-workflows/src/pr-triage-bitbucket-datacenter";
 import { workflow as triageGithub } from "../packages/triage-workflows/src/pr-triage-github";
 import { workflow as triageHistorical } from "../packages/triage-workflows/src/pr-triage-historical";
+import judgePackage from "../packages/triage-judge/package.json";
+import { workflow as judgeBitbucket } from "../packages/triage-judge/src/triage-judge-bitbucket-datacenter";
+import { workflow as judgeGithub } from "../packages/triage-judge/src/triage-judge-github";
 import managerPackage from "../packages/triage-manager/package.json";
 import { workflow as listenerBitbucket } from "../packages/triage-manager/src/triage-listener-bitbucket-datacenter";
 import { workflow as listenerGithub } from "../packages/triage-manager/src/triage-listener-github";
@@ -36,6 +39,8 @@ const SHIPPED: Record<string, WorkflowDefinition> = {
   "pr-workflow-anthropic/src/pr-workflow.ts": prWorkflow,
   "pr-workflow-anthropic/src/pr-workflow-github.ts": prWorkflowGithub,
   "pr-workflow-anthropic/src/pr-workflow-bitbucket-datacenter.ts": prWorkflowBitbucket,
+  "triage-judge/src/triage-judge-github.ts": judgeGithub,
+  "triage-judge/src/triage-judge-bitbucket-datacenter.ts": judgeBitbucket,
   "triage-manager/src/triage-manager-github.ts": managerGithub,
   "triage-manager/src/triage-manager-bitbucket-datacenter.ts": managerBitbucket,
   "triage-manager/src/triage-listener-github.ts": listenerGithub,
@@ -67,7 +72,7 @@ function modelSteps(workflow: string, node: unknown, step = ""): ModelStep[] {
 }
 
 test("every workflow the packages declare is checked", () => {
-  const declared = [...entriesOf("triage-workflows", triagePackage.interchange.workflows), ...entriesOf("pr-code-review-anthropic", codeReviewPackage.interchange.workflows), ...entriesOf("pr-workflow-anthropic", prWorkflowPackage.interchange.workflows), ...entriesOf("triage-manager", managerPackage.interchange.workflows)];
+  const declared = [...entriesOf("triage-workflows", triagePackage.interchange.workflows), ...entriesOf("pr-code-review-anthropic", codeReviewPackage.interchange.workflows), ...entriesOf("pr-workflow-anthropic", prWorkflowPackage.interchange.workflows), ...entriesOf("triage-judge", judgePackage.interchange.workflows), ...entriesOf("triage-manager", managerPackage.interchange.workflows)];
   expect(Object.keys(SHIPPED).sort()).toEqual(declared.sort());
 });
 

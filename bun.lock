@@ -352,6 +352,23 @@
         "@types/picomatch": "4.0.3",
       },
     },
+    "packages/triage-judge": {
+      "name": "@corbits/triage-judge",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/triage-contracts": "workspace:*",
+        "@corbits/triage-manager": "workspace:*",
+        "@corbits/triage-workflows": "workspace:*",
+        "@intx/agent": "workspace:*",
+        "@intx/types": "workspace:*",
+        "@intx/workflow": "workspace:*",
+        "arktype": "catalog:",
+      },
+      "devDependencies": {
+        "@intx/authz": "workspace:*",
+        "@intx/harness": "workspace:*",
+      },
+    },
     "packages/triage-manager": {
       "name": "@corbits/triage-manager",
       "version": "0.1.0",
@@ -988,6 +1005,8 @@
     "@corbits/system-one": ["@corbits/system-one@0.3.1", "", { "dependencies": { "arktype": "2.2.3" }, "peerDependencies": { "@intx/inference": "^0.4.0", "@intx/types": "^0.4.0" } }, "sha512-YvYaP6CY5VGM7MPJW6JPU4d5uPESMCX1xspddch0NGCBNB4Nz4yAR1JOFz6gYyVy0JyYHqtNYArXwFB5kUetug=="],
 
     "@corbits/triage-contracts": ["@corbits/triage-contracts@workspace:packages/triage-contracts"],
+
+    "@corbits/triage-judge": ["@corbits/triage-judge@workspace:packages/triage-judge"],
 
     "@corbits/triage-manager": ["@corbits/triage-manager@workspace:packages/triage-manager"],
 

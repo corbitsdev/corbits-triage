@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { APPROVE_DO_KIND, CodeReviewOutput, StageResult, WAITING_KIND } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CodeReviewOutput, StageResult, VerdictDetail, WAITING_KIND } from "@corbits/triage-contracts";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
 export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "result?": "unknown" });
@@ -15,7 +15,8 @@ const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean
  * What a pass works on. `run` when there is anything to do: a pass, or the code review the manager waits for is past
  * its deadline. `approvals` are the held Dos approved since, each run as pr-triage runs one. `triage` when the head is
  * triaged: `taken` is the newest pull request mail the hub recorded, or the mail that holds the head for CI when that
- * is the newest for it. `review` or `reviewFailed` is what one of its own code reviews reported on `head`.
+ * is the newest for it. `review` or `reviewFailed`, and `judge` or `judgeFailed`, is what one of its own reviewers
+ * reported on `head`.
  */
 export const TakeOutput = type({
   run: "boolean",
@@ -26,6 +27,8 @@ export const TakeOutput = type({
   "head?": "string",
   "review?": CodeReviewOutput,
   "reviewFailed?": "string",
+  "judge?": VerdictDetail,
+  "judgeFailed?": "string",
   overdue: "boolean",
   reviewers: Reviewer.array(),
 });
@@ -39,19 +42,29 @@ async function asManager<T>(ctx: EffectContext, mail: ManagerMail, route: "take"
   return undefined;
 }
 
-function isOwnReview(reviewer: Reviewer, head: string): boolean {
-  return reviewer.kind === "code-review" && reviewer.head === head;
+function isOwn(reviewer: Reviewer, kind: string, head: string): boolean {
+  return reviewer.kind === kind && reviewer.head === head;
 }
 
-/** What one of the manager's own code reviews reported on `head`. */
-function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: readonly Reviewer[]): Pick<TakeOutput, "review" | "reviewFailed"> {
+/** What one of the manager's own reviewers reported on `head`. */
+function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: readonly Reviewer[]): Pick<TakeOutput, "review" | "reviewFailed" | "judge" | "judgeFailed"> {
+  const reported: Pick<TakeOutput, "review" | "reviewFailed" | "judge" | "judgeFailed"> = {};
   for (const { key, event } of events) {
     const result = StageResult({ ...event.payload, head: event.head });
-    if (result instanceof type.errors || result.kind !== "code-review") continue;
-    if (!reviewers.some((reviewer) => isOwnReview(reviewer, head) && key.endsWith(`:${reviewer.runId}`))) continue;
-    return "failed" in result ? { reviewFailed: result.failed } : { review: result.result };
+    if (result instanceof type.errors) continue;
+    if (!reviewers.some((reviewer) => isOwn(reviewer, result.kind, head) && key.endsWith(`:${reviewer.runId}`))) continue;
+    if (result.kind === "code-review") {
+      if ("failed" in result) reported.reviewFailed = result.failed;
+      else reported.review = result.result;
+    } else if ("failed" in result) reported.judgeFailed = result.failed;
+    else reported.judge = result.result;
   }
-  return {};
+  return reported;
+}
+
+/** A reviewer of `kind` on `head` whose deadline passed with no report and no result stored. */
+function late(reviewers: readonly Reviewer[], head: string, kind: string, reported: boolean): boolean {
+  return !reported && reviewers.some((reviewer) => isOwn(reviewer, kind, head) && reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
 }
 
 /** Claims the pull request and takes its pending events, or its open pass again; see `TakeOutput`. */
@@ -68,29 +81,61 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
   const report = reportOf(events, head, reviewers);
-  const overdue = !report.review && !report.reviewFailed && reviewers.some((reviewer) => isOwnReview(reviewer, head) && Date.parse(reviewer.deadline) <= Date.now());
+  const overdue = late(reviewers, head, "code-review", report.review !== undefined || report.reviewFailed !== undefined) || late(reviewers, head, "judge", report.judge !== undefined || report.judgeFailed !== undefined);
   // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage.
-  const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || overdue);
+  const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue);
   const taken = forHead?.payload["kind"] === WAITING_KIND ? forHead.payload : request;
   return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, overdue, reviewers };
 }
 
-const DoneInput = type({ payload: "unknown", take: { output: TakeOutput }, "reviewMailed?": { output: { "reviewer?": Reviewer } } });
+const DoneInput = type({
+  payload: "unknown",
+  take: { output: TakeOutput },
+  "reviewMailed?": { output: { "reviewer?": Reviewer } },
+  "judgeMailed?": { output: { "reviewer?": Reviewer } },
+});
 
-/** The reviewers to wait for: this head's, less a code review that reported or ran out of time, plus one mailed now. */
-function reviewersAfter({ head, review, reviewFailed, overdue, reviewers }: TakeOutput, mailed: Reviewer | undefined): Reviewer[] {
-  const settled = review !== undefined || reviewFailed !== undefined || overdue;
-  const current = head === undefined ? reviewers : reviewers.filter((reviewer) => reviewer.head === head && !(settled && reviewer.kind === "code-review"));
+/** This pass's report, or a passed deadline, recorded on the reviewer it belongs to. */
+function remembered(take: TakeOutput): Reviewer[] {
+  const { head, reviewers } = take;
+  const current = head === undefined ? [...reviewers] : reviewers.filter((reviewer) => reviewer.head === head);
+  return current.map(function attach(reviewer) {
+    if (reviewer.result !== undefined) return reviewer;
+    if (reviewer.kind === "code-review" && reviewer.head === head) {
+      if (take.review) return { ...reviewer, result: take.review };
+      if (take.reviewFailed) return { ...reviewer, result: { failed: take.reviewFailed } };
+    }
+    if (reviewer.kind === "judge" && reviewer.head === head) {
+      if (take.judge) return { ...reviewer, result: take.judge };
+      if (take.judgeFailed) return { ...reviewer, result: { failed: take.judgeFailed } };
+    }
+    if (take.overdue && Date.parse(reviewer.deadline) <= Date.now()) return { ...reviewer, result: { failed: "overdue" } };
+    return reviewer;
+  });
+}
+
+/**
+ * The reviewers to wait for. A result stays on its reviewer while another of this head is still out, so a judge that
+ * reported before code review is not lost; once nothing is waiting, the settled ones are dropped. Plus one mailed now.
+ */
+function reviewersAfter(take: TakeOutput, mailed: Reviewer | undefined): Reviewer[] {
+  let current = remembered(take);
+  const waiting = current.some((reviewer) => reviewer.result === undefined) || (mailed !== undefined && mailed.result === undefined);
+  if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined);
   return mailed ? [...current, mailed] : current;
 }
 
 /**
- * The code reviews this run deployed that the pass stops waiting for without a report: one on an older head, or past its
+ * The reviewers this run deployed that the pass stops waiting for without a report: one on an older head, or past its
  * deadline. One an earlier manager deployed runs out its own deadline, since only its deployer may stop it.
  */
-function abandoned({ head, overdue, reviewers }: TakeOutput, runId: string): Reviewer[] {
+function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
   if (head === undefined) return [];
-  return reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.deployedBy === runId && (reviewer.head !== head || overdue));
+  return reviewers.filter(function abandon(reviewer) {
+    if ((reviewer.kind !== "code-review" && reviewer.kind !== "judge") || reviewer.deployedBy !== runId) return false;
+    if (reviewer.head !== head) return true;
+    return reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now();
+  });
 }
 
 /**
@@ -103,7 +148,8 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   if (parsed instanceof type.errors) throw new Error(`done: ${parsed.summary}`);
   if (parsed.take.output.refused) return { outcome: "refused" };
   const mail = managerMailOf(parsed.payload);
-  const answer = await asManager(ctx, mail, "done", { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, parsed.reviewMailed?.output.reviewer) }, Done);
+  const mailed = parsed.judgeMailed?.output.reviewer ?? parsed.reviewMailed?.output.reviewer;
+  const answer = await asManager(ctx, mail, "done", { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, mailed) }, Done);
   if (answer === undefined) return { outcome: "refused" };
   for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);
   if (answer.outcome === "ended") await endRun(ctx, mail.tenantId, mail.runId);

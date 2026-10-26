@@ -116,24 +116,28 @@ async function hex8(text: string): Promise<string> {
 }
 
 /**
- * A chain workflow's tree carries the release of the workflow it deploys, published before it, and its hash covers the
- * build and that release together, so the same build with other offerings publishes a new asset. When that
- * workflow was left out for a missing model, such as code review in a workspace without its model, the tree keeps the
- * build's empty release; any other gap is an ordering mistake and fails the publish.
+ * A chain workflow's tree carries the release of each workflow it deploys, published before it, and its hash covers
+ * the build and that release together, so the same build with other offerings publishes a new asset. A workflow left
+ * out for a missing model, such as code review in a workspace without its model, is omitted from the release; when
+ * every one was, the tree keeps the build's empty release. Any other gap is an ordering mistake and fails the publish.
  */
 async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[]): Promise<{ hash: string; tree: SourceTree }> {
   const plain = { hash: entry.hash, tree };
   const chain = CHAIN_PACKAGES.find((row) => row.name === entry.workflow);
   if (!chain || !("deploys" in chain)) return plain;
-  const deployed = published.find((row) => row.workflow === chain.deploys.workflow);
-  if (!deployed && !publishable(models, chain.deploys.workflow)) return plain;
-  const target = CHAIN_PACKAGES.find((row) => row.name === chain.deploys.workflow);
-  const offerings = target && offeringsIn(models, target.models);
-  if (!deployed || !target || !offerings) throw new Error(`${entry.workflow} deploys ${chain.deploys.workflow}, which this release has not published before it.`);
   const file = `packages/${entry.workflow}/release.json`;
   if (!(file in tree)) throw new Error(`The portal build's ${entry.workflow} does not read a release.`);
-  const release = { workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
-  const json = `${JSON.stringify({ [chain.source]: { [chain.deploys.as]: release } }, null, 2)}\n`;
+  const body: Record<string, unknown> = {};
+  for (const slot of chain.deploys) {
+    const deployed = published.find((row) => row.workflow === slot.workflow);
+    if (!deployed && !publishable(models, slot.workflow)) continue;
+    const target = CHAIN_PACKAGES.find((row) => row.name === slot.workflow);
+    const offerings = target && offeringsIn(models, target.models);
+    if (!deployed || !target || !offerings) throw new Error(`${entry.workflow} deploys ${slot.workflow}, which this release has not published before it.`);
+    body[slot.as] = { workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
+  }
+  if (Object.keys(body).length === 0) return plain;
+  const json = `${JSON.stringify({ [chain.source]: body }, null, 2)}\n`;
   return { hash: await hex8(`${entry.hash}\n${json}`), tree: { ...tree, [file]: json } };
 }
 
