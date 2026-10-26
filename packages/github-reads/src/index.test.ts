@@ -10,6 +10,7 @@ import {
   json,
   listInstallations,
   listOpenPrs,
+  listOpenPrsInto,
   listPrFiles,
   listPrFilesPage,
   listPrTimeline,
@@ -69,6 +70,12 @@ describe("listOpenPrs", () => {
     const prs = await listOpenPrs(async (path) => (paths.push(path), gh(path)), "acme/widgets");
     expect(paths[1]).toBe("/repos/acme/widgets/pulls?state=open&per_page=100&page=2");
     expect(prs.map((pr) => pr.number)).toEqual(all.map((pr) => pr.number));
+  });
+
+  test("into a base asks GitHub for that base only", async () => {
+    const { gh, requests } = recorder(() => [{ number: 7, title: "T", draft: false, head: { sha: "s" } }]);
+    expect(await listOpenPrsInto(gh, "acme/widgets", "release/1.x")).toEqual([{ number: 7, title: "T", draft: false, sha: "s" }]);
+    expect(requests.map((request) => request.path)).toEqual(["/repos/acme/widgets/pulls?state=open&base=release%2F1.x&per_page=100"]);
   });
 
   test("a pull request whose GitHub user is missing has a null author", async () => {

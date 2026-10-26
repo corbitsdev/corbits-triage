@@ -168,6 +168,7 @@ const EVERY_MACHINE_RULE = `rules:
   - { check: conventional-commits, text: T., ${EVIDENCE} }
   - { check: hidden-content, text: T., ${EVIDENCE} }
   - { check: regression-risk, text: T., ${EVIDENCE} }
+  - { check: no-duplicate, text: T., ${EVIDENCE} }
   - { id: conventions, check: code-patterns, text: T., presets: [convention], ${EVIDENCE} }
 `;
 

@@ -2,6 +2,7 @@ import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCusto
 import { holdsOthersChanges, type DeterministicResult, type PrFacts, type PrFileFacts } from "./checks.js";
 import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
 import { globMatch } from "./glob.js";
+import type { OpenPull } from "./duplicates.js";
 import type { BooleanQuestion, ChoiceQuestion, ScoreQuestion } from "@corbits/system-one";
 
 export type QualityQuestion = BooleanQuestion | ChoiceQuestion | ScoreQuestion;
@@ -112,11 +113,11 @@ function ruleText(row: ScopedCheck): string {
   return row.claim.replace(/[.!?]+$/, "");
 }
 
-/** How a per-file check is decided for one pull request: docs or a file or hunk scoped custom check. */
+/** How a per-item check is decided for one pull request: docs, a file or hunk scoped custom check, or duplicates, per open pull request. */
 export interface FilePlan {
   changed: string[];
   asked: Record<string, CheckItem>;
-  /** Files or hunks the check would ask about but no request could read, such as patches GitHub left out. */
+  /** Files or hunks the check would ask about but no request could read, such as patches GitHub left out; for duplicates, why the open pull requests were not read. */
   unread: string[];
 }
 
@@ -133,17 +134,35 @@ interface FileQuestion {
 const FAILURES: Record<QualityCheckId, string> = {
   focused: "mixes unrelated changes",
   docs: "documentation is not updated",
+  "duplicates-open-pull-request": "repeats another open pull request",
 };
 
 const ACTIONS: Record<QualityCheckId, string> = {
   focused: "Split out unrelated changes",
   docs: "Update the documentation",
+  "duplicates-open-pull-request": "Close it if another open pull request already makes this change",
 };
 
 const PASSES: Record<QualityCheckId, string> = {
   focused: "makes one focused change",
   docs: "documentation is up to date",
+  "duplicates-open-pull-request": "does not repeat another open pull request",
 };
+
+const DUPLICATES = "duplicates-open-pull-request";
+
+/** Most alike first, as a Score question orders its levels worst first. */
+export const DUPLICATE_LEVELS = ["same change", "overlaps", "unrelated"] as const;
+
+/** Asked once per open pull request on the shortlist, each beside this one. */
+function duplicateQuestion(index: number): ScoreQuestion {
+  return {
+    id: `${DUPLICATES}-${ordinal(index)}`,
+    type: "score",
+    instructions: `How does this pull request relate to \`repository.openPullRequests[${index}]\`, another open pull request, by both titles, this pull request's body and both lists of changed paths? same change: both make the same change. overlaps: they change the same code or work toward the same goal, and each makes a change of its own. unrelated: they make different changes.`,
+    criteria: [...DUPLICATE_LEVELS],
+  };
+}
 
 const MAX_BODY = 4000;
 const MAX_PATHS = 200;
@@ -282,8 +301,14 @@ export type VerdictState = {
   policy: { rules: PolicyRule[] };
 };
 
+/** The open pull requests duplicates compares this one against, beside its title, body and paths. */
+export type DuplicatesState = {
+  pullRequest: JudgeState["pullRequest"];
+  repository: { openPullRequests: OpenPull[] };
+};
+
 export interface JudgeRequest {
-  state: JudgeState | VerdictState;
+  state: JudgeState | VerdictState | DuplicatesState;
   questions: QualityQuestion[];
 }
 
@@ -303,6 +328,25 @@ export interface QualityEvaluation {
   focused?: FocusedPlan;
   requests: JudgeRequest[];
   judgeError?: string;
+}
+
+/** Why duplicates has no shortlist to ask about. */
+function openPullsUnread(read: PrFacts["openPulls"]): string {
+  return read !== undefined && "unread" in read ? read.unread : "the open pull requests were not read";
+}
+
+/**
+ * Duplicates asks about each open pull request on the facts' shortlist in a request of its own, keyed in the plan by the
+ * pull request it names; one the facts could not read leaves it unread, and an empty shortlist asks nothing.
+ */
+function duplicatesRequest(facts: PrFacts): { plan: FilePlan; request?: JudgeRequest } {
+  const read = facts.openPulls;
+  if (read === undefined || "unread" in read || read.overlapping === undefined) return { plan: { changed: [], asked: {}, unread: [openPullsUnread(read)] } };
+  const shortlist = read.overlapping;
+  const plan = { changed: [], asked: Object.fromEntries(shortlist.map((pull, index) => [duplicateQuestion(index).id, `#${pull.number}`])), unread: [] };
+  if (shortlist.length === 0) return { plan };
+  const state: DuplicatesState = { pullRequest: judgeState(facts, [], false, pathList(facts, false)).pullRequest, repository: { openPullRequests: shortlist } };
+  return { plan, request: { state, questions: [...shortlist.map((_, index) => duplicateQuestion(index)), INSTRUCTED_QUESTION] } };
 }
 
 /** The file with as many leading hunks as fit in `room` bytes, or undefined when not even its first does. */
@@ -365,6 +409,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
   const focused: FocusedPlan | undefined = isFocused(sources) && !holdsOthersChanges(facts.stack) ? { purpose: facts.title, slices: {}, unread: [], parts: {} } : undefined;
   const scoped = sources.custom.filter(isScoped);
   for (const row of scoped) plan[row.id] = { changed: [], asked: {}, unread: [] };
+  const duplicates = sources.quality.some((source) => source.id === DUPLICATES) ? duplicatesRequest(facts) : undefined;
+  if (duplicates) plan[DUPLICATES] = duplicates.plan;
   const listed = pathList(facts, focused !== undefined);
   const metadata = jsonBytes(judgeState(facts, [], sources.custom.length > 0, listed));
   const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(judgeState(facts, [], false, listed));
@@ -499,6 +545,9 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     if (readsAll && fitted.hunks.length < hunks.length) addRest(read, fitted.hunks.length, file.path, position);
   }
   flush();
+  // Duplicates gives up its own request rather than push the others past the limit.
+  if (duplicates?.request && requests.length < MAX_JUDGE_REQUESTS) requests.push(duplicates.request);
+  else if (duplicates?.request) plan[DUPLICATES] = { changed: [], asked: {}, unread: [`${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length + 1} requests)`] };
   if (requests.length > MAX_JUDGE_REQUESTS) return { plan, ...(focused && { focused }), requests: [], judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length} requests)` };
   const ids = Object.keys(focused?.slices ?? {});
   // With no lines to read, such as only generated files changed, focused does not apply.

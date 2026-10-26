@@ -12,10 +12,12 @@ import {
   listOrgMembersForRepo,
   listClosedPrsPage,
   listOpenPrs,
+  listOpenPrsInto,
   listPathCommits,
   listPrCommits,
   listPrFilesPage,
   readFileAt,
+  readPrDiff,
   readPrTemplates,
   readRepoDocsPage,
   readStack,
@@ -35,6 +37,7 @@ import {
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
 import { cachedLoads, checkRepo, checkTarget } from "@corbits/repo-read-tool/host-reads";
 import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
+import { diffHash } from "@corbits/common/diff-hash";
 
 export const CREDENTIAL_HANDLE = "github";
 
@@ -53,8 +56,8 @@ const APP_LOGIN = { type: "string", description: "The App's bot account, whose c
 const READ_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_list_open_prs",
-    description: "List open pull requests for a repository.",
-    inputSchema: obj({ repo }),
+    description: "List open pull requests for a repository, only those into base when it is set.",
+    inputSchema: obj({ repo, base: str }, ["repo"]),
   },
   {
     name: "github_list_closed_prs",
@@ -90,6 +93,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_list_path_commits",
     description: "List the default branch's commits that changed a path since an ISO time, newest first, up to 100, and whether the window holds more (truncated).",
     inputSchema: obj({ repo, path: str, since: str }),
+  },
+  {
+    name: "github_pr_diff_hash",
+    description: "Get the hash of a pull request's diff against its base, or null when the diff has no index lines to hash.",
+    inputSchema: obj({ repo, number: { type: "integer" } }),
   },
   {
     name: "github_list_pr_files",
@@ -265,7 +273,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
   if (REPO_TOOLS.has(call.name)) checkArgs(a);
   switch (call.name) {
     case "github_list_open_prs":
-      return { prs: await listOpenPrs(gh, a.repo) };
+      return { prs: typeof a.base === "string" ? await listOpenPrsInto(gh, a.repo, a.base) : await listOpenPrs(gh, a.repo) };
     case "github_list_closed_prs":
       return listClosedPrsPage(gh, a.repo, a.page);
     case "github_get_pr":
@@ -280,6 +288,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
       return { commits: await listPrCommits(gh, a.repo, a.number) };
     case "github_list_path_commits":
       return listPathCommits(gh, a.repo, a.path, a.since);
+    case "github_pr_diff_hash":
+      return { hash: diffHash(await readPrDiff(gh, a.repo, a.number)) ?? null };
     case "github_list_pr_files":
       return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patchOffset: a.patchOffset, patches: a.patches !== false });
     case "github_read_repo_docs":

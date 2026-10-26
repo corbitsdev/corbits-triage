@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./diff-files": "./src/diff-files.ts",
+    "./diff-hash": "./src/diff-hash.ts",
     "./hook-metadata": "./src/hook-metadata.ts",
     "./patch": "./src/patch.ts",
     "./security-headers": "./src/security-headers.ts",

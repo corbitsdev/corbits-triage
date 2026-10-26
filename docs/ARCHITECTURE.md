@@ -374,6 +374,22 @@ label off that head, so it never stands on a head not yet triaged.
    own changes and focused runs on them, the comment noting what it is
    stacked on. A branch other pull requests were merged into holds their
    changes too, so focused is skipped and the comment says why.
+   With a duplicate rule on, it compares the open pull requests opened before
+   this one on its base branch, drafts left out (`list_open_prs` with `base`,
+   one call per base branch); past 100 of them it reads none and both rules
+   are unconfirmed. It reads the first page of each one's changed paths
+   (`list_pr_files` without patches, ten at a time), so its cost is one call
+   per earlier open pull request. One with the same head commit repeats this
+   one with no further read. For no-duplicate it reads the diff hash
+   (`pr_diff_hash`, the hash the hub's code review takeover uses,
+   `@corbits/common/diff-hash`) and commits only of those whose first page
+   lists no path this one does not change, and of this one when any does: two
+   calls each, usually none. An earlier one whose first page can't be read
+   leaves no-duplicate unconfirmed, naming it. For duplicates-open-pull-request it keeps only
+   the shortlist the judge is asked about (`overlapping`,
+   `logic/duplicates.ts`): up to five that share a path on that first page,
+   lockfiles left out, or two title words, most shared paths first
+   (`openPulls`).
 2. **rules**: runs the hard rules (built-in rules over host data, text
    rules and code-pattern rules) and, unless one failed or the pull request is a draft or closed,
    builds the judged rules' questions, or the verdict question when there are

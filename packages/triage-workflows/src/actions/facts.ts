@@ -1,12 +1,13 @@
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, trustedRequestOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, trustedRequestOf, visibleText, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
 import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
 import { asText } from "../logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "../logic/facts.js";
+import { couldRepeat, MAX_OPEN_PULLS, overlapping, type OpenPull, type OpenPulls, type PullPrint } from "../logic/duplicates.js";
 import type { History } from "../logic/history.js";
 import { filesToRead, patternsResult, type PatternsResult } from "../logic/patterns.js";
 import { call, data, hostCalls, READ_PULL_REQUEST, runAll, toolName, type HostCall } from "../logic/host.js";
@@ -147,6 +148,75 @@ async function patternsOf(host: HostCall, tool: string, repo: string, item: { fa
   return Object.fromEntries(rules.map((rule) => [rule.id, patternsResult(rule, item.facts.files, contents)]));
 }
 
+/** An open pull request as the host lists it. */
+type ListedPull = { number: number; title: string; sha?: string; draft?: boolean };
+
+/** What the duplicate rules read: prints for no-duplicate, changed paths for duplicates-open-pull-request. */
+type DuplicateReads = { prints: boolean; paths: boolean };
+
+/** A pull request being triaged, as the duplicate rules compare it. */
+type OwnPull = { number: number; title: string; headSha: string; base: string; paths: string[] };
+
+/** Each pull request's diff hash and commits; either is left out when it could not be read. */
+async function readPrints(host: HostCall, tool: (name: string) => string, repo: string, numbers: number[]): Promise<Map<number, PullPrint>> {
+  const results = await runChunked(host, numbers.flatMap((n) => [call(tool("pr_diff_hash"), { repo, number: n }, `diff-hash:${n}`), call(tool("list_pr_commits"), { repo, number: n }, `open-commits:${n}`)]));
+  return new Map(numbers.map(function printOf(n): [number, PullPrint] {
+    const hash = data<{ hash?: unknown }>(results.get(`diff-hash:${n}`))?.hash;
+    const commits = data<{ commits?: unknown }>(results.get(`open-commits:${n}`))?.commits;
+    const shas = Array.isArray(commits) ? commits.flatMap((commit) => (isRecord(commit) && typeof commit.sha === "string" ? [commit.sha] : [])) : undefined;
+    return [n, { number: n, ...((typeof hash === "string" || hash === null) && { diffHash: hash }), ...(shas && { commits: shas }) }];
+  }));
+}
+
+/**
+ * The open pull requests opened earlier on each one's base branch, drafts left out, read only as far as the rules need:
+ * one page of changed paths each, then the diff hash and commits only of those whose paths could match. Past
+ * `MAX_OPEN_PULLS` of them none is read, so one pull request's reads stay bounded.
+ */
+async function readOpenPulls(host: HostCall, tool: (name: string) => string, repo: string, own: OwnPull[], reads: DuplicateReads): Promise<Map<number, OpenPulls>> {
+  const bases = [...new Set(own.map((pull) => pull.base))];
+  const listings = await runAll(host, bases.map((base) => call(tool("list_open_prs"), { repo, base }, `open:${base}`)));
+  function earlier(pull: OwnPull): ListedPull[] | string {
+    const rows = data<{ prs?: unknown }>(listings.get(`open:${pull.base}`))?.prs;
+    if (!Array.isArray(rows)) return `${tool("list_open_prs")} failed for ${pull.base}`;
+    const others = (rows as ListedPull[]).filter((row) => row.number < pull.number && row.draft !== true);
+    return others.length > MAX_OPEN_PULLS ? `more than ${MAX_OPEN_PULLS} open pull requests on ${pull.base}` : others;
+  }
+  const others = new Map(own.map((pull) => [pull.number, earlier(pull)]));
+  const listed = [...new Set([...others.values()].flatMap((row) => (typeof row === "string" ? [] : row.map((pull) => pull.number))))];
+  const firstPages = await runChunked(host, listed.map((n) => call(tool("list_pr_files"), { repo, number: n, offset: 0, patches: false }, `open-files:${n}`)));
+  function firstPage(n: number): { paths: string[]; whole: boolean } | undefined {
+    const page = filesPage(tool("list_pr_files"), firstPages.get(`open-files:${n}`));
+    return typeof page === "string" ? undefined : { paths: page.files.map((file) => file.path), whole: page.next === undefined };
+  }
+  function candidatesOf(pull: OwnPull, row: ListedPull[]): ListedPull[] {
+    return row.filter(function candidate(other) {
+      const page = firstPage(other.number);
+      return other.sha !== pull.headSha && page !== undefined && couldRepeat(pull.paths, page.paths, page.whole);
+    });
+  }
+  const candidates = new Map(own.map((pull) => {
+    const row = others.get(pull.number)!;
+    return [pull.number, reads.prints && typeof row !== "string" ? candidatesOf(pull, row) : []];
+  }));
+  const printed = [...new Set([...own.filter((pull) => candidates.get(pull.number)!.length > 0).map((pull) => pull.number), ...[...candidates.values()].flat().map((pull) => pull.number)])];
+  const prints = await readPrints(host, tool, repo, printed);
+  function openPullsOf(pull: OwnPull): [number, OpenPulls] {
+    const row = others.get(pull.number)!;
+    if (typeof row === "string") return [pull.number, { unread: row }];
+    const sameHead = row.filter((other) => other.sha === pull.headSha).map((other) => ({ number: other.number, headSha: pull.headSha }));
+    const self = { number: pull.number, headSha: pull.headSha, ...prints.get(pull.number) };
+    const unread = row.filter((other) => other.sha !== pull.headSha && firstPage(other.number) === undefined).map((other) => other.number);
+    const compared = { self, others: [...sameHead, ...candidates.get(pull.number)!.map((other) => prints.get(other.number)!)], unread };
+    const read = row.flatMap(function openPull(other): OpenPull[] {
+      const page = firstPage(other.number);
+      return page ? [{ number: other.number, title: visibleText(other.title), paths: page.paths }] : [];
+    });
+    return [pull.number, { ...(reads.prints && { prints: compared }), ...(reads.paths && { overlapping: overlapping(pull.title, pull.paths, read) }) }];
+  }
+  return new Map(own.map(openPullsOf));
+}
+
 function fail(reason: string): FactsOutput {
   return { items: [{ error: reason }], batch: false };
 }
@@ -235,8 +305,18 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     return [...new Set(numbers.flatMap((n) => historyPathsOf(n).slice(0, MAX_HISTORY_READS)))].map((path) => call(tool("list_path_commits"), { repo, path, since }, `history:${path}`));
   }
 
+  /** A pull request the host read whole, as the duplicate rules compare it. */
+  function ownPull(n: number): OwnPull[] {
+    const pr = prs.get(n);
+    const files = listed.get(n)?.files;
+    if (!pr?.sha || !pr.base || pr.title === undefined || !files || filesErrors.has(n)) return [];
+    return [{ number: n, title: visibleText(pr.title), headSha: pr.sha, base: pr.base, paths: files.map((file) => file.path) }];
+  }
+
   const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...teamsCalls()]);
   for (const [id, result] of await runChunked(host, historyCalls())) r2.set(id, result);
+  const duplicates: DuplicateReads = { prints: catalogCheckEnabled(pack, "no-duplicate"), paths: catalogCheckEnabled(pack, "duplicates-open-pull-request") };
+  const openPulls = duplicates.prints || duplicates.paths ? await readOpenPulls(host, tool, repo, numbers.flatMap(ownPull), duplicates) : undefined;
 
   /** A history that failed, holds more than one page or is past the read limit counts as unread (null), which leaves only the risk rule unconfirmed. */
   function fixesOf(n: number): PullData["fixes"] {
@@ -279,7 +359,9 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
       fixes: fixesOf(n),
     }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });
     if ("error" in item) return degraded(n, item.error);
-    return { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
+    const openPullsRead = openPulls?.get(n);
+    const facts = openPullsRead ? { ...item.facts, openPulls: openPullsRead } : item.facts;
+    return { ...item, facts, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
   }
 
   const items = numbers.map(itemFor);

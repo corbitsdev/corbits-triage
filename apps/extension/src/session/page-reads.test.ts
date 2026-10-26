@@ -37,3 +37,15 @@ test("a whole timeline's latest review is read on the commit the sidebar names",
   serve([approval, comment]);
   expect(JSON.parse((await pageReads().answer(`/repos/${REPO}/pulls/1/reviews`))!)).toEqual([{ user: { login: "x" }, state: "APPROVED", submitted_at: "2026-10-01T00:00:00Z", commit_id: HEAD }]);
 });
+
+test("open pull requests into a base are listed from the dashboard filtered on it, and none open reads as none", async () => {
+  const asked: string[] = [];
+  globalThis.fetch = async function dashboard(url) {
+    asked.push(decodeURIComponent(String(url)));
+    const route = String(url).includes("base") ? { currentPage: 1, openCount: 0, closedCount: 0 } : { results: [{ number: 4, title: "T", displayState: "REPO_PULL_REQUEST_DISPLAY_STATE_OPEN", headSha: HEAD, labels: [] }], totalPages: 1, openCount: 1 };
+    return new Response(JSON.stringify({ payload: { repoPullsDashboardContentRoute: route } }));
+  } as typeof fetch;
+  expect(JSON.parse((await pageReads().answer(`/repos/${REPO}/pulls?state=open&base=main&per_page=100`))!)).toEqual([]);
+  expect(JSON.parse((await pageReads().answer(`/repos/${REPO}/pulls?state=open&per_page=100`))!)).toMatchObject([{ number: 4 }]);
+  expect(asked[0]).toContain('q=is:pr is:open base:"main"');
+});

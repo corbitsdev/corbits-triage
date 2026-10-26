@@ -19,7 +19,7 @@ const OWN_RULE = { ...RULE_BASE, id: CustomId } as const;
 
 const SIZE_RULE_IDS = Object.keys(SIZE_RULES) as SizeRuleId[];
 
-const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green", "hidden-content"] as const satisfies readonly CatalogId[];
+const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green", "hidden-content", "no-duplicate", "duplicates-open-pull-request"] as const satisfies readonly CatalogId[];
 
 const RuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS), max: Limit })
   .or({ ...RULE_BASE, check: "'linked-issue'", "tracker?": type.enumerated(...ISSUE_TRACKERS.filter((tracker) => tracker !== "off")) })

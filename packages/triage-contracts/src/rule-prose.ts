@@ -30,6 +30,8 @@ const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => st
   "regression-risk": (row) => `Flag changes to files with ${row?.hotFileFixes ?? DEFAULT_RISK.hotFileFixes}+ fixes in the last ${DEFAULT_RISK.hotFileDays} days, or to migrations`,
   focused: () => "Check the change is focused on one thing",
   docs: () => "Check docs are updated when behavior changes",
+  "no-duplicate": () => "Flag a pull request with the same changes as another open one",
+  "duplicates-open-pull-request": () => "Check the change is not already made by another open pull request",
 };
 
 export function catalogSentence(id: CatalogId, pack: CheckPack): string {
