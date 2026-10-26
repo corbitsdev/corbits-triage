@@ -14,8 +14,8 @@ export type Release = typeof Release.infer;
 
 /** What each host's listener and manager deploy: the portal writes `release.json` into each published tree; a source run has none. */
 const Published = type({ "[string]": { "manager?": Release, "codeReview?": Release } });
-const releases = Published.assert(published);
 
-export function publishedFor(source: RepoSource): { manager?: Release; codeReview?: Release } | undefined {
-  return releases[source];
+/** The host's published `which`, read as a body runs, so an entry imports without one. */
+export function publishedFor(source: RepoSource, which: "manager" | "codeReview"): Release | undefined {
+  return Published.assert(published)[source]?.[which];
 }

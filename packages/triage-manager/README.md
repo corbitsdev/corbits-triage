@@ -16,9 +16,9 @@ A workspace's listener and a pull request's manager.
   request's claim, and when its passes fail or run out.
 
 What each deploys next, a published workflow's source asset at one commit and the offerings it runs on (`Release`), is
-read per host from `src/release.json`, which the portal writes into each published tree and the bundle keeps external:
-the listener entries need the manager's, and the manager entries deploy code review when the code review's is set. The
-repository's own `release.json` is empty.
+read per host from `src/release.json`, which the portal writes into each published tree and the bundle keeps external,
+as each body runs, so every entry imports without one: a listener body fails without the manager's, and a manager runs
+code review only when the code review's is set. The repository's own `release.json` is empty.
 
 A run mails only through an agent step, so both mail through `mailAgentOf`, whose director makes no model call. The code
 review a manager deploys is `codeReviewReviewer` in [`@corbits/pr-code-review`](../pr-code-review); it reports through

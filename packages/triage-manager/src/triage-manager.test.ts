@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { actionConsumer } from "@intx/authz";
 import { createActionCredentialsFactory, createCredentialProviderRegistry, createHttpCredentialProvider } from "@intx/harness";
 import type { GrantRule } from "@intx/types/authz";
@@ -14,8 +14,7 @@ import { manageMail } from "./actions/hub.js";
 import * as loops from "./loops.js";
 import { workflow as bitbucket } from "./triage-manager-bitbucket-datacenter.js";
 import { workflow as github } from "./triage-manager-github.js";
-import { triageListener } from "./triage-listener.js";
-import { triageManager } from "./triage-manager.js";
+import { workflow as listener } from "./triage-listener-github.js";
 
 const TENANT = "tnt_acme";
 const RUN = "run_manager";
@@ -152,7 +151,14 @@ function githubHost(head = HEAD) {
 
 const TAKE = { method: "POST", path: `${TENANT_PATH}/manager/take`, body: PULL };
 const DONE = { method: "POST", path: `${TENANT_PATH}/manager/done`, body: { ...PULL, reviewers: [] } };
-const STAGE_1 = ["approvals", "done", "evaluateRules", "executeRules", "facts", "held", "mirrorRules", "paused", "ran", "route", "rules", "take", "triaged", "unready", "waiting"];
+const STAGE_1 = ["approvals", "done", "evaluateRules", "executeRules", "facts", "held", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "take", "triaged", "unready", "waiting"];
+
+/** Publishes `release` as the release.json the portal writes beside the workflows; the repository's own holds none. */
+function publish(release: Record<string, unknown>): void {
+  mock.module(new URL("./release.json", import.meta.url).pathname, () => ({ default: release }));
+}
+
+afterEach(() => publish({}));
 const READY = { method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: ["Triage: Ready"] } };
 const POSTED_REVIEW = expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/pulls/${PR.number}/reviews` });
 
@@ -260,7 +266,7 @@ describe("triage-manager", () => {
   });
 
   test("on Bitbucket Data Center it reaches the host through that host's bindings only", async () => {
-    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter"]);
+    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter", "postReview:bitbucket-datacenter"]);
     const builds: unknown[] = [];
     const ref = { id: "refs/heads/fix", displayId: "fix", latestCommit: "abc", repository: { id: 1 } };
     const pull = { id: 8, version: 0, state: "OPEN", fromRef: ref, toRef: { ...ref, id: "refs/heads/main" }, links: { self: [{ href: "https://bitbucket.acme.test/pr/8" }] }, author: { user: { id: 2, slug: "octocat" } }, reviewers: [], participants: [] };
@@ -280,7 +286,8 @@ describe("triage-manager", () => {
 });
 
 describe("triage-manager with code review", () => {
-  const reviewed = triageManager({ id: "triage-manager-github", sources: ["github"], review: RELEASE });
+  const reviewed = github;
+  beforeEach(() => publish({ github: { codeReview: RELEASE } }));
   const ON = hubRequest(RULES, { ...CODE_REVIEW, ...REVIEW_REQUEST });
 
   test("the first pass deploys the review and mails it, posting nothing; the pass that collects its report posts the verdict and the review together", async () => {
@@ -331,7 +338,15 @@ describe("triage-manager with code review", () => {
 });
 
 describe("triage-listener", () => {
-  const listener = triageListener({ id: "triage-listener-github", manager: RELEASE });
+  beforeEach(() => publish({ github: { manager: RELEASE } }));
+
+  test("a listener whose release publishes no manager fails the body with what is missing", async () => {
+    publish({});
+    const hub = fakeHub({ takes: [] });
+    const mail = triggerMail(PR, RULES, { tenantId: TENANT });
+    expect((await runMail(listener, mail, githubHost().host, hub.hub)).terminalStatus).toBe("failed");
+    expect(hub.calls).toEqual([]);
+  });
 
   test("it deploys a manager for each pull request a reconciler's mail names and wakes each with its pull request only", async () => {
     const hub = fakeHub({ takes: [] });

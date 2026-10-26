@@ -8,7 +8,6 @@ import { HUB_WRITE } from "./actions/hub.js";
 import { REVIEW_DEADLINE_MS } from "./actions/review.js";
 import { mailDirector } from "./directors.js";
 import { mailAgentOf } from "./mail.js";
-import type { Release } from "./release.js";
 
 /** How often a manager waiting for its code review asks the hub whether the review reported. */
 const POLL_MS = 30_000;
@@ -35,13 +34,14 @@ function hubAction(handler: string, input: Selector, after: readonly string[]) {
 /**
  * Code review between triage's verdict and its mirror. A pass that deploys the review mails it the request and posts
  * nothing; the pass that collects its report mirrors the verdict, then posts the review. A review whose mail failed by
- * its deadline, that reported a failure or that ran past its deadline leaves the verdict to go up alone.
+ * its deadline, that reported a failure or that ran past its deadline leaves the verdict to go up alone, as does a host
+ * whose release publishes no code review.
  */
-function reviewSteps(sources: Sources, review: Release): Record<string, Primitive> {
+function reviewSteps(sources: Sources): Record<string, Primitive> {
   return {
-    reviewScope: action({ handler: "reviewScope", input: stepsOf("take", "evaluateRules"), after: ["evaluateRules"] }),
+    reviewScope: action({ handler: "reviewScope", input: { merge: [MAIL, stepsOf("take", "evaluateRules")] }, after: ["evaluateRules"] }),
     reviewing: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "deployReview", else: "posting", after: ["reviewScope"] }),
-    deployReview: hubAction("deployReview", { merge: [{ literal: { release: review } }, MAIL, stepsOf("take")] }, ["reviewing"]),
+    deployReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["reviewing"]),
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
     reviewMailed: action({ handler: "reviewMailed", input: stepsOf("deployReview", "mailReview"), after: ["mailReview"] }),
     reviewSent: gate({ when: { from: "steps.reviewMailed.output.post" }, then: "mirrorRules", else: "doneReviewing", after: ["reviewMailed"] }),
@@ -58,9 +58,8 @@ function reviewSteps(sources: Sources, review: Release): Record<string, Primitiv
  * waiting and anything else is triaged and its automatic Dos run, posting nothing for rules that need the judge yet;
  * then done. A pass after one that waits for its code review first waits `POLL_MS`.
  */
-function passOf(id: string, sources: Sources, review: Release | undefined) {
+function passOf(id: string, sources: Sources) {
   const { waiting, held, markWaiting, unready, rules, evaluateRules, mirrorRules, executeRules } = triageSteps(sources);
-  const finished = review ? ["posting", "executeRules"] : ["executeRules"];
   return defineWorkflow({
     id: `${id}-pass`,
     trigger: { type: "manual" },
@@ -80,10 +79,11 @@ function passOf(id: string, sources: Sources, review: Release | undefined) {
       rules,
       route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "done", else: "evaluateRules", after: ["rules"] }),
       evaluateRules,
-      ...(review ? { ...reviewSteps(sources, review), mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] } } : { mirrorRules }),
+      ...reviewSteps(sources),
+      mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] },
       // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.
-      executeRules: { ...executeRules, after: review ? ["postReview"] : ["mirrorRules"] },
-      done: hubAction("done", { merge: [MAIL, stepsOf("take")] }, ["ran", "triaged", "markWaiting", "route", ...finished]),
+      executeRules: { ...executeRules, after: ["postReview"] },
+      done: hubAction("done", { merge: [MAIL, stepsOf("take")] }, ["ran", "triaged", "markWaiting", "route", "posting", "executeRules"]),
     },
   });
 }
@@ -91,16 +91,17 @@ function passOf(id: string, sources: Sources, review: Release | undefined) {
 /**
  * A pull request's manager under `id`, also its mail address, for the given hosts: the only workflow that writes to the
  * pull request, one live run per pull request, which runs only while it has work. A mail wakes it to run passes until
- * done ends the claim, when the run stops itself, or another run holds the claim. With `review`, code review runs as
- * its own deployment, which reports back. Mail comes only from the listener that deployed it and the reviews it mailed.
+ * done ends the claim, when the run stops itself, or another run holds the claim. When the host's release publishes a
+ * code review, it runs as its own deployment, which reports back. Mail comes only from the listener that deployed it and
+ * the reviews it mailed.
  */
-export function triageManager({ id, sources, review }: { id: string; sources: Sources; review?: Release }) {
+export function triageManager({ id, sources }: { id: string; sources: Sources }) {
   const perMail = defineWorkflow({
     id: `${id}-run`,
     trigger: { type: "manual" },
     steps: {
       passes: loop({
-        body: passOf(id, sources, review),
+        body: passOf(id, sources),
         input: { merge: [{ literal: { wait: false } }, PAYLOAD] },
         while: "again",
         carry: "next",
@@ -111,15 +112,16 @@ export function triageManager({ id, sources, review }: { id: string; sources: So
       stop: hubAction("stop", { from: "trigger.payload" }, ["passes"]),
     },
   });
-  const writes = ["executeApprovals", ...(review ? ["postReview"] : [])];
-  const posts = writes.flatMap((handler) => sources.map((source) => ({ action: handler, handle: source, provider: source, name: source, locator: "tenant" }) as const));
+  const posts = ["executeApprovals", "postReview"].flatMap((handler) => sources.map((source) => ({ action: handler, handle: source, provider: source, name: source, locator: "tenant" }) as const));
   return defineWorkflow({
     id,
     credentialBindings: [...credentialBindingsFor(sources), ...posts],
     grantRequirements: [
       { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION, source: "creator" },
       { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
-      ...(review ? [{ resource: "workflow:*", action: "create", source: "creator" as const }, { resource: `asset:${review.workflow.assetId}`, action: "read", source: "creator" as const }] : []),
+      // Code review is deployed from whichever asset the release publishes.
+      { resource: "workflow:*", action: "create", source: "creator" },
+      { resource: "asset:*", action: "read", source: "creator" },
     ],
     mailAccept: { invoker: true, correspondent: true },
     steps: {

@@ -1,4 +1,3 @@
-import "./release-fixture";
 import { expect, test } from "bun:test";
 import { projectLiveToInert, type WorkflowDefinition } from "@intx/workflow";
 

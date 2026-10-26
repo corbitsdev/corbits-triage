@@ -5,7 +5,7 @@ import { repoSourceOf, RULE_GATES, rulesGate } from "@corbits/triage-contracts";
 import { call, hostWrite, toolName } from "@corbits/triage-workflows/logic/host";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import { Mailed, type MailInput } from "../mail.js";
-import { Release } from "../release.js";
+import { publishedFor } from "../release.js";
 import { deploy, managerMailOf, manageMail } from "./hub.js";
 import { Reviewer, TakeOutput } from "./manager.js";
 
@@ -13,11 +13,12 @@ import { Reviewer, TakeOutput } from "./manager.js";
 export const REVIEW_DEADLINE_MS = 60 * 60_000;
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES) });
-const ScopeInput = type({ take: { output: TakeOutput }, evaluateRules: { output: "unknown" } });
+const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, evaluateRules: { output: "unknown" } });
 
 /**
  * Whether the pass deploys code review, and whether it posts. Code review runs once per head, when the policy turns it on,
- * triage's rules let it past as its `when.rules` says and the hub read the head's review request. The pass that deploys
+ * triage's rules let it past as its `when.rules` says, the hub read the head's review request and the release publishes
+ * a code review for the host. The pass that deploys
  * it, and every pass before its review is in, posts nothing, so the verdict and the review go up together; one that
  * reported a failure or ran past its deadline posts the verdict alone.
  */
@@ -27,15 +28,16 @@ export async function reviewScope(input: unknown): Promise<{ deploy: boolean; po
   const { taken, head, review, reviewFailed, overdue, reviewers } = parsed.take.output;
   const part = CodeReviewPart(taken?.["codeReview"]);
   const reviewed = !(part instanceof type.errors) && part.on && rulesGate(part.rules, asRecord(parsed.evaluateRules.output)?.["checks"]).open;
-  if (!reviewed || review || reviewFailed || overdue || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true };
+  const published = publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") !== undefined;
+  if (!reviewed || !published || review || reviewFailed || overdue || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true };
   const pending = reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);
   return { deploy: !pending, post: false };
 }
 
-const DeployInput = type({ release: Release, payload: "unknown", take: { output: TakeOutput } });
+const DeployInput = type({ payload: "unknown", take: { output: TakeOutput } });
 
 /**
- * Deploys code review from the release; it is mailed the head's review request and, to reply with, the mail that wakes
+ * Deploys code review from the host's published release; it is mailed the head's review request and, to reply with, the mail that wakes
  * this manager. The mail waits for the new run until the review's deadline.
  */
 export async function deployReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ reviewer: Reviewer; mail: MailInput }> {
@@ -44,7 +46,9 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   const { tenantId, runId, pullRequest } = managerMailOf(parsed.payload);
   const { head, taken } = parsed.take.output;
   if (head === undefined || !taken) throw new Error("deployReview: the pass names no head");
-  const reviewRun = await deploy(ctx, "deploy", tenantId, parsed.release);
+  const release = publishedFor(repoSourceOf(pullRequest.source), "codeReview");
+  if (!release) throw new Error("deployReview: release.json publishes no code review for the host");
+  const reviewRun = await deploy(ctx, "deploy", tenantId, release);
   const deadline = new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString();
   const content = JSON.stringify({ ...asRecord(taken["codeReviewRequest"]), tenantId, reply: { to: runId, content: manageMail(tenantId, pullRequest) } });
   return { reviewer: { kind: "code-review", head, runId: reviewRun, deadline }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
