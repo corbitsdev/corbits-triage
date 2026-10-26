@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { type } from "arktype";
 import { BITBUCKET_DATACENTER_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
+import { ensureDeployerRole } from "../deployer-role.js";
 import { ensureTriageRole, grantEnabledKinds } from "../github/automation.js";
 import { tenantConfigOf } from "../github/bridge.js";
 import { activeCredential, credentialSecret, failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
@@ -266,6 +267,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     if (hookFailed) return hookFailed;
     const written = await patchCorbitsTriage(db, member.tenantId, async function setConnection(next, tx) {
       await ensureTriageRole(tx, member.tenantId, deps.now());
+      await ensureDeployerRole(tx, member.tenantId, deps.now());
       return { ...next, bitbucketDatacenter: { baseUrl, user } };
     });
     if (!written) return failure(404, "not_found", "Workspace not found.");

@@ -98,6 +98,7 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
   const assets = seeded.map((asset, n) => ({ id: `ast_seeded_${n}`, kind: "workflow", ...asset }));
   const requests: string[] = [];
   const tokens: unknown[] = [];
+  const refused = new Set<string>();
   async function json<T>(method: string, route: string, body?: unknown): Promise<T> {
     requests.push(`${method} ${route}`);
     if (method === "GET" && route === "/api/tenants/t/assets?kind=workflow") return assets as T;
@@ -115,9 +116,13 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
       return { id: `gtk_${tokens.length}`, secret: SECRET } as T;
     }
     if (method === "DELETE" && route.startsWith("/api/me/git-tokens/")) return undefined as T;
+    if (method === "POST" && route === `/api/tenants/t/principals/${session.principalId}/evaluate`) {
+      const { resource, action } = body as { resource: string; action: string };
+      return { effect: refused.has(`${resource} ${action}`) ? "deny" : "allow" } as T;
+    }
     throw new Error(`Unexpected ${method} ${route}`);
   }
-  return { transport: { fetch: json } as unknown as Transport, requests, tokens, session };
+  return { transport: { fetch: json } as unknown as Transport, requests, tokens, session, refused };
 }
 
 /** The portal build's files: each workflow's tree under its build hash. */
@@ -155,11 +160,16 @@ test("publishing a release twice pushes its commit once with a token scoped to t
   expect(hub.requests.filter((request) => request.startsWith("DELETE /api/me/git-tokens/"))).toEqual(["DELETE /api/me/git-tokens/gtk_1", "DELETE /api/me/git-tokens/gtk_2"]);
 });
 
-test("refuses an asset another principal created, or whose main holds another commit", async () => {
+test("refuses a publisher who is not a Deployer, an asset another principal created, or one whose main holds another commit", async () => {
   const asset = `pr-triage-github-${OWNER}-4567cdef`;
-  createRepo(asset);
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "refused") };
   const files = portalFiles([{ workflow: "pr-triage-github", hash: "4567cdef", tree: TREE }]);
+  const admin = fakeHub();
+  admin.refused.add("triage-manager:state write");
+  await expect(publishSources(admin.transport, PUBLISHER, gitClient, files)).rejects.toThrow("Only a Deployer can publish");
+  expect(admin.requests.filter((request) => !request.endsWith("/evaluate"))).toEqual([]);
+
+  createRepo(asset);
   const foreign = fakeHub([{ name: asset, creatorPrincipalId: "prn_other" }]);
   await expect(publishSources(foreign.transport, PUBLISHER, gitClient, files)).rejects.toThrow("created by someone else");
   expect(foreign.tokens).toEqual([]);

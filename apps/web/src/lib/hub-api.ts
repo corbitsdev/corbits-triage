@@ -1150,6 +1150,18 @@ export async function listRoles(transport: Transport, tenantId: string): Promise
   return listAll<HubRole>(transport, `/api/tenants/${tid}/roles`);
 }
 
+export async function assignRole(transport: Transport, tenantId: string, principalId: string, roleId: string): Promise<void> {
+  await transport.fetch("POST", principalRolePath(tenantId, principalId, roleId));
+}
+
+export async function removeRole(transport: Transport, tenantId: string, principalId: string, roleId: string): Promise<void> {
+  await transport.fetch("DELETE", principalRolePath(tenantId, principalId, roleId));
+}
+
+function principalRolePath(tenantId: string, principalId: string, roleId: string): string {
+  return `/api/tenants/${enc(requireTenantId(tenantId))}/principals/${enc(requireId(principalId, "Principal id"))}/roles/${enc(requireId(roleId, "Role id"))}`;
+}
+
 export async function evaluateAccess(
   transport: Transport,
   tenantId: string,

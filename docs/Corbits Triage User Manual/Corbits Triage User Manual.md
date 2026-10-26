@@ -567,6 +567,8 @@ There are three roles:
 | Admin | Manage repositories, rules and people. |
 | Member | Use the Inbox and approve the held actions their role allows. |
 
+Once a source is connected, a fourth role, **Deployer**, is added on top of one of these. A Deployer can upgrade the workflows Triage runs. The workflows act with their Deployer's permissions, so give the role only to people you trust with them. An owner sees **Make Deployer** or **Remove Deployer** on each person who is not an owner; owners can already do everything a Deployer can. The **Role** column lists every role a person holds, such as **Admin, Deployer**. Someone without the role who tries to upgrade is told to ask an owner.
+
 ### Your account
 
 ![Your account: signed in as maintainer@example.com with a Sign out button, and the list of signed-in browsers](images/20.png)

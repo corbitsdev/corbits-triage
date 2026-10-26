@@ -4,6 +4,8 @@ import git, { type FsClient, type HttpClient, type TreeEntry } from "isomorphic-
 import http from "isomorphic-git/http/web";
 import { createBrowserIsogitRuntime } from "@intx/storage-isogit/browser";
 import type { Transport } from "@intx/hub-client";
+import { DEPLOYER_GRANTS } from "@corbits/triage-contracts";
+import { evaluateAccess } from "./hub-api.ts";
 import { hubOrigin } from "./hub-origin.ts";
 import { listModels, offeringsIn, type ModelInfo } from "./model-catalog.ts";
 import { ensureAsset, portalPackage } from "./workflow-deploy.ts";
@@ -167,6 +169,12 @@ async function publishSource(transport: Transport, publisher: Publisher, gitClie
   }
 }
 
+/** Each workflow published does what its publisher may, so publishing needs every grant the Deployer role holds. */
+async function requireDeployer(transport: Transport, { tenantId, principalId }: Publisher): Promise<void> {
+  const held = await Promise.all(DEPLOYER_GRANTS.map(({ resource, action }) => evaluateAccess(transport, tenantId, principalId, resource, action)));
+  if (held.includes(false)) throw new Error("Only a Deployer can publish Triage's workflows. Ask a workspace owner to make you one under Settings, People.");
+}
+
 /**
  * Publishes the portal build's workflows one call at a time, in the build's order so each chain workflow follows the
  * one it deploys; a release already published keeps its commit, and a chain workflow whose models the workspace lacks
@@ -183,6 +191,7 @@ export async function publishSources(
   publishing = new Promise(function hold(resolve) { release = resolve; });
   try {
     await previous;
+    await requireDeployer(transport, publisher);
     const index = await (await portalPackage(fetchRaw, "sources/index.json")).json() as SourceIndexEntry[];
     const models = await listModels(transport, publisher.tenantId);
     const published: PublishedSource[] = [];

@@ -671,6 +671,21 @@ hold every grant. A member given the `pr-triage` role is refused every action
 until it is removed, so what triage does unattended never becomes what a person
 may do. Approving a held action checks only its kind's grant.
 
+A deployment acts with the grants its source asset's creator holds, so
+whoever publishes the listener's chain needs every grant it declares from its
+creator. The hub keeps a system `Deployer` role per workspace
+(`apps/hub/src/deployer-role.ts`), ensured with the `pr-triage` role when a
+host is connected and at every migrate for workspaces already connected. It
+holds `DEPLOYER_GRANTS` (`@corbits/triage-contracts`): `create` and `write` on
+`asset:*` (stock grants an asset's creator nothing on it, and a push needs
+`write`), `create` on `workflow:*`, `manage` on `workflow-run:*`, `write` on
+`triage-manager:state` and `create` on `triage-manager:result`. It holds no
+read: every person's owner, admin or member role reads everything. Stock admin
+lacks the asset `write` and the manager state `write`. Owners add and remove
+it per person through the stock role assignment routes; the portal refuses to
+publish, before it creates anything, unless the stock evaluate route allows
+every one of those grants.
+
 Where triage mirrors and its policy approves, a settled head that may not be
 approved dismisses the approvals the approve action made; one dismissed on a
 head is not made again on it. A person's own approval from the Inbox is never
