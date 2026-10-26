@@ -260,15 +260,6 @@ describe("triage-manager", () => {
     expect(welcomed).toBeGreaterThan(ready);
   });
 
-  test("rules that need the judge post nothing yet", async () => {
-    const { writes, host } = githubHost();
-    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] });
-    const { ran } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).toEqual(["approvals", "done", "facts", "held", "judgeScope", "judgeWait", "judging", "paused", "ran", "route", "rules", "take", "triaged", "unready", "waiting"]);
-    expect(writes).toEqual([]);
-    expect(doneBody(hub.calls)).not.toHaveProperty("report");
-  });
-
   test("a head the hub holds for CI gets the Waiting label and is not triaged", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, REQUEST), mailEvent(HEAD, { ...REQUEST, kind: WAITING_KIND }, "evt_2")] }], dones: [ENDED] });

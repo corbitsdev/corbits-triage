@@ -55,6 +55,7 @@ Check these for a stock route or primitive before touching the hub, sidecars or 
 
 - Only load-bearing tests, end to end where possible.
 - Tests beside the code are fast and offline; anything that runs real services lives in `e2e/`.
+- The one exception is `tests/chain/`: it starts the real hub and local sidecars but reaches no outside service (a fake GitHub and a stub decision model), and CI runs it as its own step, `bun run test:chain`.
 - Never read `process.env` in tests.
 - A change to how a workflow judges or reviews states its package's eval result before and after.
 
