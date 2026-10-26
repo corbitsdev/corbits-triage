@@ -32,9 +32,10 @@ export type JudgeVerdict = typeof JudgeVerdict.infer;
 
 /**
  * What a reviewer reports to its pull request's manager: the head it reviewed and its result, or why it has none; the
- * hub knows the reporting run from its run token.
+ * hub knows the reporting run from its run token. A code review names the hash of the diff it read, which a later head
+ * with the same diff takes the review over by.
  */
-export const StageResult = Reported.and({ kind: "'code-review'", result: CodeReviewOutput })
+export const StageResult = Reported.and({ kind: "'code-review'", result: CodeReviewOutput, "diffHash?": "string > 0" })
   .or(Reported.and({ kind: "'judge'", result: JudgeVerdict }))
   .or(Reported.and({ kind: "'code-review' | 'judge'", failed: "string > 0", "result?": "never" }));
 export type StageResult = typeof StageResult.infer;

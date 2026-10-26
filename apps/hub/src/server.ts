@@ -410,7 +410,7 @@ const githubManifest = createGithubManifestIntegration({
 const tenantBitbucket = createTenantBitbucket({ ...credentialDeps, fetchImpl: fetch, egressAllowlist: bitbucketEgressAllowlist(env) });
 const tenantGithub = createTenantGithub({ ...credentialDeps, githubApiOrigin: githubOrigin });
 const pullRequests = createPullRequestReader({ tenantGithub, tenantBitbucket });
-const codeReviewRuns = createCodeReviewRuns({ db: composition.db, runReader: composition.runReader, read: pullRequests.withDiff, log: logJson });
+const codeReviewRuns = createCodeReviewRuns({ db: composition.db, read: pullRequests.withDiff, log: logJson });
 const repoReads = createRepoReads(now);
 const githubPrActions = createGithubPrActions({
   ...credentialDeps,

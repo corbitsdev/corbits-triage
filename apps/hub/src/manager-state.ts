@@ -262,6 +262,30 @@ async function newestRequest(tx: Tx, tenantId: string, pr: PullRequestRef, head?
   return row && eventOf(row.key, row.state).payload;
 }
 
+/** The results reviewers of `kind` reported for the pull request, newest first, each under the reporting run. */
+export async function reviewerResults(db: DB["db"], tenantId: string, pr: PullRequestRef, kind: "code-review" | "judge"): Promise<(ManagerEvent & { runId: string })[]> {
+  const prefix = eventPrefix(pr);
+  const rows = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${prefix}%`), sql`${managerState.state}->>'type' = 'reviewer-result'`, sql`${managerState.state}->'payload'->>'kind' = ${kind}`));
+  return eventsOf(rows).map((row) => ({ ...row.event, runId: row.key.slice(eventKey(pr, "").length) })).reverse();
+}
+
+/** The reviewers of `kind` the pull request's live claim still waits on before their deadline, with when each was deployed. */
+export async function reviewersOut(db: DB["db"], tenantId: string, pr: PullRequestRef, kind: "code-review" | "judge"): Promise<{ runId: string; head: string; deployedAt: Date }[]> {
+  const key = claimKey(pr);
+  const [row] = await db.select({ state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), eq(managerState.key, key), eq(managerState.kind, "claim")));
+  const claim = row && claimOf(key, row.state);
+  const out = claim?.status === "live" ? claim.reviewers.filter((reviewer) => reviewer.kind === kind && reviewer.result === undefined && Date.parse(reviewer.deadline) > Date.now()) : [];
+  if (out.length === 0) return [];
+  const runs = await db.select({ id: schema.workflowRun.id, createdAt: schema.workflowRun.createdAt }).from(schema.workflowRun)
+    .where(inArray(schema.workflowRun.id, out.map((reviewer) => reviewer.runId)));
+  return out.flatMap(function deployed(reviewer) {
+    const run = runs.find((candidate) => candidate.id === reviewer.runId);
+    return run ? [{ runId: reviewer.runId, head: reviewer.head, deployedAt: run.createdAt }] : [];
+  });
+}
+
 /**
  * Claims the pull request for `runId` when no live run holds it, then answers the open pass again, or a new one on the
  * newest head over every pending event no other transaction holds. Reviewer results for another head are consumed and
