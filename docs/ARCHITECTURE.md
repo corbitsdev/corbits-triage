@@ -842,8 +842,9 @@ read it, and passes the rest of the request to stock.
   code review on and the App's login on GitHub, then mails the listener the
   heads. When the host's head moved past the mail's, the event goes without
   a review request and the hub logs `code_review_head_moved`; the new head's
-  own mail carries one. An event's id is the webhook's delivery id, which the coalescer's
-  mail carries, so a redelivery records nothing new; any other mail is a new
+  own mail carries one. An event's id is the webhook's delivery id, which
+  the coalescer's mail carries, so a redelivery records nothing new; any
+  other mail is a new
   event, so a head mailed again, as after its base moved or its CI settled,
   is triaged again. The code review feed sends nothing
   for that host. A workspace with no listener routes as before.
