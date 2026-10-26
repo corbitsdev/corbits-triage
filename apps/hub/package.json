@@ -11,7 +11,7 @@
   "dependencies": {
     "@corbits/artifacts": "0.2.0",
     "@corbits/common": "workspace:*",
-    "@corbits/cron": "0.2.1",
+    "@corbits/cron": "0.2.2",
     "@corbits/bitbucket-datacenter-reads": "workspace:*",
     "@corbits/github-reads": "workspace:*",
     "@corbits/bitbucket-datacenter-tool": "workspace:*",

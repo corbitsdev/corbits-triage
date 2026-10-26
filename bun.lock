@@ -57,7 +57,7 @@
         "@corbits/bitbucket-datacenter-reads": "workspace:*",
         "@corbits/bitbucket-datacenter-tool": "workspace:*",
         "@corbits/common": "workspace:*",
-        "@corbits/cron": "0.2.1",
+        "@corbits/cron": "0.2.2",
         "@corbits/github-reads": "workspace:*",
         "@corbits/github-tool": "workspace:*",
         "@corbits/pr-code-review": "workspace:*",
@@ -947,7 +947,7 @@
 
     "@corbits/common": ["@corbits/common@workspace:packages/common"],
 
-    "@corbits/cron": ["@corbits/cron@0.2.1", "", { "dependencies": { "arktype": "^2.2.3" }, "peerDependencies": { "@intx/db": "^0.4.0", "@intx/hub-api": "^0.4.0", "drizzle-orm": "^0.45.3", "hono": "^4.13.8", "postgres": "^3.4.9" } }, "sha512-eJm1nD9YSf9ehgkpE+1+9oiVfhZFfgb+Ck3jeHw2koTIeh9cwQ5eoLXigHlmDN+hAqqGeE+v/GBaHOuDy6uYbQ=="],
+    "@corbits/cron": ["@corbits/cron@0.2.2", "", { "dependencies": { "arktype": "^2.2.3" }, "peerDependencies": { "@intx/db": "^0.5.0", "@intx/hub-api": "^0.5.0", "drizzle-orm": "^0.45.3", "hono": "^4.13.8", "postgres": "^3.4.9" } }, "sha512-YVJDY1oApup2Cd2QgO6187T3PEFjkhbv35KylhiDN8/Z00ZCMg1lJVe57hh+IWU0BOx5ODRECWojHS+K0nkY3A=="],
 
     "@corbits/e2e": ["@corbits/e2e@workspace:e2e"],
 
