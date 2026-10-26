@@ -374,7 +374,7 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
   expect(mailed).toHaveLength(2);
 });
 
-test("PostgreSQL: a held Do of a verdict a manager reported is approved from the recorded verdict and the mirror request its pass kept, and goes to the listener", async () => {
+test("PostgreSQL: a held Do of a verdict a manager reported is approved from the recorded verdict and the mirror request its pass kept, and goes to the listener; once the run's newer verdict replaced it, it is superseded", async () => {
   await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_manager", tenantId: TENANT, name: "triage-manager-github", status: "stopped" });
   await handle.db.insert(schema.workflowRun).values({ id: "wfr_manager", definitionId: "wfd_manager", anchorRunId: "wfr_manager", tenantId: TENANT, status: "running" });
   const target = { labels: ["api"] };
@@ -403,4 +403,9 @@ test("PostgreSQL: a held Do of a verdict a manager reported is approved from the
   expect({ status: res.status, body: await res.json() }).toEqual({ status: 202, body: { status: "sent" } });
   expect(kept).toEqual([{ pr: { source: "github", repo: REPO, number: 8 }, runId: "wfr_manager", head: HEAD }]);
   expect(listened).toEqual([{ kind: "approve-do", runId: "wfr_manager", principalId: "prn_approver", list: "pass", index: 0, request, step: { effectId: tag.effectId, headSha: HEAD, kind: "labels", target } }]);
+
+  recorded[0] = { ...recorded[0]!, headSha: "newer", detail: { headSha: "newer", actions: [] } };
+  const replaced = await heldDos({ runId: "wfr_manager", repo: REPO, number: 8, effectId: tag.effectId, kind: "labels" }, member("usr_approver"));
+  expect({ status: replaced.status, body: await replaced.json() }).toMatchObject({ status: 409, body: { error: { code: "verdict_superseded" } } });
+  expect(listened).toHaveLength(1);
 });

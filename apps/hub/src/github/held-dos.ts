@@ -120,10 +120,15 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     return at >= 0 && verdicts.slice(at + 1).some((verdict) => verdict.degraded === null && (verdict.runStatus === null || verdict.runStatus === "completed"));
   }
 
-  /** A manager reports its verdict when its pass is done, so its Dos are the recorded verdict's, with the mirror request the pass kept. */
-  async function managedVerdict(tenantId: string, record: RepoRecord, number: number, runId: string): Promise<Record<string, unknown> | undefined> {
+  /**
+   * A manager reports its verdict when its pass is done, so its Dos are the recorded verdict's, with the mirror request
+   * the pass kept. A run's newest verdict replaces its earlier one, so a Do the row no longer holds was on a verdict a
+   * newer one superseded.
+   */
+  async function managedVerdict(tenantId: string, record: RepoRecord, { number, runId, effectId }: Body): Promise<Record<string, unknown> | Response | undefined> {
     const recorded = (await deps.verdicts.forPull(tenantId, record.name, number)).findLast((verdict) => verdict.runId === runId);
     if (!recorded?.detail) return undefined;
+    if (!recorded.detail.actions?.some((action) => action.effectId === effectId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
     const request = await deps.passRequest(tenantId, { source: sourceOf(record), repo: record.name, number }, runId, recorded.headSha);
     return request && { headSha: recorded.detail.headSha, actions: recorded.detail.actions, request };
   }
@@ -143,7 +148,8 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     const run = await runEvents(tenantId, tenant.domain, runId);
     const events = run?.events;
     if (!run || !events?.length) return failure(404, "run_not_found", "No such run in this workspace.");
-    const verdict = verdictFor(events, repo, number) ?? (await managedVerdict(tenantId, record, number, runId));
+    const verdict = verdictFor(events, repo, number) ?? (await managedVerdict(tenantId, record, body));
+    if (verdict instanceof Response) return verdict;
     if (!verdict) return failure(404, "verdict_not_found", `The run has no verdict for ${repo}#${number}.`);
     const approval = heldDo(verdict, body, principalId);
     if (approval instanceof Response) return approval;

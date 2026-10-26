@@ -80,11 +80,11 @@ function headRuns(runs: ObservedRuns, repo: string, key: string): readonly Obser
   return listed === undefined ? [] : listed;
 }
 
-/** A manager's done on the head since it was queued settles it, before the reconciler's next pass marks it so. */
+/** A manager that reported done on the head, or went away on it, since it was queued settles it before the reconciler's next pass marks it so. */
 function doneSince(row: PrTriageRow | undefined, runs: readonly ObservedRun[], policy: ReconcilePolicy): boolean {
   if (row?.queuedAt === undefined) return false;
   const since = new Date(row.queuedAt).getTime() - policy.clockSkewMs;
-  return runs.some((run) => run.status === "completed" && new Date(run.startedAt).getTime() >= since);
+  return runs.some((run) => run.status !== "running" && new Date(run.startedAt).getTime() >= since);
 }
 
 export function createGithubPrTriage(deps: GithubPrTriageDeps) {
@@ -110,7 +110,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
 
     const now = deps.now();
     const key = runKey(number, headSha);
-    const managed = headRuns(await deps.managerRuns(tenantId, sourceOf(record), undefined), repo, key);
+    const managed = headRuns(await deps.managerRuns(tenantId, [{ source: sourceOf(record), repo, number }], undefined), repo, key);
     const runs = [...headRuns(mergeObservedRuns(await observeDeployments(deps.observeRuns, deployments, tenant.domain)), repo, key), ...managed];
     if (runs.some((run) => run.status === "running" && !isStuck(run, now, deps.policy))) {
       return failure(409, "already_running", `${repo}#${number} is already being triaged.`);

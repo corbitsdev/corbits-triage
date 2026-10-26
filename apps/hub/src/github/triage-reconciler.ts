@@ -485,8 +485,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
       return false;
     }
-    const managed = await deps.managerRuns(tenant.id, deps.source, deployment.workflowVersion);
-    const pass: TenantPass = { tenantId: tenant.id, deployment, openHeads, runs: mergeObservedRuns([runs, managed]) };
+    const pass: TenantPass = { tenantId: tenant.id, deployment, openHeads, runs };
     const loaded: LoadedRepo[] = [];
     let failed = false;
     for (const repo of repos) {
@@ -497,9 +496,11 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         if (reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err)) failed = true;
       }
     }
+    const pulls = loaded.flatMap((repo) => repo.prs.map((pr) => ({ source: deps.source, repo: repo.record.name, number: pr.number })));
+    const managed = await deps.managerRuns(tenant.id, pulls, pass.deployment.workflowVersion);
     const plans = planTenant({
       repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored.rows, ci: repo.ci })),
-      runs: pass.runs.byRepo,
+      runs: mergeObservedRuns([pass.runs, managed]).byRepo,
       now: deps.now(),
       policy: deps.policy,
       workflowVersion: pass.deployment.workflowVersion,

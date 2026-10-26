@@ -121,16 +121,19 @@ const DoneInput = type({
 
 type DoneInput = typeof DoneInput.infer;
 
+/** The rules' reasons, which a verdict that gives none of its own keeps as its evidence. */
+const RuledReasons = type({ "+": "delete", "reason?": "string", "findings?": type({ "+": "delete", "reason?": "string" }).array() });
+
 /**
- * What the pass did on its head, for the hub to record: held it for CI, or posted the verdict its mirror ran on, with the
- * facts the verdict keeps rather than the whole diff.
+ * What the pass did on its head, for the hub to record: held it for CI, or posted the verdict its mirror ran on, with
+ * only the facts and reasons the verdict keeps, never the diff.
  */
 function doneReport({ take, waiting, rules, evaluateRules, mirrorRules, executeRules }: DoneInput): Record<string, unknown> | undefined {
   const { head } = take.output;
   if (head === undefined) return undefined;
   if (waiting?.output.waiting) return { head, waiting: true };
   if (!rules || !evaluateRules || !mirrorRules) return undefined;
-  const items = rules.output.items.map(({ facts, det }) => ({ facts: { ...VerdictFacts.assert(facts), repo: facts["repo"], number: facts["number"] }, det }));
+  const items = rules.output.items.map(({ facts, det }) => ({ facts: { ...VerdictFacts.assert(facts), repo: facts["repo"], number: facts["number"] }, ...(det !== undefined && { det: RuledReasons.assert(det) }) }));
   return { head, verdict: evaluateRules.output, mirror: mirrorRules.output, ...(executeRules && { executed: executeRules.output }), rules: { items } };
 }
 

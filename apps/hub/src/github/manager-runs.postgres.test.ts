@@ -8,7 +8,7 @@ import { done, recordEvent, take, type PullRequestRef } from "../manager-state.j
 import { migrateTriageTables } from "../triage-db.js";
 import { createManagerRuns } from "./manager-runs.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type OpenPr } from "./reconcile-plan.js";
-import { createVerdictRecordStore } from "./verdict-record-store.js";
+import { createVerdictRecordStore, replaceVerdict } from "./verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_manager_runs";
@@ -45,6 +45,21 @@ async function mailed(db: Db, pr: PullRequestRef, head: string): Promise<void> {
   await recordEvent(db, TENANT, pr, `opened-${pr.number}`, { type: "webhook", head, payload: { kind: "pr", event: "pull_request", action: "opened", headSha: head } });
 }
 
+const pr7: PullRequestRef = { source: "github", repo: REPO, number: 7 };
+const pr8: PullRequestRef = { source: "github", repo: REPO, number: 8 };
+
+/** The manager posts a settled verdict on h1 and reports done, recording it as the done route does, in done's transaction. */
+async function reportedDone(db: Db, pr: PullRequestRef, runId: string, now: Date): Promise<void> {
+  const result = await done(db, TENANT, pr, runId, [], { head: "h1", request: { repo: REPO, number: pr.number, labels: [], owned: [], comment: "" } }, async function record(tx, closing) {
+    if (!closing) throw new Error("a reporting pass has a closing");
+    await replaceVerdict(tx, TENANT, {
+      runId, repo: REPO, number: pr.number, headSha: closing.head, startedAt: new Date(closing.startedAt), verdictAt: now, settled: true, state: "ready-monitoring",
+      actor: "author", humanGated: false, degraded: null, checks: [], dos: [], commented: true, detail: { headSha: closing.head, checks: [] }, runStatus: "completed",
+    });
+  });
+  if (result.outcome === "refused") throw new Error("done refused the manager the claim names");
+}
+
 function open(number: number, now: Date): OpenPr {
   return { number, headSha: "h1", updatedAt: new Date(now.getTime() - 30 * MINUTE).toISOString(), draft: false };
 }
@@ -54,8 +69,8 @@ test("PostgreSQL: the reconciler does not mail a head again while a live manager
     const now = new Date();
     const verdicts = createVerdictRecordStore(db);
     const managerRuns = createManagerRuns(db, verdicts, () => now);
-    const triaged: PullRequestRef = { source: "github", repo: REPO, number: 7 };
-    const held: PullRequestRef = { source: "github", repo: REPO, number: 8 };
+    const triaged = pr7;
+    const held = pr8;
     await managerUp(db, "run_triaged");
     await managerUp(db, "run_held");
     await mailed(db, triaged, "h1");
@@ -68,23 +83,18 @@ test("PostgreSQL: the reconciler does not mail a head again while a live manager
       return planTenant({ repos: [{ name: REPO, prs: [open(7, now), open(8, now)], rows, ci }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: "1.0.0" }).get(REPO)!;
     }
 
-    const running = plan([queued], await managerRuns(TENANT, "github", "1.0.0"));
+    const running = plan([queued], await managerRuns(TENANT, [pr7, pr8], "1.0.0"));
     expect(running.rows.find((row) => row.number === 7)).toMatchObject({ status: "running", runId: "run_triaged" });
     expect(running.enqueue.map((queuedPr) => queuedPr.number)).not.toContain(7);
 
-    const result = await done(db, TENANT, triaged, "run_triaged", [], { head: "h1", request: { repo: REPO, number: 7, labels: [], owned: [], comment: "" } });
-    if (result.outcome === "refused" || !result.closed) throw new Error("done refused the manager the claim names");
-    await verdicts.replace(TENANT, {
-      runId: "run_triaged", repo: REPO, number: 7, headSha: "h1", startedAt: new Date(result.closed.takenAt), verdictAt: now, settled: true, state: "ready-monitoring",
-      actor: "author", humanGated: false, degraded: null, checks: [], dos: [], commented: true, detail: { headSha: "h1", checks: [] }, runStatus: "completed",
-    });
+    await reportedDone(db, triaged, "run_triaged", now);
     await mailed(db, held, "h1");
     await take(db, TENANT, held, "run_held");
     await done(db, TENANT, held, "run_held", [], { head: "h1", waiting: true });
     const firstSeenAt = new Date(now.getTime() - MINUTE).toISOString();
     const fresh: PrTriageRow = { number: 8, headSha: "h1", status: "new", attempts: 0, workflowVersion: "1.0.0", firstSeenAt, updatedAt: firstSeenAt };
 
-    const settled = plan([...running.rows.filter((row) => row.number === 7), fresh], await managerRuns(TENANT, "github", "1.0.0"));
+    const settled = plan([...running.rows.filter((row) => row.number === 7), fresh], await managerRuns(TENANT, [pr7, pr8], "1.0.0"));
     expect(settled.rows).toEqual([expect.objectContaining({ number: 7, status: "triaged", runId: "run_triaged" }), expect.objectContaining({ number: 8, status: "waiting", runId: "run_held" })]);
     expect(settled.enqueue).toEqual([]);
   });
@@ -101,7 +111,7 @@ test("PostgreSQL: on the listener path a head is mailed once while its manager r
     let mails = 0;
     async function reconcile(afterMs: number): Promise<PrTriageRow> {
       now = new Date(start.getTime() + afterMs);
-      const runs = await managerRuns(TENANT, "github", undefined);
+      const runs = await managerRuns(TENANT, [pr], undefined);
       const plan = planTenant({ repos: [{ name: REPO, prs: [open(7, start)], rows }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined }).get(REPO)!;
       rows = plan.rows;
       mails += plan.enqueue.length;
@@ -116,15 +126,29 @@ test("PostgreSQL: on the listener path a head is mailed once while its manager r
       expect(await reconcile(afterMs)).toMatchObject({ status: "running", runId: "run_manager" });
     }
 
-    const result = await done(db, TENANT, pr, "run_manager", [], { head: "h1", request: { repo: REPO, number: 7, labels: [], owned: [], comment: "" } });
-    if (result.outcome === "refused" || !result.closed) throw new Error("done refused the manager the claim names");
-    await verdicts.replace(TENANT, {
-      runId: "run_manager", repo: REPO, number: 7, headSha: "h1", startedAt: new Date(result.closed.takenAt), verdictAt: now, settled: true, state: "ready-monitoring",
-      actor: "author", humanGated: false, degraded: null, checks: [], dos: [], commented: true, detail: { headSha: "h1", checks: [] }, runStatus: "completed",
-    });
+    await reportedDone(db, pr, "run_manager", now);
     for (const afterMs of [7 * 60 * MINUTE + MINUTE, 14 * 60 * MINUTE]) {
       expect(await reconcile(afterMs)).toMatchObject({ status: "triaged", runId: "run_manager" });
     }
     expect(mails).toBe(1);
+  });
+}, 60_000);
+
+test("PostgreSQL: a manager that went away mid-pass fails its pass's head, so the head is retried with backoff", async () => {
+  await withDatabase(async function gone(db) {
+    const now = new Date();
+    const managerRuns = createManagerRuns(db, createVerdictRecordStore(db), () => now);
+    await managerUp(db, "run_gone");
+    await mailed(db, pr7, "h1");
+    await take(db, TENANT, pr7, "run_gone");
+    await db.update(schema.workflowRun).set({ status: "failed" }).where(sql`${schema.workflowRun.id} = 'run_gone'`);
+
+    const runs = await managerRuns(TENANT, [pr7], undefined);
+    expect(runs.byRepo.get(REPO)?.get(runKey(7, "h1"))).toEqual([expect.objectContaining({ runId: "run_gone", status: "failed" })]);
+    const queuedAt = new Date(now.getTime() - MINUTE).toISOString();
+    const queued: PrTriageRow = { number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt };
+    const plan = planTenant({ repos: [{ name: REPO, prs: [open(7, now)], rows: [queued] }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined }).get(REPO)!;
+    expect(plan.rows).toEqual([expect.objectContaining({ status: "failed", runId: "run_gone", error: "run failed" })]);
+    expect(plan.enqueue).toEqual([]);
   });
 }, 60_000);

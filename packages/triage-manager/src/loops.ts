@@ -3,7 +3,7 @@ import { asRecord } from "@corbits/common";
 
 const DONES = ["done", "donePosted", "doneWaiting", "doneReviewing", "doneJudging"];
 
-/** The pass's done, on whichever branch it ran; the runtime records each other done with the gate's skip marker as its output. */
+/** The pass's done, on whichever branch it ran. The loop reads a pass's outputs from its log, where each done it skipped holds the gate's skip marker. */
 function doneOf(output: unknown): Record<string, unknown> | undefined {
   const steps = asRecord(output);
   return DONES.map((id) => asRecord(steps?.[id])).find((done) => done !== undefined && done["skipped"] !== true);

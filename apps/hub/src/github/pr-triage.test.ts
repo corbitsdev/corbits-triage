@@ -189,15 +189,17 @@ describe("createGithubPrTriage", () => {
     expect(s.saved).toEqual([[{ ...old, queuedAt: NOW.toISOString(), updatedAt: NOW.toISOString() }]]);
   });
 
-  test("a head a live manager holds is running, and one whose manager reported done since it was queued is queued again at once", async () => {
+  test("a head a live manager holds is running, and one whose manager reported done or went away since it was queued is queued again at once", async () => {
     const queued = queuedRow(60_000);
-    const manager = (run: ObservedRun): Partial<GithubPrTriageDeps> => ({ store: stored([queued], s.saved), managerRuns: observed([run]) });
+    const manager = (run: ObservedRun): Partial<GithubPrTriageDeps> => ({ store: stored([queued], s.saved), managerRuns: async () => observed([run])("", "") });
     const s = stub();
     await refused(await handler(ENABLED, s, manager({ runId: "run_manager", source: "github", status: "running", startedAt: NOW.toISOString() }))(request(), MEMBER), 409, "already_running");
     await refused(await handler(ENABLED, s, manager({ runId: "run_manager", source: "github", status: "completed", startedAt: new Date(NOW.getTime() - 120_000 - DEFAULT_RECONCILE_POLICY.clockSkewMs).toISOString() }))(request(), MEMBER), 409, "already_queued");
     expect(s.delivered).toEqual([]);
     expect((await handler(ENABLED, s, manager({ runId: "run_manager", source: "github", status: "completed", startedAt: new Date(NOW.getTime() - 30_000).toISOString() }))(request(), MEMBER)).status).toBe(202);
     expect(s.delivered).toHaveLength(1);
+    expect((await handler(ENABLED, s, manager({ runId: "run_manager", source: "github", status: "failed", startedAt: new Date(NOW.getTime() - 30_000).toISOString() }))(request(), MEMBER)).status).toBe(202);
+    expect(s.delivered).toHaveLength(2);
   });
 
   test("a state write refused as stale is retried once on a fresh load, gate included; refused twice it answers conflict, never mailing", async () => {

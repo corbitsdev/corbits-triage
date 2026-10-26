@@ -207,7 +207,7 @@ describe("triage-manager", () => {
     const hub = fakeHub({ takes: [PASS], dones: [ENDED] });
     const { outputs } = await runMail(github, wake(), host, hub.hub);
     const { report, approvals } = doneBody(hub.calls) as { report: { rules: { items: { facts: Record<string, unknown> }[] } }; approvals: unknown };
-    expect(report).toEqual({ head: HEAD, verdict: outputs["evaluateRules"], mirror: outputs["mirrorRules"], executed: outputs["executeRules"], rules: { items: [{ facts: expect.objectContaining({ repo: PR.repo, number: PR.number, title: PR.title }), det: expect.anything() }] } });
+    expect(report).toEqual({ head: HEAD, verdict: outputs["evaluateRules"], mirror: outputs["mirrorRules"], executed: outputs["executeRules"], rules: { items: [{ facts: expect.objectContaining({ repo: PR.repo, number: PR.number, title: PR.title }), det: { reason: expect.any(String), findings: expect.any(Array) } }] } });
     expect(Object.keys(report.rules.items[0]!.facts)).not.toContain("files");
     expect(approvals).toEqual({ results: [] });
   });
@@ -356,7 +356,7 @@ describe("triage-manager with code review", () => {
     expect(ran).not.toContain("deployReview");
     expect(writes).toContainEqual(READY);
     expect(writes).toContainEqual(POSTED_REVIEW);
-    expect(second.calls).toEqual([TAKE, { ...DONE, body: { ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] } }, END]);
+    expect(second.calls).toEqual([TAKE, { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] }) }, END]);
     expect(mailed).toHaveLength(1);
   });
 
@@ -370,7 +370,7 @@ describe("triage-manager with code review", () => {
     expect(writes).toContainEqual(READY);
     expect(writes).toContainEqual(POSTED_REVIEW);
     expect(mailed).toEqual([]);
-    expect(hub.calls).toEqual([TAKE, { ...DONE, body: { ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] } }, END]);
+    expect(hub.calls).toEqual([TAKE, { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] }) }, END]);
   });
 
   test("a stored review is not posted once this pass's policy no longer asks for code review", async () => {
@@ -465,8 +465,16 @@ describe("triage-manager with a judge", () => {
     expect(ran).not.toContain("deployJudge");
     expect(outputs["evaluateRules"]).toEqual(verdict);
     expect(writes).toContainEqual(JUDGE_POSTED);
-    expect(second.calls[1]).toEqual({ ...DONE, body: { ...PULL, reviewers: [{ ...JUDGE, result: verdict }] } });
+    expect(second.calls[1]).toEqual({ ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...JUDGE, result: verdict }] }) });
+    expect(doneBody(second.calls)["report"]).toMatchObject({ head: HEAD, verdict });
     expect(mailed).toHaveLength(1);
+  });
+
+  test("a pass that mailed its judge and answers more runs the next pass, which ends", async () => {
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }, IDLE], dones: [MORE, ENDED] });
+    expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", passes: 2 });
+    expect(hub.calls.filter((call) => call.path === DONE.path)).toHaveLength(2);
   });
 
   test("a later event on the same head deploys no second judge and posts the judge's verdict, whatever changed on the pull request since", async () => {
@@ -478,7 +486,8 @@ describe("triage-manager with a judge", () => {
     expect(ran).not.toContain("deployJudge");
     expect(outputs["evaluateRules"]).toEqual(verdict);
     expect(writes).toContainEqual(JUDGE_POSTED);
-    expect(hub.calls).toEqual([TAKE, { ...DONE, body: { ...PULL, reviewers: [{ ...JUDGE, result: verdict }] } }, END]);
+    expect(hub.calls).toEqual([TAKE, { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...JUDGE, result: verdict }] }) }, END]);
+    expect(doneBody(hub.calls)["report"]).toMatchObject({ head: HEAD, verdict });
   });
 
   test("a stored verdict gives way when this pass's rules no longer need the judge, as on a draft", async () => {
@@ -599,7 +608,7 @@ describe("triage-manager with a judge and code review", () => {
     expect(ran).not.toContain("deployJudge");
     expect(writes).toContainEqual(JUDGE_POSTED);
     expect(writes).toContainEqual(POSTED_REVIEW);
-    expect(third.calls[1]).toEqual({ ...DONE, body: { ...PULL, reviewers: [{ ...JUDGE, result: verdict }, { ...reviewer(), result: REVIEW }] } });
+    expect(third.calls[1]).toEqual({ ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...JUDGE, result: verdict }, { ...reviewer(), result: REVIEW }] }) });
   });
 });
 

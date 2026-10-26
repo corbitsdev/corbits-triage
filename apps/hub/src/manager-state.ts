@@ -54,9 +54,11 @@ type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ o
 type ClosedPass = Claim["history"][number];
 /** What a pass reports as done closes it: the head it worked on, held for CI, or the mirror request of the verdict it posted. */
 export type PassReport = { head: string; waiting?: true; request?: Record<string, unknown> };
-/** `closed` is the pass done closed, and `mail` the newest pull request mail, when the pass reported. */
-type Closing = { closed?: ClosedPass; mail?: Record<string, unknown> };
-type DoneResult = { outcome: "refused" } | (({ outcome: "ended" } | { outcome: "more"; wait: boolean }) & Closing);
+/** A reporting pass's head, when this run's first pass on it was taken, and the newest pull request mail for it. */
+export type Closing = { head: string; startedAt: string; mail?: Record<string, unknown> };
+/** Records what the closed pass reported in done's transaction, so the claim never moves on without it. */
+export type RecordDone = (tx: Tx, closing: Closing | undefined) => Promise<void>;
+type DoneResult = { outcome: "refused" } | { outcome: "ended" } | { outcome: "more"; wait: boolean };
 
 function pullKey({ source, repo, number }: PullRequestRef): string {
   return `${source}:${repo}#${number}`;
@@ -87,14 +89,9 @@ function eventOf(key: string, state: unknown): ManagerEvent {
   return event;
 }
 
-/** `text` as a LIKE pattern's literal prefix. */
-function likePrefix(text: string): string {
-  return text.replace(/[\\%_]/g, "\\$&");
-}
-
 /** The pull request's event keys' prefix as a LIKE pattern. */
 function eventPrefix(pr: PullRequestRef): string {
-  return likePrefix(eventKey(pr, ""));
+  return eventKey(pr, "").replace(/[\\%_]/g, "\\$&");
 }
 
 /** The kind is a literal so a generic plan still matches the partial index. */
@@ -232,11 +229,12 @@ async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim
   return { ...(request && { request }), reviewers: claim.reviewers };
 }
 
-/** The newest pull request mail recorded for the pull request, which triage runs on. */
-async function newestRequest(tx: Tx, tenantId: string, pr: PullRequestRef): Promise<Record<string, unknown> | undefined> {
+/** The newest pull request mail recorded for the pull request, or for its `head`, which triage runs on. */
+async function newestRequest(tx: Tx, tenantId: string, pr: PullRequestRef, head?: string): Promise<Record<string, unknown> | undefined> {
   const prefix = eventPrefix(pr);
+  const onHead = head === undefined ? undefined : sql`${managerState.state}->>'head' = ${head}`;
   const [row] = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
-    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${prefix}%`), sql`${managerState.state}->'payload'->>'kind' = 'pr'`))
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${prefix}%`), sql`${managerState.state}->'payload'->>'kind' = 'pr'`, onHead))
     .orderBy(desc(sql`${managerState.state}->>'receivedAt'`), desc(managerState.key))
     .limit(1);
   return row && eventOf(row.key, row.state).payload;
@@ -283,12 +281,31 @@ function closing(claim: Claim, runId: string, now: Date, report: PassReport | un
   return pass && { ...pass, runId, doneAt: at, ...(report?.waiting && { waiting: true }), ...(report?.request && { request: report.request }) };
 }
 
+/** The history with `closed` added; only the newest pass of a run on a head keeps a mirror request, the verdict that run's row now holds. */
+function closedInto(history: Claim["history"], closed: ClosedPass): Claim["history"] {
+  if (closed.request === undefined) return [...history, closed];
+  const older = history.map(function withoutRequest(pass) {
+    if (pass.runId !== closed.runId || pass.head !== closed.head) return pass;
+    const { request: _request, ...rest } = pass;
+    return rest;
+  });
+  return [...older, closed];
+}
+
+/** The reporting pass's closing: when this run first took `head`, and the newest pull request mail for it. */
+async function closingOf(tx: Tx, tenantId: string, pr: PullRequestRef, runId: string, head: string, history: Claim["history"]): Promise<Closing> {
+  const first = history.find((pass) => pass.runId === runId && pass.head === head);
+  if (!first) throw new Error(`${claimKey(pr)} has no pass of ${runId} on ${head} to report`);
+  const mail = await newestRequest(tx, tenantId, pr, head);
+  return { head, startedAt: first.takenAt, ...(mail && { mail }) };
+}
+
 /**
  * Closes the open pass with what it reported and records `reviewers`. The claim ends when no event is pending and no
  * reviewer of the current head is still due; otherwise the manager has more to do: at once when an event is pending,
  * else after it waits for its reviewer.
  */
-export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], report?: PassReport): Promise<DoneResult> {
+export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], report?: PassReport, record?: RecordDone): Promise<DoneResult> {
   return db.transaction(async function finishPass(tx) {
     const claim = await lockClaim(tx, tenantId, pr);
     if (!fencedTo(claim, runId)) return { outcome: "refused" };
@@ -296,20 +313,19 @@ export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     if (recorded instanceof type.errors) throw new Error(`reviewers for ${claimKey(pr)} are malformed: ${recorded.summary}`);
     const now = new Date();
     const closed = closing(claim, runId, now, report);
-    const history = closed ? [...claim.history, closed] : claim.history;
-    const mail = report && await newestRequest(tx, tenantId, pr);
-    const reported: Closing = report && closed ? { closed, ...(mail && { mail }) } : {};
+    const history = closed ? closedInto(claim.history, closed) : claim.history;
     const head = history.at(-1)?.head;
     const due = recorded.some((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime());
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState).where(pending(tenantId, pr));
     const waiting = passHeadOf(eventsOf(rows), history) !== undefined;
     const kept = { claimId: claim.claimId, claimedAt: claim.claimedAt, reviewers: recorded, history, starts: claim.starts };
+    if (record) await record(tx, report && await closingOf(tx, tenantId, pr, runId, report.head, history));
     if (due || waiting) {
       await writeClaim(tx, tenantId, pr, { ...kept, status: "live", runId });
-      return { outcome: "more", wait: !waiting, ...reported };
+      return { outcome: "more", wait: !waiting };
     }
     await writeClaim(tx, tenantId, pr, { ...kept, status: "ended" });
-    return { outcome: "ended", ...reported };
+    return { outcome: "ended" };
   });
 }
 
@@ -320,8 +336,11 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
   return row && claimOf(key, row.state).history.findLast((pass) => pass.runId === runId && pass.head === head && pass.request !== undefined)?.request;
 }
 
-/** A pull request a manager claimed: its closed passes, and while its manager is up, that run and the head of the newest pull request mail recorded. */
-export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string } };
+/**
+ * A pull request a manager claimed: its closed passes; while its manager is up, that run and the head of the newest pull
+ * request mail recorded; and the pass a manager that went away left open.
+ */
+export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string }; gone?: { runId: string; pass: Pass } };
 
 /** The newest head a pull request mail named, which a live manager takes next or has taken. */
 async function newestHead(tx: Tx, tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
@@ -332,27 +351,29 @@ async function newestHead(tx: Tx, tenantId: string, pr: PullRequestRef): Promise
   return row && eventOf(row.key, row.state).head;
 }
 
-/** Every pull request of the host a manager claimed in the tenant. */
-export async function managedPulls(db: DB["db"], tenantId: string, source: RepoSource): Promise<ManagedPull[]> {
+/** The claims of `pulls` a manager made. */
+export async function managedPulls(db: DB["db"], tenantId: string, pulls: readonly PullRequestRef[]): Promise<ManagedPull[]> {
+  if (pulls.length === 0) return [];
   return db.transaction(async function readClaims(tx) {
     const now = new Date();
-    const prefix = `mgr:${source}:`;
+    const byKey = new Map(pulls.map((pr) => [claimKey(pr), pr]));
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
-      .where(and(eq(managerState.tenantId, tenantId), eq(managerState.kind, "claim"), like(managerState.key, `${likePrefix(prefix)}%`)));
-    const pulls: ManagedPull[] = [];
+      .where(and(eq(managerState.tenantId, tenantId), eq(managerState.kind, "claim"), inArray(managerState.key, [...byKey.keys()])));
+    const managed: ManagedPull[] = [];
     for (const { key, state } of rows) {
       const claim = claimOf(key, state);
-      const name = key.slice(prefix.length);
-      const at = name.lastIndexOf("#");
-      const pr = { source, repo: name.slice(0, at), number: Number(name.slice(at + 1)) };
+      const pr = byKey.get(key);
+      if (!pr) throw new Error(`manager_state ${key} is not a claim asked for`);
       const runId = claim.status === "live" ? claim.runId : undefined;
-      if (runId === undefined || (await runGone(tx, runId, now))) {
-        pulls.push({ pr, history: claim.history });
-        continue;
+      if (runId === undefined) {
+        managed.push({ pr, history: claim.history });
+      } else if (await runGone(tx, runId, now)) {
+        managed.push({ pr, history: claim.history, ...(claim.pass && { gone: { runId, pass: claim.pass } }) });
+      } else {
+        const head = await newestHead(tx, tenantId, pr);
+        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }) } });
       }
-      const head = await newestHead(tx, tenantId, pr);
-      pulls.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }) } });
     }
-    return pulls;
+    return managed;
   });
 }

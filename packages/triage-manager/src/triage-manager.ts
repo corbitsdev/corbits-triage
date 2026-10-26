@@ -108,7 +108,7 @@ function passOf(id: string, sources: Sources) {
       mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] },
       // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.
       executeRules: { ...executeRules, after: ["postReview"] },
-      // A skipped step's output is the gate's skip marker, not the step's, so the branches that report a held head or a posted verdict have their own done.
+      // A skipped step is missing from every selector, so the branches that report a held head or a posted verdict have their own done.
       doneWaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "waiting")] }, ["markWaiting"]),
       donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "evaluateRules", "mirrorRules", "executeRules")] }, ["executeRules"]),
       done: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals")] }, ["ran", "triaged", "judgeWait", "posting"]),

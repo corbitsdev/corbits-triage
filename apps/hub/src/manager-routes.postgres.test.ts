@@ -194,7 +194,7 @@ function postedOn(pr: PullRequestRef, head: string) {
   };
 }
 
-test("PostgreSQL: done records the verdict a pass posted as its run's on its host, the run's newest replaces it, approvals set their outcomes and a held head records none", async () => {
+test("PostgreSQL: done records the verdict a pass posted as its run's on its host, the run's newest replaces it keeping the Dos written on its head, approvals set their outcomes and a held head records none", async () => {
   await withDatabase(async function recorded(db) {
     const app = buildHub(db);
     const verdicts = createVerdictRecordStore(db);
@@ -223,6 +223,14 @@ test("PostgreSQL: done records the verdict a pass posted as its run's on its hos
       const rows = await verdicts.forPull(TENANT, pr.repo, pr.number);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ runId, headSha: "h2", trigger: "pull_request:synchronize", detail: { actions: [{ effectId: "held-h2", status: "done" }, { effectId: "auto-h2", status: "done" }] } });
+
+      // Mailed again on the same head, its next verdict keeps the Do already written there, the run's start on the head and the head's newest mail.
+      await mailed(db, pr, "h2", "edited");
+      await post(app, "take", pr, manager);
+      await post(app, "done", { ...pr, reviewers: [], report: postedOn(pr, "h2").report }, manager);
+      expect(await verdicts.forPull(TENANT, pr.repo, pr.number)).toEqual([expect.objectContaining({
+        startedAt: rows[0]!.startedAt, trigger: "pull_request:edited", detail: expect.objectContaining({ actions: [expect.objectContaining({ effectId: "held-h2", status: "done" }), expect.objectContaining({ effectId: "auto-h2", status: "done" })] }),
+      })]);
 
       await mailed(db, pr, "h3", "reopened");
       await post(app, "take", pr, manager);
