@@ -184,7 +184,7 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
   });
 }, 120_000);
 
-test("PostgreSQL: connecting an App writes its key and token together, another App replaces it only when asked to, a renewal of the replaced App does not overwrite them, and one installation is used", async () => {
+test("PostgreSQL: connecting an App writes its key and token together, another App replaces it only when asked to, a key alone keeps the stored App, a renewal of the replaced App does not overwrite them, and one installation is used", async () => {
   const first = app("1", [7]);
   // Installed on two accounts: the workspace uses the oldest installation.
   const replacement = app("2", [9, 8]);
@@ -214,6 +214,10 @@ test("PostgreSQL: connecting an App writes its key and token together, another A
     expect(await secretOf("github")).toBe("ghs_2_8_2");
     expect(await slugOf(db)).toBe("app-2");
     expect(pushed()).toEqual([]);
+
+    // A key sent without an App ID is the stored App's.
+    expect((await connect({ privateKey: JSON.parse(replacement.json).privateKey }, member)).status).toBe(200);
+    expect(await secretOf("github-app")).toBe(replacement.json);
   });
 }, 120_000);
 

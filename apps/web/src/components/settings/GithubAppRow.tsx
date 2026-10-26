@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from "react";
-import { Button, Input } from "@corbits/react-ui";
+import { Button } from "@corbits/react-ui";
 import { useMutation } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { isPrivateKeyPem } from "../../lib/connect-view.ts";
@@ -7,6 +7,7 @@ import { connectGithubApp } from "../../lib/github-manifest.ts";
 import { isActiveCredential, type HubCredential } from "../../lib/hub-api.ts";
 import { createHubTransport } from "../../lib/hub-transport.ts";
 import { usePortal } from "../../lib/portal.tsx";
+import { RestartFailed, useRestartTriage } from "./RestartFailed.tsx";
 
 type GithubAppRowProps = {
   credential: HubCredential;
@@ -29,26 +30,26 @@ async function readKey(file: File): Promise<string> {
   return contents;
 }
 
-/** The GitHub App: its key is replaced with its App ID, which GitHub checks before it is saved; the hub refuses another App's ID. */
+/** The GitHub App: a new key is sent alone, so the hub checks it with GitHub as the stored App's before saving it. */
 export function GithubAppRow({ credential, name, tenantId, replaceable, remove }: GithubAppRowProps) {
-  const { readOnly, notify, redeployCredentialHolders } = usePortal();
+  const { readOnly, notify } = usePortal();
+  const restart = useRestartTriage("github");
   const fileId = useId();
   const [editing, setEditing] = useState(false);
   const [replaced, setReplaced] = useState(false);
-  const [appId, setAppId] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [keyName, setKeyName] = useState("");
   const key = useMutation({ mutationFn: readKey });
   const replace = useMutation({
     mutationFn: function replaceKey() {
-      return connectGithubApp(createHubTransport(), tenantId, { appId: appId.trim(), privateKey });
+      return connectGithubApp(createHubTransport(), tenantId, { privateKey });
     },
-    onSuccess: async function closeEditor() {
+    onSuccess: function closeEditor() {
       clear();
       setEditing(false);
       setReplaced(true);
       notify("GitHub App key replaced.");
-      await redeployCredentialHolders();
+      restart.mutate();
     },
   });
   const removal = useMutation({
@@ -66,7 +67,6 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
   }
 
   function clear() {
-    setAppId("");
     setPrivateKey("");
     setKeyName("");
     key.reset();
@@ -75,6 +75,11 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
   function cancel() {
     clear();
     setEditing(false);
+  }
+
+  function startReplacing() {
+    setReplaced(false);
+    setEditing(true);
   }
 
   function chooseKey(file: File | undefined) {
@@ -95,16 +100,15 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
         {editing && (
           <ol className="field-help">
             <li>In your GitHub App's settings on GitHub, generate a new private key.</li>
-            <li>Enter the App ID shown there, choose the downloaded .pem file, and save.</li>
+            <li>Choose the downloaded .pem file here and save.</li>
             <li>Then delete the old key on GitHub.</li>
           </ol>
         )}
         {editing && (
           <form className="rline" onSubmit={save}>
-            <Input className="val" inputMode="numeric" aria-label="App ID" placeholder="App ID" value={appId} onChange={(event) => setAppId(event.target.value)} disabled={disabled} autoComplete="off" />
             <input className="sr-only" id={fileId} type="file" accept=".pem" disabled={disabled} onChange={(event) => chooseKey(event.target.files?.[0])} />
             <Button asChild variant="outline" size="sm"><label htmlFor={fileId}>{keyName || "Choose .pem file"}</label></Button>
-            <Button type="submit" size="sm" disabled={disabled || !appId.trim() || !privateKey}>{replace.isPending ? "Saving…" : "Save"}</Button>
+            <Button type="submit" size="sm" disabled={disabled || !privateKey}>{replace.isPending ? "Saving…" : "Save"}</Button>
             <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={cancel}>Cancel</Button>
           </form>
         )}
@@ -112,8 +116,9 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
         {key.error && <p role="alert" className="field-error">Could not read the private key. {errorText(key.error)}</p>}
         {replace.error && <p role="alert" className="field-error">Could not replace the {name} key. {errorText(replace.error)} Try again.</p>}
         {removal.error && <p role="alert" className="field-error">Could not remove {name}. {errorText(removal.error)} Try again.</p>}
+        <RestartFailed restart={restart} />
       </div>
-      {replaceable && !editing && <Button type="button" variant="outline" size="sm" aria-label={`Replace ${name} key`} disabled={disabled} onClick={() => { setReplaced(false); setEditing(true); }}>Replace key</Button>}
+      {replaceable && !editing && <Button type="button" variant="outline" size="sm" aria-label={`Replace ${name} key`} disabled={disabled} onClick={startReplacing}>Replace key</Button>}
       <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${name}`} disabled={disabled} onClick={() => removal.mutate()}>Remove</Button>
     </div>
   );

@@ -101,7 +101,7 @@ function webhookKey(tenantId: string | undefined, repo: string) {
 /** A new secret changes what each hand-made webhook's setup shows, so those are read again. */
 export function useRotateBitbucketDatacenterHookSecret() {
   const queryClient = useQueryClient();
-  const { snapshot, redeployCredentialHolders } = usePortal();
+  const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   return useMutation({
     mutationFn: async function rotate() {
@@ -109,7 +109,6 @@ export function useRotateBitbucketDatacenterHookSecret() {
     },
     onSuccess: async function readWebhooksAgain() {
       await queryClient.invalidateQueries({ queryKey: [BITBUCKET_DATACENTER_QUERY_KEY, tenantId, "webhook"] });
-      await redeployCredentialHolders();
     },
   });
 }

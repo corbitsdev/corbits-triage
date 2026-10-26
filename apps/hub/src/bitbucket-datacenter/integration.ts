@@ -15,7 +15,7 @@ import {
   BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, lookupAddresses, pagedValues, readRepo,
   resolveInstance, saveWebhook, WEBHOOK_EVENTS, webhookExists, type AddressLookup, type Instance,
 } from "./client.js";
-import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, splitName, TOKEN_CREDENTIAL } from "./records.js";
+import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, forgetWebhooks, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, splitName, TOKEN_CREDENTIAL } from "./records.js";
 
 export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
 const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
@@ -204,8 +204,9 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   }
 
   /**
-   * Each webhook triage created is saved again with a new secret before the secret is stored. Repositories whose webhook
-   * was set up by hand, or could not be saved, are named so someone updates them on the instance.
+   * The new secret is stored, then each webhook triage created is saved again with it; deliveries refused in between are
+   * caught up by the reconciler. A webhook that could not be saved is left to be set up by hand, so the repositories
+   * named are those whose webhook someone updates on the instance.
    */
   async function rotateHookSecret(member: Member, req: Request): Promise<Response> {
     const connection = bitbucketConnection(await tenantNs(member.tenantId));
@@ -213,32 +214,37 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     const bb = await instance(member);
     if (bb instanceof Response) return bb;
     const secret = randomBytes(32).toString("hex");
-    const url = hookUrl(member.tenantId);
-    const webhooksByHand: string[] = [];
-    for (const record of repoRecords(await tenantNs(member.tenantId)).filter((row) => isBitbucketRecord(row) && row.enabled === true)) {
-      if (record.webhookId === undefined) {
-        webhooksByHand.push(record.name);
-        continue;
-      }
-      try {
-        await saveWebhook(bb, ...splitName(record.name), record.webhookId, url, secret);
-      } catch (err) {
-        deps.log({ level: "warn", msg: "bitbucket_datacenter_webhook_not_saved", tenantId: member.tenantId, repo: record.name, error: String(err) });
-        webhooksByHand.push(record.name);
-      }
-    }
     const providerId = await ensureProvider(req, member.tenantId, connection.baseUrl);
     if (providerId instanceof Response) return providerId;
     const hookFailed = await writeCredential(req, member.tenantId, providerId, { name: HOOK_CREDENTIAL, secret, metadata: HOOK_METADATA });
     if (hookFailed) return hookFailed;
+    const url = hookUrl(member.tenantId);
+    const webhooksByHand: string[] = [];
+    const unsaved = new Set<string>();
+    for (const record of repoRecords(await tenantNs(member.tenantId)).filter((row) => isBitbucketRecord(row) && row.enabled === true)) {
+      if (record.webhookId !== undefined) {
+        try {
+          await saveWebhook(bb, ...splitName(record.name), record.webhookId, url, secret);
+          continue;
+        } catch (err) {
+          deps.log({ level: "warn", msg: "bitbucket_datacenter_webhook_not_saved", tenantId: member.tenantId, repo: record.name, error: String(err) });
+          unsaved.add(record.name);
+        }
+      }
+      webhooksByHand.push(record.name);
+    }
+    if (unsaved.size > 0) {
+      await patchCorbitsTriage(db, member.tenantId, function leaveToHand(ns) {
+        return forgetWebhooks(ns, unsaved);
+      });
+    }
     return Response.json({ webhooksByHand });
   }
 
-  async function connect(input: typeof ConnectBody.infer, member: Member, req: Request): Promise<Response> {
+  async function connect(body: typeof ConnectBody.infer, member: Member, req: Request): Promise<Response> {
     const refused = await manageRefusal(member);
     if (refused) return refused;
-    if ("rotateHookSecret" in input) return rotateHookSecret(member, req);
-    const body = input;
+    if ("rotateHookSecret" in body) return rotateHookSecret(member, req);
     const checked = await reachable(body.baseUrl);
     if (!checked) return failure(400, "invalid_request", `baseUrl must be an http(s) URL without credentials, query, or fragment. ${HOST_REFUSED}`);
     const { baseUrl } = checked;

@@ -527,17 +527,17 @@ The row says **Key stored** or **No key**. With no key, its form is open below i
 
 #### Rolling credentials
 
-Every secret Triage holds can be replaced from Settings without disconnecting anything. After a replacement, Triage redeploys its workers, and code review uses the new value from its next review.
+Every secret Triage holds can be replaced from Settings without disconnecting anything. After a GitHub or Bitbucket Data Center secret is replaced, Triage restarts its workers for that host, and code review uses the new value from its next review. If the restart fails, the row says **Saved. Restarting Triage failed; try again** with a **Try again** button; the new secret is already saved.
 
-**GitHub App key.** Press **Replace key** on the GitHub App row. In your App's settings on GitHub, generate a new private key, then enter the App ID and choose the downloaded `.pem` file and press **Save**; GitHub checks them before they are saved. Then delete the old key on GitHub. A different App ID is refused: to switch to another App, use **Create GitHub App**.
+**GitHub App key.** Press **Replace key** on the GitHub App row. In your App's settings on GitHub, generate a new private key, then choose the downloaded `.pem` file and press **Save**; GitHub checks that the key belongs to the connected App before it is saved. Then delete the old key on GitHub. To switch to another App, use **Create GitHub App**.
 
 **GitHub webhook secret.** Press **Rotate secret** on the webhook row. Triage makes a new secret and shows it once: paste it as the webhook secret in your App's settings on GitHub straight away, then press **I pasted it on GitHub**. Pull requests that change before you paste it are picked up automatically.
 
 **Bitbucket Data Center token.** Press **Replace token**, paste a new HTTP access token for the Corbits Triage user with the same permissions and press **Save**. Triage tries it against your instance and keeps the old token if the instance refuses it. Then revoke the old token in Bitbucket.
 
-**Bitbucket Data Center webhook secret.** Press **Rotate secret** on the webhook secret row. Triage gives every webhook it created the new secret. Repositories whose webhook was set up by hand are named afterwards: open each one's repository page for the new secret and update its webhook in Bitbucket.
+**Bitbucket Data Center webhook secret.** Press **Rotate secret** on the webhook secret row. Triage saves a new secret and updates every webhook it created to use it. Repositories whose webhook was set up by hand, or whose webhook Triage could not update, are named afterwards: each one's repository page shows the new secret, so update its webhook in Bitbucket from there. Pull requests that change in the meantime are picked up automatically.
 
-**Model keys.** Press **Change** on the [decision model](#decision-model) or on the Anthropic key under [Code review](#code-review-2) and paste the new key.
+**Model keys.** Press **Change** on the [decision model](#decision-model) or on the Anthropic key under [Code review](#code-review-2) and paste the new key. Triage restarts its workers for every host.
 
 ### Code review
 

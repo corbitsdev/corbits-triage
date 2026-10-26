@@ -84,8 +84,8 @@ export async function saveExistingGithubApp(input: {
   await configureGithubHook(transport, input.tenantId, input.webhookSecret);
 }
 
-/** The hub checks the App with GitHub and keeps its key out of the credential triage's workflows use; it refuses another App's ID unless `replace`. */
-export async function connectGithubApp(transport: Transport, tenantId: string, app: { appId: string; privateKey: string; replace?: boolean }): Promise<void> {
+/** The hub checks the App with GitHub and keeps its key out of the credential triage's workflows use; without `appId` the key is the stored App's, and another App's ID is refused unless `replace`. */
+export async function connectGithubApp(transport: Transport, tenantId: string, app: { appId?: string; privateKey: string; replace?: boolean }): Promise<void> {
   await transport.fetch("PUT", `/api/integrations/github-app/${encodeURIComponent(tenantId)}`, app);
 }
 

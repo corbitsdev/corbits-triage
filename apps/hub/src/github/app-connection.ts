@@ -17,7 +17,7 @@ import { failure } from "./portal-credential.js";
 
 export const GITHUB_APP_PATH = "/api/integrations/github-app";
 
-export const AppBody = type({ appId: /^\d+$/, privateKey: "string > 0", "replace?": "boolean" });
+export const AppBody = type({ "appId?": /^\d+$/, privateKey: "string > 0", "replace?": "boolean" });
 const StoredApp = type({ appId: "string" });
 export const AppConnected = type({ appSlug: "string" });
 
@@ -71,10 +71,12 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
     const githubProvider = await db.query.provider.findFirst({ where: and(eq(provider.tenantId, tenantId), eq(provider.name, "github")) });
     if (!githubProvider || !validGithubProvider(githubProvider, deps.githubApiOrigin)) return failure(409, "github_provider_missing", "The workspace has no GitHub provider for this hub's GitHub.");
     const connectedAppId = await storedAppId(tenantId);
-    if (!body.replace && connectedAppId !== undefined && connectedAppId !== body.appId) {
+    const appId = body.appId ?? connectedAppId;
+    if (appId === undefined) return failure(400, "invalid_request", "Enter the App ID.");
+    if (!body.replace && connectedAppId !== undefined && connectedAppId !== appId) {
       return failure(409, "github_app_mismatch", "That App ID is not the connected GitHub App's. To switch to another App, use Create GitHub App.");
     }
-    const appJson = JSON.stringify({ appId: body.appId, privateKey: body.privateKey.trim() });
+    const appJson = JSON.stringify({ appId, privateKey: body.privateKey.trim() });
     let issued: IssuedApp;
     try {
       issued = await deps.renewal.issue(tenantId, appJson);

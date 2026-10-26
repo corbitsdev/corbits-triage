@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport, type WorkflowDeployment } from "@intx/hub-client";
-import { cancelsSuperseded, CREDENTIAL_HOLDERS, ensureWorkflows } from "./workflow-deploy.ts";
+import { cancelsSuperseded, ensureWorkflows } from "./workflow-deploy.ts";
 import type { PackageIndexEntry } from "./workflow-packages.ts";
 
 const DECISION = [{ canonicalName: "decision", offerings: [{ offeringId: "mof_1", providerName: "corbits-system-one" }] }];
 const BOTH = { connected: ["github", "bitbucket-datacenter"], codeReview: [], codeReviewProvider: "anthropic", prWorkflow: [] } as const;
 const GITHUB = { connected: ["github"], codeReview: [], codeReviewProvider: "anthropic", prWorkflow: [] } as const;
-const MISSING = new Set<never>();
+const MISSING = { kinds: new Set<never>() };
 const INDEX: PackageIndexEntry[] = [
   { name: "@corbits/github-tool", version: "0.2.0", filename: "@corbits-github-tool-0.2.0.tgz", integrity: "sha512-tool" },
   { name: "@corbits/pr-triage-github-workflow", version: "0.1.0-sha-aaaaaaaa", filename: "@corbits-pr-triage-github-workflow-0.1.0-sha-aaaaaaaa.tgz", integrity: "sha512-triage" },
@@ -228,7 +228,7 @@ describe("ensureWorkflows", () => {
     expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic", prWorkflow: [] }, MISSING, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical", "pr-code-review-github"]);
     expect(hub.deployed.at(-1)).toMatchObject({ entry: "./pr-code-review-github.mjs", sourceOfferingIds: ["mof_opus", "mof_haiku"], defaultSourceOfferingId: "mof_opus" });
 
-    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic", prWorkflow: [] }, new Set(["code-review"]), hub.fetchRaw)).toEqual(["pr-code-review-github"]);
+    expect(await ensureWorkflows(hub.transport, "t", { connected: ["github"], codeReview: ["github"], codeReviewProvider: "anthropic", prWorkflow: [] }, { kinds: new Set(["code-review"]) }, hub.fetchRaw)).toEqual(["pr-code-review-github"]);
   });
 
   test("a host's PR workflow deploys while its provider's key is stored and code review has a place, whatever the repositories' switches", async () => {
@@ -248,16 +248,10 @@ describe("ensureWorkflows", () => {
     expect(hub.requests.filter((line) => line.startsWith("DELETE") && line.includes("/workflows/runs/"))).toEqual(["DELETE /api/tenants/t/workflows/runs/run_3"]);
   });
 
-  test("a replaced credential deploys the listeners and the PR workflow again at the same version, and leaves code review to its next launch", async () => {
-    const models = [
-      ...DECISION,
-      { canonicalName: "claude-opus-5-5", offerings: [{ offeringId: "mof_opus", providerName: "anthropic" }] },
-      { canonicalName: "claude-haiku-5-5", offerings: [{ offeringId: "mof_haiku", providerName: "anthropic" }] },
-    ];
-    const hub = fakeHub({}, [], models);
-    const hosts = { ...GITHUB, codeReview: ["github"], prWorkflow: ["github"] } as const;
-    await ensureWorkflows(hub.transport, "t", hosts, MISSING, hub.fetchRaw);
-    expect(await ensureWorkflows(hub.transport, "t", hosts, CREDENTIAL_HOLDERS, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical", "pr-workflow-anthropic-github"]);
+  test("a redeploy limited to one host deploys again only that host's workflows of the kinds named", async () => {
+    const hub = fakeHub();
+    await ensureWorkflows(hub.transport, "t", BOTH, MISSING, hub.fetchRaw);
+    expect(await ensureWorkflows(hub.transport, "t", BOTH, { kinds: new Set(["triage", "pr-workflow"]), sources: ["bitbucket-datacenter"] }, hub.fetchRaw)).toEqual(["pr-triage-bitbucket-datacenter"]);
   });
 
   test("refuses to deploy a workflow whose model the workspace does not offer", async () => {

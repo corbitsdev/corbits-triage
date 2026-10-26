@@ -4,6 +4,7 @@ import { errorText } from "@corbits/common";
 import { useBitbucketDatacenterConnection, useConnectBitbucketDatacenter, useDisconnectBitbucketDatacenter, useRotateBitbucketDatacenterHookSecret } from "../../lib/bitbucket-datacenter.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CopyField } from "../CopyField.tsx";
+import { RestartFailed, useRestartTriage } from "./RestartFailed.tsx";
 
 function connectBlocker(baseUrl: string, token: string): string | null {
   if (!baseUrl.trim()) return "Enter the instance URL to connect.";
@@ -40,8 +41,9 @@ function ConnectForm({ disabled }: { disabled: boolean }) {
 
 /** The connect route verifies the new token against the instance before it replaces the stored one. */
 function TokenRow({ baseUrl, disabled }: { baseUrl: string; disabled: boolean }) {
-  const { notify, redeployCredentialHolders } = usePortal();
+  const { notify } = usePortal();
   const connect = useConnectBitbucketDatacenter();
+  const restart = useRestartTriage("bitbucket-datacenter");
   const [editing, setEditing] = useState(false);
   const [token, setToken] = useState("");
   const busy = disabled || connect.isPending;
@@ -49,11 +51,11 @@ function TokenRow({ baseUrl, disabled }: { baseUrl: string; disabled: boolean })
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     connect.mutate({ baseUrl, token: token.trim() }, {
-      onSuccess: async function closeEditor() {
+      onSuccess: function closeEditor() {
         setToken("");
         setEditing(false);
         notify("Bitbucket Data Center token replaced.");
-        await redeployCredentialHolders();
+        restart.mutate();
       },
     });
   }
@@ -77,6 +79,7 @@ function TokenRow({ baseUrl, disabled }: { baseUrl: string; disabled: boolean })
         )}
         {editing && <p className="field-help">Create a new token for the Corbits Triage user with the same permissions. Triage checks it with your instance before saving; then revoke the old token in Bitbucket.</p>}
         {connect.error && <p role="alert" className="field-error">Could not replace the token. {errorText(connect.error)}</p>}
+        <RestartFailed restart={restart} />
       </div>
       {!editing && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setEditing(true)}>Replace token</Button>}
     </div>
@@ -86,18 +89,25 @@ function TokenRow({ baseUrl, disabled }: { baseUrl: string; disabled: boolean })
 function HookSecretRow({ disabled }: { disabled: boolean }) {
   const { notify } = usePortal();
   const rotate = useRotateBitbucketDatacenterHookSecret();
+  const restart = useRestartTriage("bitbucket-datacenter");
 
   function confirmRotate() {
     if (!window.confirm("Rotate the webhook secret? Triage saves each webhook it created with the new secret.")) return;
-    rotate.mutate(undefined, { onSuccess: () => notify("Webhook secret rotated.") });
+    rotate.mutate(undefined, {
+      onSuccess: function restartTriage() {
+        notify("Webhook secret rotated.");
+        restart.mutate();
+      },
+    });
   }
 
   return (
     <div className="sentence">
       <div className="rmain">
         <div className="rline"><span className="w">The webhook secret is stored.</span></div>
-        {rotate.data && rotate.data.webhooksByHand.length > 0 && <p role="alert" className="field-error">Update the webhook secret by hand on {rotate.data.webhooksByHand.join(", ")}. Each repository's page in Triage shows the new secret.</p>}
+        {rotate.data && rotate.data.webhooksByHand.length > 0 && <p role="status" className="field-help">Update the webhook secret by hand on {rotate.data.webhooksByHand.join(", ")}. Each repository's page in Triage shows the new secret.</p>}
         {rotate.error && <p role="alert" className="field-error">Could not rotate the webhook secret. {errorText(rotate.error)}</p>}
+        <RestartFailed restart={restart} />
       </div>
       <Button type="button" variant="outline" size="sm" disabled={disabled || rotate.isPending} onClick={confirmRotate}>{rotate.isPending ? "Rotating…" : "Rotate secret"}</Button>
     </div>
