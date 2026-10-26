@@ -10,8 +10,8 @@ const MAIL_TOOL = "mail";
 const READY_POLL_MS = 2_000;
 
 /**
- * A mail to the run `to` in this run's tenant. With `readyBy`, the run was just deployed and may not hold a sidecar yet,
- * so the mail waits for it until then.
+ * A mail to the run `to` in this run's tenant. With `readyBy`, the run was just deployed and its public key may not be
+ * published yet, so the mail waits until it is.
  */
 export const MailInput = type({ tenantId: "string > 0", to: "string > 0", content: "string > 0", "readyBy?": "string.date.iso" });
 export type MailInput = typeof MailInput.infer;
@@ -26,7 +26,7 @@ interface MailEnv extends BaseEnv {
   };
 }
 
-/** Waits until the hub shows the run on a sidecar that can take its mail, up to `readyBy`. */
+/** Waits until the hub shows the run published a non-empty public key, the deploy ack. Stock never writes sidecarId. */
 async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: string): Promise<void> {
   const hub = await env.capabilities.resolve("credentials").resolve(HUB_CREDENTIAL_HANDLE);
   if (hub.kind !== "http") throw new Error(`${HUB_CREDENTIAL_HANDLE} is ${hub.kind}, not http`);
@@ -35,12 +35,12 @@ async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: st
     if (!response.ok) throw new Error(`reading run ${to} answered ${response.status}: ${await response.text()}`);
     const run = Run(await response.json());
     if (run instanceof type.errors) throw new Error(`run ${to}: ${run.summary}`);
-    if (run.sidecarId && run.publicKey) return;
+    if (run.publicKey) return;
     await new Promise(function wait(resolve) {
       setTimeout(resolve, READY_POLL_MS);
     });
   }
-  throw new Error(`run ${to} did not reach a sidecar by ${readyBy}`);
+  throw new Error(`run ${to}: public key was not published by ${readyBy}`);
 }
 
 function mailBundle(env: MailEnv): ToolBundle {
