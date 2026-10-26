@@ -2,6 +2,9 @@ import picomatch from "picomatch";
 
 export const PATTERN_LANGUAGES = ["typescript", "javascript"] as const;
 export type PatternLanguage = (typeof PATTERN_LANGUAGES)[number];
+/** The file extensions code-pattern rules read. */
+export const PATTERN_EXTENSIONS = ["ts", "mts", "cts", "tsx", "js", "mjs", "cjs", "jsx"] as const;
+export type PatternExtension = (typeof PATTERN_EXTENSIONS)[number];
 
 /** An ast-grep rule: `rule`, `files` and `ignores` are as an ast-grep rule config holds them, globs as strings only. */
 export interface PatternRule {

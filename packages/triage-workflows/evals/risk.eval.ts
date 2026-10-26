@@ -7,7 +7,7 @@
 //
 //   bun run eval:risk   (in packages/triage-workflows)
 import { existsSync } from "node:fs";
-import { fixCount, historyPaths, isFix, migrationPaths } from "../src/logic/risk.js";
+import { fixCount, historyPaths, isFix, matchingPaths } from "../src/logic/risk.js";
 import { DEFAULT_RISK } from "../../triage-contracts/src/check-pack.js";
 
 const REPOS: Record<string, string> = {
@@ -148,7 +148,7 @@ for (const [repo, head] of Object.entries(REPOS)) {
     return {
       hot: hottest(dir, change),
       fanIn: fanIn(dir, change),
-      migration: migrationPaths(change.paths, DEFAULT_RISK.migrationGlobs).length > 0,
+      migration: matchingPaths(change.paths, DEFAULT_RISK.migrationGlobs).length > 0,
       regressed: hit.has(change.sha),
     };
   });

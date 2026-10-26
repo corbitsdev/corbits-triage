@@ -359,13 +359,13 @@ label off that head, so it never stands on a head not yet triaged.
    details (`/api/integrations/github-pull`) find referenced GitHub issues in
    the same cleaned title, body and commit messages; a pasted URL of an issue
    in the same repository counts too, as GitHub renders it `#<number>`.
-   With the regression-risk rule on, it also lists each changed file's
+   With the regression-risk or risk rule on, it also lists each changed file's
    default-branch commits from the last 30 days (`github_list_path_commits`,
    `bitbucket_datacenter_list_path_commits`, one page each, ten files at a
    time; tests, docs and lockfiles skipped; at most 300 files per pull
    request, GitHub's own diff limit) and keeps how many have a subject typed
    fix, bugfix, hotfix or revert (`fixes`); a history that fails, runs past
-   one page or is past the 300 is kept as unread, which leaves only that rule
+   one page or is past the 300 is kept as unread, which leaves only those rules
    unconfirmed.
    With the focused rule on, it also reads the stack (`get_stack`): the pull
    requests merged into the branch, and the open pull request whose branch it

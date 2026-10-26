@@ -3,7 +3,7 @@
 // mapping it onto the stored policy's shape, so the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, PatternRuleSchema, POLICY_EVENTS, SIZE_RULES, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
+import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, PatternRuleSchema, POLICY_EVENTS, RISK_MARKS, RISK_SIGNALS, SIZE_RULES, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
 import { PATTERN_PRESETS } from "./code-patterns.js";
 import { fileProblems } from "./policy-file-problems.js";
 import { withAuthors, WORKFLOW_KEYS, WORKFLOW_PROPS, workflowProblems, type PathProblem, type PolicyWorkflow } from "./policy-workflow.js";
@@ -12,6 +12,10 @@ const Lines = Text.array().atLeastLength(1).atMostLength(50);
 const Limit = type("number.integer").atLeast(1);
 
 const OnFailWord = type.enumerated(...ON_FAILS);
+
+const RiskSignal = type.enumerated(...RISK_SIGNALS);
+const RiskThreshold = Limit.or(RiskSignal.or(RiskSignal.array().atLeastLength(1)).array().atLeastLength(1));
+const RiskMark = type.enumerated(...RISK_MARKS);
 
 /** A built-in rule's id is its check; a model or text rule names its own. */
 const RULE_BASE = { "+": "reject", text: Text, reason: Text, evidence: Evidence, "enabled?": "boolean", "onFail?": OnFailWord, "label?": Label } as const;
@@ -25,6 +29,8 @@ const RuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS)
   .or({ ...RULE_BASE, check: "'linked-issue'", "tracker?": type.enumerated(...ISSUE_TRACKERS.filter((tracker) => tracker !== "off")) })
   .or({ ...RULE_BASE, check: "'no-forbidden-paths'", paths: Lines })
   .or({ ...RULE_BASE, check: "'regression-risk'", "hotFileFixes?": Limit, "migrations?": Lines })
+  .or({ ...RULE_BASE, check: "'sensitive-paths'", "groups?": type({ "[string]": { "+": "reject", level: RiskMark, paths: Lines } }), "failAt?": RiskMark, "labelAt?": RiskMark })
+  .or({ ...RULE_BASE, check: "'risk'", "medium?": RiskThreshold, "high?": RiskThreshold, "failAt?": RiskMark, "labelAt?": RiskMark })
   .or({ ...RULE_BASE, check: "'conventional-commits'", "types?": type(CONVENTIONAL_TYPE).describe("a single word").array().atLeastLength(1).atMostLength(50), "fields?": type.enumerated(...CONVENTIONAL_FIELDS).array().atLeastLength(1) })
   .or({ ...RULE_BASE, check: type.enumerated(...SIMPLE_CHECKS) })
   .or({ ...OWN_RULE, check: "'model'" })
@@ -88,6 +94,10 @@ function catalogRow(rule: Extract<PolicyRule, { check: CatalogId }>, onFail: Rec
       return { ...row, forbiddenGlobs: rule.paths };
     case "regression-risk":
       return { ...row, ...(rule.hotFileFixes !== undefined && { hotFileFixes: rule.hotFileFixes }), ...(rule.migrations && { migrationGlobs: rule.migrations }) };
+    case "sensitive-paths":
+      return { ...row, ...(rule.groups && { sensitiveGroups: rule.groups }), ...(rule.failAt && { failAt: rule.failAt }), ...(rule.labelAt && { labelAt: rule.labelAt }) };
+    case "risk":
+      return { ...row, ...(rule.medium !== undefined && { medium: rule.medium }), ...(rule.high !== undefined && { high: rule.high }), ...(rule.failAt && { failAt: rule.failAt }), ...(rule.labelAt && { labelAt: rule.labelAt }) };
     case "conventional-commits":
       return { ...row, ...(rule.types && { types: rule.types }), ...(rule.fields && { fields: rule.fields }) };
     default:

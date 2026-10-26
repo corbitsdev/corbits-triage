@@ -132,4 +132,20 @@ actions:
     expect(checkPolicyFile(`rules:\n${rule}    label: docs\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label needs onFail: label.", line: 2 }] });
     expect(checkPolicyFile(`rules:\n${rule}    onFail: label\n    label: "rule: docs"\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label rule: docs is one Triage takes back; name another." }] });
   });
+
+  test("sensitive-paths reads its groups and risk its levels, both ask unless the file says, survive export, and a bad group name, signal or count is refused", () => {
+    const sensitive = "  - check: sensitive-paths\n    text: Sensitive paths need a maintainer.\n    reason: Infra reaches production.\n    evidence: [maintainer-stated]\n";
+    const risk = "  - check: risk\n    text: Risky pull requests need a maintainer.\n    reason: Risky changes regressed.\n    evidence: [maintainer-stated]\n";
+    const pack = readPolicyFile(`rules:\n${sensitive}    groups: { infra: { level: high, paths: ["infra/**", "**/*.tf"] } }\n    labelAt: high\n${risk}    medium: 2\n    high: [hot-files, [size, no-tests]]\n    failAt: medium\n    labelAt: high\n`, REPO) as CheckPack;
+    expect(pack.checks).toMatchObject({
+      "sensitive-paths": { sensitiveGroups: { infra: { level: "high", paths: ["infra/**", "**/*.tf"] } }, labelAt: "high", onFail: "ask" },
+      risk: { medium: 2, high: ["hot-files", ["size", "no-tests"]], failAt: "medium", labelAt: "high", onFail: "ask" },
+    });
+    expect(readPolicyFile(exportPolicyFile(pack, false).text, REPO)).toEqual(pack);
+    expect(askRules(readPolicyFile(`rules:\n${sensitive}${risk}    onFail: fail\n`, REPO) as CheckPack)).toEqual(["sensitive-paths"]);
+    expect(() => readPolicyFile(`rules:\n${sensitive}    groups: { Infra: { level: high, paths: ["infra/**"] } }\n`, REPO)).toThrow("lowercase words joined by hyphens");
+    expect(checkPolicyFile(`rules:\n${sensitive}    groups: { infra: ["infra/**"] }\n`, REPO)).toMatchObject({ ok: false });
+    expect(checkPolicyFile(`rules:\n${risk}    high: [hot-files, tired]\n`, REPO)).toMatchObject({ ok: false });
+    expect(() => readPolicyFile(`rules:\n${risk}    medium: 6\n`, REPO)).toThrow("Risk medium must be a number of signals from 1 to 5");
+  });
 });

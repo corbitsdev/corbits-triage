@@ -1,5 +1,5 @@
 import { parse } from "@ast-grep/napi";
-import { isForeignPath, PATTERN_PRESETS, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
+import { isForeignPath, PATTERN_EXTENSIONS, PATTERN_PRESETS, type PatternExtension, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
 import type { PrFileFacts } from "./checks.js";
 import { addedLines, MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 
@@ -7,7 +7,7 @@ type Grammar = { language: PatternLanguage; lang: "TypeScript" | "Tsx" | "JavaSc
 
 const TYPESCRIPT: Grammar = { language: "typescript", lang: "TypeScript" };
 const JAVASCRIPT: Grammar = { language: "javascript", lang: "JavaScript" };
-const GRAMMARS: Record<string, Grammar> = {
+const GRAMMARS: Record<PatternExtension, Grammar> = {
   ts: TYPESCRIPT,
   mts: TYPESCRIPT,
   cts: TYPESCRIPT,
@@ -33,7 +33,8 @@ export function patternRules(check: PatternsCheck): PatternRule[] {
 }
 
 function grammarOf(path: string): Grammar | undefined {
-  return GRAMMARS[path.slice(path.lastIndexOf(".") + 1)];
+  const extension = PATTERN_EXTENSIONS.find((known) => path.endsWith(`.${known}`));
+  return extension && GRAMMARS[extension];
 }
 
 function checkable(file: PrFileFacts): boolean {

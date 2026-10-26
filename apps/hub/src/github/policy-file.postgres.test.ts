@@ -350,13 +350,13 @@ test("PostgreSQL: a file already holding all a file can of the saved rules is no
   const saved: CheckPack = {
     ...emptyPack(FROM_FILE),
     checks: { "ci-green": { enabled: true } },
-    custom: [{ id: "risk", name: "Risk", group: "pull-request", kind: "model", shape: "score", subject: "the risk", levels: ["high", "low"] }],
+    custom: [{ id: "risk-score", name: "Risk score", group: "pull-request", kind: "model", shape: "score", subject: "the risk", levels: ["high", "low"] }],
   };
   await writePolicy(FROM_FILE, JSON.stringify(saved));
   onMain(FROM_FILE, YML, exportPolicyFile(saved, false).text);
   await policyFile.onPush(TENANT, FROM_FILE, "github");
   expect(await readPack(FROM_FILE)).toMatchObject({ status: "ok", source: { repo: { version: 1 } } });
-  expect(await upgradeOf(FROM_FILE)).toMatchObject({ upgrade: { state: "differs", differences: [{ rule: "Risk", file: [] }], fixable: false } });
+  expect(await upgradeOf(FROM_FILE)).toMatchObject({ upgrade: { state: "differs", differences: [{ rule: "Risk score", file: [] }], fixable: false } });
   expect(await exportOf(FROM_FILE)).toMatchObject({ http: 409, error: { code: "policy_file_full" } });
 }, 60_000);
 

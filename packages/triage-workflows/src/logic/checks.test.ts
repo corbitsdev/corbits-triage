@@ -134,6 +134,76 @@ describe("deriveState check pack", () => {
   });
 });
 
+describe("sensitive paths and risk", () => {
+  const open: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success", fixes: {} };
+  const pack = readCheckPack({ ...emptyPack("acme/widgets"), checks: { "sensitive-paths": { enabled: true, onFail: "ask" }, risk: { enabled: true, onFail: "ask" } } });
+
+  function changed(paths: string[], facts: Partial<PrFacts> = {}): PrFacts {
+    return { ...open, changedFiles: paths.length, files: paths.map((path) => ({ path, additions: 1, deletions: 0 })), paths, additions: paths.length, ...facts };
+  }
+
+  const riskOnly = readCheckPack({ ...emptyPack("acme/widgets"), checks: { risk: { enabled: true, onFail: "ask" } } });
+
+  function rule(facts: PrFacts, id: string, policy = pack) {
+    return deriveState(facts, undefined, policy).checks.find((check) => check.check === id);
+  }
+
+  test("sensitive paths asks a maintainer about a high group, labels a medium one, names each group's files up to five, and reads the policy's own groups", () => {
+    expect(rule(changed(["db/migrations/0001.sql", "bun.lock", "src/a.ts"]), "sensitive-paths")).toMatchObject({ result: "fail", onFail: "ask", reason: "changes sensitive paths", evidence: ["schema: db/migrations/0001.sql", "locks: bun.lock"] });
+    expect(rule(changed(["bun.lock", ".github/workflows/ci.yml"]), "sensitive-paths")).toMatchObject({ result: "pass", label: "sensitive: medium", evidence: ["ci: .github/workflows/ci.yml", "locks: bun.lock"] });
+    expect(rule(changed(["src/a.ts", "README.md"]), "sensitive-paths")).toMatchObject({ result: "pass", evidence: [] });
+    const own = readCheckPack({ ...pack, checks: { "sensitive-paths": { enabled: true, onFail: "ask", sensitiveGroups: { infra: { level: "high", paths: ["infra/**"] } } } } });
+    const infra = Array.from({ length: 7 }, (_, at) => `infra/${at}.tf`);
+    expect(rule(changed([...infra, "db/migrations/0001.sql"]), "sensitive-paths", own)?.evidence).toEqual([...infra.slice(0, 5).map((path) => `infra: ${path}`), "and 2 more"]);
+  });
+
+  test.each([
+    ["no signal is low", changed(["src/a.ts", "src/a.test.ts"]), "pass", "low", []],
+    ["source without tests is medium", changed(["src/a.ts"]), "pass", "medium", ["no tests"]],
+    ["a first-time contributor is medium", changed(["src/a.ts", "src/a.test.ts"], { authorKind: "FIRST_TIME_CONTRIBUTOR" }), "pass", "medium", ["first-time contributor"]],
+    ["a recently fixed file is medium", changed(["src/a.ts", "src/a.test.ts"], { fixes: { "src/a.ts": 4 } }), "pass", "medium", ["1 recently fixed file"]],
+    ["a size limit alone is medium", changed(["src/a.ts", "src/a.test.ts"], { additions: 3001 }), "pass", "medium", ["3001 lines"]],
+    ["a high sensitive group is high", changed(["db/schema.sql", "src/a.test.ts"]), "fail", "high", ["schema paths"]],
+    ["a medium sensitive group is medium", changed(["bun.lock", "src/a.ts", "src/a.test.ts"]), "pass", "medium", ["locks paths"]],
+    ["a medium sensitive group and another signal stay medium", changed(["bun.lock", "src/a.ts"]), "pass", "medium", ["locks paths", "no tests"]],
+    ["a size limit with no tests is high", changed(Array.from({ length: 42 }, (_, at) => `src/${at}.ts`)), "fail", "high", ["42 files", "no tests"]],
+    ["changed translations are not source", changed(["locales/en.json"]), "pass", "low", []],
+    ["changed reStructuredText docs are not source", changed(["docs/index.rst", "LICENSE"]), "pass", "low", []],
+    ["a CI-only change is its group's level and needs no tests", changed([".github/workflows/ci.yml"]), "pass", "medium", ["ci paths"]],
+    ["end-to-end tests count as tests", changed(["src/login.ts", "e2e/login.ts"]), "pass", "low", []],
+    ["Cypress tests and snapshots count as tests", changed(["app/login.py", "cypress/login.cy.js", "__snapshots__/login.snap"]), "pass", "low", []],
+    ["type declarations, docs and examples are not source", changed(["types/index.d.ts", "docs/guide.ts", "examples/demo.py"]), "pass", "low", []],
+    ["Go source without tests is medium", changed(["cmd/main.go", "config.yaml"]), "pass", "medium", ["no tests"]],
+  ])("%s", (_, facts, result, level, evidence) => {
+    expect(rule(facts, "risk", riskOnly)).toMatchObject({ result, evidence, output: { values: { level } } });
+  });
+
+  test("with sensitive paths on, a high group is asked about once, by that rule", () => {
+    const migration = changed(["db/migrations/0001.sql", "src/a.test.ts"]);
+    expect(rule(migration, "sensitive-paths")).toMatchObject({ result: "fail", onFail: "ask" });
+    expect(rule(migration, "risk")).toMatchObject({ result: "pass", evidence: [], output: { values: { level: "low" } } });
+    expect(rule(changed(["bun.lock", "src/a.test.ts"]), "risk")).toMatchObject({ result: "pass", evidence: ["locks paths"], label: "risk: medium" });
+  });
+
+  test("risk labels at its labelAt level below failAt, and the policy's thresholds move both", () => {
+    expect(rule(changed(["src/a.ts"]), "risk")?.label).toBe("risk: medium");
+    expect(rule(changed(["src/a.ts", "src/a.test.ts"]), "risk")?.label).toBeUndefined();
+    const strict = readCheckPack({ ...pack, checks: { risk: { enabled: true, onFail: "ask", medium: 2, high: ["first-time"], failAt: "medium" } } });
+    expect(rule(changed(["src/a.ts"]), "risk", strict)).toMatchObject({ result: "pass", output: { values: { level: "low" } } });
+    expect(rule(changed(["src/a.ts"], { fixes: { "src/a.ts": 9 } }), "risk", strict)).toMatchObject({ result: "fail", reason: "risk is medium" });
+    expect(rule(changed(["src/a.ts", "src/a.test.ts"], { authorKind: "FIRST_TIME_CONTRIBUTOR" }), "risk", strict)).toMatchObject({ result: "fail", reason: "risk is high" });
+  });
+
+  test("history it could not read leaves risk unconfirmed only when a hot file would make it fail", () => {
+    const unread = changed(["src/a.ts", "src/a.test.ts"], { fixes: { "src/a.ts": null } });
+    expect(rule(unread, "risk")).toMatchObject({ result: "pass", output: { values: { level: "low" } } });
+    expect(rule(unread, "risk")?.label).toBeUndefined();
+    const failsAtMedium = readCheckPack({ ...pack, checks: { risk: { enabled: true, onFail: "ask", failAt: "medium" } } });
+    expect(rule(unread, "risk", failsAtMedium)).toMatchObject({ result: "unconfirmed", reason: "could not read the recent history of some changed files" });
+    expect(rule(changed(["src/a.ts"], { fixes: { "src/a.ts": null } }), "risk", failsAtMedium)).toMatchObject({ result: "fail", reason: "risk is medium" });
+  });
+});
+
 describe("deriveState check output", () => {
   test("each fact is named for what it states, so pending CI never reads as passing", () => {
     const pack = recommendedPack("acme/widgets");

@@ -166,10 +166,16 @@ function degradedOf(it: Item, reason: string): Verdict {
 
 type Rendered = Pick<RenderOutput, "checks" | "verdict" | "reason" | "degraded" | "waiting" | "labelled">;
 
+/** Each labelling rule's result, and each rule that did not fail but still labels. */
+function labelling(rendered: Rendered): CheckResult[] {
+  const marked = rendered.checks.filter((c) => c.label !== undefined);
+  return rendered.labelled ? [...rendered.labelled, ...marked] : marked;
+}
+
 function actionInputOf(it: Item, rendered: Rendered): ActionInput | undefined {
   if (!it.pack) return undefined;
   // Bitbucket Data Center has no labels, so there a labelling rule is only noted.
-  const labelled = hostKinds(it.repoSource ?? "github").includes("labels") ? rendered.labelled : undefined;
+  const labelled = hostKinds(it.repoSource ?? "github").includes("labels") ? labelling(rendered) : undefined;
   return { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, labelled };
 }
 

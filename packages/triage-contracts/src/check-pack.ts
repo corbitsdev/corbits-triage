@@ -30,6 +30,8 @@ export const CATALOG_IDS = [
   "regression-risk",
   "no-duplicate",
   "duplicates-open-pull-request",
+  "sensitive-paths",
+  "risk",
 ] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
@@ -58,6 +60,8 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   "regression-risk": { name: "Regression risk", group: "pull-request", kind: "machine" },
   "no-duplicate": { name: "No duplicate", group: "around", kind: "machine" },
   "duplicates-open-pull-request": { name: "Duplicates an open pull request", group: "around", kind: "quality" },
+  "sensitive-paths": { name: "Sensitive paths", group: "pull-request", kind: "machine" },
+  risk: { name: "Risk", group: "pull-request", kind: "machine" },
 };
 
 export const NOT_A_DRAFT = "not-a-draft";
@@ -120,6 +124,45 @@ export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/*
  * with at least `hotFileFixes` fix or revert commits in the last `hotFileDays`, or a changed path matching a migration glob.
  */
 export const DEFAULT_RISK = { hotFileFixes: 4, hotFileDays: 30, migrationGlobs: ["**/migrations/**", "**/*.sql"] } as const;
+export const RISK_MARKS = ["medium", "high"] as const;
+export type RiskMark = (typeof RISK_MARKS)[number];
+/** A named group of sensitive paths, and how sensitive a change to it is. */
+export type SensitiveGroup = { level: RiskMark; paths: string[] };
+/**
+ * The sensitive-paths rule's groups when the policy names none: a schema change is hard to undo and auth and secrets
+ * decide who gets in, so those are high; CI and deploy files decide what runs, and a lockfile pulls in code the diff does
+ * not show, but every dependency bump changes one, so those are medium.
+ */
+export const DEFAULT_SENSITIVE: Readonly<Record<string, SensitiveGroup>> = {
+  schema: { level: "high", paths: ["**/migrations/**", "**/*.sql"] },
+  auth: { level: "high", paths: ["**/auth/**", "**/secrets/**"] },
+  ci: { level: "medium", paths: [".github/**", "**/Dockerfile", "**/railway.json", "**/railway.toml"] },
+  locks: { level: "medium", paths: ["**/bun.lock", "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml"] },
+};
+/** The label each of the sensitive-paths and risk rules adds at a level, which Triage takes back once the level changes. */
+export const LEVEL_LABELS = { "sensitive-paths": "sensitive", risk: "risk" } as const;
+export type LevelLabelRule = keyof typeof LEVEL_LABELS;
+
+export function levelLabel(id: LevelLabelRule, level: RiskMark): string {
+  return `${LEVEL_LABELS[id]}: ${level}`;
+}
+
+export function isLevelLabelRule(id: string): id is LevelLabelRule {
+  return Object.hasOwn(LEVEL_LABELS, id);
+}
+
+/** Where the sensitive-paths and risk rules fail, and from where they label below that, when the policy does not say. */
+export const DEFAULT_MARKS: { failAt: RiskMark; labelAt: RiskMark } = { failAt: "high", labelAt: "medium" };
+/** `sensitive` is a change to a medium sensitive group; one to a high group makes the pull request high risk on its own. */
+export const RISK_SIGNALS = ["sensitive", "size", "no-tests", "hot-files", "first-time"] as const;
+export type RiskSignal = (typeof RISK_SIGNALS)[number];
+export const RISK_LEVELS = ["low", "medium", "high"] as const;
+export type RiskLevel = (typeof RISK_LEVELS)[number];
+/** How many signals reach a level, or the signals any one of which reaches it; a list among them reaches it only with all of its signals. */
+export type RiskThreshold = number | Array<RiskSignal | RiskSignal[]>;
+export type RiskLevels = { medium: RiskThreshold; high: RiskThreshold; failAt: RiskMark; labelAt: RiskMark };
+/** The risk rule's defaults: any one signal is medium; a size limit crossed with no test changed is high. */
+export const DEFAULT_RISK_LEVELS: RiskLevels = { medium: 1, high: [["size", "no-tests"]], ...DEFAULT_MARKS };
 export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
 export const CONVENTIONAL_TYPES = ["feat", "fix", "refactor", "perf", "docs", "test", "chore", "ci", "build", "style", "revert"] as const;
 export const CONVENTIONAL_FIELDS = ["title", "commits"] as const;
@@ -168,6 +211,16 @@ export type CatalogCheck = RuleNote & OnFail & {
   /** Regression risk: fixes on one changed file in recent history that make it risky, and the paths that are migrations; absent is `DEFAULT_RISK`'s. */
   hotFileFixes?: number;
   migrationGlobs?: string[];
+  /** Sensitive paths: named groups of globs, each with its level; absent is `DEFAULT_SENSITIVE`. */
+  sensitiveGroups?: Record<string, SensitiveGroup>;
+  /**
+   * Risk: what reaches medium and high; sensitive paths and risk: the level each fails at, and the level from which one
+   * below that is labelled. Absent is `DEFAULT_RISK_LEVELS`'.
+   */
+  medium?: RiskThreshold;
+  high?: RiskThreshold;
+  failAt?: RiskMark;
+  labelAt?: RiskMark;
 };
 
 /** Each size rule and the field its limit is stored in. */
@@ -184,10 +237,16 @@ export function isSizeRule(id: string): id is SizeRuleId {
   return Object.hasOwn(SIZE_RULES, id);
 }
 
-/** What a policy file's rule does on failure when the file does not say: features and refactors cross size limits and touch risky code, so those only label. */
+const ASKING_RULES: ReadonlySet<string> = new Set(["sensitive-paths", "risk"]);
+
+/**
+ * What a policy file's rule does on failure when the file does not say: features and refactors cross size limits and
+ * touch risky code, so those only label, and a sensitive or risky change is the author's to make but a maintainer's to accept.
+ */
 export function defaultOnFail(id: string): (typeof ON_FAILS)[number] {
   // A judged duplicate may only overlap, so a maintainer decides.
   if (id === "duplicates-open-pull-request") return "ask";
+  if (ASKING_RULES.has(id)) return "ask";
   return isSizeRule(id) || id === "regression-risk" ? "label" : "fail";
 }
 
@@ -481,6 +540,11 @@ const CatalogCheckSchema = type({
   "fields?": type.enumerated(...CONVENTIONAL_FIELDS).array(),
   "hotFileFixes?": "number",
   "migrationGlobs?": "string[]",
+  "sensitiveGroups?": type({ "[string]": { level: type.enumerated(...RISK_MARKS), paths: "string[]" } }),
+  "medium?": "number | (string | string[])[]",
+  "high?": "number | (string | string[])[]",
+  "failAt?": type.enumerated(...RISK_MARKS),
+  "labelAt?": type.enumerated(...RISK_MARKS),
 });
 
 export const CustomId = type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX);
@@ -610,6 +674,8 @@ export function recommendedPack(repo: string): CheckPack {
       "no-merge-conflicts": { enabled: true },
       "ci-green": { enabled: true },
       "no-forbidden-paths": { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
+      "sensitive-paths": { enabled: true, onFail: "ask" },
+      risk: { enabled: true, onFail: "ask" },
     },
     custom: [{ ...RECOMMENDED_TEXT, fields: [...RECOMMENDED_TEXT.fields], phrases: [...RECOMMENDED_TEXT.phrases] }],
     actions: { ...defaultActions(), pass: [{ do: "approve" }] },
@@ -621,6 +687,8 @@ const STARTER_REASONS = {
   "max-lines-changed": "Large pull requests are hard to review.",
   "no-merge-conflicts": "A pull request with conflicts can't be merged as it is.",
   "ci-green": "A change is not ready until CI passes.",
+  "sensitive-paths": "Schema, auth, CI and lockfile changes reach beyond what the diff shows.",
+  risk: "A risky change needs a maintainer's eye.",
 } as const satisfies Partial<Record<CatalogId, string>>;
 
 /**
@@ -687,11 +755,50 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
     const globs = parseGlobs(row.migrationGlobs, "Regression risk migration globs");
     if (globs) check.migrationGlobs = globs;
   }
+  if (id === "sensitive-paths") {
+    if (row.sensitiveGroups !== undefined) check.sensitiveGroups = sensitiveGroups(row.sensitiveGroups);
+    Object.assign(check, marks(row, "Sensitive paths"));
+  }
+  if (id === "risk") Object.assign(check, riskLevels(row), marks(row, "Risk"));
   if (id === "conventional-commits") {
     if (row.types !== undefined) check.types = commitTypes(row.types);
     if (row.fields !== undefined) check.fields = conventionalFields(row.fields);
   }
   return check;
+}
+
+function sensitiveGroups(value: unknown): Record<string, SensitiveGroup> {
+  const where = "Sensitive paths groups";
+  const named = Object.entries(record(value, where));
+  if (named.length === 0 || named.length > LIST_MAX) throw new Error(`${where} must name 1 to ${LIST_MAX} groups.`);
+  return Object.fromEntries(named.map(function group([name, raw]) {
+    if (!GroupName.allows(name)) throw new Error(`${where} names must be lowercase words joined by hyphens, not ${refusalNames([name])}.`);
+    const row = record(raw, `${where} ${name}`);
+    exactKeys(row, ["level", "paths"], `${where} ${name}`);
+    return [name, { level: oneOf(row.level, RISK_MARKS, `${where} ${name} level`), paths: globs(row.paths, `${where} ${name} paths`) }];
+  }));
+}
+
+function marks(row: Record<string, unknown>, where: string): Pick<CatalogCheck, "failAt" | "labelAt"> {
+  return {
+    ...(row.failAt !== undefined && { failAt: oneOf(row.failAt, RISK_MARKS, `${where} failAt`) }),
+    ...(row.labelAt !== undefined && { labelAt: oneOf(row.labelAt, RISK_MARKS, `${where} labelAt`) }),
+  };
+}
+
+function riskThreshold(value: unknown, where: string): RiskThreshold {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 1 || value > RISK_SIGNALS.length) throw new Error(`${where} must be a number of signals from 1 to ${RISK_SIGNALS.length}, or a list of signals.`);
+    return value;
+  }
+  return list(value, where).map((entry) => (Array.isArray(entry) ? [...new Set(list(entry, where).map((signal) => oneOf(signal, RISK_SIGNALS, where)))] : oneOf(entry, RISK_SIGNALS, where)));
+}
+
+function riskLevels(row: Record<string, unknown>): Pick<CatalogCheck, "medium" | "high"> {
+  return {
+    ...(row.medium !== undefined && { medium: riskThreshold(row.medium, "Risk medium") }),
+    ...(row.high !== undefined && { high: riskThreshold(row.high, "Risk high") }),
+  };
 }
 
 function commitTypes(value: unknown): string[] {
@@ -785,6 +892,7 @@ function parseNote(row: Record<string, unknown>, where: string): RuleNote {
 function labelOf(id: string, row: OnFail): string {
   if (row.label !== undefined) return row.label;
   if (isSizeRule(id)) return "size: large";
+  if (isLevelLabelRule(id)) return levelLabel(id, "high");
   return id === "docs" ? "docs: check" : `${id}: check`;
 }
 
