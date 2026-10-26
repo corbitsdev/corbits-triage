@@ -6,7 +6,7 @@ import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
 import { forMaintainer, hasModelChecks, holdsOthersChanges, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
+import { actionText, askedQuestionIds, DOCS_CHOICES, DUPLICATE_LEVELS, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
 type ModelAnswer = Decision;
 
@@ -378,8 +378,32 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
     return push("focused", serves >= FOCUSED_DECIDES ? { result: "pass" } : { result: "unconfirmed", reason: UNDECIDED_REASON }, scored(serves, FOCUSED_PASS_AT, []));
   }
 
+  /**
+   * Duplicates scores each open pull request on the shortlist: the one most likely the same change decides it on the
+   * unsure band, and is named when it fails. With nothing on the shortlist there is nothing to repeat.
+   */
+  function duplicatesCheck(check: string, filePlan: FilePlan | undefined) {
+    if (!filePlan || !det.needsJudgment || judgeLimitExceeded) return unchecked(check, unavailable);
+    if (filePlan.unread.length > 0) return push(check, { result: "unconfirmed", reason: filePlan.unread.join("; ") }, { kind: "could-not-check", reason: filePlan.unread.join("; ") });
+    const asked = Object.entries(filePlan.asked);
+    if (asked.length === 0) return push(check, { result: "pass" }, NOT_APPLICABLE);
+    const scored = asked.flatMap(function levelsOf([id, item]): Array<[CheckItem, Record<string, number>]> {
+      const levels = levelsOver(invalid ? undefined : parsed.decisions[id], DUPLICATE_LEVELS);
+      return levels ? [[item, levels]] : [];
+    });
+    if (scored.length < asked.length) {
+      unansweredBy(check);
+      return unchecked(check, unavailable);
+    }
+    const [item, levels] = scored.reduce((a, b) => (b[1]["same change"]! > a[1]["same change"]! ? b : a));
+    const decided = band(1 - levels["same change"]!, true);
+    const output: CheckOutput = { kind: "level", level: likeliest(levels, [...DUPLICATE_LEVELS]), levels: [...DUPLICATE_LEVELS], failBelow: "overlaps" };
+    push(check, decided, output, [], decided.result === "fail" ? `looks like the same change as ${itemText(item)}` : undefined);
+  }
+
   for (const source of sources.quality) {
     if (source.id === "focused") focusedCheck(focused);
+    else if (source.id === "duplicates-open-pull-request") duplicatesCheck(source.id, plan[source.id]);
     else fileCheck(source.id, plan[source.id], false);
   }
   for (const row of sources.custom) {
@@ -437,6 +461,7 @@ function failedStep(c: CheckResult, sources: Sources): Step {
     case "no-merge-conflicts": return { actor: "author", action: "Resolve merge conflicts" };
     case "no-forbidden-paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
     case "linked-issue": return { actor: "author", action: "Link an issue" };
+    case "no-duplicate": return { actor: "author", action: `Close it: it ${c.reason}` };
     case "regression-risk": return { actor: "maintainer", action: `Review closely: ${c.evidence.join("; ")}` };
     case NO_CHANGES_REQUESTED: {
       const reviewers = c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ");

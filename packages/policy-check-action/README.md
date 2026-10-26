@@ -42,8 +42,8 @@ through the pr-triage definition twice: on the commits since the merge base (**C
 pushed), then on those plus staged, unstaged and untracked changes (**Working tree**), unless there are none.
 Host reads are answered from local git (a code-pattern rule reads each changed file from the head commit, or from the
 working tree in the second run; a change adding code to more than 300 files leaves code-pattern rules unconfirmed), writes fail the run and are never sent, and no model is called. Skipped, besides
-model rules: ci-green, no-merge-conflicts, linked-issue, hidden-content, conventional-commits when its fields include the
-title, and text rules reading the title or description, which need the pull request on its host. Rules do not depend on
+model rules: ci-green, no-merge-conflicts, linked-issue, hidden-content, regression-risk, no-duplicate, conventional-commits
+when its fields include the title, and text rules reading the title or description, which need the pull request on its host. Rules do not depend on
 the host, so it serves Bitbucket Data Center repositories as well.
 
 Exit codes follow **Committed**; a failure only in the working tree prints a warning. 1 when a rule whose failure means Fail fails, 2 when the policy cannot be read, extends another, or the change

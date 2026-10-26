@@ -110,8 +110,8 @@ describe("check pack contract", () => {
       expect(customRuleId(name!, [])).toBe(id!);
     }
     expect(customRuleId("Schema hunk", ["schema-hunk-rule"])).toBe("schema-hunk-rule-2");
-    for (const id of ["docs-file-001", "focused-slice-001", "ticket-file-001", "ticket-hunk-001-002", "ticket-slice-2"]) {
-      expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...CUSTOM[0]!, id }] })).toThrow(`Custom rule ${id} id must not start with docs- or focused- or end in -file, -hunk or -slice and numbers.`);
+    for (const id of ["docs-file-001", "focused-slice-001", "duplicates-open-pull-request-001", "ticket-file-001", "ticket-hunk-001-002", "ticket-slice-2"]) {
+      expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...CUSTOM[0]!, id }] })).toThrow(`Custom rule ${id} id must not start with docs-, focused- or duplicates-open-pull-request- or end in -file, -hunk or -slice and numbers.`);
     }
   });
 

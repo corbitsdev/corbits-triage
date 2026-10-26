@@ -159,6 +159,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@corbits/bitbucket-datacenter-reads": "workspace:*",
+        "@corbits/common": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/repo-read-tool": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",

@@ -14,11 +14,13 @@ import {
   listPrCommits,
   listPrFilesPage,
   readFileAt,
+  readPrDiff,
   readRepoDocsPage,
   readStack,
 } from "@corbits/bitbucket-datacenter-reads";
 import { cachedLoads, checkTarget } from "@corbits/repo-read-tool/host-reads";
 import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
+import { diffHash } from "@corbits/common/diff-hash";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
 import { BitbucketRefusal, mirror, readPr, sendCodeReview, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
@@ -32,13 +34,14 @@ function obj(properties: Record<string, unknown>, required = Object.keys(propert
 }
 
 const READ_DEFINITIONS: ToolDefinition[] = [
-  { name: "bitbucket_datacenter_list_open_prs", description: "List open pull requests for a repository.", inputSchema: obj({ repo }) },
+  { name: "bitbucket_datacenter_list_open_prs", description: "List open pull requests for a repository, only those into base when it is set.", inputSchema: obj({ repo, base: str }, ["repo"]) },
   { name: "bitbucket_datacenter_get_pr", description: "Get one pull request.", inputSchema: obj({ repo, number: { type: "integer" } }) },
   { name: "bitbucket_datacenter_get_stack", description: "Get the pull requests merged into a pull request's branch, and the open pull request whose branch it is based on.", inputSchema: obj({ repo, number: { type: "integer" } }) },
   { name: "bitbucket_datacenter_get_checks", description: "Get build statuses for a commit sha as check runs, without triage's own verdict status.", inputSchema: obj({ repo, sha: str }) },
   { name: "bitbucket_datacenter_get_reviews", description: "Get each reviewer's standing status on a pull request as a review, marking the token user's own needs-work as triageRequest.", inputSchema: obj({ repo, number: { type: "integer" } }) },
   { name: "bitbucket_datacenter_list_pr_commits", description: "List commits on a pull request.", inputSchema: obj({ repo, number: { type: "integer" } }) },
   { name: "bitbucket_datacenter_list_path_commits", description: "List the default branch's commits that changed a path since an ISO time, newest first, up to 100, and whether the window holds more (truncated).", inputSchema: obj({ repo, path: str, since: str }) },
+  { name: "bitbucket_datacenter_pr_diff_hash", description: "Get the hash of a pull request's diff against its base, or null when the diff has no index lines to hash.", inputSchema: obj({ repo, number: { type: "integer" } }) },
   {
     name: "bitbucket_datacenter_list_pr_files",
     description: "List one page of files changed on a pull request from offset, without patches. Call again with next until next is absent.",
@@ -148,7 +151,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
   const a = call.arguments;
   switch (call.name) {
     case "bitbucket_datacenter_list_open_prs":
-      return { prs: await listOpenPrs(bb, a.repo) };
+      return { prs: await listOpenPrs(bb, a.repo, a.base) };
     case "bitbucket_datacenter_get_pr":
       return getPr(bb, a.repo, a.number);
     case "bitbucket_datacenter_get_stack":
@@ -161,6 +164,8 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return { commits: await listPrCommits(bb, a.repo, a.number) };
     case "bitbucket_datacenter_list_path_commits":
       return listPathCommits(bb, a.repo, a.path, a.since);
+    case "bitbucket_datacenter_pr_diff_hash":
+      return { hash: diffHash(await readPrDiff(bb, a.repo, a.number)) ?? null };
     case "bitbucket_datacenter_list_pr_files":
       return listPrFilesPage(bb, a.repo, a.number, a.offset);
     case "bitbucket_datacenter_read_repo_docs":

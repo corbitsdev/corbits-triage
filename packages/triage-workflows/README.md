@@ -17,6 +17,7 @@ bun run eval                  # decision-model eval; calls a paid model
 bun run eval:scan             # repository scan eval
 bun run eval:hidden-content   # hidden-content rule eval; calls no model
 bun run eval:risk             # regression-risk backtest over git history; calls no model (evals/RISK.md)
+bun run eval:duplicates       # duplicates-open-pull-request shortlist eval; calls no model
 ```
 
 `bun run eval -- --baseline` also writes `evals/results/pr-triage-judge.baseline.json`: the commit, the judge's provider,

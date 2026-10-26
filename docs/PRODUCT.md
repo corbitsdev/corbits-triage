@@ -86,7 +86,10 @@ organisation's `.github` repository's), that speaks to a model or
 holds those characters; it names what it found and where, never the text, and
 misses paraphrased, look-alike-letter, entity-encoded or split instructions),
 Regression risk (a changed file with four or more commits titled as a fix or revert on the
-default branch in the last 30 days, or a migration; labels by default). Two always run:
+default branch in the last 30 days, or a migration; labels by default), No duplicate
+(an open pull request opened earlier on the same base branch, not a draft, has
+the same latest commit, diff or commits, the commits alone where the host gives
+no diff to compare; unconfirmed past 100 of them). Two always run:
 Draft, and Requested changes (a requested change fails and waits on
 the author, then on the reviewer once the author pushes or replies). The
 recommended forbidden paths are `vendor/**`, `node_modules/**` and
@@ -111,9 +114,13 @@ never free text:
 - **Choose**: which of the policy's options best describes the pull request;
   it fails when that is one of the failing options.
 
-Built in: **Focused** (each change is classified against the primary change)
-and **Docs** (each changed file is asked whether it leaves the docs wrong or
-incomplete; changing a doc file satisfies the rule).
+Built in: **Focused** (each change is classified against the primary change),
+**Docs** (each changed file is asked whether it leaves the docs wrong or
+incomplete; changing a doc file satisfies the rule) and **Duplicates an open
+pull request** (up to five open pull requests opened earlier that share a
+changed path, or two title words of four or more letters, are each scored same
+change, overlaps or unrelated; one
+likely the same change fails it, and it asks a maintainer by default).
 
 An answer decides only when it is clear of a band around a coin flip: 0.7 or
 above, or 0.3 or below (0.6 for Focused). Anything inside the band, a missing

@@ -85,9 +85,10 @@ function openPr(row: unknown) {
   };
 }
 
-/** `authorAssociation` costs up to three reads per author, so the listing leaves it null; `getPr` reads it. */
-export async function listOpenPrs(bb: BitbucketFetch, repo: string) {
-  return (await jsonAll(bb, `${repoPath(repo)}/pull-requests?state=OPEN`)).map(openPr);
+/** `authorAssociation` costs up to three reads per author, so the listing leaves it null; `getPr` reads it. Only those into `base` when it is set. */
+export async function listOpenPrs(bb: BitbucketFetch, repo: string, base?: string) {
+  const into = base === undefined ? "" : `&direction=INCOMING&at=${encodeURIComponent(`refs/heads/${base}`)}`;
+  return (await jsonAll(bb, `${repoPath(repo)}/pull-requests?state=OPEN${into}`)).map(openPr);
 }
 
 /** The pull requests merged into this one's branch, and the open one whose branch it is based on; a fork's branch is not stacked on this repository's. The newest page of each is enough to tell. */

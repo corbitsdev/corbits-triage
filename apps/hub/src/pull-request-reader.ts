@@ -1,12 +1,12 @@
 // Reads a pull request as its host shows it, alone or with its diff, and builds the code review request a manager's
 // review reads: the diff cut to the limit and hashed whole, so a later head with the same diff can take a review over
 // (code-review-runs.ts).
-import { createHash } from "node:crypto";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readPr, readPrDiff, type GithubFetch } from "@corbits/github-reads";
 import { shownBody, visibleText, type RepoSource } from "@corbits/triage-contracts";
 import type { TenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { filesFrom } from "@corbits/common/diff-files";
+import { diffHash } from "@corbits/common/diff-hash";
 import { forInstallation } from "./github/open-pulls.js";
 import { sourceOf, type RepoRecord } from "./github/tenant-config.js";
 
@@ -20,15 +20,6 @@ const DIFF_LIMIT = 100_000;
 export type PullRequestHead = { title: string; description: string; headSha: string; draft: boolean; open: boolean; labels?: string[] };
 
 export type PullRequestToReview = PullRequestHead & { diff: string };
-
-/**
- * The diff's hash, its `index` lines' blob ids included, so a base change to a file the diff touches changes it; undefined
- * for a diff with no `index` line, such as one rebuilt from the file list, which can't show such a change.
- */
-export function diffHash(diff: string): string | undefined {
-  if (!diff.split("\n").some((line) => line.startsWith("index "))) return undefined;
-  return createHash("sha256").update(diff).digest("hex");
-}
 
 function lineCount(text: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);

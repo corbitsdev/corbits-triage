@@ -19,6 +19,8 @@ export interface PrData {
   authorBot?: boolean;
   sha?: string;
   branch: string;
+  /** The branch it merges into. */
+  base?: string;
   state?: string;
   draft?: boolean;
   mergeable?: boolean | null;

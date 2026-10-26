@@ -135,6 +135,14 @@ export async function listOpenPrs(gh: GithubFetch, repo: string) {
   }));
 }
 
+const OpenInto = type({ number: "number", title: "string", draft: "boolean", head: { sha: "string" } });
+
+/** The open pull requests into `base`, with only what comparing them with another needs. */
+export async function listOpenPrsInto(gh: GithubFetch, repo: string, base: string): Promise<Array<{ number: number; title: string; draft: boolean; sha: string }>> {
+  const rows = OpenInto.array().assert(await jsonAll(gh, `/repos/${repo}/pulls?state=open&base=${encodeURIComponent(base)}&per_page=100`));
+  return rows.map((row) => ({ number: row.number, title: row.title, draft: row.draft, sha: row.head.sha }));
+}
+
 /** A stacked branch: the pull requests merged into it, and the open pull request whose branch it is based on. */
 export type Stack = { includes: number[]; onto?: number };
 

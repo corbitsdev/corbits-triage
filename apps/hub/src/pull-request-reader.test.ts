@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { createPullRequestReader, cutDiff, diffHash, reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
+import { diffHash } from "@corbits/common/diff-hash";
+import { createPullRequestReader, cutDiff, reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import type { RepoRecord } from "./github/tenant-config.js";
 
 const RECORD: RepoRecord = { name: "acme/widgets", connected: true };

@@ -203,11 +203,14 @@ export function pageReads(): PageReads {
     }));
   }
 
-  /** Every open pull request, or only the newest page of GitHub's list when `newest` asks for no more than one page. */
-  async function openPulls(repo: string, newest: boolean) {
+  /** Every open pull request, or only those into `base` when it is set, or only the newest page of GitHub's list when `newest` asks for no more than one page. */
+  async function openPulls(repo: string, newest: boolean, base: string | null) {
     const rows: Array<{ number: number; title: string }> = [];
+    const query = base === null ? "is:pr is:open" : `is:pr is:open base:"${base}"`;
     for (let page = 1; ; page++) {
-      const route = (await json(`/${repo}/pulls?q=${encodeURIComponent("is:pr is:open")}&page=${page}`)).payload.repoPullsDashboardContentRoute;
+      const route = (await json(`/${repo}/pulls?q=${encodeURIComponent(query)}&page=${page}`)).payload.repoPullsDashboardContentRoute;
+      // With nothing open the route leaves out its results and pages.
+      if (route.openCount === 0) return rows;
       rows.push(...(route.results as any[]).map((row) => ({ number: row.number, title: row.title, draft: row.displayState === "REPO_PULL_REQUEST_DISPLAY_STATE_DRAFT", head: { sha: row.headSha }, labels: row.labels })));
       if (newest || page >= route.totalPages) return rows;
     }
@@ -254,7 +257,7 @@ export function pageReads(): PageReads {
     if ((match = COMMITS.exec(pathname))) return commits(match[1]!, Number(match[2]));
     if ((match = ISSUE_COMMENTS.exec(pathname))) return issueComments(match[1]!, Number(match[2]));
     // The dashboard filters by neither branch, so a stack's filtered lists are left to the API.
-    if ((match = OPEN_PULLS.exec(pathname)) && searchParams.get("state") === "open" && !searchParams.has("head") && !searchParams.has("base")) return openPulls(match[1]!, Number(searchParams.get("per_page") ?? 30) <= DASHBOARD_PAGE);
+    if ((match = OPEN_PULLS.exec(pathname)) && searchParams.get("state") === "open" && !searchParams.has("head")) return openPulls(match[1]!, Number(searchParams.get("per_page") ?? 30) <= DASHBOARD_PAGE, searchParams.get("base"));
     if ((match = CHECK_RUNS.exec(pathname))) return checkRuns(match[1]!, match[2]!);
     if ((match = FOLDER.exec(pathname)) && !searchParams.has("ref")) return folder(match[1]!, decodeURIComponent(match[2] ?? ""));
     return null;

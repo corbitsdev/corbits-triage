@@ -33,6 +33,7 @@ import {
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { globMatch } from "./glob.js";
+import { duplicateResult, type OpenPulls } from "./duplicates.js";
 import type { PatternsResult } from "./patterns.js";
 import { hotFiles, migrationPaths } from "./risk.js";
 
@@ -99,6 +100,8 @@ export interface PrFacts {
   fixes?: Record<string, number | null>;
   /** Each code-patterns rule's matches on the added lines, by rule id; matched where the files were read. */
   patterns?: Record<string, PatternsResult>;
+  /** Set only when a duplicate rule is on: the other open pull requests on the same base branch, or why they were not read. */
+  openPulls?: OpenPulls;
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
@@ -518,6 +521,12 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       const reason = hides ? "pull request text hides content" : "no hidden content";
       if (hides) add("hidden-content", "needs-author-update", reason);
       result("hidden-content", hides, reason, facts.hidden, { kind: "values", values: { hidesContent: hides } });
+    }
+    if (on("no-duplicate")) {
+      const { failed, reason } = duplicateResult(facts.openPulls);
+      if (failed === null) add("no-duplicate", "stale-unknown", reason);
+      if (failed) add("no-duplicate", "needs-author-update", reason);
+      result("no-duplicate", failed, reason, [], failed === null ? { kind: "could-not-check", reason } : { kind: "values", values: { duplicate: failed } });
     }
     for (const rule of pack?.custom.filter(isTextCheck).filter(customCheckEnabled) ?? []) {
       const { failed, reason, evidence } = textResult(rule, facts);

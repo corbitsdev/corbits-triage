@@ -28,10 +28,12 @@ export const CATALOG_IDS = [
   "conventional-commits",
   "hidden-content",
   "regression-risk",
+  "no-duplicate",
+  "duplicates-open-pull-request",
 ] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
-export const QUALITY_CHECK_IDS = ["focused", "docs"] as const;
+export const QUALITY_CHECK_IDS = ["focused", "docs", "duplicates-open-pull-request"] as const;
 export type QualityCheckId = (typeof QUALITY_CHECK_IDS)[number];
 
 export const ISSUE_TRACKERS = ["github", "linear", "either", "off"] as const;
@@ -54,6 +56,8 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   "conventional-commits": { name: "Conventional commits", group: "pull-request", kind: "machine" },
   "hidden-content": { name: "Hidden content", group: "pull-request", kind: "machine" },
   "regression-risk": { name: "Regression risk", group: "pull-request", kind: "machine" },
+  "no-duplicate": { name: "No duplicate", group: "around", kind: "machine" },
+  "duplicates-open-pull-request": { name: "Duplicates an open pull request", group: "around", kind: "quality" },
 };
 
 export const NOT_A_DRAFT = "not-a-draft";
@@ -182,6 +186,8 @@ export function isSizeRule(id: string): id is SizeRuleId {
 
 /** What a policy file's rule does on failure when the file does not say: features and refactors cross size limits and touch risky code, so those only label. */
 export function defaultOnFail(id: string): (typeof ON_FAILS)[number] {
+  // A judged duplicate may only overlap, so a maintainer decides.
+  if (id === "duplicates-open-pull-request") return "ask";
   return isSizeRule(id) || id === "regression-risk" ? "label" : "fail";
 }
 
@@ -541,13 +547,13 @@ export function refuseUnknownChecks(stored: unknown): void {
   if (unknown.length > 0) throw new Error(`The policy has unknown checks: ${refusalNames(unknown)}.`);
 }
 const RESERVED_IDS = new Set<string>([...CATALOG_IDS, ...BUILT_IN_CHECK_NAMES.keys(), ...RENAMED_RULE_IDS.keys(), ...RETIRED_CHECK_IDS, "all", "verdict", CLOSED_FINDING]);
-// Judge question ids are built from rule ids (`docs-file-001`, `focused-slice-001`, `<id>-hunk-001-002`), so no custom id may read as one.
-const QUESTION_LIKE = /^(?:docs|focused)-|-(?:file|hunk|slice)(?:-\d+)+$/;
+// Judge question ids are built from rule ids (`docs-file-001`, `focused-slice-001`, `duplicates-open-pull-request-001`, `<id>-hunk-001-002`), so no custom id may read as one.
+const QUESTION_LIKE = /^(?:docs|focused|duplicates-open-pull-request)-|-(?:file|hunk|slice)(?:-\d+)+$/;
 
 function customIdProblem(id: string): string | undefined {
   if (!CUSTOM_ID.test(id) || id.length > CUSTOM_ID_MAX) return `must be at most ${CUSTOM_ID_MAX} lowercase letters, digits and single hyphens`;
   if (RESERVED_IDS.has(id)) return "must not be a built-in rule's id";
-  if (QUESTION_LIKE.test(id)) return "must not start with docs- or focused- or end in -file, -hunk or -slice and numbers";
+  if (QUESTION_LIKE.test(id)) return "must not start with docs-, focused- or duplicates-open-pull-request- or end in -file, -hunk or -slice and numbers";
   return undefined;
 }
 
@@ -557,7 +563,7 @@ function customIdProblem(id: string): string | undefined {
  */
 export function customRuleId(name: string, taken: Iterable<string>): string {
   let base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, CUSTOM_ID_MAX - 12).replace(/^-+|-+$/g, "") || "rule";
-  if (/^(?:docs|focused)-/.test(`${base}-`)) base = `rule-${base}`;
+  if (/^(?:docs|focused|duplicates-open-pull-request)-/.test(`${base}-`)) base = `rule-${base}`;
   if (QUESTION_LIKE.test(`${base}-2`)) base = `${base}-rule`;
   const ids = [...taken];
   const numbered = new RegExp(`^${base}-(\\d+)$`);
