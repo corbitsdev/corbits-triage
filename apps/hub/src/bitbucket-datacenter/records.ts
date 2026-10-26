@@ -59,6 +59,11 @@ export function disableRepo(ns: CorbitsTriageNs, name: string): CorbitsTriageNs 
   return { ...ns, repos: repoRecords(ns).map((row) => (isBitbucketRecord(row) && row.name === name ? withoutWebhook({ ...row, enabled: false }) : row)) };
 }
 
+/** Repositories whose webhook triage could not save again; its setup is then shown to be done by hand. */
+export function forgetWebhooks(ns: CorbitsTriageNs, names: ReadonlySet<string>): CorbitsTriageNs {
+  return { ...ns, repos: repoRecords(ns).map((row) => (isBitbucketRecord(row) && names.has(row.name) ? withoutWebhook(row) : row)) };
+}
+
 function withoutWebhook(record: RepoRecord): RepoRecord {
   const { webhookId: _webhookId, ...rest } = record;
   return rest;

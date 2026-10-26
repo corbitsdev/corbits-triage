@@ -166,12 +166,19 @@ async function releaseUnwanted(transport: Transport, tenantId: string, hosts: De
   }
 }
 
-/** Each host's triage deploys while the host is connected, its code review while that is on too, its PR workflow while a repository's policy file needs it; `redeploy` names the kinds deployed again even at the same version. */
+/** The kinds deployed again even at the same version, on `sources` only when it is given. */
+export type Redeploy = { kinds: ReadonlySet<WorkflowKind>; sources?: readonly RepoSource[] };
+
+function redeploys(redeploy: Redeploy, workflow: WorkflowPackage): boolean {
+  return redeploy.kinds.has(workflow.kind) && (redeploy.sources === undefined || redeploy.sources.includes(workflow.source));
+}
+
+/** Each host's triage deploys while the host is connected, its code review while that is on too, its PR workflow while a repository's policy file needs it; `redeploy` names those deployed again even at the same version. */
 export async function ensureWorkflows(
   transport: Transport,
   tenantId: string,
   hosts: DeployHosts,
-  redeploy: ReadonlySet<WorkflowKind>,
+  redeploy: Redeploy,
   fetchRaw: typeof fetch = fetch,
 ): Promise<string[]> {
   const deployments = await listDeployedWorkflows(transport, tenantId);
@@ -186,7 +193,7 @@ export async function ensureWorkflows(
     // The deploy route needs a workflow asset to name the definition; the code comes from the registry.
     const asset = await ensureAsset(transport, tenantId, "workflow", workflow.name);
     const current = currentDeployment(deployments, workflow.name)?.package;
-    const deploy = redeploy.has(workflow.kind) || current?.name !== pkg.name || current.version !== pkg.version;
+    const deploy = redeploys(redeploy, workflow) || current?.name !== pkg.name || current.version !== pkg.version;
     if (deploy) {
       const offerings = await offeringsFor(transport, tenantId, workflow.models);
       try {

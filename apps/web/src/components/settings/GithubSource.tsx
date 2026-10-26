@@ -90,13 +90,13 @@ export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
           </div>
           {secrets.map(({ credential, name }) => (credential.name === GITHUB_CREDENTIAL_NAME
             ? <GithubAppRow key={credential.id} credential={credential} name={name} tenantId={snapshot.workspace.tenantId} replaceable={canManage} remove={removeGithubApp} />
-            : <CredentialRow key={credential.id} credential={credential} name={name} replaceable />))}
+            : <CredentialRow key={credential.id} credential={credential} name={name} rotatable />))}
         </div>
         {others.length > 0 && (
           <div>
             <p className="field-help">Other credentials</p>
             <div className="sentences">
-              {others.map(({ credential, name }) => <CredentialRow key={credential.id} credential={credential} name={name} replaceable={false} />)}
+              {others.map(({ credential, name }) => <CredentialRow key={credential.id} credential={credential} name={name} rotatable={false} />)}
             </div>
           </div>
         )}

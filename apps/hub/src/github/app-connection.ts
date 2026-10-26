@@ -9,7 +9,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import { errorText } from "@corbits/common";
 import type { Member } from "../integrations/app.js";
 import { grantAdminGithub } from "./admin-github-grant.js";
-import { GITHUB_CREDENTIAL, lockedCredential, lockGithubCredentials, renewedMetadata, storeAppKey } from "./app-key.js";
+import { decryptSecret, GITHUB_APP_KEY_CREDENTIAL, GITHUB_CREDENTIAL, lockedCredential, lockGithubCredentials, renewedMetadata, storeAppKey } from "./app-key.js";
 import { ensureTriageRole } from "./automation.js";
 import type { GithubTokenRenewal, IssuedApp } from "./installation-token.js";
 import { validGithubProvider } from "./manifest.js";
@@ -17,7 +17,8 @@ import { failure } from "./portal-credential.js";
 
 export const GITHUB_APP_PATH = "/api/integrations/github-app";
 
-export const AppBody = type({ appId: /^\d+$/, privateKey: "string > 0" });
+export const AppBody = type({ "appId?": /^\d+$/, privateKey: "string > 0", "replace?": "boolean" });
+const StoredApp = type({ appId: "string" });
 export const AppConnected = type({ appSlug: "string" });
 
 export type GithubAppConnectionDeps = {
@@ -55,6 +56,12 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
     });
   }
 
+  async function storedAppId(tenantId: string): Promise<string | undefined> {
+    const key = await db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, GITHUB_APP_KEY_CREDENTIAL)) });
+    if (!key) return undefined;
+    return StoredApp.assert(JSON.parse(await decryptSecret(cipher, key))).appId;
+  }
+
   return async function connectGithubApp(body: typeof AppBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const current = await db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, GITHUB_CREDENTIAL)) });
     const allowed = current
@@ -63,12 +70,19 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
     if (!allowed) return failure(403, "forbidden", "You do not have permission to connect the GitHub App.");
     const githubProvider = await db.query.provider.findFirst({ where: and(eq(provider.tenantId, tenantId), eq(provider.name, "github")) });
     if (!githubProvider || !validGithubProvider(githubProvider, deps.githubApiOrigin)) return failure(409, "github_provider_missing", "The workspace has no GitHub provider for this hub's GitHub.");
-    const appJson = JSON.stringify({ appId: body.appId, privateKey: body.privateKey.trim() });
+    const connectedAppId = await storedAppId(tenantId);
+    const appId = body.appId ?? connectedAppId;
+    if (appId === undefined) return failure(400, "invalid_request", "Enter the App ID.");
+    if (!body.replace && connectedAppId !== undefined && connectedAppId !== appId) {
+      return failure(409, "github_app_mismatch", "That App ID is not the connected GitHub App's. To switch to another App, use Create GitHub App.");
+    }
+    const appJson = JSON.stringify({ appId, privateKey: body.privateKey.trim() });
     let issued: IssuedApp;
     try {
       issued = await deps.renewal.issue(tenantId, appJson);
     } catch (err) {
-      return failure(400, "github_app_refused", `GitHub did not accept this App ID and private key: ${errorText(err)}.`);
+      const refused = body.appId === undefined ? "this private key for the connected App" : "this App ID and private key";
+      return failure(400, "github_app_refused", `GitHub did not accept ${refused}: ${errorText(err)}.`);
     }
     await store(tenantId, githubProvider.id, appJson, issued);
     if (issued.token) await deps.renewal.push(tenantId);

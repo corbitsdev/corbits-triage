@@ -33,7 +33,7 @@ import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
 import { CodeReviewSendBody } from "../bitbucket-datacenter/code-review-send.js";
-import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, RepoWebhook, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
+import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, HookSecretRotated, RepoDisabled, RepoEnabled, RepoWebhook, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
 import { body, Failure, json, refuseInvalid } from "../route-schema.js";
 import { SESSIONS_PATH } from "../sessions.js";
@@ -330,10 +330,10 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_APP_PATH}/:tenantId`,
     describeRoute({
       summary: "Connect an existing GitHub App",
-      description: "Needs `manage` on the `github` credential, or `create` on `credential:*` when there is none, and the workspace's `github` provider. GitHub must accept the App ID and private key (`GET /app`), which also gives the App's slug. The key is stored in the hub-only `github-app` credential and never returned; the `github` credential holds an installation token once the App is installed. The webhook secret is the stock `github-hook` credential.",
+      description: "Needs `manage` on the `github` credential, or `create` on `credential:*` when there is none, and the workspace's `github` provider. GitHub must accept the App ID and private key (`GET /app`), which also gives the App's slug. The key is stored in the hub-only `github-app` credential and never returned; the `github` credential holds an installation token once the App is installed. The webhook secret is the stock `github-hook` credential. Without `appId`, the stored App's ID is used, so a new key replaces the old one. Once a key is stored, a different App ID is refused (`409 github_app_mismatch`) unless `replace` is true.",
       tags: TAGS,
       requestBody: { required: true, content: { "application/json": { schema: resolver(AppBody) } } },
-      responses: { 200: json("Connected; the slug GitHub gave", AppConnected), 400: json("Invalid request, or GitHub did not accept the App", Failure), ...failures },
+      responses: { 200: json("Connected; the slug GitHub gave", AppConnected), 400: json("Invalid request, or GitHub did not accept the App", Failure), ...failures, 409: json("Another App is connected and `replace` is not set, or the workspace has no GitHub provider", Failure) },
     }),
     member,
     body(AppBody),
@@ -918,10 +918,10 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${BITBUCKET_PATH}/:tenantId/connection`,
     describeRoute({
       summary: "Connect a Bitbucket Data Center instance",
-      description: "Needs `manage` on the workspace. The token is tried once against `GET /rest/api/1.0/application-properties` and stored only when the instance accepts it, as the stock `bitbucket-datacenter` credential on the `bitbucket-datacenter` provider; a webhook secret is generated as `bitbucket-datacenter-hook` unless one exists. The token is never returned.",
+      description: "Needs `manage` on the workspace. The token is tried once against `GET /rest/api/1.0/application-properties` and stored only when the instance accepts it, as the stock `bitbucket-datacenter` credential on the `bitbucket-datacenter` provider; a webhook secret is generated as `bitbucket-datacenter-hook` unless one exists. The token is never returned. Called again with the connected URL and a new token, it replaces the token. With `rotateHookSecret` instead, a new secret is stored and each webhook triage created is saved with it; one that cannot be saved is no longer recorded as created. `webhooksByHand` names enabled repositories whose webhook must be updated on the instance by hand.",
       tags: TAGS,
       requestBody: { required: true, content: { "application/json": { schema: resolver(ConnectBody) } } },
-      responses: { 200: json("Connected", Connected), 400: json("Invalid request, or the instance did not accept the token", Failure), ...bitbucketFailures },
+      responses: { 200: json("Connected, or the webhook secret rotated", Connected.or(HookSecretRotated)), 400: json("Invalid request, or the instance did not accept the token", Failure), ...bitbucketFailures },
     }),
     member,
     body(ConnectBody),

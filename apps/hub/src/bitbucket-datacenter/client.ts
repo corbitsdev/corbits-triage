@@ -187,14 +187,24 @@ export async function webhookExists(bb: BitbucketFetch, project: string, slug: s
   return true;
 }
 
+function webhookBody(url: string, secret: string): string {
+  return JSON.stringify({ name: "Corbits Triage", url, active: true, events: WEBHOOK_EVENTS, configuration: { secret } });
+}
+
 /** The new webhook's id, or undefined when the token may not manage the repository's webhooks. */
 export async function createWebhook(bb: BitbucketFetch, project: string, slug: string, url: string, secret: string): Promise<number | undefined> {
   const path = `${repoPath(project, slug)}/webhooks`;
-  const body = { name: "Corbits Triage", url, active: true, events: WEBHOOK_EVENTS, configuration: { secret } };
-  const res = await bb(path, { method: "POST", body: JSON.stringify(body) });
+  const res = await bb(path, { method: "POST", body: webhookBody(url, secret) });
   if (res.status === 401 || res.status === 403) return undefined;
   if (!res.ok) throw new BitbucketFailed(res.status, path);
   return Webhook.assert(await res.json()).id;
+}
+
+/** Saves the webhook triage created again, signing with `secret` from now on. */
+export async function saveWebhook(bb: BitbucketFetch, project: string, slug: string, id: number, url: string, secret: string): Promise<void> {
+  const path = `${repoPath(project, slug)}/webhooks/${id}`;
+  const res = await bb(path, { method: "PUT", body: webhookBody(url, secret) });
+  if (!res.ok) throw new BitbucketFailed(res.status, path);
 }
 
 export async function deleteWebhook(bb: BitbucketFetch, project: string, slug: string, id: number): Promise<void> {

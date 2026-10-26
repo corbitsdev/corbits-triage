@@ -1,6 +1,6 @@
 import { ANTHROPIC_CREDENTIAL_NAME, BITBUCKET_DATACENTER_CREDENTIAL_NAME, GITHUB_APP_KEY_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
 
-type CredentialAction = "rotate" | "revoke";
+export type CredentialAction = "rotate" | "revoke";
 
 type CredentialActions = {
   confirm: (message: string) => boolean | Promise<boolean>;
@@ -90,7 +90,7 @@ export async function runCredentialAction(
   displayName = secretDisplayName(credential.name),
 ): Promise<boolean> {
   const message = action === "rotate"
-    ? `Update the ${displayName} secret?`
+    ? `Rotate the ${displayName} secret? Paste the new one on GitHub right after.`
     : `Remove ${displayName}? Features that use this secret will stop working.`;
   if (!(await actions.confirm(message))) return false;
   if (action === "rotate") await actions.replaceSecret(credential.id, secret);

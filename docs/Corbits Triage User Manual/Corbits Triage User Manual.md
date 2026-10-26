@@ -497,7 +497,7 @@ Triage reads pull requests from GitHub, Bitbucket Data Center, or both. Each has
 
 A host that is not connected takes one line with a **Connect** button. The **GitHub** card shows whether the GitHub App is connected and how many repositories it is installed on. Press **Choose repositories on GitHub** to add or remove repositories. GitHub's own installer opens, and when you come back, any new repository appears under Repositories with triage switched off.
 
-Below that are the secrets the App needs: the GitHub App and its webhook secret. The webhook secret has a **Replace secret** button for rotating it. To rotate the App's private key, or to switch to another App, owners and admins press **Replace key** on the GitHub App row and enter the App ID and the new private key; GitHub checks them before they are saved. If Triage cannot renew its access to GitHub, the GitHub App row says why and what to check, and once the access has run out the GitHub source says so; Triage runs again on its own once GitHub answers. Each has a **Remove** link; removing the GitHub App deletes its private key and disconnects Triage from GitHub, so do that only when you mean to. The **Webhook URL** is what GitHub uses to tell Triage about pull request events. You only need it if you set up the App by hand.
+Below that are the secrets the App needs: the GitHub App and its webhook secret. The webhook secret has a **Rotate secret** button, and owners and admins can **Replace key** on the GitHub App row (see [Rolling credentials](#rolling-credentials)). If Triage cannot renew its access to GitHub, the GitHub App row says why and what to check, and once the access has run out the GitHub source says so; Triage runs again on its own once GitHub answers. Each has a **Remove** link; removing the GitHub App deletes its private key and disconnects Triage from GitHub, so do that only when you mean to. The **Webhook URL** is what GitHub uses to tell Triage about pull request events. You only need it if you set up the App by hand.
 
 The **Bitbucket Data Center** card reaches an instance with an HTTP access token. To connect one, press **Connect**, enter the **Instance URL**, such as `https://bitbucket.example.com`, paste the **HTTP access token** and press **Connect**. Triage tries the token once and stores it in the server's vault only if the instance accepts it. If your instance is on a private network, the person who runs your Triage server must allow its address first; until then Triage refuses the URL, and a workspace already connected to it stops reading from it.
 
@@ -509,7 +509,7 @@ Create the token for a dedicated Bitbucket user named **Corbits Triage**, not fo
 | Repository write | What Triage does on pull requests |
 | Repository admin | Creating each repository's webhook. Without it, a repository admin sets the webhook up by hand (see [Bitbucket Data Center repositories](#bitbucket-data-center-repositories)). |
 
-Once connected, the card says **Connected to** the instance and shows the **Webhook URL**, where Bitbucket sends pull request events. Triage creates each repository's webhook when you turn triage on, if the token allows it. **Disconnect** stops triage on every Bitbucket Data Center repository and removes the webhooks Triage created; their rules are kept. If a webhook cannot be removed, the card names the repositories where an admin must delete it by hand.
+Once connected, the card says **Connected to** the instance and shows the **Webhook URL**, where Bitbucket sends pull request events. Triage creates each repository's webhook when you turn triage on, if the token allows it. **Disconnect** stops triage on every Bitbucket Data Center repository and removes the webhooks Triage created; their rules are kept. If a webhook cannot be removed, the card names the repositories where an admin must delete it by hand. **Replace token** and the webhook secret's **Rotate secret** are described under [Rolling credentials](#rolling-credentials).
 
 #### Repositories
 
@@ -524,6 +524,20 @@ Lists each connected repository and whether its default branch has a `.corbits-t
 **Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider. It answers your policies' Judgement rules and chooses the verdict.
 
 The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Change** opens the form again to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again. Every save of the decision model redeploys Triage's workers, so give it a minute before expecting new verdicts.
+
+#### Rolling credentials
+
+Every secret Triage holds can be replaced from Settings without disconnecting anything. After a GitHub or Bitbucket Data Center secret is replaced, Triage restarts its workers for that host, and code review uses the new value from its next review. If the restart fails, the row says **Saved. Restarting Triage failed; try again** with a **Try again** button; the new secret is already saved.
+
+**GitHub App key.** Press **Replace key** on the GitHub App row. In your App's settings on GitHub, generate a new private key, then choose the downloaded `.pem` file and press **Save**; GitHub checks that the key belongs to the connected App before it is saved. Then delete the old key on GitHub. To switch to another App, use **Create GitHub App**.
+
+**GitHub webhook secret.** Press **Rotate secret** on the webhook row. Triage makes a new secret and shows it once: paste it as the webhook secret in your App's settings on GitHub straight away, then press **I pasted it on GitHub**. Pull requests that change before you paste it are picked up automatically.
+
+**Bitbucket Data Center token.** Press **Replace token**, paste a new HTTP access token for the Corbits Triage user with the same permissions and press **Save**. Triage tries it against your instance and keeps the old token if the instance refuses it. Then revoke the old token in Bitbucket.
+
+**Bitbucket Data Center webhook secret.** Press **Rotate secret** on the webhook secret row. Triage saves a new secret and updates every webhook it created to use it. Repositories whose webhook was set up by hand, or whose webhook Triage could not update, are named afterwards: each one's repository page shows the new secret, so update its webhook in Bitbucket from there. Pull requests that change in the meantime are picked up automatically.
+
+**Model keys.** Press **Change** on the [decision model](#decision-model) or on the Anthropic key under [Code review](#code-review-2) and paste the new key. Triage restarts its workers for every host.
 
 ### Code review
 
