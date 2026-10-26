@@ -8,9 +8,11 @@ portal setup, and every setting. Local development is in [DEV.md](DEV.md).
 To try it on your machine, the requirements and portal address for each way
 to run it are in the [README](../README.md#get-started).
 
-GitHub cannot deliver webhooks to localhost, so a local hub picks up pull
-requests every five minutes and a policy file change within a few minutes.
-For live events, forward webhooks with a tunnel
+GitHub cannot deliver webhooks to localhost, and it refuses to create an
+App whose webhook URL it cannot reach. So when the hub runs on localhost,
+**Create GitHub App** registers the App without a webhook, and the hub picks
+up pull requests every five minutes and a policy file change within a few
+minutes. For live events, forward webhooks with a tunnel
 ([Webhooks on localhost](DEV.md#webhooks-on-localhost-unverified)).
 
 A real deployment also needs:
@@ -172,13 +174,16 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
 1. **Sign up.** The first sign-in creates your workspace.
 2. **Create the GitHub App** with **Create GitHub App** and confirm the
    prefilled form on GitHub. The private key goes to the hub's vault and never
-   reaches the browser or the workflows. The App's webhook URL is built from the
-   address that started the flow, so start it from the public URL.
+   reaches the browser or the workflows. The App's webhook URL is built from
+   `BETTER_AUTH_BASE_URL`, so set that to the public URL before starting. When
+   it is on localhost the App is created without a webhook and the hub polls
+   instead ([What you need](#what-you-need)).
 
    To reuse an App, expand **Connect an existing GitHub App instead**, enter its
    App ID, private key and webhook secret, and set its webhook URL to the one
-   shown. GitHub must accept the App ID and key. A workspace uses the App on one
-   account; install it on one account only. It needs:
+   shown (on localhost, leave the App's webhook inactive). GitHub must accept
+   the App ID and key. A workspace uses the App on one account; install it on
+   one account only. It needs:
 
    - Permissions: Pull requests, Issues and Contents: write; Checks, Members
      and Metadata: read.

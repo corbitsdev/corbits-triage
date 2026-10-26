@@ -49,7 +49,7 @@ Sign up at http://localhost:5173; the portal shows **Set up Triage** with three 
 
 ### Webhooks on localhost (unverified)
 
-The App's webhook URL is built from the hub origin that starts the manifest flow, so a localhost hub registers `http://localhost:3000/api/hooks/…`, which GitHub cannot reach. For live PR events, forward GitHub to `http://localhost:3000/api/hooks/<tenant-id>/github-hook` with a tunnel or a smee channel and set that URL in the App's settings on GitHub.
+The App's webhook URL is built from `BETTER_AUTH_BASE_URL`, and GitHub refuses a manifest whose webhook URL it cannot reach, so a hub on localhost registers the App without a webhook and finds pull requests by polling. For live PR events, forward a tunnel or a smee channel to `http://localhost:3000/api/hooks/<tenant-id>/github-hook` (the URL shown under Connect → **Connect an existing GitHub App instead**), then in the App's settings on GitHub activate the webhook with the tunnel's public URL and a secret of your choosing, and save that secret in the portal through the same form with the App ID and a private key downloaded from the App's settings.
 
 ## GitHub emulator (no GitHub account)
 

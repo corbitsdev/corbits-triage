@@ -5,6 +5,7 @@ import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { errorText } from "@corbits/common";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
+import { hubOnLocalhost } from "../lib/hub-origin.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { generateWebhookSecret, isPrivateKeyPem } from "../lib/connect-view.ts";
 import {
@@ -224,10 +225,12 @@ export default function Connect() {
   }
 
   function renderCreateBody() {
+    const intro = "GitHub will confirm a prefilled App, then ask which repositories it may see. The private key stays on the hub and is never shown here."
+      + (hubOnLocalhost() ? " GitHub cannot reach a hub on localhost, so the App is created without a webhook and pull requests are picked up every five minutes." : "");
     return <>
       {busy
-        ? <div className="setup-waiting" role="status"><StatusDot label="Working" live tone="emphasis" /><div><strong>Opening GitHub…</strong><p>GitHub will confirm a prefilled App, then ask which repositories it may see. The private key stays on the hub and is never shown here.</p></div></div>
-        : <p>GitHub will confirm a prefilled App, then ask which repositories it may see. The private key stays on the hub and is never shown here.</p>}
+        ? <div className="setup-waiting" role="status"><StatusDot label="Working" live tone="emphasis" /><div><strong>Opening GitHub…</strong><p>{intro}</p></div></div>
+        : <p>{intro}</p>}
       {error && <p role="alert" className="error">{error}</p>}
       <div className="task-actions"><Button type="button" disabled={busy} onClick={() => void startManifest()}>{busy ? "Opening GitHub…" : "Create GitHub App"}</Button></div>
       <details className="setup-help">
