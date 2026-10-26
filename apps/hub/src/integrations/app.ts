@@ -636,7 +636,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${WORKFLOW_VERSIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Package versions of the workspace's live workflow deployments",
-      description: "Each live deployment, newest first, with the workflow package it pinned and the packages its frozen closure carries. `package` is null for a deployment not pinned from a package registry; `source` is the asset and commit a source-format deployment runs, else null.",
+      description: "Each live deployment, newest first, with the workflow package it pinned and the packages its frozen closure carries. `package` is null for a deployment without a frozen closure; `source` is the asset and commit a source-format deployment runs, else null.",
       tags: TAGS,
       responses: { 200: json("Live deployments and their versions", DeployedVersions), 401: failures[401], 403: failures[403] },
     }),

@@ -81,7 +81,7 @@ interface Stamp {
   source?: PolicySource;
   repoSource: RepoSource;
   noWait: boolean;
-  /** The policy turns a block on, so `decide` chooses the Dos once the blocks have run. */
+  /** The mail names blocks, so the comment lists no Dos and approve and merge wait in Needs you. */
   blocksOn: boolean;
   /** The head the mail names for each pull request. */
   heads: Map<number, string>;

@@ -35,10 +35,10 @@ const DO_OUTCOMES: Record<string, string> = { done: "Ran", satisfied: "Found don
 
 type Entry = Omit<AuditEntry, "time"> & { at: Date };
 
-/** `people` is whether the caller may read the workspace's principals, which emails and members need. */
 /** The reason the hub gave when it replaced a busy deployment with a fresh copy, which earlier entries carry. */
 export const ROTATION_REASON = "Replaced by a fresh deployment of the same workflow";
 
+/** `people` is whether the caller may read the workspace's principals, which emails and members need. */
 type Window = { tenantId: string; repo?: string; since?: Date; limit: number; people: boolean };
 
 export type AuditLogDeps = {

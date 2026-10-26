@@ -3,13 +3,17 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as tar from "tar";
-import { tarballFilename } from "../packages/triage-contracts/src/tarball.js";
 
 // npm tarballs root every file under this directory.
 const STAGE = "package";
 
 type PackageManifest = { name: string; version: string } & Record<string, unknown>;
 export type PackedTarball = { name: string; version: string; filename: string; path: string; integrity: string };
+
+/** The file name `npm pack` gives a package version. */
+function tarballFilename(pkg: { name: string; version: string }): string {
+  return `${pkg.name.replace("/", "-")}-${pkg.version}.tgz`;
+}
 
 function byName(a: { name: string }, b: { name: string }): number {
   if (a.name < b.name) return -1;

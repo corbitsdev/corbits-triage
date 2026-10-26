@@ -7,11 +7,6 @@
     "./*": "./src/*.ts",
     "./evals/*": "./evals/*.ts"
   },
-  "interchange": {
-    "workflow": "./src/pr-triage.ts",
-    "directors": "./src/directors.ts",
-    "actions": "./src/actions/index.ts"
-  },
   "scripts": {
     "eval": "bun --conditions=intx-src evals/judge.eval.ts",
     "eval:scan": "bun --conditions=intx-src evals/scan.eval.ts",

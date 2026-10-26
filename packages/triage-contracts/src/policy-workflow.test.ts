@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Type } from "arktype";
 import { readCheckPack } from "./check-pack.ts";
-import { decide } from "./decide.ts";
 import { exportPolicyFile, policyDifferences } from "./policy-export.ts";
 import { checkPolicyFile, readPolicyFile } from "./policy-file.ts";
 import { policyWorkflowSchema } from "./policy-workflow.ts";
@@ -95,11 +94,17 @@ describe("policy file v4", () => {
     });
   });
 
-  test("schema 3 actions beside a block that is on never approve or merge when every block was skipped", () => {
-    const checked = checkPolicyFile(`${RULES}code-review: { on: true }\nactions:\n  pass: [{ do: approve }, { do: merge }]\n`, REPO);
-    if (!checked.ok) throw new Error("the policy file must read");
-    const input = { triage: "pass", events: ["opened"], on: ["code-review"], outcomes: { "code-review": { outcome: "skipped" } }, author: ["everyone"] } as const;
-    expect(decide(checked.workflow!.decide!, input)).toEqual({ do: [{ do: "nothing" }, { do: "nothing" }], rule: 1 });
+  test("schema 3 actions beside a block that is on approve or merge only when every block is clean", () => {
+    expect(checkPolicyFile(`${RULES}code-review: { on: true }\nactions:\n  pass: [{ do: approve }, { do: merge }]\n`, REPO)).toMatchObject({
+      ok: true,
+      workflow: {
+        decide: [
+          { if: { triage: "pass", all: "clean" }, do: [{ do: "approve" }, { do: "merge" }] },
+          { if: { triage: "pass" }, do: [{ do: "nothing" }, { do: "nothing" }] },
+          { if: { triage: "fail" }, do: "nothing" },
+        ],
+      },
+    });
   });
 
   test("a file that extends another holds no v4 key, and reads with no decide", () => {

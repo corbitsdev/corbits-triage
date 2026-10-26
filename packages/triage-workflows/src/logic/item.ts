@@ -20,7 +20,7 @@ export interface Item {
   repoSource?: RepoSource;
   /** The hub waits no longer for the host's checks. */
   noWait?: true;
-  /** The policy turns a block on, so `decide` chooses the Dos once the blocks have run and the comment names none. */
+  /** The mail names blocks, so the comment lists no Dos and approve and merge wait in Needs you. */
   blocksOn?: true;
   /** The App's bot account on GitHub, whose comments and reviews are triage's own. */
   appLogin?: string;
