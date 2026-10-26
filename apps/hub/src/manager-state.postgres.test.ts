@@ -1,10 +1,10 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { Tx } from "./github/admin-github-grant.js";
-import { claimForIntake, done, markLive, recordEvent, take, type PullRequestRef } from "./manager-state.js";
+import { done, recordEvent, take, type PullRequestRef } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -27,6 +27,7 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
     handle = createDB(config);
     await migrateTriageTables(handle.db, "public");
     await handle.db.insert(schema.tenant).values({ id: TENANT, name: "Manager", slug: "manager", domain: "manager.test" });
+    await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_manager", tenantId: TENANT, name: "triage-manager-github" });
     await run(handle.db);
   } finally {
     await handle?.close();
@@ -39,15 +40,15 @@ function webhook(head: string) {
   return { type: "webhook" as const, head, payload: { action: "synchronize" } };
 }
 
-async function intake(db: Db, pr: PullRequestRef, deliveryId: string, head: string) {
-  await recordEvent(db, TENANT, pr, deliveryId, webhook(head));
-  return claimForIntake(db, TENANT, pr);
+async function liveRun(db: Db, runId: string): Promise<void> {
+  await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wfd_manager", tenantId: TENANT, status: "running" });
 }
 
+/** A live claim naming `runId`, as the run's first take leaves it, without taking any event. */
 async function startManager(db: Db, pr: PullRequestRef, runId: string): Promise<void> {
-  const claimed = await claimForIntake(db, TENANT, pr);
-  if (claimed.outcome !== "won") throw new Error(`expected to win, got ${claimed.outcome}`);
-  expect(await markLive(db, TENANT, pr, claimed.claimId, runId)).toBe(true);
+  await liveRun(db, runId);
+  const claim = { status: "live", claimId: randomUUID(), claimedAt: new Date().toISOString(), runId, reviewers: [], history: [], starts: 1 };
+  await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${`mgr:${pr.source}:${pr.repo}#${pr.number}`}, 'claim', ${JSON.stringify(claim)}::jsonb)`);
 }
 
 async function stateOf(db: Db, key: string): Promise<Record<string, unknown>> {
@@ -100,17 +101,30 @@ async function untilLockWait(db: Db): Promise<void> {
   throw new Error(`no transaction waited on the held lock within ${WAIT_MS} ms`);
 }
 
-test("PostgreSQL: of ten concurrent intakes one wins each pull request's claim, and only that claim goes live", async () => {
-  await withDatabase(async function claims(db) {
-    const intakes = await Promise.all(Array.from({ length: 10 }, (_, i) => intake(db, i % 2 ? GITHUB : BITBUCKET, `d${i}`, "h1")));
-    expect(intakes.filter((claimed) => claimed.outcome === "won")).toHaveLength(2);
-    expect(intakes.filter((claimed) => claimed.outcome === "starting")).toHaveLength(8);
+test("PostgreSQL: of two managers racing take for one pull request one claims it and takes its events, and the other is refused", async () => {
+  await withDatabase(async function race(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await liveRun(db, "run_a");
+    await liveRun(db, "run_b");
+    const takes = await Promise.all([take(db, TENANT, GITHUB, "run_a"), take(db, TENANT, GITHUB, "run_b")]);
+    expect(takes.map((taken) => taken.outcome).toSorted()).toEqual(["pass", "refused"]);
+    const winner = takes[0].outcome === "pass" ? "run_a" : "run_b";
+    expect(await stateOf(db, CLAIM)).toMatchObject({ status: "live", runId: winner, starts: 1 });
+  });
+}, 120_000);
 
-    const { claimId } = await stateOf(db, CLAIM);
-    expect(await markLive(db, TENANT, GITHUB, "another-claim", "run_a")).toBe(false);
-    expect(await markLive(db, TENANT, GITHUB, String(claimId), "run_a")).toBe(true);
-    expect(await intake(db, GITHUB, "d10", "h2")).toEqual({ outcome: "live", runId: "run_a" });
-    expect(await intake(db, BITBUCKET, "d10", "h2")).toEqual({ outcome: "starting" });
+test("PostgreSQL: a take finds the claim's run gone, takes the claim over and resumes its open pass", async () => {
+  await withDatabase(async function takeover(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await startManager(db, GITHUB, "run_a");
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", resumed: false });
+    await liveRun(db, "run_b");
+    expect(await take(db, TENANT, GITHUB, "run_b")).toEqual({ outcome: "refused" });
+
+    await db.update(schema.workflowRun).set({ status: "completed" }).where(sql`${schema.workflowRun.id} = 'run_a'`);
+    expect(await take(db, TENANT, GITHUB, "run_b")).toMatchObject({ outcome: "pass", resumed: true, pass: { head: "h1", takes: 2 } });
+    expect(await stateOf(db, CLAIM)).toMatchObject({ status: "live", runId: "run_b", starts: 2 });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "refused" });
   });
 }, 120_000);
 
@@ -121,7 +135,6 @@ test("PostgreSQL: take and done refuse a run the claim does not name", async () 
     expect(await take(db, TENANT, GITHUB, "run_b")).toEqual({ outcome: "refused" });
     expect(await done(db, TENANT, GITHUB, "run_b", [])).toEqual({ outcome: "refused" });
     expect(await done(db, TENANT, GITHUB, "run_a", [])).toEqual({ outcome: "ended" });
-    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "refused" });
     expect(await done(db, TENANT, GITHUB, "run_a", [])).toEqual({ outcome: "refused" });
   });
 }, 120_000);
@@ -148,8 +161,8 @@ test("PostgreSQL: a redelivered event is a no-op", async () => {
   });
 }, 120_000);
 
-test("PostgreSQL: a claim won again after it ended keeps its history, starts and reviewers and names no run", async () => {
-  await withDatabase(async function rewon(db) {
+test("PostgreSQL: a claim taken again after it ended keeps its history, starts and reviewers", async () => {
+  await withDatabase(async function retaken(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     await startManager(db, GITHUB, "run_a");
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass" });
@@ -157,12 +170,12 @@ test("PostgreSQL: a claim won again after it ended keeps its history, starts and
     expect(await done(db, TENANT, GITHUB, "run_a", [reviewer])).toEqual({ outcome: "ended" });
     const ended = await stateOf(db, CLAIM);
 
-    expect(await claimForIntake(db, TENANT, GITHUB)).toMatchObject({ outcome: "won" });
-    const rewon = await stateOf(db, CLAIM);
-    expect(rewon).toMatchObject({ status: "starting", history: ended["history"], starts: 1, reviewers: [reviewer] });
-    expect(rewon["history"]).toMatchObject([{ head: "h1", runId: "run_a" }]);
-    expect(rewon).not.toHaveProperty("runId");
-    expect(rewon["claimId"]).not.toBe(ended["claimId"]);
+    await liveRun(db, "run_b");
+    expect(await take(db, TENANT, GITHUB, "run_b")).toEqual({ outcome: "idle", reviewers: [reviewer] });
+    const retaken = await stateOf(db, CLAIM);
+    expect(retaken).toMatchObject({ status: "live", runId: "run_b", history: ended["history"], starts: 2, reviewers: [reviewer] });
+    expect(retaken["history"]).toMatchObject([{ head: "h1", runId: "run_a" }]);
+    expect(retaken["claimId"]).not.toBe(ended["claimId"]);
   });
 }, 120_000);
 
@@ -195,6 +208,18 @@ test("PostgreSQL: take skips events another transaction holds, keeps the newest 
   });
 }, 120_000);
 
+test("PostgreSQL: a reviewer result before the claim's first pass stays pending until a webhook gives it a head", async () => {
+  await withDatabase(async function noHead(db) {
+    await recordEvent(db, TENANT, GITHUB, "r1", { type: "reviewer-result", head: "h1", payload: { verdict: "pass" } });
+    await startManager(db, GITHUB, "run_a");
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [] });
+    expect(await stateOf(db, "evt:github:acme/widgets#7:r1")).not.toHaveProperty("consumedBy");
+
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1", events: ["evt:github:acme/widgets#7:r1", "evt:github:acme/widgets#7:d1"] } });
+  });
+}, 60_000);
+
 test("PostgreSQL: an event committed while done waits for the claim's lock keeps the manager running", async () => {
   await withDatabase(async function eventFirst(db) {
     await startManager(db, GITHUB, "run_a");
@@ -207,17 +232,17 @@ test("PostgreSQL: an event committed while done waits for the claim's lock keeps
       await holder.release();
     }
     expect(await within(finishing)).toEqual({ outcome: "more" });
-    expect(await claimForIntake(db, TENANT, GITHUB)).toEqual({ outcome: "live", runId: "run_a" });
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
   });
 }, 120_000);
 
-test("PostgreSQL: an intake waiting on the claim's lock while the claim ends wins it", async () => {
+test("PostgreSQL: a take waiting on the claim's lock while the claim ends takes it over", async () => {
   await withDatabase(async function endedWhileWaiting(db) {
     await startManager(db, GITHUB, "run_a");
+    await liveRun(db, "run_b");
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     const holder = await holdRow(db, CLAIM);
-    const claiming = claimForIntake(db, TENANT, GITHUB);
+    const taking = take(db, TENANT, GITHUB, "run_b");
     try {
       await untilLockWait(db);
     } finally {
@@ -225,17 +250,16 @@ test("PostgreSQL: an intake waiting on the claim's lock while the claim ends win
         await tx.execute(sql`UPDATE corbits_triage.manager_state SET state = (state - 'runId') || '{"status":"ended"}' WHERE key = ${CLAIM}`);
       });
     }
-    expect(await within(claiming)).toMatchObject({ outcome: "won" });
+    expect(await within(taking)).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
   });
 }, 120_000);
 
-test("PostgreSQL: an event that arrives after done ends the claim starts the next manager", async () => {
+test("PostgreSQL: an event that arrives after done ends the claim is taken by the next manager", async () => {
   await withDatabase(async function doneFirst(db) {
     await startManager(db, GITHUB, "run_a");
     expect(await done(db, TENANT, GITHUB, "run_a", [])).toEqual({ outcome: "ended" });
-    const claimed = await intake(db, GITHUB, "d1", "h1");
-    if (claimed.outcome !== "won") throw new Error(`expected to win, got ${claimed.outcome}`);
-    expect(await markLive(db, TENANT, GITHUB, claimed.claimId, "run_b")).toBe(true);
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await liveRun(db, "run_b");
     expect(await take(db, TENANT, GITHUB, "run_b")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
   });
 }, 120_000);
@@ -244,11 +268,10 @@ test("PostgreSQL: a malformed claim fails closed", async () => {
   await withDatabase(async function malformed(db) {
     await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${CLAIM}, 'claim', '{"status":"live","runId":"run_a"}')`);
     await expect(take(db, TENANT, GITHUB, "run_a")).rejects.toThrow("is not a claim");
-    await expect(claimForIntake(db, TENANT, GITHUB)).rejects.toThrow("is not a claim");
 
     const ended = { status: "ended", claimId: "c1", claimedAt: new Date().toISOString(), reviewers: [], starts: 1 };
     await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, 'mgr:bitbucket-datacenter:ACME/widgets#7', 'claim', ${JSON.stringify(ended)}::jsonb)`);
-    await expect(claimForIntake(db, TENANT, BITBUCKET)).rejects.toThrow("is not a claim");
+    await expect(take(db, TENANT, BITBUCKET, "run_a")).rejects.toThrow("is not a claim");
     expect(await stateOf(db, "mgr:bitbucket-datacenter:ACME/widgets#7")).toEqual(ended);
   });
 }, 120_000);
@@ -262,7 +285,7 @@ test("PostgreSQL: a malformed event payload or reviewer is refused", async () =>
     }
     const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE kind = 'event'`);
     expect(stored.events).toBe(0);
-    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle" });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [] });
     const later = { kind: "judge", head: "h1", runId: "run_judge", deadline: new Date().toISOString(), toJSON: () => ({}) };
     await expect(done(db, TENANT, GITHUB, "run_a", [later])).rejects.toThrow("are malformed");
     const nullResult = { kind: "judge", head: "h1", runId: "run_judge", deadline: new Date().toISOString(), result: null } as unknown as typeof later;

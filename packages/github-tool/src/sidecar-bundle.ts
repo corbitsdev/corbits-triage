@@ -30,6 +30,7 @@ import {
   mergePr,
   mirror,
   requestReviewers,
+  sendCodeReview,
 } from "./github";
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
 import { cachedLoads, checkRepo, checkTarget } from "@corbits/repo-read-tool/host-reads";
@@ -204,6 +205,11 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
     ),
   },
   {
+    name: "github_send_code_review",
+    description: "Post a code review as one COMMENT review on sha: each finding the diff shows is an inline comment, the rest are in the review's body. Writes nothing when this App's review already stands on sha, or once the pull request has moved past sha. Never merges.",
+    inputSchema: obj({ repo, number: { type: "integer" }, sha: str, summary: str, comments: { type: "array", items: { type: "object" } }, appLogin: APP_LOGIN }),
+  },
+  {
     name: "github_merge_pr",
     description: "Merge a pull request only when GitHub reports mergeable is true. Refuses otherwise. Never called from github_mirror.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
@@ -326,6 +332,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
       return addAssignees(gh, { repo: a.repo, number: a.number, assignees: a.assignees });
     case "github_request_reviewers":
       return requestReviewers(gh, { repo: a.repo, number: a.number, reviewers: a.reviewers, teamReviewers: a.teamReviewers });
+    case "github_send_code_review":
+      return sendCodeReview(gh, { repo: a.repo, number: a.number, sha: a.sha, summary: a.summary, comments: a.comments }, appLoginOf(call));
     case "github_merge_pr":
       return mergePr(gh, { repo: a.repo, number: a.number });
     default:
@@ -392,5 +400,6 @@ export const githubWrite = defineGithubTool("@corbits/github-write-tool/sidecar-
   "github_create_issue_comment",
   "github_add_assignees",
   "github_request_reviewers",
+  "github_send_code_review",
   "github_merge_pr",
 ]);

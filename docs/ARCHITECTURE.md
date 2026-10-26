@@ -222,6 +222,38 @@ any other tenant or an unknown sender.
   triage, then code review behind a gate, in one run ([PR workflow](#pr-workflow)).
   The portal deploys a host's while a repository's policy file needs it; the
   hub picks it per pull request.
+- `triage-listener-github` and `triage-listener-bitbucket-datacenter`
+  (`triageListener` in `@corbits/triage-manager`): a workspace's listener for
+  one host. The hub mails it each pull request mail; it deploys that pull
+  request's manager through the stock deploy route with its run token, from
+  the manager's source asset at the commit and the offerings fixed in its own
+  definition when the release was published, and hands the hub's mail on to
+  it. It moves only on the hub's mail. Its definition declares `workflow:*`
+  `create` and `read` on the manager's asset, sourced from its creator.
+- `triage-manager-github` and `triage-manager-bitbucket-datacenter`
+  (`triageManager`): one live run per pull request, which runs only while it
+  has work, and the only workflow that writes to the pull request. It takes
+  mail only from the listener that deployed it (`invoker`) and the code reviews
+  it mailed (`correspondent`). Each mail runs one body: take claims the pull
+  request and its pending events, pr-triage's facts, rules and evaluate run on
+  the mail's request (rules that need the judge post nothing yet), and done
+  records its reviewers. When the policy turns code review on and triage's
+  rules let it past, a pass deploys the code review from the release fixed in
+  the manager's definition, mails it the head's review request, and posts
+  nothing. The pass that collects the review mirrors the verdict, then posts
+  the review through the host's `send_code_review` tool, so they go up
+  together. When done ends the claim, the run stops itself through the
+  stop-run route, under a `manage` grant on its own run.
+- `pr-code-review-reviewer-github` and
+  `pr-code-review-reviewer-bitbucket-datacenter` (`codeReviewReviewer` in
+  `@corbits/pr-code-review`): the code review a manager deploys, alone on its
+  sidecar. It takes mail only from that manager, reviews the request, records
+  its `StageResult` through the reviewer-result route, mails the manager back
+  and stops. It posts nothing to the pull request.
+- A run sends mail only through an agent step's transport, so the listener,
+  the manager and the code review mail through one agent whose director makes
+  no model call: it runs its one tool, which waits for a just-deployed run to
+  reach a sidecar and then mails it as the sending run.
 
 ## Triage pipeline
 
@@ -679,14 +711,19 @@ read it, and passes the rest of the request to stock.
   manager claim (`mgr:<source>:<repo>#<n>`: status, the run it names, the
   open pass, reviewers and closed passes) and its pending events
   (`evt:<source>:<repo>#<n>:<deliveryId>`), each change one short
-  transaction. Intake commits the event (a redelivery is a no-op), then
-  upserts the claim so exactly one caller wins one that is missing or
-  ended. Take and done refuse any run the claim does not name. Take resumes
+  transaction. Recording an event is a no-op on a redelivery. Take claims
+  the pull request for the calling run when no live run holds it: the
+  claim is missing or ended, or the run it names has gone, whose open pass
+  the caller resumes. Concurrent takes queue on the claim's row lock, so one
+  claims it and every other is refused and stops itself. Take and done
+  refuse any run the claim does not name. Take resumes
   the open pass or takes every pending event no other transaction holds,
-  keeps the newest head and consumes reviewer results for other heads. Done
+  keeps the newest head and consumes reviewer results for other heads;
+  reviewer results that arrive before the first pass stay pending. Either
+  way it answers the reviewers the last done recorded. Done
   closes the pass and, under the claim's lock, ends the claim only when no
   event is pending and no reviewer of the current head is due, so an event
-  committed before it is taken by this manager and one after it starts the
+  committed before it is taken by this manager and one after it by the
   next. A manager run reaches take and done, and a reviewer run records its
   result (under its own run id), through `POST
   /api/tenants/:tenantId/manager/{take,done,reviewer-result}`
@@ -696,6 +733,15 @@ read it, and passes the rest of the request to stock.
   answer 409 `not_manager` to a run the claim does not name.
   Reviewer-result is not fenced: any run with the grant records under its
   own run id, and the manager matches results to its reviewers by run id.
+  Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's
+  kind (`code-review` or `judge`), the head it reviewed and its result, a
+  code review's output or a judge's verdict detail.
+- In a workspace with a host's listener live, every pull request mail
+  (`sendTriageMail`) goes to it instead of a pr-triage worker
+  (`apps/hub/src/manager-intake.ts`): the hub records it as a webhook event,
+  adds the head's code review request when the policy turns code review on,
+  and mails the listener. The code review feed sends nothing for that host,
+  since the manager reviews. A workspace with no listener routes as before.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

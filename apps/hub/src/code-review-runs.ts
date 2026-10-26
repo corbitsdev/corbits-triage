@@ -7,7 +7,7 @@ import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { classifyTerminalEvent, WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { failureReason } from "@corbits/pr-code-review/failures";
-import { CodeReviewComment, REPO_SOURCES, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
+import { CodeReviewComment, CodeReviewOutput, DiffCut, REPO_SOURCES, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
 import { diffHash, type PullRequestToReview } from "./code-review-feed.js";
 import { CODE_REVIEW_WORKFLOWS } from "./github/source-workflow.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
@@ -28,8 +28,6 @@ const Source = type.enumerated(...REPO_SOURCES);
 /** `head` is the pull request's head as the asker last read it, which the newest finished review may stand for. */
 export const CodeReviewQuery = type({ repo: "string > 0", "source?": Source, number: "string.integer.parse", "head?": "string > 0" });
 
-const Cut = type({ lines: "number", of: "number", "unread?": "string[]" });
-const Review = type({ summary: "string", comments: CodeReviewComment.array(), budgetExhausted: "boolean", "cut?": Cut });
 const CompletedRun = type({
   status: "'completed'",
   headSha: "string",
@@ -37,7 +35,7 @@ const CompletedRun = type({
   summary: "string",
   comments: CodeReviewComment.array(),
   budgetExhausted: "boolean",
-  "cut?": Cut,
+  "cut?": DiffCut,
   "diffHash?": "string",
 });
 /** A failed run's `reason` says in fixed words why it failed; the run log keeps the detail. */
@@ -52,7 +50,7 @@ type Found = Omit<typeof CodeReviewFound.infer, "carriedTo">;
 
 type Run = { source: RepoSource; repo: string; number: number; review: typeof ReviewRun.infer };
 
-const REQUEST = type({ kind: "'code-review'", number: "number", checkout: { source: Source, repo: "string", sha: "string" }, "cut?": Cut, "diffHash?": "string" });
+const REQUEST = type({ kind: "'code-review'", number: "number", checkout: { source: Source, repo: "string", sha: "string" }, "cut?": DiffCut, "diffHash?": "string" });
 
 function isTerminal(event: WorkflowRunEvent): boolean {
   return classifyTerminalEvent(event.type).terminal;
@@ -65,7 +63,7 @@ function runOf(events: readonly WorkflowRunEvent[], status: string, createdAt: D
   if (request instanceof type.errors) return undefined;
   const run = { source: request.checkout.source, repo: request.checkout.repo, number: request.number };
   const base = { headSha: request.checkout.sha, startedAt: createdAt.toISOString() };
-  const output = Review(inlineOutput(events.findLast((event) => event.type === "StepCompleted" && event.body["stepId"] === "review")));
+  const output = CodeReviewOutput(inlineOutput(events.findLast((event) => event.type === "StepCompleted" && event.body["stepId"] === "review")));
   if (!(output instanceof type.errors)) {
     const comments = output.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
     return { ...run, review: { ...base, status: "completed", summary: output.summary, comments, budgetExhausted: output.budgetExhausted, ...(output.cut && { cut: output.cut }), ...(request.diffHash && { diffHash: request.diffHash }) } };

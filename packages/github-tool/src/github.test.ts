@@ -256,6 +256,7 @@ describe("github write tool approval", () => {
       { name: "github_create_issue_comment", approval: "ask" },
       { name: "github_add_assignees", approval: "ask" },
       { name: "github_request_reviewers", approval: "ask" },
+      { name: "github_send_code_review", approval: "ask" },
       { name: "github_merge_pr", approval: "ask" },
     ]);
   });

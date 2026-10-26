@@ -1,4 +1,4 @@
-import { citationOf, citationUrl, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, citationOf, citationUrl, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, notReviewedNote, render, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
@@ -850,4 +850,20 @@ export function summarize(results: Array<RenderOutput | null>): BacklogSummary {
   const byState: Record<string, number> = {};
   for (const r of done) byState[r.state] = (byState[r.state] ?? 0) + 1;
   return { total: results.length, classified: done.length, coverage: `${done.length}/${results.length}`, byState };
+}
+
+/** Unread files listed in a posted review; the rest are counted. */
+const POSTED_UNREAD = 20;
+
+function cutNotes({ cut }: Pick<CodeReviewOutput, "cut">): string[] {
+  if (!cut) return [];
+  if (!cut.unread) return [SOME_NOT_REVIEWED_NOTE];
+  const listed = cut.unread.slice(0, POSTED_UNREAD).map((path) => `- ${inlineCode(path)}`);
+  const more = cut.unread.length > POSTED_UNREAD ? [`- and ${cut.unread.length - POSTED_UNREAD} more`] : [];
+  return [[notReviewedNote(cut.unread.length), ...listed, ...more].join("\n")];
+}
+
+/** A code review's posted body: the model's summary, then a fixed line per condition: it stopped early, or its diff was cut. */
+export function codeReviewSummary(review: Pick<CodeReviewOutput, "summary" | "budgetExhausted" | "cut">): string {
+  return [review.summary, ...(review.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...cutNotes(review)].filter(Boolean).join("\n\n");
 }

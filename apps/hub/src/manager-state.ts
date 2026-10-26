@@ -1,11 +1,11 @@
-// A pull request's manager claim and the events waiting for it, one `manager_state` row each. Intake commits its event
-// before it touches the claim, and done checks for pending events under the claim's lock, so an event is either taken
-// by the live manager or starts a new one. Only the run the claim names takes events or finishes a pass.
+// A pull request's manager claim and the events waiting for it, one `manager_state` row each. A manager's take claims the
+// pull request when no live run holds it, and done checks for pending events under the claim's lock, so an event is
+// either taken by the live manager or by the next one. Only the run the claim names takes events or finishes a pass.
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, like, sql } from "drizzle-orm";
 import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
-import type { DB } from "@intx/db";
+import { schema, type DB } from "@intx/db";
 import type { RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { triageSchema } from "./triage-db.js";
@@ -20,7 +20,7 @@ const managerState = triageSchema.table("manager_state", {
 export const PassState = type({ id: "string > 0", head: "string > 0", events: "string[]", takenAt: "string.date.iso", takes: "number.integer >= 1" });
 export const ReviewerState = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deadline: "string.date.iso", "result?": "string | number | boolean | object" });
 const ClaimState = type({
-  status: "'starting' | 'live' | 'ended'",
+  status: "'live' | 'ended'",
   claimId: "string > 0",
   claimedAt: "string.date.iso",
   "runId?": "string > 0",
@@ -29,7 +29,7 @@ const ClaimState = type({
   history: PassState.and({ runId: "string > 0", doneAt: "string.date.iso" }).array(),
   starts: "number.integer >= 0",
 });
-export const EventPayload = type("Record<string, unknown>").narrow(function plainObject(value) {
+const EventPayload = type("Record<string, unknown>").narrow(function plainObject(value) {
   return !Array.isArray(value);
 });
 export const EventState = type({
@@ -48,8 +48,7 @@ type ManagerEvent = typeof EventState.infer;
 export type PullRequestRef = { source: RepoSource; repo: string; number: number };
 type TakenEvent = { key: string; event: ManagerEvent };
 
-type IntakeClaim = { outcome: "won"; claimId: string } | { outcome: "live"; runId: string } | { outcome: "starting" };
-type TakeResult = { outcome: "refused" } | { outcome: "idle" } | { outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean };
+type TakeResult = { outcome: "refused" } | { outcome: "idle"; reviewers: Reviewer[] } | { outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean; reviewers: Reviewer[] };
 type DoneResult = { outcome: "refused" } | { outcome: "ended" } | { outcome: "more" };
 
 function pullKey({ source, repo, number }: PullRequestRef): string {
@@ -130,66 +129,59 @@ export async function recordEvent(db: DB["db"], tenantId: string, pr: PullReques
   return inserted.length === 1;
 }
 
-/** Called after `recordEvent` commits. Exactly one caller wins a claim that is missing or ended; its history carries over. */
-export async function claimForIntake(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<IntakeClaim> {
-  const key = claimKey(pr);
-  const fresh = { status: "starting" as const, claimId: randomUUID(), claimedAt: new Date().toISOString() };
-  return db.transaction(async function claim(tx) {
-    const won = await tx.insert(managerState)
-      .values({ tenantId, key, kind: "claim", state: claimOf(key, { ...fresh, reviewers: [], history: [], starts: 0 }) })
-      .onConflictDoUpdate({
-        target: [managerState.tenantId, managerState.key],
-        set: { state: sql`(${managerState.state} - 'runId') || ${JSON.stringify(fresh)}::jsonb` },
-        setWhere: sql`${managerState.state}->>'status' = 'ended'`,
-      })
-      .returning({ state: managerState.state });
-    if (won.length === 1) return { outcome: "won", claimId: claimOf(key, won[0].state).claimId };
-    const current = await lockClaim(tx, tenantId, pr);
-    if (current?.status === "live" && current.runId !== undefined) return { outcome: "live", runId: current.runId };
-    if (current?.status === "starting") return { outcome: "starting" };
-    throw new Error(`manager_state ${key} was refused to intake but is ${current?.status ?? "missing"}`);
-  });
-}
-
-/** Names `runId` as the manager, only while the claim is still the one `claimId` won. */
-export async function markLive(db: DB["db"], tenantId: string, pr: PullRequestRef, claimId: string, runId: string): Promise<boolean> {
-  return db.transaction(async function live(tx) {
-    const claim = await lockClaim(tx, tenantId, pr);
-    if (claim?.status !== "starting" || claim.claimId !== claimId) return false;
-    await writeClaim(tx, tenantId, pr, { ...claim, status: "live", runId, starts: claim.starts + 1 });
-    return true;
-  });
+async function runGone(tx: Tx, runId: string): Promise<boolean> {
+  const [run] = await tx.select({ status: schema.workflowRun.status }).from(schema.workflowRun).where(eq(schema.workflowRun.id, runId));
+  return !run || !schema.isLiveWorkflowRunStatus(run.status);
 }
 
 /**
- * The open pass again, or a new one on the newest head over every pending event no other transaction holds. Reviewer
- * results for another head are consumed and left out.
+ * The claim `runId` holds, taken for it when no live run holds it: it is missing or ended, or the run it names has gone,
+ * whose open pass the caller resumes. Undefined while another live run holds it. Concurrent callers queue on the
+ * claim's row lock, so exactly one takes it.
+ */
+async function claimFor(tx: Tx, tenantId: string, pr: PullRequestRef, runId: string): Promise<Claim | undefined> {
+  const key = claimKey(pr);
+  const fresh = { status: "live" as const, claimId: randomUUID(), claimedAt: new Date().toISOString(), runId };
+  await tx.insert(managerState).values({ tenantId, key, kind: "claim", state: claimOf(key, { ...fresh, reviewers: [], history: [], starts: 1 }) }).onConflictDoNothing();
+  const claim = await lockClaim(tx, tenantId, pr);
+  if (!claim) throw new Error(`manager_state ${key} vanished under its lock`);
+  if (claim.status === "live" && claim.runId === runId) return claim;
+  if (claim.status === "live" && claim.runId !== undefined && !(await runGone(tx, claim.runId))) return undefined;
+  const taken = { ...claim, ...fresh, starts: claim.starts + 1 };
+  await writeClaim(tx, tenantId, pr, taken);
+  return taken;
+}
+
+/**
+ * Claims the pull request for `runId` when no live run holds it, then answers the open pass again, or a new one on the newest head over every pending event no other transaction holds. Reviewer
+ * results for another head are consumed and left out. Either way with the reviewers the last done recorded.
  */
 export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string): Promise<TakeResult> {
   return db.transaction(async function takePending(tx) {
-    const claim = await lockClaim(tx, tenantId, pr);
-    if (!fencedTo(claim, runId)) return { outcome: "refused" };
+    const claim = await claimFor(tx, tenantId, pr, runId);
+    if (!claim) return { outcome: "refused" };
     if (claim.pass) {
       const pass = { ...claim.pass, takes: claim.pass.takes + 1 };
       await writeClaim(tx, tenantId, pr, { ...claim, pass });
-      return { outcome: "pass", pass, events: await eventsByKey(tx, tenantId, pass.events), resumed: true };
+      return { outcome: "pass", pass, events: await eventsByKey(tx, tenantId, pass.events), resumed: true, reviewers: claim.reviewers };
     }
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
       .where(pending(tenantId, pr))
       .for("update", { skipLocked: true });
     const taken = eventsOf(rows);
-    if (taken.length === 0) return { outcome: "idle" };
+    const head = headOf(taken, claim);
+    // Reviewer results before any pass have no head to be judged against yet, so they stay pending.
+    if (taken.length === 0 || head === undefined) return { outcome: "idle", reviewers: claim.reviewers };
     const id = randomUUID();
     const takenAt = new Date().toISOString();
     await tx.update(managerState)
       .set({ state: sql`${managerState.state} || ${JSON.stringify({ consumedBy: id, consumedAt: takenAt })}::jsonb` })
       .where(and(eq(managerState.tenantId, tenantId), inArray(managerState.key, taken.map((row) => row.key))));
-    const head = headOf(taken, claim);
     const kept = taken.filter((row) => row.event.type === "webhook" || row.event.head === head);
-    if (head === undefined || kept.length === 0) return { outcome: "idle" };
+    if (kept.length === 0) return { outcome: "idle", reviewers: claim.reviewers };
     const pass = { id, head, events: kept.map((row) => row.key), takenAt, takes: 1 };
     await writeClaim(tx, tenantId, pr, { ...claim, pass });
-    return { outcome: "pass", pass, events: kept, resumed: false };
+    return { outcome: "pass", pass, events: kept, resumed: false, reviewers: claim.reviewers };
   });
 }
 
