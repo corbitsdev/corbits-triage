@@ -4,50 +4,64 @@ import { asRecord } from "@corbits/common";
 import { repoSourceOf, RULE_GATES, rulesGate } from "@corbits/triage-contracts";
 import { call, hostWrite, toolName } from "@corbits/triage-workflows/logic/host";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
-import type { MailInput } from "../mail.js";
+import { Mailed, type MailInput } from "../mail.js";
 import { Release } from "../release.js";
-import { deploy, pullRequestMailOf } from "./hub.js";
-import { TakeOutput, type Reviewer } from "./manager.js";
+import { deploy, managerMailOf, manageMail } from "./hub.js";
+import { Reviewer, TakeOutput } from "./manager.js";
 
-/** How long the manager waits for a code review it deployed before its claim may end without it. */
-const REVIEW_DEADLINE_MS = 60 * 60_000;
+/** How long the manager waits for a code review it deployed, from its deploy to its report. */
+export const REVIEW_DEADLINE_MS = 60 * 60_000;
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES) });
-const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, evaluateRules: { output: "unknown" } });
+const ScopeInput = type({ take: { output: TakeOutput }, evaluateRules: { output: "unknown" } });
 
 /**
- * Whether the pass deploys code review, and whether it posts. Code review runs once per head, when the policy turns it on
- * and triage's rules let it past as its `when.rules` says; the pass that deploys it, and any before its review is in,
- * post nothing, so the verdict and the review go up together.
+ * Whether the pass deploys code review, and whether it posts. Code review runs once per head, when the policy turns it on,
+ * triage's rules let it past as its `when.rules` says and the hub read the head's review request. The pass that deploys
+ * it, and every pass before its review is in, posts nothing, so the verdict and the review go up together; one that
+ * reported a failure or ran past its deadline posts the verdict alone.
  */
 export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean }> {
   const parsed = ScopeInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewScope: ${parsed.summary}`);
-  const { request } = pullRequestMailOf(parsed.payload);
-  const part = CodeReviewPart(request["codeReview"]);
-  const { head, review, reviewers } = parsed.take.output;
+  const { taken, head, review, reviewFailed, overdue, reviewers } = parsed.take.output;
+  const part = CodeReviewPart(taken?.["codeReview"]);
   const reviewed = !(part instanceof type.errors) && part.on && rulesGate(part.rules, asRecord(parsed.evaluateRules.output)?.["checks"]).open;
-  if (!reviewed || review) return { deploy: false, post: true };
+  if (!reviewed || review || reviewFailed || overdue || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true };
   const pending = reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);
-  return { deploy: !pending && request["codeReviewRequest"] !== undefined, post: false };
+  return { deploy: !pending, post: false };
 }
 
 const DeployInput = type({ release: Release, payload: "unknown", take: { output: TakeOutput } });
 
-/** Deploys code review from the release; it is mailed the head's review request and the mail to reply to this run with. */
+/**
+ * Deploys code review from the release; it is mailed the head's review request and, to reply with, the mail that wakes
+ * this manager. The mail waits for the new run until the review's deadline.
+ */
 export async function deployReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ reviewer: Reviewer; mail: MailInput }> {
   const parsed = DeployInput(input);
   if (parsed instanceof type.errors) throw new Error(`deployReview: ${parsed.summary}`);
-  const { tenantId, runId, request } = pullRequestMailOf(parsed.payload);
-  const { head } = parsed.take.output;
-  if (head === undefined) throw new Error("deployReview: the pass names no head");
-  const reviewRun = await deploy(ctx, tenantId, parsed.release);
-  const reply = { to: runId, content: JSON.stringify(request) };
-  const content = JSON.stringify({ ...asRecord(request["codeReviewRequest"]), tenantId, reply });
-  return {
-    reviewer: { kind: "code-review", head, runId: reviewRun, deadline: new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString() },
-    mail: { tenantId, to: reviewRun, content, fresh: true },
-  };
+  const { tenantId, runId, pullRequest } = managerMailOf(parsed.payload);
+  const { head, taken } = parsed.take.output;
+  if (head === undefined || !taken) throw new Error("deployReview: the pass names no head");
+  const reviewRun = await deploy(ctx, "deploy", tenantId, parsed.release);
+  const deadline = new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString();
+  const content = JSON.stringify({ ...asRecord(taken["codeReviewRequest"]), tenantId, reply: { to: runId, content: manageMail(tenantId, pullRequest) } });
+  return { reviewer: { kind: "code-review", head, runId: reviewRun, deadline }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
+}
+
+const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mailReview: { output: "string" } });
+
+/**
+ * The review becomes a reviewer to wait for once its mail went. A mail that failed by its deadline leaves the pass to
+ * post the verdict without code review.
+ */
+export async function reviewMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
+  const parsed = MailedInput(input);
+  if (parsed instanceof type.errors) throw new Error(`reviewMailed: ${parsed.summary}`);
+  const mailed = Mailed(parsed.mailReview.output);
+  if (mailed instanceof type.errors) throw new Error(`reviewMailed: ${mailed.summary}`);
+  return mailed.mailed ? { reviewer: parsed.deployReview.output.reviewer, post: false } : { post: true };
 }
 
 const PostInput = type({ payload: "unknown", take: { output: TakeOutput } });
@@ -56,13 +70,13 @@ const PostInput = type({ payload: "unknown", take: { output: TakeOutput } });
 export async function postReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ posted: boolean }> {
   const parsed = PostInput(input);
   if (parsed instanceof type.errors) throw new Error(`postReview: ${parsed.summary}`);
-  const { review, head } = parsed.take.output;
-  if (!review || head === undefined) return { posted: false };
+  const { review, head, taken } = parsed.take.output;
+  if (!review || head === undefined || !taken) return { posted: false };
   const summary = codeReviewSummary(review);
   if (!summary && review.comments.length === 0) return { posted: false };
-  const { pullRequest, request } = pullRequestMailOf(parsed.payload);
+  const { pullRequest } = managerMailOf(parsed.payload);
   const source = repoSourceOf(pullRequest.source);
-  const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: review.comments, appLogin: request["appLogin"] };
+  const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: review.comments, appLogin: taken["appLogin"] };
   const result = await hostWrite(ctx)(source, call(toolName(source, "send_code_review"), args, `review:${head}`));
   if (result.isError) throw new Error(`postReview: ${JSON.stringify(result.content)}`);
   return { posted: true };

@@ -159,7 +159,7 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
     checkAgent: structuredAgent("code-review-check", "check", CHECK_SCHEMA),
     writeAgent: structuredAgent("code-review-write", "write", WRITE_SCHEMA),
     /** Replies to the manager that deployed the review; it makes no model call. */
-    mailAgent: mailAgentOf(mail, inference("write")),
+    mailAgent: mailAgentOf(mail, inference("write"), { tolerate: false }),
   };
 }
 

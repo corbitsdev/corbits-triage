@@ -29,8 +29,9 @@ const PullRequest = type({ source: type.enumerated(...REPO_SOURCES), repo: /^[\w
 const DoneBody = PullRequest.and({ reviewers: ReviewerState.array() });
 const ReviewerResultBody = PullRequest.and(StageResult);
 
-const Taken = type({ outcome: "'idle'", reviewers: ReviewerState.array() }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean", reviewers: ReviewerState.array() });
-const Done = type({ outcome: "'ended' | 'more'" });
+const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array() } as const;
+const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean", ...Latest });
+const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 const Recorded = type({ recorded: "boolean" });
 
 const TAGS = ["manager"];
@@ -76,7 +77,7 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     TAKE_PATH,
     describeRoute({
       summary: "Take the pull request's pending events as its manager",
-      description: `Run token only. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`. ${NOT_MANAGER}`,
+      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded and \`request\`, the newest pull request mail the hub recorded. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("The pass to work on, or idle", Taken), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),
@@ -95,7 +96,7 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     DONE_PATH,
     describeRoute({
       summary: "Close the manager's pass and record its reviewers",
-      description: `Run token only. \`ended\`: no event is pending and no reviewer of the current head is due, so the claim ended and the run should end. \`more\`: the manager waits for its next mail. ${NOT_MANAGER}`,
+      description: `Run token only. \`ended\`: no event is pending and no reviewer of the current head is due, so the claim ended and the run should end. \`more\`: the manager takes again at once, or with \`wait\` after waiting for its reviewer. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("Whether the manager is done", Done), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),
@@ -124,8 +125,8 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     granted,
     body(ReviewerResultBody),
     async function reviewerResult(c) {
-      const valid = c.req.valid("json");
-      const recorded = await recordEvent(db, c.get("tenant").id, valid, c.get("runId"), { type: "reviewer-result", head: valid.head, payload: { kind: valid.kind, result: valid.result } });
+      const { source, repo, number, head, ...reported } = c.req.valid("json");
+      const recorded = await recordEvent(db, c.get("tenant").id, { source, repo, number }, c.get("runId"), { type: "reviewer-result", head, payload: reported });
       return c.json({ recorded });
     },
   );

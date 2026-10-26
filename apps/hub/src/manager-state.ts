@@ -2,7 +2,7 @@
 // pull request when no live run holds it, and done checks for pending events under the claim's lock, so an event is
 // either taken by the live manager or by the next one. Only the run the claim names takes events or finishes a pass.
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, like, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
 import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
@@ -48,8 +48,9 @@ type ManagerEvent = typeof EventState.infer;
 export type PullRequestRef = { source: RepoSource; repo: string; number: number };
 type TakenEvent = { key: string; event: ManagerEvent };
 
-type TakeResult = { outcome: "refused" } | { outcome: "idle"; reviewers: Reviewer[] } | { outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean; reviewers: Reviewer[] };
-type DoneResult = { outcome: "refused" } | { outcome: "ended" } | { outcome: "more" };
+type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[] };
+type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean } & Latest);
+type DoneResult = { outcome: "refused" } | { outcome: "ended" } | { outcome: "more"; wait: boolean };
 
 function pullKey({ source, repo, number }: PullRequestRef): string {
   return `${source}:${repo}#${number}`;
@@ -80,9 +81,14 @@ function eventOf(key: string, state: unknown): ManagerEvent {
   return event;
 }
 
+/** The pull request's event keys' prefix as a LIKE pattern. */
+function eventPrefix(pr: PullRequestRef): string {
+  return eventKey(pr, "").replace(/[\\%_]/g, "\\$&");
+}
+
 /** The kind is a literal so a generic plan still matches the partial index. */
 function pending(tenantId: string, pr: PullRequestRef) {
-  const prefix = eventKey(pr, "").replace(/[\\%_]/g, "\\$&");
+  const prefix = eventPrefix(pr);
   return and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, like(managerState.key, `${prefix}%`));
 }
 
@@ -152,9 +158,27 @@ async function claimFor(tx: Tx, tenantId: string, pr: PullRequestRef, runId: str
   return taken;
 }
 
+async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, events: readonly TakenEvent[], claim: Claim): Promise<Latest> {
+  const request = await newestRequest(tx, tenantId, pr, events);
+  return { ...(request && { request }), reviewers: claim.reviewers };
+}
+
+/** The newest pull request mail among `events`, else the newest one recorded for the pull request. */
+async function newestRequest(tx: Tx, tenantId: string, pr: PullRequestRef, events: readonly TakenEvent[]): Promise<Record<string, unknown> | undefined> {
+  const own = events.findLast((row) => row.event.type === "webhook");
+  if (own) return own.event.payload;
+  const prefix = eventPrefix(pr);
+  const [row] = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${prefix}%`), sql`${managerState.state}->'payload'->>'kind' = 'pr'`))
+    .orderBy(desc(sql`${managerState.state}->>'receivedAt'`))
+    .limit(1);
+  return row && eventOf(row.key, row.state).payload;
+}
+
 /**
- * Claims the pull request for `runId` when no live run holds it, then answers the open pass again, or a new one on the newest head over every pending event no other transaction holds. Reviewer
- * results for another head are consumed and left out. Either way with the reviewers the last done recorded.
+ * Claims the pull request for `runId` when no live run holds it, then answers the open pass again, or a new one on the
+ * newest head over every pending event no other transaction holds. Reviewer results for another head are consumed and
+ * left out. Either way with the reviewers the last done recorded and the newest pull request mail.
  */
 export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string): Promise<TakeResult> {
   return db.transaction(async function takePending(tx) {
@@ -163,7 +187,8 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     if (claim.pass) {
       const pass = { ...claim.pass, takes: claim.pass.takes + 1 };
       await writeClaim(tx, tenantId, pr, { ...claim, pass });
-      return { outcome: "pass", pass, events: await eventsByKey(tx, tenantId, pass.events), resumed: true, reviewers: claim.reviewers };
+      const events = await eventsByKey(tx, tenantId, pass.events);
+      return { outcome: "pass", pass, events, resumed: true, ...(await latest(tx, tenantId, pr, events, claim)) };
     }
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
       .where(pending(tenantId, pr))
@@ -171,23 +196,24 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     const taken = eventsOf(rows);
     const head = headOf(taken, claim);
     // Reviewer results before any pass have no head to be judged against yet, so they stay pending.
-    if (taken.length === 0 || head === undefined) return { outcome: "idle", reviewers: claim.reviewers };
+    if (taken.length === 0 || head === undefined) return { outcome: "idle", ...(await latest(tx, tenantId, pr, [], claim)) };
     const id = randomUUID();
     const takenAt = new Date().toISOString();
     await tx.update(managerState)
       .set({ state: sql`${managerState.state} || ${JSON.stringify({ consumedBy: id, consumedAt: takenAt })}::jsonb` })
       .where(and(eq(managerState.tenantId, tenantId), inArray(managerState.key, taken.map((row) => row.key))));
     const kept = taken.filter((row) => row.event.type === "webhook" || row.event.head === head);
-    if (kept.length === 0) return { outcome: "idle", reviewers: claim.reviewers };
+    if (kept.length === 0) return { outcome: "idle", ...(await latest(tx, tenantId, pr, [], claim)) };
     const pass = { id, head, events: kept.map((row) => row.key), takenAt, takes: 1 };
     await writeClaim(tx, tenantId, pr, { ...claim, pass });
-    return { outcome: "pass", pass, events: kept, resumed: false, reviewers: claim.reviewers };
+    return { outcome: "pass", pass, events: kept, resumed: false, ...(await latest(tx, tenantId, pr, kept, claim)) };
   });
 }
 
 /**
  * Closes the open pass and records `reviewers`. The claim ends when no event is pending and no reviewer of the current
- * head is still due; otherwise the manager has more to do.
+ * head is still due; otherwise the manager has more to do: at once when an event is pending, else after it waits for
+ * its reviewer.
  */
 export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[]): Promise<DoneResult> {
   return db.transaction(async function finishPass(tx) {
@@ -199,11 +225,11 @@ export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     const history = claim.pass ? [...claim.history, { ...claim.pass, runId, doneAt: now.toISOString() }] : claim.history;
     const head = history.at(-1)?.head;
     const due = recorded.some((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime());
-    const waiting = !due && (await tx.select({ key: managerState.key }).from(managerState).where(pending(tenantId, pr)).limit(1)).length > 0;
+    const waiting = (await tx.select({ key: managerState.key }).from(managerState).where(pending(tenantId, pr)).limit(1)).length > 0;
     const closed = { claimId: claim.claimId, claimedAt: claim.claimedAt, reviewers: recorded, history, starts: claim.starts };
     if (due || waiting) {
       await writeClaim(tx, tenantId, pr, { ...closed, status: "live", runId });
-      return { outcome: "more" };
+      return { outcome: "more", wait: !waiting };
     }
     await writeClaim(tx, tenantId, pr, { ...closed, status: "ended" });
     return { outcome: "ended" };

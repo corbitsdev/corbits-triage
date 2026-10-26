@@ -53,6 +53,17 @@ export function triggerRequestOf(payload: unknown): Record<string, unknown> | un
   return undefined;
 }
 
+/**
+ * A step's request and whether it carries the hub's authority: a mail from the hub's sender, or the request a manager's
+ * take read back from the hub, which the manager hands over as the step's whole input `{ taken }`. A mail is never that.
+ */
+export function trustedRequestOf(input: unknown): { request: Record<string, unknown> | undefined; trusted: boolean } {
+  const record = asRecord(input);
+  const taken = asRecord(record?.["taken"]);
+  if (taken && Object.keys(record!).length === 1) return { request: taken, trusted: true };
+  return { request: triggerRequestOf(input), trusted: isFromTriageSender(input) };
+}
+
 export const APPROVE_DO_KIND = "approve-do";
 
 /** The hub's mail for a head it holds for its CI; triage writes only the waiting marker. */

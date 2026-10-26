@@ -20,20 +20,26 @@ export function mailOf(payload: unknown): { request: Record<string, unknown>; ru
   return { request, runId: to[0].split("@")[0]! };
 }
 
-/** What a pull request mail names: the tenant, the pull request and its head. */
-export interface PullRequestMail {
+/** The kind of the mail that wakes a manager, which names only its pull request; the manager reads what to do from take. */
+const MANAGE_KIND = "manage";
+
+/** What a manager's mail names: the tenant and the pull request, and the run it was sent to. */
+export interface ManagerMail {
   tenantId: string;
   runId: string;
   pullRequest: PullRequest;
-  head: string;
-  request: Record<string, unknown>;
 }
 
-export function pullRequestMailOf(payload: unknown): PullRequestMail {
+export function managerMailOf(payload: unknown): ManagerMail {
   const { request, runId } = mailOf(payload);
-  const { tenantId, repo, prNumber, repoSource, headSha } = request;
-  if (typeof tenantId !== "string" || typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string") throw new Error("the mail names no tenant, repository, pull request or head");
-  return { tenantId, runId, pullRequest: { source: repoSourceOf(repoSource), repo, number: prNumber }, head: headSha, request };
+  const { kind, tenantId, repo, prNumber, repoSource } = request;
+  if (kind !== MANAGE_KIND || typeof tenantId !== "string" || typeof repo !== "string" || typeof prNumber !== "number") throw new Error("the mail names no tenant, repository or pull request");
+  return { tenantId, runId, pullRequest: { source: repoSourceOf(repoSource), repo, number: prNumber } };
+}
+
+/** The mail that wakes the manager of `pullRequest`. */
+export function manageMail(tenantId: string, { source, repo, number }: PullRequest): string {
+  return JSON.stringify({ kind: MANAGE_KIND, tenantId, repo, repoSource: source, prNumber: number });
 }
 
 export function tenantPath(tenantId: string, path: string): string {
@@ -63,11 +69,11 @@ export function answered<T>(answer: HubAnswer, what: string, schema: Type<T>): T
 
 const Deployed = type({ id: "string > 0" });
 
-/** Deploys the release's workflow through the stock deploy route as this run; the deployment's run id. */
-export async function deploy(ctx: EffectContext, tenantId: string, { workflow, offerings }: Release): Promise<string> {
+/** Deploys the release's workflow through the stock deploy route as this run, under `effectId`; the deployment's run id. */
+export async function deploy(ctx: EffectContext, effectId: string, tenantId: string, { workflow, offerings }: Release): Promise<string> {
   const source = { kind: "asset", assetId: workflow.assetId, package: { format: "source", commitSha: workflow.commitSha, packageName: workflow.packageName } };
   const body = { source, entry: workflow.entry, sourceOfferingIds: offerings.ids, defaultSourceOfferingId: offerings.defaultId };
-  const answer = await callHub(ctx, "deploy", tenantPath(tenantId, "/workflows/deployments"), "POST", body);
+  const answer = await callHub(ctx, effectId, tenantPath(tenantId, "/workflows/deployments"), "POST", body);
   return answered(answer, `deploying ${workflow.packageName}`, Deployed).id;
 }
 

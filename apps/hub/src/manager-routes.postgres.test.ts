@@ -152,7 +152,7 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
 
       const more = await post(app, "done", { ...pr, reviewers: [] }, manager);
       expect(more.status).toBe(200);
-      expect(await more.json()).toEqual({ outcome: "more" });
+      expect(await more.json()).toEqual({ outcome: "more", wait: false });
 
       expect(await (await post(app, "take", pr, manager)).json()).toMatchObject({ outcome: "pass", events: [{ key: `evt:${pr.source}:${pr.repo}#7:run_reviewer`, event: { type: "reviewer-result", payload: { kind: "code-review", result: REVIEW } } }] });
       expect(await (await post(app, "done", { ...pr, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });

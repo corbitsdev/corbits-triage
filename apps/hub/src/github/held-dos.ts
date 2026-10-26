@@ -44,6 +44,8 @@ export type GithubHeldDosDeps = PortalCredentialDeps & {
   verdicts: Pick<VerdictRecordStore, "forPull">;
   liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
+  /** Hands the approval to the workspace's listener, whose manager runs it; false when the workspace has none. */
+  toListener: (tenantId: string, payload: unknown) => Promise<boolean>;
   log: (entry: Record<string, unknown>) => void;
 };
 
@@ -128,21 +130,23 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     const approval = heldDo(verdict, body, principalId);
     if (approval instanceof Response) return approval;
     if (await superseded(tenantId, repo, number, runId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
-
-    const variant = prWorkflowVariantOf((await heldBy(tenantId, run.anchorRunId)) ?? "");
-    const heldByVariant = variant?.source === sourceOf(record);
-    const workflow = heldByVariant ? variant.id : triageWorkflowFor(sourceOf(record)).id;
-    const deployment = newestLive(await deps.liveDeployments(tenantId, workflow));
-    if (!deployment && heldByVariant) {
-      return failure(503, "service_not_running", "Code review held this action, and it is not running now, so the action can't be approved. It runs again once the repository's policy turns a check on, the Anthropic key is saved and code review has a place to run.");
-    }
-    if (!deployment) return failure(503, "service_not_running", `The ${workflow} service is not running.`);
+    const repoSource = sourceOf(record);
+    const mailed = { ...approval, ...(repoSource !== "github" && { repoSource }) };
     const logged = { tenantId, principalId, runId, repo, number, effectId: body.effectId, kind: approval.step.kind, list: approval.list };
     // A held merge on a Fail or Unsure list may still be approved, and the person approving it is told so.
     const warning = approval.step.kind === "merge" && approval.list !== "pass" ? `The verdict on this head was ${approval.list}, not pass.` : undefined;
     try {
-      const repoSource = sourceOf(record);
-      await deps.deliver(tenantId, deployment.address, { ...approval, ...(repoSource !== "github" && { repoSource }) });
+      if (!(await deps.toListener(tenantId, mailed))) {
+        const variant = prWorkflowVariantOf((await heldBy(tenantId, run.anchorRunId)) ?? "");
+        const heldByVariant = variant?.source === repoSource;
+        const workflow = heldByVariant ? variant.id : triageWorkflowFor(repoSource).id;
+        const deployment = newestLive(await deps.liveDeployments(tenantId, workflow));
+        if (!deployment && heldByVariant) {
+          return failure(503, "service_not_running", "Code review held this action, and it is not running now, so the action can't be approved. It runs again once the repository's policy turns a check on, the Anthropic key is saved and code review has a place to run.");
+        }
+        if (!deployment) return failure(503, "service_not_running", `The ${workflow} service is not running.`);
+        await deps.deliver(tenantId, deployment.address, mailed);
+      }
     } catch (err) {
       deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);

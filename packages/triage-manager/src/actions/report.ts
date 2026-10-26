@@ -25,20 +25,28 @@ export async function reviewRequest(input: unknown): Promise<{ request: Record<s
   return { request: reviewMailOf(input).request };
 }
 
-const ReportInput = type({ payload: "unknown", review: { output: CodeReviewOutput } });
+const ReportInput = type({ payload: "unknown", "review?": { output: "unknown" } });
 const Recorded = type({ recorded: "boolean" });
 
-/** Reports the review to the pull request's manager as a `StageResult` through the hub; the reply then wakes the manager. Posts nothing. */
+/** Stock runs a step whose dependencies failed, so a review that did not finish leaves no output, or one that is not a review. */
+const NOT_FINISHED = "the review did not finish";
+
+/**
+ * Reports the review to the pull request's manager as a `StageResult` through the hub, or that it did not finish; the
+ * reply then wakes the manager. Posts nothing. Its input is every step's output beside the mail.
+ */
 export async function report(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ recorded: boolean; mail: MailInput }> {
   const parsed = ReportInput(input);
   if (parsed instanceof type.errors) throw new Error(`report: ${parsed.summary}`);
   const { tenantId, number, checkout, reply } = reviewMailOf(parsed.payload).mail;
-  const result = { source: checkout.source, repo: checkout.repo, number, kind: "code-review", head: checkout.sha, result: parsed.review.output };
+  const review = CodeReviewOutput(parsed.review?.output);
+  const outcome = review instanceof type.errors ? { failed: NOT_FINISHED } : { result: review };
+  const result = { source: checkout.source, repo: checkout.repo, number, kind: "code-review", head: checkout.sha, ...outcome };
   const { recorded } = answered(await callHub(ctx, "report", tenantPath(tenantId, "/manager/reviewer-result"), "POST", result), "report", Recorded);
-  return { recorded, mail: { tenantId, ...reply, fresh: false } };
+  return { recorded, mail: { tenantId, ...reply } };
 }
 
-/** Stops the review's run once it has replied. */
+/** Stops the review's run once it has replied, whether or not the review, its report or its reply went through. */
 export async function stop(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ stopped: true }> {
   const { mail, runId } = reviewMailOf(input);
   await endRun(ctx, mail.tenantId, runId);

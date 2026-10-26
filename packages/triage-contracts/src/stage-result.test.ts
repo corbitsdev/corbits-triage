@@ -8,6 +8,7 @@ const VERDICT = { verdict: "pass", reasons: ["Every rule passed."] };
 test("a stage result is read by its kind, and one whose result is not that kind's output is refused", () => {
   expect(StageResult({ kind: "code-review", head: "h1", result: REVIEW })).toEqual({ kind: "code-review", head: "h1", result: REVIEW });
   expect(StageResult({ kind: "judge", head: "h1", result: VERDICT })).toEqual({ kind: "judge", head: "h1", result: VERDICT });
+  expect(StageResult({ kind: "code-review", head: "h1", failed: "the review did not finish" })).toEqual({ kind: "code-review", head: "h1", failed: "the review did not finish" });
   for (const malformed of [
     { kind: "code-review", head: "h1", result: VERDICT },
     { kind: "judge", head: "h1", result: { verdict: "maybe" } },

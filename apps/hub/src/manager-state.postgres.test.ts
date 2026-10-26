@@ -113,6 +113,33 @@ test("PostgreSQL: of two managers racing take for one pull request one claims it
   });
 }, 120_000);
 
+test("PostgreSQL: an event a refused manager arrived for is taken by the live one's next pass", async () => {
+  await withDatabase(async function drained(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await liveRun(db, "run_a");
+    await liveRun(db, "run_b");
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
+    await recordEvent(db, TENANT, GITHUB, "d2", webhook("h2"));
+    expect(await take(db, TENANT, GITHUB, "run_b")).toEqual({ outcome: "refused" });
+    expect(await done(db, TENANT, GITHUB, "run_a", [])).toEqual({ outcome: "more", wait: false });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h2", events: ["evt:github:acme/widgets#7:d2"] } });
+  });
+}, 120_000);
+
+test("PostgreSQL: take answers the pass's newest pull request mail, and on a pass without one the newest recorded", async () => {
+  await withDatabase(async function newest(db) {
+    const mail = (head: string) => ({ type: "webhook" as const, head, payload: { kind: "pr", headSha: head } });
+    await recordEvent(db, TENANT, GITHUB, "d1", mail("h1"));
+    await recordEvent(db, TENANT, GITHUB, "d2", mail("h2"));
+    await startManager(db, GITHUB, "run_a");
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h2" }, request: { kind: "pr", headSha: "h2" } });
+    const reviewer = { kind: "code-review", head: "h2", runId: "run_review", deadline: new Date(Date.now() + 60_000).toISOString() };
+    await done(db, TENANT, GITHUB, "run_a", [reviewer]);
+    await recordEvent(db, TENANT, GITHUB, "run_review", { type: "reviewer-result", head: "h2", payload: { kind: "code-review", failed: "the review did not finish" } });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h2" }, request: { kind: "pr", headSha: "h2" }, reviewers: [reviewer] });
+  });
+}, 120_000);
+
 test("PostgreSQL: a take finds the claim's run gone, takes the claim over and resumes its open pass", async () => {
   await withDatabase(async function takeover(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
@@ -185,7 +212,7 @@ test("PostgreSQL: take skips events another transaction holds, keeps the newest 
     await startManager(db, GITHUB, "run_a");
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
     const reviewer = { kind: "judge", head: "h1", runId: "run_judge", deadline: new Date(Date.now() + 60_000).toISOString() };
-    expect(await done(db, TENANT, GITHUB, "run_a", [reviewer])).toEqual({ outcome: "more" });
+    expect(await done(db, TENANT, GITHUB, "run_a", [reviewer])).toEqual({ outcome: "more", wait: true });
 
     await recordEvent(db, TENANT, GITHUB, "d2", webhook("h2"));
     await recordEvent(db, TENANT, GITHUB, "r1", { type: "reviewer-result", head: "h1", payload: { verdict: "pass" } });
@@ -202,7 +229,7 @@ test("PostgreSQL: take skips events another transaction holds, keeps the newest 
     expect(first.events.map((row) => row.key)).toEqual(["evt:github:acme/widgets#7:d2"]);
     expect(await stateOf(db, "evt:github:acme/widgets#7:r1")).toHaveProperty("consumedBy");
 
-    expect(await done(db, TENANT, GITHUB, "run_a", [{ ...reviewer, head: "h2" }])).toEqual({ outcome: "more" });
+    expect(await done(db, TENANT, GITHUB, "run_a", [{ ...reviewer, head: "h2" }])).toEqual({ outcome: "more", wait: false });
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h3", events: ["evt:github:acme/widgets#7:d3"] } });
     expect(await done(db, TENANT, GITHUB, "run_a", [{ ...reviewer, head: "h2" }])).toEqual({ outcome: "ended" });
   });
@@ -231,7 +258,7 @@ test("PostgreSQL: an event committed while done waits for the claim's lock keeps
     } finally {
       await holder.release();
     }
-    expect(await within(finishing)).toEqual({ outcome: "more" });
+    expect(await within(finishing)).toEqual({ outcome: "more", wait: false });
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
   });
 }, 120_000);

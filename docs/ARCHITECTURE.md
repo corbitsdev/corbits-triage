@@ -224,36 +224,47 @@ any other tenant or an unknown sender.
   hub picks it per pull request.
 - `triage-listener-github` and `triage-listener-bitbucket-datacenter`
   (`triageListener` in `@corbits/triage-manager`): a workspace's listener for
-  one host. The hub mails it each pull request mail; it deploys that pull
-  request's manager through the stock deploy route with its run token, from
-  the manager's source asset at the commit and the offerings fixed in its own
-  definition when the release was published, and hands the hub's mail on to
-  it. It moves only on the hub's mail. Its definition declares `workflow:*`
-  `create` and `read` on the manager's asset, sourced from its creator.
+  one host. The hub mails it the pull requests it recorded (`items`); for
+  each, it deploys a manager through the stock deploy route with its run
+  token, from the manager's source asset at the commit and the offerings the
+  release build fixed in its definition (`TRIAGE_RELEASE`), and wakes it with
+  a mail that names only the pull request. A mail that is not the hub's, or
+  names no pull request, fails its body. Its definition declares
+  `workflow:*` `create` and `read` on the manager's asset, sourced from its
+  creator.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes
   mail only from the listener that deployed it (`invoker`) and the code reviews
-  it mailed (`correspondent`). Each mail runs one body: take claims the pull
-  request and its pending events, pr-triage's facts, rules and evaluate run on
-  the mail's request (rules that need the judge post nothing yet), and done
-  records its reviewers. When the policy turns code review on and triage's
-  rules let it past, a pass deploys the code review from the release fixed in
-  the manager's definition, mails it the head's review request, and posts
-  nothing. The pass that collects the review mirrors the verdict, then posts
-  the review through the host's `send_code_review` tool, so they go up
-  together. When done ends the claim, the run stops itself through the
-  stop-run route, under a `manage` grant on its own run.
+  it mailed (`correspondent`). A mail starts a loop of passes. Each pass
+  takes, which claims the pull request and its pending events and answers the
+  newest pull request mail the hub recorded; pr-triage's own steps run on that
+  mail, handed over as `{ taken }`, which they trust as the hub's: a held Do's
+  approval executes, a head held for CI is marked waiting, anything else is
+  triaged (rules that need the judge post nothing yet). Done then answers
+  `ended`, and the run stops itself through the stop-run route under a
+  `manage` grant on its own run, or `more`: the next pass runs at once when an
+  event is pending, or every 30 seconds while it waits for its code review.
+  When the policy turns code review on, triage's rules let it past and the
+  hub read the head's review request, a pass deploys the code review from the
+  release (`TRIAGE_RELEASE`), mails it the request until the review's
+  one-hour deadline, and posts nothing. The pass that collects its report
+  mirrors the verdict, then posts the review through the host's
+  `send_code_review` tool, so they go up together. A review that could not be
+  mailed, reported a failure or ran past its deadline leaves the verdict to go
+  up alone.
 - `pr-code-review-reviewer-github` and
   `pr-code-review-reviewer-bitbucket-datacenter` (`codeReviewReviewer` in
   `@corbits/pr-code-review`): the code review a manager deploys, alone on its
-  sidecar. It takes mail only from that manager, reviews the request, records
-  its `StageResult` through the reviewer-result route, mails the manager back
-  and stops. It posts nothing to the pull request.
+  sidecar. It takes mail only from that manager and reviews the request.
+  Stock runs a step whose dependencies failed, so however the review ended it
+  records its `StageResult` through the reviewer-result route (a failure as
+  `failed`), mails the manager a wake-up and stops. It posts nothing to the
+  pull request.
 - A run sends mail only through an agent step's transport, so the listener,
   the manager and the code review mail through one agent whose director makes
   no model call: it runs its one tool, which waits for a just-deployed run to
-  reach a sidecar and then mails it as the sending run.
+  reach a sidecar until a deadline and then mails it as the sending run.
 
 ## Triage pipeline
 
@@ -720,7 +731,9 @@ read it, and passes the rest of the request to stock.
   the open pass or takes every pending event no other transaction holds,
   keeps the newest head and consumes reviewer results for other heads;
   reviewer results that arrive before the first pass stay pending. Either
-  way it answers the reviewers the last done recorded. Done
+  way it answers the reviewers the last done recorded and the newest
+  pull request mail recorded: the pass's own, or for a pass without one the
+  newest `pr` mail. Done
   closes the pass and, under the claim's lock, ends the claim only when no
   event is pending and no reviewer of the current head is due, so an event
   committed before it is taken by this manager and one after it by the
@@ -735,13 +748,19 @@ read it, and passes the rest of the request to stock.
   own run id, and the manager matches results to its reviewers by run id.
   Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's
   kind (`code-review` or `judge`), the head it reviewed and its result, a
-  code review's output or a judge's verdict detail.
-- In a workspace with a host's listener live, every pull request mail
-  (`sendTriageMail`) goes to it instead of a pr-triage worker
-  (`apps/hub/src/manager-intake.ts`): the hub records it as a webhook event,
-  adds the head's code review request when the policy turns code review on,
-  and mails the listener. The code review feed sends nothing for that host,
-  since the manager reviews. A workspace with no listener routes as before.
+  code review's output or a judge's verdict detail, or `failed` with why it
+  has none.
+- In a workspace with a host's listener live, pull request, waiting,
+  held-Do approval and backlog mail goes to it instead of a pr-triage worker,
+  pr-triage-historical or the deployment that held the Do
+  (`apps/hub/src/manager-intake.ts`). The hub records one webhook event per
+  pull request the mail names (a reconciler's `items`, a backlog's open
+  pull requests), with the head's code review request when the policy turns
+  code review on and the App's login on GitHub, then mails the listener the
+  heads. An event's id is the webhook delivery id when there is one,
+  otherwise `<kind>:<number>:<head>` (a held Do's: its effect id), so a
+  requeue of a recorded event is a no-op. The code review feed sends nothing
+  for that host. A workspace with no listener routes as before.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

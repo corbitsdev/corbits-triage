@@ -1,4 +1,4 @@
-import { action, defineWorkflow, onTrigger, step } from "@intx/workflow";
+import { action, defineWorkflow, map, onTrigger, step } from "@intx/workflow";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
 import { judgeAgent } from "@corbits/triage-workflows/agents";
@@ -8,9 +8,9 @@ import { mailAgentOf } from "./mail.js";
 import type { Release } from "./release.js";
 
 /**
- * A workspace's listener for one host under `id`, its mail address, which the hub mails each pull request: it deploys
- * the pull request's manager from the release `manager` and hands the hub's mail on to it. It writes nothing to the
- * pull request and holds no grant on its state; a manager whose take finds another live one stops itself.
+ * A workspace's listener for one host under `id`, its mail address, which the hub mails the pull requests it records:
+ * it deploys each one's manager from the release `manager` and wakes it. It writes nothing to the pull request and holds
+ * no grant on its state; a manager whose take finds another live one stops itself.
  */
 export function triageListener({ id, manager }: { id: string; manager: Release }) {
   const perMail = defineWorkflow({
@@ -23,7 +23,7 @@ export function triageListener({ id, manager }: { id: string; manager: Release }
         credentials: [HUB_CREDENTIAL_HANDLE],
         effect: { requires: [HUB_WRITE] },
       }),
-      mail: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference), input: { from: "steps.forward.output.mail" }, after: ["forward"] }),
+      mail: map({ over: { from: "steps.forward.output.mails" }, step: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: false }), input: { from: "trigger.payload" } }), after: ["forward"] }),
     },
   });
   return defineWorkflow({

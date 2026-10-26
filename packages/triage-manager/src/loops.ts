@@ -1,0 +1,18 @@
+// The manager's pass loop. Each fn is pure: it reads a finished pass's step outputs, keyed by step id.
+import { asRecord } from "@corbits/common";
+
+/** The pass's done, on whichever branch it ran. */
+function doneOf(output: unknown): Record<string, unknown> | undefined {
+  const steps = asRecord(output);
+  return asRecord(steps?.["done"]) ?? asRecord(steps?.["doneReviewing"]);
+}
+
+/** Another pass while done answers `more`. */
+export function again(output: unknown): boolean {
+  return doneOf(output)?.["outcome"] === "more";
+}
+
+/** The next pass works from the same mail, after waiting for its code review when done says to. */
+export function next(output: unknown, input: unknown): { payload: unknown; wait: boolean } {
+  return { payload: asRecord(input)?.["payload"], wait: doneOf(output)?.["wait"] === true };
+}

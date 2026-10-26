@@ -7,11 +7,13 @@ import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { type } from "arktype";
 
 const MAIL_TOOL = "mail";
-const READY_POLLS = 60;
 const READY_POLL_MS = 2_000;
 
-/** A mail to the run `to` in this run's tenant; `fresh` when that run was just deployed and may not hold a sidecar yet. */
-export const MailInput = type({ tenantId: "string > 0", to: "string > 0", content: "string > 0", fresh: "boolean" });
+/**
+ * A mail to the run `to` in this run's tenant. With `readyBy`, the run was just deployed and may not hold a sidecar yet,
+ * so the mail waits for it until then.
+ */
+export const MailInput = type({ tenantId: "string > 0", to: "string > 0", content: "string > 0", "readyBy?": "string.date.iso" });
 export type MailInput = typeof MailInput.infer;
 
 const Run = type({ "sidecarId?": "string | null", "publicKey?": "string | null" });
@@ -24,11 +26,11 @@ interface MailEnv extends BaseEnv {
   };
 }
 
-/** Waits until the hub shows the run on a sidecar that can take its mail. */
-async function untilReady(env: MailEnv, { tenantId, to }: MailInput): Promise<void> {
+/** Waits until the hub shows the run on a sidecar that can take its mail, up to `readyBy`. */
+async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: string): Promise<void> {
   const hub = await env.capabilities.resolve("credentials").resolve(HUB_CREDENTIAL_HANDLE);
   if (hub.kind !== "http") throw new Error(`${HUB_CREDENTIAL_HANDLE} is ${hub.kind}, not http`);
-  for (let poll = 0; poll < READY_POLLS; poll++) {
+  while (Date.now() < Date.parse(readyBy)) {
     const response = await hub.fetch(`/api/tenants/${encodeURIComponent(tenantId)}/workflows/runs/${encodeURIComponent(to)}`);
     if (!response.ok) throw new Error(`reading run ${to} answered ${response.status}: ${await response.text()}`);
     const run = Run(await response.json());
@@ -38,7 +40,7 @@ async function untilReady(env: MailEnv, { tenantId, to }: MailInput): Promise<vo
       setTimeout(resolve, READY_POLL_MS);
     });
   }
-  throw new Error(`run ${to} did not reach a sidecar`);
+  throw new Error(`run ${to} did not reach a sidecar by ${readyBy}`);
 }
 
 function mailBundle(env: MailEnv): ToolBundle {
@@ -46,16 +48,16 @@ function mailBundle(env: MailEnv): ToolBundle {
     definitions: [{
       name: MAIL_TOOL,
       description: "Mail a run in this tenant as this run.",
-      inputSchema: { type: "object", properties: { tenantId: { type: "string" }, to: { type: "string" }, content: { type: "string" }, fresh: { type: "boolean" } }, required: ["tenantId", "to", "content", "fresh"] },
+      inputSchema: { type: "object", properties: { tenantId: { type: "string" }, to: { type: "string" }, content: { type: "string" }, readyBy: { type: "string" } }, required: ["tenantId", "to", "content"] },
     }],
     async run(call, signal) {
       const input = MailInput(call.arguments);
       if (input instanceof type.errors) return { callId: call.id, content: `mail: ${input.summary}`, isError: true };
       try {
-        if (input.fresh) await untilReady(env, input);
+        if (input.readyBy) await untilReady(env, input, input.readyBy);
         const domain = env.address.slice(env.address.indexOf("@") + 1);
         const sent = await env.transport.send({ to: `${input.to}@${domain}`, type: "conversation.message", content: input.content }, signal);
-        return { callId: call.id, content: { to: input.to, ...sent } };
+        return { callId: call.id, content: { to: input.to, mailed: true, ...sent } };
       } catch (err) {
         return { callId: call.id, content: err instanceof Error ? err.message : String(err), isError: true };
       }
@@ -71,15 +73,19 @@ const mailTool = defineTool<MailEnv>({
   factory: mailBundle,
 });
 
-function mailDirector(): ReactorDirector {
+/** With `tolerate`, a mail that fails is replied as `{ mailed: false, error }` for a later step to act on; otherwise it fails the step. */
+const MailDirectorConfig = type({ tolerate: "boolean" });
+
+function mailDirector({ tolerate }: typeof MailDirectorConfig.infer): ReactorDirector {
   return {
     async decide(event, _state, caps) {
       switch (event.type) {
         case "message.received":
           return caps.executeTools([{ id: MAIL_TOOL, name: MAIL_TOOL, arguments: JSON.parse(event.message.content ?? "") }], false, false);
         case "tool.done":
-          if (event.result.isError) throw new Error(`mail: ${JSON.stringify(event.result.content)}`);
-          return caps.reply(JSON.stringify(event.result.content));
+          if (!event.result.isError) return caps.reply(JSON.stringify(event.result.content));
+          if (tolerate) return caps.reply(JSON.stringify({ mailed: false, error: event.result.content }));
+          throw new Error(`mail: ${JSON.stringify(event.result.content)}`);
         default:
           return [];
       }
@@ -89,14 +95,17 @@ function mailDirector(): ReactorDirector {
 
 /** The mail director under the package that publishes it, which lists it in its `interchange.directors` module. */
 export function mailDirectorOf(packageName: string) {
-  return defineDirector<Record<string, never>>({
+  return defineDirector<typeof MailDirectorConfig.infer>({
     id: `${packageName}/mail`,
-    configSchema: type({}),
+    configSchema: MailDirectorConfig,
     factory: mailDirector,
   });
 }
 
 /** The agent that sends one mail; `inference` is declared because every agent names one, and is never called. */
-export function mailAgentOf(director: ReturnType<typeof mailDirectorOf>, inference: AgentDefinition["inference"]) {
-  return defineAgent({ id: "triage-mail", systemPrompt: "Send the mail the input names.", tools: [mailTool], capabilities: [], inference, director: director.build({}) });
+export function mailAgentOf(director: ReturnType<typeof mailDirectorOf>, inference: AgentDefinition["inference"], { tolerate }: { tolerate: boolean }) {
+  return defineAgent({ id: tolerate ? "triage-mail-tolerant" : "triage-mail", systemPrompt: "Send the mail the input names.", tools: [mailTool], capabilities: [], inference, director: director.build({ tolerate }) });
 }
+
+/** A tolerant mail agent's reply: whether the mail went. */
+export const Mailed = type("string.json.parse").to({ mailed: "boolean" });

@@ -320,6 +320,14 @@ const toListener = createManagerIntake({
   readPull: function readPull(tenantId, record, number) {
     return pullRequests.withDiff(tenantId, record, number);
   },
+  withAppLogin: function appLoginOf(tenantId, payload) {
+    return withAppLogin(composition.db, tenantId, payload);
+  },
+  openHeads: async function openHeads(tenantId, record) {
+    const read = await tenantOpenHeads(tenantId);
+    if (!read) throw new Error("no active source credential");
+    return read(record);
+  },
   deliver: deliverToDeployment,
 });
 mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, now });
@@ -472,7 +480,7 @@ async function sendToWorker(job: TriageJob): Promise<void> {
 /** A paused pull request's job is dropped; the reconciler leaves it alone until its label comes off. A workspace with a listener runs its pull requests in managers. */
 async function sendTriageMail(job: TriageJob): Promise<void> {
   const routed = await routePrWorkflow({ ...job, workflow: workflowIdFor(job.workflow) });
-  if (routed && !(await toListener(routed))) await sendToWorker(routed);
+  if (routed && !(await toListener(routed.tenantId, routed.payload))) await sendToWorker(routed);
 }
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
 async function codeReviewPlaced(tenantId: string): Promise<boolean> {
@@ -719,6 +727,7 @@ const githubHeldDos = createGithubHeldDos({
   verdicts: verdictRecordStore,
   liveDeployments: liveTriageDeployments,
   deliver: deliverToDeployment,
+  toListener,
   log: logJson,
 });
 const reconcileSourceDeployments = createSourceDeployments({
@@ -803,8 +812,8 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number |
   if (due > 0) kickTriage();
   return due;
 }
-function sendBacklogMail(tenantId: string, payload: unknown) {
-  return sendBridgeMail(tenantId, prTriageHistoricalWorkflow.id, payload);
+async function sendBacklogMail(tenantId: string, payload: unknown) {
+  if (!(await toListener(tenantId, payload))) await sendBridgeMail(tenantId, prTriageHistoricalWorkflow.id, payload);
 }
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
