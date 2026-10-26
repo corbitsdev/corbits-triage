@@ -3,6 +3,6 @@ import { publishedFor } from "./release.js";
 import { triageListener } from "./triage-listener.js";
 
 const manager = publishedFor("bitbucket-datacenter")?.manager;
-if (!manager) throw new Error(`${TRIAGE_LISTENERS["bitbucket-datacenter"]} is built with the release's manager; a source run has none`);
+if (!manager) throw new Error(`${TRIAGE_LISTENERS["bitbucket-datacenter"]} needs the release's manager in release.json, which the portal publishes beside it`);
 
 export const workflow = triageListener({ id: TRIAGE_LISTENERS["bitbucket-datacenter"], manager });

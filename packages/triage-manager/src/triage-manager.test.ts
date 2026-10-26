@@ -4,7 +4,7 @@ import { createActionCredentialsFactory, createCredentialProviderRegistry, creat
 import type { GrantRule } from "@intx/types/authz";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
-import { ACTION_KINDS, emptyPack, WAITING_KIND, WAITING_LABEL, type CheckPack } from "@corbits/triage-contracts";
+import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, WAITING_KIND, WAITING_LABEL, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serve";
 import { delivered, grantsFor, type Bindings, type Fetch } from "@corbits/triage-workflows/local-credentials";
@@ -46,12 +46,17 @@ const LATER = "2999-01-01T00:00:00.000Z";
 const reviewer = (deadline = LATER) => ({ kind: "code-review", head: HEAD, runId: DEPLOYED, deadline });
 
 /** The pull request mail the hub records, as its bridge builds it; a manager reads it back through take. */
-function hubRequest(pack: CheckPack, extra: Record<string, unknown> = {}): Record<string, unknown> {
-  return JSON.parse(triggerMail(PR, pack, { tenantId: TENANT, ...extra }, [...ACTION_KINDS]).parts[0]!.text);
+function hubRequest(pack: CheckPack, extra: Record<string, unknown> = {}, automatic: ActionKind[] = [...ACTION_KINDS]): Record<string, unknown> {
+  return JSON.parse(triggerMail(PR, pack, { tenantId: TENANT, ...extra }, automatic).parts[0]!.text);
+}
+
+/** A mail the hub recorded for the pull request, as take answers it among a pass's events. */
+function mailEvent(head: string, payload: Record<string, unknown>, key = "evt_1") {
+  return { key, event: { type: "webhook", head, payload } };
 }
 
 const REQUEST = hubRequest(RULES);
-const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [], resumed: false, request: REQUEST, reviewers: [] };
+const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, request: REQUEST, reviewers: [] };
 const RESUMED = { ...PASS, pass: { ...PASS.pass, takes: 2 }, resumed: true };
 const IDLE = { outcome: "idle", request: REQUEST, reviewers: [] };
 const ENDED = { outcome: "ended" };
@@ -91,7 +96,7 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
 
 /** The host's credentials as triage-workflows wires them, plus the hub credential deploy binds to the hub actions. */
 function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init?: RequestInit) => Promise<Response>) {
-  const consumers = ["take", "done", "deployReview", "forward"].map(actionConsumer);
+  const consumers = ["take", "done", "deployReview", "forward", "stop"].map(actionConsumer);
   const cell = delivered(bindings, [{ credentialId: "hub", providerKey: "http", origin: HUB_ORIGIN, secret: "run-token" }]);
   cell.current = { ...cell.current, bindings: [...cell.current.bindings, ...consumers.map((consumer) => ({ handle: HUB_CREDENTIAL_HANDLE, credentialId: "hub", consumer }))] };
   const hubGrants: GrantRule[] = consumers.map((tool, index) => ({ id: `hub-${index}`, resource: "credential:hub", action: "use", effect: "allow", origin: "system", conditions: { tool }, expiresAt: null, roleId: null, principalId: null }));
@@ -124,7 +129,7 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
   }).complete;
   const passes = outputs["passes"] as { iterations: number; final: Record<string, unknown> } | undefined;
   const last = passes?.final ?? outputs;
-  return { terminalStatus, passes: passes?.iterations, ran: Object.keys(last).filter((id) => !(last[id] as { skipped?: true } | undefined)?.skipped).toSorted() };
+  return { terminalStatus, passes: passes?.iterations, outputs: last, ran: Object.keys(last).filter((id) => !(last[id] as { skipped?: true } | undefined)?.skipped).toSorted() };
 }
 
 /** The mail that wakes the manager's run, as its listener or one of its reviews sends it. */
@@ -132,22 +137,22 @@ function wake(pull: { source: string; repo: string; number: number } = PULL) {
   return { headers: { from: "run_listener@triage.test", to: [`${RUN}@triage.test`] }, parts: [{ contentType: "text/plain", text: manageMail(TENANT, pull) }] };
 }
 
-/** The eval fixture's pull request, with the base and head repositories a comment's write compares. */
-function githubHost() {
+/** The eval fixture's pull request at `head`, with the base and head repositories a comment's write compares. */
+function githubHost(head = HEAD) {
   const writes: Write[] = [];
   const fixture = fixtureGithub(PR, {});
   async function read(url: URL): Promise<Response> {
     const response = await fixture(url);
     if (url.pathname !== `/repos/${PR.repo}/pulls/${PR.number}`) return response;
     const pull = await response.json();
-    return Response.json({ ...pull, head: { ...pull.head, repo: { id: 1 } }, base: { ...pull.base, repo: { id: 1 } } });
+    return Response.json({ ...pull, head: { ...pull.head, sha: head, repo: { id: 1 } }, base: { ...pull.base, repo: { id: 1 } } });
   }
   return { writes, host: recordingGithub(read, writes) };
 }
 
 const TAKE = { method: "POST", path: `${TENANT_PATH}/manager/take`, body: PULL };
 const DONE = { method: "POST", path: `${TENANT_PATH}/manager/done`, body: { ...PULL, reviewers: [] } };
-const STAGE_1 = ["approval", "approved", "done", "evaluateRules", "executeRules", "facts", "held", "mirrorRules", "paused", "ran", "route", "rules", "take", "unready", "waiting"];
+const STAGE_1 = ["approvals", "done", "evaluateRules", "executeRules", "facts", "held", "mirrorRules", "paused", "ran", "route", "rules", "take", "triaged", "unready", "waiting"];
 const READY = { method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: ["Triage: Ready"] } };
 const POSTED_REVIEW = expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/pulls/${PR.number}/reviews` });
 
@@ -155,7 +160,7 @@ describe("triage-manager", () => {
   test.each([["new", PASS], ["resumed", RESUMED]])("a %s pass runs stage 1 on the mail the hub recorded, and the run stops itself when done ends its claim", async (_name, pass) => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [pass], dones: [ENDED] });
-    expect(await runMail(github, wake(), host, hub.hub)).toEqual({ terminalStatus: "completed", passes: 1, ran: STAGE_1 });
+    expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", passes: 1, ran: STAGE_1 });
     expect(writes).toContainEqual(READY);
     expect(hub.calls).toEqual([TAKE, DONE, END]);
   });
@@ -186,13 +191,13 @@ describe("triage-manager", () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] });
     const { ran } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).toEqual(["approval", "approved", "done", "facts", "held", "paused", "ran", "route", "rules", "take", "unready", "waiting"]);
+    expect(ran).toEqual(["approvals", "done", "facts", "held", "paused", "ran", "route", "rules", "take", "triaged", "unready", "waiting"]);
     expect(writes).toEqual([]);
   });
 
   test("a head the hub holds for CI gets the Waiting label and is not triaged", async () => {
     const { writes, host } = githubHost();
-    const hub = fakeHub({ takes: [{ ...PASS, request: { ...REQUEST, kind: WAITING_KIND } }], dones: [ENDED] });
+    const hub = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, REQUEST), mailEvent(HEAD, { ...REQUEST, kind: WAITING_KIND }, "evt_2")] }], dones: [ENDED] });
     const { ran } = await runMail(github, wake(), host, hub.hub);
     expect(ran).toContain("markWaiting");
     expect(ran).not.toContain("facts");
@@ -206,8 +211,38 @@ describe("triage-manager", () => {
     expect(writes).toEqual([]);
   });
 
+  test.each([["after"], ["before"]])("an approval for an older head arriving %s a push runs as pr-triage runs a stale one, and triage runs on the push", async (order) => {
+    const NEWER = "0e0e".repeat(10);
+    const hi = [{ do: "comment" as const, target: { body: "hi" } }];
+    const held: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: hi } };
+    const automatic = ACTION_KINDS.filter((kind) => kind !== "comment");
+    const first = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, hubRequest(held, {}, automatic))], request: hubRequest(held, {}, automatic) }], dones: [ENDED] });
+    const verdict = (await runMail(github, wake(), githubHost().host, first.hub)).outputs["evaluateRules"] as { request: unknown; headSha: string; actions: { list: string; index: number; effectId: string; kind: string; target: unknown }[] };
+    const [step] = verdict.actions;
+    expect(step).toMatchObject({ kind: "comment" });
+    const approval = { kind: APPROVE_DO_KIND, runId: "run_old", principalId: "prn_ann", list: step!.list, index: step!.index, request: verdict.request, step: { effectId: step!.effectId, headSha: verdict.headSha, kind: step!.kind, target: step!.target }, appLogin: REQUEST["appLogin"] };
+
+    const { writes, host } = githubHost(NEWER);
+    const pushed = { ...hubRequest(held, {}, automatic), headSha: NEWER };
+    const push = mailEvent(NEWER, pushed, "evt_push");
+    const approved = mailEvent(HEAD, approval, "evt_approval");
+    const hub = fakeHub({ takes: [{ ...PASS, pass: { ...PASS.pass, head: NEWER }, events: order === "after" ? [push, approved] : [approved, push], request: pushed }], dones: [ENDED] });
+    const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
+    expect(ran).toContain("facts");
+    expect(outputs["approvals"]).toEqual({ results: [{ dos: [expect.objectContaining({ effectId: step!.effectId, status: "skipped", error: expect.stringContaining("new commits since this verdict") })] }] });
+    expect(writes.filter((write) => JSON.stringify(write.body).includes("\"hi\""))).toEqual([]);
+  });
+
+  test("a pass that fails stops the run, so the claim's run is gone for the next manager's take", async () => {
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [{ error: "not json" }] });
+    const { terminalStatus } = await runMail(github, wake(), host, hub.hub);
+    expect(terminalStatus).toBe("failed");
+    expect(hub.calls).toEqual([TAKE, END]);
+  });
+
   test("on Bitbucket Data Center it reaches the host through that host's bindings only", async () => {
-    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter"]);
+    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter"]);
     const builds: unknown[] = [];
     const ref = { id: "refs/heads/fix", displayId: "fix", latestCommit: "abc", repository: { id: 1 } };
     const pull = { id: 8, version: 0, state: "OPEN", fromRef: ref, toRef: { ...ref, id: "refs/heads/main" }, links: { self: [{ href: "https://bitbucket.acme.test/pr/8" }] }, author: { user: { id: 2, slug: "octocat" } }, reviewers: [], participants: [] };
@@ -219,7 +254,7 @@ describe("triage-manager", () => {
     }
     const request = { kind: "pr", repo: BB_REPO, repoSource: "bitbucket-datacenter", prNumber: 8, headSha: "abc", policy: { enabled: true }, policyUnreadable: "The policy file has unknown checks: max-size.", automatic: ACTION_KINDS, tenantId: TENANT };
     const bbPull = { source: "bitbucket-datacenter", repo: BB_REPO, number: 8 };
-    const hub = fakeHub({ takes: [{ ...PASS, pass: { ...PASS.pass, head: "abc" }, request }], dones: [ENDED] });
+    const hub = fakeHub({ takes: [{ ...PASS, pass: { ...PASS.pass, head: "abc" }, events: [mailEvent("abc", request)], request }], dones: [ENDED] });
     expect((await runMail(bitbucket, wake(bbPull), host, hub.hub)).terminalStatus).toBe("completed");
     expect(builds).toEqual([expect.objectContaining({ state: "FAILED" })]);
     expect(hub.calls.map(({ body }) => body)).toEqual([bbPull, { ...bbPull, reviewers: [] }, undefined]);

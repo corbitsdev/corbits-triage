@@ -3,6 +3,6 @@ import { publishedFor } from "./release.js";
 import { triageListener } from "./triage-listener.js";
 
 const manager = publishedFor("github")?.manager;
-if (!manager) throw new Error(`${TRIAGE_LISTENERS["github"]} is built with the release's manager; a source run has none`);
+if (!manager) throw new Error(`${TRIAGE_LISTENERS["github"]} needs the release's manager in release.json, which the portal publishes beside it`);
 
 export const workflow = triageListener({ id: TRIAGE_LISTENERS["github"], manager });

@@ -140,6 +140,20 @@ test("PostgreSQL: take answers the pass's newest pull request mail, and on a pas
   });
 }, 120_000);
 
+test.each([["after"], ["before"]])("PostgreSQL: an approval for an older head recorded %s a push leaves the pass on the push's head and is taken with it", async (order) => {
+  await withDatabase(async function approvals(db) {
+    const push = { type: "webhook" as const, head: "h2", payload: { kind: "pr", headSha: "h2" } };
+    const approval = { type: "webhook" as const, head: "h1", payload: { kind: "approve-do", step: { headSha: "h1" } } };
+    for (const [id, event] of order === "after" ? [["d1", push], ["a1", approval]] as const : [["a1", approval], ["d1", push]] as const) await recordEvent(db, TENANT, GITHUB, id, event);
+    await startManager(db, GITHUB, "run_a");
+    const taken = await take(db, TENANT, GITHUB, "run_a");
+    if (taken.outcome !== "pass") throw new Error(`expected a pass, got ${taken.outcome}`);
+    expect(taken.pass.head).toBe("h2");
+    expect(taken.events.map((row) => row.key).toSorted()).toEqual(["evt:github:acme/widgets#7:a1", "evt:github:acme/widgets#7:d1"]);
+    expect(taken.request).toEqual({ kind: "pr", headSha: "h2" });
+  });
+}, 120_000);
+
 test("PostgreSQL: a take finds the claim's run gone, takes the claim over and resumes its open pass", async () => {
   await withDatabase(async function takeover(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));

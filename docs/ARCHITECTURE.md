@@ -227,7 +227,7 @@ any other tenant or an unknown sender.
   one host. The hub mails it the pull requests it recorded (`items`); for
   each, it deploys a manager through the stock deploy route with its run
   token, from the manager's source asset at the commit and the offerings the
-  release build fixed in its definition (`TRIAGE_RELEASE`), and wakes it with
+  portal publishes beside it in `release.json`, and wakes it with
   a mail that names only the pull request. A mail that is not the hub's, or
   names no pull request, fails its body. Its definition declares
   `workflow:*` `create` and `read` on the manager's asset, sourced from its
@@ -238,17 +238,22 @@ any other tenant or an unknown sender.
   mail only from the listener that deployed it (`invoker`) and the code reviews
   it mailed (`correspondent`). A mail starts a loop of passes. Each pass
   takes, which claims the pull request and its pending events and answers the
-  newest pull request mail the hub recorded; pr-triage's own steps run on that
-  mail, handed over as `{ taken }`, which they trust as the hub's: a held Do's
-  approval executes, a head held for CI is marked waiting, anything else is
-  triaged and its automatic Dos run after the verdict and any code review are
-  up (rules that need the judge post nothing yet). Done then answers
+  newest pull request mail the hub recorded. Each held Do approved since runs
+  as pr-triage runs an approval, which skips one whose pull request moved past
+  its head. Then, when the pass has a mail for its head, a code review report
+  or an overdue review, pr-triage's own steps run on the newest mail for the
+  head, handed over as `{ taken }`, which they trust as the hub's: a head held
+  for CI is marked waiting when that mail is the newest for it, anything else
+  is triaged and its automatic Dos run after the verdict and any code review
+  are up (rules that need the judge post nothing yet). Done then answers
   `ended`, and the run stops itself through the stop-run route under a
   `manage` grant on its own run, or `more`: the next pass runs at once when an
   event is pending, or every 30 seconds while it waits for its code review.
+  When the passes fail or run out, the run stops itself, so it never keeps
+  the claim: the next manager's take finds the run gone and claims.
   When the policy turns code review on, triage's rules let it past and the
   hub read the head's review request, a pass deploys the code review from the
-  release (`TRIAGE_RELEASE`), mails it the request until the review's
+  release in `release.json`, mails it the request until the review's
   one-hour deadline, and posts nothing. The pass that collects its report
   mirrors the verdict, then posts the review through the host's
   `send_code_review` tool, so they go up together. A review that could not be
@@ -723,7 +728,10 @@ read it, and passes the rest of the request to stock.
   manager claim (`mgr:<source>:<repo>#<n>`: status, the run it names, the
   open pass, reviewers and closed passes) and its pending events
   (`evt:<source>:<repo>#<n>:<deliveryId>`), each change one short
-  transaction. Recording an event is a no-op on a redelivery. Take claims
+  transaction. Recording an event is a no-op on a redelivery; the database
+  stamps `receivedAt` to the microsecond as it inserts the row, so events
+  sort in the order they were recorded. A held Do's approval never names the
+  pass's head. Take claims
   the pull request for the calling run when no live run holds it: the
   claim is missing or ended, or the run it names has gone, whose open pass
   the caller resumes. Concurrent takes queue on the claim's row lock, so one

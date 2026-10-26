@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { CodeReviewOutput, StageResult } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CodeReviewOutput, StageResult, WAITING_KIND } from "@corbits/triage-contracts";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
 export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deadline: "string", "result?": "unknown" });
@@ -13,12 +13,15 @@ const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean
 
 /**
  * What a pass works on. `run` when there is anything to do: a pass, or the code review the manager waits for is past
- * its deadline. `taken` is the newest pull request mail the hub recorded, which the pass's steps read; `review` or
- * `reviewFailed` is what one of its own code reviews reported on `head`.
+ * its deadline. `approvals` are the held Dos approved since, each run as pr-triage runs one. `triage` when the head is
+ * triaged: `taken` is the newest pull request mail the hub recorded, or the mail that holds the head for CI when that
+ * is the newest for it. `review` or `reviewFailed` is what one of its own code reviews reported on `head`.
  */
 export const TakeOutput = type({
   run: "boolean",
   "refused?": "true",
+  approvals: "Record<string, unknown>[]",
+  triage: "boolean",
   "taken?": "Record<string, unknown>",
   "head?": "string",
   "review?": CodeReviewOutput,
@@ -55,13 +58,20 @@ function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: 
 export async function take(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<TakeOutput> {
   const mail = managerMailOf(input);
   const answer = await asManager(ctx, mail, "take", mail.pullRequest, Taken);
-  if (answer === undefined) return { run: false, refused: true, overdue: false, reviewers: [] };
+  const nothing = { run: false, approvals: [], triage: false, overdue: false };
+  if (answer === undefined) return { ...nothing, refused: true, reviewers: [] };
   const { request, reviewers } = answer;
   const head = answer.outcome === "pass" ? answer.pass.head : request?.["headSha"];
-  if (!request || typeof head !== "string") return { run: false, overdue: false, reviewers };
-  const report = answer.outcome === "pass" ? reportOf(answer.events, head, reviewers) : {};
+  if (!request || typeof head !== "string") return { ...nothing, reviewers };
+  const events = answer.outcome === "pass" ? answer.events : [];
+  const mails = events.filter(({ event }) => event.type === "webhook").map(({ event }) => event);
+  const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);
+  const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
+  const report = reportOf(events, head, reviewers);
   const overdue = !report.review && !report.reviewFailed && reviewers.some((reviewer) => isOwnReview(reviewer, head) && Date.parse(reviewer.deadline) <= Date.now());
-  return { run: answer.outcome === "pass" || overdue, taken: request, head, ...report, overdue, reviewers };
+  const triage = forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || overdue;
+  const taken = forHead?.payload["kind"] === WAITING_KIND ? forHead.payload : request;
+  return { run: answer.outcome === "pass" || overdue, approvals, triage, taken, head, ...report, overdue, reviewers };
 }
 
 const DoneInput = type({ payload: "unknown", take: { output: TakeOutput }, "reviewMailed?": { output: { "reviewer?": Reviewer } } });
@@ -88,7 +98,12 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   return answer;
 }
 
-/** The loop runs out of passes; the claim stays live, and the next mail runs more. */
-export async function rest(): Promise<{ rested: true }> {
-  return { rested: true };
+/**
+ * Stops the run when its passes fail or run out, so it never keeps the claim: the next manager's take finds the run gone
+ * and claims the pull request.
+ */
+export async function stop(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ stopped: true }> {
+  const mail = managerMailOf(input);
+  await endRun(ctx, mail.tenantId, mail.runId);
+  return { stopped: true };
 }

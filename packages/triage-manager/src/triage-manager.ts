@@ -53,13 +53,13 @@ function reviewSteps(sources: Sources, review: Release): Record<string, Primitiv
 }
 
 /**
- * One pass: take claims the pull request and its pending events; pr-triage's own steps run on the newest mail the hub
- * recorded for it, so a held Do's approval executes, a head held for CI is marked waiting, and anything else is
- * triaged and its automatic Dos run, posting nothing for rules that need the judge yet; then done. A pass after one that waits for its code review
- * first waits `POLL_MS`.
+ * One pass: take claims the pull request and its pending events. Each held Do approved since runs; then, when the head
+ * is triaged, pr-triage's own steps run on the newest mail the hub recorded for it, so a head held for CI is marked
+ * waiting and anything else is triaged and its automatic Dos run, posting nothing for rules that need the judge yet;
+ * then done. A pass after one that waits for its code review first waits `POLL_MS`.
  */
 function passOf(id: string, sources: Sources, review: Release | undefined) {
-  const { approval, approved, executeApproved, waiting, held, markWaiting, unready, rules, evaluateRules, mirrorRules, executeRules } = triageSteps(sources);
+  const { waiting, held, markWaiting, unready, rules, evaluateRules, mirrorRules, executeRules } = triageSteps(sources);
   const finished = review ? ["posting", "executeRules"] : ["executeRules"];
   return defineWorkflow({
     id: `${id}-pass`,
@@ -69,11 +69,10 @@ function passOf(id: string, sources: Sources, review: Release | undefined) {
       // Nothing signals it: the timeout is the wait, which a loop body cannot sleep.
       poll: awaitSignal({ name: "manager-poll", timeout: POLL_MS, onTimeout: "take", after: ["paused"] }),
       take: hubAction("take", { from: "trigger.payload.payload" }, ["paused", "poll"]),
-      ran: gate({ when: { from: "steps.take.output.run" }, then: "approval", else: "done", after: ["take"] }),
-      approval: { ...approval, input: TAKEN, after: ["ran"] },
-      approved,
-      executeApproved,
-      waiting: { ...waiting, input: TAKEN },
+      ran: gate({ when: { from: "steps.take.output.run" }, then: "approvals", else: "done", after: ["take"] }),
+      approvals: { ...hostAction("execute", sources, stepsOf("take"), ["ran"]), handler: "executeApprovals" },
+      triaged: gate({ when: { from: "steps.take.output.triage" }, then: "waiting", else: "done", after: ["approvals"] }),
+      waiting: { ...waiting, input: TAKEN, after: ["triaged"] },
       held,
       markWaiting,
       unready,
@@ -84,7 +83,7 @@ function passOf(id: string, sources: Sources, review: Release | undefined) {
       ...(review ? { ...reviewSteps(sources, review), mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] } } : { mirrorRules }),
       // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.
       executeRules: { ...executeRules, after: review ? ["postReview"] : ["mirrorRules"] },
-      done: hubAction("done", { merge: [MAIL, stepsOf("take")] }, ["ran", "executeApproved", "markWaiting", "route", ...finished]),
+      done: hubAction("done", { merge: [MAIL, stepsOf("take")] }, ["ran", "triaged", "markWaiting", "route", ...finished]),
     },
   });
 }
@@ -106,12 +105,14 @@ export function triageManager({ id, sources, review }: { id: string; sources: So
         while: "again",
         carry: "next",
         maxIterations: PASSES,
-        onExhausted: "rest",
+        onExhausted: "stop",
       }),
-      rest: action({ handler: "rest", input: { literal: {} }, after: ["passes"] }),
+      // Runs when the passes fail as well as when they run out, so a manager that cannot finish never keeps the claim.
+      stop: hubAction("stop", { from: "trigger.payload" }, ["passes"]),
     },
   });
-  const posts = review ? sources.map((source) => ({ action: "postReview", handle: source, provider: source, name: source, locator: "tenant" }) as const) : [];
+  const writes = ["executeApprovals", ...(review ? ["postReview"] : [])];
+  const posts = writes.flatMap((handler) => sources.map((source) => ({ action: handler, handle: source, provider: source, name: source, locator: "tenant" }) as const));
   return defineWorkflow({
     id,
     credentialBindings: [...credentialBindingsFor(sources), ...posts],
