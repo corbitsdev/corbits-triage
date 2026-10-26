@@ -94,7 +94,7 @@ function passOf(id: string, sources: Sources) {
  * pull request, one live run per pull request, which runs only while it has work. A mail wakes it to run passes until
  * done ends the claim, when the run stops itself, or another run holds the claim. When the host's release publishes a
  * code review, it runs as its own deployment, which reports back; `codeReview`, the one published as the definition
- * loads, names the asset it declares the grants to deploy. Mail comes only from the listener that deployed it and
+ * loads, names the asset it declares the grants to deploy. Mail comes from the hub, the listener that deployed it and
  * the reviews it mailed.
  */
 export function triageManager({ id, sources, codeReview }: { id: string; sources: Sources; codeReview: Release | undefined }) {
@@ -123,7 +123,7 @@ export function triageManager({ id, sources, codeReview }: { id: string; sources
       { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
       ...(codeReview ? deployGrants(codeReview) : []),
     ],
-    mailAccept: { invoker: true, correspondent: true },
+    mailAccept: { invoker: true, correspondent: true, tenant: true },
     steps: {
       events: onTrigger({ on: { type: "mail", to: id }, body: perMail, onBodyFailure: "tolerate" }),
     },

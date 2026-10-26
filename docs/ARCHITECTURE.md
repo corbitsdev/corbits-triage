@@ -224,11 +224,13 @@ any other tenant or an unknown sender.
   hub picks it per pull request.
 - `triage-listener-github` and `triage-listener-bitbucket-datacenter`
   (`triageListener` in `@corbits/triage-manager`): a workspace's listener for
-  one host. The hub mails it the pull requests it recorded (`items`); for
-  each, it deploys a manager through the stock deploy route with its run
+  one host. The hub mails it the pull requests it recorded that have no
+  manager up (`items`); for each, it deploys a manager through the stock deploy route with its run
   token, from the manager's source asset at the commit and the offerings the
   portal publishes beside it in `release.json`, read as each body runs, and
-  wakes it with a mail that names only the pull request. A mail that is not
+  wakes it with a mail that names only the pull request. A pull request
+  whose manager is up is mailed that manager instead, so a later webhook
+  does not deploy a second one. A mail that is not
   the hub's, that names no pull request, or that finds no manager in
   `release.json` fails its body. Built with the release the module loads,
   its definition declares `workflow:*` `create` and `read` on exactly the
@@ -250,8 +252,8 @@ any other tenant or an unknown sender.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes
-  mail only from the listener that deployed it (`invoker`) and the code reviews
-  it mailed (`correspondent`). A mail starts a loop of passes. Each pass
+  mail from the hub (`tenant`), the listener that deployed it (`invoker`) and
+  the code reviews it mailed (`correspondent`). A mail starts a loop of passes. Each pass
   takes, which claims the pull request and its pending events and answers the
   newest pull request mail the hub recorded. Each held Do approved since runs
   as pr-triage runs an approval, which skips one whose pull request moved past
@@ -266,6 +268,8 @@ any other tenant or an unknown sender.
   event is pending, or every 30 seconds while it waits for its code review.
   When the passes fail or run out, the run stops itself, so it never keeps
   the claim: the next manager's take finds the run gone and claims.
+  A run left deployed with no sidecar for two minutes is gone too, and its
+  cancellation is requested so it does not start after the claim has moved on.
   When the policy turns code review on, triage's rules let it past, the hub
   read the head's review request and `release.json` publishes a code review
   for the host, a pass deploys it under `workflow:*` `create` and `read` on

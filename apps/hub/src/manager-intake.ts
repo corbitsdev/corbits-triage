@@ -1,6 +1,7 @@
 // The hub's side of a pull request's manager. In a workspace with a host's listener live, each pull request, waiting,
-// held-Do approval and backlog mail is recorded as one event per pull request it names, then sent to the listener,
-// which deploys the managers itself and wakes them. A manager reads the newest recorded mail back through take.
+// held-Do approval and backlog mail is recorded as one event per pull request it names. A pull request whose manager
+// is up is mailed that manager. One with none is sent to the listener, which deploys a manager and wakes it. A manager
+// reads the newest recorded mail back through take.
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
@@ -8,7 +9,7 @@ import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, repoSourceOf, WAITING_KIND, type RepoSource } from "@corbits/triage-contracts";
 import { reviewRequestOf, type PullRequestToReview } from "./code-review-feed.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
-import { recordEvent } from "./manager-state.js";
+import { liveManager, recordEvent } from "./manager-state.js";
 
 export type ManagerIntakeDeps = {
   db: DB["db"];
@@ -79,9 +80,17 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     return read.headSha === pull.head ? { ...request, codeReviewRequest: reviewRequestOf(record, pull.number, read) } : request;
   }
 
+  /** The tenant domain on a listener address, which a manager's address shares. */
+  function domainOf(address: string): string {
+    const at = address.lastIndexOf("@");
+    if (at <= 0 || at === address.length - 1) throw new Error(`listener address ${address} has no domain`);
+    return address.slice(at + 1);
+  }
+
   /**
-   * Records each pull request a mail names and sends the mail to the host's listener; false, with nothing recorded,
-   * when the workspace has none or the mail is not one a manager runs.
+   * Records each pull request a mail names. One whose manager is up is mailed that run; the rest go to the listener,
+   * which deploys them. False, with nothing recorded, when the workspace has no listener or the mail is not one a
+   * manager runs.
    */
   return async function toListener(tenantId: string, payload: unknown): Promise<boolean> {
     const request = asRecord(payload);
@@ -93,11 +102,21 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     const record = await recordOf(tenantId, repo, source);
     const pulls = await pullsOf(tenantId, record, request);
     if (pulls.length === 0) return false;
+    const domain = domainOf(address);
+    const start: Named[] = [];
     for (const pull of pulls) {
       const recorded = await deps.withAppLogin(tenantId, await withReviewRequest(tenantId, record, pull));
       await recordEvent(deps.db, tenantId, { source, repo, number: pull.number }, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
+      const runId = await liveManager(deps.db, tenantId, { source, repo, number: pull.number });
+      if (runId) {
+        await deps.deliver(tenantId, `${runId}@${domain}`, { kind: "manage", tenantId, repo, repoSource: source, prNumber: pull.number });
+      } else {
+        start.push(pull);
+      }
     }
-    await deps.deliver(tenantId, address, { kind: "pr", repo, ...(source !== "github" && { repoSource: source }), tenantId, items: pulls.map((pull) => ({ prNumber: pull.number, headSha: pull.head })) });
+    if (start.length > 0) {
+      await deps.deliver(tenantId, address, { kind: "pr", repo, ...(source !== "github" && { repoSource: source }), tenantId, items: start.map((pull) => ({ prNumber: pull.number, headSha: pull.head })) });
+    }
     return true;
   };
 }

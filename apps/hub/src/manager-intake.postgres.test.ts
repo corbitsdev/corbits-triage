@@ -102,6 +102,36 @@ test("PostgreSQL: each pull request a mail names is recorded as its own event, a
   });
 }, 60_000);
 
+async function claimManager(db: Db, runId: string, number: number, status: "running" | "deployed", createdAt?: Date): Promise<void> {
+  await db.insert(schema.workflowDefinition).values({ id: "wfd_intake", tenantId: TENANT, name: "triage-manager-github" }).onConflictDoNothing();
+  await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wfd_intake", tenantId: TENANT, status, ...(createdAt && { createdAt }) });
+  const claim = { status: "live", claimId: `claim-${runId}`, claimedAt: new Date().toISOString(), runId, reviewers: [], history: [], starts: 1 };
+  await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${`mgr:github:${RECORD.name}#${number}`}, 'claim', ${JSON.stringify(claim)}::jsonb)`);
+}
+
+test("PostgreSQL: a pull request whose manager is up is mailed that manager, and one with none is mailed to the listener", async () => {
+  await withDatabase(async function reuse(db) {
+    await claimManager(db, "run_mgr", 7, "running");
+    const { toListener, mailed } = stack(db, LISTENER);
+    expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
+    expect(await toListener(TENANT, mailPayload(RECORD, POLICY, STORED, { items: [{ prNumber: 7, headSha: "h1" }, { prNumber: 8, headSha: "h8" }] }))).toBe(true);
+    expect(mailed).toEqual([
+      { address: "run_mgr@intake.test", payload: { kind: "manage", tenantId: TENANT, repo: RECORD.name, repoSource: "github", prNumber: 7 } },
+      { address: "run_mgr@intake.test", payload: { kind: "manage", tenantId: TENANT, repo: RECORD.name, repoSource: "github", prNumber: 7 } },
+      { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 8, headSha: "h8" }] } },
+    ]);
+  });
+}, 60_000);
+
+test("PostgreSQL: a manager deployed without a sidecar past the startup window is not mailed, and the listener is", async () => {
+  await withDatabase(async function stuck(db) {
+    await claimManager(db, "run_stuck", 7, "deployed", new Date(Date.now() - 3 * 60_000));
+    const { toListener, mailed } = stack(db, LISTENER);
+    expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
+    expect(mailed).toEqual([{ address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] } }]);
+  });
+}, 60_000);
+
 test("PostgreSQL: with code review on, the recorded mail carries the head's review request", async () => {
   await withDatabase(async function reviewed(db) {
     const { toListener } = stack(db, LISTENER);
