@@ -8,6 +8,7 @@ import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-meta
 import { generateId } from "@intx/hub-common";
 import { grantAdminGithub } from "./admin-github-grant.js";
 import { storeAppKey } from "./app-key.js";
+import { ensureDeployerRole } from "../deployer-role.js";
 import { ensureTriageRole } from "./automation.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 
@@ -311,6 +312,7 @@ export function createGithubManifestIntegration({
       await storeAppKey(tx, cipher, { tenantId: state.tenantId, appJson: prepared.appJson });
       await grantAdminGithub(tx, state.tenantId, state.appCredentialId, stamp);
       await ensureTriageRole(tx, state.tenantId, stamp);
+      await ensureDeployerRole(tx, state.tenantId, stamp);
     });
   }
 

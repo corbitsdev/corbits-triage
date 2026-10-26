@@ -4,6 +4,8 @@ import git, { type FsClient, type HttpClient, type TreeEntry } from "isomorphic-
 import http from "isomorphic-git/http/web";
 import { createBrowserIsogitRuntime } from "@intx/storage-isogit/browser";
 import type { Transport } from "@intx/hub-client";
+import { DEPLOYER_GRANTS } from "@corbits/triage-contracts";
+import { evaluateAccess } from "./hub-api.ts";
 import { hubOrigin } from "./hub-origin.ts";
 import { listModels, offeringsIn, type ModelInfo } from "./model-catalog.ts";
 import { ensureAsset, portalPackage } from "./workflow-deploy.ts";
@@ -71,6 +73,16 @@ async function revoke(transport: Transport, tokenId: string): Promise<void> {
   } catch (error) {
     console.warn(`Revoking git token ${tokenId} failed.`, error);
   }
+}
+
+/**
+ * Stock gives an asset's creator no grant on it, so the publisher grants itself `write` on this one asset to push to it,
+ * unless it already holds it, such as after an earlier publish whose push failed.
+ */
+async function grantOwnPush(transport: Transport, { tenantId, principalId }: Publisher, assetId: string): Promise<void> {
+  const resource = `asset:${assetId}`;
+  if (await evaluateAccess(transport, tenantId, principalId, resource, "write")) return;
+  await transport.fetch("POST", `/api/tenants/${encodeURIComponent(tenantId)}/grants`, { principalId, resource, action: "write", effect: "allow", origin: "creator" });
 }
 
 async function writeTree(fs: FsClient, dir: string, tree: SourceTree): Promise<string> {
@@ -145,6 +157,7 @@ async function publishSource(transport: Transport, publisher: Publisher, gitClie
   const asset = await ensureAsset(transport, tenantId, "workflow", name);
   // A deployment's permissions come from its asset's creator.
   if (asset.creatorPrincipalId !== publisher.principalId) throw new Error(`${name} was created by someone else; publishing to it would deploy under their permissions.`);
+  await grantOwnPush(transport, publisher, asset.id);
   const dir = `${gitClient.dir}/${name}`;
   await git.init({ fs, dir, defaultBranch: BRANCH });
   const tree = await writeTree(fs, dir, source);
@@ -167,6 +180,12 @@ async function publishSource(transport: Transport, publisher: Publisher, gitClie
   }
 }
 
+/** Each workflow published does what its publisher may, so publishing needs every grant the Deployer role holds. */
+async function requireDeployer(transport: Transport, { tenantId, principalId }: Publisher): Promise<void> {
+  const held = await Promise.all(DEPLOYER_GRANTS.map(({ resource, action }) => evaluateAccess(transport, tenantId, principalId, resource, action)));
+  if (held.includes(false)) throw new Error("Only a Deployer can publish Triage's workflows. Ask a workspace owner to make you one under Settings, People.");
+}
+
 /**
  * Publishes the portal build's workflows one call at a time, in the build's order so each chain workflow follows the
  * one it deploys; a release already published keeps its commit, and a chain workflow whose models the workspace lacks
@@ -183,6 +202,7 @@ export async function publishSources(
   publishing = new Promise(function hold(resolve) { release = resolve; });
   try {
     await previous;
+    await requireDeployer(transport, publisher);
     const index = await (await portalPackage(fetchRaw, "sources/index.json")).json() as SourceIndexEntry[];
     const models = await listModels(transport, publisher.tenantId);
     const published: PublishedSource[] = [];
