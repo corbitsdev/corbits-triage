@@ -9,11 +9,16 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute } from "hono-openapi";
 import { schema, type DB } from "@intx/db";
 import type { RequireGrant, RunTokenRoute, TenantEnv } from "@intx/hub-api";
+import { asRecord } from "@corbits/common";
 import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
+import { heldForCi } from "@corbits/triage-workflows/logic/settled";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
-import { done, EventState, PassState, recordEvent, ReviewerState, take } from "./manager-state.js";
+import type { Tx } from "./github/admin-github-grant.js";
+import { recordApproved, replaceVerdict } from "./github/verdict-record-store.js";
+import { doResultsOf, eventOf, mirrorOutcomesOf, ruledOf, summaryOf, withResults } from "./github/verdict-row.js";
+import { done, EventState, PassState, recordEvent, ReviewerState, take, type Closing, type PassReport } from "./manager-state.js";
 
 const TAKE_PATH = "/manager/take";
 const DONE_PATH = "/manager/done";
@@ -26,7 +31,20 @@ export const MANAGER_RUN_TOKEN_ROUTES: readonly RunTokenRoute[] = [
 ];
 
 const PullRequest = type({ source: type.enumerated(...REPO_SOURCES), repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" });
-const DoneBody = PullRequest.and({ reviewers: ReviewerState.array() });
+/**
+ * What the pass did on its head: held it for CI, or posted a verdict, given as its evaluate, mirror, execute and rules
+ * steps output it. A pass that posted nothing reports nothing.
+ */
+const Report = type({
+  head: "string > 0",
+  "waiting?": "true",
+  "verdict?": "Record<string, unknown>",
+  "mirror?": "Record<string, unknown>",
+  "executed?": "Record<string, unknown>",
+  "rules?": "Record<string, unknown>",
+});
+/** `approvals` is the pass's approved Dos as its approvals step ran them. */
+const DoneBody = PullRequest.and({ reviewers: ReviewerState.array(), "report?": Report, "approvals?": { results: "Record<string, unknown>[]" } });
 const ReviewerResultBody = PullRequest.and(StageResult);
 
 const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array() } as const;
@@ -52,6 +70,21 @@ function refused(): Response {
 type RunEnv = TenantEnv & { Variables: TenantEnv["Variables"] & { runId: string } };
 
 export type ManagerRoutesDeps = { db: DB["db"]; requireGrant: RequireGrant; log: (entry: Record<string, unknown>) => void };
+
+type Reported = typeof Report.infer;
+
+/** The verdict the pass posted, with the outcomes of the Dos it ran. */
+function postedOf(report: Reported | undefined): Record<string, unknown> | undefined {
+  return report?.verdict && withResults(report.verdict, doResultsOf(report.executed));
+}
+
+/** What done keeps on the closed pass: whether it held its head for CI, or the mirror request of its verdict. */
+function passReport(report: Reported | undefined, posted: Record<string, unknown> | undefined): PassReport | undefined {
+  if (!report) return undefined;
+  if (report.waiting || (posted && heldForCi(posted))) return { head: report.head, waiting: true };
+  const request = asRecord(posted?.["request"]);
+  return { head: report.head, ...(request && { request }) };
+}
 
 export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps) {
   const app = new Hono<RunEnv>();
@@ -96,8 +129,8 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
   app.post(
     DONE_PATH,
     describeRoute({
-      summary: "Close the manager's pass and record its reviewers",
-      description: `Run token only. \`ended\`: no event is pending and no reviewer of the current head is due, so the claim ended and the run should end. \`more\`: the manager takes again at once, or with \`wait\` after waiting for its reviewer. ${NOT_MANAGER}`,
+      summary: "Close the manager's pass and record its reviewers and its verdict",
+      description: `Run token only. In the same transaction, a \`report\` of a verdict the pass posted is recorded as the run's verdict on the pull request, replacing one the run recorded before, and \`approvals\` sets each approved Do's outcome on the verdicts that suggest it. \`ended\`: no event is pending and no reviewer of the current head is due, so the claim ended and the run should end. \`more\`: the manager takes again at once, or with \`wait\` after waiting for its reviewer. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("Whether the manager is done", Done), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),
@@ -106,8 +139,22 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     granted,
     body(DoneBody),
     async function finishPass(c) {
-      const valid = c.req.valid("json");
-      const result = await done(db, c.get("tenant").id, valid, c.get("runId"), valid.reviewers);
+      const { reviewers, report, approvals, ...pr } = c.req.valid("json");
+      const tenantId = c.get("tenant").id;
+      const runId = c.get("runId");
+      const posted = postedOf(report);
+      const kept = passReport(report, posted);
+      async function recordPass(tx: Tx, closing: Closing | undefined): Promise<void> {
+        if (posted && closing && !kept?.waiting) {
+          const event = closing.mail && eventOf(closing.mail);
+          const trigger = { ...pr, headSha: closing.head, startedAt: closing.startedAt, ...(event !== undefined && { event }) };
+          const summary = summaryOf(posted, new Date().toISOString(), trigger, mirrorOutcomesOf(report?.mirror), ruledOf(report?.rules).get(`${pr.repo}#${pr.number}`));
+          if (summary) await replaceVerdict(tx, tenantId, { runId, repo: pr.repo, number: pr.number, headSha: closing.head, startedAt: new Date(closing.startedAt), ...summary, runStatus: "completed" });
+        }
+        const approved = approvals === undefined ? [] : approvals.results.flatMap((ran) => [...doResultsOf(ran).values()].map((outcome) => ({ repo: pr.repo, number: pr.number, ...outcome })));
+        await recordApproved(tx, tenantId, approved);
+      }
+      const result = await done(db, tenantId, pr, runId, reviewers, kept, recordPass);
       if (result.outcome === "refused") return refused();
       return c.json(result);
     },

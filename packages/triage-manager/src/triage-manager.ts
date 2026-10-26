@@ -48,7 +48,7 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
     reviewMailed: action({ handler: "reviewMailed", input: stepsOf("deployReview", "mailReview"), after: ["mailReview"] }),
     reviewSent: gate({ when: { from: "steps.reviewMailed.output.post" }, then: "mirrorRules", else: "doneReviewing", after: ["reviewMailed"] }),
     // A pass that mailed its review records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
-    doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "reviewMailed")] }, ["reviewSent"]),
+    doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "reviewMailed")] }, ["reviewSent"]),
     posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "done", after: ["reviewing"] }),
     postReview: action({ handler: "postReview", input: { merge: [MAIL, stepsOf("take", "reviewScope")] }, after: ["mirrorRules"], credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } }),
   };
@@ -70,7 +70,7 @@ function judgeSteps(): Record<string, Primitive> {
     judgeMailed: action({ handler: "judgeMailed", input: stepsOf("deployJudge", "mailJudge"), after: ["mailJudge"] }),
     judgeSent: gate({ when: { from: "steps.judgeMailed.output.post" }, then: "evaluateRules", else: "doneJudging", after: ["judgeMailed"] }),
     // A pass that mailed its judge records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
-    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "judgeMailed")] }, ["judgeSent"]),
+    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "judgeMailed")] }, ["judgeSent"]),
     judgeWait: gate({ when: { from: "steps.judgeScope.output.post" }, then: "evaluateRules", else: "done", after: ["judging"] }),
   };
 }
@@ -91,9 +91,10 @@ function passOf(id: string, sources: Sources) {
       // Nothing signals it: the timeout is the wait, which a loop body cannot sleep.
       poll: awaitSignal({ name: "manager-poll", timeout: POLL_MS, onTimeout: "take", after: ["paused"] }),
       take: hubAction("take", { from: "trigger.payload.payload" }, ["paused", "poll"]),
-      ran: gate({ when: { from: "steps.take.output.run" }, then: "approvals", else: "done", after: ["take"] }),
-      approvals: { ...hostAction("execute", sources, stepsOf("take"), ["ran"]), handler: "executeApprovals" },
-      triaged: gate({ when: { from: "steps.take.output.triage" }, then: "waiting", else: "done", after: ["approvals"] }),
+      // Runs on every pass, approving nothing when there is nothing to run, so every branch's done reports its outcomes.
+      approvals: { ...hostAction("execute", sources, stepsOf("take"), ["take"]), handler: "executeApprovals" },
+      ran: gate({ when: { from: "steps.take.output.run" }, then: "triaged", else: "done", after: ["approvals"] }),
+      triaged: gate({ when: { from: "steps.take.output.triage" }, then: "waiting", else: "done", after: ["ran"] }),
       waiting: { ...waiting, input: TAKEN, after: ["triaged"] },
       held,
       markWaiting,
@@ -107,7 +108,10 @@ function passOf(id: string, sources: Sources) {
       mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] },
       // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.
       executeRules: { ...executeRules, after: ["postReview"] },
-      done: hubAction("done", { merge: [MAIL, stepsOf("take")] }, ["ran", "triaged", "markWaiting", "judgeWait", "posting", "executeRules"]),
+      // A skipped step is missing from every selector, so the branches that report a held head or a posted verdict have their own done.
+      doneWaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "waiting")] }, ["markWaiting"]),
+      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "evaluateRules", "mirrorRules", "executeRules")] }, ["executeRules"]),
+      done: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals")] }, ["ran", "triaged", "judgeWait", "posting"]),
     },
   });
 }

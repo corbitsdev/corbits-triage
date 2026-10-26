@@ -4,6 +4,9 @@ import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, M
 /** Each host's listener by its definition id, also its mail address: a workspace with one live routes pull requests to managers. */
 export const TRIAGE_LISTENERS: Record<RepoSource, string> = { github: "triage-listener-github", "bitbucket-datacenter": "triage-listener-bitbucket-datacenter" };
 
+/** Each host's pull request manager by its definition id, also its mail address. */
+export const TRIAGE_MANAGERS: Record<RepoSource, string> = { github: "triage-manager-github", "bitbucket-datacenter": "triage-manager-bitbucket-datacenter" };
+
 /** The system role a person holds to publish the listener's chain and deploy it, which every deployment of it then acts under. */
 export const DEPLOYER_ROLE = "Deployer";
 

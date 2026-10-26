@@ -34,6 +34,7 @@ import { TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
+import { passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
@@ -80,6 +81,7 @@ import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
+import { createManagerRuns } from "./github/manager-runs.js";
 import { createSessions } from "./sessions.js";
 import { createVerifiedGate } from "./verified-gate.js";
 import { createHubOwner } from "./hub-owner.js";
@@ -571,6 +573,7 @@ function reconcileTenants() {
   return composition.db.select({ id: schema.tenant.id, domain: schema.tenant.domain, config: schema.tenant.config }).from(schema.tenant);
 }
 const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
+const managerRuns = createManagerRuns(composition.db, verdictRecordStore, now);
 async function liveTriageDeployments(tenantId: string, workflow: string) {
   return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, workflow));
 }
@@ -660,6 +663,7 @@ function triageStack(triage: TriageWorkflow) {
     openHeadsFor: tenantOpenHeads,
     activity: repoActivity,
     observeTenant: observer.observe,
+    managerRuns,
     store: triageStateStore,
     readCheckPack,
     send: sendTriageMail,
@@ -715,6 +719,7 @@ const githubPrTriage = createGithubPrTriage({
   readCheckPack,
   liveDeployments: liveTriageDeployments,
   observeRuns: observeTriageRuns,
+  managerRuns,
   store: triageStateStore,
   send: sendTriageMail,
   policy: reconcilePolicy,
@@ -729,6 +734,9 @@ const githubHeldDos = createGithubHeldDos({
   liveDeployments: liveTriageDeployments,
   deliver: deliverToDeployment,
   toListener,
+  passRequest: function managerPassRequest(tenantId, pr, runId, head) {
+    return passRequest(composition.db, tenantId, pr, runId, head);
+  },
   log: logJson,
 });
 const reconcileSourceDeployments = createSourceDeployments({

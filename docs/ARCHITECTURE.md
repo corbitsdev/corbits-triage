@@ -261,10 +261,15 @@ any other tenant or an unknown sender.
   review report, or an overdue reviewer, pr-triage's own steps run on the
   newest mail for the head, handed over as `{ taken }`, which they trust as
   the hub's: a head held for CI is marked waiting when that mail is the newest
-  for it. Anything else is triaged. A policy of only deterministic rules posts
-  on this pass. One whose rules need the judge, or that asks for code review,
-  posts once, after each of those has reported or given up: the machine
-  verdict, the judge's verdict and the code review together. Done then answers
+  for it. Anything else is triaged. Every pass runs its approvals step, which
+  approves nothing when there is nothing to run. A policy of only deterministic
+  rules posts on this pass. One whose rules need the judge, or that asks for
+  code review, posts once, after each of those has reported or given up: the machine
+  verdict, the judge's verdict and the code review together. Done reports what
+  the pass ran: the approved Dos' outcomes, a head it held for CI, or the
+  verdict it posted as its evaluate, mirror, execute and rules steps output
+  it, with the facts the verdict keeps rather than the diff. Each branch that
+  reports one of these has its own done step. Done then answers
   `ended`, or `more`: the next pass runs at once when an event is pending, or
   every 30 seconds while it waits for its judge or its code review.
   Once the passes end, fail or run out, or take finds another run holds the
@@ -310,6 +315,20 @@ any other tenant or an unknown sender.
   one an earlier manager deployed runs out its own deadline. Stock grants the
   deployer `read` on a run it deployed, and the vendored Interchange carries
   `manage` instead (`vendor/interchange/VENDORED.md`).
+  The hub records the verdict done reports as the manager run's, in done's
+  transaction (`apps/hub/src/manager-routes.ts`), with the row-building code
+  pr-triage's run logs use (`apps/hub/src/github/verdict-row.ts`). The
+  reconciler and Triage again read the managers of the pull requests they look
+  at from their claims and those rows (`apps/hub/src/github/manager-runs.ts`):
+  a manager that is up runs the head of the newest pull request mail recorded
+  for it, so its head is not mailed again; one that went away with a pass open
+  failed on that pass's head, which is retried with backoff; a head whose last
+  pass was held for CI waits for its CI; a recorded verdict settles its head as
+  a pr-triage run's does. Triage again can queue a head again as soon as its
+  manager has reported done, or went away, since it was queued.
+  Approving a held Do of a manager's verdict reads the Do from the recorded
+  verdict and sends it with the mirror request its pass kept; a Do the run's
+  newer verdict no longer holds answers `verdict_superseded`.
 - `pr-code-review-reviewer-github` and
   `pr-code-review-reviewer-bitbucket-datacenter` (`codeReviewReviewer` in
   `@corbits/pr-code-review`): the code review a manager deploys, alone on its
@@ -810,8 +829,13 @@ read it, and passes the rest of the request to stock.
   recorded file is older than its own last one; the `@corbits/*` packages'
   migrations keep no record of their own.
 - Triage's tables, in the `corbits_triage` schema: `verdict` (verdicts per
-  head, with the outcomes of the actions their run executed; a verdict's host
-  is its run's workflow's, and GitHub when that run is gone), `device_code`
+  head, with the outcomes of the actions their run executed, copied from a
+  pr-triage run's log or reported by a manager's done; a manager run's newest
+  verdict on a pull request replaces the one it recorded before, keeping the
+  outcomes of Dos already written on its head. The verdict's `startedAt` is
+  when the run first took its head, and its trigger the newest mail for it. A verdict's
+  host is its run's workflow's, by the workflow id its deployment's frozen
+  projection keeps, and GitHub when that run is gone), `device_code`
   (better-auth's device authorization, for agents a signed-in person
   approves) and `manager_state` (below), migrated from `apps/hub/migrations`
   by `db:migrate` in one transaction under an advisory lock. Nothing else is
@@ -819,7 +843,9 @@ read it, and passes the rest of the request to stock.
   invited principal.
 - `manager_state` (`apps/hub/src/manager-state.ts`) holds a pull request's
   manager claim (`mgr:<source>:<repo>#<n>`: status, the run it names, the
-  open pass, reviewers and closed passes) and its pending events
+  open pass, reviewers and closed passes, each closed pass with whether it
+  held its head for CI, and the newest pass of a run on a head with the mirror
+  request of the verdict it posted) and its pending events
   (`evt:<source>:<repo>#<n>:<deliveryId>`), each change one short
   transaction. Recording an event is a no-op on a redelivery; the database
   stamps `receivedAt` to the microsecond as it inserts the row, so events
@@ -849,7 +875,12 @@ read it, and passes the rest of the request to stock.
   `triage-manager:state`; reviewer-result needs `create` on
   `triage-manager:result` and nothing more. The calling run is the token's
   run, never a body field. Take and done
-  answer 409 `not_manager` to a run the claim does not name.
+  answer 409 `not_manager` to a run the claim does not name. Done's body
+  carries the pass's `report` and `approvals`: the hub keeps the report on the
+  closed pass (a pass that reported without taking events, as one past a
+  reviewer's deadline, is closed as its own), and in the same transaction
+  records a posted verdict and sets each approved Do's outcome on the verdicts
+  that suggest it.
   Reviewer-result is not fenced: any run with the grant records under its
   own run id, and the manager matches results to its reviewers by run id.
   Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's

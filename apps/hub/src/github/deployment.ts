@@ -72,7 +72,7 @@ type DeploymentQuery = { tenantId: string; definitionName?: string; kind: Deploy
  * A workflow the portal publishes per person deploys from an asset named for its publisher and release, which names
  * its definition too; its frozen projection keeps the workflow's own id, so that is the name a deployment is found by.
  */
-const workflowName = sql<string>`coalesce(${schema.workflowRunLaunchSpec.frozenApprovalBundle} -> 'projection' ->> 'id', ${schema.workflowDefinition.name})`;
+export const workflowName = sql<string>`coalesce(${schema.workflowRunLaunchSpec.frozenApprovalBundle} -> 'projection' ->> 'id', ${schema.workflowDefinition.name})`;
 
 /** Matches how the hub lists deployments: a deployment is its anchor run. Newest first; live, or ended since `endedSince`. */
 async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<TenantDeployment[]> {

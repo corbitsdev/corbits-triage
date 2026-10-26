@@ -153,6 +153,7 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     openHeadsFor: async () => async () => [{ ...HEAD, updatedAt: ago(60 * MINUTE).toISOString(), draft: false }],
     activity: { stale: () => true },
     observeTenant: observer.observe,
+    managerRuns: async () => NO_RUNS,
     headChecks: async () => [],
     verdicts: { latest: async () => [] },
     store: {

@@ -19,6 +19,7 @@ import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type R
 import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
 import type { RepoActivity } from "./repo-activity.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
+import type { ManagerRuns } from "./manager-runs.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
@@ -58,6 +59,8 @@ export type TriageReconcilerDeps = {
   verdicts: Pick<VerdictRecordStore, "latest">;
   /** Reads and records the live deployments' runs, shared with the recording loop. */
   observeTenant: TenantObserver["observe"];
+  /** The host's pull request managers, read from their claims and the verdicts they reported. */
+  managerRuns: ManagerRuns;
   store: TriageStateStore;
   readCheckPack: PolicyReader;
   send: (job: TriageJob) => Promise<void>;
@@ -493,9 +496,11 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         if (reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err)) failed = true;
       }
     }
+    const pulls = loaded.flatMap((repo) => repo.prs.map((pr) => ({ source: deps.source, repo: repo.record.name, number: pr.number })));
+    const managed = await deps.managerRuns(tenant.id, pulls, pass.deployment.workflowVersion);
     const plans = planTenant({
       repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored.rows, ci: repo.ci })),
-      runs: pass.runs.byRepo,
+      runs: mergeObservedRuns([pass.runs, managed]).byRepo,
       now: deps.now(),
       policy: deps.policy,
       workflowVersion: pass.deployment.workflowVersion,

@@ -5,7 +5,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { hasEnabledRules, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
@@ -13,11 +13,12 @@ import type { PolicyReader } from "./check-pack-store.js";
 import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
-import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
+import type { ManagerRuns } from "./manager-runs.js";
+import { isStuck, runKey, type ObservedRun, type ReconcilePolicy } from "./reconcile-plan.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import { newestLive, type LiveDeployment } from "./deployment.js";
-import { mergeObservedRuns, observeDeployments, type ObserveRuns } from "./triage-runs.js";
+import { mergeObservedRuns, observeDeployments, type ObservedRuns, type ObserveRuns } from "./triage-runs.js";
 import { isQueuedSince, isRunningSince, queueHead, restoreHead } from "./triage-queue.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 
@@ -32,6 +33,7 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   /** The named workflow's, newest first; mail goes to the first, and a head may still be running on a replaced one. */
   liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
   observeRuns: ObserveRuns;
+  managerRuns: ManagerRuns;
   store: TriageStateStore;
   send: (job: TriageJob) => Promise<void>;
   policy: ReconcilePolicy;
@@ -72,6 +74,19 @@ async function readyToTriage(deps: GithubPrTriageDeps, member: Member, repo: str
   return { ...granted, ...inputs };
 }
 
+/** The runs that named the head; none when no run did. */
+function headRuns(runs: ObservedRuns, repo: string, key: string): readonly ObservedRun[] {
+  const listed = runs.byRepo.get(repo)?.get(key);
+  return listed === undefined ? [] : listed;
+}
+
+/** A manager that reported done on the head, or went away on it, since it was queued settles it before the reconciler's next pass marks it so. */
+function doneSince(row: PrTriageRow | undefined, runs: readonly ObservedRun[], policy: ReconcilePolicy): boolean {
+  if (row?.queuedAt === undefined) return false;
+  const since = new Date(row.queuedAt).getTime() - policy.clockSkewMs;
+  return runs.some((run) => run.status !== "running" && new Date(run.startedAt).getTime() >= since);
+}
+
 export function createGithubPrTriage(deps: GithubPrTriageDeps) {
   return async function handle({ repo, number }: typeof TriageBody.infer, member: Member): Promise<Response> {
     const { tenantId, principalId } = member;
@@ -94,13 +109,15 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const headSha = openHead;
 
     const now = deps.now();
-    const runs = mergeObservedRuns(await observeDeployments(deps.observeRuns, deployments, tenant.domain)).byRepo.get(repo)?.get(runKey(number, headSha)) ?? [];
+    const key = runKey(number, headSha);
+    const managed = headRuns(await deps.managerRuns(tenantId, [{ source: sourceOf(record), repo, number }], undefined), repo, key);
+    const runs = [...headRuns(mergeObservedRuns(await observeDeployments(deps.observeRuns, deployments, tenant.domain)), repo, key), ...managed];
     if (runs.some((run) => run.status === "running" && !isStuck(run, now, deps.policy))) {
       return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
     }
     const head = { tenantId, repo: triageStateKey(record), number, headSha };
     const queued = await queueHead(deps.store, head, now, function busy(prior) {
-      return isQueuedSince(prior, now, deps.policy) || isRunningSince(prior, now, deps.policy);
+      return (isQueuedSince(prior, now, deps.policy) || isRunningSince(prior, now, deps.policy)) && !doneSince(prior, managed, deps.policy);
     }, false);
     if (queued.status === "kept") {
       if (isQueuedSince(queued.prior, now, deps.policy)) return failure(409, "already_queued", `${repo}#${number} is already queued for triage.`);

@@ -1,10 +1,12 @@
 // The manager's pass loop. Each fn is pure: it reads a finished pass's step outputs, keyed by step id.
 import { asRecord } from "@corbits/common";
 
-/** The pass's done, on whichever branch it ran. A skipped step is missing, so the first of these that ran is the pass's. */
+const DONES = ["done", "donePosted", "doneWaiting", "doneReviewing", "doneJudging"];
+
+/** The pass's done, on whichever branch it ran. The loop reads a pass's outputs from its log, where each done it skipped holds the gate's skip marker. */
 function doneOf(output: unknown): Record<string, unknown> | undefined {
   const steps = asRecord(output);
-  return asRecord(steps?.["done"]) ?? asRecord(steps?.["doneReviewing"]) ?? asRecord(steps?.["doneJudging"]);
+  return DONES.map((id) => asRecord(steps?.[id])).find((done) => done !== undefined && done["skipped"] !== true);
 }
 
 /** Another pass while done answers `more`. */

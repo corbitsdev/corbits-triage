@@ -345,6 +345,7 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
     async liveDeployments() { return [{ runId: "wfr_anchor", address: "wfr_anchor@read-access.test", createdAt: new Date(), cancelling: false }]; },
     async deliver(_tenantId, address, payload) { mailed.push({ address, payload }); },
     async toListener() { return false; },
+    async passRequest() { throw new Error("pr-triage's verdict is in its run's log"); },
     log() {},
   });
   async function approve(user: string, step: { effectId: string; kind: ActionKind }, runId = "wfr_verdict") {
@@ -371,4 +372,40 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
   recorded.push({ runId: "wfr_newer", degraded: null, runStatus: "completed" });
   expect(await approve("usr_approver", ship)).toMatchObject({ status: 409, body: { error: { code: "verdict_superseded" } } });
   expect(mailed).toHaveLength(2);
+});
+
+test("PostgreSQL: a held Do of a verdict a manager reported is approved from the recorded verdict and the mirror request its pass kept, and goes to the listener; once the run's newer verdict replaced it, it is superseded", async () => {
+  await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_manager", tenantId: TENANT, name: "triage-manager-github", status: "stopped" });
+  await handle.db.insert(schema.workflowRun).values({ id: "wfr_manager", definitionId: "wfd_manager", anchorRunId: "wfr_manager", tenantId: TENANT, status: "running" });
+  const target = { labels: ["api"] };
+  const tag = { list: "pass" as const, index: 0, kind: "labels" as const, target, held: true, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "labels", target }) };
+  const request = { repo: REPO, number: 8, labels: ["Triage: Pass"], owned: [], comment: "Ready for review." };
+  const recorded: Array<Pick<VerdictRecord, "runId" | "headSha" | "degraded" | "runStatus" | "detail">> = [{ runId: "wfr_manager", headSha: HEAD, degraded: null, runStatus: "completed", detail: { headSha: HEAD, actions: [tag] } }];
+  const kept: unknown[] = [];
+  const listened: unknown[] = [];
+  const heldDos = createGithubHeldDos({
+    ...deps,
+    runReader: { async readRunEvents() { return [{ seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0 } }]; } },
+    verdicts: { async forPull() { return recorded as VerdictRecord[]; } },
+    async liveDeployments() { return []; },
+    async deliver() { throw new Error("a manager's approval goes to the listener"); },
+    async toListener(_tenantId, payload) {
+      listened.push(payload);
+      return true;
+    },
+    async passRequest(_tenantId, pr, runId, head) {
+      kept.push({ pr, runId, head });
+      return request;
+    },
+    log() {},
+  });
+  const res = await heldDos({ runId: "wfr_manager", repo: REPO, number: 8, effectId: tag.effectId, kind: "labels" }, member("usr_approver"));
+  expect({ status: res.status, body: await res.json() }).toEqual({ status: 202, body: { status: "sent" } });
+  expect(kept).toEqual([{ pr: { source: "github", repo: REPO, number: 8 }, runId: "wfr_manager", head: HEAD }]);
+  expect(listened).toEqual([{ kind: "approve-do", runId: "wfr_manager", principalId: "prn_approver", list: "pass", index: 0, request, step: { effectId: tag.effectId, headSha: HEAD, kind: "labels", target } }]);
+
+  recorded[0] = { ...recorded[0]!, headSha: "newer", detail: { headSha: "newer", actions: [] } };
+  const replaced = await heldDos({ runId: "wfr_manager", repo: REPO, number: 8, effectId: tag.effectId, kind: "labels" }, member("usr_approver"));
+  expect({ status: replaced.status, body: await replaced.json() }).toMatchObject({ status: 409, body: { error: { code: "verdict_superseded" } } });
+  expect(listened).toHaveLength(1);
 });
