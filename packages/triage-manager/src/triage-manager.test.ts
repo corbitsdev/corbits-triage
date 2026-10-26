@@ -25,6 +25,9 @@ const TENANT_PATH = `/api/tenants/${TENANT}`;
 const END = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${RUN}` };
 const DEPLOY = { method: "POST", path: `${TENANT_PATH}/workflows/deployments` };
 const DEPLOYED = "run_deployed";
+const STOP_REVIEW = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` };
+/** A code review an earlier manager deployed, which only that manager may stop. */
+const INHERITED = "run_inherited";
 /** The eval fixture's head. */
 const HEAD = "e0a1".repeat(10);
 
@@ -44,7 +47,7 @@ const CODE_REVIEW = { codeReview: { on: true, for: ["everyone"], triage: ["pass"
 const REVIEW_REQUEST = { codeReviewRequest: { kind: "code-review", number: PR.number, title: PR.title, description: PR.body, diff: "diff --git a/src/flag.ts b/src/flag.ts", checkout: { source: "github", repo: PR.repo, sha: HEAD } } };
 const REVIEW = { summary: "One bug.", comments: [{ path: "src/flag.ts", start: 1, end: 1, title: "Always true", body: "The flag can never be off." }], budgetExhausted: false };
 const LATER = "2999-01-01T00:00:00.000Z";
-const reviewer = (deadline = LATER) => ({ kind: "code-review", head: HEAD, runId: DEPLOYED, deadline });
+const reviewer = (deadline = LATER) => ({ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN, deadline });
 
 /** The pull request mail the hub records, as its bridge builds it; a manager reads it back through take. */
 function hubRequest(pack: CheckPack, extra: Record<string, unknown> = {}, automatic: ActionKind[] = [...ACTION_KINDS]): Record<string, unknown> {
@@ -76,7 +79,7 @@ const allow: WorkflowAuthorizeFn = async function allow() {
 type HubCall = { method: string; path: string; body?: unknown };
 type HubAnswer = Record<string, unknown> | typeof REFUSED;
 
-/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route. */
+/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route, which refuses to stop an inherited review. */
 function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[] }) {
   const calls: HubCall[] = [];
   function answer(next: HubAnswer | undefined): Response {
@@ -88,7 +91,8 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
     calls.push({ method, path: url.pathname, ...(init?.body !== undefined && { body: JSON.parse(String(init.body)) }) });
     if (url.pathname === `${TENANT_PATH}/manager/take`) return answer(takes.shift());
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
-    if (method === END.method && url.pathname === END.path) return new Response(null, { status: 202 });
+    if (method === "DELETE" && url.pathname === `${TENANT_PATH}/workflows/runs/${INHERITED}`) return Response.json({ error: { code: "forbidden" } }, { status: 403 });
+    if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
     if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: DEPLOYED }, { status: 201 });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });
   }
@@ -225,11 +229,20 @@ describe("triage-manager", () => {
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
   });
 
-  test("an old review's reply finds nothing for its head and runs no stage 1", async () => {
+  test("an old review's reply finds nothing for its head, runs no stage 1 and stops the superseded review", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [{ ...reviewer(), head: "older" }] }], dones: [ENDED] });
     expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["done", "paused", "ran", "take"]);
     expect(writes).toEqual([]);
+    expect(hub.calls).toEqual([TAKE, DONE, STOP_REVIEW, END]);
+  });
+
+  test("a review an earlier manager deployed is left to run out its own deadline", async () => {
+    const { host } = githubHost();
+    const inherited = { ...reviewer(), head: "older", runId: INHERITED, deployedBy: "run_earlier" };
+    const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [inherited] }], dones: [ENDED] });
+    expect((await runMail(github, wake(), host, hub.hub)).terminalStatus).toBe("completed");
+    expect(hub.calls).toEqual([TAKE, DONE, END]);
   });
 
   test("a pass of an approval alone, before any pull request mail was recorded, runs it and triages nothing", async () => {
@@ -299,7 +312,7 @@ describe("triage-manager with code review", () => {
     expect((await runMail(reviewed, wake(), host, first.hub, mailed)).ran).toContain("doneReviewing");
     expect(writes).toEqual([]);
     expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_review", package: { format: "source", commitSha: "c0ffee", packageName: RELEASE.workflow.packageName } }, entry: RELEASE.workflow.entry, sourceOfferingIds: ["off_a"], defaultSourceOfferingId: "off_a" } });
-    expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "code-review", head: HEAD, runId: DEPLOYED }] } });
+    expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
     expect({ ...mail, content: JSON.parse(mail.content) }).toMatchObject({ tenantId: TENANT, to: DEPLOYED, content: { ...REVIEW_REQUEST.codeReviewRequest, tenantId: TENANT, reply: { to: RUN, content: manageMail(TENANT, PULL) } } });
@@ -315,17 +328,17 @@ describe("triage-manager with code review", () => {
   });
 
   test.each([
-    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON)],
-    ["the review ran past its deadline", { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] }],
-    ["the hub read no review request", { ...PASS, request: hubRequest(RULES, CODE_REVIEW) }],
-  ])("when %s, the verdict goes up without code review", async (_name, taken) => {
+    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON), [TAKE, DONE, END]],
+    ["the review ran past its deadline, which is stopped,", { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] }, [TAKE, DONE, STOP_REVIEW, END]],
+    ["the hub read no review request", { ...PASS, request: hubRequest(RULES, CODE_REVIEW) }, [TAKE, DONE, END]],
+  ])("when %s the verdict goes up without code review", async (_name, taken, calls) => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [taken], dones: [ENDED] });
     const { ran } = await runMail(reviewed, wake(), host, hub.hub);
     expect(ran).not.toContain("deployReview");
     expect(writes).toContainEqual(READY);
     expect(writes).not.toContainEqual(POSTED_REVIEW);
-    expect(hub.calls).toEqual([TAKE, DONE, END]);
+    expect(hub.calls).toEqual(calls);
   });
 
   test("a review that could not be mailed by its deadline leaves the verdict to go up alone, waiting for no reviewer", async () => {

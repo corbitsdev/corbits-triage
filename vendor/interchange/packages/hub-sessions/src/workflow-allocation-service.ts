@@ -467,7 +467,7 @@ export function createWorkflowAllocationService({
         tenantId: request.tenantId,
         principalId: request.sourceAuthorityPrincipalId,
         resource: `workflow-run:${request.anchorRunId}`,
-        action: "read",
+        action: "manage",
         effect: "allow",
         origin: "creator",
         createdAt,

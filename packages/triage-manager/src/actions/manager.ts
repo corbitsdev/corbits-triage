@@ -3,7 +3,7 @@ import { type, type Type } from "arktype";
 import { APPROVE_DO_KIND, CodeReviewOutput, StageResult, WAITING_KIND } from "@corbits/triage-contracts";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
-export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deadline: "string", "result?": "unknown" });
+export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "result?": "unknown" });
 export type Reviewer = typeof Reviewer.infer;
 
 const TakenEvent = type({ key: "string", event: { type: "string", head: "string", payload: "Record<string, unknown>" } });
@@ -85,8 +85,18 @@ function reviewersAfter({ head, review, reviewFailed, overdue, reviewers }: Take
 }
 
 /**
- * Closes the pass; the run ends itself when the hub ends its claim, and a run that take refused has ended already.
- * `more` runs the next pass at once, or with `wait` after waiting for a code review.
+ * The code reviews this run deployed that the pass stops waiting for without a report: one on an older head, or past its
+ * deadline. One an earlier manager deployed runs out its own deadline, since only its deployer may stop it.
+ */
+function abandoned({ head, overdue, reviewers }: TakeOutput, runId: string): Reviewer[] {
+  if (head === undefined) return [];
+  return reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.deployedBy === runId && (reviewer.head !== head || overdue));
+}
+
+/**
+ * Closes the pass and stops the code reviews it no longer waits for; the run ends itself when the hub ends its claim, and
+ * a run that take refused has ended already. `more` runs the next pass at once, or with `wait` after waiting for a code
+ * review.
  */
 export async function done(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ outcome: "ended" | "refused" } | { outcome: "more"; wait: boolean }> {
   const parsed = DoneInput(input);
@@ -95,6 +105,7 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const mail = managerMailOf(parsed.payload);
   const answer = await asManager(ctx, mail, "done", { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, parsed.reviewMailed?.output.reviewer) }, Done);
   if (answer === undefined) return { outcome: "refused" };
+  for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);
   if (answer.outcome === "ended") await endRun(ctx, mail.tenantId, mail.runId);
   return answer;
 }

@@ -133,7 +133,7 @@ test("PostgreSQL: take answers the pass's newest pull request mail, and on a pas
     await recordEvent(db, TENANT, GITHUB, "d2", mail("h2"));
     await startManager(db, GITHUB, "run_a");
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h2" }, request: { kind: "pr", headSha: "h2" } });
-    const reviewer = { kind: "code-review", head: "h2", runId: "run_review", deadline: new Date(Date.now() + 60_000).toISOString() };
+    const reviewer = { kind: "code-review", head: "h2", runId: "run_review", deployedBy: "run_a", deadline: new Date(Date.now() + 60_000).toISOString() };
     await done(db, TENANT, GITHUB, "run_a", [reviewer]);
     await recordEvent(db, TENANT, GITHUB, "run_review", { type: "reviewer-result", head: "h2", payload: { kind: "code-review", failed: "the review did not finish" } });
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h2" }, request: { kind: "pr", headSha: "h2" }, reviewers: [reviewer] });
@@ -225,7 +225,7 @@ test("PostgreSQL: a claim taken again after it ended keeps its history, starts a
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     await startManager(db, GITHUB, "run_a");
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass" });
-    const reviewer = { kind: "judge", head: "h1", runId: "run_judge", deadline: new Date(Date.now() - 1_000).toISOString() };
+    const reviewer = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date(Date.now() - 1_000).toISOString() };
     expect(await done(db, TENANT, GITHUB, "run_a", [reviewer])).toEqual({ outcome: "ended" });
     const ended = await stateOf(db, CLAIM);
 
@@ -243,7 +243,7 @@ test("PostgreSQL: take skips events another transaction holds, keeps the newest 
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     await startManager(db, GITHUB, "run_a");
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
-    const reviewer = { kind: "judge", head: "h1", runId: "run_judge", deadline: new Date(Date.now() + 60_000).toISOString() };
+    const reviewer = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date(Date.now() + 60_000).toISOString() };
     expect(await done(db, TENANT, GITHUB, "run_a", [reviewer])).toEqual({ outcome: "more", wait: true });
 
     await recordEvent(db, TENANT, GITHUB, "d2", webhook("h2"));
@@ -345,9 +345,9 @@ test("PostgreSQL: a malformed event payload or reviewer is refused", async () =>
     const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE kind = 'event'`);
     expect(stored.events).toBe(0);
     expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [] });
-    const later = { kind: "judge", head: "h1", runId: "run_judge", deadline: new Date().toISOString(), toJSON: () => ({}) };
+    const later = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date().toISOString(), toJSON: () => ({}) };
     await expect(done(db, TENANT, GITHUB, "run_a", [later])).rejects.toThrow("are malformed");
-    const nullResult = { kind: "judge", head: "h1", runId: "run_judge", deadline: new Date().toISOString(), result: null } as unknown as typeof later;
+    const nullResult = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date().toISOString(), result: null } as unknown as typeof later;
     await expect(done(db, TENANT, GITHUB, "run_a", [nullResult])).rejects.toThrow("are malformed");
   });
 }, 120_000);

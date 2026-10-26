@@ -51,7 +51,7 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   const reviewRun = await deploy(ctx, "deploy", tenantId, release);
   const deadline = new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString();
   const content = JSON.stringify({ ...asRecord(taken["codeReviewRequest"]), tenantId, reply: { to: runId, content: manageMail(tenantId, pullRequest) } });
-  return { reviewer: { kind: "code-review", head, runId: reviewRun, deadline }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
+  return { reviewer: { kind: "code-review", head, runId: reviewRun, deployedBy: runId, deadline }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
 }
 
 const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mailReview: { output: "string" } });
