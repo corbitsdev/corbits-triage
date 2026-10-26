@@ -320,7 +320,7 @@ test("PostgreSQL: every verdict route needs workflow-run read, which holding the
   }
 });
 
-test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage who approved it; it stands only on the newest judged verdict; a written or unrunnable Do is refused", async () => {
+test("PostgreSQL: approving a held Do needs its kind's grant and hands the listener who approved it; it stands only on the newest judged verdict; a written or unrunnable Do is refused, and none goes out without a listener", async () => {
   await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_triage", tenantId: TENANT, name: "pr-triage", status: "stopped" });
   await handle.db.insert(schema.workflowRun).values([
     { id: "wfr_anchor", definitionId: "wfd_triage", anchorRunId: "wfr_anchor", tenantId: TENANT, status: "deployed" },
@@ -336,15 +336,17 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
   const derived = held("3", "labels", { unresolved: "derive", from: "type" });
   const verdict = { repo: REPO, number: 8, headSha: HEAD, request: { repo: REPO, number: 8, labels: [], owned: [], comment: "" }, actions: [ship, tag, written, derived] };
   const events = [{ seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } } }];
-  const mailed: Array<{ address: string; payload: unknown }> = [];
+  const mailed: unknown[] = [];
+  let listening = true;
   let recorded: Array<Pick<VerdictRecord, "runId" | "degraded" | "runStatus">> = [];
   const heldDos = createGithubHeldDos({
     ...deps,
     runReader: { async readRunEvents() { return events; } },
     verdicts: { async forPull() { return recorded as VerdictRecord[]; } },
-    async liveDeployments() { return [{ runId: "wfr_anchor", address: "wfr_anchor@read-access.test", createdAt: new Date(), cancelling: false }]; },
-    async deliver(_tenantId, address, payload) { mailed.push({ address, payload }); },
-    async toListener() { return false; },
+    async toListener(_tenantId, payload) {
+      if (listening) mailed.push(payload);
+      return listening;
+    },
     async passRequest() { throw new Error("pr-triage's verdict is in its run's log"); },
     log() {},
   });
@@ -360,11 +362,8 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
   expect(await approve("usr_user", tag)).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
   expect(await approve("usr_approver", tag)).toEqual({ status: 202, body: { status: "sent" } });
   expect(mailed).toEqual([{
-    address: "wfr_anchor@read-access.test",
-    payload: {
-      kind: "approve-do", runId: "wfr_verdict", principalId: "prn_approver", list: "pass", index: 1,
-      request: verdict.request, step: { effectId: tag.effectId, headSha: HEAD, kind: "labels", target: { labels: ["api"] } },
-    },
+    kind: "approve-do", runId: "wfr_verdict", principalId: "prn_approver", list: "pass", index: 1,
+    request: verdict.request, step: { effectId: tag.effectId, headSha: HEAD, kind: "labels", target: { labels: ["api"] } },
   }]);
 
   recorded = [{ runId: "wfr_verdict", degraded: null, runStatus: "completed" }, { runId: "wfr_degraded", degraded: "error", runStatus: "completed" }, { runId: "wfr_failed", degraded: null, runStatus: "failed" }];
@@ -372,6 +371,9 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
   recorded.push({ runId: "wfr_newer", degraded: null, runStatus: "completed" });
   expect(await approve("usr_approver", ship)).toMatchObject({ status: 409, body: { error: { code: "verdict_superseded" } } });
   expect(mailed).toHaveLength(2);
+  recorded.pop();
+  listening = false;
+  expect(await approve("usr_approver", ship)).toMatchObject({ status: 503, body: { error: { code: "service_not_running" } } });
 });
 
 test("PostgreSQL: a held Do of a verdict a manager reported is approved from the recorded verdict and the mirror request its pass kept, and goes to the listener; once the run's newer verdict replaced it, it is superseded", async () => {
@@ -387,8 +389,6 @@ test("PostgreSQL: a held Do of a verdict a manager reported is approved from the
     ...deps,
     runReader: { async readRunEvents() { return [{ seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0 } }]; } },
     verdicts: { async forPull() { return recorded as VerdictRecord[]; } },
-    async liveDeployments() { return []; },
-    async deliver() { throw new Error("a manager's approval goes to the listener"); },
     async toListener(_tenantId, payload) {
       listened.push(payload);
       return true;

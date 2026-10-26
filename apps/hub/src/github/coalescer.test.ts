@@ -3,7 +3,7 @@ import type { CheckRun } from "@corbits/github-reads";
 import { emptyPack, repoPolicy, triageEventOf, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
 import { createCoalescer, type CoalescedEvent, type CoalescerDeps } from "./coalescer.js";
 import { GithubRateLimited } from "./github-usage.js";
-import { createPrWorkflowRouter } from "./pr-workflow.js";
+import { createPauseGate } from "./pr-workflow.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant } from "./reconcile-plan.js";
 import type { PrMail } from "./normalize.js";
 import type { TriageStateStore } from "./triage-state-store.js";
@@ -364,13 +364,7 @@ test("a mail that fails at flush leaves the row failed for the reconciler", asyn
 });
 
 test("a paused-label head whose pull request cannot be read is left failed, and the reconciler queues it again", async () => {
-  const route = createPrWorkflowRouter({
-    credentials: async () => [],
-    live: async () => true,
-    readHead: async () => Promise.reject(new Error("502 Bad Gateway")),
-    readPull: async () => Promise.reject(new Error("502 Bad Gateway")),
-    log() {},
-  });
+  const route = createPauseGate({ readHead: async () => Promise.reject(new Error("502 Bad Gateway")), log() {} });
   const { clock, state, mails, coalescer } = harness([], {
     async sendMail(job) {
       if (await route(job)) mails.push(job.payload as Record<string, unknown>);

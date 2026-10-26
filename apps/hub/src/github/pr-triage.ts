@@ -1,12 +1,11 @@
 // Queues one open pull request's head at a maintainer's request, for the host's
-// listener while one is live and the live pr-triage deployment otherwise. The
-// row is marked queued before the mail goes out so repeated clicks and reconcile
+// listener. The row is marked queued before the mail goes out so repeated clicks and reconcile
 // passes see it; a failed mail puts it back.
 // Attempts are left alone: a head the hub gave up on is only ever retried here.
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy, TRIAGE_LISTENERS, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
@@ -18,8 +17,8 @@ import type { ManagerRuns } from "./manager-runs.js";
 import { isStuck, runKey, type ObservedRun, type ReconcilePolicy } from "./reconcile-plan.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
-import { newestLive, type LiveDeployment } from "./deployment.js";
-import { mergeObservedRuns, observeDeployments, type ObservedRuns, type ObserveRuns } from "./triage-runs.js";
+import type { LiveDeployment } from "./deployment.js";
+import type { ObservedRuns } from "./triage-runs.js";
 import { isQueuedSince, isRunningSince, queueHead, restoreHead } from "./triage-queue.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 
@@ -31,11 +30,8 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   /** The open pull request's head on the record's host, or undefined when it is not open. */
   pullHead: (tenantId: string, record: RepoRecord, number: number) => Promise<string | undefined>;
   readCheckPack: PolicyReader;
-  /** The named workflow's, newest first; mail goes to the first, and a head may still be running on a replaced one. */
-  liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
-  /** The workspace's live listener for the host, if it has one; its managers then run the pull requests. */
+  /** The workspace's live listener for the host, if it has one; its managers run the pull requests. */
   listener: (tenantId: string, source: RepoSource) => Promise<LiveDeployment | undefined>;
-  observeRuns: ObserveRuns;
   managerRuns: ManagerRuns;
   store: TriageStateStore;
   send: (job: TriageJob) => Promise<void>;
@@ -95,11 +91,10 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const { tenantId, principalId } = member;
     const ready = await readyToTriage(deps, member, repo);
     if (ready instanceof Response) return ready;
-    const { tenant, record, policy, pack } = ready;
+    const { record, policy, pack } = ready;
     const triage = triageWorkflowFor(sourceOf(record));
-    const listening = (await deps.listener(tenantId, sourceOf(record))) !== undefined;
-    const deployments = listening ? [] : await deps.liveDeployments(tenantId, triage.id);
-    if (!listening && !newestLive(deployments)) return failure(503, "service_not_running", `The ${triage.id} service is not running.`);
+    const listener = TRIAGE_LISTENERS[sourceOf(record)];
+    if (!(await deps.listener(tenantId, sourceOf(record)))) return failure(503, "service_not_running", `The ${listener} service is not running. Upgrade Triage in Settings.`);
 
     let openHead: string | undefined;
     try {
@@ -114,8 +109,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const now = deps.now();
     const key = runKey(number, headSha);
     const managed = headRuns(await deps.managerRuns(tenantId, [{ source: sourceOf(record), repo, number }], undefined), repo, key);
-    const runs = [...headRuns(mergeObservedRuns(await observeDeployments(deps.observeRuns, deployments, tenant.domain)), repo, key), ...managed];
-    if (runs.some((run) => run.status === "running" && !isStuck(run, now, deps.policy))) {
+    if (managed.some((run) => run.status === "running" && !isStuck(run, now, deps.policy))) {
       return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
     }
     const head = { tenantId, repo: triageStateKey(record), number, headSha };

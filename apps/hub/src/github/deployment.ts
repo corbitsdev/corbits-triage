@@ -130,21 +130,6 @@ export async function liveWorkers(db: DB["db"]): Promise<{ tenantId: string; run
     .where(and(eq(workflowRun.id, workflowRun.anchorRunId), inArray(workflowRun.status, [...liveWorkflowRunStatuses]), markedAs("worker")));
 }
 
-/** A deployment in any status: `cancelling` tells one released on purpose from one Interchange failed. */
-export type DeploymentRecord = { runId: string; status: (typeof schema.workflowRun.$inferSelect)["status"]; endedAt: Date | null; cancelling: boolean };
-
-export async function latestDeployments(db: DB["db"], tenantId: string, definitionName: string, limit: number): Promise<DeploymentRecord[]> {
-  const { workflowRun, workflowDefinition } = schema;
-  const rows = await db
-    .select({ runId: workflowRun.id, status: workflowRun.status, endedAt: workflowRun.endedAt, cancellationRequestedAt: workflowRun.cancellationRequestedAt })
-    .from(workflowRun)
-    .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
-    .where(and(eq(workflowRun.tenantId, tenantId), eq(workflowDefinition.name, definitionName), eq(workflowRun.id, workflowRun.anchorRunId)))
-    .orderBy(desc(workflowRun.createdAt), desc(workflowRun.id))
-    .limit(limit);
-  return rows.map(({ cancellationRequestedAt, ...row }) => ({ ...row, cancelling: cancellationRequestedAt !== null }));
-}
-
 export type ActiveTenant = { id: string; domain: string };
 
 /**

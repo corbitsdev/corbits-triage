@@ -70,7 +70,6 @@ const HubEnvSchema = type({
   "RAILWAY_GIT_REPO_NAME?": "string",
   "RAILWAY_ENVIRONMENT_ID?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
-  "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
   "TRIAGE_CAPPED_RETRY_MS?": positiveInteger,
   "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
@@ -253,15 +252,6 @@ export function migrationEnv(db: DatabaseConfig): Record<string, string> {
 
 export function triageReconcileIntervalMs(env: HubEnv): number {
   return env.TRIAGE_RECONCILE_INTERVAL_MS === undefined ? 5 * 60_000 : Number(env.TRIAGE_RECONCILE_INTERVAL_MS);
-}
-
-/**
- * The stock hub checks every commit pushed to a deployment's run log against
- * the whole log, so the hub replaces the pr-triage deployment with a fresh copy
- * once its log holds more runs than this.
- */
-export function triageRotateAfterRuns(env: HubEnv): number {
-  return numberOr(env.TRIAGE_ROTATE_AFTER_RUNS, 15);
 }
 
 /** Heads the reconciler lets a tenant have queued or running at once; each runs in a worker sidecar of its own. */

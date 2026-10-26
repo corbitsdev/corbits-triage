@@ -2,37 +2,29 @@ import { expect, test } from "bun:test";
 import type { WorkflowRunEvent } from "@intx/hub-sessions";
 import { decideOf, defaultActions, WAITING_KIND, type PolicyWorkflow } from "@corbits/triage-contracts";
 import type { TriageJob } from "./coordinator.js";
-import { reviewRequestOf, type PullRequestToReview } from "../code-review-feed.js";
-import { createPrWorkflowRouter, prWorkflowKeys, workflowPart } from "./pr-workflow.js";
+import type { PullRequestToReview } from "../code-review-feed.js";
+import { createPauseGate, prWorkflowKeys, workflowPart } from "./pr-workflow.js";
 import type { RepoRecord } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
 
 const DECIDE = [{ if: { triage: "fail" as const }, do: "request-changes" as const }];
 const RECORD = { name: "acme/widgets", connected: true } as RepoRecord;
 const PULL: PullRequestToReview = { title: "t", description: "d", headSha: "abc", draft: false, open: true, diff: "", labels: ["bug"] };
-const REVIEW = reviewRequestOf(RECORD, 8, PULL);
 
 type Read = () => Promise<PullRequestToReview>;
 
-function router(keys: string[], { live = true, read = async () => PULL, readDiff = read }: { live?: boolean; read?: Read; readDiff?: Read } = {}) {
+function gate(read: Read = async () => PULL) {
   const logged: Array<Record<string, unknown>> = [];
-  const diffsRead: number[] = [];
-  const route = createPrWorkflowRouter({
-    credentials: async () => keys,
-    live: async () => live,
+  const route = createPauseGate({
     async readHead() {
       const { diff: _diff, ...head } = await read();
       return head;
-    },
-    readPull(_tenantId, _record, number) {
-      diffsRead.push(number);
-      return readDiff();
     },
     log(entry) {
       logged.push(entry);
     },
   });
-  return { route, logged, diffsRead };
+  return { route, logged };
 }
 
 function job(policyWorkflow: PolicyWorkflow | undefined, kind = "pr", pauseLabel?: string): TriageJob {
@@ -53,75 +45,22 @@ test("only a block on, or a decide other than the actions', needs the PR workflo
   expect(workflowPart({ decide: DECIDE })).toEqual({ codeReview: { on: false, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "pass" }, blocks: [], decide: DECIDE });
 });
 
-test("code review on with the provider's key runs the host's variant, carrying the review of the head; a decide alone reads no diff", async () => {
-  const routed = await router(["anthropic"]).route(job({ "code-review": { on: true }, decide: DECIDE }));
-  expect(routed?.workflow).toBe("pr-workflow-anthropic-github");
-  expect(routed?.payload).toMatchObject({ blocks: ["code-review"], decide: DECIDE, codeReviewRequest: REVIEW, automatic: ["comment", "approve", "merge"] });
-  const decided = await router(["anthropic"]).route(job({ decide: DECIDE }));
-  expect(decided?.workflow).toBe("pr-workflow-anthropic-github");
-  expect(decided?.payload).not.toHaveProperty("codeReviewRequest");
-});
-
-test("a diff that cannot be read is sent without its review, which the run records incomplete", async () => {
-  const { route, logged } = router(["anthropic"], { read: async () => Promise.reject(new Error("host down")) });
-  const routed = await route(job({ "code-review": { on: true } }));
-  expect(routed?.workflow).toBe("pr-workflow-anthropic-github");
-  expect(routed?.payload).not.toHaveProperty("codeReviewRequest");
-  expect(logged).toMatchObject([{ msg: "pull_request_unread", error: "host down" }]);
-});
-
-test("without the provider's key, its variant running, or a variant that runs every block on, pr-triage runs with approve and merge left to a person", async () => {
-  const cases = [
-    { keys: [], live: true, workflow: { "code-review": { on: true } }, reason: "no_provider_key" },
-    { keys: ["anthropic"], live: true, workflow: { "code-review": { on: true, provider: "openai" as const } }, reason: "no_provider_key" },
-    { keys: ["anthropic"], live: true, workflow: { security: { on: true } }, reason: "block_not_runnable" },
-    { keys: ["anthropic"], live: false, workflow: { decide: DECIDE }, reason: "variant_not_running" },
-  ];
-  for (const { keys, live, workflow, reason } of cases) {
-    const { route, logged } = router(keys, { live });
-    const routed = await route(job(workflow));
-    expect(routed?.workflow).toBe("pr-triage-github");
-    expect(routed?.payload).toMatchObject({ automatic: ["comment"] });
-    expect(routed?.payload).not.toHaveProperty("codeReviewRequest");
-    expect(logged.map((entry) => [entry.msg, entry.reason])).toEqual([["pr_workflow_unavailable", reason]]);
-  }
-});
-
-test("a pull request carrying the pause label starts no run, nor does one whose labels can't be read", async () => {
-  const paused = router(["anthropic"]);
-  expect(await paused.route(job(undefined, "pr", "bug"))).toBeUndefined();
-  expect(await paused.route(job({ "code-review": { on: true } }, "pr", "bug"))).toBeUndefined();
-  expect(paused.logged.map((entry) => entry.msg)).toEqual(["pr_paused", "pr_paused"]);
-  const unread = router(["anthropic"], { read: async () => Promise.reject(new Error("502 Bad Gateway")) });
+test("a pull request carrying the pause label on GitHub starts no run, and one whose labels can't be read throws to be retried", async () => {
+  const { route, logged } = gate();
+  expect(await route(job(undefined, "pr", "bug"))).toBeUndefined();
+  expect(logged.map((entry) => entry.msg)).toEqual(["pr_paused"]);
+  expect(await route(job(undefined, "pr", "wip"))).toEqual(job(undefined, "pr", "wip"));
+  const unread = gate(async () => Promise.reject(new Error("502 Bad Gateway")));
   await expect(unread.route(job(undefined, "pr", "bug"))).rejects.toThrow("502 Bad Gateway");
-  await expect(unread.route(job({ "code-review": { on: true } }, "pr", "bug"))).rejects.toThrow("502 Bad Gateway");
   const bitbucket = job(undefined, "pr", "bug");
   const unlabelled = { ...bitbucket, payload: { ...(bitbucket.payload as object), repoSource: "bitbucket-datacenter" } };
   expect(await unread.route(unlabelled)).toEqual(unlabelled);
-  expect(await router(["anthropic"]).route(job(undefined, "pr", "wip"))).toEqual(job(undefined, "pr", "wip"));
 });
 
-test("with a pause label, a diff that cannot be read still pauses on the head's labels, or is sent without its review", async () => {
-  const { route, logged } = router(["anthropic"], { readDiff: async () => Promise.reject(new Error("502 Bad Gateway")) });
-  expect(await route(job({ "code-review": { on: true } }, "pr", "bug"))).toBeUndefined();
-  const routed = await route(job({ "code-review": { on: true } }, "pr", "wip"));
-  expect(routed?.workflow).toBe("pr-workflow-anthropic-github");
-  expect(routed?.payload).not.toHaveProperty("codeReviewRequest");
-  expect(logged.map((entry) => entry.msg)).toEqual(["pull_request_unread", "pr_paused", "pull_request_unread"]);
-});
-
-test("only code review reads the diff; a pause label alone reads the pull request without it", async () => {
-  const paused = router(["anthropic"]);
-  expect(await paused.route(job(undefined, "pr", "bug"))).toBeUndefined();
-  expect(await paused.route(job({ decide: DECIDE }, "pr", "wip"))).toMatchObject({ workflow: "pr-workflow-anthropic-github" });
-  expect(paused.diffsRead).toEqual([]);
-  await paused.route(job({ "code-review": { on: true } }, "pr", "wip"));
-  expect(paused.diffsRead).toEqual([8]);
-});
-
-test("a policy pr-triage runs, and a waiting mail, leave the job as it is", async () => {
-  const { route } = router(["anthropic"]);
-  for (const sent of [job(undefined), job({ "code-review": { on: true } }, WAITING_KIND)]) {
+test("a policy writing its own decide leaves approve and merge to a person; code review alone, or a waiting mail, leaves the job as it is", async () => {
+  const { route } = gate();
+  expect((await route(job({ decide: DECIDE })))?.payload).toMatchObject({ automatic: ["comment"] });
+  for (const sent of [job(undefined), job({ "code-review": { on: true } }), job({ decide: DECIDE }, WAITING_KIND)]) {
     expect(await route(sent)).toEqual(sent);
   }
 });

@@ -352,7 +352,7 @@ On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repos
 
 ### Code review
 
-Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. In a repository whose [policy file](#writing-the-file) turns a check on or writes its own `decide`, the file decides instead: changing the switch, or pressing **Review again**, says **This repository's policy file decides code review, which runs with triage.**
+Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. In a repository whose [policy file](#writing-the-file) turns a check on or writes its own `decide`, the file decides instead: changing the switch says **This repository's policy file decides code review, which runs with triage.** **Review again** still reviews the latest commit once more.
 
 ![The popup Code review needs an Anthropic key, with the Anthropic key field, You won't see it again, Cancel and Save and turn on](images/27.png)
 
@@ -464,8 +464,6 @@ The bar at the bottom of the pane always offers the next step first. For a passi
 - **Triage again** re-runs the checks on the current commit.
 
 Anything you do here is also written to the audit log.
-
-An action that code review held can be approved only while code review runs. If it has stopped, because the policy file no longer turns a check on, the Anthropic key was removed or code review has no place to run, approving it says **Code review held this action, and it is not running now, so the action can't be approved.** Set code review up again, or press **Triage again**.
 
 ### What the author sees
 

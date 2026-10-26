@@ -15,7 +15,7 @@ const CREDENTIAL_ID = "crd_github";
 const NOW = new Date("2026-10-08T12:00:00Z");
 const PACK = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true } } };
 const ENABLED = { name: REPO, connected: true, enabled: true };
-const ANCHOR = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
+const LISTENER = { runId: "listener-1", address: "listener-1@tenant.example", createdAt: NOW, cancelling: false };
 
 type Delivered = { payload: unknown };
 type Stub = { delivered: Delivered[]; saved: PrTriageRow[][]; authorized: unknown[][] };
@@ -29,8 +29,8 @@ function stubDb(repo: Record<string, unknown>) {
   } as never;
 }
 
-function observed(runs: ObservedRun[]): GithubPrTriageDeps["observeRuns"] & GithubPrTriageDeps["managerRuns"] {
-  return async function observeRuns() {
+function observed(runs: ObservedRun[]): GithubPrTriageDeps["managerRuns"] {
+  return async function managerRuns() {
     return { byRepo: new Map([[REPO, new Map([["8@abc123", runs]])]]), runCount: runs.length, verdicts: [], approved: [] };
   };
 }
@@ -72,10 +72,8 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
     },
     pullHead: async (_tenantId, _record, number) => (number === 8 ? "abc123" : undefined),
     readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
-    liveDeployments: async () => [ANCHOR],
-    listener: async () => undefined,
-    observeRuns: observed([]),
-    managerRuns: async () => ({ byRepo: new Map(), runCount: 0, verdicts: [], approved: [] }),
+    listener: async () => LISTENER,
+    managerRuns: observed([]),
     store: stored([], s.saved),
     send: async ({ payload }) => {
       s.delivered.push({ payload });
@@ -161,29 +159,21 @@ describe("createGithubPrTriage", () => {
     const live: ObservedRun = { runId: "run-live", source: "github", status: "running", startedAt: new Date(NOW.getTime() - 60_000).toISOString() };
     const stuck: ObservedRun = { runId: "run-stuck", source: "github", status: "running", startedAt: new Date(NOW.getTime() - 2 * DEFAULT_RECONCILE_POLICY.stuckAfterMs).toISOString() };
     const s = stub();
-    await refused(await handler(ENABLED, s, { observeRuns: observed([live]) })(request(), MEMBER), 409, "already_running");
+    await refused(await handler(ENABLED, s, { managerRuns: observed([live]) })(request(), MEMBER), 409, "already_running");
     expect(s.delivered).toEqual([]);
-    expect((await handler(ENABLED, s, { observeRuns: observed([stuck]) })(request(), MEMBER)).status).toBe(202);
+    expect((await handler(ENABLED, s, { managerRuns: observed([stuck]) })(request(), MEMBER)).status).toBe(202);
     expect(s.delivered).toHaveLength(1);
   });
 
-  test("with the host's listener live, mails with no pr-triage deployment and refuses a pull request whose manager is up", async () => {
+  test("without the host's listener nothing is queued or mailed", async () => {
     const s = stub();
-    const listening: Partial<GithubPrTriageDeps> = { listener: async () => ({ ...ANCHOR, runId: "listener-1", address: "listener-1@tenant.example" }), liveDeployments: async () => [] };
-    expect((await handler(ENABLED, s, listening)(request(), MEMBER)).status).toBe(202);
-    expect(s.delivered).toHaveLength(1);
-    const managed = stub();
-    const running: ObservedRun = { runId: "run-manager", source: "github", status: "running", startedAt: NOW.toISOString() };
-    await refused(await handler(ENABLED, managed, { ...listening, managerRuns: observed([running]) })(request(), MEMBER), 409, "already_running");
-    expect(managed.delivered).toEqual([]);
+    await refused(await handler(ENABLED, s, { listener: async () => undefined })(request(), MEMBER), 503, "service_not_running");
+    expect(s.delivered).toEqual([]);
+    expect(s.saved).toEqual([]);
   });
 
-  test("refuses a head still running on a replaced deployment or stored as running, but not one stored running past the stuck time", async () => {
-    const live: ObservedRun = { runId: "run-live", source: "github", status: "running", startedAt: new Date(NOW.getTime() - 60_000).toISOString() };
-    const replaced = { ...ANCHOR, runId: "anchor-0", address: "anchor-0@tenant.example" };
-    const onReplaced: GithubPrTriageDeps["observeRuns"] = async (anchorRunId, domain) => (anchorRunId === replaced.runId ? observed([live]) : observed([]))(anchorRunId, domain);
+  test("refuses a head stored as running, but not one stored running past the stuck time", async () => {
     const s = stub();
-    await refused(await handler(ENABLED, s, { liveDeployments: async () => [ANCHOR, replaced], observeRuns: onReplaced })(request(), MEMBER), 409, "already_running");
     const running = (agoMs: number): PrTriageRow => ({ ...queuedRow(agoMs), status: "running", runId: "run-live" });
     await refused(await handler(ENABLED, s, { store: stored([running(60_000)], s.saved) })(request(), MEMBER), 409, "already_running");
     expect(s.delivered).toEqual([]);
@@ -203,7 +193,7 @@ describe("createGithubPrTriage", () => {
 
   test("a head a live manager holds is running, and one whose manager reported done or went away since it was queued is queued again at once", async () => {
     const queued = queuedRow(60_000);
-    const manager = (run: ObservedRun): Partial<GithubPrTriageDeps> => ({ store: stored([queued], s.saved), managerRuns: async () => observed([run])("", "") });
+    const manager = (run: ObservedRun): Partial<GithubPrTriageDeps> => ({ store: stored([queued], s.saved), managerRuns: observed([run]) });
     const s = stub();
     await refused(await handler(ENABLED, s, manager({ runId: "run_manager", source: "github", status: "running", startedAt: NOW.toISOString() }))(request(), MEMBER), 409, "already_running");
     await refused(await handler(ENABLED, s, manager({ runId: "run_manager", source: "github", status: "completed", startedAt: new Date(NOW.getTime() - 120_000 - DEFAULT_RECONCILE_POLICY.clockSkewMs).toISOString() }))(request(), MEMBER), 409, "already_queued");

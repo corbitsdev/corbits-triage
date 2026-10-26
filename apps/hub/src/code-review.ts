@@ -2,13 +2,17 @@ import { type } from "arktype";
 import { resolveTenantSidecarCapabilityPolicies, type DB } from "@intx/db";
 import type { SidecarPluginRegistry } from "@intx/hub-sessions";
 import { CODE_REVIEW_PLACEMENT } from "@corbits/pr-code-review/pr-code-review";
-import { REPO_SOURCES, type CodeReviewPlace, type CodeReviewPlaceOption, type PlaceGuide, type RepoSource } from "@corbits/triage-contracts";
+import { errorText } from "@corbits/common";
+import { EVERYONE, REPO_SOURCES, TRIAGE_LISTENERS, VERDICTS, type CodeReviewPlace, type CodeReviewPlaceOption, type PlaceGuide, type RepoSource } from "@corbits/triage-contracts";
 import { githubLimited } from "./github/github-refusal.js";
 import { failure } from "./github/portal-credential.js";
 import { connectedSources, hasCodeReviewKey } from "./github/source-workflow.js";
-import { tenantConfigOf } from "./github/bridge.js";
+import { mailPayload, tenantConfigOf } from "./github/bridge.js";
 import { patchCorbitsTriage, repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
-import type { CodeReviewFeed, Offered } from "./code-review-feed.js";
+import type { PullRequestHead } from "./code-review-feed.js";
+import type { PolicyReader } from "./github/check-pack-store.js";
+import { NoLiveDeploymentError } from "./github/deployment.js";
+import { triageInputs } from "./github/pr-triage.js";
 import type { Member } from "./integrations/app.js";
 
 export const CODE_REVIEW_PATH = "/api/integrations/code-review";
@@ -55,12 +59,6 @@ export function createCodeReviewPlace(deps: CodeReviewPlaceDeps) {
     return Response.json({ provisioner, places: deps.probes.map((probe) => placeOption(probe, provisioner, manages)), prWorkflow } satisfies CodeReviewPlace);
   };
 }
-
-const REFUSED: Record<Exclude<Offered, "sent">, { code: string; message: string }> = {
-  not_reviewed: { code: "code_review_off", message: "Code review is off for this repository, or the Anthropic key is missing." },
-  draft: { code: "draft", message: "The pull request is a draft; code review starts once it is ready." },
-  not_open: { code: "not_open", message: "The pull request is not open." },
-};
 
 type CodeReviewDeps = {
   db: DB["db"];
@@ -116,26 +114,40 @@ export function createCodeReviewSwitch(deps: CodeReviewDeps) {
   };
 }
 
-type CodeReviewRunDeps = Pick<CodeReviewDeps, "db" | "authorize" | "place" | "inPrWorkflow"> & { feed: Pick<CodeReviewFeed, "again"> };
+type CodeReviewRunDeps = Pick<CodeReviewDeps, "db" | "authorize" | "place"> & {
+  readCheckPack: PolicyReader;
+  /** The pull request as its host shows it now, without its diff. */
+  readHead: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestHead>;
+  /** Hands the mail to the host's listener, whose manager deploys the review. */
+  send: (tenantId: string, payload: unknown) => Promise<void>;
+};
 
-/** "Review again": reviews the pull request's current head once more. */
+/** Code review as "Review again" asks for it: on, whatever the policy's own scope says. */
+const REVIEW_NOW = { on: true, for: [EVERYONE], triage: [...VERDICTS], rules: "any" };
+
+/** "Review again": triages the pull request's current head with code review on, so its manager reviews it once more. */
 export function createCodeReviewRun(deps: CodeReviewRunDeps) {
   return async function runCodeReview(body: typeof CodeReviewRunBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     if (!(await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage"))) {
       return failure(403, "forbidden", "You do not have permission to manage this workspace.");
     }
     if ((await deps.place(tenantId)) === null) return noPlace();
+    if (!(await hasCodeReviewKey(deps.db, tenantId))) return failure(409, "anthropic_key_missing", "Save an Anthropic key in Settings before reviewing again.");
     const source = body.source ?? "github";
     const record = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).find((row) => row.name === body.repo && sourceOf(row) === source && row.connected);
     if (!record) return failure(404, "repo_not_found", "The workspace has no such connected repository.");
-    if (await deps.inPrWorkflow(tenantId, record.name, source)) return fileDecides("Press Triage again to review the latest commit.");
-    let offered: Offered;
+    const inputs = await triageInputs(deps, tenantId, record);
+    if (inputs instanceof Response) return inputs;
     try {
-      offered = await deps.feed.again(tenantId, record, body.number);
+      const pull = await deps.readHead(tenantId, record, body.number);
+      if (!pull.open) return failure(409, "not_open", "The pull request is not open.");
+      if (pull.draft) return failure(409, "draft", "The pull request is a draft; code review starts once it is ready.");
+      const payload = mailPayload(record, inputs.policy, inputs.pack, { prNumber: body.number, headSha: pull.headSha, noWait: true });
+      await deps.send(tenantId, { ...payload, codeReview: REVIEW_NOW });
     } catch (err) {
-      return githubLimited(err) ?? failure(502, "code_review_unavailable", `Could not send the pull request to code review: ${err instanceof Error ? err.message : String(err)}`);
+      if (err instanceof NoLiveDeploymentError) return failure(503, "service_not_running", `The ${TRIAGE_LISTENERS[source]} service is not running. Upgrade Triage in Settings.`);
+      return githubLimited(err) ?? failure(502, "code_review_unavailable", `Could not send the pull request to code review: ${errorText(err)}`);
     }
-    if (offered !== "sent") return failure(409, REFUSED[offered].code, REFUSED[offered].message);
     return Response.json({ status: "queued" }, { status: 202 });
   };
 }
