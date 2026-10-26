@@ -18,7 +18,7 @@ import { createSidecarStepBuildEnv, createSidecarSubstrateFactory } from "../ven
 import { runGrantsPath } from "../vendor/interchange/packages/workflow-host/src/run-grants";
 import { loadWorkflowDirectorRegistryFromClosure } from "../vendor/interchange/packages/workflow-host/src/workflow-definition-loader";
 
-const packageDir = resolve(import.meta.dirname, "../packages/triage-workflows");
+const packageDir = resolve(import.meta.dirname, "../packages/triage-judge");
 const directorRef = { id: "@corbits/triage-workflows/judge", config: {} };
 
 type BuildStepEnv = ReturnType<typeof createSidecarStepBuildEnv>;
