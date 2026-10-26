@@ -2,8 +2,15 @@ import type { RepoSource } from "@corbits/triage-contracts";
 
 const HOST_NAMES: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket" };
 
+const HOST_FULL_NAMES: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" };
+
 export function hostName(source: RepoSource): string {
   return HOST_NAMES[source];
+}
+
+/** Where the product is named, such as in Settings, Bitbucket Data Center is named in full. */
+export function hostFullName(source: RepoSource): string {
+  return HOST_FULL_NAMES[source];
 }
 
 /** The pull request's page on its host: the one the hub listed, else GitHub's well-known one for a GitHub pull request. */

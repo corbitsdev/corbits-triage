@@ -8,6 +8,7 @@ import { isDeployerRole, isOwnerRole } from "./automation-grid.ts";
 import { connectedSources, isLiveDeployment, listDeployedWorkflows, pause, type DeployedWorkflow } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { offeringsFor } from "./model-catalog.ts";
+import { hostFullName } from "./pull-link.ts";
 import { TRIAGE_RELEASE_QUERY_KEY, usePortal } from "./portal.tsx";
 import { usePrincipals, useRoles } from "./tenant-entities.ts";
 import { cancelDeployment, portalPackage } from "./workflow-deploy.ts";
@@ -16,7 +17,7 @@ import { publishSources, type PublishedSource, type Publisher } from "./workflow
 
 export type UpgradeStep = "publishing" | "starting" | "stopping";
 
-export const SOURCE_NAME: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" };
+const SUPERSEDED = "Someone else's upgrade finished first; Triage runs their version.";
 
 export const UPGRADE_STEP_LABEL: Record<UpgradeStep, string> = { publishing: "Publishing the new version…", starting: "Starting the new version…", stopping: "Stopping the old version…" };
 
@@ -48,12 +49,13 @@ export function portalRelease(portal: readonly SourceIndexEntry[], source: RepoS
   return portal.find((entry) => entry.workflow === TRIAGE_LISTENERS[source])?.hash;
 }
 
-async function waitUntilStarted(transport: Transport, tenantId: string, id: string): Promise<void> {
+/** False when the deployment ended before it was live, such as when a newer upgrade stopped it. */
+async function waitUntilStarted(transport: Transport, tenantId: string, id: string): Promise<boolean> {
   const deadline = Date.now() + START_DEADLINE_MS;
   while (Date.now() < deadline) {
     const deployment = (await listWorkflowDeployments(transport, tenantId)).find((row) => row.id === id);
-    if (deployment && isLiveDeployment(deployment.status)) return;
-    if (deployment && FAILED_STATUSES.has(deployment.status)) throw new Error("The new version did not start, so the current one keeps running.");
+    if (deployment && isLiveDeployment(deployment.status)) return true;
+    if (deployment && FAILED_STATUSES.has(deployment.status)) return false;
     await pause(START_POLL_MS);
   }
   await cancelDeployment(transport, tenantId, id);
@@ -71,6 +73,24 @@ async function stopOlderListeners(transport: Transport, tenantId: string, source
   }
 }
 
+/** A host's live listener deployed after this one, which an upgrade finishing later started and keeps. */
+async function newerLive(transport: Transport, tenantId: string, source: RepoSource, ours: WorkflowDeployment): Promise<boolean> {
+  return (await listDeployedWorkflows(transport, tenantId)).some((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling && !row.worker && row.id !== ours.id && !olderThan(row, ours));
+}
+
+/** "superseded" when another upgrade's newer listener replaced this one. */
+async function upgradeHost(transport: Transport, tenantId: string, source: RepoSource, published: readonly PublishedSource[], onStep: (step: UpgradeStep) => void): Promise<"upgraded" | "superseded"> {
+  onStep("starting");
+  const deployment = await deployListener(transport, tenantId, source, published);
+  if (!(await waitUntilStarted(transport, tenantId, deployment.id))) {
+    if (await newerLive(transport, tenantId, source, deployment)) return "superseded";
+    throw new Error("The new version did not start, so the current one keeps running.");
+  }
+  onStep("stopping");
+  await stopOlderListeners(transport, tenantId, source, deployment);
+  return (await newerLive(transport, tenantId, source, deployment)) ? "superseded" : "upgraded";
+}
+
 async function deployListener(transport: Transport, tenantId: string, source: RepoSource, published: readonly PublishedSource[]): Promise<WorkflowDeployment> {
   const workflow = TRIAGE_LISTENERS[source];
   const listener = published.find((row) => row.workflow === workflow);
@@ -85,26 +105,25 @@ async function deployListener(transport: Transport, tenantId: string, source: Re
   });
 }
 
+/** The hosts where another person's upgrade finished first. */
 export async function upgradeTriage(
   transport: Transport,
   publisher: Publisher,
   sources: readonly RepoSource[],
   onStep: (step: UpgradeStep) => void,
   publish: (transport: Transport, publisher: Publisher) => Promise<PublishedSource[]> = publishSources,
-): Promise<void> {
+): Promise<RepoSource[]> {
   onStep("publishing");
   const published = await publish(transport, publisher);
+  const superseded: RepoSource[] = [];
   for (const source of sources) {
     try {
-      onStep("starting");
-      const deployment = await deployListener(transport, publisher.tenantId, source, published);
-      await waitUntilStarted(transport, publisher.tenantId, deployment.id);
-      onStep("stopping");
-      await stopOlderListeners(transport, publisher.tenantId, source, deployment);
+      if ((await upgradeHost(transport, publisher.tenantId, source, published, onStep)) === "superseded") superseded.push(source);
     } catch (cause: unknown) {
-      throw new Error(`${SOURCE_NAME[source]}: ${errorText(cause)}`, { cause });
+      throw new Error(`${hostFullName(source)}: ${errorText(cause)}`, { cause });
     }
   }
+  return superseded;
 }
 
 function hostOf(source: RepoSource, deployed: readonly DeployedWorkflow[], deployments: readonly WorkflowDeployment[], assets: readonly Asset[]): HostRelease {
@@ -164,12 +183,15 @@ export function useTriageRelease() {
 }
 
 export function useTriageUpgrade(onStep: (step: UpgradeStep) => void) {
-  const { snapshot, refresh } = usePortal();
+  const { snapshot, refresh, notify } = usePortal();
   return useMutation({
     async mutationFn() {
       if (!snapshot) throw new Error("The service is unavailable. Reload the page and try again.");
       const { tenantId, principalId } = snapshot.workspace;
-      await upgradeTriage(createHubTransport(), { tenantId, principalId }, connectedSources(snapshot.credentials), onStep);
+      return upgradeTriage(createHubTransport(), { tenantId, principalId }, connectedSources(snapshot.credentials), onStep);
+    },
+    onSuccess(superseded) {
+      if (superseded.length > 0) notify(SUPERSEDED);
     },
     onSettled: refresh,
   });

@@ -97,5 +97,8 @@ test("two Deployers upgrading at once leave exactly one listener live", async ()
     upgradeTriage(hub.transportFor("b"), { tenantId: "t", principalId: "prn_b" }, ["github"], () => {}, published("b")),
   ]);
   expect(settled.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+  // The upgrade whose listener the other stopped says so.
+  const stopped = ["a", "b"].map((who) => hub.deployments.find((row) => row.id === `run_${who}`)!.status === "cancelled");
+  expect(settled.map((result) => result.status === "fulfilled" && result.value.includes("github"))).toEqual(stopped);
   expect(hub.deployments.filter((row) => row.status === "deployed")).toHaveLength(1);
 });

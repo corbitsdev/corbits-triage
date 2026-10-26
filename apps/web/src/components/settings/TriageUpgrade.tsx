@@ -5,8 +5,9 @@ import type { RepoSource } from "@corbits/triage-contracts";
 import { CHAIN_PACKAGES } from "../../lib/workflow-packages.ts";
 import type { HubPrincipal } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
+import { hostFullName } from "../../lib/pull-link.ts";
 import { usePrincipals } from "../../lib/tenant-entities.ts";
-import { portalRelease, SOURCE_NAME, UPGRADE_STEP_LABEL, upgradeDue, useMayUpgrade, useTriageRelease, useTriageUpgrade, type HostRelease, type TriageRelease, type UpgradeStep } from "../../lib/triage-upgrade.ts";
+import { portalRelease, UPGRADE_STEP_LABEL, upgradeDue, useMayUpgrade, useTriageRelease, useTriageUpgrade, type HostRelease, type TriageRelease, type UpgradeStep } from "../../lib/triage-upgrade.ts";
 
 const SUMMARY = "Each pull request gets one manager that posts a single update.";
 
@@ -18,7 +19,7 @@ function publisherName(principalId: string | null, people: readonly HubPrincipal
 
 /** One sentence per connected host; the host is named only when there are several. */
 function hostText(release: TriageRelease, host: HostRelease, people: readonly HubPrincipal[], named: boolean): string {
-  const on = named ? ` on ${SOURCE_NAME[host.source]}` : "";
+  const on = named ? ` on ${hostFullName(host.source)}` : "";
   if (!host.running) return `Triage${on} runs on its old workflow, which is being retired. Upgrade to keep it working.`;
   const what = host.running.version === undefined ? "the new workflow" : `version ${host.running.version}`;
   const ran = `Triage${on} runs ${what}, published by ${publisherName(host.running.publisherPrincipalId, people)}.`;
@@ -35,9 +36,9 @@ function AdvancedInfo({ release, people }: { release: TriageRelease; people: rea
     <details className="upgrade-info">
       <summary>Advanced info</summary>
       <ul>
-        {release.hosts.map((host) => <li key={`portal-${host.source}`}>This portal's release{named && ` for ${SOURCE_NAME[host.source]}`}: {portalRelease(release.portal, host.source) ?? "none"}</li>)}
+        {release.hosts.map((host) => <li key={`portal-${host.source}`}>This portal's release{named && ` for ${hostFullName(host.source)}`}: {portalRelease(release.portal, host.source) ?? "none"}</li>)}
         {release.hosts.map((host) => host.running && (
-          <li key={`running-${host.source}`}>Running{named && ` on ${SOURCE_NAME[host.source]}`}: {host.running.release === undefined ? "the new workflow" : `release ${host.running.release}`}, published by {publisherName(host.running.publisherPrincipalId, people)} on {new Date(host.running.since).toLocaleString()}</li>
+          <li key={`running-${host.source}`}>Running{named && ` on ${hostFullName(host.source)}`}: {host.running.release === undefined ? "the new workflow" : `release ${host.running.release}`}, published by {publisherName(host.running.publisherPrincipalId, people)} on {new Date(host.running.since).toLocaleString()}</li>
         ))}
         {chain.map((row) => <li key={row.name}><span className="mono">{row.name}</span> {release.portal.find((entry) => entry.workflow === row.name)?.hash ?? "not in this release"}</li>)}
       </ul>

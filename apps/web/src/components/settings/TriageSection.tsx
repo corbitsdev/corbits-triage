@@ -7,16 +7,15 @@ import { DeniedNotice } from "../../lib/denied.tsx";
 import { connectedSources, currentDeployment, isActiveCredential, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
 import { usePortal } from "../../lib/portal.tsx";
+import { hostFullName } from "../../lib/pull-link.ts";
 import { packsPending, triageEnabledRepos, triageReadyRepos } from "../../lib/repo-rows.ts";
 import type { TenantSection } from "../../lib/tenant-entities.ts";
-import { SOURCE_NAME } from "../../lib/triage-upgrade.ts";
 import { DecisionModelForm } from "../DecisionModelForm.tsx";
 import { BitbucketDatacenterSource } from "./BitbucketDatacenterSource.tsx";
 import { GithubSource } from "./GithubSource.tsx";
 import { KeyRow } from "./KeyRow.tsx";
 import { PolicyFiles } from "./PolicyFiles.tsx";
 import { TriageUpgrade } from "./TriageUpgrade.tsx";
-
 
 /** The connected hosts whose pr-triage workflow has no deployment. */
 function undeployedSources(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): RepoSource[] {
@@ -29,7 +28,7 @@ function statusText({ sources, undeployed, model, triaging, total }: Status): st
   if (sources.length === 0) return "Triage is not running: no source is connected.";
   if (!model) return "Triage needs a decision model before it can run. Add one below.";
   if (undeployed.length === sources.length) return "Triage is not running: its workflow is not deployed.";
-  if (undeployed.length > 0) return `Triage is not running on ${undeployed.map((source) => SOURCE_NAME[source]).join(" or ")}: its workflow is not deployed.`;
+  if (undeployed.length > 0) return `Triage is not running on ${undeployed.map(hostFullName).join(" or ")}: its workflow is not deployed.`;
   if (total === 0) return "Triage is running, but no repository is connected yet.";
   return `Triage is running on ${triaging} of ${counted(total, "repository", "repositories")}.`;
 }
