@@ -21,8 +21,6 @@ export type PrTriageRow = {
   attempts: number;
   /** On a head capped by runs that never started. */
   cappedRetries?: number;
-  /** Workflow package version of the deployment the row was created, reset or last run under; an integer on rows from before versions were read from deployments, absent on rows older still. */
-  workflowVersion?: string | number;
   firstSeenAt: string;
   queuedAt?: string;
   /** Runs started before this do not settle the head: the base branch moved after them. */
@@ -51,10 +49,6 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function isWorkflowVersion(value: unknown): value is string | number {
-  return optionalString(value) !== undefined || (typeof value === "number" && Number.isInteger(value));
-}
-
 function parseRow(raw: unknown): PrTriageRow | null {
   const row = asRecord(raw);
   if (!row) return null;
@@ -64,8 +58,6 @@ function parseRow(raw: unknown): PrTriageRow | null {
   if (typeof status !== "string" || !STATUS_SET.has(status)) return null;
   if (typeof attempts !== "number" || !Number.isInteger(attempts) || attempts < 0) return null;
   if (typeof firstSeenAt !== "string" || typeof updatedAt !== "string") return null;
-  const workflowVersion = row.workflowVersion;
-  if (workflowVersion !== undefined && !isWorkflowVersion(workflowVersion)) return null;
   const cappedRetries = row.cappedRetries;
   if (cappedRetries !== undefined && (typeof cappedRetries !== "number" || !Number.isInteger(cappedRetries) || cappedRetries < 0)) return null;
   const runId = optionalString(row.runId);
@@ -81,7 +73,6 @@ function parseRow(raw: unknown): PrTriageRow | null {
     ...(runId !== undefined && { runId }),
     attempts,
     ...(cappedRetries !== undefined && { cappedRetries }),
-    ...(workflowVersion !== undefined && { workflowVersion }),
     firstSeenAt,
     ...(queuedAt !== undefined && { queuedAt }),
     ...(staleBefore !== undefined && { staleBefore }),

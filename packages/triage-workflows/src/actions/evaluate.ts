@@ -6,9 +6,9 @@ import { approvalHeldBy, changesWanted, heldApprovals, holdDos, packApproves, st
 import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
-import type { Item, Judged } from "../logic/item.js";
-import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation } from "../logic/quality.js";
-import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
+import type { Item } from "../logic/item.js";
+import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation } from "../logic/quality.js";
+import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
 
@@ -36,10 +36,10 @@ function stamp(facts: PrFacts | undefined, it?: Item) {
  * Merges the answers of each reply that is well formed and answers only its own request's questions, so a bad reply
  * leaves only its own questions unanswered.
  */
-function answersOf(requests: JudgeRequest[], answered: Array<[string, unknown]>): ParsedAnswers {
+function answersOf(requests: JudgeRequest[], answered: unknown[]): ParsedAnswers {
   const decisions: ParsedAnswers["decisions"] = {};
   const instructed: Array<number | undefined> = [];
-  for (const [index, [, reply]] of answered.entries()) {
+  for (const [index, reply] of answered.entries()) {
     const { judge } = (stepJson(reply) ?? {}) as Judgment;
     const parsed = typeof judge === "string" ? parseAnswers(judge) : undefined;
     const asked = new Set(requests[index]!.questions.map((question) => question.id));
@@ -56,40 +56,18 @@ function answersOf(requests: JudgeRequest[], answered: Array<[string, unknown]>)
   return { decisions, malformed: false };
 }
 
-function errorOf(answered: Array<[string, unknown]>): Judgment {
+function errorOf(answered: unknown[]): Judgment {
   const errors = new Set<string>();
-  for (const [, reply] of answered) {
+  for (const reply of answered) {
     const { judgeError } = (stepJson(reply) ?? {}) as Judgment;
     if (typeof judgeError === "string") errors.add(judgeError);
   }
   return errors.size > 0 ? { judgeError: [...errors].join("; ") } : {};
 }
 
-export function repliesTo(it: Item, requests: JudgeRequest[], replies: unknown[]): Array<[string, unknown]> {
-  return requests.map(function replyTo(request): [string, unknown] {
-    const key = judgeKey(request);
-    const carried = it.judged?.[key];
-    return [key, carried !== undefined ? { judge: carried } : replies.shift()];
-  });
-}
-
-// The run log carries the verdict inline and the hub mails the answers back; on the judge eval the answers a verdict
-// keeps are a few hundred bytes at the median and about 20 KB on the largest pull request, so the rare outlier is
-// re-asked in part rather than carried whole.
-const MAX_JUDGED_BYTES = 16 * 1024;
-
-/** The answers a later run of the same head can reuse: each that came back whole and decisive, up to `MAX_JUDGED_BYTES`. */
-function reusable(answered: Array<[string, unknown]>): Judged {
-  const judged: Judged = {};
-  let bytes = 0;
-  for (const [key, reply] of answered) {
-    const { judge, judgeError } = (stepJson(reply) ?? {}) as Judgment;
-    if (typeof judge !== "string" || judgeError !== undefined || !isReusableReply(judge)) continue;
-    bytes += key.length + judge.length;
-    if (bytes > MAX_JUDGED_BYTES) break;
-    judged[key] = judge;
-  }
-  return judged;
+/** Takes one reply per request off the front of `replies`. */
+export function repliesTo(requests: JudgeRequest[], replies: unknown[]): unknown[] {
+  return requests.map(() => replies.shift());
 }
 
 /** The names the verdict question was evaluated with, kept when the portal renames a rule so the model reads the same state. */
@@ -107,16 +85,16 @@ function policyRule(pack: CheckPack, c: CheckResult): PolicyRule {
   return { name: VERDICT_RULE_NAMES.get(c.check) ?? checkName(pack, c.check), judged: c.kind === "model", result: c.result, reason: c.reason, evidence: c.evidence, ...(pass !== undefined && { pass }), ...(level !== undefined && { level }) };
 }
 
-/** Whether the verdict question is asked with the judged rules' first calls: when none of those is left to ask, their answers are already known. */
-export function choiceFirst(it: Item, { requests }: QualityEvaluation): boolean {
-  return requests.every((request) => it.judged?.[judgeKey(request)] !== undefined);
+/** Whether the verdict question is asked in the first round: no judged rule is asked before it. */
+export function choiceFirst({ requests }: QualityEvaluation): boolean {
+  return requests.length === 0;
 }
 
 /**
  * The verdict question once the judged rules' first answers are in, or why it cannot be asked; undefined when the head
  * is not judged, or a first call failed or left a rule unanswered and the verdict degrades anyway.
  */
-export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[string, unknown]>): { request: JudgeRequest } | { judgeError: string } | undefined {
+export function choiceOf(it: Item, evaluation: QualityEvaluation, first: unknown[]): { request: JudgeRequest } | { judgeError: string } | undefined {
   if (!it.det.needsJudgment || !decidesByModel(it.det) || !it.pack || it.judgeLimitExceeded || errorOf(first).judgeError !== undefined) return undefined;
   const { facts, det } = it;
   const { plan, focused, requests } = evaluation;
@@ -127,7 +105,7 @@ export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[
   return verdictRequest(facts, [...det.checks, ...deciding].map((c) => policyRule(it.pack!, c)));
 }
 
-export function partsOf(sources: DeterministicResult["sources"], { plan, focused, requests }: QualityEvaluation, answered: Array<[string, unknown]>): FocusedParts | undefined {
+export function partsOf(sources: DeterministicResult["sources"], { plan, focused, requests }: QualityEvaluation, answered: unknown[]): FocusedParts | undefined {
   const failing = focused && sources ? separateSlices(answersOf(requests, answered), focused, askedQuestionIds(sources, plan, focused)) : [];
   return failing.length > 0 ? focusedPartRequests(requests, failing) : undefined;
 }
@@ -204,20 +182,20 @@ export function suggestedDos(it: Item, rendered: Rendered, steps: readonly Step[
   return holdDos(heldApprovals(suggested, approvalHeldBy(rendered.verdict, it.facts.checks), it.facts.checks), it.automatic ?? []);
 }
 
-/** Takes the item's own chunk replies off the front of `replies` and `partReplies`; requests an earlier run answered took none. */
+/** Takes the item's own chunk replies off the front of `replies` and `partReplies`. */
 function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdict {
   if (it.error !== undefined) return degradedOf(it, it.error);
   try {
-    // Rules recorded this same pure split as the judge's chunks, less the requests an earlier run answered.
+    // Rules recorded this same pure split as the judge's chunks.
     const evaluation = prepareQualityEvaluation(it.facts, it.det.sources);
     const { plan, focused: asked, requests } = evaluation;
-    const first = it.det.needsJudgment ? repliesTo(it, requests, replies) : [];
+    const first = it.det.needsJudgment ? repliesTo(requests, replies) : [];
     const choice = choiceOf(it, evaluation, first);
     const asking = choice && "request" in choice ? choice.request : undefined;
-    const early = asking && choiceFirst(it, evaluation) ? repliesTo(it, [asking], replies) : [];
+    const early = asking && choiceFirst(evaluation) ? repliesTo([asking], replies) : [];
     const parts = partsOf(it.det.sources, evaluation, first);
-    const later = parts ? repliesTo(it, parts.requests, partReplies) : [];
-    const late = asking && !choiceFirst(it, evaluation) ? repliesTo(it, [asking], partReplies) : [];
+    const later = parts ? repliesTo(parts.requests, partReplies) : [];
+    const late = asking && !choiceFirst(evaluation) ? repliesTo([asking], partReplies) : [];
     const focused = parts && asked ? { ...asked, parts: parts.asked } : asked;
     // Follow-up replies only name files, so one that failed or came back malformed never costs the first answers.
     const { judgeError } = it.det.needsJudgment ? { ...it, ...errorOf([...first, ...early, ...late]) } : it;
@@ -237,7 +215,6 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const held = approvalHeldBy(rendered.verdict, it.facts.checks);
     const automatic = it.automatic ?? [];
     const actions = suggestedDos(it, rendered, it.pack?.actions[rendered.verdict] ?? []);
-    const judged = reusable([...first, ...early, ...later, ...late]);
     const feedback = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
     // What reading the policy left out is said on every verdict, so the policy can be fixed.
     const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
@@ -245,7 +222,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
     const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none", it.appLogin);
     const verdict = {
-      ...stamp(it.facts, it), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }),
+      ...stamp(it.facts, it), ...rendered, labels, reasons, feedback, automatic, actions,
       ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),
       ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
     };

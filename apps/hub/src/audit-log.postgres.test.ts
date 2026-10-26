@@ -2,15 +2,14 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { createDB, runMigrations, schema } from "@intx/db";
+import { createDB, runMigrations, schema, type DB } from "@intx/db";
 import { createArtifact, runArtifactMigrations } from "@corbits/artifacts";
 import { APPROVE_DO_KIND, AuditLog, checkPackName, emptyPack, stockTriggerMail } from "@corbits/triage-contracts";
 import type { WorkflowRunEvent } from "@intx/hub-sessions";
-import { createAuditLog } from "./audit-log.js";
+import { createAuditLog, ROTATION_REASON } from "./audit-log.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { migrateTriageTables } from "./triage-db.js";
-import { ROTATION_REASON } from "./github/deployment.js";
-import { createVerdictRecordStore, type RecordedVerdict } from "./github/verdict-record-store.js";
+import { type RecordedVerdict, replaceVerdict } from "./github/verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_audit";
@@ -35,12 +34,17 @@ const LOGS: Record<string, WorkflowRunEvent[]> = {
   wfr_forged: approvalRun({ ...stockTriggerMail(APPROVAL), headers: { from: "mallory@elsewhere.test", to: ["pr-triage@acme.test"] } }),
 };
 
-function verdict(runId: string, time: string, state: string, comment: string): RecordedVerdict {
+function verdict(runId: string, time: string, state: string, comment: string, headSha = "abcdef123"): RecordedVerdict {
   return {
-    runId, repo: REPO, number: 7, headSha: "abcdef123", startedAt: at(time), verdictAt: at(time), settled: true, state, actor: "maintainer", humanGated: true,
+    runId, repo: REPO, number: 7, headSha, startedAt: at(time), verdictAt: at(time), settled: true, state, actor: "maintainer", humanGated: true,
     degraded: null, checks: [], dos: [], commented: false, runStatus: "completed",
     detail: { actions: [{ list: "fail", effectId: "eff_comment", kind: "comment", status: comment }, { list: "pass", effectId: "eff_approve", kind: "approve", held: true, status: "done" }] },
   };
+}
+
+/** Seeds verdict rows as managers record them. */
+async function seed(db: DB["db"], tenantId: string, verdicts: readonly RecordedVerdict[]): Promise<void> {
+  for (const verdict of verdicts) await replaceVerdict(db, tenantId, verdict);
 }
 
 function lines(log: AuditLog): string[] {
@@ -81,7 +85,7 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
       { id: "wfr_forged", anchorRunId: "wfr_anchor", definitionId: "wfd_triage", tenantId: TENANT, status: "completed", createdAt: at("10:04") },
       { id: "wfr_approval", anchorRunId: "wfr_anchor", definitionId: "wfd_triage", tenantId: TENANT, status: "completed", createdAt: at("10:05") },
     ]);
-    await createVerdictRecordStore(db).record(TENANT, [verdict("wfr_verdict", "10:00", "needs-review", "done"), verdict("wfr_retriage", "10:30", "ready", "failed")]);
+    await seed(db, TENANT, [verdict("wfr_verdict", "10:00", "needs-review", "done"), verdict("wfr_retriage", "10:30", "ready", "failed", "fedcba321")]);
     await db.transaction(async function seedPack(tx) {
       await createArtifact(tx, {
         scope: { tenantId: TENANT, principalId: "prn_owner" }, ownerPrincipalId: "prn_owner", kind: "document",
@@ -103,9 +107,6 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
             read.push(runId);
             return LOGS[runId] ?? [];
           },
-        },
-        async sameSource() {
-          return true;
         },
         async authorize(_principalId, _tenantId, resource) {
           return !denied.has(resource);

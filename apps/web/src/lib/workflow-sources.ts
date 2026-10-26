@@ -158,7 +158,7 @@ function publishable(models: readonly ModelInfo[], workflow: string): boolean {
 async function publishSource(transport: Transport, publisher: Publisher, gitClient: SourceGit, workflow: string, name: string, source: SourceTree): Promise<PublishedSource> {
   const { tenantId } = publisher;
   const { fs } = gitClient;
-  const asset = await ensureAsset(transport, tenantId, "workflow", name);
+  const asset = await ensureAsset(transport, tenantId, name);
   // A deployment's permissions come from its asset's creator.
   if (asset.creatorPrincipalId !== publisher.principalId) throw new Error(`${name} was created by someone else; publishing to it would deploy under their permissions.`);
   await grantOwnPush(transport, publisher, asset.id);

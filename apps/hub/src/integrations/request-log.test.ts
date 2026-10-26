@@ -27,7 +27,7 @@ const signedIn = async () => ({ user: { id: "user-1" } }) as never;
 
 test("a request from outside the portal is refused", async () => {
   const app = guardedApp({} as never, signedIn, createInMemoryGrantStore([]), {});
-  const res = await app.request("/api/integrations/workflow-deploy/tenant-1", { method: "POST", headers: { "content-type": "application/json", origin: "https://elsewhere.example" }, body: "{}" });
+  const res = await app.request("/api/integrations/code-review/tenant-1/run", { method: "POST", headers: { "content-type": "application/json", origin: "https://elsewhere.example" }, body: "{}" });
   expect({ status: res.status, body: await res.json() }).toEqual({ status: 403, body: { error: { code: "forbidden", message: "This request did not come from the portal." } } });
 });
 

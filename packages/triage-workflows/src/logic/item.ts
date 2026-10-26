@@ -1,8 +1,6 @@
 import type { ActionKind, CheckPack, PolicySource, RepoSource } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 
-export type Judged = Record<string, string>;
-
 export interface Item {
   facts: PrFacts;
   det: DeterministicResult;
@@ -15,7 +13,6 @@ export interface Item {
    * answer wait on it, and the head waits for those checks or a human decides.
    */
   judgeSkipped?: true;
-  judged?: Judged;
   automatic?: ActionKind[];
   pack?: CheckPack;
   source?: PolicySource;
@@ -23,7 +20,7 @@ export interface Item {
   repoSource?: RepoSource;
   /** The hub waits no longer for the host's checks. */
   noWait?: true;
-  /** The policy turns a block on, so `decide` chooses the Dos once the blocks have run and the comment names none. */
+  /** The mail names blocks, so the comment lists no Dos and approve and merge wait in Needs you. */
   blocksOn?: true;
   /** The App's bot account on GitHub, whose comments and reviews are triage's own. */
   appLogin?: string;

@@ -6,11 +6,11 @@ it while its Anthropic key is stored.
 
 ## Use
 
-`pr-code-review-github` and `pr-code-review-bitbucket-datacenter` are the deployed packages, each binding only its
-host's read credential:
+`pr-code-review-reviewer-github` and `pr-code-review-reviewer-bitbucket-datacenter` are the deployed packages, each
+binding only its host's read credential; a pull request's manager deploys its host's:
 
 ```ts
-import { workflow } from "@corbits/pr-code-review-anthropic/pr-code-review-github";
+import { workflow } from "@corbits/pr-code-review-anthropic/pr-code-review-reviewer-github";
 ```
 
 The repository finder's budget counts input, output and cache-write tokens: cache reads re-count the whole prompt on

@@ -3,19 +3,8 @@ import { projectLiveToInert, type WorkflowDefinition } from "@intx/workflow";
 
 import codeReviewPackage from "../packages/pr-code-review-anthropic/package.json";
 import { workflow as codeReview } from "../packages/pr-code-review-anthropic/src/pr-code-review";
-import { workflow as codeReviewBitbucket } from "../packages/pr-code-review-anthropic/src/pr-code-review-bitbucket-datacenter";
-import { workflow as codeReviewGithub } from "../packages/pr-code-review-anthropic/src/pr-code-review-github";
 import { workflow as codeReviewReviewerBitbucket } from "../packages/pr-code-review-anthropic/src/pr-code-review-reviewer-bitbucket-datacenter";
 import { workflow as codeReviewReviewerGithub } from "../packages/pr-code-review-anthropic/src/pr-code-review-reviewer-github";
-import prWorkflowPackage from "../packages/pr-workflow-anthropic/package.json";
-import { workflow as prWorkflow } from "../packages/pr-workflow-anthropic/src/pr-workflow";
-import { workflow as prWorkflowBitbucket } from "../packages/pr-workflow-anthropic/src/pr-workflow-bitbucket-datacenter";
-import { workflow as prWorkflowGithub } from "../packages/pr-workflow-anthropic/src/pr-workflow-github";
-import triagePackage from "../packages/triage-workflows/package.json";
-import { workflow as triage } from "../packages/triage-workflows/src/pr-triage";
-import { workflow as triageBitbucket } from "../packages/triage-workflows/src/pr-triage-bitbucket-datacenter";
-import { workflow as triageGithub } from "../packages/triage-workflows/src/pr-triage-github";
-import { workflow as triageHistorical } from "../packages/triage-workflows/src/pr-triage-historical";
 import judgePackage from "../packages/triage-judge/package.json";
 import { workflow as judgeBitbucket } from "../packages/triage-judge/src/triage-judge-bitbucket-datacenter";
 import { workflow as judgeGithub } from "../packages/triage-judge/src/triage-judge-github";
@@ -27,18 +16,9 @@ import { workflow as managerGithub } from "../packages/triage-manager/src/triage
 
 /** Each workflow entry the packages declare, by package and entry path. */
 const SHIPPED: Record<string, WorkflowDefinition> = {
-  "triage-workflows/src/pr-triage.ts": triage,
-  "triage-workflows/src/pr-triage-historical.ts": triageHistorical,
-  "triage-workflows/src/pr-triage-github.ts": triageGithub,
-  "triage-workflows/src/pr-triage-bitbucket-datacenter.ts": triageBitbucket,
   "pr-code-review-anthropic/src/pr-code-review.ts": codeReview,
-  "pr-code-review-anthropic/src/pr-code-review-github.ts": codeReviewGithub,
-  "pr-code-review-anthropic/src/pr-code-review-bitbucket-datacenter.ts": codeReviewBitbucket,
   "pr-code-review-anthropic/src/pr-code-review-reviewer-github.ts": codeReviewReviewerGithub,
   "pr-code-review-anthropic/src/pr-code-review-reviewer-bitbucket-datacenter.ts": codeReviewReviewerBitbucket,
-  "pr-workflow-anthropic/src/pr-workflow.ts": prWorkflow,
-  "pr-workflow-anthropic/src/pr-workflow-github.ts": prWorkflowGithub,
-  "pr-workflow-anthropic/src/pr-workflow-bitbucket-datacenter.ts": prWorkflowBitbucket,
   "triage-judge/src/triage-judge-github.ts": judgeGithub,
   "triage-judge/src/triage-judge-bitbucket-datacenter.ts": judgeBitbucket,
   "triage-manager/src/triage-manager-github.ts": managerGithub,
@@ -72,7 +52,7 @@ function modelSteps(workflow: string, node: unknown, step = ""): ModelStep[] {
 }
 
 test("every workflow the packages declare is checked", () => {
-  const declared = [...entriesOf("triage-workflows", triagePackage.interchange.workflows), ...entriesOf("pr-code-review-anthropic", codeReviewPackage.interchange.workflows), ...entriesOf("pr-workflow-anthropic", prWorkflowPackage.interchange.workflows), ...entriesOf("triage-judge", judgePackage.interchange.workflows), ...entriesOf("triage-manager", managerPackage.interchange.workflows)];
+  const declared = [...entriesOf("pr-code-review-anthropic", codeReviewPackage.interchange.workflows), ...entriesOf("triage-judge", judgePackage.interchange.workflows), ...entriesOf("triage-manager", managerPackage.interchange.workflows)];
   expect(Object.keys(SHIPPED).sort()).toEqual(declared.sort());
 });
 

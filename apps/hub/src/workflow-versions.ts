@@ -23,22 +23,19 @@ function sourceOf(bundle: FrozenApprovalBundle): DeployedVersions["deployments"]
 export function createWorkflowVersions(deps: WorkflowVersionsDeps) {
   return async function handle({ tenantId }: Member): Promise<Response> {
     const deployments: DeployedVersions["deployments"] = [];
-    for (const kind of ["listener", "worker"] as const) {
-      for (const live of await resolveLiveDeployments(deps.db, tenantId, undefined, kind)) {
-        const spec = await deps.launchSpecs.get(live.runId);
-        const versions = spec ? closureVersions(spec.frozenApprovalBundle) : null;
-        deployments.push({
-          id: live.runId,
-          workflow: live.workflow,
-          createdAt: live.createdAt.toISOString(),
-          cancelling: live.cancelling,
-          live: await deps.up(live.runId),
-          worker: kind === "worker",
-          package: versions?.workflow ?? null,
-          tools: versions?.tools ?? [],
-          source: spec ? sourceOf(spec.frozenApprovalBundle) : null,
-        });
-      }
+    for (const live of await resolveLiveDeployments(deps.db, tenantId)) {
+      const spec = await deps.launchSpecs.get(live.runId);
+      const versions = spec ? closureVersions(spec.frozenApprovalBundle) : null;
+      deployments.push({
+        id: live.runId,
+        workflow: live.workflow,
+        createdAt: live.createdAt.toISOString(),
+        cancelling: live.cancelling,
+        live: await deps.up(live.runId),
+        package: versions?.workflow ?? null,
+        ...(versions && { tools: versions.tools }),
+        source: spec ? sourceOf(spec.frozenApprovalBundle) : null,
+      });
     }
     return Response.json({ deployments } satisfies DeployedVersions);
   };

@@ -23,14 +23,13 @@ is a wrapper over them.
 
 ## Workflow
 
-Bitbucket repositories are triaged by the `pr-triage-bitbucket-datacenter`
-workflow, the same steps as `pr-triage-github` built over the Bitbucket tools
-(`@corbits/triage-workflows`'s `prTriage({ sources })`). It binds only the
-`bitbucket-datacenter` credential, so the hub deploys it once the instance is
-connected (`POST /api/integrations/workflow-deploy` answers 409
-`source_not_connected` before that); a workspace with GitHub as well runs both.
+Bitbucket repositories are triaged by the `triage-listener-bitbucket-datacenter`
+listener and the managers it deploys, the same steps as on GitHub built over the
+Bitbucket tools. They bind only the `bitbucket-datacenter` credential, so
+**Upgrade to new version** starts them once the instance is connected; a
+workspace with GitHub as well runs both hosts' listeners.
 Disconnecting releases the host's listener and its managers and leaves the Bitbucket repository records disabled and disconnected, so the open pull request listing carries on with the other hosts. The webhook credential names this
-workflow, and every mail carries `repoSource: "bitbucket-datacenter"`.
+listener, and every mail carries `repoSource: "bitbucket-datacenter"`.
 
 Triage with every rule switched off starts no run and writes nothing to the
 pull request (`triage_skipped_no_rules` in the hub log), on either host.

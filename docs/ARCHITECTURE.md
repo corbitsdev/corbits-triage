@@ -8,7 +8,7 @@ and tool packages the portal deploys.
 ## Components
 
 ```
-GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-triage run
+GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listener, manager
    ▲                 │  ▲                          │
    │                 │  └──── portal (/api) ───────┤
    └─── PR actions ──┴──── GitHub reads, actions ──┘
@@ -42,8 +42,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     step, never as text), or the file is refused, the stored policy applies;
     once they run the same, the hub archives the stored policy. A refused file
     with no stored policy is `invalid`, and a stored policy the hub refuses
-    is `corrupt`; for either, a pull request event or the reconciler mails pr-triage
-    `policyUnreadable` with the reason and no pack, so the run marks the head
+    is `corrupt`; for either, a pull request event or the reconciler mails the listener
+    `policyUnreadable` with the reason and no pack, so the manager marks the head
     failed instead of triaging it, once per head. A push that leaves the policy
     unreadable, and on Bitbucket Data Center any default branch push, triages
     every open pull request again. Routes:
@@ -180,24 +180,9 @@ name per tenant; no deployment ids are configured anywhere. Each declares
 `github` sender (a principal in the deployment's tenant) and refuses mail from
 any other tenant or an unknown sender.
 
-- `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
-  pull request and triages it. Both are built by `prTriage({ sources })` in
-  `@corbits/triage-workflows`. Nothing deploys them; Upgrade cancels any
-  still live.
-- `pr-triage-historical`: one run that triages every open pull request of a
-  GitHub repository, skipping drafts. The hub no longer mails it: its backlog
-  route, run when triage is turned on, when a push to the default branch
-  changes the policy file of an enabled repository and leaves it valid, or
-  when someone clicks **Triage open pull requests again**, mails the listener
-  instead.
 - `repo-scan`: one run that reads a repository's most recently updated closed
   pull requests (200 by default) and measures what maintainers merged and
   closed. Not deployed by the hub yet.
-- `pr-code-review-github` and `pr-code-review-bitbucket-datacenter`: one mail
-  names one pull request and the run returns a review.
-- `pr-workflow-anthropic-github` and `pr-workflow-anthropic-bitbucket-datacenter`:
-  triage, then code review behind a gate, in one run ([PR workflow](#pr-workflow)).
-  Nothing deploys them; Upgrade cancels any still live.
 - `triage-listener-github` and `triage-listener-bitbucket-datacenter`
   (`triageListener` in `@corbits/triage-manager`): a workspace's listener for
   one host. The hub mails it the pull requests it recorded that have no
@@ -559,77 +544,18 @@ The steps, the provider profile and how to add a provider are in
 eval and its numbers in
 [packages/pr-code-review-anthropic/evals/README.md](../packages/pr-code-review-anthropic/evals/README.md).
 
-## PR workflow
+## Policy blocks
 
-`@corbits/pr-workflow-anthropic` composes the two pipelines into one
-definition per host. Its steps are pr-triage's under their own ids, then code
-review's (`codeReviewSteps` in `pr-code-review`) under `codeReview_`, whose
-actions read their steps under the `$prefix` their input carries.
-
-Once triage has decided, `codeReview_scope` reads the trigger request's
-`codeReview` (`on`, `for`, the `triage` verdicts it runs on, `rules`, optional
-`paths` globs, where `*` stays within one folder and `**/` matches zero or more
-folders, and the block's optional `clean`) and `codeReviewRequest`, triage's
-verdict, the changed files and, unless `for` holds `everyone`, the author's
-groups from the pack's `groups` and triage's facts. Whatever the scope cannot
-read leaves the review incomplete, as does a degraded verdict. Under
-`rules: pass`, the hub's default unless the block's `when.rules` is `any`,
-`rulesGate` in `triage-contracts` keeps the review shut unless every policy rule
-in the verdict's `checks` read
+A policy file that turns a block on keeps its v4 keys in the stored policy,
+and its pull request mails carry `codeReview`, `blocks` and `decide`. The
+manager runs code review behind `rulesGate` in `triage-contracts`: under
+`rules: pass`, the hub's default unless the block's `when.rules` is `any`, the
+review stays shut unless every policy rule in the verdict's `checks` read
 without a model whose failure fails the pull request passed (`hardFailures`,
 shared with triage), CI only through `ci-green` and never the built-in
-`not-a-draft` or `no-changes-requested`:
-a failed one skips it, and one not known yet, such as CI still running, or no
-checks leaves it incomplete; the hub triages again once CI completes. The gate
-is a plain function so a coordinator that starts code review as its own
-workflow can apply it unchanged. A gate runs the review or skips it, and
-`codeReview` records the outcome: `findings` with the worst that counts,
-`clean`, `skipped` with the reason, or `incomplete` when the scope or a review
-step failed, the review cannot be read, the reader stopped early, the diff was
-cut, or a paths rule met unread files. A finding counts unless its severity is
-below `clean.below`.
-
-`decide` is the run's one decision. It reads the trigger request's `decide`
-(the policy file's rules; the parser writes a file's `actions` as one rule per
-triage outcome, and with a block on, approve and merge only under
-`{ all: clean }`, the other steps kept in their places in a second rule) and
-`blocks` (the blocks the policy turns on), triage's verdict, the events that
-woke the run, the author's groups
-(`authorGroupsOf` over the pack's `groups`) and code review's outcome, whose
-findings' priorities read as severities (0 critical, 1 high, 2 medium, 3 low;
-any other, or none, critical), as does a worst it cannot read. Rules run in order and the first that matches
-wins; skipped blocks never count, so `{ all: clean }` holds when at least one
-block ran and every block that ran is clean, and a rule that approves or merges
-without naming `triage` matches only Pass. Every block with an outcome counts, whatever
-`blocks` says, and one that is on, or that a rule names, with no outcome reads
-as `incomplete`: this variant runs only code review, so `security` or
-`deslop` on is incomplete here. It flags for a maintainer when nothing
-matches, when the rules are missing or invalid, when a rule names groups and
-the author's cannot be read, and when a matched rule approves or merges after
-an incomplete block. Only
-`decide` chooses: with any block in `blocks`, the verdict comment names no Do,
-so it never claims an approve or merge `decide` may hold.
-
-The matched rule's own steps, with their targets and `when`, become the Dos,
-resolved, held and granted as triage's own (`suggestedDos` in pr-triage's
-evaluate); the labelling rules' labels Do runs as triage adds it, whatever is
-decided. Every other Do the verdict would have run unattended is recorded
-`held` with the reason (on a flag, the flag; otherwise the block that was not
-clean, such as "Code review is findings"), which the hub reads as a Do triage
-held, so it waits in Needs you and its approval mail runs triage's own
-execute. So a schema 3 file's approve and merge wait for a maintainer after a
-review that was not clean. Stock runs a step whose dependencies failed, so ordering
-alone holds nothing back: triage's execute is one step after the mirror and
-`decide`, and without a decision it fails and writes nothing. An approval or waiting mail never triages, so it never reaches the
-scope. The definition binds both pipelines' credentials and, like code review,
-requires `isolation:workload`.
-
-No deployment of the PR workflow is reached any more: every pull request mail
-goes to the host's listener, whose manager runs triage and code review as
-stages of their own. A policy file that turns a block on keeps its v4 keys in
-the stored policy, and its pull request mails carry `codeReview`, `blocks`
-and `decide`; the manager does not run `decide`, so the hub takes approve and
-merge out of such a mail's `automatic` and they wait in Needs you.
+`not-a-draft` or `no-changes-requested`. The manager does not run `decide`,
+so the hub takes approve and merge out of such a mail's `automatic` and they
+wait in Needs you.
 
 ## Tenancy and authority
 

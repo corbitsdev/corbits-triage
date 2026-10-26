@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -570,8 +570,6 @@ export async function ensureWorkspace(transport: Transport, chosen: string | nul
   return createWorkspace(transport);
 }
 
-const HOOK_WORKFLOW = "pr-triage";
-
 export function legacyHookCredentials(credentials: HubCredential[]): HubCredential[] {
   return credentials.filter((row) => row.name.startsWith(`${GITHUB_HOOK_CREDENTIAL_NAME}:`));
 }
@@ -621,8 +619,8 @@ const REACTIVATABLE_CREDENTIAL_STATUSES = new Set(["expired", "inactive"]);
 /**
  * Converges the app-level hook credential GitHub posts to. The secret is the
  * GitHub webhook signing secret (never the GitHub API credential); the
- * metadata names the X-Hub-Signature verifier, its headers and the pr-triage
- * workflow. Returns the credential id for the hook URL.
+ * metadata names the X-Hub-Signature verifier, its headers and the GitHub
+ * listener. Returns the credential id for the hook URL.
  */
 export async function ensureHookCredential(
   transport: Transport,
@@ -633,7 +631,7 @@ export async function ensureHookCredential(
   const hookSecret = requireSecret(secret);
   const providerId = await ensureGitHubProvider(transport, tenantId);
   const name = GITHUB_HOOK_CREDENTIAL_NAME;
-  const metadata = xHubHookMetadata(HOOK_WORKFLOW, GITHUB_HOOK_HEADERS);
+  const metadata = xHubHookMetadata(TRIAGE_LISTENERS.github, GITHUB_HOOK_HEADERS);
   try {
     const created = await transport.fetch<HubCredential>("POST", `/api/tenants/${tid}/credentials`, {
       providerId,
@@ -799,7 +797,7 @@ export async function listDeployedWorkflows(transport: Transport, tenantId: stri
 }
 
 export function currentDeployment(deployments: readonly DeployedWorkflow[], workflow: string): DeployedWorkflow | undefined {
-  return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling && !deployment.worker);
+  return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling);
 }
 
 export const WAITING_FOR_WORKFLOW = "Waiting for the workflow to be ready…";

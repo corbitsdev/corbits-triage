@@ -4,13 +4,13 @@ import { randomBytes } from "node:crypto";
 import { type } from "arktype";
 import { BITBUCKET_DATACENTER_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
+import { TRIAGE_LISTENERS } from "@corbits/triage-contracts";
 import { ensureDeployerRole } from "../deployer-role.js";
 import { ensureTriageRole, grantEnabledKinds } from "../github/automation.js";
 import { tenantConfigOf } from "../github/bridge.js";
 import { activeCredential, credentialSecret, failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
 import { patchCorbitsTriage, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
 import type { Member } from "../integrations/app.js";
-import { triageWorkflowFor } from "../github/source-workflow.js";
 import { asCaller } from "../stock-caller.js";
 import {
   BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, lookupAddresses, pagedValues, readRepo,
@@ -22,7 +22,7 @@ export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
 const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
 const NO_STORE = { headers: { "Cache-Control": "no-store" } };
 const HOST_REFUSED = "The host must resolve only to public addresses; a private-network instance needs the hub operator to allowlist it.";
-const HOOK_METADATA = xHubHookMetadata(triageWorkflowFor("bitbucket-datacenter").id, BITBUCKET_DATACENTER_HOOK_HEADERS);
+const HOOK_METADATA = xHubHookMetadata(TRIAGE_LISTENERS["bitbucket-datacenter"], BITBUCKET_DATACENTER_HOOK_HEADERS);
 
 const NewConnection = type({ baseUrl: "string > 0", token: "string > 0" });
 /** Connects, or replaces the token in place; `rotateHookSecret` instead signs the webhooks triage created with a new secret. */

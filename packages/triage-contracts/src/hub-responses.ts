@@ -200,10 +200,9 @@ export const DeployedVersions = type({
     cancelling: "boolean",
     /** Up as the hub counts a listener or a manager: running, on its sidecar, or just deployed. */
     live: "boolean",
-    /** A worker runs one triage job on a copy of a listener; it still pins that listener's versions. */
-    worker: "boolean",
     package: PackageVersion.or("null"),
-    tools: PackageVersion.array(),
+    /** The packages its frozen closure carries besides the workflow; absent without a closure. */
+    "tools?": PackageVersion.array(),
     /** The source asset commit a source-format deployment runs, so it can be deployed again as it is. */
     source: type({ assetId: "string", commitSha: "string" }).or("null"),
   }).array(),

@@ -7,7 +7,7 @@ import { fixtureGithub } from "@corbits/triage-workflows/evals/serve";
 import { runChecks } from "./run-checks.ts";
 import { outcomeOf, type ViewCheck } from "./view.ts";
 
-const PR = JSON.parse(readFileSync(join(import.meta.dir, "../../../packages/pr-workflow-anthropic/fixtures/godotenv-262.json"), "utf8")) as Snapshot;
+const PR = JSON.parse(readFileSync(join(import.meta.dir, "../fixtures/godotenv-262.json"), "utf8")) as Snapshot;
 
 function readOnly(writes: string[]) {
   const served = fixtureGithub(PR, {});

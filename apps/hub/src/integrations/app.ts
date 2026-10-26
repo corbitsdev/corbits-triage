@@ -10,7 +10,6 @@ import { getLogger } from "@intx/log";
 import { honoLogger, type HonoContext } from "@intx/log/hono";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
 import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
-import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { CODE_REVIEW_PATH, CodeReviewQueued, CodeReviewRunBody } from "../code-review.js";
@@ -37,7 +36,6 @@ import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Dis
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
 import { body, Failure, json, refuseInvalid } from "../route-schema.js";
 import { SESSIONS_PATH } from "../sessions.js";
-import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
 export const INTEGRATIONS_PREFIX = "/api/integrations/";
@@ -86,7 +84,6 @@ export type IntegrationHandlers = {
   triageTimeline: MemberHandler;
   triageVerdicts: MemberHandler;
   audit: MemberHandler;
-  workflowDeploy: BodyHandler<typeof DeployBody.infer>;
   codeReviewRun: BodyHandler<typeof CodeReviewRunBody.infer>;
   codeReviewLatest: BodyHandler<typeof CodeReviewQuery.infer>;
   codeReviewPlace: (member: Member) => Promise<Response>;
@@ -635,36 +632,11 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     },
   );
 
-  app.post(
-    `${WORKFLOW_DEPLOY_PATH}/:tenantId`,
-    describeRoute({
-      summary: "Deploy a workflow published as a tarball in the workspace's package registry",
-      description: "The stock deploy route with the package-registry asset as the source and a separate workflow asset as the definition.",
-      tags: TAGS,
-      responses: {
-        201: json("Workflow deployment accepted for provisioning", WorkflowDeploymentResponse),
-        ...invalid,
-        401: failures[401],
-        403: failures[403],
-        404: json("Workspace, workflow asset or package registry asset not found", Failure),
-        409: json("Workflow definition, source offering chain or tenant config invalid, or provisioning unavailable", Failure),
-        500: json("Deployment missing after preparation", Failure),
-        502: json("Sidecar unavailable", Failure),
-      },
-    }),
-    member,
-    requireGrant("workflow:*", "create"),
-    body(DeployBody),
-    function workflowDeploy(c) {
-      return handlers.workflowDeploy(c.req.valid("json"), memberOf(c));
-    },
-  );
-
   app.get(
     `${WORKFLOW_VERSIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Package versions of the workspace's live workflow deployments",
-      description: "Each live deployment, newest first, with the workflow package it pinned and the packages its frozen closure carries. `package` is null for a deployment not pinned from a package registry; `source` is the asset and commit a source-format deployment runs, else null.",
+      description: "Each live deployment, newest first, with the workflow package it pinned and the packages its frozen closure carries. `package` is null for a deployment without a frozen closure; `source` is the asset and commit a source-format deployment runs, else null.",
       tags: TAGS,
       responses: { 200: json("Live deployments and their versions", DeployedVersions), 401: failures[401], 403: failures[403] },
     }),

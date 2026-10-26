@@ -1,6 +1,5 @@
-// Packs each workflow as a tarball into public/packages/ beside the host tools it depends on, and as a source tree
-// with those tools as workspace members, so the portal can publish them to the hub.
-import { createHash } from "node:crypto";
+// Packs each workflow as a source tree into public/packages/, with the host tools it depends on as workspace members,
+// so the portal can publish them to the hub.
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { isBuiltin } from "node:module";
@@ -12,14 +11,11 @@ import bitbucketPkg from "../../../packages/bitbucket-datacenter-tool/package.js
 import * as githubTool from "../../../packages/github-tool/build.ts";
 import githubPkg from "../../../packages/github-tool/package.json";
 import triageWorkflowsPkg from "../../../packages/triage-workflows/package.json";
-import { tarballFilename } from "../../../packages/triage-contracts/src/tarball.ts";
-import { contentVersion, packPackage, type PackedTarball } from "../../../tooling/pack-tarball.ts";
-import { CHAIN_PACKAGES, WORKFLOW_PACKAGES, type BuiltPackage, type PackageIndexEntry, type SourceIndexEntry, type SourceTree } from "../src/lib/workflow-packages.ts";
+import { contentVersion, type PackedTarball } from "../../../tooling/pack-tarball.ts";
+import { CHAIN_PACKAGES, type BuiltPackage, type SourceIndexEntry, type SourceTree } from "../src/lib/workflow-packages.ts";
 
 const PACKAGES = resolve(import.meta.dir, "../../../packages");
 const PUBLIC = resolve(import.meta.dir, "../public");
-const LOCKFILE = resolve(import.meta.dir, "../../../bun.lock");
-const NPM = "https://registry.npmjs.org";
 const DIRECTORS = "directors.mjs";
 const ACTIONS = "actions/index.mjs";
 const LOOPS = "loops.mjs";
@@ -85,7 +81,7 @@ async function bundle(workflow: BuiltPackage, outdir: string): Promise<string[]>
   return result.outputs.map((output) => relative(outdir, output.path)).sort();
 }
 
-// The tarball resolves only its own chunks and the registry asset it is published to, which holds only the tools and native modules.
+// The workflow resolves only its own chunks, the tools and the native modules.
 function assertOnlyToolImports(workflow: BuiltPackage, file: string, code: string, outputs: string[]): void {
   // A CommonJS require would load a module the import scan cannot see.
   if (/\bcreateRequire\b|\b__require\b/.test(code)) {
@@ -124,10 +120,8 @@ async function toolMembers(tools: PackedTarball[]): Promise<SourceTree> {
   }
 }
 
-type BuiltWorkflow = { manifest: { name: string; version: string } & Record<string, unknown>; files: Record<string, string>; release: boolean };
-
-// Bundles into `stage`, which must outlive the returned `files`; writes the workflow's source tree beside the tools.
-async function packWorkflow(workflow: BuiltPackage, tools: PackedTarball[], members: SourceTree, stage: string, outDir: string): Promise<BuiltWorkflow & { source: SourceIndexEntry }> {
+// Bundles into `stage`; writes the workflow's source tree beside the tools.
+async function packWorkflow(workflow: BuiltPackage, tools: PackedTarball[], members: SourceTree, stage: string, outDir: string): Promise<{ release: boolean; source: SourceIndexEntry }> {
   const outputs = await bundle(workflow, stage);
   const files = Object.fromEntries(outputs.map((output) => [`./${output}`, join(stage, output)]));
   const code = await Promise.all(outputs.map((output) => readFile(join(stage, output), "utf8")));
@@ -158,93 +152,35 @@ async function packWorkflow(workflow: BuiltPackage, tools: PackedTarball[], memb
   };
   const hash = version.slice(version.lastIndexOf("-") + 1);
   await Bun.write(join(outDir, SOURCES, `${workflow.name}-${hash}.json`), JSON.stringify(tree));
-  return { manifest, files, release, source: { workflow: workflow.name, hash } };
+  return { release, source: { workflow: workflow.name, hash } };
 }
 
-async function packHostTool(tool: (typeof TOOLS)[number], outDir: string): Promise<PackedTarball> {
+/** Packs the tool into `into`, from which its files become each workflow's workspace member. */
+async function packHostTool(tool: (typeof TOOLS)[number], into: string): Promise<PackedTarball> {
   const stage = await mkdtemp(join(tmpdir(), "host-tool-"));
   try {
-    return await tool.build.packTool(await tool.build.buildEntry(join(stage, "index.js")), outDir);
+    return await tool.build.packTool(await tool.build.buildEntry(join(stage, "index.js")), into);
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
 }
 
-type LockedPackage = [string, string, { dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }, string];
-type Platform = { os: string; cpu: string; libc: string };
-type PlatformFields = { os?: string[]; cpu?: string[]; libc?: string[] };
-/** Where native modules come from: the lockfile pins them, `fetch` reaches the npm registry, `platforms` picks the binaries. */
-export type NativeSource = { lockfile: string; fetch: typeof fetch; platforms: Platform[] };
-
-// Sidecar images are Debian, so glibc. The libc filter is load-bearing: the stock resolver and installer match
-// only os and cpu, so a musl binary in the registry would be installed beside the glibc one.
-export const SIDECAR_PLATFORMS: Platform[] = [{ os: "linux", cpu: "x64", libc: "glibc" }, { os: "linux", cpu: "arm64", libc: "glibc" }];
-export const NPM_NATIVE: NativeSource = { lockfile: LOCKFILE, fetch, platforms: SIDECAR_PLATFORMS };
-
-function runsOn(fields: PlatformFields, platform: Platform): boolean {
-  return (["os", "cpu", "libc"] as const).every((key) => !fields[key] || fields[key].includes(platform[key]));
-}
-
-// A deployment installs only from the registry asset, so each native module ships there with its lockfile closure
-// for the given platforms, fetched at the locked version and checked against the locked integrity.
-async function fetchNative(outDir: string, { lockfile, fetch, platforms }: NativeSource): Promise<PackedTarball[]> {
-  const locked = Bun.JSONC.parse(await readFile(lockfile, "utf8")) as { packages: Record<string, LockedPackage> };
-  const declared: Record<string, string> = NATIVE;
-  const names = new Set(NATIVE_NAMES);
-  const fetched: PackedTarball[] = [];
-  for (const name of names) {
-    const entry = locked.packages[name];
-    if (!entry) throw new Error(`${name} is not in bun.lock.`);
-    const [spec, , meta, integrity] = entry;
-    const version = spec.slice(spec.lastIndexOf("@") + 1);
-    if (name in declared && declared[name] !== version) {
-      throw new Error(`Workflows declare ${name}@${declared[name]} but bun.lock resolves ${version}.`);
-    }
-    const manifestResponse = await fetch(`${NPM}/${name}/${version}`);
-    if (!manifestResponse.ok) throw new Error(`Fetching ${name}@${version} metadata failed: HTTP ${manifestResponse.status}.`);
-    const manifest = await manifestResponse.json() as PlatformFields;
-    if (!platforms.some((platform) => runsOn(manifest, platform))) continue;
-    for (const dependency of Object.keys({ ...meta.dependencies, ...meta.optionalDependencies })) names.add(dependency);
-    const url = `${NPM}/${name}/-/${name.split("/").pop()}-${version}.tgz`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Fetching ${url} failed: HTTP ${response.status}.`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== integrity) {
-      throw new Error(`${name}@${version} from ${url} does not match its bun.lock integrity.`);
-    }
-    const filename = tarballFilename({ name, version });
-    await mkdir(outDir, { recursive: true });
-    await Bun.write(join(outDir, filename), bytes);
-    fetched.push({ name, version, filename, path: join(outDir, filename), integrity });
-  }
-  return fetched;
-}
-
-export async function packWorkflows(outDir: string, native = NPM_NATIVE): Promise<PackageIndexEntry[]> {
+export async function packWorkflows(outDir: string): Promise<SourceIndexEntry[]> {
   await rm(outDir, { recursive: true, force: true });
   const stage = await mkdtemp(join(tmpdir(), "workflows-"));
   try {
     const tools: PackedTarball[] = [];
-    for (const tool of TOOLS) tools.push(await packHostTool(tool, outDir));
+    for (const tool of TOOLS) tools.push(await packHostTool(tool, stage));
     const members = await toolMembers(tools);
-    const packed = [...tools, ...await fetchNative(outDir, native)];
     const sources: SourceIndexEntry[] = [];
-    for (const workflow of WORKFLOW_PACKAGES) {
-      const built = await packWorkflow(workflow, tools, members, join(stage, workflow.name), outDir);
-      if (built.release) throw new Error(`${workflow.packageName} reads a release, which only a published source tree holds.`);
-      packed.push(await packPackage(built.manifest, built.files, outDir));
-      sources.push(built.source);
-    }
     for (const workflow of CHAIN_PACKAGES) {
       const built = await packWorkflow(workflow, tools, members, join(stage, workflow.name), outDir);
       const slots = "deploys" in workflow ? workflow.deploys : undefined;
       if (slots?.length && !built.release) throw new Error(`${workflow.packageName} deploys ${slots.map((slot) => slot.workflow).join(", ")} but does not read its release.`);
       sources.push(built.source);
     }
-    const index = packed.map(({ name, version, filename, integrity }) => ({ name, version, filename, integrity }));
-    await Bun.write(join(outDir, "index.json"), `${JSON.stringify(index, null, 2)}\n`);
     await Bun.write(join(outDir, SOURCES, "index.json"), `${JSON.stringify(sources, null, 2)}\n`);
-    return index;
+    return sources;
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
@@ -252,6 +188,6 @@ export async function packWorkflows(outDir: string, native = NPM_NATIVE): Promis
 
 if (import.meta.main) {
   const packagesOut = join(PUBLIC, "packages");
-  const index = await packWorkflows(packagesOut);
-  console.log(`packed ${index.length} tarballs into ${packagesOut}`);
+  const sources = await packWorkflows(packagesOut);
+  console.log(`packed ${sources.length} workflow source trees into ${packagesOut}`);
 }

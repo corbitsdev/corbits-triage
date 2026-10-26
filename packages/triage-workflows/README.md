@@ -1,14 +1,14 @@
 # @corbits/triage-workflows
 
-The triage workflows (`pr-triage-github`, `pr-triage-bitbucket-datacenter`, `pr-triage-historical`, `repo-scan`), their
-steps and directors, and the deterministic logic under `src/logic/`. The hub and the extension import it.
+The triage steps and directors, the `pr-triage` definition that runs them locally, `repo-scan`, and the deterministic
+logic under `src/logic/`. The manager, the judge, the hub, the extension and the policy check import it.
 
 ## Use
 
 Every file under `src/` is a subpath export:
 
 ```ts
-import { workflow } from "@corbits/triage-workflows/pr-triage-github";
+import { workflow } from "@corbits/triage-workflows/pr-triage";
 import { NEEDS_JUDGE_REASON, type Verdict } from "@corbits/triage-workflows/logic/render";
 ```
 
@@ -25,7 +25,7 @@ that needs it is null), each case's verdict and rule answers, and each check's t
 or when any case's repository is not public. The writer (`evals/baseline.ts`) and price table (`evals/prices.ts`) are
 shared with the code review eval. The committed file is the baseline for the commit it names; rerun and commit it when a
 change moves the numbers.
-`evals/judge.eval.ts` exports the eval, which runs any definition that triages; pr-workflow-anthropic runs it through its own.
+`evals/judge.eval.ts` exports the eval, which runs any definition that triages.
 
 ## Test
 

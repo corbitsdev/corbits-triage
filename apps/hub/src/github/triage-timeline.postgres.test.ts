@@ -2,10 +2,10 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { createDB, runMigrations, schema } from "@intx/db";
+import { createDB, runMigrations, schema, type DB } from "@intx/db";
 import { migrateTriageTables } from "../triage-db.js";
 import { createTriageTimeline, TriageTimeline } from "./triage-timeline.js";
-import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
+import { createVerdictRecordStore, type RecordedVerdict, replaceVerdict } from "./verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_timeline";
@@ -22,6 +22,11 @@ function verdict(runId: string, headSha: string, at: number, checks: RecordedVer
     runId, repo: REPO, number: 8, headSha, startedAt: minutes(at - 1), verdictAt: minutes(at), settled: true,
     state: "awaiting-review", actor: "maintainer", humanGated: false, degraded: null, checks, dos: [], commented: false, ...fields,
   };
+}
+
+/** Seeds verdict rows as managers record them. */
+async function seed(db: DB["db"], tenantId: string, verdicts: readonly RecordedVerdict[]): Promise<void> {
+  for (const verdict of verdicts) await replaceVerdict(db, tenantId, verdict);
 }
 
 test("PostgreSQL: a pull request's timeline scores each new outcome and names the checks that changed", async () => {
@@ -42,7 +47,7 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
 
     const verdicts = createVerdictRecordStore(db);
     const failing = [{ check: "ci", result: "fail" }, { check: "linked", result: "unconfirmed" }];
-    await verdicts.record(TENANT, [
+    await seed(db, TENANT, [
       verdict("run_1", "aaa", 0, failing),
       verdict("run_2", "aaa", 5, failing),
       verdict("run_3", "bbb", 10, [{ check: "ci-green", result: "fail" }], { degraded: "error", state: "stale-unknown", actor: "system" }),
@@ -52,7 +57,7 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
       verdict("run_8", "fff", 60, [{ check: "size", result: "fail" }], { number: 9, detail: { checks: [{ check: "size", kind: "machine", result: "fail", evidence: ["40 files (max 30)"] }] } }),
       verdict("run_9", "ggg", 70, [{ check: "max-files-changed", result: "pass" }, { check: "max-lines-changed", result: "pass" }], { number: 9 }),
     ]);
-    await verdicts.record(OTHER_TENANT, [verdict("run_7", "eee", 50, [])]);
+    await seed(db, OTHER_TENANT, [verdict("run_7", "eee", 50, [])]);
 
     const timeline = createTriageTimeline({ verdicts });
     async function get(query: string): Promise<Response> {

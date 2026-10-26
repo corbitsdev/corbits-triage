@@ -149,23 +149,6 @@ export async function replaceVerdict(db: DB["db"] | Tx, tenantId: string, verdic
 
 export function createVerdictRecordStore(db: DB["db"]) {
   return {
-    /**
-     * A verdict is recorded once its step completes; recorded again, it only gains what it was recorded without, a posted
-     * reply, the Do outcomes its run went on to write, or how its run ended.
-     */
-    async record(tenantId: string, verdicts: readonly RecordedVerdict[]): Promise<void> {
-      if (verdicts.length === 0) return;
-      await db.insert(verdictRecord).values(verdicts.map((verdict) => ({ ...verdict, tenantId }))).onConflictDoUpdate({
-        target: [verdictRecord.tenantId, verdictRecord.runId, verdictRecord.repo, verdictRecord.number],
-        set: {
-          detail: sql`coalesce(excluded.detail, ${verdictRecord.detail})`,
-          trigger: sql`coalesce(${verdictRecord.trigger}, excluded.trigger)`,
-          commented: sql`${verdictRecord.commented} OR excluded.commented`,
-          runStatus: sql`coalesce(excluded.run_status, ${verdictRecord.runStatus})`,
-        },
-      });
-    },
-
     /** The newest verdict of each pull request on each host. */
     latest(tenantId: string, pulls: readonly PullRef[]): Promise<HostedVerdict[]> {
       if (pulls.length === 0) return Promise.resolve([]);

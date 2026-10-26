@@ -10,7 +10,6 @@ import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount,
 import type { History } from "../logic/history.js";
 import { filesToRead, patternsResult, type PatternsResult } from "../logic/patterns.js";
 import { call, data, hostCalls, READ_PULL_REQUEST, runAll, toolName, type HostCall } from "../logic/host.js";
-import type { Judged } from "../logic/item.js";
 import { fixCount, historyPaths } from "../logic/risk.js";
 import { POLICY_UNREADABLE } from "../logic/settled.js";
 import type { RulesItem } from "./rules.js";
@@ -57,15 +56,6 @@ function filesPage(tool: string, r: ToolResult | undefined): FilesPage | string 
   return { files: content.files.flatMap(fileFacts), ...(next === undefined ? {} : { next }), ...(patchNext === undefined ? {} : { patchNext }) };
 }
 
-/** The judge answers a catch-up mail carried for each pull request it names; only the hub's mail is trusted to carry them. */
-function carriedAnswers(items: unknown[]): Map<number, Judged> {
-  return new Map(items.flatMap(function answersOf(item): Array<[number, Judged]> {
-    if (!isRecord(item) || typeof item.prNumber !== "number" || !isRecord(item.judged)) return [];
-    const judged = Object.entries(item.judged).filter((entry): entry is [string, string] => typeof entry[1] === "string");
-    return judged.length > 0 ? [[item.prNumber, Object.fromEntries(judged)]] : [];
-  }));
-}
-
 /** The policy versions the hub's mail names; a mail from before it named them has none. */
 function policySource(request: Record<string, unknown>): PolicySource | undefined {
   const source = isRecord(request.policy) ? PolicySourceShape(request.policy.source) : undefined;
@@ -87,12 +77,11 @@ function mailHeads(request: Record<string, unknown>): Map<number, string> {
 
 /** What each item read for a pull request carries besides its facts. */
 interface Stamp {
-  carried: Map<number, Judged>;
   automatic: ActionKind[];
   source?: PolicySource;
   repoSource: RepoSource;
   noWait: boolean;
-  /** The policy turns a block on, so `decide` chooses the Dos once the blocks have run. */
+  /** The mail names blocks, so the comment lists no Dos and approve and merge wait in Needs you. */
   blocksOn: boolean;
   /** The head the mail names for each pull request. */
   heads: Map<number, string>;
@@ -289,10 +278,8 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
       authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
       fixes: fixesOf(n),
     }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });
-    const judged = stamp.carried.get(n);
     if ("error" in item) return degraded(n, item.error);
-    const stamped = { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
-    return judged === undefined ? stamped : { ...stamped, judged };
+    return { ...item, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
   }
 
   const items = numbers.map(itemFor);
@@ -371,7 +358,7 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
     const limit = request.limit ?? HISTORY_LIMIT;
     if (typeof repo !== "string") return fail("facts: input has no repo");
     if (!Number.isSafeInteger(limit) || (limit as number) < 1) return fail("facts: history limit must be a positive integer");
-    return fetchHistory({ host: hostFor("github"), stamp: { carried: new Map(), automatic: [], repoSource: "github", noWait: false, blocksOn: false, heads: new Map(), ...appLogin } }, repo, limit as number);
+    return fetchHistory({ host: hostFor("github"), stamp: { automatic: [], repoSource: "github", noWait: false, blocksOn: false, heads: new Map(), ...appLogin } }, repo, limit as number);
   }
   const policy = repoPolicy(request?.policy);
   if (!request || typeof repo !== "string") return fail("facts: input has no repo");
@@ -388,8 +375,7 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
   const repoSource = repoSourceOf(request.repoSource);
   const source = policySource(request);
   const items = request.kind === "pr" && Array.isArray(request.items) ? request.items : undefined;
-  const carried = trusted && items ? carriedAnswers(items) : new Map<number, Judged>();
-  const read = { host: hostFor(repoSource), stamp: { carried, automatic: automaticKinds(trusted, request), repoSource, noWait: request.noWait === true, blocksOn: Array.isArray(request.blocks) && request.blocks.length > 0, heads: mailHeads(request), ...(source && { source }), ...appLogin } };
+  const read = { host: hostFor(repoSource), stamp: { automatic: automaticKinds(trusted, request), repoSource, noWait: request.noWait === true, blocksOn: Array.isArray(request.blocks) && request.blocks.length > 0, heads: mailHeads(request), ...(source && { source }), ...appLogin } };
   if (request.kind === "backlog") return fetchListed(read, repo, undefined, true, policy, pack, ["catch-up"]);
   if (request.kind !== "pr") return fail("facts: input is neither pr nor backlog");
   // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.

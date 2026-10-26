@@ -1,32 +1,20 @@
 // The policy file's v4 keys as a pull request's mail carries them, and the gate every pull request mail passes before
 // the listener: a paused pull request starts no run, and in doubt nothing approves or merges unattended.
 import { isDeepStrictEqual } from "node:util";
-import { BLOCK_KINDS, decideOf, EVERYONE, repoSourceOf, VERDICTS, type BlockKind, type CheckPack, type CodeReviewProvider, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
+import { BLOCK_KINDS, decideOf, EVERYONE, repoSourceOf, VERDICTS, type CheckPack, type PolicyWorkflow } from "@corbits/triage-contracts";
 import type { PullRequestHead } from "../pull-request-reader.js";
 import type { RepoRecord } from "./tenant-config.js";
 
-/** `blocks` are those the variant runs; a policy turning any other on runs nowhere yet. */
-export type PrWorkflowVariant = { source: RepoSource; provider: CodeReviewProvider; id: string; entry: string; blocks: readonly BlockKind[] };
-
-export const PR_WORKFLOW_VARIANTS: readonly PrWorkflowVariant[] = [
-  { source: "github", provider: "anthropic", id: "pr-workflow-anthropic-github", entry: "./pr-workflow-github.mjs", blocks: ["code-review"] },
-  { source: "bitbucket-datacenter", provider: "anthropic", id: "pr-workflow-anthropic-bitbucket-datacenter", entry: "./pr-workflow-bitbucket-datacenter.mjs", blocks: ["code-review"] },
-];
-
-export function prWorkflowVariantOf(entryOrId: string): PrWorkflowVariant | undefined {
-  return PR_WORKFLOW_VARIANTS.find((variant) => variant.entry === entryOrId || variant.id === entryOrId);
-}
-
 /**
- * The policy file's v4 keys when only the PR workflow can run them: a block is on, or `decide` is not the one pr-triage
- * runs from the pack's actions. Undefined otherwise, so the repository stays on pr-triage.
+ * The policy file's v4 keys when the mail has to carry them: a block is on, or `decide` is not the one the pack's
+ * actions give. Undefined otherwise.
  */
 export function prWorkflowKeys(workflow: PolicyWorkflow, pack: Pick<CheckPack, "actions">): PolicyWorkflow | undefined {
   const blocksOn = BLOCK_KINDS.some((kind) => workflow[kind]?.on === true);
   return blocksOn || (workflow.decide !== undefined && !isDeepStrictEqual(workflow.decide, decideOf(pack.actions, false))) ? workflow : undefined;
 }
 
-/** The trigger's part for the variant: code review's block as its scope reads it, gated on triage's rules unless it says otherwise, `decide`, and the blocks that are on. */
+/** The mail's part: code review's block as its scope reads it, gated on triage's rules unless it says otherwise, `decide`, and the blocks that are on. */
 export function workflowPart(workflow: PolicyWorkflow | undefined) {
   if (!workflow) return {};
   const block = workflow["code-review"];

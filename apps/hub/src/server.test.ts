@@ -8,11 +8,10 @@ import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
-import { checkPackName, emptyPack, parseTriageState, triageStateName, TriageStats } from "@corbits/triage-contracts";
+import { checkPackName, emptyPack, parseTriageState, TRIAGE_LISTENERS, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
-import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage-github";
 import { replaceVerdict } from "./github/verdict-record-store.js";
 import { mirrorOutcomesOf, summaryOf } from "./github/verdict-row.js";
 import { ensureTriageRole } from "./github/automation.js";
@@ -206,16 +205,6 @@ async function createTenant(origin: string, headers: Record<string, string>): Pr
   return type({ id: "string" }).assert(await tenant.json()).id;
 }
 
-async function createAsset(origin: string, headers: Record<string, string>, tenantId: string, kind: string): Promise<string> {
-  const asset = await fetch(`${origin}/api/tenants/${tenantId}/assets`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ kind, name: `corbits-${crypto.randomUUID().slice(0, 8)}` }),
-  });
-  expect(asset.status).toBe(201);
-  return type({ id: "string" }).assert(await asset.json()).id;
-}
-
 test("a hub refuses to start on a database that is not migrated", async () => {
   const unmigrated = `corbits_unmigrated_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
@@ -323,7 +312,6 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/triage-timeline/{tenantId}": ["get"],
     "/api/integrations/triage-verdicts/{tenantId}": ["get"],
     "/api/integrations/audit/{tenantId}": ["get"],
-    "/api/integrations/workflow-deploy/{tenantId}": ["post"],
     "/api/integrations/workflow-versions/{tenantId}": ["get"],
     "/api/integrations/code-review/{tenantId}": ["get"],
     "/api/integrations/code-review/{tenantId}/place": ["get"],
@@ -360,26 +348,6 @@ test("composed hub documents the integration routes and still answers an invalid
   });
   expect(action.status).toBe(400);
   expect(await action.json()).toMatchObject({ error: { code: "invalid_request" } });
-}, 40_000);
-
-test("workflow deploy refuses a package registry that is not the workspace's own or is not a registry", async () => {
-  const origin = await startHub();
-  const headers = await signedIn(origin);
-  const id = await createTenant(origin, headers);
-  const workflowAsset = await createAsset(origin, headers, id, "workflow");
-  const otherRegistry = await createAsset(origin, headers, await createTenant(origin, headers), "package-registry");
-
-  async function deploy(registryAssetId: string, pin = "@corbits/pr-triage-workflow@0.1.0") {
-    const res = await fetch(`${origin}/api/integrations/workflow-deploy/${id}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ registryAssetId, definitionAssetId: workflowAsset, pin, entry: "./pr-triage.mjs", sourceOfferingIds: ["mof_1"], defaultSourceOfferingId: "mof_1" }),
-    });
-    return { status: res.status, body: await res.json() };
-  }
-  expect(await deploy(otherRegistry)).toMatchObject({ status: 404, body: { error: { code: "not_found", message: "Package registry asset not found" } } });
-  expect(await deploy(workflowAsset)).toMatchObject({ status: 404, body: { error: { code: "not_found", message: "Package registry asset not found" } } });
-  expect(await deploy(otherRegistry, "Not A Pin@")).toMatchObject({ status: 400, body: { error: { code: "invalid_request" } } });
 }, 40_000);
 
 test("guards see the path the router matches, so an encoded path is refused as the plain one", async () => {
@@ -670,7 +638,7 @@ test("a burst of webhook deliveries for one pull request queues its head once an
     const hook = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ providerId, name: "github-hook", type: "api_key", secret: HOOK_SECRET, metadata: xHubHookMetadata(prTriageWorkflow.id, GITHUB_HOOK_HEADERS) }),
+      body: JSON.stringify({ providerId, name: "github-hook", type: "api_key", secret: HOOK_SECRET, metadata: xHubHookMetadata(TRIAGE_LISTENERS.github, GITHUB_HOOK_HEADERS) }),
     });
     expect(hook.status).toBe(201);
     const hookId = type({ id: "string" }).assert(await hook.json()).id;

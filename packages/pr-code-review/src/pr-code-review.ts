@@ -8,11 +8,6 @@ import { MODEL_ATTEMPTS } from "./failures.js";
 
 export const PR_CODE_REVIEW_ADDRESS = "pr-code-review";
 
-/** Every provider's package deploys a host's review under the same id, so the hub mails it whichever provider runs it. */
-export const PR_CODE_REVIEW_GITHUB_ADDRESS = "pr-code-review-github";
-
-export const PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS = "pr-code-review-bitbucket-datacenter";
-
 const TIMEOUT = 10 * 60_000;
 
 /** A model step whose call failed or whose answer couldn't be read asks again, waiting out a brief overload. */
@@ -80,9 +75,9 @@ export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { pr
 }
 
 /**
- * The review on its own: the definition for the given hosts under `id`, also its mail address, binds only their
- * credentials; the deployed packages are one per host, and a request's checkout names that host. The checkout's folder
- * is on the sidecar, which the review has to itself.
+ * The review on its own, which the tests and evals run: the definition for the given hosts under `id`, also its mail
+ * address, binds only their credentials, and a request's checkout names its host. The checkout's folder is on the
+ * sidecar, which the review has to itself.
  */
 export function codeReviewWorkflow(agents: CodeReviewAgents) {
   return function prCodeReview({ id = PR_CODE_REVIEW_ADDRESS, sources }: { id?: string; sources: Sources }) {

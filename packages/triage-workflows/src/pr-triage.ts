@@ -8,10 +8,8 @@ export type { CheckResult } from "./logic/checks.js";
 export const PR_TRIAGE_ADDRESS = "pr-triage";
 
 /**
- * The pr-triage definition for the given hosts under `id`, which is also its mail address: the same steps over those
- * hosts' credentials, binding only theirs, because an unresolved binding fails the deployment.
- * The deployed packages are one per host (pr-triage-github, pr-triage-bitbucket-datacenter); the hub mails the one of
- * each pull request's host, and the mail names that host as `repoSource`.
+ * The triage steps for the given hosts as one definition under `id`, which is also its mail address, binding only
+ * those hosts' credentials; the tests, the evals, the policy check and the extension run it locally.
  */
 export function prTriage({ id = PR_TRIAGE_ADDRESS, sources }: { id?: string; sources: Sources }) {
   const perPr = defineWorkflow({
@@ -29,5 +27,5 @@ export function prTriage({ id = PR_TRIAGE_ADDRESS, sources }: { id?: string; sou
   });
 }
 
-/** The library definition the tests and evals run; the deployed packages are its per-host builds. */
+/** The definition on GitHub. */
 export const workflow = prTriage({ sources: ["github"] });

@@ -26,7 +26,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role. |
 | `src/audit-log.ts` | The audit list, read from what the workspace already recorded. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
-| `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
+| `src/workflow-versions.ts` | Lists what is deployed and the versions it runs. |
 | `src/code-review.ts`, `src/pull-request-reader.ts`, `src/code-review-runs.ts` | `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; reading a pull request and building its review request; the latest review, read from the manager's state, and whether a head takes it over. |
 | `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and Docker registration (`docker.ts`). |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider). |
@@ -76,19 +76,17 @@ with the `intx-src` export condition, so every hub command runs with
   their own copy, and the build's content hash, or for a workflow with a
   release a hash of the build's hash and its `release.json`, so other
   offerings publish a new asset.
-- `scripts/build-workflows.ts`: packs the tools and workflows into
-  `public/packages/` with `index.json`. Each version is
-  `<base>-sha-<8 hex>` over the package's files (`tooling/pack-tarball.ts`),
-  so any change publishes a new version. It also writes each workflow's source
-  tree to `public/packages/sources/`: a workspace root whose members are the
-  workflow bundle and the built host tools, since Interchange installs only
-  npm dependencies from a registry. The manager chain (`CHAIN_PACKAGES`) is
-  built only as source trees; its bundles import `release.json` at run time
+- `scripts/build-workflows.ts`: writes each workflow of the manager chain
+  (`CHAIN_PACKAGES`) as a source tree to `public/packages/sources/`: a
+  workspace root whose members are the workflow bundle and the built host
+  tools, since Interchange installs only npm dependencies from a registry.
+  Each version is `<base>-sha-<8 hex>` over the package's files
+  (`tooling/pack-tarball.ts`), so any change publishes a new version. Its
+  bundles import `release.json` at run time
   through the package's `#release` import, which resolves from any file in it,
   and `src/loops.ts`, where a package has one, ships as `interchange.loops`.
   The chain's bundles run on Bun only: Bun's bundler drops the import's
   `with { type: "json" }`, which Node requires, and every sidecar runs Bun.
-  The tarball workflows still load under Node.
 
 The workflows name one decision model, `corbits-system-one:decision`, so their
 source is the same for every tenant. Saving a model key stores it in the vault
@@ -109,7 +107,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 
 | Package | Holds |
 | --- | --- |
-| `triage-workflows` | `pr-triage-github`, `pr-triage-bitbucket-datacenter`, `pr-triage-historical`, `repo-scan`, their steps, the judge's director, the actions under `actions/`, the deterministic logic under `logic/`, and the decision-model eval. |
+| `triage-workflows` | The triage steps, `pr-triage`, the definition that runs them locally, `repo-scan`, the judge's director, the actions under `actions/`, the deterministic logic under `logic/`, and the decision-model eval. |
 | `triage-contracts` | Policy schema and parsers, the policy file, workspace policy resolution, repository settings, triage state, labels, trigger mail and shared types; see [its README](../packages/triage-contracts/README.md). |
 | `github-reads`, `bitbucket-datacenter-reads` | Host read helpers, both returning the GitHub shapes. |
 | `github-tool`, `bitbucket-datacenter-tool` | The sidecar tool bundles: reads, the mirror, and actions. |

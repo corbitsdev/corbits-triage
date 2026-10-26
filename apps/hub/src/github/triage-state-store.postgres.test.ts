@@ -49,10 +49,10 @@ test("PostgreSQL: unreadable triage state loads as empty with a warning and the 
     expect(unreadable.version).not.toBeNull();
     expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_state_unreadable", repo: REPO }));
 
-    // A legacy integer workflow version still loads, beside a package version.
-    const rows: PrTriageRow[] = [{ ...ROW, workflowVersion: 3 }, { ...ROW, number: 8, workflowVersion: "0.1.0-sha-1234abcd" }];
-    await store.save("tnt_state", REPO, rows, unreadable.version);
-    expect((await store.load("tnt_state", REPO)).rows).toEqual(rows);
+    // A row stored with the workflow version rows once carried still loads, without it.
+    const stored = [{ ...ROW, workflowVersion: 3 }, { ...ROW, number: 8, workflowVersion: "0.1.0-sha-1234abcd" }] as unknown as PrTriageRow[];
+    await store.save("tnt_state", REPO, stored, unreadable.version);
+    expect((await store.load("tnt_state", REPO)).rows).toEqual([ROW, { ...ROW, number: 8 }]);
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
