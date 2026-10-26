@@ -567,7 +567,7 @@ There are three roles:
 | Admin | Manage repositories, rules and people. |
 | Member | Use the Inbox and approve the held actions their role allows. |
 
-Once a source is connected, an admin can also be a **Deployer**. Deployers publish Triage's workflows, which then run with their permissions, so give the role only to admins you trust with them. Owners and admins see **Make Deployer** or **Remove Deployer** on each admin's row; owners can already do everything a Deployer can. The **Role** column lists every role a person holds, such as **Admin, Deployer**. Someone without the role who tries to publish is told to ask a workspace owner.
+Once a source is connected, an admin can also be a **Deployer**. Deployers publish Triage's workflows, which then run with their permissions, so give the role only to admins you trust with them. Owners and admins see **Make Deployer** on each admin's row, and **Remove Deployer** on every row that has the role, such as an admin since made a member; owners can already do everything a Deployer can. The **Role** column lists every role a person holds, such as **Admin, Deployer**. Someone without the role who tries to publish is told to ask a workspace owner.
 
 ### Your account
 

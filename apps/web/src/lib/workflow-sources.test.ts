@@ -99,7 +99,9 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
   const requests: string[] = [];
   const tokens: unknown[] = [];
   const refused = new Set<string>();
-  const grants: unknown[] = [];
+  const grants: Array<{ resource: string }> = [];
+  /** How many grant requests fail before one succeeds. */
+  const failing = { grants: 0 };
   async function json<T>(method: string, route: string, body?: unknown): Promise<T> {
     requests.push(`${method} ${route}`);
     if (method === "GET" && route === "/api/tenants/t/assets?kind=workflow") return assets as T;
@@ -118,16 +120,22 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
     }
     if (method === "DELETE" && route.startsWith("/api/me/git-tokens/")) return undefined as T;
     if (method === "POST" && route === "/api/tenants/t/grants") {
-      grants.push(body);
+      if (failing.grants > 0) {
+        failing.grants -= 1;
+        throw new Error("The hub answered with an error (HTTP 500).");
+      }
+      grants.push(body as { resource: string });
       return body as T;
     }
     if (method === "POST" && route === `/api/tenants/t/principals/${session.principalId}/evaluate`) {
       const { resource, action } = body as { resource: string; action: string };
+      // Like stock: an asset's creator holds no grant on it until one is made.
+      if (resource.startsWith("asset:ast_") && action === "write") return { effect: grants.some((grant) => grant.resource === resource) ? "allow" : "deny" } as T;
       return { effect: refused.has(`${resource} ${action}`) ? "deny" : "allow" } as T;
     }
     throw new Error(`Unexpected ${method} ${route}`);
   }
-  return { transport: { fetch: json } as unknown as Transport, requests, tokens, session, refused, grants };
+  return { transport: { fetch: json } as unknown as Transport, requests, tokens, session, refused, grants, failing };
 }
 
 /** The portal build's files: each workflow's tree under its build hash. */
@@ -184,6 +192,20 @@ test("refuses a publisher who is not a Deployer, an asset another principal crea
   gitIn(asset, "update-ref", "refs/heads/main", other);
   const own = fakeHub([{ name: asset, creatorPrincipalId: PUBLISHER.principalId }]);
   await expect(publishSources(own.transport, PUBLISHER, gitClient, files)).rejects.toThrow(`already holds ${other}, not this release`);
+});
+
+test("a publish whose grant failed leaves its asset to the next publish, which grants it once and pushes", async () => {
+  const asset = `pr-triage-github-${OWNER}-89ab0123`;
+  const hub = fakeHub();
+  hub.failing.grants = 1;
+  const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "regrant") };
+  const files = portalFiles([{ workflow: "pr-triage-github", hash: "89ab0123", tree: TREE }]);
+  await expect(publishSources(hub.transport, PUBLISHER, gitClient, files)).rejects.toThrow("HTTP 500");
+  const [published] = await publishSources(hub.transport, PUBLISHER, gitClient, files);
+  await publishSources(hub.transport, PUBLISHER, gitClient, files);
+
+  expect(published!.commitSha).toBe(gitIn(asset, "rev-parse", "refs/heads/main"));
+  expect(hub.grants).toEqual([{ principalId: PUBLISHER.principalId, resource: `asset:${published!.assetId}`, action: "write", effect: "allow", origin: "creator" }]);
 });
 
 function chainTree(workflow: string, release: boolean): SourceTree {

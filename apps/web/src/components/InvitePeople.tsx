@@ -198,10 +198,12 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   }
 
   function deployerButton(person: HubPrincipal) {
-    // Only admins take the role: owners hold every grant already, and a member's role would give it too little.
-    const admin = person.roles.some((role) => adminRoleIds.includes(role.id)) && !person.roles.some((role) => ownerRoleIds.includes(role.id));
-    if (!mayAssignRoles || !deployer || !admin) return null;
+    if (!mayAssignRoles || !deployer) return null;
     const holds = person.roles.some((role) => role.id === deployer.id);
+    // Only admins take the role: owners hold every grant already, and a member's role would give it too little. Anyone
+    // holding it, such as an admin since made a member, can have it removed.
+    const admin = person.roles.some((role) => adminRoleIds.includes(role.id)) && !person.roles.some((role) => ownerRoleIds.includes(role.id));
+    if (!holds && !admin) return null;
     const label = holds ? "Remove Deployer" : "Make Deployer";
     return (
       <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => setDeployer(person, deployer.id, holds)}>

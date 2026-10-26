@@ -75,9 +75,14 @@ async function revoke(transport: Transport, tokenId: string): Promise<void> {
   }
 }
 
-/** Stock gives an asset's creator no grant on it, so the publisher grants itself `write` on this one asset to push to it. */
+/**
+ * Stock gives an asset's creator no grant on it, so the publisher grants itself `write` on this one asset to push to it,
+ * unless it already holds it, such as after an earlier publish whose push failed.
+ */
 async function grantOwnPush(transport: Transport, { tenantId, principalId }: Publisher, assetId: string): Promise<void> {
-  await transport.fetch("POST", `/api/tenants/${encodeURIComponent(tenantId)}/grants`, { principalId, resource: `asset:${assetId}`, action: "write", effect: "allow", origin: "creator" });
+  const resource = `asset:${assetId}`;
+  if (await evaluateAccess(transport, tenantId, principalId, resource, "write")) return;
+  await transport.fetch("POST", `/api/tenants/${encodeURIComponent(tenantId)}/grants`, { principalId, resource, action: "write", effect: "allow", origin: "creator" });
 }
 
 async function writeTree(fs: FsClient, dir: string, tree: SourceTree): Promise<string> {
@@ -149,11 +154,10 @@ function publishable(models: readonly ModelInfo[], workflow: string): boolean {
 async function publishSource(transport: Transport, publisher: Publisher, gitClient: SourceGit, workflow: string, name: string, source: SourceTree): Promise<PublishedSource> {
   const { tenantId } = publisher;
   const { fs } = gitClient;
-  const asset = await ensureAsset(transport, tenantId, "workflow", name, function grantPush(created) {
-    return grantOwnPush(transport, publisher, created.id);
-  });
+  const asset = await ensureAsset(transport, tenantId, "workflow", name);
   // A deployment's permissions come from its asset's creator.
   if (asset.creatorPrincipalId !== publisher.principalId) throw new Error(`${name} was created by someone else; publishing to it would deploy under their permissions.`);
+  await grantOwnPush(transport, publisher, asset.id);
   const dir = `${gitClient.dir}/${name}`;
   await git.init({ fs, dir, defaultBranch: BRANCH });
   const tree = await writeTree(fs, dir, source);

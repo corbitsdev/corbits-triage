@@ -680,13 +680,14 @@ holds `DEPLOYER_GRANTS` (`@corbits/triage-contracts`): `create` on `asset:*`
 and `workflow:*`, `manage` on `workflow-run:*`, `write` on
 `triage-manager:state` and `create` on `triage-manager:result`. It holds no
 read, since it is given to admins, whose role reads everything. Stock gives an
-asset's creator no grant on it, and a push needs `write`, so right after
-creating a workflow asset the portal grants its publisher `write` on that one
-asset through the stock grants route (admins hold `create` on `grant:*`);
-publishing to it again uses that grant, and a Deployer cannot push to anyone
-else's. Stock admin lacks the manager state `write`. Stock lets owners and
+asset's creator no grant on it, and a push needs `write`, so before pushing to a
+workflow asset its user created, the portal grants that user `write` on that
+one asset through the stock grants route (admins hold `create` on `grant:*`),
+unless the evaluate route says the user already holds it. The portal only
+pushes to assets its user created. Under Interchange, an admin can grant itself
+anything. Stock admin lacks the manager state `write`. Stock lets owners and
 admins assign roles through the role assignment routes, and the portal offers
-the role on admins' rows only; it refuses to publish, before it creates
+the role on admins' rows only and its removal on any row that has it; it refuses to publish, before it creates
 anything, unless the stock evaluate route allows every one of the role's
 grants.
 

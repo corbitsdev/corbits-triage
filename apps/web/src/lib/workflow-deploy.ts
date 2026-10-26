@@ -14,21 +14,11 @@ const REGISTRY_NAME = "corbits";
 
 type Asset = { id: string; kind: string; name: string; creatorPrincipalId: string | null };
 
-/** `onCreated` runs only when this call created the asset. */
-export async function ensureAsset(
-  transport: Transport,
-  tenantId: string,
-  kind: "workflow" | "package-registry",
-  name: string,
-  onCreated?: (asset: Asset) => Promise<void>,
-): Promise<Asset> {
+export async function ensureAsset(transport: Transport, tenantId: string, kind: "workflow" | "package-registry", name: string): Promise<Asset> {
   const base = `/api/tenants/${encodeURIComponent(tenantId)}/assets`;
   const assets = await transport.fetch<Asset[]>("GET", `${base}?kind=${kind}`);
-  const found = assets.find((asset) => asset.name === name);
-  if (found) return found;
-  const created = await transport.fetch<Asset>("POST", base, { kind, name });
-  await onCreated?.(created);
-  return created;
+  return assets.find((asset) => asset.name === name)
+    ?? transport.fetch<Asset>("POST", base, { kind, name });
 }
 
 export async function portalPackage(fetchRaw: typeof fetch, file: string): Promise<Response> {
