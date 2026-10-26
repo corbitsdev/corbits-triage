@@ -6,7 +6,7 @@ import path from "node:path";
 import http from "isomorphic-git/http/web";
 import type { Transport } from "@intx/hub-client";
 import { publishSources } from "./workflow-sources.ts";
-import type { SourceIndexEntry, SourceTree } from "./workflow-packages.ts";
+import type { SourceTree } from "./workflow-packages.ts";
 
 const SECRET = "itx_pat_test";
 const PUBLISHER = { tenantId: "t", principalId: "prn_owner" };
@@ -81,13 +81,18 @@ function createRepo(name: string): void {
   Bun.spawnSync([gitPath, "--git-dir", dir, "update-ref", "refs/heads/main", seed]);
 }
 
-function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = []) {
+const OFFERINGS = { decision: ["mof_decision", "corbits-system-one"], "claude-opus-5-5": ["mof_opus", "anthropic"], "claude-haiku-5-5": ["mof_haiku", "anthropic"] };
+
+function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [], offerings: Record<string, string[]> = OFFERINGS) {
   const assets = seeded.map((asset, n) => ({ id: `ast_seeded_${n}`, kind: "workflow", ...asset }));
   const requests: string[] = [];
   const tokens: unknown[] = [];
   async function json<T>(method: string, route: string, body?: unknown): Promise<T> {
     requests.push(`${method} ${route}`);
     if (method === "GET" && route === "/api/tenants/t/assets?kind=workflow") return assets as T;
+    if (method === "GET" && route === "/api/tenants/t/models") {
+      return Object.entries(offerings).map(([canonicalName, [offeringId, providerName]]) => ({ canonicalName, offerings: [{ offeringId, providerName }] })) as T;
+    }
     if (method === "POST" && route === "/api/tenants/t/assets") {
       const asset = { id: `ast_${assets.length + 1}`, creatorPrincipalId: PUBLISHER.principalId, ...(body as { kind: string; name: string }) };
       assets.push(asset);
@@ -104,14 +109,13 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
   return { transport: { fetch: json } as unknown as Transport, requests, tokens };
 }
 
-/** The portal build's files for a release of one workflow published as `asset`. */
-function portalFiles(asset: string): typeof fetch {
-  const sources: SourceIndexEntry[] = [{ workflow: "pr-triage-github", asset }];
+/** The portal build's files: each workflow's tree under its build hash. */
+function portalFiles(builds: Array<{ workflow: string; hash: string; tree: SourceTree }>): typeof fetch {
   async function serve(input: string | URL | Request): Promise<Response> {
     const file = String(input);
-    if (file === "/packages/sources/index.json") return Response.json(sources);
-    if (file === `/packages/sources/${asset}.json`) return Response.json(TREE);
-    return new Response(null, { status: 404 });
+    if (file === "/packages/sources/index.json") return Response.json(builds.map(({ workflow, hash }) => ({ workflow, hash })));
+    const build = builds.find(({ workflow, hash }) => file === `/packages/sources/${workflow}-${hash}.json`);
+    return build ? Response.json(build.tree) : new Response(null, { status: 404 });
   }
   return serve as typeof fetch;
 }
@@ -124,8 +128,9 @@ test("publishing a release twice pushes its commit once with a token scoped to t
   const asset = "pr-triage-github-0123abcd";
   const hub = fakeHub();
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "twice") };
-  const first = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(asset));
-  const second = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(asset));
+  const files = portalFiles([{ workflow: "pr-triage-github", hash: "0123abcd", tree: TREE }]);
+  const first = await publishSources(hub.transport, PUBLISHER, gitClient, files);
+  const second = await publishSources(hub.transport, PUBLISHER, gitClient, files);
 
   expect(second).toEqual(first);
   expect(first).toEqual([{ workflow: "pr-triage-github", assetId: "ast_1", commitSha: gitIn(asset, "rev-parse", "refs/heads/main") }]);
@@ -143,12 +148,56 @@ test("refuses an asset another principal created, or whose main holds another co
   const asset = "pr-triage-github-4567cdef";
   createRepo(asset);
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "refused") };
+  const files = portalFiles([{ workflow: "pr-triage-github", hash: "4567cdef", tree: TREE }]);
   const foreign = fakeHub([{ name: asset, creatorPrincipalId: "prn_other" }]);
-  await expect(publishSources(foreign.transport, PUBLISHER, gitClient, portalFiles(asset))).rejects.toThrow("created by someone else");
+  await expect(publishSources(foreign.transport, PUBLISHER, gitClient, files)).rejects.toThrow("created by someone else");
   expect(foreign.tokens).toEqual([]);
 
   const other = gitIn(asset, "commit-tree", "main^{tree}", "-p", "main", "-m", "other");
   gitIn(asset, "update-ref", "refs/heads/main", other);
   const own = fakeHub([{ name: asset, creatorPrincipalId: PUBLISHER.principalId }]);
-  await expect(publishSources(own.transport, PUBLISHER, gitClient, portalFiles(asset))).rejects.toThrow(`already holds ${other}, not this release`);
+  await expect(publishSources(own.transport, PUBLISHER, gitClient, files)).rejects.toThrow(`already holds ${other}, not this release`);
+});
+
+function chainTree(workflow: string, release: boolean): SourceTree {
+  return {
+    "package.json": TREE["package.json"]!,
+    [`packages/${workflow}/package.json`]: JSON.stringify({ name: `@corbits/${workflow}-workflow`, version: "0.1.0-sha-89abcdef", interchange: { workflow: `./${workflow}.mjs` } }),
+    [`packages/${workflow}/${workflow}.mjs`]: "export default {};\n",
+    ...(release && { [`packages/${workflow}/release.json`]: "{}\n" }),
+  };
+}
+
+test("each chain workflow carries the release of the one it deploys, and its asset name changes with that release", async () => {
+  const builds = [
+    { workflow: "pr-code-review-reviewer-github", hash: "aaaaaaaa", tree: chainTree("pr-code-review-reviewer-github", false) },
+    { workflow: "triage-manager-github", hash: "bbbbbbbb", tree: chainTree("triage-manager-github", true) },
+    { workflow: "triage-listener-github", hash: "cccccccc", tree: chainTree("triage-listener-github", true) },
+  ];
+  const offerings = { ...OFFERINGS };
+  const hub = fakeHub([], offerings);
+  const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "chain") };
+  const [reviewer, manager, listener] = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
+  const assets = await hub.transport.fetch<Array<{ id: string; name: string }>>("GET", "/api/tenants/t/assets?kind=workflow");
+  function nameOf(id: string): string {
+    return assets.find((asset) => asset.id === id)!.name;
+  }
+  expect(nameOf(reviewer!.assetId)).toBe("pr-code-review-reviewer-github-aaaaaaaa");
+  expect(nameOf(listener!.assetId)).toMatch(/^triage-listener-github-[0-9a-f]{8}$/);
+  expect(nameOf(listener!.assetId)).not.toBe("triage-listener-github-cccccccc");
+  function releaseOf(entry: { assetId: string }, workflow: string): unknown {
+    return JSON.parse(gitIn(nameOf(entry.assetId), "show", `main:packages/${workflow}/release.json`));
+  }
+  expect(releaseOf(manager!, "triage-manager-github")).toEqual({
+    github: { codeReview: { workflow: { assetId: reviewer!.assetId, commitSha: reviewer!.commitSha, packageName: "@corbits/pr-code-review-reviewer-github-workflow", entry: "./pr-code-review-reviewer-github.mjs" }, offerings: { ids: ["mof_opus", "mof_haiku"], defaultId: "mof_opus" } } },
+  });
+  expect(releaseOf(listener!, "triage-listener-github")).toEqual({
+    github: { manager: { workflow: { assetId: manager!.assetId, commitSha: manager!.commitSha, packageName: "@corbits/triage-manager-github-workflow", entry: "./triage-manager-github.mjs" }, offerings: { ids: ["mof_decision"], defaultId: "mof_decision" } } },
+  });
+
+  offerings.decision = ["mof_decision_2", "corbits-system-one"];
+  const [, managerAgain, listenerAgain] = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
+  const rekeyed = await hub.transport.fetch<Array<{ id: string; name: string }>>("GET", "/api/tenants/t/assets?kind=workflow");
+  expect(managerAgain).toEqual(manager!);
+  expect(rekeyed.find((asset) => asset.id === listenerAgain!.assetId)!.name).not.toBe(nameOf(listener!.assetId));
 });

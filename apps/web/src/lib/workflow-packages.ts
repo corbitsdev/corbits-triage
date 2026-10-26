@@ -39,7 +39,23 @@ export const WORKFLOW_PACKAGES = [
 
 export type PackageIndexEntry = { name: string; version: string; filename: string; integrity: string };
 
-/** A release's workflow as a source asset: `asset` names it, and `sources/<asset>.json` holds its tree. */
-export type SourceIndexEntry = { workflow: string; asset: string };
+/** Where a release's workflow comes from: the package under packages/ and its entry, built into its own package. */
+export type BuiltPackage = { name: string; workspace: string; packageName: string; entry: `./${string}.mjs`; src: `src/${string}.ts`; models: readonly [DeclaredModel, ...DeclaredModel[]] };
+
+/** A workflow of the manager chain; one that deploys another is published after it, with that one's release as `as`. */
+export type ChainPackage = BuiltPackage & { source: RepoSource; deploys?: { workflow: string; as: "codeReview" | "manager" } };
+
+// Each host's listener deploys its manager, which deploys its code review, so they publish in this order.
+export const CHAIN_PACKAGES = [
+  { name: "pr-code-review-reviewer-github", workspace: "pr-code-review-anthropic", source: "github", packageName: "@corbits/pr-code-review-reviewer-github-workflow", entry: "./pr-code-review-reviewer-github.mjs", src: "src/pr-code-review-reviewer-github.ts", models: ["claude-opus-5-5", "claude-haiku-5-5"] },
+  { name: "pr-code-review-reviewer-bitbucket-datacenter", workspace: "pr-code-review-anthropic", source: "bitbucket-datacenter", packageName: "@corbits/pr-code-review-reviewer-bitbucket-datacenter-workflow", entry: "./pr-code-review-reviewer-bitbucket-datacenter.mjs", src: "src/pr-code-review-reviewer-bitbucket-datacenter.ts", models: ["claude-opus-5-5", "claude-haiku-5-5"] },
+  { name: "triage-manager-github", workspace: "triage-manager", source: "github", packageName: "@corbits/triage-manager-github-workflow", entry: "./triage-manager-github.mjs", src: "src/triage-manager-github.ts", models: ["decision"], deploys: { workflow: "pr-code-review-reviewer-github", as: "codeReview" } },
+  { name: "triage-manager-bitbucket-datacenter", workspace: "triage-manager", source: "bitbucket-datacenter", packageName: "@corbits/triage-manager-bitbucket-datacenter-workflow", entry: "./triage-manager-bitbucket-datacenter.mjs", src: "src/triage-manager-bitbucket-datacenter.ts", models: ["decision"], deploys: { workflow: "pr-code-review-reviewer-bitbucket-datacenter", as: "codeReview" } },
+  { name: "triage-listener-github", workspace: "triage-manager", source: "github", packageName: "@corbits/triage-listener-github-workflow", entry: "./triage-listener-github.mjs", src: "src/triage-listener-github.ts", models: ["decision"], deploys: { workflow: "triage-manager-github", as: "manager" } },
+  { name: "triage-listener-bitbucket-datacenter", workspace: "triage-manager", source: "bitbucket-datacenter", packageName: "@corbits/triage-listener-bitbucket-datacenter-workflow", entry: "./triage-listener-bitbucket-datacenter.mjs", src: "src/triage-listener-bitbucket-datacenter.ts", models: ["decision"], deploys: { workflow: "triage-manager-bitbucket-datacenter", as: "manager" } },
+] as const satisfies readonly ChainPackage[];
+
+/** A release's workflow as a source tree: `sources/<workflow>-<hash>.json`, where `hash` is its build's content hash. */
+export type SourceIndexEntry = { workflow: string; hash: string };
 /** Each file's path in the source asset mapped to its contents. */
 export type SourceTree = Record<string, string>;

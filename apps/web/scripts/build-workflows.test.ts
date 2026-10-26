@@ -11,7 +11,7 @@ import triageWorkflows from "../../../packages/triage-workflows/package.json";
 import { packPackage } from "../../../tooling/pack-tarball.ts";
 import { packWorkflows, SIDECAR_PLATFORMS, type NativeSource } from "./build-workflows.ts";
 import { installWorkflows, loadUnderNode } from "./install-from-registry.ts";
-import { WORKFLOW_PACKAGES, type SourceIndexEntry, type SourceTree } from "../src/lib/workflow-packages.ts";
+import { CHAIN_PACKAGES, WORKFLOW_PACKAGES, type SourceIndexEntry, type SourceTree } from "../src/lib/workflow-packages.ts";
 // Interchange exports only the type; the hub resolves a source deploy's closure with this function.
 import { resolveSourceWorkflowClosure, type SourceTreeReads } from "../../../vendor/interchange/packages/hub-sessions/src/workflow-source-closure.ts";
 
@@ -129,13 +129,14 @@ function treeReads(tree: SourceTree): SourceTreeReads {
 
 test("each workflow's source tree resolves the way the hub resolves a source deploy, with the host tools as its own members", async () => {
   const sources = JSON.parse(await readFile(path.join(BUILT, "sources/index.json"), "utf8")) as SourceIndexEntry[];
-  expect(sources.map((source) => source.workflow)).toEqual(WORKFLOW_PACKAGES.map((workflow) => workflow.name));
+  const built = [...WORKFLOW_PACKAGES, ...CHAIN_PACKAGES];
+  expect(sources.map((source) => source.workflow)).toEqual(built.map((workflow) => workflow.name));
   async function npmOnly(name: string): Promise<Packument> {
     if (name !== NAPI) throw new Error(`${name} resolved from npm`);
     return { name, versions: { [NAPI_VERSION]: { name, version: NAPI_VERSION, dist: { tarball: "https://registry.test/napi.tgz", integrity: "sha512-napi" } } } };
   }
-  for (const [i, workflow] of WORKFLOW_PACKAGES.entries()) {
-    const tree = JSON.parse(await readFile(path.join(BUILT, `sources/${sources[i]!.asset}.json`), "utf8")) as SourceTree;
+  for (const [i, workflow] of built.entries()) {
+    const tree = JSON.parse(await readFile(path.join(BUILT, `sources/${workflow.name}-${sources[i]!.hash}.json`), "utf8")) as SourceTree;
     const closure = await resolveSourceWorkflowClosure({
       source: { kind: "asset", assetId: "ast_source", package: { format: "source", commitSha: "c0ffee", packageName: workflow.packageName } },
       reads: treeReads(tree),
@@ -146,6 +147,8 @@ test("each workflow's source tree resolves the way the hub resolves a source dep
     const members = closure.entries.filter((entry) => entry.source.kind === "asset").map((entry) => entry.name).sort();
     expect(members).toEqual([workflow.packageName, githubTool.name, bitbucketTool.name].sort());
     const workflowMember = JSON.parse(tree[`packages/${workflow.name}/package.json`]!);
-    expect(tree[path.posix.join("packages", workflow.name, workflowMember.interchange.workflow)]).toBeDefined();
+    for (const entry of Object.values(workflowMember.interchange) as string[]) expect(tree[path.posix.join("packages", workflow.name, entry)]).toBeDefined();
+    expect(`packages/${workflow.name}/release.json` in tree).toBe("deploys" in workflow);
+    expect("loops" in workflowMember.interchange).toBe(workflow.workspace === "triage-manager");
   }
 });

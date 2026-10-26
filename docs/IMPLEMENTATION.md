@@ -64,21 +64,28 @@ with the `intx-src` export condition, so every hub command runs with
   a live deployment pins, since Interchange delivers the registry's whole tree
   under a 32 MiB cap.
 - `src/lib/workflow-sources.ts`: publishes each workflow as a source-format
-  `workflow` asset named `<workflow>-<8 hex>`, through the stock git
-  smart-HTTP route with a short-lived personal git token that is revoked
-  afterwards, and returns each asset id and commit. It writes the release's
-  tree locally and fetches the asset's `main`: when that commit holds the
-  same tree it is returned as is; when it is the hub's first commit, the
-  release is committed on top of it and pushed; anything else, or an asset
-  created by someone else, is refused, since a deployment's permissions come
-  from its asset's creator.
+  `workflow` asset, through the stock git smart-HTTP route with a short-lived
+  personal git token that is revoked afterwards, and returns each asset id and
+  commit. It writes the release's tree locally and fetches the asset's `main`:
+  when that commit holds the same tree it is returned as is; when it is the
+  hub's first commit, the release is committed on top of it and pushed;
+  anything else, or an asset created by someone else, is refused, since a
+  deployment's permissions come from its asset's creator. Each host's code
+  review, manager and listener publish in that order: the manager's tree gets
+  a `release.json` naming the code review just published and the offerings it
+  runs on, the listener's the same for the manager. An asset is named
+  `<workflow>-<8 hex>`, the build's content hash, or for a workflow with a
+  release a hash of the build's hash and its `release.json`, so other
+  offerings publish a new asset.
 - `scripts/build-workflows.ts`: packs the tools and workflows into
   `public/packages/` with `index.json`. Each version is
   `<base>-sha-<8 hex>` over the package's files (`tooling/pack-tarball.ts`),
   so any change publishes a new version. It also writes each workflow's source
   tree to `public/packages/sources/`: a workspace root whose members are the
   workflow bundle and the built host tools, since Interchange installs only
-  npm dependencies from a registry.
+  npm dependencies from a registry. The manager chain (`CHAIN_PACKAGES`) is
+  built only as source trees; its bundles import `./release.json` at run time,
+  and `src/loops.ts`, where a package has one, ships as `interchange.loops`.
 
 The workflows name one decision model, `corbits-system-one:decision`, so their
 source is the same for every tenant. Saving a model key stores it in the vault

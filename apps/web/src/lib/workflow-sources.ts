@@ -5,8 +5,9 @@ import http from "isomorphic-git/http/web";
 import { createBrowserIsogitRuntime } from "@intx/storage-isogit/browser";
 import type { Transport } from "@intx/hub-client";
 import { hubOrigin } from "./hub-origin.ts";
+import { offeringsFor } from "./model-catalog.ts";
 import { ensureAsset, portalPackage } from "./workflow-deploy.ts";
-import type { SourceIndexEntry, SourceTree } from "./workflow-packages.ts";
+import { CHAIN_PACKAGES, type SourceIndexEntry, type SourceTree } from "./workflow-packages.ts";
 
 const BRANCH = "main";
 const REF = `refs/heads/${BRANCH}`;
@@ -97,35 +98,63 @@ async function commitTree(fs: FsClient, dir: string, tree: string, parent: strin
   return oid;
 }
 
-async function publishSource(transport: Transport, publisher: Publisher, gitClient: SourceGit, entry: SourceIndexEntry, fetchRaw: typeof fetch): Promise<PublishedSource> {
+async function hex8(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return Array.from(digest.slice(0, 4), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * A chain workflow's tree carries the release of the workflow it deploys, published before it, and its asset is named
+ * for the build and that release together, so the same build with other offerings publishes a new asset.
+ */
+async function withRelease(transport: Transport, tenantId: string, entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[]): Promise<{ asset: string; tree: SourceTree }> {
+  const chain = CHAIN_PACKAGES.find((row) => row.name === entry.workflow);
+  if (!chain || !("deploys" in chain)) return { asset: `${entry.workflow}-${entry.hash}`, tree };
+  const target = CHAIN_PACKAGES.find((row) => row.name === chain.deploys.workflow);
+  const deployed = published.find((row) => row.workflow === chain.deploys.workflow);
+  if (!target || !deployed) throw new Error(`${entry.workflow} deploys ${chain.deploys.workflow}, which this release has not published.`);
+  const file = `packages/${entry.workflow}/release.json`;
+  if (!(file in tree)) throw new Error(`The portal build's ${entry.workflow} does not read a release.`);
+  const release = {
+    workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry },
+    offerings: await offeringsFor(transport, tenantId, target.models),
+  };
+  const json = `${JSON.stringify({ [chain.source]: { [chain.deploys.as]: release } }, null, 2)}\n`;
+  return { asset: `${entry.workflow}-${await hex8(`${entry.hash}\n${json}`)}`, tree: { ...tree, [file]: json } };
+}
+
+async function publishSource(transport: Transport, publisher: Publisher, gitClient: SourceGit, workflow: string, name: string, source: SourceTree): Promise<PublishedSource> {
   const { tenantId } = publisher;
   const { fs } = gitClient;
-  const asset = await ensureAsset(transport, tenantId, "workflow", entry.asset);
+  const asset = await ensureAsset(transport, tenantId, "workflow", name);
   // A deployment's permissions come from its asset's creator.
-  if (asset.creatorPrincipalId !== publisher.principalId) throw new Error(`${entry.asset} was created by someone else; publishing to it would deploy under their permissions.`);
-  const dir = `${gitClient.dir}/${entry.asset}`;
+  if (asset.creatorPrincipalId !== publisher.principalId) throw new Error(`${name} was created by someone else; publishing to it would deploy under their permissions.`);
+  const dir = `${gitClient.dir}/${name}`;
   await git.init({ fs, dir, defaultBranch: BRANCH });
-  const tree = await writeTree(fs, dir, await (await portalPackage(fetchRaw, `sources/${entry.asset}.json`)).json() as SourceTree);
-  const token = await gitToken(transport, tenantId, asset.id, entry.asset);
+  const tree = await writeTree(fs, dir, source);
+  const token = await gitToken(transport, tenantId, asset.id, name);
   try {
-    const url = `${gitClient.origin}/api/tenants/${encodeURIComponent(tenantId)}/assets/workflow/${encodeURIComponent(entry.asset)}.git`;
+    const url = `${gitClient.origin}/api/tenants/${encodeURIComponent(tenantId)}/assets/workflow/${encodeURIComponent(name)}.git`;
     const onAuth = () => ({ username: "git", password: token.secret });
     await git.addRemote({ fs, dir, remote: "origin", url, force: true });
     const { fetchHead } = await git.fetch({ fs, http: gitClient.http, dir, ref: BRANCH, singleBranch: true, tags: false, onAuth });
-    if (!fetchHead) throw new Error(`${entry.asset} has no ${BRANCH} branch.`);
+    if (!fetchHead) throw new Error(`${name} has no ${BRANCH} branch.`);
     const { commit } = await git.readCommit({ fs, dir, oid: fetchHead });
-    if (commit.tree === tree) return { workflow: entry.workflow, assetId: asset.id, commitSha: fetchHead };
+    if (commit.tree === tree) return { workflow, assetId: asset.id, commitSha: fetchHead };
     // The hub starts every asset with one commit of its own; the release is the only commit on top of it.
-    if (commit.parent.length > 0) throw new Error(`${entry.asset} already holds ${fetchHead}, not this release.`);
-    const commitSha = await commitTree(fs, dir, tree, fetchHead, entry.asset);
+    if (commit.parent.length > 0) throw new Error(`${name} already holds ${fetchHead}, not this release.`);
+    const commitSha = await commitTree(fs, dir, tree, fetchHead, name);
     await git.push({ fs, http: bandedPushAnswers(gitClient.http), dir, ref: BRANCH, onAuth });
-    return { workflow: entry.workflow, assetId: asset.id, commitSha };
+    return { workflow, assetId: asset.id, commitSha };
   } finally {
     await revoke(transport, token.id);
   }
 }
 
-/** Publishes the portal build's workflows one call at a time; a release already published keeps its commit. */
+/**
+ * Publishes the portal build's workflows one call at a time, in the build's order so each chain workflow follows the
+ * one it deploys; a release already published keeps its commit.
+ */
 export async function publishSources(
   transport: Transport,
   publisher: Publisher,
@@ -139,7 +168,11 @@ export async function publishSources(
     await previous;
     const index = await (await portalPackage(fetchRaw, "sources/index.json")).json() as SourceIndexEntry[];
     const published: PublishedSource[] = [];
-    for (const entry of index) published.push(await publishSource(transport, publisher, gitClient, entry, fetchRaw));
+    for (const entry of index) {
+      const built = await (await portalPackage(fetchRaw, `sources/${entry.workflow}-${entry.hash}.json`)).json() as SourceTree;
+      const { asset, tree } = await withRelease(transport, publisher.tenantId, entry, built, published);
+      published.push(await publishSource(transport, publisher, gitClient, entry.workflow, asset, tree));
+    }
     return published;
   } finally {
     release();
