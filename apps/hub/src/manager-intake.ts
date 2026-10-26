@@ -1,6 +1,7 @@
 // The hub's side of a pull request's manager. In a workspace with a host's listener live, each pull request, waiting,
 // held-Do approval and backlog mail is recorded as one event per pull request it names, then sent to the listener,
 // which deploys the managers itself and wakes them. A manager reads the newest recorded mail back through take.
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
@@ -28,10 +29,13 @@ const MANAGED = new Set<unknown>(["pr", WAITING_KIND, APPROVE_DO_KIND, "backlog"
 /** One pull request a mail names: its number and head, the request recorded for it, and the event's id. */
 type Named = { number: number; head: string; request: Record<string, unknown>; id: string };
 
-function named(request: Record<string, unknown>, number: unknown, head: unknown, key: unknown): Named[] {
+/**
+ * A webhook's mail carries its delivery id, so a redelivery records nothing new; any other mail is a new event, so a
+ * head mailed again, as after its base moved or its CI settled, is triaged again.
+ */
+function named(request: Record<string, unknown>, number: unknown, head: unknown): Named[] {
   if (typeof number !== "number" || typeof head !== "string") return [];
-  const id = typeof request["deliveryId"] === "string" ? request["deliveryId"] : `${String(request["kind"])}:${number}:${String(key)}`;
-  return [{ number, head, request, id }];
+  return [{ number, head, request, id: typeof request["deliveryId"] === "string" ? request["deliveryId"] : randomUUID() }];
 }
 
 /** A reconciler mail names its heads as `items`; each is recorded as a mail for its own pull request. */
@@ -39,7 +43,7 @@ function itemsOf(request: Record<string, unknown>, items: readonly unknown[]): N
   const { items: _items, ...single } = request;
   return items.flatMap(function item(entry) {
     const head = asRecord(entry);
-    return named({ ...single, prNumber: head?.["prNumber"], headSha: head?.["headSha"] }, head?.["prNumber"], head?.["headSha"], head?.["headSha"]);
+    return named({ ...single, prNumber: head?.["prNumber"], headSha: head?.["headSha"] }, head?.["prNumber"], head?.["headSha"]);
   });
 }
 
@@ -56,15 +60,15 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     const { kind, items, prNumber, headSha } = request;
     if (kind === APPROVE_DO_KIND) {
       const step = asRecord(request["step"]);
-      return named(request, asRecord(request["request"])?.["number"], step?.["headSha"], step?.["effectId"]);
+      return named(request, asRecord(request["request"])?.["number"], step?.["headSha"]);
     }
-    if (kind === WAITING_KIND) return named(request, prNumber, headSha, headSha);
+    if (kind === WAITING_KIND) return named(request, prNumber, headSha);
     if (kind === "backlog") {
       const heads = (await deps.openHeads(tenantId, record)).filter((pull) => !pull.draft);
-      return heads.flatMap((pull) => named({ ...request, kind: "pr", prNumber: pull.number, headSha: pull.headSha }, pull.number, pull.headSha, pull.headSha));
+      return heads.flatMap((pull) => named({ ...request, kind: "pr", prNumber: pull.number, headSha: pull.headSha }, pull.number, pull.headSha));
     }
     if (kind !== "pr") return [];
-    return Array.isArray(items) ? itemsOf(request, items) : named(request, prNumber, headSha, headSha);
+    return Array.isArray(items) ? itemsOf(request, items) : named(request, prNumber, headSha);
   }
 
   /** The review request for a pull request mail's head when its policy turns code review on, so the manager can hand it on. */

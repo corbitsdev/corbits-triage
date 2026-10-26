@@ -241,7 +241,8 @@ any other tenant or an unknown sender.
   newest pull request mail the hub recorded; pr-triage's own steps run on that
   mail, handed over as `{ taken }`, which they trust as the hub's: a held Do's
   approval executes, a head held for CI is marked waiting, anything else is
-  triaged (rules that need the judge post nothing yet). Done then answers
+  triaged and its automatic Dos run after the verdict and any code review are
+  up (rules that need the judge post nothing yet). Done then answers
   `ended`, and the run stops itself through the stop-run route under a
   `manage` grant on its own run, or `more`: the next pass runs at once when an
   event is pending, or every 30 seconds while it waits for its code review.
@@ -757,9 +758,10 @@ read it, and passes the rest of the request to stock.
   pull request the mail names (a reconciler's `items`, a backlog's open
   pull requests), with the head's code review request when the policy turns
   code review on and the App's login on GitHub, then mails the listener the
-  heads. An event's id is the webhook delivery id when there is one,
-  otherwise `<kind>:<number>:<head>` (a held Do's: its effect id), so a
-  requeue of a recorded event is a no-op. The code review feed sends nothing
+  heads. An event's id is the webhook's delivery id, which the coalescer's
+  mail carries, so a redelivery records nothing new; any other mail is a new
+  event, so a head mailed again, as after its base moved or its CI settled,
+  is triaged again. The code review feed sends nothing
   for that host. A workspace with no listener routes as before.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.

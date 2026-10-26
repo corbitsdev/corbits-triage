@@ -147,7 +147,7 @@ function githubHost() {
 
 const TAKE = { method: "POST", path: `${TENANT_PATH}/manager/take`, body: PULL };
 const DONE = { method: "POST", path: `${TENANT_PATH}/manager/done`, body: { ...PULL, reviewers: [] } };
-const STAGE_1 = ["approval", "approved", "done", "evaluateRules", "facts", "held", "mirrorRules", "paused", "ran", "route", "rules", "take", "unready", "waiting"];
+const STAGE_1 = ["approval", "approved", "done", "evaluateRules", "executeRules", "facts", "held", "mirrorRules", "paused", "ran", "route", "rules", "take", "unready", "waiting"];
 const READY = { method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: ["Triage: Ready"] } };
 const POSTED_REVIEW = expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/pulls/${PR.number}/reviews` });
 
@@ -170,6 +170,16 @@ describe("triage-manager", () => {
     const live = fakeHub({ takes: [PASS, { ...PASS, pass: { ...PASS.pass, id: "pass_2" } }], dones: [MORE, ENDED] });
     expect(await runMail(github, wake(), host, live.hub)).toMatchObject({ terminalStatus: "completed", passes: 2 });
     expect(live.calls).toEqual([TAKE, DONE, TAKE, DONE, END]);
+  });
+
+  test("the verdict's automatic Dos run after its mirror, as pr-triage runs them", async () => {
+    const { writes, host } = githubHost();
+    const welcome: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: [{ do: "comment", target: { body: "Welcome" } }] } };
+    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(welcome) }], dones: [ENDED] });
+    expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(STAGE_1);
+    const ready = writes.findIndex((write) => write.path.endsWith("/labels"));
+    const welcomed = writes.findIndex((write) => JSON.stringify(write.body).includes("Welcome"));
+    expect(welcomed).toBeGreaterThan(ready);
   });
 
   test("rules that need the judge post nothing yet", async () => {

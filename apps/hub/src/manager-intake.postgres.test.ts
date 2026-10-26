@@ -70,26 +70,34 @@ test("PostgreSQL: a workspace without a listener records nothing and mails nothi
   });
 }, 60_000);
 
-test("PostgreSQL: each pull request a mail names is recorded once as its own event, a requeue or a backlog's head already recorded is not recorded again, and the listener is mailed the heads", async () => {
+test("PostgreSQL: each pull request a mail names is recorded as its own event, a webhook once however often it is delivered and any other mail every time, and the listener is mailed the heads", async () => {
   await withDatabase(async function listener(db) {
     const { toListener, mailed } = stack(db, LISTENER);
+    const webhook = mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h1", deliveryId: "d1" });
+    expect(await toListener(TENANT, webhook)).toBe(true);
+    expect(await toListener(TENANT, webhook)).toBe(true);
     expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
     expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
-    expect(await toListener(TENANT, { ...waitingPayload(RECORD, POLICY, STORED, { number: 8, headSha: "h8" }, false) })).toBe(true);
+    expect(await toListener(TENANT, waitingPayload(RECORD, POLICY, STORED, { number: 8, headSha: "h8" }, false))).toBe(true);
     const approval = { kind: APPROVE_DO_KIND, runId: "run_m", principalId: "prn_a", list: "pass", index: 0, request: { repo: RECORD.name, number: 7 }, step: { effectId: "e1", headSha: "h1" } };
     expect(await toListener(TENANT, approval)).toBe(true);
     expect(await toListener(TENANT, { ...mailPayload(RECORD, POLICY, STORED, {}), kind: "backlog" })).toBe(true);
     expect(await toListener(TENANT, { kind: "history", repo: RECORD.name })).toBe(false);
 
-    expect((await events(db)).map((row) => [row.key, row.state.head, row.state.payload["kind"]])).toEqual([
-      ["evt:github:acme/widgets#7:approve-do:7:e1", "h1", APPROVE_DO_KIND],
-      ["evt:github:acme/widgets#7:pr:7:h1", "h1", "pr"],
-      ["evt:github:acme/widgets#8:waiting:8:h8", "h8", WAITING_KIND],
+    const recorded = await events(db);
+    expect(recorded.map((row) => `${row.key.split(":").slice(0, 3).join(":")} ${row.state.head} ${String(row.state.payload["kind"])}`).toSorted()).toEqual([
+      "evt:github:acme/widgets#7 h1 approve-do",
+      "evt:github:acme/widgets#7 h1 pr",
+      "evt:github:acme/widgets#7 h1 pr",
+      "evt:github:acme/widgets#7 h1 pr",
+      "evt:github:acme/widgets#7 h1 pr",
+      "evt:github:acme/widgets#8 h8 waiting",
     ]);
-    const [, single] = await events(db);
-    expect(single!.state.payload).toMatchObject({ prNumber: 7, headSha: "h1", appLogin: "triage[bot]" });
-    expect(single!.state.payload).not.toHaveProperty("items");
-    expect(mailed.map((mail) => mail.address)).toEqual(Array(5).fill(LISTENER));
+    expect(recorded.map((row) => row.key)).toContain("evt:github:acme/widgets#7:d1");
+    const item = recorded.find((row) => row.state.payload["kind"] === "pr" && row.state.payload["deliveryId"] === undefined)!;
+    expect(item.state.payload).toMatchObject({ prNumber: 7, headSha: "h1", appLogin: "triage[bot]" });
+    expect(item.state.payload).not.toHaveProperty("items");
+    expect(mailed.map((mail) => mail.address)).toEqual(Array(7).fill(LISTENER));
     expect(mailed[0]!.payload).toEqual({ kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] });
   });
 }, 60_000);

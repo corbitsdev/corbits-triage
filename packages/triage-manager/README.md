@@ -8,11 +8,11 @@ A workspace's listener and a pull request's manager.
 - **Manager** (`triageManager`, `triage-manager-<host>`): one live run per pull request, which runs only while it has
   work, and the only workflow that writes to the pull request. A mail starts a loop of passes: `take` claims the pull
   request and answers the newest mail the hub recorded for it, pr-triage's own steps run on that mail (an approval, a
-  head held for CI, or a pull request to triage), then `done`. The next pass runs at once while an event is pending, or
-  every 30 seconds while it waits for its code review. With code review, a pass deploys the review and mails it the
-  head's request; the pass that collects its report mirrors the verdict and posts the review together. A review that
-  could not be mailed, failed or ran past its one-hour deadline leaves the verdict to go up alone. The run stops itself
-  when `done` ends the pull request's claim.
+  head held for CI, or a pull request to triage and its automatic Dos), then `done`. The next pass runs at once while an
+  event is pending, or every 30 seconds while it waits for its code review. With code review, a pass deploys the review
+  and mails it the head's request; the pass that collects its report mirrors the verdict and posts the review together.
+  A review that could not be mailed, failed or ran past its one-hour deadline leaves the verdict to go up alone. The run
+  stops itself when `done` ends the pull request's claim.
 
 What each deploys next, a published workflow's source asset at one commit and the offerings it runs on (`Release`), is
 set by the release build as `TRIAGE_RELEASE`, per host: the listener entries need the manager's, and the manager

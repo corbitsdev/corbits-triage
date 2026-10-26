@@ -55,12 +55,12 @@ function reviewSteps(sources: Sources, review: Release): Record<string, Primitiv
 /**
  * One pass: take claims the pull request and its pending events; pr-triage's own steps run on the newest mail the hub
  * recorded for it, so a held Do's approval executes, a head held for CI is marked waiting, and anything else is
- * triaged, posting nothing for rules that need the judge yet; then done. A pass after one that waits for its code review
+ * triaged and its automatic Dos run, posting nothing for rules that need the judge yet; then done. A pass after one that waits for its code review
  * first waits `POLL_MS`.
  */
 function passOf(id: string, sources: Sources, review: Release | undefined) {
-  const { approval, approved, executeApproved, waiting, held, markWaiting, unready, rules, evaluateRules, mirrorRules } = triageSteps(sources);
-  const finished = review ? ["posting", "postReview"] : ["mirrorRules"];
+  const { approval, approved, executeApproved, waiting, held, markWaiting, unready, rules, evaluateRules, mirrorRules, executeRules } = triageSteps(sources);
+  const finished = review ? ["posting", "executeRules"] : ["executeRules"];
   return defineWorkflow({
     id: `${id}-pass`,
     trigger: { type: "manual" },
@@ -82,6 +82,8 @@ function passOf(id: string, sources: Sources, review: Release | undefined) {
       route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "done", else: "evaluateRules", after: ["rules"] }),
       evaluateRules,
       ...(review ? { ...reviewSteps(sources, review), mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] } } : { mirrorRules }),
+      // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.
+      executeRules: { ...executeRules, after: review ? ["postReview"] : ["mirrorRules"] },
       done: hubAction("done", { merge: [MAIL, stepsOf("take")] }, ["ran", "executeApproved", "markWaiting", "route", ...finished]),
     },
   });
