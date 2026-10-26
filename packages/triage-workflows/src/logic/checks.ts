@@ -195,7 +195,7 @@ export function forMaintainer(c: CheckResult, ask: readonly string[] | undefined
 }
 
 /** The host diffs a pull request against its base branch, so one based on another's branch shows only its own changes; one with pull requests merged into its branch holds theirs too. */
-export function holdsOthersChanges(stack: Stack | undefined): stack is Stack {
+export function holdsOthersChanges(stack: Stack | undefined): boolean {
   return stack !== undefined && stack.includes.length > 0;
 }
 

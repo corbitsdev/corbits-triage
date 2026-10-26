@@ -366,7 +366,7 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
    * most likely to be the separate change, from the follow-up file questions. The score is the least serving slice's.
    */
   function focusedCheck(plan: FocusedPlan | undefined) {
-    if (holdsOthersChanges(stack)) {
+    if (stack !== undefined && holdsOthersChanges(stack)) {
       const reason = stackText(stack);
       return push("focused", { result: "pass" }, { kind: "not-applicable", reason }, [], `skipped: ${reason}`);
     }
@@ -602,7 +602,7 @@ function commentTitle(verdict: VerdictWord): string {
   return `**Triage: ${VERDICT_TITLES[verdict]}**`;
 }
 
-/** A judged rule skipped for a reason, such as focused on a stacked branch. */
+/** A judged rule skipped for a reason, such as focused on a branch other pull requests were merged into. */
 function skippedLine(c: CheckResult, sources: NonNullable<Sources>): string[] {
   return c.kind === "model" && c.output.kind === "not-applicable" && c.output.reason ? [`- ${passText(c.check, sources)}: ${c.output.reason}`] : [];
 }
@@ -652,7 +652,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
     if (failing.some((c) => c.check === NO_CHANGES_REQUESTED)) return "";
     lines.push(`${verdict === "pass" ? NOTHING_TO_CHANGE : ""}A maintainer will review this pull request.`);
   }
-  if (ctx.stack?.onto !== undefined && ctx.stack.includes.length === 0) lines.push("", `Stacked on #${ctx.stack.onto}: only this pull request's own changes were checked.`);
+  if (ctx.stack?.onto !== undefined && !holdsOthersChanges(ctx.stack)) lines.push("", `Stacked on #${ctx.stack.onto}: only this pull request's own changes were checked.`);
   const skipped = sources ? checks.flatMap((c) => skippedLine(c, sources)) : [];
   if (skipped.length) lines.push("", "Skipped:", ...skipped);
   const notes = ctx.labelled.filter(isLabelledFinding);
@@ -682,6 +682,7 @@ interface RenderContext {
   reviewers: string[];
   /** Set whenever focused was asked. */
   purpose?: string;
+  /** Set only on a stacked branch: the pull requests merged into it, and the open one it is based on. */
   stack?: Stack;
   labelled: CheckResult[];
 }
