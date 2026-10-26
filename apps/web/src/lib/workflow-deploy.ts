@@ -12,16 +12,16 @@ import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowKind, type Work
 
 const REGISTRY_NAME = "corbits";
 
-type Asset = { id: string; kind: string; name: string };
+type Asset = { id: string; kind: string; name: string; creatorPrincipalId: string | null };
 
-async function ensureAsset(transport: Transport, tenantId: string, kind: "workflow" | "package-registry", name: string): Promise<Asset> {
+export async function ensureAsset(transport: Transport, tenantId: string, kind: "workflow" | "package-registry", name: string): Promise<Asset> {
   const base = `/api/tenants/${encodeURIComponent(tenantId)}/assets`;
   const assets = await transport.fetch<Asset[]>("GET", `${base}?kind=${kind}`);
   return assets.find((asset) => asset.name === name)
     ?? transport.fetch<Asset>("POST", base, { kind, name });
 }
 
-async function portalPackage(fetchRaw: typeof fetch, file: string): Promise<Response> {
+export async function portalPackage(fetchRaw: typeof fetch, file: string): Promise<Response> {
   const response = await fetchRaw(`/packages/${file}`);
   if (!response.ok) throw new Error(`The portal build is missing ${file}.`);
   return response;
