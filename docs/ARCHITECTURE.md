@@ -676,15 +676,19 @@ whoever publishes the listener's chain needs every grant it declares from its
 creator. The hub keeps a system `Deployer` role per workspace
 (`apps/hub/src/deployer-role.ts`), ensured with the `pr-triage` role when a
 host is connected and at every migrate for workspaces already connected. It
-holds `DEPLOYER_GRANTS` (`@corbits/triage-contracts`): `create` and `write` on
-`asset:*` (stock grants an asset's creator nothing on it, and a push needs
-`write`), `create` on `workflow:*`, `manage` on `workflow-run:*`, `write` on
+holds `DEPLOYER_GRANTS` (`@corbits/triage-contracts`): `create` on `asset:*`
+and `workflow:*`, `manage` on `workflow-run:*`, `write` on
 `triage-manager:state` and `create` on `triage-manager:result`. It holds no
-read: every person's owner, admin or member role reads everything. Stock admin
-lacks the asset `write` and the manager state `write`. Owners add and remove
-it per person through the stock role assignment routes; the portal refuses to
-publish, before it creates anything, unless the stock evaluate route allows
-every one of those grants.
+read, since it is given to admins, whose role reads everything. Stock gives an
+asset's creator no grant on it, and a push needs `write`, so right after
+creating a workflow asset the portal grants its publisher `write` on that one
+asset through the stock grants route (admins hold `create` on `grant:*`);
+publishing to it again uses that grant, and a Deployer cannot push to anyone
+else's. Stock admin lacks the manager state `write`. Stock lets owners and
+admins assign roles through the role assignment routes, and the portal offers
+the role on admins' rows only; it refuses to publish, before it creates
+anything, unless the stock evaluate route allows every one of the role's
+grants.
 
 Where triage mirrors and its policy approves, a settled head that may not be
 approved dismisses the approvals the approve action made; one dismissed on a

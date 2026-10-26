@@ -15,6 +15,10 @@ export function isDeployerRole(role: NamedRole): boolean {
   return role.isSystem === true && role.name === DEPLOYER_ROLE;
 }
 
+export function isAdminRole(role: NamedRole): boolean {
+  return role.isSystem === true && role.name === "admin";
+}
+
 export function isOwnerRole(role: NamedRole): boolean {
   return role.isSystem === true && role.name === "owner";
 }

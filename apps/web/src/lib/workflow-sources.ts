@@ -75,6 +75,11 @@ async function revoke(transport: Transport, tokenId: string): Promise<void> {
   }
 }
 
+/** Stock gives an asset's creator no grant on it, so the publisher grants itself `write` on this one asset to push to it. */
+async function grantOwnPush(transport: Transport, { tenantId, principalId }: Publisher, assetId: string): Promise<void> {
+  await transport.fetch("POST", `/api/tenants/${encodeURIComponent(tenantId)}/grants`, { principalId, resource: `asset:${assetId}`, action: "write", effect: "allow", origin: "creator" });
+}
+
 async function writeTree(fs: FsClient, dir: string, tree: SourceTree): Promise<string> {
   const blobs: TreeEntry[] = [];
   const subtrees = new Map<string, SourceTree>();
@@ -144,7 +149,9 @@ function publishable(models: readonly ModelInfo[], workflow: string): boolean {
 async function publishSource(transport: Transport, publisher: Publisher, gitClient: SourceGit, workflow: string, name: string, source: SourceTree): Promise<PublishedSource> {
   const { tenantId } = publisher;
   const { fs } = gitClient;
-  const asset = await ensureAsset(transport, tenantId, "workflow", name);
+  const asset = await ensureAsset(transport, tenantId, "workflow", name, function grantPush(created) {
+    return grantOwnPush(transport, publisher, created.id);
+  });
   // A deployment's permissions come from its asset's creator.
   if (asset.creatorPrincipalId !== publisher.principalId) throw new Error(`${name} was created by someone else; publishing to it would deploy under their permissions.`);
   const dir = `${gitClient.dir}/${name}`;

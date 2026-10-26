@@ -4,13 +4,13 @@ import { skipToken, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@intx/hub-client";
 import { errorText } from "@corbits/common";
 import type { InviteRoles, InviteSent } from "@corbits/triage-contracts";
-import { isDeployerRole, isOwnerRole, isTriageRole, roleName } from "../lib/automation-grid.ts";
+import { isAdminRole, isDeployerRole, isOwnerRole, isTriageRole, roleName } from "../lib/automation-grid.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { initialsOf } from "../lib/inbox-view.ts";
 import { assignRole, createInvitation, inviteRoles, isPerson, listInvited, markEmailVerified, removeRole, resendInvitation, withdrawInvitation, type HubPrincipal } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { INVITATIONS_QUERY_KEY, usePortal, useSignOutWhenRejected } from "../lib/portal.tsx";
-import { usePrincipals, useRoles } from "../lib/tenant-entities.ts";
+import { useAllowed, usePrincipals, useRoles } from "../lib/tenant-entities.ts";
 import { CopyField } from "./CopyField.tsx";
 
 const DEFAULT_ROLE = "member";
@@ -103,7 +103,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   const { snapshot, notify, warn, refresh, readOnly } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
   const roles = useRoles();
-  const members = usePrincipals();
+  const mayAssignRoles = useAllowed("role:*", "manage");
   const tenantId = snapshot?.workspace.tenantId;
   const query = useQuery({
     queryKey: [INVITATIONS_QUERY_KEY, tenantId],
@@ -132,8 +132,8 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   const choices = roles.rows.filter((role) => assignableRoleIds.includes(role.id) && !isTriageRole(role) && !isDeployerRole(role));
   const deployer = roles.rows.find(isDeployerRole);
   const ownerRoleIds = roles.rows.filter(isOwnerRole).map((role) => role.id);
+  const adminRoleIds = roles.rows.filter(isAdminRole).map((role) => role.id);
   const you = snapshot?.workspace.principalId;
-  const youAreOwner = members.rows.some((person) => person.id === you && person.roles.some((role) => ownerRoleIds.includes(role.id)));
   const chosenRole = roleId || choices.find((role) => role.name === DEFAULT_ROLE)?.id || "";
 
   async function act(key: string, run: () => Promise<void>) {
@@ -198,8 +198,9 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   }
 
   function deployerButton(person: HubPrincipal) {
-    // Owners hold every grant already.
-    if (!youAreOwner || !deployer || person.roles.some((role) => ownerRoleIds.includes(role.id))) return null;
+    // Only admins take the role: owners hold every grant already, and a member's role would give it too little.
+    const admin = person.roles.some((role) => adminRoleIds.includes(role.id)) && !person.roles.some((role) => ownerRoleIds.includes(role.id));
+    if (!mayAssignRoles || !deployer || !admin) return null;
     const holds = person.roles.some((role) => role.id === deployer.id);
     const label = holds ? "Remove Deployer" : "Make Deployer";
     return (
@@ -280,7 +281,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
       <header>
         <h2 id="sec-people">People</h2>
         {intro}
-        {deployer && <p>A Deployer can upgrade the workflows Triage runs. {youAreOwner ? "Owners choose who is one." : "Ask an owner to make you one."}</p>}
+        {deployer && <p>Deployers publish Triage's workflows, which then run with their permissions. Owners and admins can make an admin a Deployer.</p>}
       </header>
       <div>
         <PeopleTable you={you} unverified={unverifiedPrincipalIds} actions={memberActions}>{invitedRows}</PeopleTable>

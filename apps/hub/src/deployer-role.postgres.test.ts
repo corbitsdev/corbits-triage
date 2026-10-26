@@ -11,9 +11,10 @@ import { ensureDeployerRole, ensureDeployerRoles } from "./deployer-role.js";
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_deployer";
 
-/** What publishing pushes and deploys, and every creator-sourced grant the listener, manager and code review declare. */
+/** What publishing creates, pushes and deploys, and every creator-sourced grant the listener, manager and code review declare. */
 const PUBLISH_AND_CHAIN = [
-  ["asset:ast_listener", "write"],
+  ["asset:*", "create"],
+  ["asset:ast_mine", "write"],
   ["workflow:*", "create"],
   ["asset:ast_manager", "read"],
   [MANAGER_STATE_RESOURCE, MANAGER_STATE_ACTION],
@@ -21,7 +22,7 @@ const PUBLISH_AND_CHAIN = [
   ["workflow-run:run_manager", "manage"],
 ] as const;
 
-test("PostgreSQL: an admin publishes and deploys the chain only once given the Deployer role, which every connected workspace gets once", async () => {
+test("PostgreSQL: an admin publishes and deploys the chain only once given the Deployer role, pushing only to assets it granted itself, and every connected workspace gets the role once", async () => {
   const database = `corbits_deployer_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
   await admin.db.execute(sql.raw(`create database ${database}`));
@@ -48,14 +49,17 @@ test("PostgreSQL: an admin publishes and deploys the chain only once given the D
     expect(await db.select({ id: schema.role.id }).from(schema.role).where(eq(schema.role.name, DEPLOYER_ROLE))).toEqual([{ id: first! }]);
     await db.insert(schema.principalRole).values([{ principalId: "prn_admin", roleId: "rol_admin" }, { principalId: "prn_deployer", roleId: "rol_admin" }, { principalId: "prn_deployer", roleId: first! }]);
 
+    // What the portal's publish grants its publisher on each asset it creates.
+    await db.insert(schema.grant).values(["admin", "deployer"].map((name) => ({ id: `grt_${name}_push`, tenantId: TENANT, principalId: `prn_${name}`, resource: "asset:ast_mine", action: "write", effect: "allow" as const, origin: "creator" as const })));
     const grants = createGrantStore(db);
     async function allowed(principalId: string): Promise<boolean[]> {
       return Promise.all(PUBLISH_AND_CHAIN.map(async function may([resource, action]) {
         return (await authorize(grants, principalId, TENANT, resource, action, { conditions: HUB_CONDITION_REGISTRY })).effect === "allow";
       }));
     }
-    expect(await allowed("prn_deployer")).toEqual([true, true, true, true, true, true]);
-    expect(await allowed("prn_admin")).toEqual([false, true, true, false, true, true]);
+    expect(await allowed("prn_deployer")).toEqual([true, true, true, true, true, true, true]);
+    expect(await allowed("prn_admin")).toEqual([true, true, true, true, false, true, true]);
+    expect((await authorize(grants, "prn_deployer", TENANT, "asset:ast_theirs", "write", { conditions: HUB_CONDITION_REGISTRY })).effect).not.toBe("allow");
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

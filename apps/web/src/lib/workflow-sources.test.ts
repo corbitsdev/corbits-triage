@@ -99,6 +99,7 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
   const requests: string[] = [];
   const tokens: unknown[] = [];
   const refused = new Set<string>();
+  const grants: unknown[] = [];
   async function json<T>(method: string, route: string, body?: unknown): Promise<T> {
     requests.push(`${method} ${route}`);
     if (method === "GET" && route === "/api/tenants/t/assets?kind=workflow") return assets as T;
@@ -116,13 +117,17 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
       return { id: `gtk_${tokens.length}`, secret: SECRET } as T;
     }
     if (method === "DELETE" && route.startsWith("/api/me/git-tokens/")) return undefined as T;
+    if (method === "POST" && route === "/api/tenants/t/grants") {
+      grants.push(body);
+      return body as T;
+    }
     if (method === "POST" && route === `/api/tenants/t/principals/${session.principalId}/evaluate`) {
       const { resource, action } = body as { resource: string; action: string };
       return { effect: refused.has(`${resource} ${action}`) ? "deny" : "allow" } as T;
     }
     throw new Error(`Unexpected ${method} ${route}`);
   }
-  return { transport: { fetch: json } as unknown as Transport, requests, tokens, session, refused };
+  return { transport: { fetch: json } as unknown as Transport, requests, tokens, session, refused, grants };
 }
 
 /** The portal build's files: each workflow's tree under its build hash. */
@@ -153,6 +158,7 @@ test("publishing a release twice pushes its commit once with a token scoped to t
   expect(gitIn(asset, "rev-list", "--count", "main")).toBe("2");
   expect(pushes).toEqual([`/${asset}.git/git-receive-pack`]);
   expect(hub.requests.filter((request) => request === "POST /api/tenants/t/assets")).toHaveLength(1);
+  expect(hub.grants).toEqual([{ principalId: PUBLISHER.principalId, resource: "asset:ast_1", action: "write", effect: "allow", origin: "creator" }]);
   expect(gitIn(asset, "ls-tree", "-r", "--name-only", "main").split("\n")).toEqual(Object.keys(TREE).sort());
   for (const token of hub.tokens) {
     expect(token).toEqual({ name: asset, resource: "asset:ast_1", refPattern: "refs/heads/main", actions: ["can_read", "can_push"], expiresAt: expect.any(String), tenantId: "t" });
