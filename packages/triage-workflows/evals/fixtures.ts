@@ -103,8 +103,9 @@ export function issueOf(key: string): IssueText & { number: number } {
   if (!ticket) throw new Error(`${key} is not a ticket in labels.json`);
   const [repo] = pullOf(key);
   const text = cached(`issues/${repo.replace("/", "-")}-${ticket.issue}.json`, function fetchIssue() {
-    const row = ghJson<any>(`repos/${repo}/issues/${ticket.issue}`);
-    return { title: redacted(row.title), body: redacted(row.body ?? "") };
+    const row = ghJson<{ title: unknown; body: unknown }>(`repos/${repo}/issues/${ticket.issue}`);
+    if (typeof row.title !== "string" || typeof row.body !== "string") throw new Error(`${key} issue ${ticket.issue} has no title or body`);
+    return { title: redacted(row.title), body: redacted(row.body) };
   });
   return { ...text, number: ticket.issue };
 }

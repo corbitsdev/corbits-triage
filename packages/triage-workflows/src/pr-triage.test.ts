@@ -270,7 +270,7 @@ describe("pr-triage body", () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ticket-goals": { enabled: true } } };
     const { judged, verdict, requests } = await triage(pack, { title: "Add a flag, follow-up to #2 (closes #3)", issue: "- [ ] I searched existing issues\n## Outcome\n- [ ] Add the flag\n- [x] `bun run check` passes\n```\n- [ ] not a goal\n```" });
     expect(requests).toContainEqual({ method: "GET", path: `/repos/${REPO}/issues/3` });
-    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["ticket-goals", "issue_instructed", "instructed"], ["verdict"]]);
+    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["ticket-goals", "issue_instructed", "instructed"], ["verdict", "instructed"]]);
     expect(judged[0]!.state).toMatchObject({ issue: { title: "Add a flag", goals: ["Add the flag", "`bun run check` passes"] } });
     expect((verdict as Verdict).checks.find((c) => c.check === "ticket-goals")).toMatchObject({ result: "pass" });
   });

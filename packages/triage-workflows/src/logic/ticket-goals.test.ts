@@ -42,7 +42,7 @@ describe("ticket goals rule", () => {
     const det = deriveState(facts, undefined, pack);
     const { plan, requests } = prepareQualityEvaluation(facts, det.sources);
     const reply = Object.entries({ instructed: 0.1, ...answers }).map(([id, noul]) => JSON.stringify({ id, type: "noul", noul })).join("");
-    const rendered = renderVerdict({ author: "octocat", repo: base.repo, headSha: "abc", det, answers: parseAnswers(reply), plan, ticket });
+    const rendered = renderVerdict({ repoSource: "github", author: "octocat", repo: base.repo, headSha: "abc", det, answers: parseAnswers(reply), plan, ticket });
     return { requests, check: rendered.checks.find((c) => c.check === "ticket-goals") };
   }
   const ticket: Ticket = { issue: "#12", title: "Add a route", goals: ["Add the route"] };
@@ -65,7 +65,7 @@ describe("ticket goals rule", () => {
     const facts = { ...base, ticket, files: [huge], paths: ["src/big.ts"] };
     const det = deriveState(facts, undefined, pack);
     const { plan, requests } = prepareQualityEvaluation(facts, det.sources);
-    const rendered = renderVerdict({ author: "octocat", repo: base.repo, headSha: "abc", det, answers: parseAnswers(""), plan, ticket });
+    const rendered = renderVerdict({ repoSource: "github", author: "octocat", repo: base.repo, headSha: "abc", det, answers: parseAnswers(""), plan, ticket });
     expect(requests.filter((request) => request.questions.some((q) => q.id === "ticket-goals"))).toEqual([]);
     expect(rendered.checks.find((c) => c.check === "ticket-goals")).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check", items: ["src/big.ts"] } });
   });
