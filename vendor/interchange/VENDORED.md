@@ -183,8 +183,9 @@ but cannot stop it. The carry inserts that grant with `manage` instead; it is
 the only changed line.
 
 - `manage` also lets the deployer mail, signal and trigger the deployment.
-  That deployment's runs carry the deployer's own delegated grants, so this
-  is no escalation beyond the deployer's authority.
+  That deployment's runs carry the deployer's delegated grants and the
+  definition creator's. This is no escalation: the deployer could get the
+  same runs by deploying again.
 
 Allowed files:
 

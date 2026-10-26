@@ -18,7 +18,7 @@ const managerState = triageSchema.table("manager_state", {
 }, (t) => [primaryKey({ columns: [t.tenantId, t.key] })]);
 
 export const PassState = type({ id: "string > 0", head: "string > 0", events: "string[]", takenAt: "string.date.iso", takes: "number.integer >= 1" });
-export const ReviewerState = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deadline: "string.date.iso", "result?": "string | number | boolean | object" });
+export const ReviewerState = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string.date.iso", "result?": "string | number | boolean | object" });
 const ClaimState = type({
   status: "'live' | 'ended'",
   claimId: "string > 0",
