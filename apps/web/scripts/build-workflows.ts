@@ -1,10 +1,11 @@
-// Packs each workflow as a tarball into public/packages/ beside the host tools it depends on,
-// so the portal can publish them to the hub.
+// Packs each workflow as a tarball into public/packages/ beside the host tools it depends on, and as a source tree
+// with those tools as workspace members, so the portal can publish them to the hub.
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import * as tar from "tar";
 import * as bitbucketTool from "../../../packages/bitbucket-datacenter-tool/build.ts";
 import bitbucketPkg from "../../../packages/bitbucket-datacenter-tool/package.json";
 import * as githubTool from "../../../packages/github-tool/build.ts";
@@ -12,7 +13,7 @@ import githubPkg from "../../../packages/github-tool/package.json";
 import triageWorkflowsPkg from "../../../packages/triage-workflows/package.json";
 import { tarballFilename } from "../../../packages/triage-contracts/src/tarball.ts";
 import { contentVersion, packPackage, type PackedTarball } from "../../../tooling/pack-tarball.ts";
-import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowPackage } from "../src/lib/workflow-packages.ts";
+import { WORKFLOW_PACKAGES, type PackageIndexEntry, type SourceIndexEntry, type SourceTree, type WorkflowPackage } from "../src/lib/workflow-packages.ts";
 
 const PACKAGES = resolve(import.meta.dir, "../../../packages");
 const PUBLIC = resolve(import.meta.dir, "../public");
@@ -20,6 +21,8 @@ const LOCKFILE = resolve(import.meta.dir, "../../../bun.lock");
 const NPM = "https://registry.npmjs.org";
 const DIRECTORS = "directors.mjs";
 const ACTIONS = "actions/index.mjs";
+const SOURCES = "sources";
+const SOURCE_ROOT = { private: true, workspaces: ["packages/*"] };
 
 /** The tool packages published beside each workflow; the workflow imports only these at run time. */
 const TOOLS = [
@@ -81,7 +84,36 @@ function assertOnlyToolImports(workflow: WorkflowPackage, file: string, code: st
   }
 }
 
-async function packWorkflow(workflow: WorkflowPackage, tools: PackedTarball[], outDir: string): Promise<PackedTarball> {
+async function readTree(dir: string, prefix: string): Promise<SourceTree> {
+  const tree: SourceTree = {};
+  for await (const file of new Bun.Glob("**").scan(dir)) tree[`${prefix}/${file}`] = await readFile(join(dir, file), "utf8");
+  return tree;
+}
+
+// Interchange installs only npm dependencies from the registry, so each tool ships as a workspace member holding the
+// same files as its tarball.
+async function toolMembers(tools: PackedTarball[]): Promise<SourceTree> {
+  const stage = await mkdtemp(join(tmpdir(), "tool-members-"));
+  try {
+    const members: SourceTree = {};
+    for (const tool of tools) {
+      const dir = join(stage, tool.filename);
+      await mkdir(dir);
+      await tar.x({ file: tool.path, cwd: dir, strip: 1 });
+      Object.assign(members, await readTree(dir, `packages/${tool.name.split("/").pop()}`));
+    }
+    return members;
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
+}
+
+/** The source asset is named for the workflow and its content hash, so each release with changes is a new asset. */
+function sourceAsset(workflow: WorkflowPackage, version: string): string {
+  return `${workflow.name}-${version.slice(version.lastIndexOf("-") + 1)}`;
+}
+
+async function packWorkflow(workflow: WorkflowPackage, tools: PackedTarball[], members: SourceTree, outDir: string): Promise<{ packed: PackedTarball; source: SourceIndexEntry }> {
   const stage = await mkdtemp(join(tmpdir(), `${workflow.name}-`));
   try {
     const outputs = await bundle(workflow, stage);
@@ -100,7 +132,17 @@ async function packWorkflow(workflow: WorkflowPackage, tools: PackedTarball[], o
     }
     for (const [i, output] of outputs.entries()) assertOnlyToolImports(workflow, output, code[i]!, outputs);
     const version = await contentVersion("0.1.0", { name: workflow.packageName, ...manifest }, files);
-    return await packPackage({ name: workflow.packageName, version, ...manifest }, files, outDir);
+    const packed = await packPackage({ name: workflow.packageName, version, ...manifest }, files, outDir);
+    const asset = sourceAsset(workflow, version);
+    const member = `packages/${workflow.name}`;
+    const tree: SourceTree = {
+      "package.json": `${JSON.stringify(SOURCE_ROOT, null, 2)}\n`,
+      ...members,
+      [`${member}/package.json`]: `${JSON.stringify({ name: workflow.packageName, version, ...manifest }, null, 2)}\n`,
+      ...Object.fromEntries(outputs.map((output, i) => [`${member}/${output}`, code[i]!])),
+    };
+    await Bun.write(join(outDir, SOURCES, `${asset}.json`), JSON.stringify(tree));
+    return { packed, source: { workflow: workflow.name, asset } };
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
@@ -169,10 +211,17 @@ export async function packWorkflows(outDir: string, native = NPM_NATIVE): Promis
   await rm(outDir, { recursive: true, force: true });
   const tools: PackedTarball[] = [];
   for (const tool of TOOLS) tools.push(await packHostTool(tool, outDir));
+  const members = await toolMembers(tools);
   const packed = [...tools, ...await fetchNative(outDir, native)];
-  for (const workflow of WORKFLOW_PACKAGES) packed.push(await packWorkflow(workflow, tools, outDir));
+  const sources: SourceIndexEntry[] = [];
+  for (const workflow of WORKFLOW_PACKAGES) {
+    const { packed: tarball, source } = await packWorkflow(workflow, tools, members, outDir);
+    packed.push(tarball);
+    sources.push(source);
+  }
   const index = packed.map(({ name, version, filename, integrity }) => ({ name, version, filename, integrity }));
   await Bun.write(join(outDir, "index.json"), `${JSON.stringify(index, null, 2)}\n`);
+  await Bun.write(join(outDir, SOURCES, "index.json"), `${JSON.stringify(sources, null, 2)}\n`);
   return index;
 }
 

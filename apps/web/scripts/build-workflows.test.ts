@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as tar from "tar";
+import type { Packument } from "@intx/tool-packaging";
 
 import bitbucketTool from "../../../packages/bitbucket-datacenter-tool/package.json";
 import githubTool from "../../../packages/github-tool/package.json";
@@ -10,7 +11,9 @@ import triageWorkflows from "../../../packages/triage-workflows/package.json";
 import { packPackage } from "../../../tooling/pack-tarball.ts";
 import { packWorkflows, SIDECAR_PLATFORMS, type NativeSource } from "./build-workflows.ts";
 import { installWorkflows, loadUnderNode } from "./install-from-registry.ts";
-import { WORKFLOW_PACKAGES } from "../src/lib/workflow-packages.ts";
+import { WORKFLOW_PACKAGES, type SourceIndexEntry, type SourceTree } from "../src/lib/workflow-packages.ts";
+// Interchange exports only the type; the hub resolves a source deploy's closure with this function.
+import { resolveSourceWorkflowClosure, type SourceTreeReads } from "../../../vendor/interchange/packages/hub-sessions/src/workflow-source-closure.ts";
 
 const scratch = await mkdtemp(path.join(tmpdir(), "workflow-pack-"));
 afterAll(async function cleanup() {
@@ -23,6 +26,8 @@ const PLATFORM_GNU = `${NAPI}-linux-x64-gnu`;
 const PLATFORM_MUSL = `${NAPI}-linux-x64-musl`;
 const FIXTURE = "fixture";
 const native = await fixtureNative();
+const BUILT = path.join(scratch, "a");
+const first = await packWorkflows(BUILT, native);
 
 // Stand-ins for the native module and two of its platform binaries, served as the npm registry would.
 async function fixtureNative(): Promise<NativeSource> {
@@ -59,7 +64,6 @@ async function importsOf(file: string): Promise<string[]> {
 }
 
 test("packs each workflow deterministically, importing the host tools instead of inlining them", async () => {
-  const first = await packWorkflows(path.join(scratch, "a"), native);
   const second = await packWorkflows(path.join(scratch, "b"), native);
   expect(second).toEqual(first);
 
@@ -100,3 +104,48 @@ test("every packed workflow installs from the registry it is published to and lo
     for (const result of await loadUnderNode(packageDir, extra)) expect(result).toEqual({ ...result, stderr: "", code: 0 });
   }
 }, 120_000);
+
+// Reads the tree as the hub reads the pushed commit.
+function treeReads(tree: SourceTree): SourceTreeReads {
+  function children(dir: string): string[] {
+    const prefix = dir === "." ? "" : `${dir}/`;
+    return [...new Set(Object.keys(tree).filter((file) => file.startsWith(prefix)).map((file) => file.slice(prefix.length).split("/")[0]!))];
+  }
+  return {
+    async readBlob(file) {
+      const contents = tree[file];
+      if (contents === undefined) throw new Error(`no blob at ${file}`);
+      return new TextEncoder().encode(contents);
+    },
+    async listDir(dir) {
+      const prefix = dir === "." ? "" : `${dir}/`;
+      return children(dir).map((name) => ({ name, oid: name, type: `${prefix}${name}` in tree ? "blob" : "tree" }));
+    },
+    async treeOid(dir) {
+      return children(dir).length > 0 ? dir : null;
+    },
+  };
+}
+
+test("each workflow's source tree resolves the way the hub resolves a source deploy, with the host tools as its own members", async () => {
+  const sources = JSON.parse(await readFile(path.join(BUILT, "sources/index.json"), "utf8")) as SourceIndexEntry[];
+  expect(sources.map((source) => source.workflow)).toEqual(WORKFLOW_PACKAGES.map((workflow) => workflow.name));
+  async function npmOnly(name: string): Promise<Packument> {
+    if (name !== NAPI) throw new Error(`${name} resolved from npm`);
+    return { name, versions: { [NAPI_VERSION]: { name, version: NAPI_VERSION, dist: { tarball: "https://registry.test/napi.tgz", integrity: "sha512-napi" } } } };
+  }
+  for (const [i, workflow] of WORKFLOW_PACKAGES.entries()) {
+    const tree = JSON.parse(await readFile(path.join(BUILT, `sources/${sources[i]!.asset}.json`), "utf8")) as SourceTree;
+    const closure = await resolveSourceWorkflowClosure({
+      source: { kind: "asset", assetId: "ast_source", package: { format: "source", commitSha: "c0ffee", packageName: workflow.packageName } },
+      reads: treeReads(tree),
+      registryName: "npmjs",
+      registryConfig: { url: "https://registry.test" },
+      fetchPackument: npmOnly,
+    });
+    const members = closure.entries.filter((entry) => entry.source.kind === "asset").map((entry) => entry.name).sort();
+    expect(members).toEqual([workflow.packageName, githubTool.name, bitbucketTool.name].sort());
+    const workflowMember = JSON.parse(tree[`packages/${workflow.name}/package.json`]!);
+    expect(tree[path.posix.join("packages", workflow.name, workflowMember.interchange.workflow)]).toBeDefined();
+  }
+});

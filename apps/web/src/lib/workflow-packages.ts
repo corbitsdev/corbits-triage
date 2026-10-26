@@ -38,3 +38,8 @@ export const WORKFLOW_PACKAGES = [
 ] as const satisfies readonly WorkflowPackage[];
 
 export type PackageIndexEntry = { name: string; version: string; filename: string; integrity: string };
+
+/** A release's workflow as a source asset: `asset` names it, and `sources/<asset>.json` holds its tree. */
+export type SourceIndexEntry = { workflow: string; asset: string };
+/** Each file's path in the source asset mapped to its contents. */
+export type SourceTree = Record<string, string>;
