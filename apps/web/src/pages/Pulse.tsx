@@ -14,6 +14,7 @@ import { useHubRepoPackStore } from "../lib/repo-pack.ts";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { OUTCOME_NAMES, WEEK_DAYS, actedOn, medianText, outcomesView, repoStatsQuery, type OutcomeField, type OutcomesView } from "../lib/repo-stats.ts";
 import { ExternalIcon } from "../components/inbox-icons.tsx";
+import { TriageUpgradeBanner } from "../components/TriageUpgradeBanner.tsx";
 
 function OpenLine({ item, note }: { item: PrItem; note?: string }) {
   return (
@@ -173,6 +174,7 @@ export default function Pulse() {
   return (
     <main className="pulse" id="main">
       <h1>Pulse</h1>
+      <TriageUpgradeBanner />
       {pulse ? (
         <>
           <SinceVisit pulse={pulse} />

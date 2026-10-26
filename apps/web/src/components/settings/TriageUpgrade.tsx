@@ -46,23 +46,19 @@ function AdvancedInfo({ release, people }: { release: TriageRelease; people: rea
   );
 }
 
-/** Which version of the per-pull-request manager each host runs, and the switch to this portal's; a deprecation notice for a host that has none. */
-export function TriageUpgrade() {
+/** Each given host's sentence and, while an upgrade is due, the upgrade with its progress and error; Settings and the banner share it. */
+export function UpgradeOffer({ release, hosts }: { release: TriageRelease; hosts: readonly HostRelease[] }) {
   const { readOnly } = usePortal();
   const people = usePrincipals();
-  const release = useTriageRelease();
   const mayUpgrade = useMayUpgrade();
   const [step, setStep] = useState<UpgradeStep | null>(null);
   const upgrade = useTriageUpgrade(setStep);
-
-  if (!release.data) return null;
-  const data = release.data;
-  const named = data.hosts.length > 1;
-  const due = data.hosts.some((host) => upgradeDue(data, host));
+  const named = release.hosts.length > 1;
+  const due = release.hosts.some((host) => upgradeDue(release, host));
 
   return (
     <>
-      {data.hosts.map((host) => <div className="sentence" key={host.source}><span className="txt">{hostText(data, host, people.rows, named)}</span></div>)}
+      {hosts.map((host) => <div className="sentence" key={host.source}><span className="txt">{hostText(release, host, people.rows, named)}</span></div>)}
       {due && (
         <div className="sentence">
           <span className="txt">{SUMMARY}</span>
@@ -73,8 +69,25 @@ export function TriageUpgrade() {
           )}
         </div>
       )}
-      {due && !mayUpgrade && <p className="muted small-text">Ask a workspace owner or a Deployer to upgrade.</p>}
       {upgrade.error && <p role="alert" className="field-error">Could not upgrade. {errorText(upgrade.error)}</p>}
+    </>
+  );
+}
+
+/** Which version of the per-pull-request manager each host runs, and the switch to this portal's; a deprecation notice for a host that has none. */
+export function TriageUpgrade() {
+  const people = usePrincipals();
+  const release = useTriageRelease();
+  const mayUpgrade = useMayUpgrade();
+
+  if (!release.data) return null;
+  const data = release.data;
+  const due = data.hosts.some((host) => upgradeDue(data, host));
+
+  return (
+    <>
+      <UpgradeOffer release={data} hosts={data.hosts} />
+      {due && !mayUpgrade && <p className="muted small-text">Ask a workspace owner or a Deployer to upgrade.</p>}
       <AdvancedInfo release={data} people={people.rows} />
     </>
   );

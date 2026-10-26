@@ -79,6 +79,7 @@ import { packOf, useCheckPacks, useRepoPack, type PackState } from "../lib/check
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import PullToRefresh from "../components/PullToRefresh.tsx";
+import { TriageUpgradeBanner } from "../components/TriageUpgradeBanner.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
@@ -757,6 +758,7 @@ export default function Inbox({ view }: { view: ListView }) {
           {searchable || activeFilters(filters).length > 0 ? <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} /> : null}
         </div>
         <PullToRefresh className="scroll" id="main">
+          <TriageUpgradeBanner />
           <RefusedPolicies repos={enabledNames} />
           <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
