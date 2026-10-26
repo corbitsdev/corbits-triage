@@ -265,11 +265,11 @@ any other tenant or an unknown sender.
   on this pass. One whose rules need the judge, or that asks for code review,
   posts once, after each of those has reported or given up: the machine
   verdict, the judge's verdict and the code review together. Done then answers
-  `ended`, and the run stops itself through the stop-run route under a
-  `manage` grant on its own run, or `more`: the next pass runs at once when an
-  event is pending, or every 30 seconds while it waits for its judge or its
-  code review.
-  When the passes fail or run out, the run stops itself, so it never keeps
+  `ended`, or `more`: the next pass runs at once when an event is pending, or
+  every 30 seconds while it waits for its judge or its code review.
+  Once the passes end, fail or run out, or take finds another run holds the
+  claim, the run's last step stops it through the stop-run route under a
+  `manage` grant on its own run, so the run is ended once and never keeps
   the claim: the next manager's take finds the run gone and claims.
   A run left deployed with no sidecar for two minutes is gone too, and its
   cancellation is requested so it does not start after the claim has moved on.

@@ -16,7 +16,8 @@ A workspace's listener and a pull request's manager.
   request; the pass that collects its report mirrors the verdict and posts the review together. A reviewer that could
   not be mailed, failed or ran past its one-hour deadline leaves the verdict to go up alone; a judge the release does
   not publish posts nothing. `done` stops a reviewer this run deployed that is on an older head or past its deadline.
-  The run stops itself when `done` ends the pull request's claim, and when its passes fail or run out.
+  The run's last step is its only end: it stops the run once `done` ends the pull request's claim, take is refused
+  because another run holds it, or the passes fail or run out.
 
 What each deploys next, a published workflow's source asset at one commit and the offerings it runs on (`Release`), is
 read per host from `src/release.json`, which the portal writes into each published tree and the bundle keeps external,

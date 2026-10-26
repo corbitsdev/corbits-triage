@@ -1,4 +1,4 @@
-import { action, awaitSignal, defineWorkflow, gate, loop, onTrigger, SELF_RUN_RESOURCE, step, type Primitive, type Selector } from "@intx/workflow";
+import { action, awaitSignal, defineWorkflow, gate, loop, onTrigger, SELF_RUN_RESOURCE, sleep, step, type Primitive, type Selector } from "@intx/workflow";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
 import { credentialBindingsFor, judgeAgent, type Sources } from "@corbits/triage-workflows/agents";
@@ -115,10 +115,10 @@ function passOf(id: string, sources: Sources) {
 /**
  * A pull request's manager under `id`, also its mail address, for the given hosts: the only workflow that writes to the
  * pull request, one live run per pull request, which runs only while it has work. A mail wakes it to run passes until
- * done ends the claim, when the run stops itself, or another run holds the claim. When the host's release publishes a
- * code review or a judge, each runs as its own deployment, which reports back; `codeReview` and `judge`, the ones
- * published as the definition loads, name the assets it declares the grants to deploy. Mail comes from the hub, the
- * listener that deployed it, and the judge and the reviews it mailed.
+ * done ends the claim or another run holds the claim, after which its last step stops it. When the host's release
+ * publishes a code review or a judge, each runs as its own deployment, which reports back; `codeReview` and `judge`, the
+ * ones published as the definition loads, name the assets it declares the grants to deploy. Mail comes from the hub,
+ * the listener that deployed it, and the judge and the reviews it mailed.
  */
 export function triageManager({ id, sources, codeReview, judge }: { id: string; sources: Sources; codeReview: Release | undefined; judge?: Release }) {
   const perMail = defineWorkflow({
@@ -131,10 +131,12 @@ export function triageManager({ id, sources, codeReview, judge }: { id: string; 
         while: "again",
         carry: "next",
         maxIterations: PASSES,
-        onExhausted: "stop",
+        onExhausted: "exhausted",
       }),
-      // Runs when the passes fail as well as when they run out, so a manager that cannot finish never keeps the claim.
-      stop: hubAction("stop", { from: "trigger.payload" }, ["passes"]),
+      // Stock prunes a loop's onExhausted when the loop converges; stop joins both branches so it runs once on every outcome.
+      exhausted: sleep({ duration: 0, drainBehavior: "wait", after: ["passes"] }),
+      // The run's only end, its last step, so a manager that cannot finish never keeps the claim and no step runs after it.
+      stop: hubAction("stop", { from: "trigger.payload" }, ["passes", "exhausted"]),
     },
   });
   const posts = ["executeApprovals", "postReview"].flatMap((handler) => sources.map((source) => ({ action: handler, handle: source, provider: source, name: source, locator: "tenant" }) as const));
