@@ -66,7 +66,7 @@
         "@corbits/provisioner-railway": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-workflows": "workspace:*",
-        "@corbits/webhooks": "0.3.1",
+        "@corbits/webhooks": "0.3.2",
         "@intx/authz": "workspace:*",
         "@intx/crypto": "0.5.0",
         "@intx/db": "workspace:*",
@@ -995,7 +995,7 @@
 
     "@corbits/web": ["@corbits/web@workspace:apps/web"],
 
-    "@corbits/webhooks": ["@corbits/webhooks@0.3.1", "", { "peerDependencies": { "@intx/crypto": "^0.4.0", "@intx/db": "^0.4.0", "@intx/hub-api": "^0.4.0", "@intx/hub-common": "^0.4.0", "@intx/hub-sessions": "^0.4.0", "@intx/mime": "^0.4.0", "@intx/types": "^0.4.0", "drizzle-orm": "^0.45.1", "hono": "^4.11.9", "postgres": "^3.4.8" } }, "sha512-1r2pedp6RjiFPNgrf0Pn6yM6JVpon07IGhhsuFPiuce27EqhFfTvvNs7g74cHPuFplqY7tGrlJOiGvYlwukaMg=="],
+    "@corbits/webhooks": ["@corbits/webhooks@0.3.2", "", { "peerDependencies": { "@intx/crypto": "^0.5.0", "@intx/db": "^0.5.0", "@intx/hub-api": "^0.5.0", "@intx/hub-common": "^0.5.0", "@intx/hub-sessions": "^0.5.0", "@intx/mime": "^0.5.0", "@intx/types": "^0.5.0", "drizzle-orm": "^0.45.1", "hono": "^4.11.9", "postgres": "^3.4.8" } }, "sha512-hE9dw6VFV4lJoMX60vhVChsB5hyhqXguW5YvdCSNFg/ehVHRAZByfnWwBx9owap/KYwL26Z51T8qRVDc2FE6nA=="],
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 
