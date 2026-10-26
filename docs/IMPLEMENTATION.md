@@ -73,7 +73,10 @@ with the `intx-src` export condition, so every hub command runs with
   deployment's permissions come from its asset's creator. Each host's code
   review, manager and listener publish in that order: the manager's tree gets
   a `release.json` naming the code review just published and the offerings it
-  runs on, the listener's the same for the manager. An asset is named
+  runs on, the listener's the same for the manager. A chain workflow publishes
+  only while the workspace has every model it names, so code review publishes
+  once its model is set up; until then the manager publishes with no code
+  review, and the publish after it is set up gives the manager a new asset. An asset is named
   `<workflow>-<8 hex>`, the build's content hash, or for a workflow with a
   release a hash of the build's hash and its `release.json`, so other
   offerings publish a new asset.

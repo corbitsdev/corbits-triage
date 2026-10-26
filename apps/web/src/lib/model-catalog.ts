@@ -126,14 +126,31 @@ type ModelInfo = { canonicalName: string; offerings: Array<{ offeringId: string;
 
 export type Offerings = { ids: string[]; defaultId: string };
 
-/** The offering of each model a workflow names, its first model's the default; a missing one is an error, so no step falls back to another model. */
-export async function offeringsFor(transport: Transport, tenantId: string, names: readonly [DeclaredModel, ...DeclaredModel[]]): Promise<Offerings> {
-  const models = await transport.fetch<ModelInfo[]>("GET", `/api/tenants/${encodeURIComponent(tenantId)}/models`);
-  function offeringOf(name: DeclaredModel): string {
-    const declared = DECLARED_MODELS.find((row) => row.model === name);
-    const offering = models.find((model) => model.canonicalName === name)?.offerings.find((o) => o.providerName === declared?.provider);
-    if (!offering) throw new Error(`The workspace has no ${name} model. Save its key in Settings.`);
-    return offering.offeringId;
+export async function listModels(transport: Transport, tenantId: string): Promise<ModelInfo[]> {
+  return transport.fetch<ModelInfo[]>("GET", `/api/tenants/${encodeURIComponent(tenantId)}/models`);
+}
+
+function offeringOf(models: readonly ModelInfo[], name: DeclaredModel): string | undefined {
+  const declared = DECLARED_MODELS.find((row) => row.model === name);
+  return models.find((model) => model.canonicalName === name)?.offerings.find((o) => o.providerName === declared?.provider)?.offeringId;
+}
+
+/** The offering of each model a workflow names, its first model's the default; undefined while the workspace lacks any of them. */
+export function offeringsIn(models: readonly ModelInfo[], names: readonly [DeclaredModel, ...DeclaredModel[]]): Offerings | undefined {
+  const ids: string[] = [];
+  for (const name of names) {
+    const id = offeringOf(models, name);
+    if (!id) return undefined;
+    ids.push(id);
   }
-  return { ids: names.map(offeringOf), defaultId: offeringOf(names[0]) };
+  return { ids, defaultId: ids[0]! };
+}
+
+/** As `offeringsIn`, but a missing model is an error, so no step falls back to another model. */
+export async function offeringsFor(transport: Transport, tenantId: string, names: readonly [DeclaredModel, ...DeclaredModel[]]): Promise<Offerings> {
+  const models = await listModels(transport, tenantId);
+  const offerings = offeringsIn(models, names);
+  if (offerings) return offerings;
+  const missing = names.find((name) => offeringOf(models, name) === undefined);
+  throw new Error(`The workspace has no ${missing} model. Save its key in Settings.`);
 }

@@ -209,3 +209,28 @@ test("each chain workflow carries the release of the one it deploys, and its ass
   expect(managerAgain).toEqual(manager!);
   expect(rekeyed.find((asset) => asset.id === listenerAgain!.assetId)!.name).not.toBe(nameOf(listener!.assetId));
 });
+
+test("without code review's model the manager publishes with no code review, and setting it up later republishes the manager", async () => {
+  const builds = [
+    { workflow: "pr-code-review-reviewer-github", hash: "dddddddd", tree: chainTree("pr-code-review-reviewer-github", false) },
+    { workflow: "triage-manager-github", hash: "eeeeeeee", tree: chainTree("triage-manager-github", true) },
+    { workflow: "triage-listener-github", hash: "ffffffff", tree: chainTree("triage-listener-github", true) },
+  ];
+  const offerings: Record<string, string[]> = { decision: OFFERINGS.decision };
+  const hub = fakeHub([], offerings);
+  const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "no-review") };
+  const published = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
+
+  expect(published.map((row) => row.workflow)).toEqual(["triage-manager-github", "triage-listener-github"]);
+  expect(gitIn("triage-manager-github-eeeeeeee", "show", "main:packages/triage-manager-github/release.json")).toBe("{}");
+  const [manager, listener] = published;
+  const assets = await hub.transport.fetch<Array<{ id: string; name: string }>>("GET", "/api/tenants/t/assets?kind=workflow");
+  const listenerAsset = assets.find((asset) => asset.id === listener!.assetId)!.name;
+  expect(JSON.parse(gitIn(listenerAsset, "show", "main:packages/triage-listener-github/release.json")).github.manager.workflow.assetId).toBe(manager!.assetId);
+
+  Object.assign(offerings, OFFERINGS);
+  const reviewed = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
+  expect(reviewed.map((row) => row.workflow)).toEqual(["pr-code-review-reviewer-github", "triage-manager-github", "triage-listener-github"]);
+  expect(reviewed[1]!.assetId).not.toBe(manager!.assetId);
+  expect(reviewed[2]!.assetId).not.toBe(listener!.assetId);
+});
