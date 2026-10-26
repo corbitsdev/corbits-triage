@@ -175,6 +175,20 @@ function doneBody(calls: readonly HubCall[]): Record<string, unknown> {
 }
 const STAGE_1 = ["approvals", "donePosted", "evaluateRules", "executeRules", "facts", "held", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "take", "triaged", "unready", "waiting"];
 
+/** A Bitbucket Data Center pull request at head `abc`, recording the build statuses posted on it. */
+function bitbucketHost() {
+  const builds: unknown[] = [];
+  const ref = { id: "refs/heads/fix", displayId: "fix", latestCommit: "abc", repository: { id: 1 } };
+  const pull = { id: 8, version: 0, state: "OPEN", fromRef: ref, toRef: { ...ref, id: "refs/heads/main" }, links: { self: [{ href: "https://bitbucket.acme.test/pr/8" }] }, author: { user: { id: 2, slug: "octocat" } }, reviewers: [], participants: [] };
+  async function host(url: URL, init?: RequestInit): Promise<Response> {
+    if (url.pathname === BB_PULL) return Response.json(pull);
+    if (url.pathname !== BB_BUILDS) return Response.json({ message: "Server Error" }, { status: 500 });
+    if (init?.method === "POST") builds.push(JSON.parse(String(init.body)));
+    return Response.json({ values: [], isLastPage: true });
+  }
+  return { builds, host };
+}
+
 /** Publishes `release` as the release.json the portal writes beside the workflows; the repository's own holds none. */
 function publish(release: Record<string, unknown>): void {
   mock.module(new URL("./release.json", import.meta.url).pathname, () => ({ default: release }));
@@ -317,17 +331,28 @@ describe("triage-manager", () => {
     expect(hub.calls).toEqual([TAKE, END]);
   });
 
+  test("a new pull request whose first mail is the hub holding it for CI gets the Waiting label", async () => {
+    const { writes, host } = githubHost();
+    const hub = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, { ...REQUEST, kind: WAITING_KIND })], request: undefined }], dones: [ENDED] });
+    const { ran } = await runMail(github, wake(), host, hub.hub);
+    expect(ran).toContain("markWaiting");
+    expect(ran).not.toContain("facts");
+    expect(writes).toEqual([expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } })]);
+  });
+
+  test("on Bitbucket Data Center a new pull request held for CI gets an in-progress build status", async () => {
+    const { builds, host } = bitbucketHost();
+    const held = { ...REQUEST, kind: WAITING_KIND, repo: BB_REPO, repoSource: "bitbucket-datacenter", headSha: "abc" };
+    const bbPull = { source: "bitbucket-datacenter", repo: BB_REPO, number: 8 };
+    const hub = fakeHub({ takes: [{ ...PASS, pass: { ...PASS.pass, head: "abc" }, events: [mailEvent("abc", held)], request: undefined }], dones: [ENDED] });
+    const { ran } = await runMail(bitbucket, wake(bbPull), host, hub.hub);
+    expect(ran).toContain("markWaiting");
+    expect(builds).toEqual([expect.objectContaining({ state: "INPROGRESS" })]);
+  });
+
   test("on Bitbucket Data Center it reaches the host through that host's bindings only", async () => {
     expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter", "postReview:bitbucket-datacenter"]);
-    const builds: unknown[] = [];
-    const ref = { id: "refs/heads/fix", displayId: "fix", latestCommit: "abc", repository: { id: 1 } };
-    const pull = { id: 8, version: 0, state: "OPEN", fromRef: ref, toRef: { ...ref, id: "refs/heads/main" }, links: { self: [{ href: "https://bitbucket.acme.test/pr/8" }] }, author: { user: { id: 2, slug: "octocat" } }, reviewers: [], participants: [] };
-    async function host(url: URL, init?: RequestInit): Promise<Response> {
-      if (url.pathname === BB_PULL) return Response.json(pull);
-      if (url.pathname !== BB_BUILDS) return Response.json({ message: "Server Error" }, { status: 500 });
-      if (init?.method === "POST") builds.push(JSON.parse(String(init.body)));
-      return Response.json({ values: [], isLastPage: true });
-    }
+    const { builds, host } = bitbucketHost();
     const request = { kind: "pr", repo: BB_REPO, repoSource: "bitbucket-datacenter", prNumber: 8, headSha: "abc", policy: { enabled: true }, policyUnreadable: "The policy file has unknown checks: max-size.", automatic: ACTION_KINDS, tenantId: TENANT };
     const bbPull = { source: "bitbucket-datacenter", repo: BB_REPO, number: 8 };
     const hub = fakeHub({ takes: [{ ...PASS, pass: { ...PASS.pass, head: "abc" }, events: [mailEvent("abc", request)], request }], dones: [ENDED] });
