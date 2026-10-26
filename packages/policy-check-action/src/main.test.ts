@@ -42,13 +42,14 @@ const BASE_POLICY = `rules:
   - { check: focused, text: One change., reason: Reviewable., evidence: [maintainer-stated] }
 `;
 
-/** Runs the Action on `pr`'s pull request event against GitHub served from it, with `policy`, if any, on the base branch. */
-async function onPullRequest(pr: typeof PR, policy: string | undefined) {
+/** Runs the Action on `pr`'s pull request event against GitHub served from it and `reviews`, with `policy`, if any, on the base branch. */
+async function onPullRequest(pr: typeof PR, policy: string | undefined, reviews: unknown[] = []) {
   const served = fixtureGithub(pr, {});
   const github = Bun.serve({
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
+      if (url.pathname === `/repos/${pr.repo}/pulls/${pr.number}/reviews`) return Response.json(reviews);
       if (url.pathname !== `/repos/${pr.repo}/contents/.corbits-triage.yml`) return served(url);
       if (policy === undefined || url.searchParams.get("ref") !== "base") return new Response(null, { status: 404 });
       return new Response(policy);
@@ -97,4 +98,19 @@ test("an unreadable base policy fails the job, and one that extends another or n
   const none = await onPullRequest(PR, undefined);
   expect(none.exitCode).toBe(0);
   expect(none.stdout).toContain("The base branch has no policy, so no rules ran.");
+}, 30_000);
+
+test("triage's own request for changes is not a reviewer's", async () => {
+  const policy = "rules:\n  - { check: linked-issue, text: Link an issue., tracker: github, reason: Tracked., evidence: [maintainer-stated] }\n";
+  const own = { user: { login: "corbits-triage[bot]", type: "Bot" }, state: "CHANGES_REQUESTED", body: "Fix the rules.\n<!-- corbits-request-changes -->", commit_id: HEAD };
+  const { exitCode, stdout } = await onPullRequest(PR, policy, [own]);
+  expect(stdout).not.toContain("title=no-changes-requested");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+test("a person's marked request for changes still counts", async () => {
+  const policy = "rules:\n  - { check: linked-issue, text: Link an issue., tracker: github, reason: Tracked., evidence: [maintainer-stated] }\n";
+  const person = { user: { login: "mallory", type: "User" }, state: "CHANGES_REQUESTED", body: "Fix the rules.\n<!-- corbits-request-changes -->", commit_id: HEAD };
+  const { stdout } = await onPullRequest(PR, policy, [person]);
+  expect(stdout).toContain("title=no-changes-requested");
 }, 30_000);
