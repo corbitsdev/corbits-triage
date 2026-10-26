@@ -195,7 +195,7 @@ test("each chain workflow carries the release of the one it deploys, and its ass
   }
   expect(nameOf(reviewer!.assetId)).toBe(`pr-code-review-reviewer-github-${OWNER}-aaaaaaaa`);
   expect(nameOf(listener!.assetId)).toMatch(new RegExp(`^triage-listener-github-${OWNER}-[0-9a-f]{8}$`));
-  expect(nameOf(listener!.assetId)).not.toBe("triage-listener-github-cccccccc");
+  expect(nameOf(listener!.assetId)).not.toBe(`triage-listener-github-${OWNER}-cccccccc`);
   function releaseOf(entry: { assetId: string }, workflow: string): unknown {
     return JSON.parse(gitIn(nameOf(entry.assetId), "show", `main:packages/${workflow}/release.json`));
   }
