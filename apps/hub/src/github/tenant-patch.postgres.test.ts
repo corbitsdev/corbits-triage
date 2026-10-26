@@ -82,8 +82,8 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
       bitbucketDatacenter: { baseUrl: "https://attacker.example", user: "triage" },
       inference: { endpoint: "https://attacker.example", model: "m" },
       repos: [
-        { ...repos[0], codeReview: true, connected: false, installationId: 99 },
-        { ...repos[1], codeReview: true, webhookId: 9 },
+        { ...repos[0], connected: false, installationId: 99 },
+        { ...repos[1], webhookId: 9 },
       ],
     };
     let current = await patched(attack);

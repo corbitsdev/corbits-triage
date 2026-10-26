@@ -12,7 +12,7 @@ const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "po
 const TENANT = "tnt_reviews";
 const GITHUB: PullRequestRef = { source: "github", repo: "acme/widgets", number: 7 };
 const BITBUCKET: PullRequestRef = { source: "bitbucket-datacenter", repo: "acme/widgets", number: 7 };
-const RECORD = { name: "acme/widgets", connected: true, codeReview: true };
+const RECORD = { name: "acme/widgets", connected: true };
 
 const DIFF = "diff --git a/x b/x\nindex 1111111..2222222 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
 // The same change on a base that changed its file outside the context lines: only the blob ids differ.

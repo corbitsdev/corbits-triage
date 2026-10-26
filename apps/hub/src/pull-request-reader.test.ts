@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { createPullRequestReader, cutDiff, diffHash, reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import type { RepoRecord } from "./github/tenant-config.js";
 
-const RECORD: RepoRecord = { name: "acme/widgets", connected: true, codeReview: true };
+const RECORD: RepoRecord = { name: "acme/widgets", connected: true };
 const PULL: PullRequestToReview = { title: "Fix", description: "Body", headSha: "sha1", draft: false, open: true, diff: "diff --git a/x b/x\nindex 1111111..2222222 100644\n+1\n" };
 
 test("a diff's hash changes with any blob id, and a diff with none, as GitHub rebuilds from the file list, has none and is requested unhashed", () => {

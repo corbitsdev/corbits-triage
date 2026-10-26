@@ -13,7 +13,7 @@ import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, 
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
-import { CODE_REVIEW_PATH, CodeReviewBody, CodeReviewQueued, CodeReviewRunBody, CodeReviewSet } from "../code-review.js";
+import { CODE_REVIEW_PATH, CodeReviewQueued, CodeReviewRunBody } from "../code-review.js";
 import { CodeReviewFound, CodeReviewQuery } from "../code-review-runs.js";
 import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
 import { AppBody, AppConnected, GITHUB_APP_PATH } from "../github/app-connection.js";
@@ -87,7 +87,6 @@ export type IntegrationHandlers = {
   triageVerdicts: MemberHandler;
   audit: MemberHandler;
   workflowDeploy: BodyHandler<typeof DeployBody.infer>;
-  codeReview: BodyHandler<typeof CodeReviewBody.infer>;
   codeReviewRun: BodyHandler<typeof CodeReviewRunBody.infer>;
   codeReviewLatest: BodyHandler<typeof CodeReviewQuery.infer>;
   codeReviewPlace: (member: Member) => Promise<Response>;
@@ -673,28 +672,6 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     requireGrant("workflow:*", "read"),
     function workflowVersions(c) {
       return handlers.workflowVersions(memberOf(c));
-    },
-  );
-
-  app.post(
-    `${CODE_REVIEW_PATH}/:tenantId`,
-    describeRoute({
-      summary: "Turn code review on or off for a repository",
-      description: "Needs `manage` on the workspace. Sets `codeReview` on the repository's record (`source` absent means GitHub). Refuses a repository whose policy file decides code review (`policy_file_decides`). Turning it on needs a provisioner code review can run on (`no_isolated_place` otherwise; see `GET /api/integrations/code-review/{tenantId}/place`), the repository's host and the repository connected (`repo_not_connected` otherwise) and the workspace's Anthropic key; the portal then deploys that host's code review. Turning off the last repository of a host releases its code review deployment.",
-      tags: TAGS,
-      responses: {
-        200: json("The repository's code review setting", CodeReviewSet),
-        ...invalid,
-        401: failures[401],
-        403: failures[403],
-        404: json("No such repository", Failure),
-        409: json("`policy_file_decides`, `no_isolated_place`, `source_not_connected`, `anthropic_key_missing` or `repo_not_connected`", Failure),
-      },
-    }),
-    member,
-    body(CodeReviewBody),
-    function setCodeReview(c) {
-      return handlers.codeReview(c.req.valid("json"), memberOf(c));
     },
   );
 

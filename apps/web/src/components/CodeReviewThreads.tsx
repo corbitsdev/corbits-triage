@@ -3,19 +3,18 @@ import { BUDGET_EXHAUSTED_NOTE, UNVERIFIED_FINDING } from "@corbits/triage-contr
 import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-review.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { relativeTime } from "../lib/duration.ts";
-import type { CodeReviewComment, CodeReviewRun, CodeReviews, PrItem } from "../lib/hub-api.ts";
+import type { CodeReviewComment, CodeReviewRun, PrItem } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { Markdown } from "./Markdown.tsx";
 
-type Reviewed = Pick<PrItem, "repo" | "source" | "headSha"> & { number: number };
+type Reviewed = Pick<PrItem, "repo" | "source" | "headSha" | "draft"> & { number: number };
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }
 
-function hint({ review, completed }: CodeReviews): string {
-  if (!review) return "No review yet";
+function hint(review: CodeReviewRun, completed: CodeReviewRun | null): string {
   if (review.status === "running") return `Reviewing ${shortSha(review.headSha)}…`;
   if (review.status === "failed") return "The last review did not finish";
   const count = completed?.comments?.length ?? 0;
@@ -107,23 +106,24 @@ function CutNote({ cut }: { cut: NonNullable<CodeReviewRun["cut"]> }) {
   );
 }
 
-/** The pull request's code review: shown once it has one, or while the repository has code review on. */
+/** The pull request's code review, and Review again on a pull request that is not a draft while code review has a place to run. */
 export function CodeReviewThreads({ item }: { item: Reviewed }) {
   const { snapshot, readOnly } = usePortal();
   const reviews = useCodeReview(item).data;
   const again = useReviewAgain(item);
   const send = useSendCodeReview(item);
-  const on = snapshot?.repos.some((repo) => repo.name === item.repo && repo.source === item.source && repo.codeReview === true) === true;
-  if (!reviews || (!on && !reviews.review)) return null;
-  const { completed, carriedTo } = reviews;
+  const askable = Boolean(snapshot?.codeReviewPlace) && item.draft !== true;
+  if (!reviews || (!reviews.review && !askable)) return null;
+  const { review, completed, carriedTo } = reviews;
+  const unreviewed = again.isSuccess ? "Review requested" : "No review yet";
 
   return (
     <section className="code-review" aria-label="Code review">
       <h3 className="lbl-h">
-        Code review<span className="hint">{hint(reviews)}</span>
+        Code review<span className="hint">{review ? hint(review, completed) : unreviewed}</span>
         <span className="sp" />
         {completed ? <SendReview item={item} completed={completed} carriedTo={carriedTo} send={send} /> : null}
-        {on && snapshot?.codeReviewPlace ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}
+        {askable ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}
       </h3>
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
       {send.error ? <p role="alert" className="error">Could not send to {hostName(item.source)}. {errorText(send.error)}</p> : null}
