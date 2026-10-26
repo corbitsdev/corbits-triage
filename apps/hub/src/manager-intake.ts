@@ -22,6 +22,7 @@ export type ManagerIntakeDeps = {
   /** The mail as a GitHub workspace's runs read it, naming the App's bot account. */
   withAppLogin: (tenantId: string, payload: Record<string, unknown>) => Promise<unknown>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
+  log: (entry: Record<string, unknown>) => void;
 };
 
 /** The mails a manager runs: a pull request's, its head held for CI, a held Do's approval, and a backlog of open ones. */
@@ -72,12 +73,14 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     return Array.isArray(items) ? itemsOf(request, items) : named(request, prNumber, headSha);
   }
 
-  /** The review request for a pull request mail's head when its policy turns code review on, so the manager can hand it on. */
+  /** The head's review request when the policy turns code review on; a head that moved gets its own at its own intake. */
   async function withReviewRequest(tenantId: string, record: RepoRecord, pull: Named): Promise<Record<string, unknown>> {
     const { request } = pull;
     if (request["kind"] !== "pr" || request["codeReviewRequest"] !== undefined || asRecord(request["codeReview"])?.["on"] !== true) return request;
     const read = await deps.readPull(tenantId, record, pull.number);
-    return read.headSha === pull.head ? { ...request, codeReviewRequest: reviewRequestOf(record, pull.number, read) } : request;
+    if (read.headSha === pull.head) return { ...request, codeReviewRequest: reviewRequestOf(record, pull.number, read) };
+    deps.log({ level: "info", msg: "code_review_head_moved", tenantId, repo: record.name, pr: pull.number, headSha: pull.head, hostHeadSha: read.headSha });
+    return request;
   }
 
   /** The tenant domain on a listener address, which a manager's address shares. */
