@@ -3,7 +3,7 @@ import { Badge, Button, StatusDot } from "@corbits/react-ui";
 import { useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { errorText } from "@corbits/common";
-import { isRepoCatchingUp } from "../lib/backlog-status.ts";
+import { catchingUpRepos } from "../lib/backlog-status.ts";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { hubOnLocalhost } from "../lib/hub-origin.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
@@ -20,11 +20,9 @@ import {
 import { useGithubSync } from "../lib/github-sync.ts";
 import { counted } from "../lib/plural.ts";
 import { usePortal } from "../lib/portal.tsx";
-import { hostedRepos } from "../lib/repo-rows.ts";
-import { useBacklogLogs } from "../lib/run-logs.ts";
+import { hostedRepos, sameRepo } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { UPGRADE_STEP_LABEL, useMayUpgrade, useTriageUpgrade, type UpgradeStep } from "../lib/triage-upgrade.ts";
-import { useRuns } from "../lib/tenant-entities.ts";
 import { CopyField } from "../components/CopyField.tsx";
 import { BitbucketDatacenterSource } from "../components/settings/BitbucketDatacenterSource.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
@@ -71,10 +69,9 @@ export default function Connect() {
   const [secretNotice, setSecretNotice] = useState("");
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
-  const logs = useBacklogLogs();
   const verdicts = useTriageVerdicts();
-  const runs = useRuns();
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
+  const catching = useMemo(() => catchingUpRepos(verdicts.data?.pulls ?? [], triaged), [verdicts.data, triaged]);
   const modelStored = snapshot?.decisionModel !== undefined;
   const mayUpgrade = useMayUpgrade();
   const [upgradeStep, setUpgradeStep] = useState<UpgradeStep | null>(null);
@@ -216,7 +213,7 @@ export default function Connect() {
   }
 
   function renderInstallRow(repo: RepoRecord) {
-    const catchingUp = isRepoCatchingUp(logs, runs.rows, triaged, repo);
+    const catchingUp = catching.some((row) => sameRepo(row, repo));
     return <div key={repo.name} className="install-row"><strong className="mono">{repo.name}</strong>{catchingUp ? <span className="catching-up"><StatusDot label="In progress" live tone="emphasis" />Catching up open pull requests…</span> : <Badge tone="success">Connected</Badge>}</div>;
   }
 

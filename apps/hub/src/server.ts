@@ -74,7 +74,7 @@ import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployments, sameSource, TriageStoppedError, withWorkflowVersions, type LiveDeployment } from "./github/deployment.js";
+import { readyMaterializer, systemSenderMaterializer, resolveLiveDeployments, sameSource, TriageStoppedError, type LiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
@@ -88,8 +88,6 @@ import { createTriageStats } from "./github/triage-stats.js";
 import { createHostReads, createOutcomeReader } from "./github/pr-outcomes.js";
 import { createTriageTimeline } from "./github/triage-timeline.js";
 import { createAuditLog } from "./audit-log.js";
-import { createRunRecorder } from "./github/run-recorder.js";
-import { createRecordPass, createTenantObserver, createTenantVersions } from "./github/tenant-observer.js";
 import { createTriageVerdicts } from "./github/triage-verdicts.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createMergeStates } from "./github/merge-states.js";
@@ -104,7 +102,6 @@ import { githubUsage } from "./github/github-usage.js";
 import { createTriageReconciler, type ReconcileOutcome } from "./github/triage-reconciler.js";
 import { createRepoActivity } from "./github/repo-activity.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
-import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved, type TriageJob } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
@@ -140,19 +137,13 @@ const EXPECTED_DEPLOYMENT_SET = {
   },
 };
 
-// Runs whose trigger and outcome the reconciler remembers between passes.
-const TRIAGE_KNOWN_RUNS = 10_000;
 const TRIAGE_RETRY_MS = 15_000;
 const TRIAGE_RETRY_MAX_MS = 120_000;
 /** A repository is listed again once its listing is this old, and every pass once its webhook (the App's, on GitHub) heard nothing this long. */
 const TRIAGE_RELIST_QUIET_MS = 30 * 60_000;
 /** A listing that started this soon after a repository's webhook is read again, since GitHub's listing can trail it. */
 const TRIAGE_RELIST_GRACE_MS = 60_000;
-/** How often the live logs of tenants with a pr-triage run in flight are read and recorded, and how stale a shared read may be. */
-const TRIAGE_RECORD_MS = 2_000;
 const GITHUB_CALLS_LOG_MS = 60_000;
-/** A tenant whose logs could not be read is left at most this long before the recording loop tries again. */
-const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
 /** How often E2B sandboxes are swept and extended; well inside their one-hour timeout. */
 const E2B_TEND_MS = 10 * 60_000;
 /** A GitHub token that could not be renewed is tried again within its remaining quarter hour. */
@@ -202,7 +193,6 @@ const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
 let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
-let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let tokenLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
 let e2bTender: ReturnType<typeof setInterval> | undefined;
@@ -216,7 +206,6 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   cronTicker?.stop();
   triageLoop?.stop();
-  recordLoop?.stop();
   tokenLoop?.stop();
   coalescer?.stop();
   clearInterval(e2bTender);
@@ -533,9 +522,6 @@ function reconcileTenants() {
 }
 const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
 const managerRuns = createManagerRuns(composition.db, verdictRecordStore, now);
-async function liveTriageDeployments(tenantId: string, workflow: string) {
-  return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, workflow));
-}
 const tenantOpenHeads = createTenantOpenHeads(tenantSources);
 const tenantOpenHead = createTenantOpenHead(tenantSources);
 const tenantHeadChecks = createTenantHeadChecks(tenantSources);
@@ -546,59 +532,11 @@ const githubOpenPulls = createGithubOpenPulls({
   authorize: authorizePortal,
 });
 const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
-const observeTriageRuns = createTriageRuns({
-  runReader: composition.runReader,
-  readSettled: createSettledStatusReader(composition.db),
-  maxKnownRuns: TRIAGE_KNOWN_RUNS,
-});
-const tenantVersions = createTenantVersions();
 const reconcilePolicy = triageReconcilePolicy(env);
-const runRecorder = createRunRecorder({ verdicts: verdictRecordStore, log: logJson });
 
-/**
- * The observer and recording loop that copy verdicts into the verdict table from the run logs of one workflow's
- * listeners and of the workers of `workerIds`: a host's pr-triage reads its PR workflow variants' workers too, so their
- * runs settle its heads.
- */
-function recordingStack(workflowId: string, workerIds: readonly string[] = [workflowId]) {
-  function liveDeployments(tenantId: string) {
-    return liveTriageDeployments(tenantId, workflowId);
-  }
-  async function workerDeployments(tenantId: string, endedSince: Date) {
-    const workers = await Promise.all(workerIds.map((id) => recentWorkers(composition.db, tenantId, id, endedSince)));
-    return withWorkflowVersions(launchSpecs, workers.flat());
-  }
-  async function activeTriageTenants(what: "runs" | "deployments", endedSince?: Date) {
-    const active = await Promise.all([...new Set([workflowId, ...workerIds])].map((id) => activeTenants(composition.db, id, what, endedSince)));
-    return [...new Map(active.flat().map((tenant) => [tenant.id, tenant])).values()];
-  }
-  const observer = createTenantObserver({
-    liveDeployments,
-    // Reconciler passes can be two intervals apart (a kick is skipped while one drains), and an observation is reused for a record interval.
-    workers: { deployments: workerDeployments, endedWithinMs: 2 * triageReconcileIntervalMs(env) + 2 * TRIAGE_RECORD_MS },
-    observeRuns: observeTriageRuns,
-    recordRuns: runRecorder,
-    versions: tenantVersions,
-    minIntervalMs: TRIAGE_RECORD_MS,
-    now,
-  });
-  const recordPass = createRecordPass({
-    observer,
-    activeTenants: activeTriageTenants,
-    endedWithinMs: 2 * TRIAGE_RECORD_MS,
-    backoffMs: TRIAGE_RECORD_MS,
-    maxBackoffMs: TRIAGE_RECORD_MAX_BACKOFF_MS,
-    now,
-    log: logJson,
-  });
-  return { observer, recordPass, liveDeployments };
-}
-
-/** One host's observer, run recorder and reconciler. */
-function triageStack(triage: TriageWorkflow) {
-  const variants = PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === triage.source).map((variant) => variant.id);
-  const { observer, recordPass } = recordingStack(triage.id, [triage.id, ...variants]);
-  const reconcile = createTriageReconciler({
+/** One host's reconciler. */
+function reconcilerFor(triage: TriageWorkflow) {
+  return createTriageReconciler({
     source: triage.source,
     tenants: reconcileTenants,
     listener: liveListenerOf,
@@ -606,7 +544,6 @@ function triageStack(triage: TriageWorkflow) {
     verdicts: verdictRecordStore,
     openHeadsFor: tenantOpenHeads,
     activity: repoActivity,
-    observeTenant: observer.observe,
     managerRuns,
     store: triageStateStore,
     readCheckPack,
@@ -615,42 +552,18 @@ function triageStack(triage: TriageWorkflow) {
     now,
     log: logJson,
   });
-  return { triage, observer, recordPass, reconcile };
 }
 
-const stacks = TRIAGE_WORKFLOWS.map(triageStack);
-// pr-triage-historical is only recorded: the reconcilers never mail or rotate it.
-// A PR workflow variant's listener runs only the approvals of Dos its workers held; those workers are its host's stack's.
-const recordings = [...stacks, recordingStack(prTriageHistoricalWorkflow.id), ...PR_WORKFLOW_VARIANTS.map((variant) => recordingStack(variant.id, []))];
-// The portal's verdict listing reads every host's observations.
-const tenantObserver = {
-  last(tenantId: string) {
-    const observations = recordings.flatMap((stack) => stack.observer.last(tenantId) ?? []);
-    if (observations.length === 0) return undefined;
-    return {
-      deployments: observations.flatMap((observation) => observation.deployments),
-      observed: observations.flatMap((observation) => observation.observed),
-      workers: observations.flatMap((observation) => observation.workers),
-    };
-  },
-};
-function recordsReady(tenantId: string): boolean {
-  return recordings.every((stack) => stack.recordPass.ready(tenantId));
-}
-async function recordAll() {
-  for (const stack of recordings) await stack.recordPass.pass();
-  return { retry: false };
-}
+const reconcilers = TRIAGE_WORKFLOWS.map(reconcilerFor);
 async function reconcileAll(): Promise<ReconcileOutcome> {
   // A host removed through the stock credential route tells the hub nothing, so each pass releases what it left running.
   for (const tenant of await reconcileTenants()) await releaseHostsOf(tenant.id);
   const outcomes: ReconcileOutcome[] = [];
-  for (const stack of stacks) outcomes.push(await stack.reconcile());
+  for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);
   const limits = outcomes.flatMap((outcome) => outcome.retryAt ?? []);
   return limits.length === 0 ? { retry } : { retry, retryAt: Math.min(...limits) };
 }
-recordLoop = createReconcileLoop(recordAll, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
 const githubPrTriage = createGithubPrTriage({
   ...credentialDeps,
@@ -847,9 +760,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     ...credentialDeps,
     authorize: authorizePortal,
     verdicts: verdictRecordStore,
-    observer: tenantObserver,
-    ready: recordsReady,
-    versions: tenantVersions,
+    managerRuns,
     openPulls: openPullsCache,
     list: tenantOpenPrs,
     triageState: triageStateStore,
@@ -1001,7 +912,6 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
 }
 
 triageLoop.start();
-recordLoop.start();
 tokenLoop.start();
 
 logJson({

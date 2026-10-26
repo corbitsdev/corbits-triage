@@ -1,39 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { createEd25519Crypto, generateKeyPair } from "@intx/crypto";
-import { decodeMail, extractAddrSpec } from "@intx/mime";
 import { formatRunAddress } from "@intx/types";
-import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
-import { emptyPack, stockTriggerMail, type ActionKind, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { emptyPack, type ActionKind, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import type { CheckRun } from "@corbits/github-reads";
+import { heldForCi, unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
-import { createRunTriggerDeliverer } from "@corbits/webhooks";
 import type { LiveDeployment } from "./deployment.js";
-import { createRunRecorder } from "./run-recorder.js";
-import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
-import type { ApprovedDo, HostedVerdict, RecordedVerdict } from "./verdict-record-store.js";
+import type { HostedVerdict } from "./verdict-record-store.js";
 import { createTriageReconciler, type ReconcileOutcome } from "./triage-reconciler.js";
 import { createReconcileLoop } from "./reconcile-loop.js";
 import { createRepoActivity, type RepoActivity } from "./repo-activity.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { markBaseMoved } from "./triage-queue.js";
-import { createTriageRuns, verdictFor } from "./triage-runs.js";
-import type { ToolCall, ToolResult } from "@intx/types/runtime";
-import { evaluate, parts, rules } from "@corbits/triage-workflows/actions/index";
+import { evaluate, rules } from "@corbits/triage-workflows/actions/index";
 import { readFacts } from "@corbits/triage-workflows/actions/facts";
-import type { JudgeChunk } from "@corbits/triage-workflows/actions/rules";
-import type { Verdict } from "@corbits/triage-workflows/logic/render";
 
 const REPO = "acme/widgets";
 const DOMAIN = "acme.test";
 const TENANT_ID = "tnt_acme";
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const LONG_AGO = "2026-10-07T00:00:00.000Z";
-const VERSION = "0.1.0-sha-11111111";
-const OFFERING = "off_decision";
-const LIVE = deployment("run_live", new Date(LONG_AGO));
-/** A listener names no workflow version or offering. */
+const STARTED = "2026-10-07T01:00:00.000Z";
 const LISTENER = { runId: "run_listener", address: formatRunAddress("run_listener", DOMAIN), createdAt: new Date(LONG_AGO), cancelling: false };
 const MINUTE = 60_000;
 const BASE_MOVE_WINDOW = DEFAULT_RECONCILE_POLICY.baseMoveWindowMs / MINUTE;
@@ -41,15 +29,7 @@ const BASE_MOVE_WINDOW = DEFAULT_RECONCILE_POLICY.baseMoveWindowMs / MINUTE;
 function at(minutes: number): Date {
   return new Date(NOW.getTime() + minutes * MINUTE);
 }
-let failNextList = false;
-
-function deployment(runId: string, createdAt: Date): LiveDeployment {
-  return { runId, address: formatRunAddress(runId, DOMAIN), createdAt, cancelling: false, workflowVersion: VERSION, offeringId: OFFERING };
-}
-
-function repoKey(anchorRunId: string): string {
-  return workflowRunRepoIdForAddress(formatRunAddress(anchorRunId, DOMAIN)).id;
-}
+let failNextRead = false;
 
 function head(number: number): OpenPr {
   return { number, headSha: `sha${number}`, updatedAt: LONG_AGO, draft: false };
@@ -59,34 +39,34 @@ function heads(from: number, count: number): OpenPr[] {
   return Array.from({ length: count }, (_, i) => head(from + i));
 }
 
-function startedBy(payload: unknown, at: string): WorkflowRunEvent {
-  return { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at, trigger: { type: "mail", payload } } };
-}
-
-function started(number: number, at = "2026-10-07T01:00:00.000Z"): WorkflowRunEvent {
-  return startedBy(stockTriggerMail({ kind: "pr", repo: REPO, prNumber: number, headSha: `sha${number}` }), at);
-}
-
-function startedBatch(numbers: number[], at = "2026-10-07T01:00:00.000Z"): WorkflowRunEvent {
-  return startedBy(stockTriggerMail({ kind: "pr", repo: REPO, items: numbers.map((number) => ({ prNumber: number, headSha: `sha${number}` })) }), at);
-}
-
 function current(number: number): Record<string, unknown> {
   return { degraded: null, reason: "", headSha: `sha${number}`, checks: [] };
 }
 
-function replied(stepId: string, reply: Record<string, unknown>): WorkflowRunEvent {
-  const output = { ref: `inline:${JSON.stringify({ reply: JSON.stringify(reply), turn: 1 })}` };
-  return { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, at: "2026-10-07T01:30:00.000Z", stepId, output } };
+/** A manager's run of `number`'s head as the hub reads it: running, or completed with what its verdict settles. */
+function ran(runId: string, number: number, verdict?: Record<string, unknown>, startedAt = STARTED): ObservedRun {
+  if (!verdict) return { runId, source: "github", status: "running", startedAt };
+  return { runId, source: "github", status: "completed", startedAt, ...unsettledBy(verdict, `sha${number}`), ...(heldForCi(verdict) && { heldForCi: true }) };
 }
 
-function rendered(verdict: Record<string, unknown>): WorkflowRunEvent {
-  return replied("render", verdict);
+/** The managers' runs by repository, then by head. */
+type Runs = Record<string, Record<string, ObservedRun[]>>;
+
+function runsOf(...observed: Array<[number, ObservedRun]>): Runs {
+  const byHead: Record<string, ObservedRun[]> = {};
+  for (const [number, run] of observed) (byHead[runKey(number, `sha${number}`)] ??= []).push(run);
+  return { [REPO]: byHead };
 }
 
-const completed: WorkflowRunEvent = { seq: 2, type: "RunCompleted", body: { type: "RunCompleted", seq: 2 } };
+function settled(from: number, count: number): Runs {
+  return runsOf(...heads(from, count).map(({ number }): [number, ObservedRun] => [number, ran(`run_${number}`, number, current(number))]));
+}
 
-type Logs = Record<string, Record<string, WorkflowRunEvent[]>>;
+/** The verdict the hub recorded from `runId`, as the build poll reads it. */
+function recordedOf(runId: string, verdict: { checks: Array<{ check: string; result: string }> }): HostedVerdict {
+  return { tenantId: TENANT_ID, runId, repo: REPO, source: "github", number: 1, headSha: "sha1", startedAt: new Date(STARTED), verdictAt: new Date(STARTED), settled: true, state: "awaiting-review", actor: "system", humanGated: false, degraded: null, checks: verdict.checks.map(({ check, result }) => ({ check, result })), dos: [], commented: false, detail: { checks: verdict.checks } as HostedVerdict["detail"], trigger: "pull_request:opened", runStatus: null };
+}
+
 type Delivered = Array<{ payload: Record<string, unknown> }>;
 
 function mailedHeads(delivered: Delivered): Array<[string, number]> {
@@ -97,101 +77,14 @@ function mailedNumbers(delivered: Delivered): number[] {
   return mailedHeads(delivered).map(([, number]) => number);
 }
 
-function githubAnswer({ id, name }: ToolCall, pr: Record<string, unknown>): Record<string, unknown> {
-  const n = Number(id.split(":")[1]);
-  switch (name) {
-    case "github_list_open_prs":
-      return { prs: [1, 2, 3].map((number) => ({ number, title: `PR ${number}` })) };
-    case "github_read_repo_docs":
-      return { docs: [], rules: [], ref: "tree" };
-    case "github_get_pr":
-      return { title: `PR ${n}`, author: "octocat", sha: `sha${n}`, state: "open", draft: false, requestedReviewers: 0, ...pr };
-    case "github_list_pr_files":
-      return { files: [{ path: `src/pr${n}.ts`, status: "modified", patch: `@@ -0,0 +1 @@\n+export const pr${n} = ${n};` }] };
-    case "github_get_reviews":
-      return { reviews: [] };
-    case "github_list_pr_commits":
-      return { commits: [] };
-    case "github_list_issue_comments":
-      return { comments: [] };
-    case "github_get_checks":
-      return { checks: [] };
-    case "github_get_stack":
-      return { includes: [] };
-  }
-  throw new Error(`unexpected call ${name}`);
-}
-
-function focusedAnswers(questions: Array<{ id: string }>, related: number): string {
-  const rest = (1 - related) / 2;
-  const probabilities: Record<string, Record<string, number>> = {
-    focused: { one_thing: related, more_than_one_thing: rest, cant_tell: rest },
-    verdict: { pass: related, fail: rest, cant_tell: rest },
-  };
-  return questions.map(({ id }) => JSON.stringify(id === "instructed" ? { id, type: "noul", noul: 0.1 } : { id, type: "choice", choice: Object.keys(probabilities[id]!)[0], probabilities: probabilities[id], confidence: 0.9 })).join("");
-}
-
-async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 0.8) {
-  async function github(asked: ToolCall): Promise<ToolResult> {
-    return { callId: asked.id, content: githubAnswer(asked, pr) };
-  }
-  const read = await readFacts(mail, () => github);
-  const ctx = {} as never;
-  const signal = new AbortController().signal;
-  const ruled = await rules(read, ctx, signal);
-  function answer(chunks: JudgeChunk[]) {
-    return chunks.map((chunk) => ({ reply: JSON.stringify({ judge: focusedAnswers(chunk.questions, related) }) }));
-  }
-  const judged = { ...ruled, judge: { output: answer(ruled.chunks) } };
-  const { chunks } = await parts(judged, ctx, signal);
-  const verdicts = await evaluate(ruled.needsJudgment ? { ...judged, judgeParts: { output: answer(chunks) } } : ruled, ctx, signal) as { items: Verdict[] };
-  return { asked: ruled.chunks.length, verdicts: verdicts.items };
-}
-
-function evaluated(output: unknown): WorkflowRunEvent {
-  return { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, at: "2026-10-07T01:30:00.000Z", stepId: "evaluate", output: { ref: `inline:${JSON.stringify(output)}` } } };
-}
-
-function fakeReader(logs: Logs) {
-  const reads: Array<{ repo: string; runId: string }> = [];
-  const latestOf: string[][] = [];
-  const reader: WorkflowRunReader = {
-    async listRunIds(repoId: RepoId) {
-      return Object.keys(logs[repoId.id] ?? {});
-    },
-    async readRunEvents(repoId: RepoId, _ref: string, runId: string) {
-      reads.push({ repo: repoId.id, runId });
-      return logs[repoId.id]?.[runId] ?? [];
-    },
-    async readLatestRunEvents(repoId: RepoId, _ref: string, include: (runId: string) => boolean) {
-      const events = new Map<string, WorkflowRunEvent | null>();
-      for (const [runId, log] of Object.entries(logs[repoId.id] ?? {})) {
-        if (include(runId)) events.set(runId, log.at(-1) ?? null);
-      }
-      latestOf.push([repoId.id, ...events.keys()]);
-      return { tip: "tip", events };
-    },
-    async resolveRefTip() {
-      return "tip";
-    },
-    async hasRepository() {
-      return true;
-    },
-  };
-  return { reader, reads, latestOf };
-}
-
 type HarnessOptions = {
   github?: boolean;
   maxInFlight?: string;
   refuseSaves?: number;
   onRefusedSave?: (repo: string) => void;
   now?: () => Date;
-  deployments?: LiveDeployment[];
   /** The host's listener; a live one when not given. */
   listener?: LiveDeployment | undefined;
-  /** The managers' runs by head, read on each pass. */
-  managed?: () => Record<string, ObservedRun[]>;
   pack?: CheckPack;
   automatic?: ActionKind[];
   noPack?: boolean;
@@ -201,7 +94,7 @@ type HarnessOptions = {
   headChecks?: CheckRun[];
   /** Stored triage state of the repository before the first pass. */
   rows?: PrTriageRow[];
-  /** Verdicts recorded from runs no live log holds any more. */
+  /** Verdicts the hub recorded. */
   recorded?: HostedVerdict[];
   activity?: RepoActivity;
   /** Thrown by every listing of open pull requests while set. */
@@ -210,47 +103,19 @@ type HarnessOptions = {
   sendErrors?: Record<number, Error>;
 };
 
-function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
+/** `runs` is what the managers' runs are on each pass. */
+function harness(runs: Runs | (() => Runs), prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
   const repos = Array.isArray(prs) ? { [REPO]: prs } : prs;
   function tenant() {
     const ns = { repos: Object.keys(repos).map((name) => ({ name, connected: true, enabled: true })) };
     return { id: TENANT_ID, domain: DOMAIN, config: { corbitsTriage: ns } };
   }
-  const { reader, reads, latestOf } = fakeReader(logs);
   const delivered: Delivered = [];
   const saved = new Map<string, PrTriageRow[]>(options.rows ? [[REPO, options.rows]] : []);
   let refusals = options.refuseSaves ?? 0;
   const logged: Array<Record<string, unknown>> = [];
   const listings: string[] = [];
   const now = options.now ?? (() => NOW);
-  const deployments = (options.deployments ?? [LIVE]).map((live) => ({ ...live }));
-  const verdicts: RecordedVerdict[] = [];
-  const approved: ApprovedDo[] = [];
-  async function liveDeployments() {
-    if (failNextList) {
-      failNextList = false;
-      throw new Error("transient list failure");
-    }
-    return deployments.map((live) => ({ ...live }));
-  }
-  const observer = createTenantObserver({
-    liveDeployments,
-    observeRuns: createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 }),
-    recordRuns: createRunRecorder({
-      verdicts: {
-        async record(_tenantId, recorded) {
-          verdicts.push(...recorded);
-        },
-        async recordApproved(_tenantId, outcomes) {
-          approved.push(...outcomes);
-        },
-      },
-      log: () => {},
-    }),
-    versions: createTenantVersions(),
-    minIntervalMs: 0,
-    now,
-  });
   const reconcile = createTriageReconciler({
     source: "github",
     tenants: async function tenants() {
@@ -266,8 +131,14 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       };
     },
     activity: options.activity ?? { stale: () => true },
-    observeTenant: observer.observe,
-    managerRuns: async () => ({ byRepo: new Map(options.managed ? [[REPO, new Map(Object.entries(options.managed()))]] : []), runCount: 0, verdicts: [], approved: [] }),
+    managerRuns: async function managerRuns() {
+      if (failNextRead) {
+        failNextRead = false;
+        throw new Error("transient read failure");
+      }
+      const byRepo = typeof runs === "function" ? runs() : runs;
+      return { byRepo: new Map(Object.entries(byRepo).map(([repo, byHead]) => [repo, new Map(Object.entries(byHead))])) };
+    },
     headChecks: async () => options.headChecks ?? [],
     verdicts: { latest: async () => options.recorded ?? [] },
     store: store(),
@@ -301,13 +172,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       },
     };
   }
-  return { reconcile, listings, delivered, saved, logged, reads, latestOf, deployments, verdicts, approved, store: store() };
-}
-
-function settled(from: number, count: number): Record<string, WorkflowRunEvent[]> {
-  const runs: Record<string, WorkflowRunEvent[]> = {};
-  for (const { number } of heads(from, count)) runs[`run_${number}`] = [started(number), rendered(current(number)), completed];
-  return runs;
+  return { reconcile, listings, delivered, saved, logged, store: store() };
 }
 
 describe("triage reconciler", () => {
@@ -318,44 +183,45 @@ describe("triage reconciler", () => {
     expect(run.logged).toContainEqual(expect.objectContaining({ msg: "triage_reconcile_skipped", reason: "no_listener" }));
   });
 
-  test("a host whose listener is live is caught up with no pr-triage deployment", async () => {
-    const run = harness({}, [head(1)], { deployments: [], listener: LISTENER });
+  test("a host whose listener is live is caught up", async () => {
+    const run = harness({}, [head(1)], { listener: LISTENER });
     await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
   });
 
   test("a head mailed through the listener is mailed once while its manager runs and once it reported", async () => {
     let minutes = 0;
-    let managed: Record<string, ObservedRun[]> = {};
-    const run = harness({}, [head(1)], { deployments: [], listener: LISTENER, now: () => at(minutes), managed: () => managed });
+    let managed: Runs = {};
+    const run = harness(() => managed, [head(1)], { listener: LISTENER, now: () => at(minutes) });
     await run.reconcile();
-    managed = { [runKey(1, "sha1")]: [{ runId: "run_manager", source: "github", status: "running", startedAt: at(1).toISOString() }] };
+    managed = runsOf([1, ran("run_manager", 1, undefined, at(1).toISOString())]);
     for (minutes = 1; minutes <= 3; minutes++) await run.reconcile();
-    managed = { [runKey(1, "sha1")]: [{ runId: "run_manager", source: "github", status: "completed", startedAt: at(1).toISOString() }] };
+    managed = runsOf([1, ran("run_manager", 1, current(1), at(1).toISOString())]);
     for (minutes = 4; minutes <= 60; minutes += 14) await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
   });
 
   test("a host without build webhooks: a head whose verdict waits on CI is queued again once its builds stop pending", async () => {
     const waiting = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }] };
-    const logs: Logs = { [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(waiting), completed] } };
-    const pending = harness(logs, [head(1)], { headChecks: [{ name: "build", status: "in_progress", conclusion: null }] });
+    const logs = runsOf([1, ran("run_1", 1, waiting)]);
+    const recorded = [recordedOf("run_1", waiting)];
+    const pending = harness(logs, [head(1)], { recorded, headChecks: [{ name: "build", status: "in_progress", conclusion: null }] });
     await pending.reconcile();
     expect(pending.delivered).toHaveLength(0);
-    const finished = harness(logs, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    const finished = harness(logs, [head(1)], { recorded, headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await finished.reconcile();
     expect(mailedNumbers(finished.delivered)).toEqual([1]);
     expect(finished.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "build_status_changed" }));
     // A verdict that failed on CI is polled too: red turning green is caught without another event.
     const failed = { ...waiting, checks: [{ check: "ci-green", kind: "machine", result: "fail" }] };
-    const red = { [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(failed), completed] } };
-    const stillRed = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "failure" }] });
+    const red = runsOf([1, ran("run_1", 1, failed)]);
+    const stillRed = harness(red, [head(1)], { recorded: [recordedOf("run_1", failed)], headChecks: [{ name: "build", status: "completed", conclusion: "failure" }] });
     await stillRed.reconcile();
     expect(stillRed.delivered).toHaveLength(0);
-    const green = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    const green = harness(red, [head(1)], { recorded: [recordedOf("run_1", failed)], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await green.reconcile();
     expect(mailedNumbers(green.delivered)).toEqual([1]);
-    const nowCancelled = harness(logs, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] });
+    const nowCancelled = harness(logs, [head(1)], { recorded, headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] });
     await nowCancelled.reconcile();
     expect(mailedNumbers(nowCancelled.delivered)).toEqual([1]);
   });
@@ -363,8 +229,8 @@ describe("triage reconciler", () => {
   test("a verdict that read CI as cancelled is not queued again while it stays cancelled, however many reads, and is once a check is re-run", async () => {
     const cancelled = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed", output: { kind: "values", values: { status: "cancelled" } } }] };
     let now = NOW;
-    const options: HarnessOptions = { now: () => now, headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] };
-    const run = harness({ [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(cancelled), completed] } }, [head(1)], options);
+    const options: HarnessOptions = { now: () => now, recorded: [recordedOf("run_1", cancelled)], headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] };
+    const run = harness(runsOf([1, ran("run_1", 1, cancelled)]), [head(1)], options);
     for (let pass = 0; pass <= DEFAULT_RECONCILE_POLICY.maxAttempts; pass++) {
       now = new Date(now.getTime() + DEFAULT_RECONCILE_POLICY.backoffMaxMs);
       await run.reconcile();
@@ -376,15 +242,15 @@ describe("triage reconciler", () => {
     expect(mailedNumbers(run.delivered)).toEqual([1]);
   });
 
-  test("a head whose verdict waits on CI is queued again once CI finished, though the deployment that gave the verdict was replaced", async () => {
+  test("a head whose recorded verdict waits on CI is queued again once CI finished", async () => {
     const triaged: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: 1, runId: "run_gone", firstSeenAt: LONG_AGO, updatedAt: LONG_AGO };
     const recorded: HostedVerdict = { tenantId: TENANT_ID, runId: "run_gone", repo: REPO, source: "github", number: 1, headSha: "sha1", startedAt: new Date(LONG_AGO), verdictAt: new Date(LONG_AGO), settled: true, state: "awaiting-review", actor: "system", humanGated: false, degraded: null, checks: [{ check: "ci-green", result: "unconfirmed" }], dos: [], commented: false, detail: null, trigger: "pull_request:opened", runStatus: null };
-    const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    const run = harness({}, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
     expect(run.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "build_status_changed" }));
     // Without the rule's detail, cancelled CI is taken as already read, so the head is not run again and again.
-    const cancelled = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] });
+    const cancelled = harness({}, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "cancelled" }] });
     await cancelled.reconcile();
     expect(cancelled.delivered).toHaveLength(0);
   });
@@ -392,26 +258,26 @@ describe("triage reconciler", () => {
   test("a head waiting on CI under another host's verdict of the same repository, number and head is not queued again", async () => {
     const triaged: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: 1, runId: "run_gone", firstSeenAt: LONG_AGO, updatedAt: LONG_AGO };
     const recorded: HostedVerdict = { tenantId: TENANT_ID, runId: "run_bitbucket", repo: REPO, source: "bitbucket-datacenter", number: 1, headSha: "sha1", startedAt: new Date(LONG_AGO), verdictAt: new Date(LONG_AGO), settled: true, state: "awaiting-review", actor: "system", humanGated: false, degraded: null, checks: [{ check: "ci-green", result: "unconfirmed" }], dos: [], commented: false, detail: null, trigger: "pull_request:opened", runStatus: null };
-    const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    const run = harness({}, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await run.reconcile();
     expect(run.delivered).toHaveLength(0);
   });
 
   test("a head the reconciler holds for CI is mailed to be marked waiting once, where triage writes labels", async () => {
     const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-    const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { pack, automatic: ["labels"], headChecks: [{ name: "build", status: "in_progress", conclusion: null }] });
+    const run = harness({}, [head(1)], { pack, automatic: ["labels"], headChecks: [{ name: "build", status: "in_progress", conclusion: null }] });
     await run.reconcile();
     await run.reconcile();
     expect(run.delivered.map((entry) => entry.payload)).toEqual([expect.objectContaining({ kind: "waiting", prNumber: 1, headSha: "sha1" })]);
   });
 
   test("a repository with every rule off, or no policy, starts no run and is logged once per head", async () => {
-    const off = harness({ [repoKey(LIVE.runId)]: {} }, [head(1), head(2)], { pack: emptyPack(REPO) });
+    const off = harness({}, [head(1), head(2)], { pack: emptyPack(REPO) });
     await off.reconcile();
     expect(off.delivered).toHaveLength(0);
     await off.reconcile();
     expect(off.logged.filter((entry) => entry.msg === "triage_skipped_no_rules").map((entry) => entry.pulls)).toEqual([[1, 2]]);
-    const unset = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { noPack: true });
+    const unset = harness({}, [head(1)], { noPack: true });
     await unset.reconcile();
     await unset.reconcile();
     expect(unset.delivered).toHaveLength(0);
@@ -419,97 +285,20 @@ describe("triage reconciler", () => {
   });
 
   test("a policy triage can't read mails each open head with why and no pack, so the run marks it failed", async () => {
-    const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { unreadable: "The policy file has unknown checks: max-size.", automatic: ["labels"] });
+    const run = harness({}, [head(1)], { unreadable: "The policy file has unknown checks: max-size.", automatic: ["labels"] });
     await run.reconcile();
     expect(run.delivered.map((entry) => entry.payload)).toEqual([expect.objectContaining({ policyUnreadable: "The policy file has unknown checks: max-size.", automatic: ["labels"], items: [{ prNumber: 1, headSha: "sha1" }] })]);
     expect(run.delivered[0]!.payload).not.toHaveProperty("pack");
   });
 
-  test("reads only the live deployment's runs and queues to it", async () => {
-    const logs: Logs = {
-      [repoKey("run_old")]: { run_old_pr: [started(1), rendered(current(1)), completed] },
-      [repoKey(LIVE.runId)]: {},
-    };
-    const { reconcile, delivered, reads, latestOf } = harness(logs, [head(1)]);
-    await reconcile();
-    expect(latestOf.map(([repo]) => repo)).toEqual([repoKey(LIVE.runId)]);
-    expect(reads.every((read) => read.repo === repoKey(LIVE.runId))).toBe(true);
-    expect(delivered).toHaveLength(1);
-    expect(delivered[0]).toMatchObject({ payload: { kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] } });
-  });
-
-  test("the Dos a run executed are recorded on its verdict", async () => {
-    const comment = { id: "hello", branch: "always", index: 0, kind: "comment", reason: "", effectId: "e-comment", target: { body: "hi" } };
-    const label = { ...comment, index: 1, kind: "labels", effectId: "e-label", target: { labels: ["x"] } };
-    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [comment, label] };
-    const executed = replied("execute", { dos: [{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }] });
-    const log = [started(1), rendered(verdict), executed, completed];
-    const { reconcile, verdicts } = harness({ [repoKey(LIVE.runId)]: { run_1: log } }, [head(1)]);
-    await reconcile();
-    const outcomes = [{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }];
-    expect(verdictFor(log, REPO, 1)?.["actions"]).toMatchObject(outcomes);
-    expect(verdicts.at(-1)?.detail?.actions).toMatchObject(outcomes);
-  });
-
-  test("a held Do's approval run puts its outcome on the verdicts of its head, once", async () => {
-    const held = { id: "hello", branch: "always", index: 0, kind: "comment", reason: "", effectId: "e-comment", target: { body: "hi" }, held: true };
-    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [held] };
-    const mail = stockTriggerMail({ kind: "approve-do", runId: "run_1", request: { repo: REPO, number: 1 } });
-    const approval = [startedBy(mail, "2026-10-07T02:00:00.000Z"), replied("executeApproved", { dos: [{ effectId: "e-comment", status: "done" }] }), completed];
-    const retriaged = [started(1, "2026-10-07T03:00:00.000Z"), rendered(verdict), completed];
-    const { reconcile, verdicts, approved } = harness({ [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(verdict), completed], run_2: approval, run_3: retriaged } }, [head(1)]);
-    await reconcile();
-    await reconcile();
-    const latest = new Map(verdicts.map((recorded) => [recorded.runId, recorded]));
-    expect([...latest.keys()].sort()).toEqual(["run_1", "run_3"]);
-    for (const recorded of latest.values()) expect(recorded.detail?.actions).toMatchObject([{ effectId: "e-comment", held: true, status: "done" }]);
-    expect(approved).toEqual([{ repo: REPO, number: 1, effectId: "e-comment", status: "done" }]);
-  });
-
-  test("a verdict is recorded with what the portal shows of it: its own fields, the facts it read and the webhook event that started it", async () => {
-    const mail = stockTriggerMail({ kind: "pr", repo: REPO, prNumber: 1, headSha: "sha1", event: "pull_request", action: "synchronize" });
-    const facts = { repo: REPO, number: 1, title: "Add widgets", author: "ann", draft: false, mergeable: true, checks: "success", body: "not shown" };
-    const ruled: WorkflowRunEvent = { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "rules", output: { ref: `inline:${JSON.stringify({ items: [{ facts, det: {} }] })}` } } };
-    const check = { check: "ci-green", kind: "machine", result: "pass", reason: "green", evidence: [], gate: false };
-    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready-monitoring", actor: "author", humanGated: false, priority: "P2", feedback: "Thanks.", checks: [check], det: { sources: {} } };
-    const { reconcile, verdicts } = harness({ [repoKey(LIVE.runId)]: { run_1: [startedBy(mail, "2026-10-07T01:00:00.000Z"), ruled, rendered(verdict), completed] } }, [head(1)]);
-    await reconcile();
-    expect(verdicts).toMatchObject([{
-      runId: "run_1",
-      trigger: "pull_request:synchronize",
-      detail: { priority: "P2", feedback: "Thanks.", reason: "", checks: [check], facts: { title: "Add widgets", author: "ann", draft: false, mergeable: true, checks: "success" } },
-    }]);
-    expect(verdicts[0]!.detail).not.toHaveProperty("det");
-    expect(verdicts[0]!.detail?.facts).not.toHaveProperty("body");
-  });
-
-  test("a verdict is recorded once its step completes, and kept when the run then fails", async () => {
-    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready-monitoring", actor: "author", humanGated: false };
-    const log = [started(1), rendered(verdict)];
-    const { reconcile, verdicts } = harness({ [repoKey(LIVE.runId)]: { run_1: log } }, [head(1)]);
-    await reconcile();
-    expect(verdicts.map(({ runId, state, settled, runStatus }) => ({ runId, state, settled, runStatus }))).toEqual([{ runId: "run_1", state: "ready-monitoring", settled: true, runStatus: "running" }]);
-    log.push({ seq: 3, type: "RunFailed", body: { type: "RunFailed", seq: 3 } });
-    await reconcile();
-    expect(verdicts.map(({ runId, state, runStatus }) => ({ runId, state, runStatus }))).toEqual([
-      { runId: "run_1", state: "ready-monitoring", runStatus: "running" },
-      { runId: "run_1", state: "ready-monitoring", runStatus: "failed" },
-    ]);
-  });
-
   test("draft heads are not queued", async () => {
-    const { reconcile, delivered } = harness({ [repoKey(LIVE.runId)]: {} }, [{ ...head(1), draft: true }, head(2)]);
+    const { reconcile, delivered } = harness({}, [{ ...head(1), draft: true }, head(2)]);
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([2]);
   });
 
   test("a degraded verdict is queued again and a clean one settles the head", async () => {
-    const logs: Logs = {
-      [repoKey(LIVE.runId)]: {
-        run_degraded: [started(2), rendered({ degraded: "error", reason: "This repository still needs a policy." }), completed],
-        run_clean: [started(3), rendered(current(3)), completed],
-      },
-    };
+    const logs = runsOf([2, ran("run_degraded", 2, { degraded: "error", reason: "This repository still needs a policy." })], [3, ran("run_clean", 3, current(3))]);
     const { reconcile, delivered, saved } = harness(logs, [head(2), head(3)]);
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([2]);
@@ -520,22 +309,20 @@ describe("triage reconciler", () => {
 
   test("verdicts on another commit or with unconfirmed checks are queued again with their reason", async () => {
     const unconfirmed = [{ check: "no-merge-conflicts", kind: "machine", result: "unconfirmed" }, { check: "docs", kind: "model", result: "unconfirmed" }];
-    const logs: Logs = {
-      [repoKey(LIVE.runId)]: {
-        run_other_head: [started(2), rendered({ ...current(2), headSha: "sha2-pushed" }), completed],
-        run_unconfirmed: [started(3), rendered({ ...current(3), checks: unconfirmed }), completed],
-        run_not_asked: [started(4), rendered({ ...current(4), checks: [{ check: "docs", kind: "model", result: "unconfirmed" }] }), completed],
-        run_ci_pending: [started(5), rendered({ ...current(5), checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }, { check: "docs", kind: "model", result: "pass" }] }), completed],
-      },
-    };
+    const logs = runsOf(
+      [2, ran("run_other_head", 2, { ...current(2), headSha: "sha2-pushed" })],
+      [3, ran("run_unconfirmed", 3, { ...current(3), checks: unconfirmed })],
+      [4, ran("run_not_asked", 4, { ...current(4), checks: [{ check: "docs", kind: "model", result: "unconfirmed" }] })],
+      [5, ran("run_ci_pending", 5, { ...current(5), checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }, { check: "docs", kind: "model", result: "pass" }] })],
+    );
     const { reconcile, delivered, saved, logged } = harness(logs, [head(2), head(3), head(4), head(5)]);
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([2, 3]);
     const reasons = logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"]);
     expect(reasons).toEqual(["verdict made on head sha2-pushed", "unconfirmed checks: no-merge-conflicts"]);
     const rows = saved.get(REPO) ?? [];
-    expect(rows.filter((row) => row.number < 4).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === VERSION)).toBe(true);
-    expect(rows.find((row) => row.number === 4)).toMatchObject({ status: "triaged", runId: "run_not_asked", workflowVersion: VERSION });
+    expect(rows.filter((row) => row.number < 4).every((row) => row.status === "queued" && row.attempts === 1)).toBe(true);
+    expect(rows.find((row) => row.number === 4)).toMatchObject({ status: "triaged", runId: "run_not_asked" });
     // Running checks settle; the completed check_run webhook triages the head again.
     expect(rows.find((row) => row.number === 5)).toMatchObject({ status: "triaged", runId: "run_ci_pending" });
   });
@@ -549,7 +336,7 @@ describe("triage reconciler", () => {
     const signal = new AbortController().signal;
     const verdict = await evaluate(await rules(read, ctx, signal), ctx, signal) as Record<string, unknown>;
     expect(verdict).toMatchObject({ degraded: "error", headSha: null, reason: "facts: pr input has no prNumber" });
-    const logs: Logs = { [repoKey(LIVE.runId)]: { run_fail: [started(1), rendered(verdict), completed] } };
+    const logs = runsOf([1, ran("run_fail", 1, verdict)]);
     const { reconcile, delivered, logged } = harness(logs, [head(1)]);
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([1]);
@@ -558,13 +345,10 @@ describe("triage reconciler", () => {
 
   test("a merge triages the repository's other settled heads again, not the merged one or another repository's", async () => {
     const OTHER = "acme/gadgets";
-    const runs: Record<string, WorkflowRunEvent[]> = {
-      ...settled(1, 3),
-      run_other: [startedBy(stockTriggerMail({ kind: "pr", repo: OTHER, prNumber: 4, headSha: "sha4" }), "2026-10-07T01:00:00.000Z"), rendered(current(4)), completed],
-    };
+    const runs: Runs = { ...settled(1, 3), [OTHER]: { [runKey(4, "sha4")]: [ran("run_other", 4, current(4))] } };
     let now = NOW;
     const open = { [REPO]: heads(1, 3), [OTHER]: [head(4)] };
-    const { reconcile, delivered, saved, logged, store } = harness({ [repoKey(LIVE.runId)]: runs }, open, { now: () => now });
+    const { reconcile, delivered, saved, logged, store } = harness(() => runs, open, { now: () => now });
     await reconcile();
     expect(delivered).toEqual([]);
 
@@ -577,16 +361,18 @@ describe("triage reconciler", () => {
     expect(logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"])).toEqual(["base branch moved", "base branch moved"]);
     expect(saved.get(OTHER)?.[0]).toMatchObject({ status: "triaged" });
 
-    runs["run_recheck"] = [startedBatch([1, 3], at(2).toISOString()), rendered({ items: [current(1), current(3)] }), completed];
+    for (const number of [1, 3]) runs[REPO]![runKey(number, `sha${number}`)]!.push(ran("run_recheck", number, current(number), at(2).toISOString()));
     now = at(3);
     await reconcile();
     expect(saved.get(REPO)?.map((row) => [row.number, row.status, row.runId])).toEqual([[1, "triaged", "run_recheck"], [3, "triaged", "run_recheck"]]);
   });
 
   test("a head in flight when the base branch moves runs again once its run ends and its base move window has passed", async () => {
-    const runs: Record<string, WorkflowRunEvent[]> = { run_1: [started(1, at(-1).toISOString())], run_3: [started(3), rendered(current(3)), completed] };
+    const runs = runsOf([1, ran("run_1", 1, undefined, at(-1).toISOString())], [3, ran("run_3", 3, current(3))]);
+    const of1 = runs[REPO]![runKey(1, "sha1")]!;
+    const of3 = runs[REPO]![runKey(3, "sha3")]!;
     let now = NOW;
-    const { reconcile, delivered, saved, store } = harness({ [repoKey(LIVE.runId)]: runs }, [head(1), head(3)], { now: () => now });
+    const { reconcile, delivered, saved, store } = harness(runs, [head(1), head(3)], { now: () => now });
     await reconcile();
     expect(saved.get(REPO)?.map((row) => row.status)).toEqual(["running", "triaged"]);
 
@@ -598,7 +384,7 @@ describe("triage reconciler", () => {
     expect(saved.get(REPO)?.map((row) => row.status)).toEqual(["running", "queued"]);
 
     // #3's run starts before a second merge and ends after it; #1's run outlives both.
-    runs["run_3b"] = [started(3, at(2.5).toISOString())];
+    of3.push(ran("run_3b", 3, undefined, at(2.5).toISOString()));
     now = at(4);
     expect(await markBaseMoved(store, TENANT_ID, REPO, 8, now, DEFAULT_RECONCILE_POLICY)).toBe(0);
     now = at(5);
@@ -606,14 +392,14 @@ describe("triage reconciler", () => {
     expect(mailedNumbers(delivered)).toEqual([3]);
     expect(saved.get(REPO)?.map((row) => row.status)).toEqual(["running", "running"]);
 
-    runs["run_1"]!.push(rendered(current(1)), completed);
-    runs["run_3b"]!.push(rendered(current(3)), completed);
+    of1.splice(0, 1, ran("run_1", 1, current(1), at(-1).toISOString()));
+    of3.splice(1, 1, ran("run_3b", 3, current(3), at(2.5).toISOString()));
     now = at(6);
     await reconcile();
     // #1 was never queued by the hub, so it goes at once; #3, queued at minute 2, waits out its window.
     expect(mailedNumbers(delivered)).toEqual([3, 1]);
 
-    runs["run_1b"] = [started(1, at(6).toISOString()), rendered(current(1)), completed];
+    of1.push(ran("run_1b", 1, current(1), at(6).toISOString()));
     now = at(1 + BASE_MOVE_WINDOW);
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([3, 1]);
@@ -621,7 +407,7 @@ describe("triage reconciler", () => {
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([3, 1, 3]);
 
-    runs["run_3c"] = [started(3, now.toISOString()), rendered(current(3)), completed];
+    of3.push(ran("run_3c", 3, current(3), now.toISOString()));
     now = at(3 + BASE_MOVE_WINDOW);
     await reconcile();
     expect(saved.get(REPO)?.map((row) => [row.number, row.status, row.runId])).toEqual([[1, "triaged", "run_1b"], [3, "triaged", "run_3c"]]);
@@ -645,7 +431,7 @@ describe("triage reconciler", () => {
   test("merges inside a head's base move window re-check it once when the window closes, not once per merge", async () => {
     const runs = settled(1, 2);
     let now = NOW;
-    const { reconcile, delivered, store } = harness({ [repoKey(LIVE.runId)]: runs }, heads(1, 2), { now: () => now });
+    const { reconcile, delivered, store } = harness(runs, heads(1, 2), { now: () => now });
     await reconcile();
     now = at(1);
     await markBaseMoved(store, TENANT_ID, REPO, 9, now, DEFAULT_RECONCILE_POLICY);
@@ -653,7 +439,7 @@ describe("triage reconciler", () => {
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([1, 2]);
 
-    runs["run_recheck"] = [startedBatch([1, 2], at(2).toISOString()), rendered({ items: [current(1), current(2)] }), completed];
+    for (const number of [1, 2]) runs[REPO]![runKey(number, `sha${number}`)]!.push(ran("run_recheck", number, current(number), at(2).toISOString()));
     for (const minute of [4, 6, 8, 10, 12]) {
       now = at(minute);
       await markBaseMoved(store, TENANT_ID, REPO, minute, now, DEFAULT_RECONCILE_POLICY);
@@ -673,98 +459,8 @@ describe("triage reconciler", () => {
     const row: PrTriageRow = { number: 7, headSha: "abc", status: "queued", attempts: 1, firstSeenAt: LONG_AGO, queuedAt: iso(moved + 50), staleBefore: iso(moved), updatedAt: iso(moved + 50) };
     const run: ObservedRun = { runId: "run_after", source: "github", status: "completed", startedAt: iso(moved + 50 - 500) };
     const pr = { number: 7, headSha: "abc", updatedAt: LONG_AGO, draft: false };
-    const plans = planTenant({ repos: [{ name: REPO, prs: [pr], rows: [row] }], runs: new Map([[REPO, new Map([["7@abc", [run]]])]]), now: at(1), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined });
+    const plans = planTenant({ repos: [{ name: REPO, prs: [pr], rows: [row] }], runs: new Map([[REPO, new Map([["7@abc", [run]]])]]), now: at(1), policy: DEFAULT_RECONCILE_POLICY });
     expect(plans.get(REPO)!.rows[0]!.status).toBe("triaged");
-  });
-
-  describe("judge answers", () => {
-    const pack: CheckPack = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true }, focused: { enabled: true } } };
-    const policy = { enabled: true, checkPack: { name: REPO } };
-
-    async function remailed(related: number, listener = LIVE) {
-      const first = await triageMail(stockTriggerMail({ kind: "pr", repo: REPO, items: [1, 3].map((n) => ({ prNumber: n, headSha: `sha${n}` })), policy, checkPack: pack }), { mergeable: true }, related);
-      const runs = { run_first: [startedBatch([1, 3]), evaluated({ items: first.verdicts }), completed] };
-      const { reconcile, delivered, store } = harness({ [repoKey(LIVE.runId)]: runs }, [head(1), head(3)], { pack, listener });
-      await reconcile();
-      await markBaseMoved(store, TENANT_ID, REPO, 2, NOW, DEFAULT_RECONCILE_POLICY);
-      await reconcile();
-      return { first, payload: delivered[0]!.payload };
-    }
-
-    test("a head re-checked after a merge reuses its decisive answers, while its conflicts are read afresh", async () => {
-      const { first, payload } = await remailed(0.8);
-      expect(first.asked).toBe(2);
-      expect((payload["items"] as Array<{ judged?: object }>).map((item) => Object.keys(item.judged ?? {}).length)).toEqual([2]);
-      const reused = await triageMail(stockTriggerMail(payload), { mergeable: true });
-      expect(reused.asked).toBe(0);
-      expect(reused.verdicts.map(({ verdict, checks }) => [verdict, checks.find((check) => check.check === "focused")?.result])).toEqual([["pass", "pass"]]);
-      const conflicted = await triageMail(stockTriggerMail(payload), { mergeable: false });
-      expect(conflicted.asked).toBe(0);
-      expect(conflicted.verdicts.map(({ verdict, checks }) => [verdict, checks.find((check) => check.check === "no-merge-conflicts")?.result])).toEqual([["fail", "fail"]]);
-    });
-
-    test("answers ride only on mail whose From is the hub's bare address on the deployment's domain", async () => {
-      const { payload } = await remailed(0.8);
-      const hub = createEd25519Crypto(await generateKeyPair());
-      const hubSender = `github@${DOMAIN}`;
-      let raw: Uint8Array | undefined;
-      const trigger = createRunTriggerDeliverer({
-        materialize: async () => ({ outcome: "materialized" as const, stepGrants: [] }),
-        router: {
-          async routeMail(_address: string, base64: string) {
-            raw = Buffer.from(base64, "base64");
-            return true;
-          },
-        },
-        tenantDomain: async () => DOMAIN,
-        senderLocalPart: "github",
-        systemSender: { resolve: async () => ({ address: hubSender, publicKey: Buffer.from(hub.getPublicKey()).toString("hex"), sign: (input: Uint8Array) => hub.sign(input) }) },
-      });
-      await trigger.to(LIVE.address, JSON.stringify(payload), TENANT_ID, undefined);
-      const { headers, rawHeaders, parts } = decodeMail(raw!);
-      const fromHub = { headers, rawHeaders, parts: parts.map((part, i) => ({ contentType: part.contentType, ref: `mail-part:///run_x/m1/${i}`, text: new TextDecoder().decode(part.content) })) };
-      expect((await triageMail(fromHub, { mergeable: true })).asked).toBe(0);
-
-      // Stock binds a mail to its authenticated sender by the address `extractAddrSpec` reads, so this From passes its gate for another run.
-      const memberRun = formatRunAddress("run_member", DOMAIN);
-      const named = `"<${hubSender}>" <${memberRun}>`;
-      expect(extractAddrSpec(named)).toBe(memberRun);
-      for (const from of [named, "github@other.test"]) {
-        const mail = stockTriggerMail(payload);
-        const forged = { ...mail, headers: { ...mail.headers, from }, rawHeaders: { ...mail.rawHeaders, from: [from] } };
-        expect((await triageMail(forged, { mergeable: true })).asked).toBe(1);
-      }
-    });
-
-    test("unsure answers are not carried", async () => {
-      const { first, payload } = await remailed(0.5);
-      expect(first.verdicts.every((verdict) => verdict.judged === undefined)).toBe(true);
-      expect((payload["items"] as Array<{ judged?: object }>).every((item) => item.judged === undefined)).toBe(true);
-    });
-
-    test("answers are not carried to a listener on another decision-model offering", async () => {
-      const { payload } = await remailed(0.8, { ...deployment("run_new", NOW), offeringId: "off_other" });
-      expect((payload["items"] as Array<{ judged?: object }>).every((item) => item.judged === undefined)).toBe(true);
-    });
-  });
-
-  test("heads settled under another workflow version than the live deployment's, a legacy integer included, keep their verdicts", async () => {
-    const { reconcile, delivered, saved } = harness({}, [head(1), head(2)]);
-    const settled = (number: number, workflowVersion: string | number): PrTriageRow => ({ number, headSha: `sha${number}`, status: "triaged", attempts: 0, runId: `old_${number}`, workflowVersion, firstSeenAt: LONG_AGO, updatedAt: LONG_AGO });
-    const rows = [settled(1, 3), settled(2, "0.1.0-sha-00000000")];
-    saved.set(REPO, rows);
-    await reconcile();
-    expect(mailedNumbers(delivered)).toEqual([]);
-    expect(saved.get(REPO)).toEqual(rows);
-  });
-
-  test("a finished run's log is read once and then left out of later passes", async () => {
-    const logs: Logs = { [repoKey(LIVE.runId)]: { run_clean: [started(3), rendered(current(3)), completed] } };
-    const { reconcile, reads, latestOf } = harness(logs, [head(3)]);
-    await reconcile();
-    await reconcile();
-    expect(reads).toHaveLength(1);
-    expect(latestOf[1]).toEqual([repoKey(LIVE.runId)]);
   });
 
   test("the in-flight budget is per tenant across repositories, oldest pull requests first", async () => {
@@ -792,30 +488,14 @@ describe("triage reconciler", () => {
     expect(saved.get(REPO)?.find((row) => row.number === 1)).toMatchObject({ status: "failed", error: "delivery failed: Error: 502 Bad Gateway" });
   });
 
-  test("a batch run's verdicts settle each head it named; a batch degraded before rendering queues every head again", async () => {
-    const logs: Logs = {
-      [repoKey(LIVE.runId)]: {
-        run_batch: [startedBatch([1, 2, 3]), rendered({ items: [current(1), { ...current(2), headSha: "sha2-pushed" }, current(3)], summary: {} }), completed],
-        run_failed: [startedBatch([4, 5]), rendered({ degraded: "error", reason: "facts interrupted: abort", headSha: null }), completed],
-      },
-    };
-    const { reconcile, delivered, saved, logged } = harness(logs, heads(1, 5));
-    await reconcile();
-    expect(mailedNumbers(delivered)).toEqual([2, 4, 5]);
-    expect(logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"])).toEqual(["verdict made on head sha2-pushed", "degraded: facts interrupted: abort", "degraded: facts interrupted: abort"]);
-    const rows = saved.get(REPO) ?? [];
-    expect(rows.filter((row) => row.status === "triaged").map((row) => [row.number, row.runId])).toEqual([[1, "run_batch"], [3, "run_batch"]]);
-    expect(rows.filter((row) => row.status === "queued").map((row) => row.number)).toEqual([2, 4, 5]);
-  });
-
   test("queued heads that have not started hold the budget until their runs complete", async () => {
-    const logs: Logs = { [repoKey(LIVE.runId)]: {} };
+    const logs: Runs = { [REPO]: {} };
     const { reconcile, delivered, saved } = harness(logs, heads(1, 12));
     await reconcile();
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([1, 2, 3, 4, 5]);
     // Only a run started since the hub queued the head settles it.
-    for (const number of [1, 2, 3, 4, 5]) logs[repoKey(LIVE.runId)]![`run_${number}`] = [started(number, "2026-10-07T12:00:30.000Z"), rendered(current(number)), completed];
+    for (const number of [1, 2, 3, 4, 5]) logs[REPO]![runKey(number, `sha${number}`)] = [ran(`run_${number}`, number, current(number), "2026-10-07T12:00:30.000Z")];
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const rows = saved.get(REPO) ?? [];
@@ -840,26 +520,8 @@ describe("triage reconciler", () => {
     expect(twice.logged).toContainEqual(expect.objectContaining({ msg: "triage_state_conflict", repo: REPO }));
   });
 
-  test("a run triggered by the stock mail, decoded or stringified, is seen running and settles on its verdict", async () => {
-    const at = "2026-10-07T12:00:30.000Z";
-    const runs: Record<string, WorkflowRunEvent[]> = {};
-    const { reconcile, delivered, saved } = harness({ [repoKey(LIVE.runId)]: runs }, [head(1), head(2)]);
-    await reconcile();
-    expect(mailedNumbers(delivered)).toEqual([1, 2]);
-    runs["run_mail"] = [startedBy(stockTriggerMail({ kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] }), at)];
-    runs["run_string"] = [startedBy(JSON.stringify(stockTriggerMail({ kind: "pr", repo: REPO, items: [{ prNumber: 2, headSha: "sha2" }] })), at)];
-    await reconcile();
-    expect(saved.get(REPO)!.map((row) => [row.number, row.status, row.runId])).toEqual([[1, "running", "run_mail"], [2, "running", "run_string"]]);
-    runs["run_mail"]!.push(rendered({ items: [current(1)] }), completed);
-    runs["run_string"]!.push(rendered({ items: [current(2)] }), completed);
-    await reconcile();
-    await reconcile();
-    expect(mailedNumbers(delivered)).toEqual([1, 2]);
-    expect(saved.get(REPO)!.map((row) => [row.number, row.status, row.runId])).toEqual([[1, "triaged", "run_mail"], [2, "triaged", "run_string"]]);
-  });
-
   test("a head still running holds one of the tenant's slots", async () => {
-    const logs: Logs = { [repoKey(LIVE.runId)]: { run_going: [started(1, "2026-10-07T11:55:00.000Z")] } };
+    const logs = runsOf([1, ran("run_going", 1, undefined, "2026-10-07T11:55:00.000Z")]);
     const { reconcile, delivered } = harness(logs, heads(1, 7));
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([2, 3, 4, 5]);
@@ -881,7 +543,7 @@ describe("triage reconciler", () => {
   test("a repository is listed again once a webhook named it or half an hour passed, and every pass while its webhook heard nothing that long", async () => {
     let clock = NOW;
     const activity = createRepoActivity(() => clock, { quietMs: 30 * MINUTE, graceMs: MINUTE });
-    const { reconcile, listings } = harness({ [repoKey(LIVE.runId)]: settled(1, 1) }, { [REPO]: [head(1)], "acme/gadgets": [] }, { now: () => clock, activity });
+    const { reconcile, listings } = harness(settled(1, 1), { [REPO]: [head(1)], "acme/gadgets": [] }, { now: () => clock, activity });
     function hear(minutes: number, repo: string): void {
       clock = at(minutes);
       activity.heard(TENANT_ID, "github", repo);
@@ -919,7 +581,7 @@ describe("triage reconciler", () => {
     let clock = NOW;
     const activity = createRepoActivity(() => clock, { quietMs: 30 * MINUTE, graceMs: MINUTE });
     const options = { now: () => clock, activity, github: true };
-    const { reconcile, listings } = harness({ [repoKey(LIVE.runId)]: settled(1, 1) }, [head(1)], options);
+    const { reconcile, listings } = harness(settled(1, 1), [head(1)], options);
     activity.heard(TENANT_ID, "github", REPO);
     clock = at(2);
     await reconcile();
@@ -936,7 +598,7 @@ describe("triage reconciler", () => {
     let clock = NOW;
     const activity = createRepoActivity(() => clock, { quietMs: 30 * MINUTE, graceMs: MINUTE });
     const options: HarnessOptions = { now: () => clock, activity };
-    const { reconcile, listings } = harness({ [repoKey(LIVE.runId)]: settled(1, 1) }, [head(1)], options);
+    const { reconcile, listings } = harness(settled(1, 1), [head(1)], options);
     activity.heard(TENANT_ID, "github", REPO);
     clock = at(25);
     await reconcile();
@@ -976,9 +638,9 @@ describe("triage reconciler", () => {
     expect(mailedNumbers(delivered)).toEqual([1]);
   });
 
-  test("a tenant whose runs cannot be read asks for another pass soon", async () => {
+  test("a tenant whose managers' runs cannot be read asks for another pass soon", async () => {
     const { reconcile } = harness({}, [head(1)]);
-    failNextList = true;
+    failNextRead = true;
     expect(await reconcile()).toEqual({ retry: true });
   });
 });

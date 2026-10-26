@@ -21,7 +21,7 @@ Triage reaches the model through Interchange inference. The agents name the tena
 | OpenCode Zen | `https://opencode.ai/zen/v1` | `jev-1.13` |
 | Custom | any | any |
 
-The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that infers: a `map` over the rules step's chunks, one System One call per chunk, then a second `map` over focused's follow-up chunks and the verdict question (`triage-steps.ts`, `directors.ts`). A pull request without judged rules to ask, or whose judged rules an earlier run answered, asks the verdict question in the first map. A failed hard rule, a draft, a closed pull request or a policy with no decision-model rule on asks nothing. The request body is `{ state, questions, model }`; no system prompt reaches the model.
+The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that infers: a `map` over the rules step's chunks, one System One call per chunk, then a second `map` over focused's follow-up chunks and the verdict question (`triage-steps.ts`, `directors.ts`). A pull request without judged rules to ask asks the verdict question in the first map. A failed hard rule, a draft, a closed pull request or a policy with no decision-model rule on asks nothing. The request body is `{ state, questions, model }`; no system prompt reaches the model.
 
 ## Why Triage uses it
 
@@ -113,17 +113,12 @@ Two different numbers come out of the answers:
 
 ## Reused answers
 
-A re-check of a head the judge already answered, such as after a merge moved
-the base branch, does not ask the model again for an unchanged request. Each
-verdict keeps the answers it got, keyed by a SHA-256 of the judge's system
-prompt and the exact request (`judgeKey`, `logic/quality.ts`). The reconciler
-carries them in its catch-up mail only to a deployment on the same workflow
-version and decision-model offering, and the facts step accepts them only from
-the hub's own triage sender. Rules sends the judge only requests no carried
-answer matches; changed content or docs are asked again.
-
-Only well-formed answers clear of the unsure band are kept, up to 16 KB per
-verdict (`MAX_JUDGED_BYTES`, `actions/evaluate.ts`); the rest are asked again.
+A pull request's manager keeps the judge's verdict for each head. A later pass
+on the same head, such as a re-check after a merge moved the base branch, reuses
+that verdict instead of asking again (`judgeScope`,
+`packages/triage-manager/src/actions/judge.ts`). The judge is asked again for that
+head only while the host's checks could still change its verdict: a host check
+left unconfirmed, or an action held for CI. A new head is judged afresh.
 
 ## Cost per pull request
 

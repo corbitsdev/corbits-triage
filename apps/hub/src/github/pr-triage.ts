@@ -17,7 +17,7 @@ import type { ManagerRuns } from "./manager-runs.js";
 import { isStuck, runKey, type ObservedRun, type ReconcilePolicy } from "./reconcile-plan.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { LiveDeployment } from "./deployment.js";
-import type { ObservedRuns } from "./triage-runs.js";
+import type { ObservedRuns } from "./manager-runs.js";
 import { isQueuedSince, isRunningSince, queueHead, restoreHead } from "./triage-queue.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 
@@ -105,7 +105,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
 
     const now = deps.now();
     const key = runKey(number, headSha);
-    const managed = headRuns(await deps.managerRuns(tenantId, [{ source: sourceOf(record), repo, number }], undefined), repo, key);
+    const managed = headRuns(await deps.managerRuns(tenantId, [{ source: sourceOf(record), repo, number }]), repo, key);
     if (managed.some((run) => run.status === "running" && !isStuck(run, now, deps.policy))) {
       return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
     }

@@ -308,7 +308,7 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
 test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {
   const unused = {} as never;
   const app = guardedApp(handle.db, sessionOf, grants, {
-    triageVerdicts: createTriageVerdicts({ ...deps, list, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, triageState: unused, now: unused }),
+    triageVerdicts: createTriageVerdicts({ ...deps, list, verdicts: unused, managerRuns: unused, openPulls: unused, triageState: unused, now: unused }),
     triageTimeline: createTriageTimeline({ verdicts: unused }),
     triageStats: createTriageStats({ verdicts: unused, outcomes: unused, now: unused, log: unused }),
     audit: createAuditLog({ db: unused, artifacts: unused, readCheckPack: unused, runReader: unused, sameSource: unused, authorize: unused, workflows: ["pr-triage"] }),

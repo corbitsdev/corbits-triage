@@ -1,9 +1,8 @@
-// Decides, from what GitHub and the run logs say now, which open pull requests
-// to queue again. Pure, so every recovery path is decided in one place.
+// Decides, from what the host and the managers' runs say now, which open pull
+// requests to queue again. Pure, so every recovery path is decided in one place.
 import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { CiState } from "@corbits/github-reads";
 import { MODEL_NOT_ASKED } from "@corbits/triage-workflows/logic/settled";
-import type { Judged } from "@corbits/triage-workflows/logic/item";
 
 /** `labels` only where the host lists them. */
 export type OpenPr = { number: number; headSha: string; updatedAt: string; draft: boolean; labels?: string[] };
@@ -20,11 +19,9 @@ export type ObservedRun = {
   unconfirmed?: true;
   /** The run waited for CI still running on the head instead of deciding, so the head waits for its CI. */
   heldForCi?: true;
-  /** Workflow package version of the deployment the run ran on; the row keeps it to reset failed heads on a later deployment and to carry judge answers. */
-  workflowVersion?: string;
   trigger?: string;
-  offeringId?: string;
-  judged?: Judged;
+  /** When a running manager took the pass it has open; absent while it is up between passes, as while it waits on a reviewer. */
+  passAt?: string;
 };
 
 export type ReconcilePolicy = {
@@ -101,18 +98,14 @@ type RepoPlanInput = {
 
 export type TenantPlanInput = {
   repos: readonly RepoPlanInput[];
-  /** Every observed run of the deployment, by repository, then by `${number}@${headSha}`, whether or not its repository or head is still here. */
+  /** Every observed run, by repository, then by `${number}@${headSha}`, whether or not its repository or head is still here. */
   runs: ReadonlyMap<string, ReadonlyMap<string, readonly ObservedRun[]>>;
   now: Date;
   policy: ReconcilePolicy;
-  /** Workflow package version of the deployment new mail goes to; none when it was not deployed from the package registry. */
-  workflowVersion: string | undefined;
-  /** Decision-model offering of the deployment new mail goes to; judge answers are carried only between runs on the same one. */
-  offeringId?: string;
 };
 
-/** A head to queue, why, the judge answers its earlier runs got, the events it waited on CI with, and whether it is decided while the host's checks are pending. */
-export type QueuedPr = { number: number; reason: string; judged?: Judged; events?: TriageEvent[]; noWait?: true };
+/** A head to queue, why, the events it waited on CI with, and whether it is decided while the host's checks are pending. */
+export type QueuedPr = { number: number; reason: string; events?: TriageEvent[]; noWait?: true };
 
 /** Rows for exactly the open heads; queued heads are already marked queued. */
 export type RepoPlan = { rows: PrTriageRow[]; enqueue: QueuedPr[] };
@@ -137,16 +130,14 @@ function backoffMs(attempts: number, policy: ReconcilePolicy): number {
 type Observation = { status: PrTriageRow["status"]; run?: ObservedRun; runId?: string; error?: string };
 
 function withStatus(row: PrTriageRow, { status, run, runId = run?.runId, error }: Observation, now: string): PrTriageRow {
-  const workflowVersion = run?.workflowVersion ?? row.workflowVersion;
-  if (row.status === status && row.runId === runId && row.error === error && row.workflowVersion === workflowVersion) return row;
-  const { runId: _run, error: _error, workflowVersion: _version, events, ...rest } = row;
+  if (row.status === status && row.runId === runId && row.error === error) return row;
+  const { runId: _run, error: _error, events, ...rest } = row;
   return {
     ...rest,
     status,
     ...(events !== undefined && (inFlight({ status }) || status === "waiting") && { events }),
     ...(runId !== undefined && { runId }),
     ...(error !== undefined && { error }),
-    ...(workflowVersion !== undefined && { workflowVersion }),
     updatedAt: now,
   };
 }
@@ -246,17 +237,8 @@ function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], ci: C
   return now.getTime() >= Math.max(last + backoffMs(row.attempts, policy), unconfirmedUntil);
 }
 
-const STALE_VERDICT = "attempts from workflow version";
-
-/** A head capped under another workflow version starts over, once: its attempts were spent on other code. A settled verdict is kept; the next event triages the head on the current version. A row that names no version is not stale; a legacy integer always differs. */
-function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: string | undefined, at: string): PrTriageRow {
-  if (prior === undefined) {
-    return { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, ...(workflowVersion !== undefined && { workflowVersion }), firstSeenAt: at, updatedAt: at };
-  }
-  if (workflowVersion === undefined || prior.workflowVersion === undefined || prior.workflowVersion === workflowVersion) return prior;
-  if (prior.status !== "failed") return prior;
-  const { runId: _run, queuedAt: _queued, ...rest } = prior;
-  return { ...rest, status: "new", attempts: 0, workflowVersion, error: `${STALE_VERDICT} ${prior.workflowVersion}, current is ${workflowVersion}`, updatedAt: at };
+function fresh(pr: OpenPr, prior: PrTriageRow | undefined, at: string): PrTriageRow {
+  return prior ?? { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, firstSeenAt: at, updatedAt: at };
 }
 
 /** A queued head counts until the hub marks it failed for never starting, so a backed-up queue is not mailed again. */
@@ -279,28 +261,11 @@ function runningHeads(runs: TenantPlanInput["runs"], now: Date, policy: Reconcil
   return busy;
 }
 
-/** Once a head is on the live version, a run of any other, such as one on a deployment still being cancelled, neither settles nor fails it; it still holds its slot. A head still on an older version keeps every run, so one in flight settles. */
-function counts(run: ObservedRun, row: PrTriageRow, workflowVersion: string | undefined): boolean {
-  return workflowVersion === undefined || row.workflowVersion !== workflowVersion || run.workflowVersion === workflowVersion;
-}
+type Due = { repo: string; index: number; row: PrTriageRow };
 
-type Due = { repo: string; index: number; row: PrTriageRow; judged: Judged };
-
-/**
- * Every answer the head's completed runs got on the same workflow version and decision-model offering as the
- * deployment mailed, a newer run's winning; none when either is unknown. The judge is asked only what none answered.
- */
-function judgedOf(runs: readonly ObservedRun[], workflowVersion: string | undefined, offeringId: string | undefined): Judged {
-  if (workflowVersion === undefined || offeringId === undefined) return {};
-  const done = runs
-    .filter((run) => run.status === "completed" && run.workflowVersion === workflowVersion && run.offeringId === offeringId)
-    .sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
-  return Object.assign({}, ...done.map((run) => run.judged ?? {}));
-}
-
-/** A head with no run and no verdict, even if its mail failed to deliver; a version-stale reset also has no run, so only its reason tells it apart. */
+/** A head with no run and no verdict, even if its mail failed to deliver. */
 function neverTriaged(row: PrTriageRow): boolean {
-  return row.status === "new" && row.runId === undefined && !row.error?.startsWith(STALE_VERDICT);
+  return row.status === "new" && row.runId === undefined;
 }
 
 /** Never-attempted heads first, then oldest waiting first, a retried head by the time it was last queued; among equals, the oldest pull request first. */
@@ -310,7 +275,7 @@ function byWait(a: Due, b: Due): number {
     || a.row.number - b.row.number;
 }
 
-/** Queues a settled head again for `reason`, keeping its attempts since it did not fail; the row keeps its run so the verdict's answers are carried. */
+/** Queues a settled head again for `reason`, keeping its attempts since it did not fail. */
 export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: Date, policy: ReconcilePolicy): void {
   const index = plan.rows.findIndex((candidate) => candidate.number === row.number && candidate.headSha === row.headSha);
   if (index === -1) return;
@@ -321,7 +286,7 @@ export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: D
 }
 
 /** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running. */
-export function planTenant({ repos, runs, now, policy, workflowVersion, offeringId }: TenantPlanInput): Map<string, RepoPlan> {
+export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<string, RepoPlan> {
   const at = now.toISOString();
   const plans = new Map<string, RepoPlan>();
   const due: Due[] = [];
@@ -332,26 +297,26 @@ export function planTenant({ repos, runs, now, policy, workflowVersion, offering
     const next: PrTriageRow[] = [];
     for (const pr of prs) {
       const key = runKey(pr.number, pr.headSha);
-      const current = fresh(pr, byHead.get(key), workflowVersion, at);
-      const runsOfHead = (observed?.get(key) ?? []).filter((run) => counts(run, current, workflowVersion));
+      const current = fresh(pr, byHead.get(key), at);
+      const runsOfHead = observed?.get(key) ?? [];
       const seen = uncapped(observe(current, runsOfHead, now, policy), now, policy);
       // A head no webhook queued waits for its running CI like one that did; one with no checks yet is taken as having none.
       const held = seen.status === "new" && ci?.get(key) === "pending" && isDue(seen, pr, runsOfHead, undefined, now, policy) && waitsForCi("pending", seen.firstSeenAt, now, policy);
       const row: PrTriageRow = held ? { ...seen, status: "waiting", updatedAt: at } : seen;
       if (inFlight(row)) busy.add(`${name} ${key}`);
-      if (isDue(row, pr, runsOfHead, ci?.get(key), now, policy)) due.push({ repo: name, index: next.length, row, judged: judgedOf(runsOfHead, workflowVersion, offeringId) });
+      if (isDue(row, pr, runsOfHead, ci?.get(key), now, policy)) due.push({ repo: name, index: next.length, row });
       next.push(row);
     }
     plans.set(name, { rows: next, enqueue: [] });
   }
-  for (const { repo, index, row, judged } of due.sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0))) {
+  for (const { repo, index, row } of due.sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0))) {
     const plan = plans.get(repo)!;
     const { runId: _run, error: _error, events, ...rest } = row;
     // The events stay on the row while its run is in flight, so a check run finishing meanwhile is known to be covered by it.
     plan.rows[index] = { ...rest, status: "queued", ...(events !== undefined && { events }), attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
     const reason = row.status === "waiting" ? "waited for CI" : row.error ?? "never triaged";
     const noWait = decideNow(row, row.attempts + 1, now, policy);
-    plan.enqueue.push({ number: row.number, reason, ...(Object.keys(judged).length > 0 && { judged }), ...(events !== undefined && { events }), ...(noWait && { noWait }) });
+    plan.enqueue.push({ number: row.number, reason, ...(events !== undefined && { events }), ...(noWait && { noWait }) });
   }
   return plans;
 }

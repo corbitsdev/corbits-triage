@@ -148,18 +148,15 @@ describe("projectQueue from the hub's verdicts", () => {
     expect(items.map(({ key, draft }) => ({ key, draft }))).toEqual([{ key: "acme/widgets#8", draft: true }]);
   });
 
-  test("a pull request's run in flight, ended early or not read yet shows, with or without a previous verdict", () => {
+  test("a pull request's run in flight or ended early shows, with or without a previous verdict", () => {
     const run = (status: "running" | "stuck" | "failed") => ({ runId: `run-${status}`, startedAt: "2026-10-01T01:30:00.000Z", status });
     const pulls = [
       pull(8, { verdict: decided.verdict, run: run("running"), activityAt: "2026-10-01T01:30:00.000Z" }),
       pull(9, { run: run("stuck") }),
       pull(10, { run: run("failed") }),
-      pull(11, { verdict: decided.verdict, run: { status: "unknown" } }),
     ];
     expect(projectQueue(pulls, [], openPulls).map(({ key, state, running, failure, activityAt }) => ({ key, state, running, failure, activityAt }))).toEqual([
       { key: "acme/widgets#8", state: "needs-decision", running: true, failure: null, activityAt: "2026-10-01T01:30:00.000Z" },
-      // Until the hub read the live logs since it started, a run may be going, so writes wait as for one that is.
-      { key: "acme/widgets#11", state: "needs-decision", running: true, failure: null, activityAt: null },
       { key: "acme/widgets#9", state: "new", running: false, failure: "stuck", activityAt: null },
       { key: "acme/widgets#10", state: "new", running: false, failure: "failed", activityAt: null },
     ]);

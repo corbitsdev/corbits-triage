@@ -1,17 +1,15 @@
 import {
   ApiError,
   type Transport,
-  type WorkflowRunEvent,
 } from "@intx/hub-client";
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
-import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
+import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
 import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type CodeReviewProvider, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
-export const BACKLOG_WORKFLOW = "pr-triage-historical";
 const GITHUB_PROVIDER = "github";
 const GITHUB_PROVIDER_PLUGIN = "http";
 export const GITHUB_CREDENTIAL_NAME = "github";
@@ -109,13 +107,6 @@ export function isPerson(principal: HubPrincipal): boolean {
 }
 export type HubRole = typeof RoleResponse.infer;
 export type HubApproval = typeof ApprovalResponse.infer;
-export type HubRun = typeof WorkflowRunResponse.infer;
-
-export type RunLog = {
-  runId: string;
-  anchorRunId: string;
-  events: WorkflowRunEvent[];
-};
 
 type SectionDenied = {
   repos: boolean;
@@ -1215,10 +1206,6 @@ export async function listApprovals(transport: Transport, tenantId: string): Pro
   return listAll<HubApproval>(transport, `/api/tenants/${tid}/approvals`);
 }
 
-export async function listRuns(transport: Transport, tenantId: string): Promise<HubRun[]> {
-  const tid = enc(requireTenantId(tenantId));
-  return listAll<HubRun>(transport, `/api/tenants/${tid}/workflows/runs`);
-}
 
 async function readCodeReviewPlace(transport: Transport, tid: string): Promise<CodeReviewPlace> {
   return CodeReviewPlace.assert(await transport.fetch<unknown>("GET", `/api/integrations/code-review/${tid}/place`));
@@ -1462,16 +1449,15 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
 
 /** A stuck run is a failure, not running, so its Dos stay enabled: running them again is the way out. */
 function failureOf(run: PullRun | null): RunFailure | null {
-  return run === null || run.status === "running" || run.status === "unknown" || run.status === "waiting-ci" ? null : run.status;
+  return run === null || run.status === "running" || run.status === "waiting-ci" ? null : run.status;
 }
 
 function waitingFields(run: PullRun | null | undefined): Pick<PrItem, "waitingForCi" | "waitingHeadSha"> {
   return run?.status === "waiting-ci" ? { waitingForCi: true, waitingHeadSha: run.headSha } : { waitingForCi: false, waitingHeadSha: null };
 }
 
-/** A run the hub has not read yet may be going, so it holds writes like one that is. */
 function isRunning(run: PullRun | null): boolean {
-  return run?.status === "running" || run?.status === "unknown";
+  return run?.status === "running";
 }
 
 function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {

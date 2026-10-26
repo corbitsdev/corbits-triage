@@ -1,12 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { toast } from "@corbits/react-ui/ui/toast";
 import { toast as lastingToast } from "sonner";
-import { useQuery, useQueryClient, type Query, type QueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { errorText } from "@corbits/common";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
-import { isTerminalRunEvents } from "@intx/hub-client";
 import { ApiError, createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
 import {
   ANTHROPIC_PROVIDER,
@@ -30,7 +29,6 @@ import {
   type InvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
-  type RunLog,
   type PortalSnapshot,
   type RepoRecord,
   type WorkspaceOption,
@@ -95,11 +93,8 @@ const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
 };
 
 const PORTAL_QUERY_KEY = ["portal"] as const;
-export const RUN_IDS_QUERY_KEY = "run-ids";
-export const RUN_LOG_QUERY_KEY = "run-log";
 export const TRIAGE_VERDICTS_QUERY_KEY = "triage-verdicts";
 export const APPROVALS_QUERY_KEY = "approvals";
-export const RUNS_QUERY_KEY = "runs";
 export const PRINCIPALS_QUERY_KEY = "principals";
 export const ROLES_QUERY_KEY = "roles";
 export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
@@ -111,11 +106,8 @@ export const INVITE_PATH = "/invite/";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
   PORTAL_QUERY_KEY,
-  [RUN_IDS_QUERY_KEY],
-  [RUN_LOG_QUERY_KEY],
   [TRIAGE_VERDICTS_QUERY_KEY],
   [APPROVALS_QUERY_KEY],
-  [RUNS_QUERY_KEY],
   [PRINCIPALS_QUERY_KEY],
   [ROLES_QUERY_KEY],
   [DEPLOYED_WORKFLOWS_QUERY_KEY],
@@ -125,21 +117,8 @@ const REFRESH_QUERY_KEYS = [
   [TRIAGE_RELEASE_QUERY_KEY],
 ];
 
-function isRunLog(value: unknown): value is RunLog {
-  return typeof value === "object" && value !== null && "events" in value && Array.isArray(value.events);
-}
-
-export function isFinishedRunLogQuery(query: Query): boolean {
-  return query.queryKey[0] === RUN_LOG_QUERY_KEY && isRunLog(query.state.data) && isTerminalRunEvents(query.state.data.events);
-}
-
-/** A refresh rereads everything except finished run logs. */
-function canChange(query: Query): boolean {
-  return !isFinishedRunLogQuery(query);
-}
-
 async function invalidateChangeable(queryClient: QueryClient, queryKeys: ReadonlyArray<readonly unknown[]>): Promise<void> {
-  await Promise.all(queryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
+  await Promise.all(queryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })));
 }
 
 /** A 401 means the hub ended the session, so the local session is cleared too. */

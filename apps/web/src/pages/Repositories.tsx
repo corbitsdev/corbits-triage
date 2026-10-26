@@ -19,9 +19,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
 import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
-import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
-import { useRuns } from "../lib/tenant-entities.ts";
 import { relativeTime } from "../lib/triage-view.ts";
 
 function plural(n: number, word: string): string {
@@ -62,9 +60,7 @@ function isPlainClick(event: MouseEvent): boolean {
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
   const packStore = useHubRepoPackStore();
-  const logs = useBacklogLogs();
   const verdicts = useTriageVerdicts();
-  const runs = useRuns();
   const navigate = useNavigate();
   const params = useParams();
   const [search] = useSearchParams();
@@ -82,7 +78,7 @@ export default function Repositories() {
   const upgrades = usePolicyUpgrades();
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const active = useMemo(() => hostedRepos(verdicts.data?.active ?? []), [verdicts.data]);
-  const catchingUp = useMemo(() => catchingUpRepos(logs, runs.rows, triaged), [logs, runs.rows, triaged]);
+  const catchingUp = useMemo(() => catchingUpRepos(verdicts.data?.pulls ?? [], triaged), [verdicts.data, triaged]);
   const rows = useMemo(
     () => repoRows(repos, packs, items, active, catchingUp, openPulls, pullsError),
     [repos, packs, items, active, catchingUp, openPulls, pullsError],

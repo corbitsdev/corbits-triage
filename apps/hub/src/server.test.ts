@@ -3,17 +3,18 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { type } from "arktype";
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { and, count, eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
-import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName, TriageStats } from "@corbits/triage-contracts";
+import { checkPackName, emptyPack, parseTriageState, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage-github";
-import { verdictRecord } from "./github/verdict-record-store.js";
+import { replaceVerdict } from "./github/verdict-record-store.js";
+import { mirrorOutcomesOf, summaryOf } from "./github/verdict-row.js";
 import { ensureTriageRole } from "./github/automation.js";
 import { patchCorbitsTriage, upsertConnectedRepos } from "./github/tenant-config.js";
 import { homedir, tmpdir } from "node:os";
@@ -581,17 +582,15 @@ const SAVED_PACK = {
   actions: { when: ["opened", "updated", "checks", "ready"], pass: [{ do: "labels", target: { from: "list", labels: ["checked"] } }], fail: [], unsure: [] },
 };
 
-function timedRun(started: Date, tookMs: number, verdict: Record<string, unknown>, mirrored = false): SeededEvent[] {
-  const at = (offsetMs: number) => new Date(started.getTime() + offsetMs).toISOString();
+/** A manager's verdict as its pass records it: made `tookMs` after the pass started, its comment posted when `mirrored`. */
+async function seedVerdict(db: Db, tenantId: string, runId: string, started: Date, tookMs: number, verdict: Record<string, unknown>, mirrored = false): Promise<void> {
   const number = Number(verdict["number"]);
-  const payload = stockTriggerMail({ kind: "pr", repo: REPO, prNumber: number, headSha: verdict["headSha"] });
-  const mirror = mirrored ? { call: `mirror:${REPO.replace("/", "--")}:${number}`, ok: true } : { skipped: true };
-  return [
-    { type: "RunStarted", seq: 0, at: at(0), trigger: { type: "mail", payload } },
-    { type: "StepCompleted", seq: 1, at: at(tookMs), stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } },
-    { type: "StepCompleted", seq: 2, at: at(tookMs + 1_000), stepId: "mirror", output: { ref: `inline:${JSON.stringify({ reply: JSON.stringify(mirror) })}` } },
-    { type: "RunCompleted", seq: 3, at: at(tookMs + 2_000) },
-  ];
+  const headSha = String(verdict["headSha"]);
+  const trigger = { repo: REPO, source: "github" as const, number, headSha, startedAt: started.toISOString() };
+  const mirror = mirrorOutcomesOf(mirrored ? { call: `mirror:${REPO.replace("/", "--")}:${number}`, ok: true } : undefined);
+  const summary = summaryOf(verdict, new Date(started.getTime() + tookMs).toISOString(), trigger, mirror, undefined);
+  if (!summary) throw new Error(`no summary for ${runId}`);
+  await replaceVerdict(db, tenantId, { runId, repo: REPO, number, headSha, startedAt: started, ...summary, runStatus: "completed" });
 }
 
 function statsVerdict(number: number, headSha: string, fields: Record<string, unknown>) {
@@ -607,7 +606,7 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
   const dataDir = temporaryDirectory();
   const { db, close } = createDB(DATABASE);
   try {
-    const origin = await startHub({ GITHUB_API_ORIGIN: github.origin, TRIAGE_RECONCILE_INTERVAL_MS: "200" }, dataDir);
+    const origin = await startHub({ GITHUB_API_ORIGIN: github.origin }, dataDir);
     const headers = await signedIn(origin);
     const tenantId = await createTenant(origin, headers);
     const otherTenantId = await createTenant(origin, headers);
@@ -618,23 +617,11 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
     const ci = (result: string, check = "ci-green") => ({ check, kind: "machine", result, reason: "", evidence: [] });
     // Noon UTC yesterday keeps the runs on one UTC day at any hour.
     const started = new Date(new Date().setUTCHours(-12, 0, 0, 0));
-    await seedDeployment(db, dataDir, tenantId, [
-      timedRun(started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass", "ci")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good" } }), true),
-      timedRun(new Date(started.getTime() + 600_000), 180_000, statsVerdict(8, HEAD, {
-        state: "awaiting-review", actor: "maintainer", checks: [ci("unconfirmed")], actions: [{ ...verdictStep(label, HEAD), status: "done" }, verdictStep(note, HEAD)],
-      })),
-      timedRun(new Date(started.getTime() + 1_200_000), 900_000, statsVerdict(8, HEAD, { state: "stale-unknown", actor: "system", degraded: "error", checks: [ci("fail")] })),
-    ], prTriageWorkflow.id);
-
-    // Answers are cached for a minute, so the route is asked only once the reconciler recorded every verdict.
-    const deadline = Date.now() + 20_000;
-    let recorded = 0;
-    while (recorded < 3 && Date.now() < deadline) {
-      await Bun.sleep(200);
-      const [row] = await db.select({ rows: count() }).from(verdictRecord).where(eq(verdictRecord.tenantId, tenantId));
-      recorded = row?.rows ?? 0;
-    }
-    expect(recorded).toBe(3);
+    await seedVerdict(db, tenantId, "wfr_stats_7", started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass", "ci")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good" } }), true);
+    await seedVerdict(db, tenantId, "wfr_stats_8", new Date(started.getTime() + 600_000), 180_000, statsVerdict(8, HEAD, {
+      state: "awaiting-review", actor: "maintainer", checks: [ci("unconfirmed")], actions: [{ ...verdictStep(label, HEAD), status: "done" }, verdictStep(note, HEAD)],
+    }));
+    await seedVerdict(db, tenantId, "wfr_stats_8b", new Date(started.getTime() + 1_200_000), 900_000, statsVerdict(8, HEAD, { state: "stale-unknown", actor: "system", degraded: "error", checks: [ci("fail")] }));
 
     async function stats(tenant: string) {
       const res = await fetch(`${origin}/api/integrations/triage-stats/${tenant}?repo=${REPO}`, { headers });
