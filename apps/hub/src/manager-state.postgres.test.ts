@@ -335,6 +335,67 @@ test("PostgreSQL: a malformed claim fails closed", async () => {
   });
 }, 120_000);
 
+const MINUTE = 60_000;
+
+async function deployedRun(db: Db, runId: string, createdAt: Date): Promise<void> {
+  await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wfd_manager", tenantId: TENANT, status: "deployed", createdAt });
+}
+
+async function claimRun(db: Db, runId: string): Promise<void> {
+  const claim = { status: "live", claimId: randomUUID(), claimedAt: new Date().toISOString(), runId, reviewers: [], history: [], starts: 1 };
+  await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${CLAIM}, 'claim', ${JSON.stringify(claim)}::jsonb)`);
+}
+
+test("PostgreSQL: a manager deployed without a sidecar past the startup window does not hold the pull request", async () => {
+  await withDatabase(async function stuck(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await deployedRun(db, "run_stuck", new Date(Date.now() - 3 * MINUTE));
+    await claimRun(db, "run_stuck");
+    await liveRun(db, "run_next");
+    expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
+    const [left] = await db.select({
+      cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt,
+      cancellationReason: schema.workflowRun.cancellationReason,
+    }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_stuck'`);
+    expect(left?.cancellationRequestedAt).toBeInstanceOf(Date);
+    expect(left?.cancellationReason).toBe("manager deployed without a sidecar");
+  });
+}, 120_000);
+
+test("PostgreSQL: a manager deployed inside the startup window, or one with a sidecar, still holds the pull request", async () => {
+  await withDatabase(async function held(db) {
+    await deployedRun(db, "run_fresh", new Date());
+    await claimRun(db, "run_fresh");
+    await liveRun(db, "run_next");
+    expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
+
+    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 3 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_fresh'`);
+    await db.insert(schema.sidecar).values({
+      id: "sdc_up",
+      tokenHashSha256: new Uint8Array(32).fill(7),
+      provisionerId: "docker",
+      provisionerApiVersion: 2,
+      provisionerBindingFingerprint: "fp",
+      adapterManifestDigest: "digest",
+    });
+    await db.insert(schema.sidecarAllocation).values({
+      id: "alc_up",
+      anchorRunId: "run_fresh",
+      tenantId: TENANT,
+      provisionerId: "docker",
+      provisionerApiVersion: 2,
+      provisionerBindingFingerprint: "fp",
+      adapterManifestDigest: "digest",
+      status: "allocated",
+      sidecarId: "sdc_up",
+      maxDisconnectedMs: 60_000,
+    });
+    expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
+    const [heldRun] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_fresh'`);
+    expect(heldRun?.cancellationRequestedAt).toBeNull();
+  });
+}, 120_000);
+
 test("PostgreSQL: a malformed event payload or reviewer is refused", async () => {
   await withDatabase(async function badPayload(db) {
     await startManager(db, GITHUB, "run_a");

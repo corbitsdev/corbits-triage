@@ -2,7 +2,7 @@
 // pull request when no live run holds it, and done checks for pending events under the claim's lock, so an event is
 // either taken by the live manager or by the next one. Only the run the claim names takes events or finishes a pass.
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, sql } from "drizzle-orm";
 import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
@@ -148,24 +148,70 @@ export async function recordEvent(db: DB["db"], tenantId: string, pr: PullReques
   return inserted.length === 1;
 }
 
-async function runGone(tx: Tx, runId: string): Promise<boolean> {
-  const [run] = await tx.select({ status: schema.workflowRun.status }).from(schema.workflowRun).where(eq(schema.workflowRun.id, runId));
-  return !run || !schema.isLiveWorkflowRunStatus(run.status);
+/** How long a just-deployed manager may have no sidecar and still hold the pull request. The listener waits this long for it to start. */
+const MANAGER_START_GRACE_MS = 2 * 60_000;
+
+type ManagerRun = { status: string; createdAt: Date; allocationStatus: string | null; sidecarId: string | null };
+
+async function managerRun(tx: Tx, runId: string): Promise<ManagerRun | undefined> {
+  const [run] = await tx
+    .select({
+      status: schema.workflowRun.status,
+      createdAt: schema.workflowRun.createdAt,
+      allocationStatus: schema.sidecarAllocation.status,
+      sidecarId: schema.sidecarAllocation.sidecarId,
+    })
+    .from(schema.workflowRun)
+    .leftJoin(schema.sidecarAllocation, eq(schema.sidecarAllocation.anchorRunId, schema.workflowRun.id))
+    .where(eq(schema.workflowRun.id, runId));
+  return run;
+}
+
+/** A running manager, one whose sidecar is up, or one deployed inside the startup window. A deploy that never got a sidecar past that window is not. */
+function runIsUp(run: ManagerRun | undefined, now: Date): boolean {
+  if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
+  if (run.status === "running") return true;
+  if (run.allocationStatus === "allocated" && run.sidecarId !== null) return true;
+  return now.getTime() - run.createdAt.getTime() < MANAGER_START_GRACE_MS;
+}
+
+async function runGone(tx: Tx, runId: string, now: Date): Promise<boolean> {
+  return !runIsUp(await managerRun(tx, runId), now);
+}
+
+/** Asks the sweep to stop a deploy that still counts as live but never became a process, so it cannot start after its claim has moved on. */
+async function releaseStuck(tx: Tx, runId: string, now: Date): Promise<void> {
+  await tx
+    .update(schema.workflowRun)
+    .set({ cancellationRequestedAt: now, cancellationDeadline: now, cancellationReason: "manager deployed without a sidecar" })
+    .where(and(eq(schema.workflowRun.id, runId), inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]), isNull(schema.workflowRun.cancellationRequestedAt)));
+}
+
+/** The run id of the pull request's manager while that run is up. */
+export async function liveManager(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
+  return db.transaction(async function findLive(tx) {
+    const now = new Date();
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (claim?.status !== "live" || claim.runId === undefined) return undefined;
+    return (await runGone(tx, claim.runId, now)) ? undefined : claim.runId;
+  });
 }
 
 /**
- * The claim `runId` holds, taken for it when no live run holds it: it is missing or ended, or the run it names has gone,
- * whose open pass the caller resumes. Undefined while another live run holds it. Concurrent callers queue on the
+ * The claim `runId` holds, taken for it when no up run holds it: it is missing or ended, or the run it names has gone,
+ * whose open pass the caller resumes. Undefined while another up run holds it. Concurrent callers queue on the
  * claim's row lock, so exactly one takes it.
  */
 async function claimFor(tx: Tx, tenantId: string, pr: PullRequestRef, runId: string): Promise<Claim | undefined> {
   const key = claimKey(pr);
-  const fresh = { status: "live" as const, claimId: randomUUID(), claimedAt: new Date().toISOString(), runId };
+  const now = new Date();
+  const fresh = { status: "live" as const, claimId: randomUUID(), claimedAt: now.toISOString(), runId };
   await tx.insert(managerState).values({ tenantId, key, kind: "claim", state: claimOf(key, { ...fresh, reviewers: [], history: [], starts: 1 }) }).onConflictDoNothing();
   const claim = await lockClaim(tx, tenantId, pr);
   if (!claim) throw new Error(`manager_state ${key} vanished under its lock`);
   if (claim.status === "live" && claim.runId === runId) return claim;
-  if (claim.status === "live" && claim.runId !== undefined && !(await runGone(tx, claim.runId))) return undefined;
+  if (claim.status === "live" && claim.runId !== undefined && !(await runGone(tx, claim.runId, now))) return undefined;
+  if (claim.runId !== undefined && claim.runId !== runId) await releaseStuck(tx, claim.runId, now);
   const taken = { ...claim, ...fresh, starts: claim.starts + 1 };
   await writeClaim(tx, tenantId, pr, taken);
   return taken;
