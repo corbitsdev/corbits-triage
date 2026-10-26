@@ -13,7 +13,7 @@ import { triageWorkflowFor } from "../github/source-workflow.js";
 import { asCaller } from "../stock-caller.js";
 import {
   BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, lookupAddresses, pagedValues, readRepo,
-  resolveInstance, WEBHOOK_EVENTS, webhookExists, type AddressLookup, type Instance,
+  resolveInstance, saveWebhook, WEBHOOK_EVENTS, webhookExists, type AddressLookup, type Instance,
 } from "./client.js";
 import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, splitName, TOKEN_CREDENTIAL } from "./records.js";
 
@@ -23,9 +23,12 @@ const NO_STORE = { headers: { "Cache-Control": "no-store" } };
 const HOST_REFUSED = "The host must resolve only to public addresses; a private-network instance needs the hub operator to allowlist it.";
 const HOOK_METADATA = xHubHookMetadata(triageWorkflowFor("bitbucket-datacenter").id, BITBUCKET_DATACENTER_HOOK_HEADERS);
 
-export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
+const NewConnection = type({ baseUrl: "string > 0", token: "string > 0" });
+/** Connects, or replaces the token in place; `rotateHookSecret` instead signs the webhooks triage created with a new secret. */
+export const ConnectBody = NewConnection.or({ rotateHookSecret: "true" });
 export const Connection = type({ baseUrl: "string", hookUrl: "string" });
 export const Connected = type({ baseUrl: "string", hookUrl: "string", hookSecretSet: "true" });
+export const HookSecretRotated = type({ webhooksByHand: "string[]" });
 export const Disconnected = type({ webhooksLeft: "string[]" });
 const BitbucketRepo = type({ name: "string", connected: "boolean", source: "'bitbucket-datacenter'", "enabled?": "boolean", "defaultBranch?": "string", "webhookId?": "number" });
 export const BitbucketRepos = type({ repositories: BitbucketRepo.array() });
@@ -200,9 +203,42 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     return user;
   }
 
-  async function connect(body: typeof ConnectBody.infer, member: Member, req: Request): Promise<Response> {
+  /**
+   * Each webhook triage created is saved again with a new secret before the secret is stored. Repositories whose webhook
+   * was set up by hand, or could not be saved, are named so someone updates them on the instance.
+   */
+  async function rotateHookSecret(member: Member, req: Request): Promise<Response> {
+    const connection = bitbucketConnection(await tenantNs(member.tenantId));
+    if (!connection) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
+    const bb = await instance(member);
+    if (bb instanceof Response) return bb;
+    const secret = randomBytes(32).toString("hex");
+    const url = hookUrl(member.tenantId);
+    const webhooksByHand: string[] = [];
+    for (const record of repoRecords(await tenantNs(member.tenantId)).filter((row) => isBitbucketRecord(row) && row.enabled === true)) {
+      if (record.webhookId === undefined) {
+        webhooksByHand.push(record.name);
+        continue;
+      }
+      try {
+        await saveWebhook(bb, ...splitName(record.name), record.webhookId, url, secret);
+      } catch (err) {
+        deps.log({ level: "warn", msg: "bitbucket_datacenter_webhook_not_saved", tenantId: member.tenantId, repo: record.name, error: String(err) });
+        webhooksByHand.push(record.name);
+      }
+    }
+    const providerId = await ensureProvider(req, member.tenantId, connection.baseUrl);
+    if (providerId instanceof Response) return providerId;
+    const hookFailed = await writeCredential(req, member.tenantId, providerId, { name: HOOK_CREDENTIAL, secret, metadata: HOOK_METADATA });
+    if (hookFailed) return hookFailed;
+    return Response.json({ webhooksByHand });
+  }
+
+  async function connect(input: typeof ConnectBody.infer, member: Member, req: Request): Promise<Response> {
     const refused = await manageRefusal(member);
     if (refused) return refused;
+    if ("rotateHookSecret" in input) return rotateHookSecret(member, req);
+    const body = input;
     const checked = await reachable(body.baseUrl);
     if (!checked) return failure(400, "invalid_request", `baseUrl must be an http(s) URL without credentials, query, or fragment. ${HOST_REFUSED}`);
     const { baseUrl } = checked;

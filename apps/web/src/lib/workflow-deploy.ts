@@ -166,6 +166,9 @@ async function releaseUnwanted(transport: Transport, tenantId: string, hosts: De
   }
 }
 
+/** The long-lived deployments that hold a workspace credential from when they were deployed; code review reads it at each launch. */
+export const CREDENTIAL_HOLDERS: ReadonlySet<WorkflowKind> = new Set(["triage", "pr-workflow"]);
+
 /** Each host's triage deploys while the host is connected, its code review while that is on too, its PR workflow while a repository's policy file needs it; `redeploy` names the kinds deployed again even at the same version. */
 export async function ensureWorkflows(
   transport: Transport,

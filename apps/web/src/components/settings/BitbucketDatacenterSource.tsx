@@ -1,7 +1,7 @@
 import { useId, useState, type FormEvent } from "react";
 import { Button, Input } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { useBitbucketDatacenterConnection, useConnectBitbucketDatacenter, useDisconnectBitbucketDatacenter } from "../../lib/bitbucket-datacenter.ts";
+import { useBitbucketDatacenterConnection, useConnectBitbucketDatacenter, useDisconnectBitbucketDatacenter, useRotateBitbucketDatacenterHookSecret } from "../../lib/bitbucket-datacenter.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CopyField } from "../CopyField.tsx";
 
@@ -35,6 +35,72 @@ function ConnectForm({ disabled }: { disabled: boolean }) {
         <small id={blockerId} className="muted" aria-live="polite">{blocker}</small>
       </div>
     </form>
+  );
+}
+
+/** The connect route verifies the new token against the instance before it replaces the stored one. */
+function TokenRow({ baseUrl, disabled }: { baseUrl: string; disabled: boolean }) {
+  const { notify, redeployCredentialHolders } = usePortal();
+  const connect = useConnectBitbucketDatacenter();
+  const [editing, setEditing] = useState(false);
+  const [token, setToken] = useState("");
+  const busy = disabled || connect.isPending;
+
+  function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    connect.mutate({ baseUrl, token: token.trim() }, {
+      onSuccess: async function closeEditor() {
+        setToken("");
+        setEditing(false);
+        notify("Bitbucket Data Center token replaced.");
+        await redeployCredentialHolders();
+      },
+    });
+  }
+
+  function cancel() {
+    setToken("");
+    setEditing(false);
+    connect.reset();
+  }
+
+  return (
+    <div className="sentence">
+      <div className="rmain">
+        <div className="rline"><span className="w">The HTTP access token is stored.</span></div>
+        {editing && (
+          <form className="rline" onSubmit={save}>
+            <Input className="val w" type="password" aria-label="New HTTP access token" value={token} onChange={(event) => setToken(event.target.value)} disabled={busy} autoComplete="off" />
+            <Button type="submit" size="sm" disabled={busy || !token.trim()}>{connect.isPending ? "Checking…" : "Save"}</Button>
+            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={cancel}>Cancel</Button>
+          </form>
+        )}
+        {editing && <p className="field-help">Create a new token for the Corbits Triage user with the same permissions. Triage checks it with your instance before saving; then revoke the old token in Bitbucket.</p>}
+        {connect.error && <p role="alert" className="field-error">Could not replace the token. {errorText(connect.error)}</p>}
+      </div>
+      {!editing && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setEditing(true)}>Replace token</Button>}
+    </div>
+  );
+}
+
+function HookSecretRow({ disabled }: { disabled: boolean }) {
+  const { notify } = usePortal();
+  const rotate = useRotateBitbucketDatacenterHookSecret();
+
+  function confirmRotate() {
+    if (!window.confirm("Rotate the webhook secret? Triage saves each webhook it created with the new secret.")) return;
+    rotate.mutate(undefined, { onSuccess: () => notify("Webhook secret rotated.") });
+  }
+
+  return (
+    <div className="sentence">
+      <div className="rmain">
+        <div className="rline"><span className="w">The webhook secret is stored.</span></div>
+        {rotate.data && rotate.data.webhooksByHand.length > 0 && <p role="alert" className="field-error">Update the webhook secret by hand on {rotate.data.webhooksByHand.join(", ")}. Each repository's page in Triage shows the new secret.</p>}
+        {rotate.error && <p role="alert" className="field-error">Could not rotate the webhook secret. {errorText(rotate.error)}</p>}
+      </div>
+      <Button type="button" variant="outline" size="sm" disabled={disabled || rotate.isPending} onClick={confirmRotate}>{rotate.isPending ? "Rotating…" : "Rotate secret"}</Button>
+    </div>
   );
 }
 
@@ -77,6 +143,8 @@ export function BitbucketDatacenterSource() {
               <span className="txt">{connected ? <>Connected to <b className="mono small-text">{connected.baseUrl}</b>.</> : "Bitbucket Data Center is not connected."}</span>
               {connected && <Button type="button" variant="outline" size="sm" disabled={readOnly || disconnect.isPending} onClick={confirmDisconnect}>{disconnect.isPending ? "Disconnecting…" : "Disconnect"}</Button>}
             </div>
+            {connected && <TokenRow baseUrl={connected.baseUrl} disabled={readOnly || disconnect.isPending} />}
+            {connected && <HookSecretRow disabled={readOnly || disconnect.isPending} />}
           </div>
         )}
         {connection.data === null && <ConnectForm disabled={readOnly} />}

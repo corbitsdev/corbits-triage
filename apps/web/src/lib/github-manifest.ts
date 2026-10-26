@@ -80,12 +80,12 @@ export async function saveExistingGithubApp(input: {
   );
   if (exists && !input.replace) throw new ManifestStartError("replacement_confirmation_required");
   await ensureGitHubProvider(transport, input.tenantId);
-  await connectGithubApp(transport, input.tenantId, { appId: input.appId.trim(), privateKey: input.privateKey });
+  await connectGithubApp(transport, input.tenantId, { appId: input.appId.trim(), privateKey: input.privateKey, replace: input.replace });
   await configureGithubHook(transport, input.tenantId, input.webhookSecret);
 }
 
-/** The hub checks the App with GitHub and keeps its key out of the credential triage's workflows use. */
-export async function connectGithubApp(transport: Transport, tenantId: string, app: { appId: string; privateKey: string }): Promise<void> {
+/** The hub checks the App with GitHub and keeps its key out of the credential triage's workflows use; it refuses another App's ID unless `replace`. */
+export async function connectGithubApp(transport: Transport, tenantId: string, app: { appId: string; privateKey: string; replace?: boolean }): Promise<void> {
   await transport.fetch("PUT", `/api/integrations/github-app/${encodeURIComponent(tenantId)}`, app);
 }
 

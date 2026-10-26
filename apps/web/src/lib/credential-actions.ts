@@ -90,7 +90,7 @@ export async function runCredentialAction(
   displayName = secretDisplayName(credential.name),
 ): Promise<boolean> {
   const message = action === "rotate"
-    ? `Update the ${displayName} secret?`
+    ? `Rotate the ${displayName} secret? Paste the new one on GitHub right after.`
     : `Remove ${displayName}? Features that use this secret will stop working.`;
   if (!(await actions.confirm(message))) return false;
   if (action === "rotate") await actions.replaceSecret(credential.id, secret);

@@ -1,6 +1,7 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { type } from "arktype";
 import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
@@ -129,5 +130,45 @@ test("PostgreSQL: a hand-made webhook needs use on the hook credential, its setu
 
     expect((await integration.disable(MEMBER, "TRI", "widgets")).status).toBe(200);
     expect(await failureCode(integration.webhook(MEMBER, "TRI", "widgets"))).toEqual([409, "triage_off"]);
+  });
+}, 120_000);
+
+test("PostgreSQL: rotating the webhook secret saves each webhook triage created with the new secret, stores that secret, and names the hand-made ones", async () => {
+  await withDatabase(async function rotateHookSecret(db, cipher) {
+    const resaved: Array<{ path: string; secret: string }> = [];
+    const stored: unknown[] = [];
+    async function instance(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+      const path = new URL(String(input)).pathname;
+      const slug = path.includes("/gadgets") ? "gadgets" : "widgets";
+      if (path.endsWith("/default-branch")) return Response.json({ displayId: "main" });
+      if (path.endsWith("/webhooks") && init?.method === "POST") return slug === "gadgets" ? new Response(null, { status: 403 }) : Response.json({ id: 9 });
+      if (init?.method === "PUT") {
+        resaved.push({ path, secret: type({ configuration: { secret: "string" } }).assert(JSON.parse(String(init.body))).configuration.secret });
+        return Response.json({ id: 9 });
+      }
+      return Response.json({ slug, project: { key: "TRI" } });
+    }
+    async function stock(req: Request): Promise<Response> {
+      const { pathname } = new URL(req.url);
+      if (pathname.endsWith("/providers")) return Response.json({ data: [{ id: "prv_bitbucket", name: "bitbucket-datacenter", apiBaseUrl: BASE_URL }] });
+      if (pathname.endsWith(`/credentials/resolve/${HOOK_CREDENTIAL}`)) return Response.json({ id: HOOK_ID, name: HOOK_CREDENTIAL, status: "active" });
+      if (req.method === "PATCH" && pathname.endsWith(`/credentials/${HOOK_ID}`)) {
+        stored.push(await req.json());
+        return Response.json({});
+      }
+      return new Response(null, { status: 500 });
+    }
+    const integration = createBitbucketIntegration({
+      db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
+      stockFetch: stock, publicOrigin: "https://hub.test", fetchImpl: instance as typeof fetch, lookup: lookupBitbucket,
+      onEnabled() {}, async onConnectionChanged() {}, now: () => new Date(), log() {},
+    });
+    expect((await integration.enable(MEMBER, "TRI", "widgets")).status).toBe(200);
+    expect((await integration.enable(MEMBER, "TRI", "gadgets")).status).toBe(200);
+
+    const res = await integration.connect({ rotateHookSecret: true }, MEMBER, new Request("https://hub.test/api/integrations/bitbucket-datacenter"));
+    expect(await res.json()).toEqual({ webhooksByHand: ["TRI/gadgets"] });
+    expect(resaved).toEqual([{ path: "/rest/api/1.0/projects/TRI/repos/widgets/webhooks/9", secret: expect.stringMatching(/^[0-9a-f]{64}$/) }]);
+    expect(stored).toEqual([{ secret: resaved[0]!.secret, status: "active", metadata: expect.any(Object) }]);
   });
 }, 120_000);

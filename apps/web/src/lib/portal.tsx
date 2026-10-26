@@ -41,7 +41,7 @@ import {
 } from "./hub-api.ts";
 import { readChosenWorkspace, writeChosenWorkspace } from "./chosen-workspace.ts";
 import type { CreateGrantInput } from "./grant-actions.ts";
-import { ensureWorkflows, releaseWorkflows, type DeployHosts } from "./workflow-deploy.ts";
+import { CREDENTIAL_HOLDERS, ensureWorkflows, releaseWorkflows, type DeployHosts } from "./workflow-deploy.ts";
 import type { WorkflowKind } from "./workflow-packages.ts";
 import { reconcileModelCatalog, removeModelKey, saveInference } from "./model-catalog.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
@@ -75,6 +75,8 @@ interface PortalContextValue {
   writeGithub: (input: PrGithubWriteInput, delivery: GithubDelivery) => Promise<PrGithubWriteResult>;
   decide: (approvalId: string, decision: "once" | "always" | "deny") => Promise<void>;
   replaceSecret: (credentialId: string, secret: string) => Promise<void>;
+  /** After a credential is replaced outside `replaceSecret`, so the deployments holding it get the new value. */
+  redeployCredentialHolders: () => Promise<void>;
   revoke: (credentialId: string) => Promise<void>;
   addGrant: (input: CreateGrantInput) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
@@ -377,15 +379,23 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
+  const redeployCredentialHolders = useCallback(async function redeployCredentialHolders() {
+    const fresh = await refreshNow();
+    // Every converge deploys triage, which needs the decision model.
+    if (!fresh?.decisionModel) return;
+    const freshHosts = hostsOf(fresh);
+    if (freshHosts.connected.length > 0) convergeWorkflows(fresh.workspace.tenantId, freshHosts, CREDENTIAL_HOLDERS);
+  }, [convergeWorkflows, refreshNow]);
+
   const replaceSecret = useCallback(
     async function replaceSecret(credentialId: string, secret: string) {
       const current = requireSnapshot();
       const transport = createHubTransport();
       await replaceCredential(transport, current.workspace.tenantId, credentialId, secret);
       notify("Secret updated.");
-      refresh();
+      await redeployCredentialHolders();
     },
-    [notify, refresh, requireSnapshot],
+    [notify, redeployCredentialHolders, requireSnapshot],
   );
 
   const revoke = useCallback(
@@ -508,6 +518,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         writeGithub,
         decide,
         replaceSecret,
+        redeployCredentialHolders,
         revoke,
         addGrant,
         saveInferenceSecret,
@@ -538,6 +549,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       writeGithub,
       decide,
       replaceSecret,
+      redeployCredentialHolders,
       revoke,
       addGrant,
       saveInferenceSecret,

@@ -8,6 +8,7 @@ import {
   listBitbucketDatacenterRepositories,
   loadBitbucketDatacenterConnection,
   loadBitbucketDatacenterWebhook,
+  rotateBitbucketDatacenterHookSecret,
   type RepoRecord,
 } from "./hub-api.ts";
 import { createHubTransport, type Transport } from "./hub-transport.ts";
@@ -95,6 +96,22 @@ export function useDisconnectBitbucketDatacenter() {
 
 function webhookKey(tenantId: string | undefined, repo: string) {
   return [BITBUCKET_DATACENTER_QUERY_KEY, tenantId, "webhook", repo] as const;
+}
+
+/** A new secret changes what each hand-made webhook's setup shows, so those are read again. */
+export function useRotateBitbucketDatacenterHookSecret() {
+  const queryClient = useQueryClient();
+  const { snapshot, redeployCredentialHolders } = usePortal();
+  const tenantId = snapshot?.workspace.tenantId;
+  return useMutation({
+    mutationFn: async function rotate() {
+      return rotateBitbucketDatacenterHookSecret(createHubTransport(), requireTenant(tenantId));
+    },
+    onSuccess: async function readWebhooksAgain() {
+      await queryClient.invalidateQueries({ queryKey: [BITBUCKET_DATACENTER_QUERY_KEY, tenantId, "webhook"] });
+      await redeployCredentialHolders();
+    },
+  });
 }
 
 /** Turning triage on or off also creates or removes the webhook, which only the hub's routes do. */

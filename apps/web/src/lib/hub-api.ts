@@ -1688,6 +1688,11 @@ export async function connectBitbucketDatacenter(transport: Transport, tenantId:
   return bitbucketDatacenter<BitbucketDatacenterConnection>(transport, "PUT", tenantId, "/connection", input);
 }
 
+/** Answers the enabled repositories whose webhook must be given the new secret on the instance by hand. */
+export async function rotateBitbucketDatacenterHookSecret(transport: Transport, tenantId: string): Promise<{ webhooksByHand: string[] }> {
+  return bitbucketDatacenter<{ webhooksByHand: string[] }>(transport, "PUT", tenantId, "/connection", { rotateHookSecret: true });
+}
+
 /** Answers the repositories whose webhook could not be removed and must be deleted on the instance. */
 export async function disconnectBitbucketDatacenter(transport: Transport, tenantId: string): Promise<{ webhooksLeft: string[] }> {
   return bitbucketDatacenter<{ webhooksLeft: string[] }>(transport, "DELETE", tenantId, "/connection", {});
