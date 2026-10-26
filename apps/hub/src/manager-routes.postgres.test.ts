@@ -12,7 +12,8 @@ import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-a
 import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
-import { recordEvent, type PullRequestRef } from "./manager-state.js";
+import { passRequest, recordEvent, type PullRequestRef } from "./manager-state.js";
+import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -160,6 +161,73 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
 
       expect(await (await post(app, "take", pr, manager)).json()).toMatchObject({ outcome: "pass", events: [{ key: `evt:${pr.source}:${pr.repo}#7:run_reviewer`, event: { type: "reviewer-result", payload: { kind: "code-review", result: REVIEW } } }] });
       expect(await (await post(app, "done", { ...pr, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });
+    }
+  });
+}, 60_000);
+
+/** The run as the stock deploy route launched it, from a published workflow whose frozen projection keeps its id. */
+async function launchedAs(db: Db, runId: string, workflow: string): Promise<void> {
+  await db.insert(schema.workflowRunLaunchSpec).values({
+    anchorRunId: runId, sessionId: `ses_${runId}`, deploymentDomain: "manager.test", sourceAuthorityPrincipalId: "prn_member",
+    frozenApprovalBundle: { projection: { id: workflow } }, sourceOfferingIds: [], defaultSourceOfferingId: "off_default", deployContent: {},
+  });
+}
+
+async function mailed(db: Db, pr: PullRequestRef, head: string, action: string): Promise<void> {
+  await recordEvent(db, TENANT, pr, `${action}-${pr.source}`, { type: "webhook", head, payload: { kind: "pr", event: "pull_request", action, headSha: head } });
+}
+
+/** What a pass that posted its verdict on `head` reports, as its evaluate, mirror, execute and rules steps output it. */
+function postedOn(pr: PullRequestRef, head: string) {
+  const target = { labels: ["api"] };
+  const request = { repo: pr.repo, number: pr.number, labels: ["Triage: Pass"], owned: [], comment: "Ready for review." };
+  const actions = [{ list: "pass", index: 0, effectId: `held-${head}`, kind: "labels", target, held: true }, { list: "pass", index: 1, effectId: `auto-${head}`, kind: "labels", target }];
+  return {
+    request,
+    report: {
+      head,
+      verdict: { repo: pr.repo, number: pr.number, headSha: head, verdict: "pass", state: "ready-monitoring", actor: "author", humanGated: false, degraded: null, checks: [{ check: "title", kind: "machine", result: "pass" }], actions, request },
+      mirror: { call: `mirror:${pr.repo.replace("/", "--")}:${pr.number}`, ok: true },
+      executed: { dos: [{ effectId: `auto-${head}`, status: "done" }] },
+      rules: { items: [{ facts: { repo: pr.repo, number: pr.number, title: "Fix the widget", author: "octocat" }, det: { findings: [{ reason: "The title says what changed." }] } }] },
+    },
+  };
+}
+
+test("PostgreSQL: done records the verdict a pass posted as its run's on its host, the run's newest replaces it, approvals set their outcomes and a held head records none", async () => {
+  await withDatabase(async function recorded(db) {
+    const app = buildHub(db);
+    const verdicts = createVerdictRecordStore(db);
+    for (const pr of [GITHUB, BITBUCKET]) {
+      const runId = `run_${pr.source}`;
+      const manager = bearer(await runWithToken(db, runId, [STATE]));
+      await launchedAs(db, runId, `triage-manager-${pr.source}`);
+
+      await mailed(db, pr, "h1", "opened");
+      await post(app, "take", pr, manager);
+      const first = postedOn(pr, "h1");
+      expect(await (await post(app, "done", { ...pr, reviewers: [], report: first.report }, manager)).json()).toEqual({ outcome: "ended" });
+      expect(await verdicts.latestFor(TENANT, pr)).toMatchObject({
+        runId, source: pr.source, headSha: "h1", runStatus: "completed", state: "ready-monitoring", settled: true, commented: true, trigger: "pull_request:opened",
+        checks: [{ check: "title", result: "pass" }], dos: [{ list: "pass", effectId: "held-h1" }, { list: "pass", effectId: "auto-h1" }],
+        detail: { headSha: "h1", facts: { title: "Fix the widget", author: "octocat" }, evidence: ["The title says what changed."], actions: [{ effectId: "held-h1", held: true }, { effectId: "auto-h1", status: "done" }] },
+      });
+      expect(await passRequest(db, TENANT, pr, runId, "h1")).toEqual(first.request);
+
+      await mailed(db, pr, "h2", "synchronize");
+      await post(app, "take", pr, manager);
+      const approvals = { results: [{ dos: [{ effectId: "held-h2", status: "done" }] }] };
+      await post(app, "done", { ...pr, reviewers: [], report: postedOn(pr, "h2").report }, manager);
+      await post(app, "take", pr, manager);
+      await post(app, "done", { ...pr, reviewers: [], approvals }, manager);
+      const rows = await verdicts.forPull(TENANT, pr.repo, pr.number);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ runId, headSha: "h2", trigger: "pull_request:synchronize", detail: { actions: [{ effectId: "held-h2", status: "done" }, { effectId: "auto-h2", status: "done" }] } });
+
+      await mailed(db, pr, "h3", "reopened");
+      await post(app, "take", pr, manager);
+      expect(await (await post(app, "done", { ...pr, reviewers: [], report: { head: "h3", waiting: true } }, manager)).json()).toEqual({ outcome: "ended" });
+      expect((await verdicts.forPull(TENANT, pr.repo, pr.number)).map((row) => row.headSha)).toEqual(["h2"]);
     }
   });
 }, 60_000);

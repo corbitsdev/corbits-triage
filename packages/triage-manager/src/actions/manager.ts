@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, WAITING_KIND } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, VerdictFacts, WAITING_KIND } from "@corbits/triage-contracts";
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
@@ -104,12 +104,35 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers };
 }
 
+const Output = { output: "Record<string, unknown>" } as const;
+
 const DoneInput = type({
   payload: "unknown",
   take: { output: TakeOutput },
+  "approvals?": { output: { results: "Record<string, unknown>[]" } },
+  "waiting?": { output: { waiting: "boolean" } },
+  "rules?": { output: { items: type({ facts: "Record<string, unknown>", "det?": "unknown" }).array() } },
+  "evaluateRules?": Output,
+  "mirrorRules?": Output,
+  "executeRules?": Output,
   "reviewMailed?": { output: { "reviewer?": Reviewer } },
   "judgeMailed?": { output: { "reviewer?": Reviewer } },
 });
+
+type DoneInput = typeof DoneInput.infer;
+
+/**
+ * What the pass did on its head, for the hub to record: held it for CI, or posted the verdict its mirror ran on, with the
+ * facts the verdict keeps rather than the whole diff.
+ */
+function doneReport({ take, waiting, rules, evaluateRules, mirrorRules, executeRules }: DoneInput): Record<string, unknown> | undefined {
+  const { head } = take.output;
+  if (head === undefined) return undefined;
+  if (waiting?.output.waiting) return { head, waiting: true };
+  if (!rules || !evaluateRules || !mirrorRules) return undefined;
+  const items = rules.output.items.map(({ facts, det }) => ({ facts: { ...VerdictFacts.assert(facts), repo: facts["repo"], number: facts["number"] }, det }));
+  return { head, verdict: evaluateRules.output, mirror: mirrorRules.output, ...(executeRules && { executed: executeRules.output }), rules: { items } };
+}
 
 /** This pass's report, or a passed deadline, recorded on the reviewer it belongs to. */
 function remembered(take: TakeOutput): Reviewer[] {
@@ -172,8 +195,8 @@ function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
 }
 
 /**
- * Closes the pass and stops the code reviews it no longer waits for. `more` runs the next pass at once, or with `wait`
- * after waiting for a code review.
+ * Closes the pass with what it ran and stops the code reviews it no longer waits for. `more` runs the next pass at once,
+ * or with `wait` after waiting for a code review.
  */
 export async function done(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ outcome: "ended" | "refused" } | { outcome: "more"; wait: boolean }> {
   const parsed = DoneInput(input);
@@ -181,7 +204,9 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   if (parsed.take.output.refused) return { outcome: "refused" };
   const mail = managerMailOf(parsed.payload);
   const mailed = parsed.judgeMailed?.output.reviewer ?? parsed.reviewMailed?.output.reviewer;
-  const answer = await asManager(ctx, mail, "done", { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, mailed) }, Done);
+  const report = doneReport(parsed);
+  const body = { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, mailed), ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }) };
+  const answer = await asManager(ctx, mail, "done", body, Done);
   if (answer === undefined) return { outcome: "refused" };
   for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);
   return answer;

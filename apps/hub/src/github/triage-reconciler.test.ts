@@ -295,6 +295,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     },
     activity: options.activity ?? { stale: () => true },
     observeTenant: observer.observe,
+    managerRuns: async () => ({ byRepo: new Map(), runCount: 0, verdicts: [], approved: [] }),
     headChecks: async () => options.headChecks ?? [],
     verdicts: { latest: async () => options.recorded ?? [] },
     store: store(),

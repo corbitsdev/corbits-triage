@@ -35,6 +35,9 @@ const DetailAction = type({
   "error?": "string",
 });
 
+/** The pull request's facts a verdict keeps. */
+export const VerdictFacts = type({ "+": "delete", "title?": "string", "author?": "string", "draft?": "boolean", "mergeable?": "boolean | null", "checks?": "string", "reviewAnswered?": "boolean" });
+
 /** What the portal shows of a verdict beyond the columns: the verdict's own fields, and the facts it was made from. */
 export const VerdictDetail = type({
   "+": "delete",
@@ -55,7 +58,7 @@ export const VerdictDetail = type({
   "automatic?": "string[]",
   /** Why the run's mirror posted nothing on the host: `stale`, `waiting`, `no_request` or `no_grants`. */
   "notPosted?": "string",
-  "facts?": { "+": "delete", "title?": "string", "author?": "string", "draft?": "boolean", "mergeable?": "boolean | null", "checks?": "string", "reviewAnswered?": "boolean" },
+  "facts?": VerdictFacts,
 });
 export type VerdictDetail = typeof VerdictDetail.infer;
 

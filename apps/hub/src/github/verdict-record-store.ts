@@ -1,5 +1,6 @@
 // One row per verdict a completed pr-triage run made for a pull request head,
-// copied from the live deployment's run log by the reconciler. The log holds
+// copied from the live deployment's run log by the reconciler, and one per
+// pull request for each manager run, its newest, reported by its done. The log holds
 // only the runs since the deployment last rotated, so this table is what a
 // window of stats reads, and what the portal shows of each pull request.
 import { and, asc, desc, eq, getTableColumns, gte, inArray, or, sql, type SQL } from "drizzle-orm";
@@ -76,20 +77,24 @@ function ofPulls(pulls: readonly PullRef[]): SQL | undefined {
   return or(...pulls.map((pull) => and(eq(verdictRecord.repo, pull.repo), eq(verdictRecord.number, pull.number))));
 }
 
+/** A published workflow's definition is named for its publisher and release; its frozen projection keeps the workflow's own id. */
+const workflowName = sql<string>`coalesce(${schema.workflowRunLaunchSpec.frozenApprovalBundle} -> 'projection' ->> 'id', ${schema.workflowDefinition.name})`;
+
 /**
  * A verdict's host is its run's workflow's. A verdict whose run is gone, or from a workflow from before hosts, is GitHub's:
  * workflow runs go only with their tenant, and every workflow before hosts read GitHub.
  */
-const verdictSource = sql<RepoSource>`case when ${inArray(schema.workflowDefinition.name, jobWorkflowsFor("bitbucket-datacenter"))} then 'bitbucket-datacenter' else 'github' end`;
+const verdictSource = sql<RepoSource>`case when ${inArray(workflowName, jobWorkflowsFor("bitbucket-datacenter"))} then 'bitbucket-datacenter' else 'github' end`;
 
 /** The verdicts `where` picks, each with its host, to group or pick from by host. */
 function hostedVerdicts(db: DB["db"], where: SQL | undefined) {
-  const { workflowRun, workflowDefinition } = schema;
+  const { workflowRun, workflowDefinition, workflowRunLaunchSpec } = schema;
   return db
     .select({ ...getTableColumns(verdictRecord), source: verdictSource.as("source") })
     .from(verdictRecord)
     .leftJoin(workflowRun, and(eq(workflowRun.id, verdictRecord.runId), eq(workflowRun.tenantId, verdictRecord.tenantId)))
     .leftJoin(workflowDefinition, eq(workflowDefinition.id, workflowRun.definitionId))
+    .leftJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.anchorRunId))
     .where(where)
     .as("hosted");
 }
@@ -119,6 +124,15 @@ export function createVerdictRecordStore(db: DB["db"]) {
           commented: sql`${verdictRecord.commented} OR excluded.commented`,
           runStatus: sql`coalesce(excluded.run_status, ${verdictRecord.runStatus})`,
         },
+      });
+    },
+
+    /** A manager's verdict: its run makes one per pass, and the newest replaces the row its run recorded before. */
+    async replace(tenantId: string, verdict: RecordedVerdict): Promise<void> {
+      const { runId: _runId, repo: _repo, number: _number, ...fields } = verdict;
+      await db.insert(verdictRecord).values({ ...verdict, tenantId }).onConflictDoUpdate({
+        target: [verdictRecord.tenantId, verdictRecord.runId, verdictRecord.repo, verdictRecord.number],
+        set: { detail: null, trigger: null, runStatus: null, ...fields },
       });
     },
 
@@ -173,6 +187,11 @@ export function createVerdictRecordStore(db: DB["db"]) {
         .where(and(eq(verdictRecord.tenantId, tenantId), sql`jsonb_typeof(${verdictRecord.detail}->'score') = 'number'`))
         .limit(1);
       return row !== undefined;
+    },
+
+    ofRuns(tenantId: string, runIds: readonly string[]): Promise<VerdictRecord[]> {
+      if (runIds.length === 0) return Promise.resolve([]);
+      return db.select().from(verdictRecord).where(and(eq(verdictRecord.tenantId, tenantId), inArray(verdictRecord.runId, [...runIds])));
     },
 
     /** Oldest first. */

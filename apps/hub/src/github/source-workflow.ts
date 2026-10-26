@@ -3,7 +3,7 @@
 // its host's workflow.
 import { and, eq, inArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { CODE_REVIEW_PROVIDERS, codeReviewProviderOf, type RepoSource } from "@corbits/triage-contracts";
+import { CODE_REVIEW_PROVIDERS, codeReviewProviderOf, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import { PR_TRIAGE_ADDRESS } from "@corbits/triage-workflows/pr-triage";
 import { PR_TRIAGE_BITBUCKET_DATACENTER_ADDRESS, workflow as prTriageBitbucket } from "@corbits/triage-workflows/pr-triage-bitbucket-datacenter";
 import { PR_TRIAGE_GITHUB_ADDRESS, workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
@@ -55,10 +55,10 @@ export function codeReviewWorkflowFor(source: RepoSource): CodeReviewWorkflow {
   return CODE_REVIEW_WORKFLOWS.find((workflow) => workflow.source === source)!;
 }
 
-/** Every workflow a host's pull request job can run in: its triage, its code review and its PR workflow variants. */
+/** Every workflow a host's pull request job can run in: its triage, its code review, its PR workflow variants and its manager. */
 export function jobWorkflowsFor(source: RepoSource): string[] {
   const variants = PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === source).map((variant) => variant.id);
-  return [triageWorkflowFor(source).id, codeReviewWorkflowFor(source).id, ...variants];
+  return [triageWorkflowFor(source).id, codeReviewWorkflowFor(source).id, ...variants, TRIAGE_MANAGERS[source]];
 }
 
 /** The host whose credential a package entry binds; undefined for an entry that binds none. */
