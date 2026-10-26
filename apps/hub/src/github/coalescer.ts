@@ -9,17 +9,19 @@
 // queued when its first event is accepted, so a window lost to a restart is
 // recovered by the reconciler. Every accepted event opens or joins a window,
 // even on a head already queued: a queued row does not say whether its run
-// has read facts yet. When the policy reads CI and CI on the head is still
-// running, the head waits instead, holding its events, and the window that
-// sees CI finish, or the reconciler, mails it; a new commit first takes over
-// the events an earlier head held. Check events on a waiting head
-// leave its row as it is until CI is read done, and a completed check suite
-// closes their window on the burst. A window of check events alone reads
-// whether its pull request is still open and ready once at its flush, since
-// their payloads do not say. The window map lives in
-// process: the hub runs as one replica.
+// has read facts yet. When the policy reads CI and a window that is not only
+// check events finds CI still running, the head waits instead, holding its
+// events, and the window that sees CI finish, or the reconciler, mails it; a
+// new commit first takes over the events an earlier head held. A window of
+// check events alone is mailed either way, pending or green: check webhooks
+// are not replayed, and the manager, not this process, holds a still-pending
+// head. Check events on a waiting head leave its row as it is until the flush
+// mails them. A completed check suite closes their window on the burst. A
+// window of check events alone reads whether its pull request is still open
+// and ready once at its flush, since their payloads do not say. The window
+// map lives in process: the hub runs as one replica.
 import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type PolicySource, type PolicyWorkflow, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
-import { checkPending, summarizeChecks, type CheckRun } from "@corbits/github-reads";
+import { summarizeChecks, type CheckRun } from "@corbits/github-reads";
 import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import { GithubRateLimited } from "./github-usage.js";
@@ -107,11 +109,6 @@ function never(): boolean {
 
 function movedOn(prior: PrTriageRow | undefined): boolean {
   return prior?.status !== "waiting";
-}
-
-/** A settled or not-yet-running head can be held; a run already going is left to finish, and a head already waiting stays as it is. */
-function holdsForPendingChecks(prior: PrTriageRow | undefined): boolean {
-  return prior === undefined || prior.status === "new" || prior.status === "queued" || prior.status === "triaged" || prior.status === "failed";
 }
 
 function heldForCi({ event }: CoalescedEvent, prior: PrTriageRow | undefined): boolean {
@@ -247,26 +244,15 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       throw err;
     }
     const ci = checks && summarizeChecks(checks);
-    // CI still running on the head is re-triaged once by its last completed check run; a head waiting for CI is released by its first failed check.
-    const pending = prior?.status === "waiting" ? ci === "pending" : checks?.some(checkPending) === true;
-    // Check webhooks are not replayed. One that finds CI still running holds a head that is not already waiting and has no run
-    // going, so the reconciler queues it once CI finishes. The wait starts at this hold: an old pull request is not decided
-    // while a check is still running. The GitHub label alone does not.
-    if (checksOnly && pending && readsCi && holdsForPendingChecks(prior)) {
-      const events = [...new Set([...heldEvents(prior), ...open.events])];
-      const now = deps.now();
-      await waitHead(deps.store, head, events, now, now);
-      deps.log({ level: "info", msg: "triage_waiting_ci", ...entry, events, ci });
-      if (prior?.status !== "waiting") await markWaiting(open, ci === "none");
-      return;
-    }
-    if (checksOnly && pending) return drop(open, entry, "checks_pending");
     // Undefined when the reconciler moved the head on since its window opened.
     const { remembered } = open.remembered ? open : await queue(head, movedOn, false);
     if (remembered === undefined) return drop(open, entry, "released");
     const events = [...new Set([...heldEvents(prior), ...open.events])];
     const firstSeenAt = remembered.rows.find((row) => row.number === head.number && row.headSha === head.headSha)!.firstSeenAt;
-    if (readsCi && waitsForCi(ci, firstSeenAt, deps.now(), deps.ciWait)) {
+    // Check events are mailed even while CI is pending. The manager refuses the approval, and a verdict that waited
+    // records heldForCi so the reconciler queues the head once CI is green. Other events still wait out CI here,
+    // keeping the time the head was first seen: the 60-minute give-up is not restarted.
+    if (!checksOnly && readsCi && waitsForCi(ci, firstSeenAt, deps.now(), deps.ciWait)) {
       await waitHead(deps.store, head, events, deps.now());
       deps.log({ level: "info", msg: "triage_waiting_ci", ...entry, events, ci });
       if (prior?.status !== "waiting") await markWaiting(open, ci === "none");
