@@ -91,8 +91,11 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     return { anchorRunId: run.anchorRunId, events: await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId) };
   }
 
-  /** The workflow whose deployment held the Do: a worker is its listener's copy, so it goes by the listener's name. */
-  async function heldBy(tenantId: string, anchorRunId: string): Promise<string | undefined> {
+  /**
+   * The workflow whose deployment held the Do: a worker is its listener's copy, so it goes by the listener's name. The
+   * anchor run was just read from the run that held it, and every run has a definition, so a missing one is a broken store.
+   */
+  async function heldBy(tenantId: string, anchorRunId: string): Promise<string> {
     const { workflowRun, workflowDefinition } = schema;
     const [row] = await deps.db
       .select({ name: workflowDefinition.name })
@@ -100,7 +103,8 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
       .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
       .where(and(eq(workflowRun.id, anchorRunId), eq(workflowRun.tenantId, tenantId)))
       .limit(1);
-    return row?.name;
+    if (!row) throw new Error(`run ${anchorRunId} has no workflow definition`);
+    return row.name;
   }
 
   /** An approval stands only on the newest verdict that judged something; a run not recorded yet has none newer that is known. */
@@ -137,7 +141,7 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     const warning = approval.step.kind === "merge" && approval.list !== "pass" ? `The verdict on this head was ${approval.list}, not pass.` : undefined;
     try {
       if (!(await deps.toListener(tenantId, mailed))) {
-        const variant = prWorkflowVariantOf((await heldBy(tenantId, run.anchorRunId)) ?? "");
+        const variant = prWorkflowVariantOf(await heldBy(tenantId, run.anchorRunId));
         const heldByVariant = variant?.source === repoSource;
         const workflow = heldByVariant ? variant.id : triageWorkflowFor(repoSource).id;
         const deployment = newestLive(await deps.liveDeployments(tenantId, workflow));
