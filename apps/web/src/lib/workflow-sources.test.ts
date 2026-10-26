@@ -71,14 +71,22 @@ function withoutSideBand(advertisement: Buffer): Buffer {
   return Buffer.concat(lines);
 }
 
+// Without the runner's own git config, which may have no identity or may sign; the hub commits as itself.
+const HUB_GIT = { GIT_AUTHOR_NAME: "Hub", GIT_AUTHOR_EMAIL: "hub@hub.test", GIT_COMMITTER_NAME: "Hub", GIT_COMMITTER_EMAIL: "hub@hub.test" };
+
+function hubGit(args: string[], stdin?: string): string {
+  const run = Bun.spawnSync([gitPath, ...args], { env: HUB_GIT, ...(stdin !== undefined && { stdin: Buffer.from(stdin) }) });
+  if (run.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${run.stderr.toString()}`);
+  return run.stdout.toString().trim();
+}
+
 // Like the hub, a new asset starts with one commit of its own holding a `.gitignore`.
 function createRepo(name: string): void {
   const dir = path.join(repos, `${name}.git`);
-  Bun.spawnSync([gitPath, "init", "--bare", "-q", dir]);
-  const gitignore = Bun.spawnSync([gitPath, "--git-dir", dir, "hash-object", "-w", "--stdin"], { stdin: Buffer.from("node_modules/\ndist/\n") }).stdout.toString().trim();
-  const tree = Bun.spawnSync([gitPath, "--git-dir", dir, "mktree"], { stdin: Buffer.from(`100644 blob ${gitignore}\t.gitignore\n`) }).stdout.toString().trim();
-  const seed = Bun.spawnSync([gitPath, "--git-dir", dir, "commit-tree", tree, "-m", "Initial commit"]).stdout.toString().trim();
-  Bun.spawnSync([gitPath, "--git-dir", dir, "update-ref", "refs/heads/main", seed]);
+  hubGit(["init", "--bare", "-q", "--initial-branch=main", dir]);
+  const gitignore = hubGit(["--git-dir", dir, "hash-object", "-w", "--stdin"], "node_modules/\ndist/\n");
+  const tree = hubGit(["--git-dir", dir, "mktree"], `100644 blob ${gitignore}\t.gitignore\n`);
+  hubGit(["--git-dir", dir, "update-ref", "refs/heads/main", hubGit(["--git-dir", dir, "commit-tree", tree, "-m", "Initial commit"])]);
 }
 
 const OFFERINGS = { decision: ["mof_decision", "corbits-system-one"], "claude-opus-5-5": ["mof_opus", "anthropic"], "claude-haiku-5-5": ["mof_haiku", "anthropic"] };
@@ -121,7 +129,7 @@ function portalFiles(builds: Array<{ workflow: string; hash: string; tree: Sourc
 }
 
 function gitIn(asset: string, ...args: string[]): string {
-  return Bun.spawnSync([gitPath, "--git-dir", path.join(repos, `${asset}.git`), ...args]).stdout.toString().trim();
+  return hubGit(["--git-dir", path.join(repos, `${asset}.git`), ...args]);
 }
 
 test("publishing a release twice pushes its commit once with a token scoped to the asset, then revokes it", async () => {
