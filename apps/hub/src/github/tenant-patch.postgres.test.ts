@@ -8,7 +8,7 @@ import { createDB, createGrantStore, runMigrations, schema } from "@intx/db";
 import { asRecord } from "@corbits/common";
 import { bitbucketConnection } from "../bitbucket-datacenter/records.js";
 import { allowCreator } from "./admin-github-grant.js";
-import { claimRotation, patchCorbitsTriage, prepareCorbitsTriagePatch, repoRecords, rotationRecord, triageNs, type CorbitsTriageNs, type RepoRecord } from "./tenant-config.js";
+import { patchCorbitsTriage, prepareCorbitsTriagePatch, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "./tenant-config.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const T = "tnt_patch";
@@ -121,18 +121,17 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq([])))).toEqual([400, "invalid_request"]);
 
     // A write landing between the hub's read and its locked write is refused, not overwritten.
-    const rotation = { from: "run_a", to: "run_b", at: "2026-10-18T00:00:00.000Z" };
     const interleaved = {
       ...deps,
       async authorize(principalId: string, tenantId: string, resource: string, action: string) {
-        await claimRotation(db, T, rotation);
+        await patchCorbitsTriage(db, T, (ns) => ({ ...ns, interleaved: true }));
         return deps.authorize(principalId, tenantId, resource, action);
       },
     };
     const repinned = { ...current, repos: [{ ...github, checkPack: { name: "policy", id: "art_a" } }, bitbucket] };
     expect(await errorOf(await prepareCorbitsTriagePatch(interleaved, T, MANAGER, patchReq(repinned)))).toEqual([409, "config_conflict"]);
     current = await storedNs();
-    expect(rotationRecord(current)).toEqual(rotation);
+    expect(current["interleaved"]).toBe(true);
 
     const kept = repoRecords(current)[0];
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, new Request(`https://hub/api/tenants/${T}`, { method: "PATCH", body: JSON.stringify({ name: 7, config: { corbitsTriage: { ...current, repos: [kept] } } }) })))).toEqual([400, "invalid_request"]);

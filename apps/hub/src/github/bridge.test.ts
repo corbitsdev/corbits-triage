@@ -161,7 +161,6 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
     cipher: stubCipher,
     cache: new DeliveryCache(),
     coalescer: { accept },
-    codeReview: { async offer() {} },
     log: ignoreLog,
     readCheckPack: packsFor(["octocat/hello"]),
     openHeadFor: openHeadOf([]),
@@ -469,21 +468,14 @@ describe("bridge handler", () => {
     expect([sent, rechecks, refreshed]).toEqual([[], [], []]);
   });
 
-  test("a disabled repo is 202 ignored, and its pull request event still reaches code review", async () => {
+  test("a disabled repo is 202 ignored", async () => {
     const sent: Sent[] = [];
-    const offered: string[] = [];
     const db = stubDb([hookRow()], {
       corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: false }] },
     });
-    const codeReview = {
-      async offer(_tenantId: string, record: { name: string }, mail: { action: string | null }) {
-        offered.push(`${record.name}:${mail.action}`);
-      },
-    };
-    const res = await bridge({ db, sent, codeReview })(githubRequest(prPayload), TARGET);
+    const res = await bridge({ db, sent })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
-    expect(offered).toEqual([`octocat/hello:${JSON.parse(prPayload).action}`]);
   });
 
   test("a draft is 202 ignored as its event says, and triaged once marked ready; a check run is left to its window to read", async () => {

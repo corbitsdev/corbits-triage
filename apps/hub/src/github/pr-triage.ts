@@ -8,7 +8,7 @@ import { schema } from "@intx/db";
 import { hasEnabledRules, repoPolicy, triageStopped, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
-import type { TriageJob } from "./coordinator.js";
+import type { TriageJob } from "./triage-queue.js";
 import type { PolicyReader } from "./check-pack-store.js";
 import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";

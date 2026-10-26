@@ -141,10 +141,6 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
     expect(await renewal.renewAll()).toEqual({ retry: false });
     expect(pushed().at(-1)).toEqual({ address: LISTENER, secrets: ["ghs_1_7_2"] });
 
-    // A worker is deployed with a token that has most of its hour left as it is.
-    await renewal.ensure(TENANT);
-    expect(github.minted()).toBe(2);
-
     // A stock credential write replaces the App while a renewal mints from the old key: the renewal does not overwrite it.
     github.hooks.onMint = async function stockWriteSavesReplacement() {
       await db.update(schema.credential).set({ secret: await cipher.encrypt(replacement.json, credentialAad("crd_github", "secret")) }).where(eq(schema.credential.id, "crd_github"));
@@ -154,8 +150,8 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
     expect(await secretOf("github")).toBe(replacement.json);
     expect(pushed()).toHaveLength(3);
 
-    // The next worker moves the replacement off the bound credential and mints from it.
-    await renewal.ensure(TENANT);
+    // The next renewal moves the replacement off the bound credential and mints from it.
+    await renewal.renew(TENANT);
     expect(await secretOf("github-app")).toBe(replacement.json);
     expect(await secretOf("github")).toBe("ghs_2_7_4");
     expect(pushed().at(-1)).toEqual({ address: LISTENER, secrets: ["ghs_2_7_4"] });
@@ -172,12 +168,12 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
     expect(await renewal.renewAll()).toEqual({ retry: true });
     expect(await githubRow()).toMatchObject({ status: "active", metadata: { appSlug: "app-2", tokenError: expect.stringContaining("503") } });
     await db.update(schema.credential).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(schema.credential.id, "crd_github"));
-    await expect(renewal.ensure(TENANT)).rejects.toThrow("503");
+    await expect(renewal.renew(TENANT)).rejects.toThrow("503");
     expect((await githubRow()).status).toBe("expired");
     expect((await launchable()).ok).toBe(false);
 
     github.hooks.down = false;
-    await renewal.ensure(TENANT);
+    await renewal.renew(TENANT);
     expect(await githubRow()).toMatchObject({ status: "active", metadata: { appSlug: "app-2" } });
     expect((await githubRow()).metadata).not.toHaveProperty("tokenError");
     expect((await launchable()).ok).toBe(true);

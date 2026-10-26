@@ -23,7 +23,7 @@
 import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type PolicySource, type PolicyWorkflow, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import { summarizeChecks, type CheckRun } from "@corbits/github-reads";
 import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
-import type { TriageJob } from "./coordinator.js";
+import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
 import type { PrMail } from "./normalize.js";
 import { sourceOf, triageStateKey, type RepoRecord } from "./tenant-config.js";

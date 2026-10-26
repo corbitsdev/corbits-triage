@@ -18,8 +18,6 @@ import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
 /** Installation tokens last an hour. */
 export const GITHUB_TOKEN_RENEW_MS = 45 * 60_000;
-/** A worker is deployed with the token it reads, so one with less left than this is renewed first. */
-const MIN_TOKEN_LIFE_MS = 15 * 60_000;
 /** A full pass falls due a little before the renewal interval fires, so the interval's pass is always full. */
 const RETRY_SLACK_MS = 60_000;
 
@@ -154,22 +152,6 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     });
   }
 
-  /**
-   * Renews the token of the workspace whose credential `tenantId` resolves to unless it is active with long enough left;
-   * reading the key first moves one a stock write left, which leaves no token.
-   */
-  async function ensure(tenantId: string): Promise<void> {
-    const owner = (await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL))?.tenantId;
-    if (owner === undefined) return;
-    await recorded(owner, async function ensureToken() {
-      await secure(owner);
-      const appJson = await githubAppKey(keyDeps, owner);
-      const github = await heldCredential(deps.db, owner, GITHUB_CREDENTIAL);
-      if (github?.status === "active" && github.expiresAt && github.expiresAt.getTime() - Date.now() > MIN_TOKEN_LIFE_MS) return;
-      await renewWith(owner, appJson);
-    });
-  }
-
   /** A key whose `github` credential was removed or revoked through the stock route goes with it. */
   async function dropOrphanKey(tenantId: string): Promise<void> {
     await deps.db.transaction(async function drop(tx) {
@@ -211,7 +193,7 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     return { retry: failed.size > 0, ...(retryAt !== undefined && { retryAt }) };
   }
 
-  return { issue, push, secure, renew, ensure, renewAll };
+  return { issue, push, secure, renew, renewAll };
 }
 
 export type GithubTokenRenewal = ReturnType<typeof createGithubTokenRenewal>;

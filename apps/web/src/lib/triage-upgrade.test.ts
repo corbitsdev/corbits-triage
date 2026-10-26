@@ -9,14 +9,24 @@ const PUBLISHED: PublishedSource[] = [
   { workflow: "triage-listener-github", assetId: "ast_listener", commitSha: "l1" },
 ];
 
-/** Live listeners: one the owner published, one another Deployer published, and another workflow's. */
+/** Live listeners one the owner and another Deployer published, the workflows they replace, a manager, and another host's pr-triage. */
 function fakeHub() {
   const deployments = [
     { id: "run_owner", tenantId: "t", definitionAssetId: "ast_owner_listener", status: "deployed", createdAt: "2026-10-01T00:00:00.000Z" },
     { id: "run_other", tenantId: "t", definitionAssetId: "ast_other_listener", status: "deployed", createdAt: "2026-10-02T00:00:00.000Z" },
     { id: "run_triage", tenantId: "t", definitionAssetId: "ast_triage", status: "deployed", createdAt: "2026-10-02T00:00:00.000Z" },
+    { id: "run_review", tenantId: "t", definitionAssetId: "ast_review", status: "deployed", createdAt: "2026-10-02T00:00:00.000Z" },
+    { id: "run_manager", tenantId: "t", definitionAssetId: "ast_manager", status: "deployed", createdAt: "2026-10-02T00:00:00.000Z" },
+    { id: "run_bitbucket", tenantId: "t", definitionAssetId: "ast_bitbucket", status: "deployed", createdAt: "2026-10-02T00:00:00.000Z" },
   ];
-  const workflows: Record<string, string> = { run_owner: "triage-listener-github", run_other: "triage-listener-github", run_triage: "pr-triage-github" };
+  const workflows: Record<string, string> = {
+    run_owner: "triage-listener-github",
+    run_other: "triage-listener-github",
+    run_triage: "pr-triage-github",
+    run_review: "pr-code-review-github",
+    run_manager: "triage-manager-github",
+    run_bitbucket: "pr-triage-bitbucket-datacenter",
+  };
   const requests: Array<{ method: string; path: string; body?: unknown }> = [];
   async function json<T>(method: string, path: string, body?: unknown): Promise<T> {
     requests.push({ method, path, ...(body !== undefined && { body }) });
@@ -40,7 +50,7 @@ function fakeHub() {
   return { transport: { fetch: json } as unknown as Transport, requests };
 }
 
-test("an upgrade deploys the listener from its published source, then stops every other listener of the host, whoever published it", async () => {
+test("an upgrade deploys the listener from its published source, then stops the host's other listeners, whoever published them, and the workflows it replaces", async () => {
   const hub = fakeHub();
   const steps: UpgradeStep[] = [];
   await upgradeTriage(hub.transport, PUBLISHER, ["github"], (step) => steps.push(step), async () => PUBLISHED);
@@ -55,6 +65,8 @@ test("an upgrade deploys the listener from its published source, then stops ever
   expect(hub.requests.filter((row) => row.method === "DELETE").map((row) => row.path)).toEqual([
     "/api/tenants/t/workflows/runs/run_owner",
     "/api/tenants/t/workflows/runs/run_other",
+    "/api/tenants/t/workflows/runs/run_triage",
+    "/api/tenants/t/workflows/runs/run_review",
   ]);
 });
 

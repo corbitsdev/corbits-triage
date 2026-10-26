@@ -7,7 +7,7 @@
 // out, on hosts and pull requests whose CI results send no webhook.
 import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
 import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
-import type { TriageJob } from "./coordinator.js";
+import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import { deliveryFailure, failHead } from "./triage-queue.js";

@@ -1,5 +1,6 @@
 // Switching a workspace to the per-pull-request manager: publish this portal's release as the person upgrading, deploy
-// each connected host's listener from it, and once it is up stop that host's listeners deployed before it.
+// each connected host's listener from it, and once it is up stop that host's listeners deployed before it and every
+// deployment of the workflows the listener replaced.
 import { skipToken, useMutation, useQuery } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { deployWorkflow, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
@@ -24,6 +25,12 @@ export const UPGRADE_STEP_LABEL: Record<UpgradeStep, string> = { publishing: "Pu
 const START_DEADLINE_MS = 5 * 60_000;
 const START_POLL_MS = 2_000;
 const FAILED_STATUSES = new Set(["failed", "cancelled", "released"]);
+
+/** Each host's workflows from before the listener, which nothing mails any more. */
+const REPLACED: Record<RepoSource, readonly string[]> = {
+  github: ["pr-triage", "pr-triage-github", "pr-triage-historical", "pr-code-review-github", "pr-workflow-anthropic-github"],
+  "bitbucket-datacenter": ["pr-triage-bitbucket-datacenter", "pr-code-review-bitbucket-datacenter", "pr-workflow-anthropic-bitbucket-datacenter"],
+};
 
 type Asset = { id: string; name: string; creatorPrincipalId: string | null };
 
@@ -67,9 +74,14 @@ function olderThan(deployment: { id: string; createdAt: string }, newer: Workflo
 }
 
 /** Only listeners deployed before this one, whoever published them, so of two upgrades at once the newer stays. */
-async function stopOlderListeners(transport: Transport, tenantId: string, source: RepoSource, started: WorkflowDeployment): Promise<void> {
+function isOlderListener(deployment: DeployedWorkflow, source: RepoSource, started: WorkflowDeployment): boolean {
+  return deployment.workflow === TRIAGE_LISTENERS[source] && olderThan(deployment, started) && !deployment.worker;
+}
+
+async function stopOldDeployments(transport: Transport, tenantId: string, source: RepoSource, started: WorkflowDeployment): Promise<void> {
   for (const deployment of await listDeployedWorkflows(transport, tenantId)) {
-    if (deployment.workflow === TRIAGE_LISTENERS[source] && olderThan(deployment, started) && !deployment.cancelling && !deployment.worker) await cancelDeployment(transport, tenantId, deployment.id);
+    if (deployment.cancelling) continue;
+    if (isOlderListener(deployment, source, started) || REPLACED[source].includes(deployment.workflow)) await cancelDeployment(transport, tenantId, deployment.id);
   }
 }
 
@@ -87,7 +99,7 @@ async function upgradeHost(transport: Transport, tenantId: string, source: RepoS
     throw new Error("The new version did not start, so the current one keeps running.");
   }
   onStep("stopping");
-  await stopOlderListeners(transport, tenantId, source, deployment);
+  await stopOldDeployments(transport, tenantId, source, deployment);
   return (await newerLive(transport, tenantId, source, deployment)) ? "superseded" : "upgraded";
 }
 

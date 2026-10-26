@@ -6,8 +6,6 @@ import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { tenantConfigOf } from "../github/bridge.js";
 import { activeCredential, credentialSecret } from "../github/portal-credential.js";
 import { triageNs } from "../github/tenant-config.js";
-import type { TriageJob, WorkerSpawner } from "../github/coordinator.js";
-import { jobWorkflowsFor } from "../github/source-workflow.js";
 import { bitbucketFetch, lookupAddresses, resolveInstance, type AddressLookup } from "./client.js";
 import { bitbucketConnection, TOKEN_CREDENTIAL } from "./records.js";
 
@@ -34,17 +32,4 @@ export function createTenantBitbucket(deps: TenantBitbucketDeps): TenantBitbucke
     if (checked === undefined) return undefined;
     return bitbucketFetch(deps.fetchImpl, checked, await credentialSecret(deps.cipher, credential));
   };
-}
-
-const BITBUCKET_WORKFLOWS = new Set(jobWorkflowsFor("bitbucket-datacenter"));
-
-/** A Bitbucket run sends the token to the stored instance, so its worker is spawned only while that host passes the check. */
-export function checkedBitbucketSpawner(spawner: WorkerSpawner, tenantBitbucket: TenantBitbucket): WorkerSpawner {
-  async function spawn(job: TriageJob): Promise<string> {
-    if (BITBUCKET_WORKFLOWS.has(job.workflow) && (await tenantBitbucket(job.tenantId)) === undefined) {
-      throw new Error("Bitbucket is not connected, has no active token, or its host is refused");
-    }
-    return spawner.spawn(job);
-  }
-  return { ...spawner, spawn };
 }

@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, repoSourceOf, WAITING_KIND, type RepoSource } from "@corbits/triage-contracts";
-import { reviewRequestOf, type PullRequestToReview } from "./code-review-feed.js";
+import { reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import { liveManager, recordEvent } from "./manager-state.js";
 

@@ -52,14 +52,14 @@ import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX, logRefusal } from "./integrations/app.js";
 import { createBitbucketCodeReviewSend } from "./bitbucket-datacenter/code-review-send.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
-import { checkedBitbucketSpawner, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { createPauseGate, PR_WORKFLOW_VARIANTS, prWorkflowVariantOf } from "./github/pr-workflow.js";
-import { codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, jobWorkflowsFor, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
+import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
+import { createPauseGate, PR_WORKFLOW_VARIANTS } from "./github/pr-workflow.js";
+import { codeReviewWorkflowFor, TRIAGE_WORKFLOWS, triageWorkflowFor, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
-import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
+import { createPullRequestReader } from "./pull-request-reader.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
@@ -73,10 +73,8 @@ import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.
 import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
-import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
-import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployments, TriageStoppedError, withWorkflowVersions, type LiveDeployment } from "./github/deployment.js";
+import { activeTenants, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployments, sameSource, TriageStoppedError, withWorkflowVersions, type LiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
@@ -108,7 +106,7 @@ import { createRepoActivity } from "./github/repo-activity.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
-import { failHead, markBaseMoved } from "./github/triage-queue.js";
+import { markBaseMoved, type TriageJob } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
 import { prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
@@ -152,10 +150,7 @@ const TRIAGE_RELIST_QUIET_MS = 30 * 60_000;
 const TRIAGE_RELIST_GRACE_MS = 60_000;
 /** How often the live logs of tenants with a pr-triage run in flight are read and recorded, and how stale a shared read may be. */
 const TRIAGE_RECORD_MS = 2_000;
-const WORKER_FIRE_TIMEOUT_MS = 120_000;
-const WORKER_RUN_TIMEOUT_MS = 60 * 60_000;
 const GITHUB_CALLS_LOG_MS = 60_000;
-const WORKER_POLL_MS = 2_000;
 /** A tenant whose logs could not be read is left at most this long before the recording loop tries again. */
 const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
 /** How often E2B sandboxes are swept and extended; well inside their one-hour timeout. */
@@ -210,7 +205,6 @@ let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let tokenLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
-let coordinator: Coordinator | undefined;
 let e2bTender: ReturnType<typeof setInterval> | undefined;
 function logGithubCalls(): void {
   const line = githubUsage.flush();
@@ -225,7 +219,6 @@ async function shutdown(): Promise<void> {
   recordLoop?.stop();
   tokenLoop?.stop();
   coalescer?.stop();
-  coordinator?.stop();
   clearInterval(e2bTender);
   clearInterval(githubCallsLogger);
   try {
@@ -337,7 +330,7 @@ const toListener = createManagerIntake({
   gate: function gateOf(tenantId, record, number, request) {
     return pauseGate(tenantId, record, number, request);
   },
-  deliver: deliverToDeployment,
+  deliver: deliverToListener,
   log: logJson,
 });
 mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, now });
@@ -446,7 +439,11 @@ const mergeStates = createMergeStates({
 
 const GITHUB_SENDER = TRIAGE_MAIL_SENDER;
 const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
-async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
+/** A Bitbucket run sends the token to the stored instance, so its mail goes out only while that host passes the check. */
+async function deliverToListener(tenantId: string, address: string, payload: unknown): Promise<void> {
+  if (repoSourceOf(asRecord(payload)?.["repoSource"]) === "bitbucket-datacenter" && (await tenantBitbucket(tenantId)) === undefined) {
+    throw new Error("Bitbucket is not connected, has no active token, or its host is refused");
+  }
   await githubDeliverer.to(address, JSON.stringify(await withAppLogin(composition.db, tenantId, payload)), tenantId, undefined);
 }
 const githubToken = createGithubTokenRenewal({ ...credentialDeps, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, loadRunCredentials: composition.loadRunCredentials, log: logJson });
@@ -459,20 +456,6 @@ async function renewGithubToken(tenantId: string): Promise<void> {
   } catch (err) {
     logJson({ level: "error", msg: "github_token_renew_failed", tenantId, error: String(err) });
   }
-}
-const GITHUB_JOB_WORKFLOWS = new Set(jobWorkflowsFor("github"));
-/** A token that could not be renewed may still have time left, so the worker goes ahead and the token loop retries. */
-async function readyWorkerCredentials(job: TriageJob): Promise<void> {
-  if (!GITHUB_JOB_WORKFLOWS.has(job.workflow)) return;
-  try {
-    await githubToken.ensure(job.tenantId);
-  } catch (err) {
-    logJson({ level: "error", msg: "github_token_renew_failed", tenantId: job.tenantId, error: String(err) });
-  }
-}
-/** Every triage and code review mail, whatever started it, runs in a worker of its own. */
-async function sendToWorker(job: TriageJob): Promise<void> {
-  coordinator!.enqueue(job);
 }
 async function sendTriageMail(job: TriageJob): Promise<void> {
   await sendToListener(job.tenantId, job.payload);
@@ -489,32 +472,6 @@ const placeCodeReview = createCodeReviewPlacement(composition.db, composition.si
 async function codeReviewPlaced(tenantId: string): Promise<boolean> {
   return (await placeCodeReview(tenantId)) !== null;
 }
-/** Whether the repository's policy file needs the PR workflow, which reviews the code itself. */
-async function inPrWorkflow(tenantId: string, repo: string, source: RepoSource): Promise<boolean> {
-  const read = await readCheckPack(tenantId, repo, source);
-  return read.status === "ok" && read.policyWorkflow !== undefined;
-}
-// Code review runs in the managers a listener deploys, and nothing runs without one, so the feed sends nothing.
-async function reviewedSources(): Promise<RepoSource[]> {
-  return [];
-}
-/** The hosts whose PR workflow deploys: a connected repository's policy file needs it, and code review has a place to run. */
-async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
-  if (!(await codeReviewPlaced(tenantId))) return [];
-  const tenant = await composition.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
-  const sources = new Set<RepoSource>();
-  for (const record of repoRecords(triageNs(tenant?.config)).filter((row) => row.connected)) {
-    if (await inPrWorkflow(tenantId, record.name, sourceOf(record))) sources.add(sourceOf(record));
-  }
-  return [...sources];
-}
-const codeReviewFeed = createCodeReviewFeed({
-  reviewed: reviewedSources,
-  read: pullRequests.withDiff,
-  carries: codeReviewRuns.carries,
-  send: sendToWorker,
-  log: logJson,
-});
 const pauseGate = createPauseGate({ readHead: pullRequests.head, log: logJson });
 const tenantSources = { ...credentialDeps, githubApiOrigin: githubOrigin, tenantBitbucket };
 const tenantOpenPrs = keptOpenPrs(createTenantOpenPrs(tenantSources), repoReads);
@@ -545,6 +502,21 @@ function chosenFileRefusal(tenantId: string, repo: string, source: RepoSource, p
 }
 async function readCheckPack(tenantId: string, repo: string, source: RepoSource) {
   return (await settleRepoPolicy(tenantId, repo, source)).read;
+}
+/** Whether the repository's policy file decides code review. */
+async function inPrWorkflow(tenantId: string, repo: string, source: RepoSource): Promise<boolean> {
+  const read = await readCheckPack(tenantId, repo, source);
+  return read.status === "ok" && read.policyWorkflow !== undefined;
+}
+/** The hosts with a connected repository whose policy file decides code review, while code review has a place to run. */
+async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
+  if (!(await codeReviewPlaced(tenantId))) return [];
+  const tenant = await composition.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
+  const sources = new Set<RepoSource>();
+  for (const record of repoRecords(triageNs(tenant?.config)).filter((row) => row.connected)) {
+    if (await inPrWorkflow(tenantId, record.name, sourceOf(record))) sources.add(sourceOf(record));
+  }
+  return [...sources];
 }
 /** A push that lands a file matching the saved rules retires them now, so an edit after it is not taken for a difference. */
 async function refreshPolicyFile(tenantId: string, repo: string, source: RepoSource) {
@@ -624,20 +596,10 @@ function recordingStack(workflowId: string, workerIds: readonly string[] = [work
   return { observer, recordPass, liveDeployments };
 }
 
-/** One host's observer, run recorder, rotation and reconciler over its own workflow's deployments. */
+/** One host's observer, run recorder and reconciler. */
 function triageStack(triage: TriageWorkflow) {
   const variants = PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === triage.source).map((variant) => variant.id);
   const { observer, recordPass } = recordingStack(triage.id, [triage.id, ...variants]);
-  const rotation = createDeploymentRotation({
-    db: composition.db,
-    launchSpecs,
-    allocation: composition.workflowAllocationService,
-    lifecycle: composition.workflowLifecycleService,
-    mayDeploy: function mayDeploy(principalId, tenantId) {
-      return authorizePortal(principalId, tenantId, "workflow:*", "create");
-    },
-    rotationKey: triage.rotationKey,
-  });
   const reconcile = createTriageReconciler({
     source: triage.source,
     tenants: reconcileTenants,
@@ -655,16 +617,14 @@ function triageStack(triage: TriageWorkflow) {
     now,
     log: logJson,
   });
-  return { triage, observer, recordPass, rotation, reconcile };
+  return { triage, observer, recordPass, reconcile };
 }
 
 const stacks = TRIAGE_WORKFLOWS.map(triageStack);
 // pr-triage-historical is only recorded: the reconcilers never mail or rotate it.
 // A PR workflow variant's listener runs only the approvals of Dos its workers held; those workers are its host's stack's.
 const recordings = [...stacks, recordingStack(prTriageHistoricalWorkflow.id), ...PR_WORKFLOW_VARIANTS.map((variant) => recordingStack(variant.id, []))];
-// The portal's verdict listing reads every host's observations; connection changes use the GitHub stack's rotation to release.
-const github = stacks.find((stack) => stack.triage.source === "github")!;
-const deploymentRotation = github.rotation;
+// The portal's verdict listing reads every host's observations.
 const tenantObserver = {
   last(tenantId: string) {
     const observations = recordings.flatMap((stack) => stack.observer.last(tenantId) ?? []);
@@ -720,27 +680,8 @@ const githubHeldDos = createGithubHeldDos({
   },
   log: logJson,
 });
-const reconcileSourceDeployments = createSourceDeployments({
-  connectedSources: function connectedSourcesOf(tenantId) {
-    return connectedSources(composition.db, tenantId);
-  },
-  codeReviewSources: function codeReviewSourcesOf(tenantId) {
-    return codeReviewSources(composition.db, tenantId);
-  },
-  codeReviewPlaced,
-  liveDeployments: function liveOf(tenantId, workflow) {
-    return resolveLiveDeployments(composition.db, tenantId, workflow);
-  },
-  release: deploymentRotation.release,
-  log: logJson,
-});
 const kickTriage = triageLoop.kick;
-async function onSourcesChanged(tenantId: string): Promise<void> {
-  try {
-    await reconcileSourceDeployments(tenantId);
-  } catch (err) {
-    logJson({ level: "error", msg: "triage_source_deployments_failed", tenantId, error: String(err) });
-  }
+async function onSourcesChanged(): Promise<void> {
   kickTriage();
 }
 const syncInstallations = createInstallationSync({
@@ -749,7 +690,7 @@ const syncInstallations = createInstallationSync({
   authorize: authorizePortal,
   onSynced: function installationsSynced(tenantId) {
     void renewGithubToken(tenantId);
-    void onSourcesChanged(tenantId);
+    void onSourcesChanged();
   },
 });
 function setTimer(fire: () => Promise<void>, ms: number): () => void {
@@ -758,34 +699,6 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
     clearTimeout(handle);
   };
 }
-/** A code review job keeps no state to fail: its head is forgotten, so the next event for it sends it again. */
-async function failCoordinatedJob(job: TriageJob, error: string): Promise<void> {
-  if (!triageWorkflowOf(job.workflow) && !prWorkflowVariantOf(job.workflow)) {
-    codeReviewFeed.forget(job);
-    logJson({ level: "error", msg: "code_review_failed", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error });
-    return;
-  }
-  await failHead(triageStateStore, job, error, now());
-}
-await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleService, logJson);
-coordinator = createCoordinator({
-  spawner: checkedBitbucketSpawner(createWorkerSpawner({
-    db: composition.db,
-    beforeDeploy: readyWorkerCredentials,
-    redeploy: github.rotation.redeploy,
-    deliver: deliverToDeployment,
-    lifecycle: composition.workflowLifecycleService,
-    sleep: Bun.sleep,
-    fireTimeoutMs: WORKER_FIRE_TIMEOUT_MS,
-    pollMs: WORKER_POLL_MS,
-  }), tenantBitbucket),
-  retry: { minMs: TRIAGE_RETRY_MS, maxMs: TRIAGE_RETRY_MAX_MS },
-  failed: failCoordinatedJob,
-  runTimeoutMs: WORKER_RUN_TIMEOUT_MS,
-  setTimer,
-  now,
-  log: logJson,
-});
 coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendTriageMail,
@@ -811,7 +724,6 @@ const bridge = createBridgeHandler({
   cipher: credentialDeps.cipher,
   cache: deliveryCache,
   coalescer,
-  codeReview: codeReviewFeed,
   readCheckPack,
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
@@ -825,7 +737,6 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   cipher: credentialDeps.cipher,
   cache: deliveryCache,
   coalescer,
-  codeReview: codeReviewFeed,
   readCheckPack,
   recheckOpenPulls,
   refreshPolicyFile,
@@ -929,7 +840,9 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     artifacts: composition.db,
     readCheckPack: readStoredCheckPack,
     runReader: composition.runReader,
-    sameSource: deploymentRotation.sameSource,
+    sameSource: function sameSourceOf(anchorRunId, otherAnchorRunId) {
+      return sameSource(launchSpecs, anchorRunId, otherAnchorRunId);
+    },
     authorize: authorizePortal,
     workflows: [...TRIAGE_WORKFLOWS, ...PR_WORKFLOW_VARIANTS].map((workflow) => workflow.id),
   }),

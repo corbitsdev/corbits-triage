@@ -2,7 +2,7 @@
 // the listener: a paused pull request starts no run, and in doubt nothing approves or merges unattended.
 import { isDeepStrictEqual } from "node:util";
 import { BLOCK_KINDS, decideOf, EVERYONE, repoSourceOf, VERDICTS, type BlockKind, type CheckPack, type CodeReviewProvider, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
-import type { PullRequestHead } from "../code-review-feed.js";
+import type { PullRequestHead } from "../pull-request-reader.js";
 import type { RepoRecord } from "./tenant-config.js";
 
 /** `blocks` are those the variant runs; a policy turning any other on runs nowhere yet. */

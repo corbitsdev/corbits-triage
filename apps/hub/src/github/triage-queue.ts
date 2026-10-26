@@ -6,12 +6,29 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { PrTriageRow, TriageEvent } from "@corbits/triage-contracts";
 import { TriageStoppedError } from "./deployment.js";
 import { BASE_MOVED, type ReconcilePolicy } from "./reconcile-plan.js";
+import type { RepoRecord } from "./tenant-config.js";
 import { TriageStateConflictError, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
 /** Why a head's mail did not go out: the next step a person takes when Triage is stopped, else the error. */
 export function deliveryFailure(err: unknown): string {
   return err instanceof TriageStoppedError ? err.message : `delivery failed: ${String(err)}`;
 }
+
+/** Where a job came from: a webhook, a person's Triage again, or the reconciler. */
+export type TriageSource = "event" | "retry" | "reconcile";
+
+/** A pull request mail for the host's listener. */
+export type TriageJob = {
+  tenantId: string;
+  workflow: string;
+  repo: string;
+  number: number;
+  headSha: string;
+  source: TriageSource;
+  payload: unknown;
+  /** The repository a triage job's mail names, which the hub reads the pull request through. */
+  record?: RepoRecord;
+};
 
 export type QueuedHead = { tenantId: string; repo: string; number: number; headSha: string };
 
