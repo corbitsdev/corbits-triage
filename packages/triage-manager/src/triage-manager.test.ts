@@ -15,6 +15,8 @@ import * as loops from "./loops.js";
 import { workflow as bitbucket } from "./triage-manager-bitbucket-datacenter.js";
 import { workflow as github } from "./triage-manager-github.js";
 import { workflow as listener } from "./triage-listener-github.js";
+import { triageListener } from "./triage-listener.js";
+import { triageManager } from "./triage-manager.js";
 
 const TENANT = "tnt_acme";
 const RUN = "run_manager";
@@ -368,5 +370,20 @@ describe("triage-listener", () => {
     expect((await runMail(listener, unnamed, githubHost().host, hub.hub)).terminalStatus).toBe("failed");
     expect((await runMail(listener, { ...mail, headers: { from: "someone@triage.test", to: mail.headers.to } }, githubHost().host, hub.hub)).terminalStatus).toBe("failed");
     expect(hub.calls).toEqual([]);
+  });
+});
+
+describe("grants", () => {
+  const DEPLOY_GRANTS = [{ resource: "workflow:*", action: "create", source: "creator" }, { resource: "asset:ast_review", action: "read", source: "creator" }];
+  const MANAGER_GRANTS = [{ resource: "triage-manager:state", action: "write", source: "creator" }, { resource: "workflow-run:self", action: "manage", source: "creator" }];
+
+  test("a listener built with the release's manager declares the grants to deploy exactly that asset, and one built without declares none", () => {
+    expect(triageListener({ id: "triage-listener-github", manager: RELEASE }).grantRequirements).toEqual(DEPLOY_GRANTS);
+    expect(triageListener({ id: "triage-listener-github", manager: undefined }).grantRequirements).toEqual([]);
+  });
+
+  test("a manager built with the release's code review declares the grants to deploy exactly that asset, and one built without declares no asset read", () => {
+    expect(triageManager({ id: "triage-manager-github", sources: ["github"], codeReview: RELEASE }).grantRequirements).toEqual([...MANAGER_GRANTS, ...DEPLOY_GRANTS]);
+    expect(triageManager({ id: "triage-manager-github", sources: ["github"], codeReview: undefined }).grantRequirements).toEqual(MANAGER_GRANTS);
   });
 });

@@ -15,7 +15,15 @@ export type Release = typeof Release.infer;
 /** What each host's listener and manager deploy: the portal writes `release.json` into each published tree; a source run has none. */
 const Published = type({ "[string]": { "manager?": Release, "codeReview?": Release } });
 
-/** The host's published `which`, read as a body runs, so an entry imports without one. */
+/** The creator-sourced grants to deploy the published workflow: create a deployment, and read exactly its asset. */
+export function deployGrants({ workflow }: Release) {
+  return [
+    { resource: "workflow:*", action: "create", source: "creator" as const },
+    { resource: `asset:${workflow.assetId}`, action: "read", source: "creator" as const },
+  ];
+}
+
+/** The host's published `which`, or undefined when `release.json` publishes none; it never throws, so every entry imports. */
 export function publishedFor(source: RepoSource, which: "manager" | "codeReview"): Release | undefined {
   return Published.assert(published)[source]?.[which];
 }

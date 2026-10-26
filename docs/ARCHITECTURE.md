@@ -230,8 +230,9 @@ any other tenant or an unknown sender.
   portal publishes beside it in `release.json`, read as each body runs, and
   wakes it with a mail that names only the pull request. A mail that is not
   the hub's, that names no pull request, or that finds no manager in
-  `release.json` fails its body. Its definition declares `workflow:*`
-  `create` and `asset:*` `read`, sourced from its creator.
+  `release.json` fails its body. Built with the release the module loads,
+  its definition declares `workflow:*` `create` and `read` on exactly the
+  manager's asset, sourced from its creator; built without one, neither.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes
@@ -253,8 +254,10 @@ any other tenant or an unknown sender.
   the claim: the next manager's take finds the run gone and claims.
   When the policy turns code review on, triage's rules let it past, the hub
   read the head's review request and `release.json` publishes a code review
-  for the host, a pass deploys it (under `workflow:*` `create` and `asset:*`
-  `read`), mails it the request until the review's
+  for the host, a pass deploys it under `workflow:*` `create` and `read` on
+  exactly the code review's asset, which the definition declares when its
+  module loads with that release (without one it declares neither, and the
+  verdict goes up alone), mails it the request until the review's
   one-hour deadline, and posts nothing. The pass that collects its report
   mirrors the verdict, then posts the review through the host's
   `send_code_review` tool, so they go up together. A review that could not be

@@ -8,6 +8,7 @@ import { HUB_WRITE } from "./actions/hub.js";
 import { REVIEW_DEADLINE_MS } from "./actions/review.js";
 import { mailDirector } from "./directors.js";
 import { mailAgentOf } from "./mail.js";
+import { deployGrants, type Release } from "./release.js";
 
 /** How often a manager waiting for its code review asks the hub whether the review reported. */
 const POLL_MS = 30_000;
@@ -92,10 +93,11 @@ function passOf(id: string, sources: Sources) {
  * A pull request's manager under `id`, also its mail address, for the given hosts: the only workflow that writes to the
  * pull request, one live run per pull request, which runs only while it has work. A mail wakes it to run passes until
  * done ends the claim, when the run stops itself, or another run holds the claim. When the host's release publishes a
- * code review, it runs as its own deployment, which reports back. Mail comes only from the listener that deployed it and
+ * code review, it runs as its own deployment, which reports back; `codeReview`, the one published as the definition
+ * loads, names the asset it declares the grants to deploy. Mail comes only from the listener that deployed it and
  * the reviews it mailed.
  */
-export function triageManager({ id, sources }: { id: string; sources: Sources }) {
+export function triageManager({ id, sources, codeReview }: { id: string; sources: Sources; codeReview: Release | undefined }) {
   const perMail = defineWorkflow({
     id: `${id}-run`,
     trigger: { type: "manual" },
@@ -119,9 +121,7 @@ export function triageManager({ id, sources }: { id: string; sources: Sources })
     grantRequirements: [
       { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION, source: "creator" },
       { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
-      // Code review is deployed from whichever asset the release publishes.
-      { resource: "workflow:*", action: "create", source: "creator" },
-      { resource: "asset:*", action: "read", source: "creator" },
+      ...(codeReview ? deployGrants(codeReview) : []),
     ],
     mailAccept: { invoker: true, correspondent: true },
     steps: {
