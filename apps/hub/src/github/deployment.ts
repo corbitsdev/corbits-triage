@@ -68,6 +68,12 @@ function markedAs(kind: DeploymentKind) {
 
 type DeploymentQuery = { tenantId: string; definitionName?: string; kind: DeploymentKind; endedSince?: Date };
 
+/**
+ * A workflow the portal publishes per person deploys from an asset named for its publisher and release, which names
+ * its definition too; its frozen projection keeps the workflow's own id, so that is the name a deployment is found by.
+ */
+const workflowName = sql<string>`coalesce(${schema.workflowRunLaunchSpec.frozenApprovalBundle} -> 'projection' ->> 'id', ${schema.workflowDefinition.name})`;
+
 /** Matches how the hub lists deployments: a deployment is its anchor run. Newest first; live, or ended since `endedSince`. */
 async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<TenantDeployment[]> {
   const { workflowRun, workflowDefinition, workflowRunLaunchSpec, tenant, liveWorkflowRunStatuses } = schema;
@@ -75,7 +81,7 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
   const rows = await db
     .select({
       runId: workflowRun.id,
-      workflow: workflowDefinition.name,
+      workflow: workflowName,
       domain: tenant.domain,
       createdAt: workflowRun.createdAt,
       cancellationRequestedAt: workflowRun.cancellationRequestedAt,
@@ -87,7 +93,7 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
     .leftJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
     .where(and(
       eq(workflowRun.tenantId, query.tenantId),
-      query.definitionName === undefined ? undefined : eq(workflowDefinition.name, query.definitionName),
+      query.definitionName === undefined ? undefined : eq(workflowName, query.definitionName),
       isNotNull(workflowRun.anchorRunId),
       eq(workflowRun.id, workflowRun.anchorRunId),
       query.endedSince === undefined ? live : or(live, gt(workflowRun.endedAt, query.endedSince)),
@@ -190,9 +196,18 @@ export function pinOf(closure: ToolPackageManifest): string {
 
 export type ClosureVersions = { workflow: PackageVersion; tools: PackageVersion[] };
 
+/** A tarball-format source pins its one top-level package; a source-format one names its package, at the version it built. */
+function workflowOf(bundle: FrozenApprovalBundle): PackageVersion | undefined {
+  if (bundle.source.kind !== "asset") return undefined;
+  if (bundle.source.package.format === "tarball") return rootOf(bundle.closure);
+  const { packageName } = bundle.source.package;
+  const found = bundle.closure.topLevel.find((pkg) => pkg.name === packageName);
+  return found && { name: found.name, version: found.version };
+}
+
 export function closureVersions(bundle: FrozenApprovalBundle): ClosureVersions | null {
-  if (pinFor(bundle) === undefined) return null;
-  const workflow = rootOf(bundle.closure);
+  const workflow = workflowOf(bundle);
+  if (!workflow) return null;
   const tools = bundle.closure.entries
     .filter((entry) => entry.name !== workflow.name)
     .map((entry) => ({ name: entry.name, version: entry.version }));

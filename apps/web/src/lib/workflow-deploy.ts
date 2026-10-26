@@ -108,7 +108,7 @@ async function ensureKeepDeployedLifetime(transport: Transport, tenantId: string
 }
 
 /** A deployment's id is its anchor run's id; 409 means it already stopped. */
-async function cancelDeployment(transport: Transport, tenantId: string, deploymentId: string): Promise<void> {
+export async function cancelDeployment(transport: Transport, tenantId: string, deploymentId: string): Promise<void> {
   try {
     await transport.fetch("DELETE", `/api/tenants/${encodeURIComponent(tenantId)}/workflows/runs/${encodeURIComponent(deploymentId)}`);
   } catch (error) {

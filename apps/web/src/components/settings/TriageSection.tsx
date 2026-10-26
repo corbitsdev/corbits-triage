@@ -14,6 +14,7 @@ import { BitbucketDatacenterSource } from "./BitbucketDatacenterSource.tsx";
 import { GithubSource } from "./GithubSource.tsx";
 import { KeyRow } from "./KeyRow.tsx";
 import { PolicyFiles } from "./PolicyFiles.tsx";
+import { TriageUpgrade } from "./TriageUpgrade.tsx";
 
 const SOURCE_NAME: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" };
 
@@ -95,6 +96,7 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
               <span className="txt">{statusText(status)}</span>
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
+            {sources.length > 0 && status.model && <TriageUpgrade sources={sources} />}
           </div>
         )}
         <GithubSource snapshot={snapshot} />

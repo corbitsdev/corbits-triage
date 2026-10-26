@@ -7,6 +7,7 @@ const TENANT_ID = "tenant-1";
 const CREATED_AT = new Date("2026-10-09T12:00:00Z");
 const WORKFLOW = { name: "@corbits/pr-triage-workflow", version: "0.1.0-sha-1234abcd" };
 const TOOL = { name: "@corbits/github-tool", version: "0.2.0" };
+const SOURCE_WORKFLOW = { name: "@corbits/pr-triage-historical-workflow", version: "0.1.0-sha-5678ef01" };
 
 function tarball(pkg: { name: string; version: string }) {
   return { ...pkg, source: { kind: "asset", assetId: "ast_corbits", package: { format: "tarball", path: `tarballs/${pkg.version}.tgz`, integrity: "sha512-AAAA" } } };
@@ -24,7 +25,7 @@ const SPECS: Record<string, unknown> = {
     frozenApprovalBundle: {
       source: { kind: "asset", assetId: "ast_triage", package: { format: "source", commitSha: "c0ffee", packageName: "@corbits/pr-triage-historical-workflow" } },
       entry: "./pr-triage-historical.mjs",
-      closure: { schemaVersion: "1", topLevel: [], entries: [] },
+      closure: { schemaVersion: "1", topLevel: [SOURCE_WORKFLOW], entries: [] },
     },
   },
 };
@@ -61,7 +62,7 @@ describe("createWorkflowVersions", () => {
     expect(await res.json()).toEqual({
       deployments: [
         { id: "run_tarball", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, worker: false, package: WORKFLOW, tools: [TOOL] },
-        { id: "run_source", workflow: "pr-triage-historical", createdAt: CREATED_AT.toISOString(), cancelling: true, worker: false, package: null, tools: [] },
+        { id: "run_source", workflow: "pr-triage-historical", createdAt: CREATED_AT.toISOString(), cancelling: true, worker: false, package: SOURCE_WORKFLOW, tools: [] },
         { id: "run_tarball_worker", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, worker: true, package: WORKFLOW, tools: [TOOL] },
       ],
     });

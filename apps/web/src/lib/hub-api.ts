@@ -804,7 +804,7 @@ export function isLiveDeployment(status: string): boolean {
   return LIVE_DEPLOYMENT_STATUSES.has(status);
 }
 
-/** A live deployment with the versions its frozen closure pins; `package` is null when it was not deployed from the package registry. */
+/** A live deployment with the versions its frozen closure pins; `package` is null when the closure does not name its workflow. */
 export type DeployedWorkflow = DeployedVersions["deployments"][number];
 
 export async function listDeployedWorkflows(transport: Transport, tenantId: string): Promise<DeployedWorkflow[]> {
@@ -825,7 +825,7 @@ function isDeploymentNotReady(cause: unknown): boolean {
   return cause instanceof ApiError && cause.status === 409 && cause.code === "deployment_not_ready";
 }
 
-function pause(ms: number): Promise<void> {
+export function pause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
