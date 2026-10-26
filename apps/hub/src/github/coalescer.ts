@@ -109,6 +109,11 @@ function movedOn(prior: PrTriageRow | undefined): boolean {
   return prior?.status !== "waiting";
 }
 
+/** A settled or not-yet-running head can be held; a run already going is left to finish, and a head already waiting stays as it is. */
+function holdsForPendingChecks(prior: PrTriageRow | undefined): boolean {
+  return prior === undefined || prior.status === "new" || prior.status === "queued" || prior.status === "triaged" || prior.status === "failed";
+}
+
 function heldForCi({ event }: CoalescedEvent, prior: PrTriageRow | undefined): boolean {
   return event === "checks" && prior?.status === "waiting";
 }
@@ -244,6 +249,15 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     const ci = checks && summarizeChecks(checks);
     // CI still running on the head is re-triaged once by its last completed check run; a head waiting for CI is released by its first failed check.
     const pending = prior?.status === "waiting" ? ci === "pending" : checks?.some(checkPending) === true;
+    // Check webhooks are not replayed. One that finds CI still running holds a head that is not already waiting and has no run
+    // going, so the reconciler queues it once CI finishes; the GitHub label alone does not.
+    if (checksOnly && pending && readsCi && holdsForPendingChecks(prior)) {
+      const events = [...new Set([...heldEvents(prior), ...open.events])];
+      await waitHead(deps.store, head, events, deps.now());
+      deps.log({ level: "info", msg: "triage_waiting_ci", ...entry, events, ci });
+      if (prior?.status !== "waiting") await markWaiting(open, ci === "none");
+      return;
+    }
     if (checksOnly && pending) return drop(open, entry, "checks_pending");
     // Undefined when the reconciler moved the head on since its window opened.
     const { remembered } = open.remembered ? open : await queue(head, movedOn, false);
