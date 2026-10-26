@@ -5,7 +5,7 @@
     "": {
       "name": "corbits-triage",
       "dependencies": {
-        "@corbits/system-one": "0.3.1",
+        "@corbits/system-one": "0.3.2",
       },
       "devDependencies": {
         "@corbits/evals": "0.1.2",
@@ -378,7 +378,7 @@
         "@corbits/common": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/github-tool": "workspace:*",
-        "@corbits/system-one": "0.3.1",
+        "@corbits/system-one": "0.3.2",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/agent": "workspace:*",
         "@intx/authz": "workspace:*",
@@ -985,7 +985,7 @@
 
     "@corbits/repo-read-tool": ["@corbits/repo-read-tool@workspace:packages/repo-read-tool"],
 
-    "@corbits/system-one": ["@corbits/system-one@0.3.1", "", { "dependencies": { "arktype": "2.2.3" }, "peerDependencies": { "@intx/inference": "^0.4.0", "@intx/types": "^0.4.0" } }, "sha512-YvYaP6CY5VGM7MPJW6JPU4d5uPESMCX1xspddch0NGCBNB4Nz4yAR1JOFz6gYyVy0JyYHqtNYArXwFB5kUetug=="],
+    "@corbits/system-one": ["@corbits/system-one@0.3.2", "", { "dependencies": { "arktype": "2.2.3" }, "peerDependencies": { "@intx/inference": "^0.5.0", "@intx/types": "^0.5.0" } }, "sha512-ugVh+UWMMkogFxHGTl6HnhraLwlGPi+ng1/3vXsaQe84BZ1DlD6WVO59lqrVXqtOmi9CVY/sYDqqf2quaJcUHA=="],
 
     "@corbits/triage-contracts": ["@corbits/triage-contracts@workspace:packages/triage-contracts"],
 
