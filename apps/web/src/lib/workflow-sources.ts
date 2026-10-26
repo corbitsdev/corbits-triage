@@ -124,7 +124,7 @@ async function hex8(text: string): Promise<string> {
 async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[]): Promise<{ hash: string; tree: SourceTree }> {
   const plain = { hash: entry.hash, tree };
   const chain = CHAIN_PACKAGES.find((row) => row.name === entry.workflow);
-  if (!chain?.deploys?.length) return plain;
+  if (!chain || !("deploys" in chain)) return plain;
   const file = `packages/${entry.workflow}/release.json`;
   if (!(file in tree)) throw new Error(`The portal build's ${entry.workflow} does not read a release.`);
   const body: Record<string, unknown> = {};
