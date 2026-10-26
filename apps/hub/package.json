@@ -9,7 +9,7 @@
     "start": "bun --conditions=intx-src src/server.ts"
   },
   "dependencies": {
-    "@corbits/artifacts": "0.2.0",
+    "@corbits/artifacts": "0.3.0",
     "@corbits/common": "workspace:*",
     "@corbits/cron": "0.2.1",
     "@corbits/bitbucket-datacenter-reads": "workspace:*",

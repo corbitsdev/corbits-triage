@@ -1,6 +1,8 @@
 // Stock admins hold read, create and manage on everything but not write, so without these grants only owners could
 // version an artifact. Each new artifact is writable and archivable by its creator and the admin role; owners hold
-// every grant already.
+// every grant already. The artifact routes mint the creator's write and archive grants before this hook runs;
+// `allowCreator` sees that row and does not insert another. A create that does not go through those routes still
+// needs the creator grants from here.
 import { type } from "arktype";
 import { sql } from "drizzle-orm";
 import type { ArtifactRow, ArtifactTx, ResolvedPrincipal } from "@corbits/artifacts";
