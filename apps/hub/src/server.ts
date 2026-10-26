@@ -52,9 +52,9 @@ import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX, logRefusal } from "./integrations/app.js";
 import { createBitbucketCodeReviewSend } from "./bitbucket-datacenter/code-review-send.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
-import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
+import { checkedBitbucketDelivery, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { createPauseGate, PR_WORKFLOW_VARIANTS } from "./github/pr-workflow.js";
-import { codeReviewWorkflowFor, TRIAGE_WORKFLOWS, triageWorkflowFor, type TriageWorkflow } from "./github/source-workflow.js";
+import { codeReviewWorkflowFor, connectedSources, createHostRelease, TRIAGE_WORKFLOWS, triageWorkflowFor, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -330,7 +330,9 @@ const toListener = createManagerIntake({
   gate: function gateOf(tenantId, record, number, request) {
     return pauseGate(tenantId, record, number, request);
   },
-  deliver: deliverToListener,
+  deliver: function deliverOf(tenantId, address, payload) {
+    return deliverToListener(tenantId, address, payload);
+  },
   log: logJson,
 });
 mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, now });
@@ -439,13 +441,9 @@ const mergeStates = createMergeStates({
 
 const GITHUB_SENDER = TRIAGE_MAIL_SENDER;
 const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
-/** A Bitbucket run sends the token to the stored instance, so its mail goes out only while that host passes the check. */
-async function deliverToListener(tenantId: string, address: string, payload: unknown): Promise<void> {
-  if (repoSourceOf(asRecord(payload)?.["repoSource"]) === "bitbucket-datacenter" && (await tenantBitbucket(tenantId)) === undefined) {
-    throw new Error("Bitbucket is not connected, has no active token, or its host is refused");
-  }
+const deliverToListener = checkedBitbucketDelivery(async function deliverMail(tenantId, address, payload) {
   await githubDeliverer.to(address, JSON.stringify(await withAppLogin(composition.db, tenantId, payload)), tenantId, undefined);
-}
+}, tenantBitbucket);
 const githubToken = createGithubTokenRenewal({ ...credentialDeps, githubApiOrigin: githubOrigin, router: composition.sidecarRouter, loadRunCredentials: composition.loadRunCredentials, log: logJson });
 for (const tenantId of movedAppKeys) await githubToken.push(tenantId);
 tokenLoop = createReconcileLoop(githubToken.renewAll, { intervalMs: GITHUB_TOKEN_RENEW_MS, retryMs: GITHUB_TOKEN_RETRY_MS, retryMaxMs: GITHUB_TOKEN_RETRY_MAX_MS }, logJson);
@@ -644,6 +642,8 @@ async function recordAll() {
   return { retry: false };
 }
 async function reconcileAll(): Promise<ReconcileOutcome> {
+  // A host removed through the stock credential route tells the hub nothing, so each pass releases what it left running.
+  for (const tenant of await reconcileTenants()) await releaseHostsOf(tenant.id);
   const outcomes: ReconcileOutcome[] = [];
   for (const stack of stacks) outcomes.push(await stack.reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);
@@ -681,7 +681,27 @@ const githubHeldDos = createGithubHeldDos({
   log: logJson,
 });
 const kickTriage = triageLoop.kick;
-async function onSourcesChanged(): Promise<void> {
+const releaseDisconnected = createHostRelease({
+  connectedSources: function connectedSourcesOf(tenantId) {
+    return connectedSources(composition.db, tenantId);
+  },
+  liveDeployments: function liveOf(tenantId, workflow) {
+    return resolveLiveDeployments(composition.db, tenantId, workflow);
+  },
+  async cancel(tenantId, runId) {
+    await composition.workflowLifecycleService.requestCancellation(tenantId, runId, "source_disconnected");
+  },
+  log: logJson,
+});
+async function releaseHostsOf(tenantId: string): Promise<void> {
+  try {
+    await releaseDisconnected(tenantId);
+  } catch (err) {
+    logJson({ level: "error", msg: "triage_source_release_failed", tenantId, error: String(err) });
+  }
+}
+async function onSourcesChanged(tenantId: string): Promise<void> {
+  await releaseHostsOf(tenantId);
   kickTriage();
 }
 const syncInstallations = createInstallationSync({
@@ -690,7 +710,7 @@ const syncInstallations = createInstallationSync({
   authorize: authorizePortal,
   onSynced: function installationsSynced(tenantId) {
     void renewGithubToken(tenantId);
-    void onSourcesChanged();
+    void onSourcesChanged(tenantId);
   },
 });
 function setTimer(fire: () => Promise<void>, ms: number): () => void {

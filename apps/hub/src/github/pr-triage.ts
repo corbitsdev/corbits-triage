@@ -15,7 +15,6 @@ import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./por
 import type { Member } from "../integrations/app.js";
 import type { ManagerRuns } from "./manager-runs.js";
 import { isStuck, runKey, type ObservedRun, type ReconcilePolicy } from "./reconcile-plan.js";
-import { triageWorkflowFor } from "./source-workflow.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { LiveDeployment } from "./deployment.js";
 import type { ObservedRuns } from "./triage-runs.js";
@@ -92,7 +91,6 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const ready = await readyToTriage(deps, member, repo);
     if (ready instanceof Response) return ready;
     const { record, policy, pack } = ready;
-    const triage = triageWorkflowFor(sourceOf(record));
     if (!(await deps.listener(tenantId, sourceOf(record)))) return failure(503, "service_not_running", triageStopped(sourceOf(record)));
 
     let openHead: string | undefined;
@@ -121,7 +119,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     }
     if (queued.status === "conflict") return failure(409, "conflict", `${repo}#${number} was just updated by the hub. Try again.`);
     try {
-      await deps.send({ ...head, workflow: triage.id, source: "retry", record, payload: mailPayload(record, policy, pack, { prNumber: number, headSha, noWait: true }) });
+      await deps.send({ ...head, record, payload: mailPayload(record, policy, pack, { prNumber: number, headSha, noWait: true }) });
     } catch (err) {
       deps.log({ level: "error", msg: "triage_request_failed", tenantId, repo, pr: number, headSha, error: String(err) });
       try {

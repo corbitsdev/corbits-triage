@@ -352,7 +352,7 @@ On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repos
 
 ### Code review
 
-Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. In a repository whose [policy file](#writing-the-file) turns a check on or writes its own `decide`, the file decides instead: changing the switch says **This repository's policy file decides code review, which runs with triage.** **Review again** still reviews the latest commit once more.
+Code review reads each new commit of a pull request for bugs, and skips drafts. It runs with triage, so only in a repository where triage is on, and only when the repository's [policy file](#writing-the-file) turns code review on. **Review again** reviews the latest commit once more, whatever the policy file says.
 
 ![The popup Code review needs an Anthropic key, with the Anthropic key field, You won't see it again, Cancel and Save and turn on](images/27.png)
 
@@ -532,11 +532,11 @@ Lists each connected repository and whether its default branch has a `.corbits-t
 
 **Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider. It answers your policies' Judgement rules and chooses the verdict.
 
-The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Change** opens the form again to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again. Every save of the decision model redeploys Triage's workers, so give it a minute before expecting new verdicts.
+The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Change** opens the form again to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again.
 
 #### Rolling credentials
 
-Every secret Triage holds can be replaced from Settings without disconnecting anything. After a GitHub or Bitbucket Data Center secret is replaced, Triage restarts its workers for that host, and code review uses the new value from its next review. If the restart fails, the row says **Saved. Restarting Triage failed; try again** with a **Try again** button; the new secret is already saved.
+Every secret Triage holds can be replaced from Settings without disconnecting anything. Triage uses the new value from its next pull request.
 
 **GitHub App key.** Press **Replace key** on the GitHub App row. In your App's settings on GitHub, generate a new private key, then choose the downloaded `.pem` file and press **Save**; GitHub checks that the key belongs to the connected App before it is saved. Then delete the old key on GitHub. To switch to another App, use **Create GitHub App**.
 
@@ -546,7 +546,7 @@ Every secret Triage holds can be replaced from Settings without disconnecting an
 
 **Bitbucket Data Center webhook secret.** Press **Rotate secret** on the webhook secret row. Triage saves a new secret and updates every webhook it created to use it. Repositories whose webhook was set up by hand, or whose webhook Triage could not update, are named afterwards: each one's repository page shows the new secret, so update its webhook in Bitbucket from there. Pull requests that change in the meantime are picked up automatically.
 
-**Model keys.** Press **Change** on the [decision model](#decision-model) or on the Anthropic key under [Code review](#code-review-2) and paste the new key. Triage restarts its workers for every host.
+**Model keys.** Press **Change** on the [decision model](#decision-model) or on the Anthropic key under [Code review](#code-review-2) and paste the new key.
 
 ### Code review
 

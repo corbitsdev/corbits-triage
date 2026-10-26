@@ -16,7 +16,6 @@ import {
   ensureWorkspace,
   loadPortal,
   legacyHookCredentials,
-  connectedSources,
   portalConnected,
   replaceCredential,
   removeRepository,
@@ -24,8 +23,6 @@ import {
   revokeCredential,
   saveAnthropicKey,
   setCodeReview,
-  codeReviewProvider,
-  codeReviewSources,
   startBacklogTriage,
   githubPrAction,
   triagePullRequest as requestPullRequestTriage,
@@ -41,11 +38,10 @@ import {
 } from "./hub-api.ts";
 import { readChosenWorkspace, writeChosenWorkspace } from "./chosen-workspace.ts";
 import type { CreateGrantInput } from "./grant-actions.ts";
-import { ensureWorkflows, releaseWorkflows, type DeployHosts, type Redeploy } from "./workflow-deploy.ts";
 import { reconcileModelCatalog, removeModelKey, saveInference } from "./model-catalog.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
-import { checkPackName, type RepoSource } from "@corbits/triage-contracts";
+import { checkPackName } from "@corbits/triage-contracts";
 
 /** `now` confirms the write with a toast; `held` writes were announced by the inbox's Undo toast; `leaving` ones are held writes sent as the page goes away, so they must outlive it. */
 type GithubDelivery = "now" | "held" | "leaving";
@@ -74,8 +70,6 @@ interface PortalContextValue {
   writeGithub: (input: PrGithubWriteInput, delivery: GithubDelivery) => Promise<PrGithubWriteResult>;
   decide: (approvalId: string, decision: "once" | "always" | "deny") => Promise<void>;
   replaceSecret: (credentialId: string, secret: string) => Promise<void>;
-  /** Redeploys a host's listener and PR workflow, which hold its credentials from when they were deployed; rejects when that fails. */
-  redeployHost: (source: RepoSource) => Promise<void>;
   revoke: (credentialId: string) => Promise<void>;
   addGrant: (input: CreateGrantInput) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
@@ -163,24 +157,6 @@ export function useSignOutWhenRejected(): (cause: unknown) => void {
     }
     if (cause instanceof ApiError && cause.status === 401) void signOutQuietly();
   }, [signOut]);
-}
-
-/** Each tenant's converge, keyed by the hosts it was connected to, so connecting or disconnecting one converges again. */
-const convergedTenants = new Set<string>();
-
-const NO_HOSTS: DeployHosts = { connected: [], codeReview: [], codeReviewProvider: undefined, prWorkflow: undefined };
-const DEPLOY_MISSING: Redeploy = { kinds: new Set() };
-// The PR workflow triages on the decision model too.
-const REDEPLOY_TRIAGE: Redeploy = { kinds: new Set(["triage", "pr-workflow"]) };
-const REDEPLOY_CODE_REVIEW: Redeploy = { kinds: new Set(["code-review", "pr-workflow"]) };
-
-/** A workspace's converges are remembered per set of hosts; switching code review back on must deploy it again even when that set was seen before. */
-function forgetConverged(tenantId: string): void {
-  for (const key of convergedTenants) if (key.startsWith(`${tenantId}:`)) convergedTenants.delete(key);
-}
-
-function hostsOf(snapshot: PortalSnapshot): DeployHosts {
-  return { connected: connectedSources(snapshot.credentials), codeReview: codeReviewSources(snapshot), codeReviewProvider: codeReviewProvider(snapshot.credentials), prWorkflow: snapshot.prWorkflowSources };
 }
 
 type PortalLoad = PortalSnapshot | InvitedAccess;
@@ -271,34 +247,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     }
   }, [enabled, queryClient]);
 
-  const tenantId = snapshot?.workspace.tenantId;
-  const hosts = useMemo<DeployHosts>(() => (snapshot ? hostsOf(snapshot) : NO_HOSTS), [snapshot]);
-  const decisionModelConnected = snapshot?.decisionModel !== undefined;
-  const deployWorkflows = useCallback(async function deployWorkflows(id: string, deployHosts: DeployHosts, redeploy: Redeploy) {
-    const transport = createHubTransport();
-    await reconcileModelCatalog(transport, id);
-    const deployed = await ensureWorkflows(transport, id, deployHosts, redeploy);
-    if (deployed.length) refresh();
-  }, [refresh]);
-  const convergeWorkflows = useCallback(function convergeWorkflows(id: string, deployHosts: DeployHosts, redeploy: Redeploy) {
-    const key = `${id}:${JSON.stringify(deployHosts)}`;
-    if (redeploy.kinds.size === 0 && convergedTenants.has(key)) return;
-    convergedTenants.add(key);
-    async function deploy() {
-      try {
-        await deployWorkflows(id, deployHosts, redeploy);
-      } catch (cause: unknown) {
-        convergedTenants.delete(key);
-        warn(`Could not deploy triage workflows. ${errorText(cause)}`);
-      }
-    }
-    void deploy();
-  }, [deployWorkflows, warn]);
-
-  useEffect(function convergeOnConnect() {
-    if (tenantId && hosts.connected.length > 0 && decisionModelConnected) convergeWorkflows(tenantId, hosts, DEPLOY_MISSING);
-  }, [convergeWorkflows, decisionModelConnected, hosts, tenantId]);
-
   const requireSnapshot = useCallback(function requireSnapshot() {
     if (readOnly || !snapshot) {
       throw new Error("The service is unavailable. Reload the page and try again.");
@@ -383,14 +331,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const redeployHost = useCallback(async function redeployHost(source: RepoSource) {
-    const fresh = await refreshNow();
-    // Every deploy includes triage, which needs the decision model.
-    if (!fresh?.decisionModel) return;
-    const freshHosts = hostsOf(fresh);
-    if (freshHosts.connected.includes(source)) await deployWorkflows(fresh.workspace.tenantId, freshHosts, { ...REDEPLOY_TRIAGE, sources: [source] });
-  }, [deployWorkflows, refreshNow]);
-
   const replaceSecret = useCallback(
     async function replaceSecret(credentialId: string, secret: string) {
       const current = requireSnapshot();
@@ -435,12 +375,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     async function saveInferenceSecret(input: { endpoint: string; model: string; secret: string }) {
       const current = requireSnapshot();
       await saveInference(createHubTransport(), current.workspace.tenantId, input);
+      await reconcileModelCatalog(createHubTransport(), current.workspace.tenantId);
       notify("Decision model saved.");
       refresh();
-      const deployHosts = hostsOf(current);
-      if (deployHosts.connected.length > 0) convergeWorkflows(current.workspace.tenantId, deployHosts, REDEPLOY_TRIAGE);
     },
-    [convergeWorkflows, notify, refresh, requireSnapshot],
+    [notify, refresh, requireSnapshot],
   );
 
   const saveAnthropic = useCallback(
@@ -450,22 +389,15 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       await saveAnthropicKey(transport, current.workspace.tenantId, secret);
       await reconcileModelCatalog(transport, current.workspace.tenantId);
       notify("Anthropic key saved.");
-      // A new key can mean new offerings, which a deployment resolves only when deployed.
-      const fresh = await refreshNow();
-      // Every converge deploys triage, which needs the decision model.
-      if (!fresh?.decisionModel) return;
-      const freshHosts = hostsOf(fresh);
-      if (freshHosts.codeReview.length > 0 || (freshHosts.prWorkflow ?? []).length > 0) convergeWorkflows(fresh.workspace.tenantId, freshHosts, REDEPLOY_CODE_REVIEW);
+      refresh();
     },
-    [convergeWorkflows, notify, refreshNow, requireSnapshot],
+    [notify, refresh, requireSnapshot],
   );
 
   const removeAnthropic = useCallback(
     async function removeAnthropic(credentialId: string) {
       const current = requireSnapshot();
       const transport = createHubTransport();
-      await releaseWorkflows(transport, current.workspace.tenantId, "code-review");
-      await releaseWorkflows(transport, current.workspace.tenantId, "pr-workflow");
       await removeModelKey(transport, current.workspace.tenantId, ANTHROPIC_PROVIDER, credentialId);
       notify("Anthropic key removed.");
       refresh();
@@ -477,8 +409,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     async function removeDecisionModel(credentialId: string) {
       const current = requireSnapshot();
       const transport = createHubTransport();
-      await releaseWorkflows(transport, current.workspace.tenantId, "triage");
-      await releaseWorkflows(transport, current.workspace.tenantId, "pr-workflow");
       await removeModelKey(transport, current.workspace.tenantId, INFERENCE_PROVIDER, credentialId);
       notify("Secret removed.");
       refresh();
@@ -491,8 +421,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const current = requireSnapshot();
       await setCodeReview(createHubTransport(), current.workspace.tenantId, repo, enabled);
       notify(enabled ? `Code review is on for ${repo.name}.` : `Code review is off for ${repo.name}.`);
-      // A host whose code review was off has no deployment, so the converge the fresh snapshot starts must deploy it.
-      if (enabled && !hostsOf(current).codeReview.includes(repo.source)) forgetConverged(current.workspace.tenantId);
       await refreshNow();
     },
     [notify, refreshNow, requireSnapshot],
@@ -522,7 +450,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         writeGithub,
         decide,
         replaceSecret,
-        redeployHost,
         revoke,
         addGrant,
         saveInferenceSecret,
@@ -553,7 +480,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       writeGithub,
       decide,
       replaceSecret,
-      redeployHost,
       revoke,
       addGrant,
       saveInferenceSecret,

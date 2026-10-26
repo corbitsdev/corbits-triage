@@ -166,9 +166,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   (`no_isolated_place`), nothing is mailed, the host's code review
   deployments are released, and the portal links Settings → Code review in
   place of the switch.
-- **Portal** (`apps/web`): owns setup. After sign-in it converges the tenant,
-  credentials, inference offerings, workflow sources and deployments over
-  stock hub routes. The hub seeds nothing for it. It is a wrapper over the
+- **Portal** (`apps/web`): owns setup. It writes the tenant, credentials and
+  inference offerings over stock hub routes, and **Upgrade to new version**
+  publishes the workflow sources and deploys the listeners. The hub seeds nothing for it. It is a wrapper over the
   routes; nothing is possible only through it. Each minute and on focus it
   reads the served `index.html`; once its hashed entry script differs from the
   one the tab loaded, it offers a reload, since a stale tab would deploy the
@@ -185,10 +185,8 @@ any other tenant or an unknown sender.
 
 - `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
   pull request and triages it. Both are built by `prTriage({ sources })` in
-  `@corbits/triage-workflows`. Each binds only its host's credential, since an
-  unresolved binding fails a deployment, so a workspace deploys one per
-  connected host. A deployment of the earlier `pr-triage` workflow is released
-  once `pr-triage-github` is live.
+  `@corbits/triage-workflows`. Nothing deploys them; Upgrade cancels any
+  still live.
 - `pr-triage-historical`: one run that triages every open pull request of a
   GitHub repository, skipping drafts. The hub no longer mails it: its backlog
   route, run when triage is turned on, when a push to the default branch
@@ -202,8 +200,7 @@ any other tenant or an unknown sender.
   names one pull request and the run returns a review.
 - `pr-workflow-anthropic-github` and `pr-workflow-anthropic-bitbucket-datacenter`:
   triage, then code review behind a gate, in one run ([PR workflow](#pr-workflow)).
-  The portal deploys a host's while a repository's policy file needs it; the
-  hub picks it per pull request.
+  Nothing deploys them; Upgrade cancels any still live.
 - `triage-listener-github` and `triage-listener-bitbucket-datacenter`
   (`triageListener` in `@corbits/triage-manager`): a workspace's listener for
   one host. The hub mails it the pull requests it recorded that have no
@@ -232,7 +229,12 @@ any other tenant or an unknown sender.
   its frozen projection (`apps/hub/src/github/deployment.ts`), and the
   workflow-versions route reports a source deployment's package from its
   closure. Onboarding runs the same upgrade once the decision model is saved,
-  for an owner or Deployer.
+  for an owner or Deployer. The upgrade also sets the tenant's
+  `lifecycle.maxLifetime` to the longest Interchange accepts, so a listener
+  lives until a newer one replaces it. A host's listener and its managers are
+  released once the host is disconnected: right away when Bitbucket Data
+  Center is disconnected through its route, and on the next reconcile pass
+  when the GitHub App credential is removed.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes

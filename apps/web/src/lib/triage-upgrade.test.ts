@@ -30,6 +30,8 @@ function fakeHub() {
   const requests: Array<{ method: string; path: string; body?: unknown }> = [];
   async function json<T>(method: string, path: string, body?: unknown): Promise<T> {
     requests.push({ method, path, ...(body !== undefined && { body }) });
+    if (method === "GET" && path === "/api/tenants/t") return { config: {} } as T;
+    if (method === "PATCH" && path === "/api/tenants/t") return undefined as T;
     if (path === "/api/tenants/t/models") return [{ canonicalName: "decision", offerings: [{ offeringId: "mof_1", providerName: "corbits-system-one" }] }] as T;
     if (method === "POST" && path === "/api/tenants/t/workflows/deployments") {
       const created = { id: "run_new", tenantId: "t", definitionAssetId: "ast_listener", status: "deployed", createdAt: "2026-10-03T00:00:00.000Z" };
@@ -56,6 +58,7 @@ test("an upgrade deploys the listener from its published source, then stops the 
   await upgradeTriage(hub.transport, PUBLISHER, ["github"], (step) => steps.push(step), async () => PUBLISHED);
 
   expect(steps).toEqual(["publishing", "starting", "stopping"]);
+  expect(hub.requests).toContainEqual({ method: "PATCH", path: "/api/tenants/t", body: { config: { lifecycle: { maxLifetime: "36500d" } } } });
   expect(hub.requests.find((row) => row.method === "POST")?.body).toEqual({
     source: { kind: "asset", assetId: "ast_listener", package: { format: "source", commitSha: "l1", packageName: "@corbits/triage-listener-github-workflow" } },
     entry: "./triage-listener-github.mjs",
@@ -78,7 +81,9 @@ function sharedHub() {
   function transportFor(who: string): Transport {
     async function json<T>(method: string, path: string): Promise<T> {
       await Promise.resolve();
-      if (path === "/api/tenants/t/models") return [{ canonicalName: "decision", offerings: [{ offeringId: "mof_1", providerName: "corbits-system-one" }] }] as T;
+      if (method === "GET" && path === "/api/tenants/t") return { config: {} } as T;
+    if (method === "PATCH" && path === "/api/tenants/t") return undefined as T;
+    if (path === "/api/tenants/t/models") return [{ canonicalName: "decision", offerings: [{ offeringId: "mof_1", providerName: "corbits-system-one" }] }] as T;
       if (method === "POST" && path === "/api/tenants/t/workflows/deployments") {
         const created = { id: `run_${who}`, tenantId: "t", definitionAssetId: `ast_${who}`, status: "deployed", createdAt: `2026-10-03T00:00:0${n++}.000Z` };
         deployments.push(created);

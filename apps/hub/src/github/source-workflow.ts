@@ -3,7 +3,7 @@
 // its host's workflow.
 import { and, eq, inArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { CODE_REVIEW_PROVIDERS, codeReviewProviderOf, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
+import { CODE_REVIEW_PROVIDERS, codeReviewProviderOf, REPO_SOURCES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import { PR_TRIAGE_ADDRESS } from "@corbits/triage-workflows/pr-triage";
 import { PR_TRIAGE_BITBUCKET_DATACENTER_ADDRESS, workflow as prTriageBitbucket } from "@corbits/triage-workflows/pr-triage-bitbucket-datacenter";
 import { PR_TRIAGE_GITHUB_ADDRESS, workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
@@ -53,7 +53,7 @@ export function codeReviewWorkflowFor(source: RepoSource): CodeReviewWorkflow {
 }
 
 /** Every workflow a host's pull request job can run in: its triage, its code review and its PR workflow variants. */
-export function jobWorkflowsFor(source: RepoSource): string[] {
+function jobWorkflowsFor(source: RepoSource): string[] {
   const variants = PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === source).map((variant) => variant.id);
   return [triageWorkflowFor(source).id, codeReviewWorkflowFor(source).id, ...variants];
 }
@@ -93,4 +93,27 @@ export async function connectedSources(db: DB["db"], tenantId: string): Promise<
   });
   const names = new Set(rows.map((row) => row.name));
   return TRIAGE_WORKFLOWS.filter((workflow) => names.has(workflow.credential)).map((workflow) => workflow.source);
+}
+
+export type HostReleaseDeps = {
+  connectedSources: (tenantId: string) => Promise<RepoSource[]>;
+  liveDeployments: (tenantId: string, workflow: string) => Promise<Array<{ runId: string; cancelling: boolean }>>;
+  cancel: (tenantId: string, runId: string) => Promise<void>;
+  log: (entry: Record<string, unknown>) => void;
+};
+
+/** A host's listener and the managers it deployed hold its credential, so they are released once the host is disconnected. */
+export function createHostRelease(deps: HostReleaseDeps) {
+  return async function releaseDisconnected(tenantId: string): Promise<void> {
+    const connected = await deps.connectedSources(tenantId);
+    for (const source of REPO_SOURCES.filter((host) => !connected.includes(host))) {
+      for (const workflow of [TRIAGE_LISTENERS[source], TRIAGE_MANAGERS[source]]) {
+        for (const live of await deps.liveDeployments(tenantId, workflow)) {
+          if (live.cancelling) continue;
+          await deps.cancel(tenantId, live.runId);
+          deps.log({ level: "info", msg: "triage_deployment_released", tenantId, workflow, deployment: live.runId, reason: "source_disconnected" });
+        }
+      }
+    }
+  };
 }

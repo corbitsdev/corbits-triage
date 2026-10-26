@@ -14,17 +14,12 @@ export function deliveryFailure(err: unknown): string {
   return err instanceof TriageStoppedError ? err.message : `delivery failed: ${String(err)}`;
 }
 
-/** Where a job came from: a webhook, a person's Triage again, or the reconciler. */
-export type TriageSource = "event" | "retry" | "reconcile";
-
 /** A pull request mail for the host's listener. */
 export type TriageJob = {
   tenantId: string;
-  workflow: string;
   repo: string;
   number: number;
   headSha: string;
-  source: TriageSource;
   payload: unknown;
   /** The repository a triage job's mail names, which the hub reads the pull request through. */
   record?: RepoRecord;

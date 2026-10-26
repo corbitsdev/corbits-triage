@@ -9,7 +9,6 @@ import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRo
 import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
-import { triageWorkflowFor } from "./source-workflow.js";
 import { deliveryFailure, failHead } from "./triage-queue.js";
 import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
@@ -267,7 +266,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     if (!("pack" in repo) || !marksWaiting(sourceOf(repo.record), repo.automatic)) return;
     const waited = new Set(repo.stored.rows.filter((row) => row.status === "waiting").map(headKey));
     for (const row of rows.filter((candidate) => candidate.status === "waiting" && !waited.has(headKey(candidate)))) {
-      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, source: "reconcile", payload: waitingPayload(repo.record, repo.policy, repo, row, false) });
+      await deps.send({ tenantId: pass.tenantId, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, payload: waitingPayload(repo.record, repo.policy, repo, row, false) });
     }
   }
 
@@ -286,7 +285,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       const mailed = { ...extra, ...(queued.noWait && { noWait: true }) };
       const payload = "pack" in repo ? mailPayload(repo.record, repo.policy, repo, mailed) : unreadablePayload(repo.record, repo.policy, repo, mailed);
       try {
-        await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, number: queued.number, headSha, source: "reconcile", record: repo.record, payload });
+        await deps.send({ tenantId: pass.tenantId, repo: key, number: queued.number, headSha, record: repo.record, payload });
       } catch (err) {
         if (err instanceof GithubRateLimited) throw err;
         deps.log({ level: "error", msg: "forward_failed", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, error: String(err) });

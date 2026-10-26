@@ -63,7 +63,7 @@ export type TenantDeployment = LiveDeployment & { workflow: string };
  * A worker deployment carries this key in its deploy content, so the hub can tell it from the listener it was copied
  * from: a worker ran one mail and was released when that run ended.
  */
-export const WORKER_MARKER = "corbitsTriageWorker";
+const WORKER_MARKER = "corbitsTriageWorker";
 
 export type DeploymentKind = "listener" | "worker";
 

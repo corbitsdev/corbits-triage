@@ -12,7 +12,7 @@ import { offeringsFor } from "./model-catalog.ts";
 import { hostFullName } from "./pull-link.ts";
 import { TRIAGE_RELEASE_QUERY_KEY, usePortal } from "./portal.tsx";
 import { usePrincipals, useRoles } from "./tenant-entities.ts";
-import { cancelDeployment, portalPackage } from "./workflow-deploy.ts";
+import { cancelDeployment, ensureKeepDeployedLifetime, portalPackage } from "./workflow-deploy.ts";
 import { CHAIN_PACKAGES, type SourceIndexEntry } from "./workflow-packages.ts";
 import { publishSources, type PublishedSource, type Publisher } from "./workflow-sources.ts";
 
@@ -126,6 +126,7 @@ export async function upgradeTriage(
   publish: (transport: Transport, publisher: Publisher) => Promise<PublishedSource[]> = publishSources,
 ): Promise<RepoSource[]> {
   onStep("publishing");
+  await ensureKeepDeployedLifetime(transport, publisher.tenantId);
   const published = await publish(transport, publisher);
   const superseded: RepoSource[] = [];
   for (const source of sources) {

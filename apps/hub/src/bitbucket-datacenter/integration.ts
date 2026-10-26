@@ -59,7 +59,7 @@ type BitbucketDeps = PortalCredentialDeps & {
   egressAllowlist?: readonly string[];
   /** Called once a repository is enabled, so its open pull requests are triaged without waiting for the next pass. */
   onEnabled: (tenantId: string) => void;
-  /** Called after connect and disconnect: the deployed pr-triage entry follows the connected hosts. */
+  /** Called after connect and disconnect, so a disconnected host's listener and managers are released. */
   onConnectionChanged: (tenantId: string) => Promise<void>;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;

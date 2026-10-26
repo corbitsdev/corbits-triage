@@ -912,12 +912,6 @@ export function codeReviewProvider(credentials: readonly HubCredential[]): CodeR
   return codeReviewProviderOf(credentials.filter(isActiveCredential).map((credential) => credential.name));
 }
 
-/** The hosts with a connected repository that has code review on, while a code review provider's key is stored and the hub can run it: the hosts whose code review deploys. */
-export function codeReviewSources(snapshot: Pick<PortalSnapshot, "repos" | "credentials" | "codeReviewPlace">): RepoSource[] {
-  if (!codeReviewProvider(snapshot.credentials) || typeof snapshot.codeReviewPlace !== "string") return [];
-  return [...new Set(snapshot.repos.filter((repo) => repo.connected && repo.codeReview).map((repo) => repo.source))];
-}
-
 export type OpenPulls = {
   repos: Array<{
     repo: string;
