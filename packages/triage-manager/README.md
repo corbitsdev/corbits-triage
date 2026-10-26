@@ -14,7 +14,8 @@ A workspace's listener and a pull request's manager.
   published judge, a pass deploys [`@corbits/triage-judge`](../triage-judge) and mails it the rules output; the pass
   that collects its report posts the judge's verdict as the judge made it, and so does every later pass on that head,
   which deploys no other judge. With code review, a pass then deploys the review and mails it the head's
-  request; the pass that collects its report mirrors the verdict and posts the review together. A reviewer that could
+  request; the pass that collects its report mirrors the verdict and posts the review together, and a later pass on
+  that head posts the stored review again without deploying another. A reviewer that could
   not be mailed, failed or ran past its one-hour deadline leaves the verdict to go up alone; a judge the release does
   not publish posts nothing. `done` stops a reviewer this run deployed that is on an older head or past its deadline.
   The run's last step is its only end: it stops the run once `done` ends the pull request's claim, take is refused

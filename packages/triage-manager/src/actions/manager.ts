@@ -126,14 +126,13 @@ function remembered(take: TakeOutput): Reviewer[] {
 }
 
 /**
- * The reviewers to wait for. A result stays on its reviewer while another of this head is still out, so a judge that
- * reported before code review is not lost; once nothing is waiting, the settled ones are dropped, except the judge of
- * this head, so a later pass on it posts that judge's verdict and deploys no other. Plus one mailed now.
+ * The reviewers of the pass's head, each with its result once it has one, so a later pass on that head posts what they
+ * reported and deploys no other. Without a head, the settled ones are dropped once nothing is waiting. Plus one mailed now.
  */
 function reviewersAfter(take: TakeOutput, mailed: Reviewer | undefined): Reviewer[] {
   let current = remembered(take);
   const waiting = current.some((reviewer) => reviewer.result === undefined) || (mailed !== undefined && mailed.result === undefined);
-  if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined || (reviewer.kind === "judge" && reviewer.head === take.head));
+  if (!waiting && take.head === undefined) current = current.filter((reviewer) => reviewer.result === undefined);
   return mailed ? [...current, mailed] : current;
 }
 

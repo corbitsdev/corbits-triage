@@ -292,8 +292,11 @@ any other tenant or an unknown sender.
   request until the review's one-hour deadline, and still posts nothing while
   that review is out. The pass that collects its report mirrors the verdict,
   then posts the review through the host's `send_code_review` tool, so they
-  go up together. A review that could not be mailed, reported a failure or
-  ran past its deadline leaves the verdict to go up alone. Each reviewer the
+  go up together. The review's reviewer, with its result, stays on the claim
+  for its head like the judge's, so a later pass on that head posts the
+  stored review with the verdict and deploys no other. A review that could
+  not be mailed, reported a failure or ran past its deadline leaves the
+  verdict to go up alone and is not deployed again on that head. Each reviewer the
   manager records names the manager run that deployed it (`deployedBy`). Done
   stops each judge or code review this run deployed and no longer waits for,
   one on an older head or past its deadline, through the same stop-run route;

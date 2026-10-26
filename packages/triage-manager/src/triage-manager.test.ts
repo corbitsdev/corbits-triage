@@ -333,13 +333,27 @@ describe("triage-manager with code review", () => {
     expect(ran).not.toContain("deployReview");
     expect(writes).toContainEqual(READY);
     expect(writes).toContainEqual(POSTED_REVIEW);
-    expect(second.calls).toEqual([TAKE, DONE, END]);
+    expect(second.calls).toEqual([TAKE, { ...DONE, body: { ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] } }, END]);
     expect(mailed).toHaveLength(1);
   });
 
+  test("a later event on the same head deploys no second review and posts the stored review with the verdict", async () => {
+    const { writes, host } = githubHost();
+    const mailed: unknown[] = [];
+    const later = { ...PASS, request: ON, events: [mailEvent(HEAD, ON, "evt_2")], reviewers: [{ ...reviewer(), result: REVIEW }] };
+    const hub = fakeHub({ takes: [later], dones: [ENDED] });
+    const { ran } = await runMail(reviewed, wake(), host, hub.hub, mailed);
+    expect(ran).not.toContain("deployReview");
+    expect(writes).toContainEqual(READY);
+    expect(writes).toContainEqual(POSTED_REVIEW);
+    expect(mailed).toEqual([]);
+    expect(hub.calls).toEqual([TAKE, { ...DONE, body: { ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] } }, END]);
+  });
+
+  const PAST = "2000-01-01T00:00:00.000Z";
   test.each([
-    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON), [TAKE, DONE, END]],
-    ["the review ran past its deadline, which is stopped,", { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] }, [TAKE, DONE, STOP_REVIEW, END]],
+    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON), [TAKE, { ...DONE, body: { ...PULL, reviewers: [{ ...reviewer(), result: { failed: "the review did not finish" } }] } }, END]],
+    ["the review ran past its deadline, which is stopped,", { ...IDLE, request: ON, reviewers: [reviewer(PAST)] }, [TAKE, { ...DONE, body: { ...PULL, reviewers: [{ ...reviewer(PAST), result: { failed: "overdue" } }] } }, STOP_REVIEW, END]],
     ["the hub read no review request", { ...PASS, request: hubRequest(RULES, CODE_REVIEW) }, [TAKE, DONE, END]],
   ])("when %s the verdict goes up without code review", async (_name, taken, calls) => {
     const { writes, host } = githubHost();
@@ -477,7 +491,7 @@ describe("triage-manager with a judge and code review", () => {
     expect(ran).not.toContain("deployJudge");
     expect(writes).toContainEqual(JUDGE_POSTED);
     expect(writes).toContainEqual(POSTED_REVIEW);
-    expect(third.calls[1]).toEqual({ ...DONE, body: { ...PULL, reviewers: [{ ...JUDGE, result: verdict }] } });
+    expect(third.calls[1]).toEqual({ ...DONE, body: { ...PULL, reviewers: [{ ...JUDGE, result: verdict }, { ...reviewer(), result: REVIEW }] } });
   });
 });
 
