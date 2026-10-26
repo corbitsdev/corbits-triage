@@ -12,8 +12,8 @@ A workspace's listener and a pull request's manager.
   automatic Dos); then `done`. The next pass runs at once while an event is pending, or every 30 seconds while it waits
   for its code review. With code review, a pass deploys the review and mails it the head's request; the pass that
   collects its report mirrors the verdict and posts the review together. A review that could not be mailed, failed or
-  ran past its one-hour deadline leaves the verdict to go up alone. The run stops itself when `done` ends the pull
-  request's claim, and when its passes fail or run out.
+  ran past its one-hour deadline leaves the verdict to go up alone; `done` stops a review on an older head or past its
+  deadline. The run stops itself when `done` ends the pull request's claim, and when its passes fail or run out.
 
 What each deploys next, a published workflow's source asset at one commit and the offerings it runs on (`Release`), is
 read per host from `src/release.json`, which the portal writes into each published tree and the bundle keeps external,

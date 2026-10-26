@@ -84,9 +84,16 @@ function reviewersAfter({ head, review, reviewFailed, overdue, reviewers }: Take
   return mailed ? [...current, mailed] : current;
 }
 
+/** The code reviews the pass stops waiting for without a report: one on an older head, or past its deadline. */
+function abandoned({ head, overdue, reviewers }: TakeOutput): Reviewer[] {
+  if (head === undefined) return [];
+  return reviewers.filter((reviewer) => reviewer.kind === "code-review" && (reviewer.head !== head || overdue));
+}
+
 /**
- * Closes the pass; the run ends itself when the hub ends its claim, and a run that take refused has ended already.
- * `more` runs the next pass at once, or with `wait` after waiting for a code review.
+ * Closes the pass and stops the code reviews it no longer waits for; the run ends itself when the hub ends its claim, and
+ * a run that take refused has ended already. `more` runs the next pass at once, or with `wait` after waiting for a code
+ * review.
  */
 export async function done(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ outcome: "ended" | "refused" } | { outcome: "more"; wait: boolean }> {
   const parsed = DoneInput(input);
@@ -95,6 +102,7 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const mail = managerMailOf(parsed.payload);
   const answer = await asManager(ctx, mail, "done", { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, parsed.reviewMailed?.output.reviewer) }, Done);
   if (answer === undefined) return { outcome: "refused" };
+  for (const reviewer of abandoned(parsed.take.output)) await endRun(ctx, mail.tenantId, reviewer.runId);
   if (answer.outcome === "ended") await endRun(ctx, mail.tenantId, mail.runId);
   return answer;
 }

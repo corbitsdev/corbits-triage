@@ -6,8 +6,9 @@
 - Stock ref: `b1ca01f0d9bc2eb203e95b1780a6f685c5da8215`
 - Composite pin: stock `b1ca01f0` (`v0.5.0-67`) plus the
   step-env director threading from PR #193, the local CL-10210 carry, the
-  INTR-666 adaptive-thinking model ids and Anthropic structured outputs, and
-  the host run-token routes. Do not treat any delta as a new stock pin.
+  INTR-666 adaptive-thinking model ids and Anthropic structured outputs, the
+  host run-token routes, and the deployer's manage grant. Do not treat any
+  delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -173,6 +174,25 @@ Allowed files:
 Upstream reference: none (not proposed upstream; tracked in CL-11373).
 
 Remove when stock Interchange lets a host extend the run-token allowlist.
+
+### Deployer manages the run it deployed
+
+Stock `WorkflowAllocationService` grants the deploying principal only `read`
+on `workflow-run:<anchorRunId>`, so a run that deploys another can watch it
+but cannot stop it. The carry inserts that grant with `manage` instead; it is
+the only changed line.
+
+- `manage` also lets the deployer mail, signal and trigger the deployment.
+  That deployment's runs carry the deployer's own delegated grants, so this
+  is no escalation beyond the deployer's authority.
+
+Allowed files:
+
+- `packages/hub-sessions/src/workflow-allocation-service.ts`
+
+Upstream reference: none yet; to be raised upstream.
+
+Remove when stock grants the deployer `manage` on the run it deployed.
 
 ## Dropped deltas
 

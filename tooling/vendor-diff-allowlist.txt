@@ -37,3 +37,8 @@ packages/hub-api/src/middleware/run-token-auth.ts
 packages/hub-api/src/app.ts
 packages/hub-api/src/app.test.ts
 packages/hub-api/src/index.ts
+
+# Local carry: the deployer's grant on the run it deployed is manage, not
+# read, so a run can stop a deployment it started. To be raised upstream.
+# Remove when stock grants the deployer manage.
+packages/hub-sessions/src/workflow-allocation-service.ts

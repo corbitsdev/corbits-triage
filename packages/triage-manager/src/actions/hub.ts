@@ -77,8 +77,8 @@ export async function deploy(ctx: EffectContext, effectId: string, tenantId: str
   return answered(answer, `deploying ${workflow.packageName}`, Deployed).id;
 }
 
-/** Asks the hub to stop the run; it is already ending when the hub answers 409. */
+/** Asks the hub to stop the run, this one or one it deployed; it is already ending when the hub answers 409. */
 export async function endRun(ctx: EffectContext, tenantId: string, runId: string): Promise<void> {
-  const answer = await callHub(ctx, "end", tenantPath(tenantId, `/workflows/runs/${encodeURIComponent(runId)}`), "DELETE");
+  const answer = await callHub(ctx, `end:${runId}`, tenantPath(tenantId, `/workflows/runs/${encodeURIComponent(runId)}`), "DELETE");
   if (answer.status >= 300 && answer.status !== 409) throw new Error(`stopping run ${runId} answered ${answer.status}: ${answer.text}`);
 }

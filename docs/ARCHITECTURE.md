@@ -262,7 +262,10 @@ any other tenant or an unknown sender.
   mirrors the verdict, then posts the review through the host's
   `send_code_review` tool, so they go up together. A review that could not be
   mailed, reported a failure or ran past its deadline leaves the verdict to go
-  up alone.
+  up alone. Done stops each code review the manager no longer waits for, one
+  on an older head or past its deadline, through the same stop-run route;
+  stock grants the deployer `read` on a run it deployed, and the vendored
+  Interchange carries `manage` instead (`vendor/interchange/VENDORED.md`).
 - `pr-code-review-reviewer-github` and
   `pr-code-review-reviewer-bitbucket-datacenter` (`codeReviewReviewer` in
   `@corbits/pr-code-review`): the code review a manager deploys, alone on its

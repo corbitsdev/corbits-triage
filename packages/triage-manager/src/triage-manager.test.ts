@@ -25,6 +25,7 @@ const TENANT_PATH = `/api/tenants/${TENANT}`;
 const END = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${RUN}` };
 const DEPLOY = { method: "POST", path: `${TENANT_PATH}/workflows/deployments` };
 const DEPLOYED = "run_deployed";
+const STOP_REVIEW = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` };
 /** The eval fixture's head. */
 const HEAD = "e0a1".repeat(10);
 
@@ -76,7 +77,7 @@ const allow: WorkflowAuthorizeFn = async function allow() {
 type HubCall = { method: string; path: string; body?: unknown };
 type HubAnswer = Record<string, unknown> | typeof REFUSED;
 
-/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route. */
+/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route for any run. */
 function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[] }) {
   const calls: HubCall[] = [];
   function answer(next: HubAnswer | undefined): Response {
@@ -88,7 +89,7 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
     calls.push({ method, path: url.pathname, ...(init?.body !== undefined && { body: JSON.parse(String(init.body)) }) });
     if (url.pathname === `${TENANT_PATH}/manager/take`) return answer(takes.shift());
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
-    if (method === END.method && url.pathname === END.path) return new Response(null, { status: 202 });
+    if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
     if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: DEPLOYED }, { status: 201 });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });
   }
@@ -225,11 +226,12 @@ describe("triage-manager", () => {
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
   });
 
-  test("an old review's reply finds nothing for its head and runs no stage 1", async () => {
+  test("an old review's reply finds nothing for its head, runs no stage 1 and stops the superseded review", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [{ ...reviewer(), head: "older" }] }], dones: [ENDED] });
     expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["done", "paused", "ran", "take"]);
     expect(writes).toEqual([]);
+    expect(hub.calls).toEqual([TAKE, DONE, STOP_REVIEW, END]);
   });
 
   test("a pass of an approval alone, before any pull request mail was recorded, runs it and triages nothing", async () => {
@@ -315,17 +317,17 @@ describe("triage-manager with code review", () => {
   });
 
   test.each([
-    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON)],
-    ["the review ran past its deadline", { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] }],
-    ["the hub read no review request", { ...PASS, request: hubRequest(RULES, CODE_REVIEW) }],
-  ])("when %s, the verdict goes up without code review", async (_name, taken) => {
+    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON), [TAKE, DONE, END]],
+    ["the review ran past its deadline, which is stopped,", { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] }, [TAKE, DONE, STOP_REVIEW, END]],
+    ["the hub read no review request", { ...PASS, request: hubRequest(RULES, CODE_REVIEW) }, [TAKE, DONE, END]],
+  ])("when %s the verdict goes up without code review", async (_name, taken, calls) => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [taken], dones: [ENDED] });
     const { ran } = await runMail(reviewed, wake(), host, hub.hub);
     expect(ran).not.toContain("deployReview");
     expect(writes).toContainEqual(READY);
     expect(writes).not.toContainEqual(POSTED_REVIEW);
-    expect(hub.calls).toEqual([TAKE, DONE, END]);
+    expect(hub.calls).toEqual(calls);
   });
 
   test("a review that could not be mailed by its deadline leaves the verdict to go up alone, waiting for no reviewer", async () => {
