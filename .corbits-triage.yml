@@ -58,6 +58,26 @@ rules:
     reason: Hidden text can steer the rules a model judges.
     evidence:
       - maintainer-stated
+  - check: no-duplicate
+    text: Flag a pull request whose diff or commits match another open one.
+    reason: Two pull requests for the same change waste a review; the earlier one stays.
+    evidence:
+      - maintainer-stated
+  - check: duplicates-open-pull-request
+    text: Ask when a pull request overlaps another open one.
+    reason: A near duplicate needs a person to pick which one goes on.
+    evidence:
+      - maintainer-stated
+  - check: sensitive-paths
+    text: Route schema, migration, auth and secret changes to a person.
+    reason: A schema or auth change is hard to undo; CI config and lockfiles are noted.
+    evidence:
+      - maintainer-stated
+  - check: risk
+    text: Ask about high-risk pull requests and label medium-risk ones.
+    reason: A large change with no test touched needs a maintainer's eye.
+    evidence:
+      - maintainer-stated
   - id: no-ai-attribution
     check: text
     text: Titles, descriptions and commits carry no AI attribution.
