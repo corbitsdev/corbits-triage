@@ -145,7 +145,7 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     rotationKey: "rotation",
     tenants: async () => [{ id: TENANT, domain: DOMAIN, config: CONFIG }],
     liveDeployments,
-    listener: async () => null,
+    listener: async () => undefined,
     latestDeployments: (tenantId, limit) => latestDeployments(db, tenantId, WORKFLOW, limit),
     rotation: {
       afterRuns: 1_000,

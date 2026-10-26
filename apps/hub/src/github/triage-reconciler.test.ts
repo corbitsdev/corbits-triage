@@ -188,7 +188,6 @@ type HarnessOptions = {
   rotateAfterRuns?: number;
   now?: () => Date;
   deployments?: LiveDeployment[];
-  /** The host's live listener. */
   listener?: LiveDeployment;
   whileRedeploying?: (deployments: LiveDeployment[]) => void;
   rotation?: RotationRecord;
@@ -261,7 +260,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       return [tenant()];
     },
     liveDeployments,
-    listener: async () => options.listener ?? null,
+    listener: async () => options.listener,
     latestDeployments: async () => [],
     rotation: {
       afterRuns: options.rotateAfterRuns ?? 1_000,
@@ -351,7 +350,8 @@ function rotationLogs(logged: ReadonlyArray<Record<string, unknown>>): unknown[]
 
 describe("triage reconciler", () => {
   test("a host whose listener is live is caught up with no pr-triage deployment", async () => {
-    const run = harness({}, [head(1)], { deployments: [], listener: deployment("run_listener", new Date(LONG_AGO)) });
+    const listener = { runId: "run_listener", address: formatRunAddress("run_listener", DOMAIN), createdAt: new Date(LONG_AGO), cancelling: false };
+    const run = harness({}, [head(1)], { deployments: [], listener });
     await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
   });

@@ -30,11 +30,11 @@ import {
 } from "@corbits/cron";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
+import { TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { passRequest } from "./manager-state.js";
+import { liveListener, passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
@@ -313,12 +313,15 @@ const requireGrant = createRequireGrant({
   conditionRegistry: HUB_CONDITION_REGISTRY,
 });
 /** A workspace with a host's listener live runs that host's pull requests in managers. */
-async function liveListener(tenantId: string, source: RepoSource): Promise<string | undefined> {
-  return (await resolveLiveDeployment(composition.db, tenantId, TRIAGE_LISTENERS[source]))?.address;
+function liveListenerOf(tenantId: string, source: RepoSource) {
+  return liveListener(composition.db, tenantId, source);
+}
+async function listenerAddress(tenantId: string, source: RepoSource): Promise<string | undefined> {
+  return (await liveListenerOf(tenantId, source))?.address;
 }
 const toListener = createManagerIntake({
   db: composition.db,
-  listener: liveListener,
+  listener: listenerAddress,
   readPull: function readPull(tenantId, record, number) {
     return pullRequests.withDiff(tenantId, record, number);
   },
@@ -496,7 +499,7 @@ async function inPrWorkflow(tenantId: string, repo: string, source: RepoSource):
 }
 // Repositories left switched on send nothing while code review has nowhere to run, nor one the PR workflow or a manager reviews.
 async function reviewedSources(tenantId: string, record: RepoRecord) {
-  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name, sourceOf(record))) || (await liveListener(tenantId, sourceOf(record)))) return [];
+  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name, sourceOf(record))) || (await listenerAddress(tenantId, sourceOf(record)))) return [];
   return codeReviewSources(composition.db, tenantId);
 }
 /** The hosts whose PR workflow deploys: a connected repository's policy file needs it, and code review has a place to run. */
@@ -654,9 +657,7 @@ function triageStack(triage: TriageWorkflow) {
     rotationKey: triage.rotationKey,
     tenants: reconcileTenants,
     liveDeployments,
-    listener: function liveTriageListener(tenantId) {
-      return resolveLiveDeployment(composition.db, tenantId, TRIAGE_LISTENERS[triage.source]);
-    },
+    listener: liveListenerOf,
     headChecks: tenantHeadChecks,
     verdicts: verdictRecordStore,
     latestDeployments: function latestTriageDeployments(tenantId, limit) {
@@ -721,7 +722,7 @@ const githubPrTriage = createGithubPrTriage({
   },
   readCheckPack,
   liveDeployments: liveTriageDeployments,
-  listener: liveListener,
+  listener: liveListenerOf,
   observeRuns: observeTriageRuns,
   managerRuns,
   store: triageStateStore,

@@ -6,8 +6,9 @@ import { and, desc, eq, inArray, isNull, like, sql } from "drizzle-orm";
 import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
-import { APPROVE_DO_KIND, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
+import { resolveLiveDeployment, type LiveDeployment } from "./github/deployment.js";
 import { triageSchema } from "./triage-db.js";
 
 const managerState = triageSchema.table("manager_state", {
@@ -155,12 +156,15 @@ export async function recordEvent(db: DB["db"], tenantId: string, pr: PullReques
   return inserted.length === 1;
 }
 
-/** How long a just-deployed manager may have no sidecar and still hold the pull request. The listener waits this long for it to start. */
+/**
+ * How long a just-deployed manager may have no sidecar and still hold the pull request, and a just-deployed listener
+ * still count as live. The listener waits this long for a manager to start.
+ */
 const MANAGER_START_GRACE_MS = 2 * 60_000;
 
 type ManagerRun = { status: string; createdAt: Date; allocationStatus: string | null; sidecarId: string | null };
 
-async function managerRun(tx: Tx, runId: string): Promise<ManagerRun | undefined> {
+async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun | undefined> {
   const [run] = await tx
     .select({
       status: schema.workflowRun.status,
@@ -192,6 +196,13 @@ async function releaseStuck(tx: Tx, runId: string, now: Date): Promise<void> {
     .update(schema.workflowRun)
     .set({ cancellationRequestedAt: now, cancellationDeadline: now, cancellationReason: "manager deployed without a sidecar" })
     .where(and(eq(schema.workflowRun.id, runId), inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]), isNull(schema.workflowRun.cancellationRequestedAt)));
+}
+
+/** The workspace's newest listener for the host while it is up, as a manager is: running, on its sidecar, or just deployed. */
+export async function liveListener(db: DB["db"], tenantId: string, source: RepoSource): Promise<LiveDeployment | undefined> {
+  const listener = await resolveLiveDeployment(db, tenantId, TRIAGE_LISTENERS[source]);
+  if (!listener || !runIsUp(await managerRun(db, listener.runId), new Date())) return undefined;
+  return listener;
 }
 
 /** The run id of the pull request's manager while that run is up. */

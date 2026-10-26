@@ -46,9 +46,10 @@ export type TriageReconcilerDeps = {
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
   /**
    * The host's live listener, whose managers run its pull requests: the pass then needs no pr-triage deployment, and
-   * neither rotates nor heals one. A listener names no workflow version, so no head starts over for one.
+   * neither rotates nor heals one, so a rotation under way is abandoned. A listener names no workflow version, so no
+   * head starts over for one.
    */
-  listener: (tenantId: string) => Promise<LiveDeployment | null>;
+  listener: (tenantId: string, source: RepoSource) => Promise<LiveDeployment | undefined>;
   latestDeployments: (tenantId: string, limit: number) => Promise<DeploymentRecord[]>;
   rotation: DeploymentRotation;
   /** Undefined when the tenant holds no credential for any pull request host. */
@@ -462,8 +463,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   async function reconcileTenant(tenant: ReconcileTenant): Promise<boolean> {
     const repos = enabledRepos(tenant.config, deps.source);
     if (repos.length === 0) return false;
+    const listener = await deps.listener(tenant.id, deps.source);
     // Only live deployments' and recent workers' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
-    const listener = await deps.listener(tenant.id);
     const { deployments, observed, workers } = await deps.observeTenant(tenant.id, tenant.domain);
     if (!listener && deployments.length === 0) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });

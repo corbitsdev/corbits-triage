@@ -169,7 +169,7 @@ describe("createGithubPrTriage", () => {
 
   test("with the host's listener live, mails with no pr-triage deployment and refuses a pull request whose manager is up", async () => {
     const s = stub();
-    const listening: Partial<GithubPrTriageDeps> = { listener: async () => "listener-1@tenant.example", liveDeployments: async () => [] };
+    const listening: Partial<GithubPrTriageDeps> = { listener: async () => ({ ...ANCHOR, runId: "listener-1", address: "listener-1@tenant.example" }), liveDeployments: async () => [] };
     expect((await handler(ENABLED, s, listening)(request(), MEMBER)).status).toBe(202);
     expect(s.delivered).toHaveLength(1);
     const managed = stub();

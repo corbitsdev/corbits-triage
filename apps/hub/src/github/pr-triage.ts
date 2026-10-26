@@ -33,8 +33,8 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   readCheckPack: PolicyReader;
   /** The named workflow's, newest first; mail goes to the first, and a head may still be running on a replaced one. */
   liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
-  /** The address of the workspace's live listener for the host, if it has one; its managers then run the pull requests. */
-  listener: (tenantId: string, source: RepoSource) => Promise<string | undefined>;
+  /** The workspace's live listener for the host, if it has one; its managers then run the pull requests. */
+  listener: (tenantId: string, source: RepoSource) => Promise<LiveDeployment | undefined>;
   observeRuns: ObserveRuns;
   managerRuns: ManagerRuns;
   store: TriageStateStore;
