@@ -353,6 +353,41 @@ describe("pr-triage body", () => {
     expect((await triage(pack, { history: "unread" })).verdict).toMatchObject({ verdict: "pass", labelled: [{ check: "regression-risk", result: "unconfirmed", evidence: ["src/flag.ts"] }] });
   });
 
+  test("risk and sensitive paths label and note a medium pull request and ask a maintainer about a high one, naming what they found", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "sensitive-paths": { enabled: true, onFail: "ask" }, risk: { enabled: true, onFail: "ask" } } };
+    const medium = (await triage(pack)).verdict as Verdict;
+    expect(medium).toMatchObject({ verdict: "pass", actions: [{ list: "pass", kind: "labels", target: { labels: ["risk: medium"] } }] });
+    expect(medium.request.comment).toBe("**Triage: Pass**\n\nNo changes needed from you. A maintainer will review this pull request.\n\nNotes:\n- Risk: medium (no tests)\n\nTriage will label.");
+    const migration: FileRow = { filename: "db/migrations/0002.sql", status: "added", additions: 1, deletions: 0 };
+    const high = (await triage(pack, { files: [FLAG, migration] })).verdict as Verdict;
+    expect(high).toMatchObject({ verdict: "unsure", actor: "maintainer", actions: [{ list: "unsure", kind: "request-review" }, { list: "unsure", kind: "labels", target: { labels: ["risk: medium"] } }] });
+    expect(high.request.comment).toBe("**Triage: Unsure**\n\nAsking a maintainer about:\n- changes sensitive paths: `schema: db/migrations/0002.sql`\n\nNotes:\n- Risk: medium (no tests)\n\nTriage will request review, label.");
+    expect((await triage(pack, { files: [FLAG, { ...FLAG, filename: "src/flag.test.ts" }] })).verdict).toMatchObject({ verdict: "pass", actions: [] });
+    const bump = (await triage(pack, { files: [{ filename: "bun.lock", status: "modified", additions: 1, deletions: 1 }] })).verdict as Verdict;
+    expect(bump).toMatchObject({ verdict: "pass", actions: [{ list: "pass", kind: "labels", target: { labels: ["sensitive: medium", "risk: medium"] } }] });
+    expect(bump.request.comment).toBe("**Triage: Pass**\n\nNo changes needed from you. A maintainer will review this pull request.\n\nNotes:\n- changes sensitive paths: `locks: bun.lock`\n- Risk: medium (locks paths)\n\nTriage will label.");
+  });
+
+  test("risk it could not check for unread history is noted, never waited on", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { risk: { enabled: true, onFail: "ask", failAt: "medium" } } };
+    const unread = (await triage(pack, { files: [FLAG, { ...FLAG, filename: "src/flag.test.ts" }], history: "unread" })).verdict as Verdict;
+    expect(unread).toMatchObject({ verdict: "unsure", checks: expect.arrayContaining([expect.objectContaining({ check: "risk", result: "unconfirmed" })]) });
+    expect(unread.waiting).toBeUndefined();
+    expect(unread.request.comment).toBe("**Triage: Unsure**\n\nA maintainer will review this pull request.\n\nNotes:\n- Risk could not be checked: could not read the recent history of some changed files\n\nTriage will request review.");
+  });
+
+  test("Triage swaps the level labels of sensitive paths and risk as the level changes, and a risk rule that only labels adds risk: high", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "sensitive-paths": { enabled: true, onFail: "ask" }, risk: { enabled: true, onFail: "ask" } } };
+    const lowered = (await triage(pack, { labels: ["risk: high", "sensitive: medium", "risk: someday"] })).verdict as Verdict;
+    expect(lowered.actions).toEqual([expect.objectContaining({ kind: "labels", target: { labels: ["risk: medium"], unlabel: ["risk: high", "sensitive: medium"] } })]);
+    const tested = [FLAG, { ...FLAG, filename: "src/flag.test.ts" }];
+    expect((await triage(pack, { files: tested, labels: ["risk: medium"] })).verdict).toMatchObject({ actions: [{ kind: "labels", target: { labels: [], unlabel: ["risk: medium"] } }] });
+    expect((await triage(pack, { files: tested })).verdict).toMatchObject({ actions: [] });
+    const labelOnly: CheckPack = { ...emptyPack(REPO), checks: { risk: { enabled: true, onFail: "label" } } };
+    const migration: FileRow = { filename: "db/migrations/0002.sql", status: "added", additions: 1, deletions: 0 };
+    expect((await triage(labelOnly, { files: [migration] })).verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", target: { labels: ["risk: high"] } }] });
+  });
+
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {
     const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, docs: { enabled: true, onFail: "label" } } });
     expect(path).toEqual(VERDICT_PATH);

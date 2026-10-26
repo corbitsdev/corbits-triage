@@ -47,7 +47,7 @@ function addBody(lead: string): string {
   return [lead, "", "Edit it here before merging. Once merged, triage reads its rules from this file, and you change them by editing it."].join("\n");
 }
 
-const STARTER_BODY = addBody(`Adds \`${POLICY_FILE_PATH}\` with a few common rules: a size limit, no merge conflicts and passing CI.`);
+const STARTER_BODY = addBody(`Adds \`${POLICY_FILE_PATH}\` with a few common rules: a size limit, no merge conflicts, passing CI, and a maintainer asked about sensitive or risky changes.`);
 const CHOSEN_BODY = addBody(`Adds \`${POLICY_FILE_PATH}\`.`);
 
 /**

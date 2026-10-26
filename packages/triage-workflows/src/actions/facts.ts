@@ -237,7 +237,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   }
   const teams = namedTeams(pack, repo);
   const focused = catalogCheckEnabled(pack, "focused");
-  const risk = catalogCheckEnabled(pack, "regression-risk");
+  const risk = catalogCheckEnabled(pack, "regression-risk") || catalogCheckEnabled(pack, "risk");
   const listed = new Map<number, ListedFiles>();
   const filesErrors = new Map<number, string>();
 

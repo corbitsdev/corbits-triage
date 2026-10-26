@@ -169,6 +169,8 @@ const EVERY_MACHINE_RULE = `rules:
   - { check: hidden-content, text: T., ${EVIDENCE} }
   - { check: regression-risk, text: T., ${EVIDENCE} }
   - { check: no-duplicate, text: T., ${EVIDENCE} }
+  - { check: sensitive-paths, text: T., ${EVIDENCE} }
+  - { check: risk, text: T., ${EVIDENCE} }
   - { id: conventions, check: code-patterns, text: T., presets: [convention], ${EVIDENCE} }
 `;
 

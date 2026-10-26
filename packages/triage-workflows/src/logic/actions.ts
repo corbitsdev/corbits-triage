@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, authorGroupsOf, CATALOG_IDS, checkName, classificationSources, labelRules, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
 import { authorFailures, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
@@ -42,7 +42,7 @@ export interface ActionInput {
   verdict: VerdictWord;
   reason: string;
   pack: CheckPack;
-  /** Each labelling rule's result, where the host has labels. */
+  /** Each labelling rule's result, and each rule that did not fail but still labels, where the host has labels. */
   labelled?: CheckResult[];
 }
 
@@ -179,14 +179,29 @@ function stepSubject(facts: PrFacts, pack: CheckPack): StepSubject {
   };
 }
 
+/** The label a result adds: its own, or else its labelling rule's when that rule did not pass. */
+function addedLabels(c: CheckResult, labels: ReadonlyMap<string, string>): string[] {
+  if (c.label !== undefined) return [c.label];
+  const label = labels.get(c.check);
+  return label !== undefined && isLabelledFinding(c) ? [label] : [];
+}
+
+/** The level labels of the switched-on sensitive-paths and risk rules, which only Triage adds. */
+function levelLabels(pack: CheckPack): Set<string> {
+  const ids = (Object.keys(LEVEL_LABELS) as Array<keyof typeof LEVEL_LABELS>).filter((id) => catalogCheckEnabled(pack, id));
+  return new Set(ids.flatMap((id) => RISK_MARKS.map((level) => levelLabel(id, level).toLowerCase())));
+}
+
 /**
- * After the verdict's own steps, one labels Do adds the label of each labelling rule that did not pass. Nothing says who
- * put a label on, so one is never taken back: it may be a person's.
+ * After the verdict's own steps, one labels Do adds the label of each labelling rule that did not pass, and each label a
+ * rule that did not fail still adds. Nothing says who put a label on, so one is never taken back, as it may be a
+ * person's, except a level label of sensitive paths or risk that no longer applies.
  */
 function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string): SuggestedAction[] {
-  if (!labelled?.length) return [];
+  if (labelled === undefined) return [];
   const labels = labelRules(pack);
-  const target = { labels: [...new Set(labelled.filter(isLabelledFinding).flatMap((c) => labels.get(c.check) ?? []))] };
+  const owned = levelLabels(pack);
+  const target = derivedLabels([...new Set(labelled.flatMap((c) => addedLabels(c, labels)))], (label) => owned.has(label.toLowerCase()), facts);
   if (satisfied("labels", target, facts)) return [];
   const index = pack.actions[list].length;
   const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: "labels", target });

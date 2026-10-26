@@ -1,11 +1,15 @@
 import {
   askRules,
+  AUTHOR_GROUPS,
   catalogCheckEnabled,
   CLOSED_FINDING,
   classificationSources,
   CONVENTIONAL_FIELDS,
   CONVENTIONAL_TYPES,
   DEFAULT_RISK,
+  DEFAULT_MARKS,
+  DEFAULT_RISK_LEVELS,
+  DEFAULT_SENSITIVE,
   customCheckEnabled,
   hardFailures,
   ISSUE_LINKS,
@@ -13,9 +17,11 @@ import {
   isPatternsCheck,
   isTextCheck,
   labelRules,
+  levelLabel,
   NO_CHANGES_REQUESTED,
   NOT_A_DRAFT,
   readCheckPack,
+  RECOMMENDED_SIZE,
   repoPolicy,
   SIZE_RULES,
   type AuthorKind,
@@ -24,6 +30,9 @@ import {
   type CheckPack,
   type ConventionalField,
   type IssueTracker,
+  type RiskLevels,
+  type RiskSignal,
+  type SensitiveGroup,
   type SizeRuleId,
   type TextCustomCheck,
   type TriageEvent,
@@ -35,7 +44,7 @@ import type { Stack } from "@corbits/github-reads";
 import { globMatch } from "./glob.js";
 import { duplicateResult, type OpenPulls } from "./duplicates.js";
 import type { PatternsResult } from "./patterns.js";
-import { hotFiles, migrationPaths } from "./risk.js";
+import { hotFiles, matchingPaths, riskLevel, riskOutcome, sensitiveHits, sensitiveLevel, untested, type SensitiveHit } from "./risk.js";
 
 export interface PrFileFacts {
   path: string;
@@ -96,7 +105,7 @@ export interface PrFacts {
   stack?: Stack;
   /** What the title, description, commits and paths hid, as `where: what`, never the hidden text. */
   hidden: string[];
-  /** Set only when regression risk is on: the fix commits in each changed file's recent history, by path, or null when that history could not be read in full. */
+  /** Set only when regression risk or risk is on: the fix commits in each changed file's recent history, by path, or null when that history could not be read in full. */
   fixes?: Record<string, number | null>;
   /** Each code-patterns rule's matches on the added lines, by rule id; matched where the files were read. */
   patterns?: Record<string, PatternsResult>;
@@ -124,6 +133,8 @@ export interface CheckResult {
   onFail?: "ask";
   /** The evidence lines naming files the rule skipped rather than checked. */
   skipped?: string[];
+  /** The label a rule that did not fail still adds: sensitive paths or risk below its `failAt` and at or above its `labelAt`. */
+  label?: string;
 }
 
 export interface DeterministicResult {
@@ -419,6 +430,11 @@ interface CheckRules {
   tracker: IssueTracker;
   conventional?: ConventionalRule;
   risk: { hotFileFixes: number; migrationGlobs: readonly string[] };
+  sensitiveGroups: Readonly<Record<string, SensitiveGroup>>;
+  sensitiveMarks: Pick<RiskLevels, "failAt" | "labelAt">;
+  /** The risk rule's levels, and the size limits whose crossing is its size signal. */
+  riskLevels: RiskLevels;
+  riskSizes: SizeLimits;
 }
 
 function resultOf(failed: boolean | null): CheckResult["result"] {
@@ -492,7 +508,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
     if (on("regression-risk")) {
       const read = Object.entries(facts.fixes ?? {}).filter((entry): entry is [string, number] => entry[1] !== null);
       const unread = facts.fixes === undefined ? ["every file"] : Object.keys(facts.fixes).filter((path) => facts.fixes![path] === null);
-      const evidence = [...hotFiles(new Map(read), rules.risk.hotFileFixes), ...migrationPaths(facts.paths, rules.risk.migrationGlobs).map((path) => `${path}: migration`)];
+      const evidence = [...hotFiles(new Map(read), rules.risk.hotFileFixes), ...matchingPaths(facts.paths, rules.risk.migrationGlobs).map((path) => `${path}: migration`)];
       if (evidence.length) {
         const reason = "changes code that regressed recently or a migration";
         add("regression-risk", "needs-decision", reason);
@@ -502,6 +518,17 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
         add("regression-risk", "stale-unknown", reason);
         result("regression-risk", null, reason, unread, { kind: "could-not-check", reason });
       } else result("regression-risk", false, "no recently fixed files or migrations changed", [], { kind: "values", values: { risky: false } });
+    }
+    if (on("sensitive-paths")) {
+      const sensitive = sensitiveResult(facts, rules);
+      if (sensitive.result === "fail") add("sensitive-paths", "needs-decision", sensitive.reason);
+      checks.push(sensitive);
+    }
+    if (on("risk")) {
+      const risk = riskResult(facts, rules);
+      if (risk.result === "fail") add("risk", "needs-decision", risk.reason);
+      if (risk.result === "unconfirmed") add("risk", "stale-unknown", risk.reason);
+      checks.push(risk);
     }
     if (on("linked-issue") && rules.tracker !== "off") {
       const ref = issueReference(facts, rules.tracker);
@@ -559,6 +586,62 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
   return finish(findings, checks, facts, pack);
 }
 
+const SENSITIVE_SHOWN = 5;
+
+/** Up to five changed files as `group: path`, then how many more. */
+function sensitiveEvidence(hits: readonly SensitiveHit[]): string[] {
+  const lines = hits.flatMap(({ name, paths }) => paths.map((path) => `${name}: ${path}`));
+  return lines.length > SENSITIVE_SHOWN ? [...lines.slice(0, SENSITIVE_SHOWN), `and ${lines.length - SENSITIVE_SHOWN} more`] : lines;
+}
+
+/** Fails at the highest changed group's level when that is `failAt` or above, and below it labels from `labelAt`. */
+function sensitiveResult(facts: PrFacts, rules: CheckRules): CheckResult {
+  const hits = sensitiveHits(facts.paths, rules.sensitiveGroups);
+  const level = sensitiveLevel(hits);
+  const outcome = riskOutcome(level, rules.sensitiveMarks);
+  const base = { check: "sensitive-paths", kind: "machine" as const, evidence: sensitiveEvidence(hits), output: { kind: "values" as const, values: { level } } };
+  if (hits.length === 0) return { ...base, result: "pass", reason: "no sensitive paths changed" };
+  if (outcome === "fail") return { ...base, result: "fail", reason: "changes sensitive paths" };
+  return { ...base, result: "pass", reason: "changes sensitive paths", ...(outcome === "label" && level !== "low" && { label: levelLabel("sensitive-paths", level) }) };
+}
+
+/** Each risk signal the pull request shows, in words, beside whether its changed files' recent history was read in full. */
+function riskSignals(facts: PrFacts, rules: CheckRules): { signals: Map<RiskSignal, string[]>; sensitive: SensitiveHit[]; historyUnread: boolean } {
+  const signals = new Map<RiskSignal, string[]>();
+  // With sensitive paths on, a high group is that rule's to ask about, so a migration is asked about once.
+  const sensitive = sensitiveHits(facts.paths, rules.sensitiveGroups).filter((hit) => hit.level !== "high" || !rules.enabled("sensitive-paths"));
+  if (sensitive.some((hit) => hit.level === "medium")) signals.set("sensitive", []);
+  const over = sizeResults(facts, rules.riskSizes).filter((size) => size.finding !== undefined);
+  if (over.length) signals.set("size", over.flatMap((size) => Object.entries(size.values).map(([key, count]) => `${count} ${key}`)));
+  if (untested(facts.paths)) signals.set("no-tests", ["no tests"]);
+  const fixes = Object.values(facts.fixes ?? {});
+  const hot = fixes.filter((count) => count !== null && count >= rules.risk.hotFileFixes).length;
+  if (hot) signals.set("hot-files", [`${hot} recently fixed ${hot === 1 ? "file" : "files"}`]);
+  if (facts.authorKind && (AUTHOR_GROUPS["first-timers"] as readonly string[]).includes(facts.authorKind)) signals.set("first-time", ["first-time contributor"]);
+  return { signals, sensitive, historyUnread: hot === 0 && (facts.fixes === undefined || fixes.includes(null)) };
+}
+
+/**
+ * The pull request's risk level from its signals: it fails at `failAt`, and below that labels from `labelAt`. When a
+ * history left unread could have made a file hot and that would decide whether the rule fails, it is unconfirmed; a
+ * label it could only have added is left off. It never waits on the host, which will not read that history again.
+ */
+function riskResult(facts: PrFacts, rules: CheckRules): CheckResult {
+  const { signals, sensitive, historyUnread } = riskSignals(facts, rules);
+  const floor = sensitiveLevel(sensitive);
+  const level = riskLevel(new Set(signals.keys()), rules.riskLevels, floor);
+  const outcome = riskOutcome(level, rules.riskLevels);
+  const evidence = [...sensitive.map(({ name }) => `${name} paths`), ...[...signals.values()].flat()];
+  const output: CheckOutput = { kind: "values", values: { level } };
+  const unreadFails = riskOutcome(riskLevel(new Set([...signals.keys(), "hot-files"]), rules.riskLevels, floor), rules.riskLevels) === "fail";
+  if (historyUnread && outcome !== "fail" && unreadFails) {
+    return { check: "risk", kind: "machine", result: "unconfirmed", reason: "could not read the recent history of some changed files", evidence, output };
+  }
+  const base = { check: "risk", kind: "machine" as const, reason: `risk is ${level}`, evidence, output };
+  if (outcome === "fail") return { ...base, result: "fail" };
+  return { ...base, result: "pass", ...(outcome === "label" && level !== "low" && { label: levelLabel("risk", level) }) };
+}
+
 function patternsReason(failed: boolean, found: { skipped: string[]; checked: number }): string {
   if (failed) return "added code matches a code pattern";
   if (found.checked === 0 && found.skipped.length > 0) return "nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code";
@@ -574,7 +657,19 @@ function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
     tracker: pack.checks["linked-issue"]?.tracker ?? "either",
     conventional: { types: pack.checks["conventional-commits"]?.types ?? CONVENTIONAL_TYPES, fields: pack.checks["conventional-commits"]?.fields ?? CONVENTIONAL_FIELDS },
     risk: { hotFileFixes: pack.checks["regression-risk"]?.hotFileFixes ?? DEFAULT_RISK.hotFileFixes, migrationGlobs: pack.checks["regression-risk"]?.migrationGlobs ?? DEFAULT_RISK.migrationGlobs },
+    ...riskRules(pack),
   }, pack);
+}
+
+/** The sensitive groups and the size limits are the sensitive-paths and size rules' own, whether or not those rules are on. */
+function riskRules(pack: CheckPack): Pick<CheckRules, "sensitiveGroups" | "sensitiveMarks" | "riskLevels" | "riskSizes"> {
+  const [sensitive, risk] = [pack.checks["sensitive-paths"], pack.checks.risk];
+  return {
+    sensitiveGroups: sensitive?.sensitiveGroups ?? DEFAULT_SENSITIVE,
+    sensitiveMarks: { failAt: sensitive?.failAt ?? DEFAULT_MARKS.failAt, labelAt: sensitive?.labelAt ?? DEFAULT_MARKS.labelAt },
+    riskLevels: { medium: risk?.medium ?? DEFAULT_RISK_LEVELS.medium, high: risk?.high ?? DEFAULT_RISK_LEVELS.high, failAt: risk?.failAt ?? DEFAULT_RISK_LEVELS.failAt, labelAt: risk?.labelAt ?? DEFAULT_RISK_LEVELS.labelAt },
+    riskSizes: { "max-files-changed": pack.checks["max-files-changed"]?.maxFiles ?? RECOMMENDED_SIZE.maxFiles, "max-lines-changed": pack.checks["max-lines-changed"]?.maxLines ?? RECOMMENDED_SIZE.maxLines },
+  };
 }
 
 /** The hub read the stored policy, so what that read left out comes with the pack it mails. */
@@ -594,5 +689,9 @@ export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack |
     forbiddenGlobs: [],
     tracker: "off",
     risk: DEFAULT_RISK,
+    sensitiveGroups: DEFAULT_SENSITIVE,
+    sensitiveMarks: DEFAULT_MARKS,
+    riskLevels: DEFAULT_RISK_LEVELS,
+    riskSizes: {},
   });
 }

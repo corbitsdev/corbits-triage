@@ -33,6 +33,8 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | `conventional-commits` | `types:` list of words (optional, default `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `ci`, `build`, `style`, `revert`); `fields:` `title`, `commits` or both (optional, default both) | no | Fails unless the title and each commit's first line (first 100 commits) start `type: `, `type(scope): ` or `type!: ` with a listed type, in any case. Merges and `Revert "…"` commits are skipped. |
 | `hidden-content` | none | no | Fails when the title, description, a commit message or a changed path hides text: invisible, tag or bidi override characters, or a link with no visible content. On GitHub, also hidden markup in the description that speaks to a model, other than the repository's pull request template. |
 | `regression-risk` | `hotFileFixes:` whole number ≥ 1 (optional, default 4); `migrations:` list of 1–50 globs (optional, default `**/migrations/**`, `**/*.sql`) | no | Fails when a changed file (not a test, Markdown doc or lockfile) has at least `hotFileFixes` commits in the last 30 days whose subject starts with a `fix`, `bugfix`, `hotfix` or `revert` type (`fix:`, `fix(scope):`, `Revert "…"`); merges and body text don't count. Also fails when a changed file matches `migrations`. A history that can't be read in full, or a pull request changing more than 300 such files, leaves the rule unconfirmed. Default `onFail` is `label`. |
+| `sensitive-paths` | `groups:` map of group name (lowercase words joined by hyphens) to `{ level: high or medium, paths: list of 1–50 globs }` (optional, default `schema`, `auth` high; `ci`, `locks` medium); `failAt:`, `labelAt:` `medium` or `high` (optional, default `high` and `medium`) | no | Fails when a changed file matches a group at `failAt` or above, globs as in `no-forbidden-paths`; below that, from `labelAt`, passes and labels `sensitive: <level>`. Evidence names each group with up to five files. Defaults: `schema` `**/migrations/**`, `**/*.sql`; `auth` `**/auth/**`, `**/secrets/**`; `ci` `.github/**`, `**/Dockerfile`, `**/railway.json`, `**/railway.toml`; `locks` `**/bun.lock`, `**/package-lock.json`, `**/yarn.lock`, `**/pnpm-lock.yaml`. Default `onFail` is `ask`. |
+| `risk` | `medium:`, `high:` a number of signals from 1 to 5, or a list of signals where a nested list needs all of its own (optional, default `1` and `[[size, no-tests]]`); `failAt:`, `labelAt:` `medium` or `high` (optional, default `high` and `medium`) | no | Rates the pull request low, medium or high from five signals: `sensitive` (a medium `sensitive-paths` group, default groups if unset; a high group makes it high on its own unless `sensitive-paths` is on), `size` (over the `max-files-changed` or `max-lines-changed` limit, default 30 and 3,000), `no-tests` (source code in a common language changed, not `*.d.ts`, `docs/` or `examples/`, and no test file, `e2e/`, `cypress/` or `__snapshots__/` file), `hot-files` (a file `regression-risk` counts as hot) and `first-time` (a first-time contributor; never on Bitbucket Data Center). Fails at `failAt`; below it, from `labelAt`, passes and labels `risk: <level>`. Unconfirmed when unread history could make a file hot and the rule fail. Default `onFail` is `ask`. |
 | `focused` | none | yes | The decision model checks the change is focused on one thing. |
 | `docs` | none | yes | The decision model checks docs are updated when behaviour changes. |
 
@@ -173,6 +175,14 @@ rules:
   - check: ci-green
     text: CI must pass before merge.
     reason: A change is not ready until CI passes.
+    evidence: [maintainer-stated]
+  - check: sensitive-paths
+    text: "Flag changes to sensitive paths: schema, auth, ci, locks."
+    reason: Schema, auth, CI and lockfile changes reach beyond what the diff shows.
+    evidence: [maintainer-stated]
+  - check: risk
+    text: Flag high-risk pull requests and label medium-risk ones.
+    reason: A risky change needs a maintainer's eye.
     evidence: [maintainer-stated]
 ```
 

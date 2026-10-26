@@ -326,7 +326,7 @@ describe("judge on a blocked pull request", () => {
   test("a stored step for a repository role no longer runs, and every verdict says so", async () => {
     const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), fail: [{ do: "request-review", target: { to: "role", role: "leads" } }] } };
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code));
-    expect(verdict.actions).toEqual([]);
+    expect(verdict.actions).toEqual([expect.objectContaining({ kind: "labels", target: { labels: ["risk: medium"], unlabel: [] } })]);
     expect(verdict.reasons).toContain("Fail step 1 (request-review role leads) no longer runs");
   });
 
@@ -356,6 +356,7 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual(["docs-file-001", "focused", "instructed", "focused-file-001"]);
     expect(verdict.actions).toEqual([
       { list: "fail", index: 0, effectId: expect.any(String), kind: "request-review", target: { users: ["dave"], teams: [] }, reason: "mixes unrelated changes: src/flag.ts", held: true },
+      { list: "fail", index: 1, effectId: expect.any(String), kind: "labels", target: { labels: ["risk: medium"], unlabel: [] }, reason: "mixes unrelated changes: src/flag.ts", held: true },
     ]);
   });
 

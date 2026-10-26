@@ -1,5 +1,5 @@
 // Plain-text words for a policy's rules.
-import { CONVENTIONAL_FIELDS, DEFAULT_RISK, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type TextCheck, type TextField, type TextMatch } from "./check-pack.js";
+import { CONVENTIONAL_FIELDS, DEFAULT_MARKS, DEFAULT_RISK, DEFAULT_SENSITIVE, RECOMMENDED_ISSUE, RISK_MARKS, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type TextCheck, type TextField, type TextMatch } from "./check-pack.js";
 
 export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
 
@@ -8,6 +8,13 @@ function count(value: number | undefined): string {
 }
 
 const CONVENTIONAL_SUBJECTS = { title: "a conventional commit title", commits: "conventional commit messages", both: "a conventional commit title and messages" } as const;
+
+function riskSentence(row: CatalogCheck | undefined): string {
+  const failAt = row?.failAt ?? DEFAULT_MARKS.failAt;
+  const labelAt = row?.labelAt ?? DEFAULT_MARKS.labelAt;
+  const labels = RISK_MARKS.indexOf(labelAt) < RISK_MARKS.indexOf(failAt) ? ` and label ${labelAt}-risk ones` : "";
+  return `Flag ${failAt}-risk pull requests${labels}`;
+}
 
 function conventionalSentence(row: CatalogCheck | undefined): string {
   const fields = row?.fields ?? CONVENTIONAL_FIELDS;
@@ -28,6 +35,8 @@ const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => st
   "conventional-commits": conventionalSentence,
   "hidden-content": () => "Flag pull requests that hide text",
   "regression-risk": (row) => `Flag changes to files with ${row?.hotFileFixes ?? DEFAULT_RISK.hotFileFixes}+ fixes in the last ${DEFAULT_RISK.hotFileDays} days, or to migrations`,
+  "sensitive-paths": (row) => `Flag changes to sensitive paths: ${Object.keys(row?.sensitiveGroups ?? DEFAULT_SENSITIVE).join(", ")}`,
+  risk: riskSentence,
   focused: () => "Check the change is focused on one thing",
   docs: () => "Check docs are updated when behavior changes",
   "no-duplicate": () => "Flag a pull request with the same changes as another open one",

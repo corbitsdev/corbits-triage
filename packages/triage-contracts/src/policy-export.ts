@@ -54,6 +54,10 @@ function catalogParams(id: CatalogId, row: CatalogCheck): Record<string, unknown
       return row.forbiddenGlobs?.length ? { paths: row.forbiddenGlobs } : undefined;
     case "regression-risk":
       return { ...(row.hotFileFixes !== undefined && { hotFileFixes: row.hotFileFixes }), ...(row.migrationGlobs && { migrations: row.migrationGlobs }) };
+    case "sensitive-paths":
+      return { ...(row.sensitiveGroups && { groups: row.sensitiveGroups }), ...(row.failAt && { failAt: row.failAt }), ...(row.labelAt && { labelAt: row.labelAt }) };
+    case "risk":
+      return { ...(row.medium !== undefined && { medium: row.medium }), ...(row.high !== undefined && { high: row.high }), ...(row.failAt && { failAt: row.failAt }), ...(row.labelAt && { labelAt: row.labelAt }) };
     case "conventional-commits":
       return { ...(row.types && { types: row.types }), ...(row.fields && { fields: row.fields }) };
     default:
@@ -155,7 +159,7 @@ function catalogChecks(pack: CheckPack, id: CatalogId): string | undefined {
   if (id === "ci-green" && row?.enabled === false) return CI_SKIPPED;
   if (!row?.enabled) return undefined;
   const conventional = id === "conventional-commits" && { types: sorted(row.types ?? CONVENTIONAL_TYPES), fields: row.fields ?? CONVENTIONAL_FIELDS };
-  return canonical({ max: isSizeRule(id) ? row[SIZE_RULES[id]] : undefined, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), hotFileFixes: row.hotFileFixes, migrations: sorted(row.migrationGlobs), onFail: onFailText(pack, id), ...conventional });
+  return canonical({ max: isSizeRule(id) ? row[SIZE_RULES[id]] : undefined, tracker: row.tracker ?? "either", paths: sorted(row.forbiddenGlobs), hotFileFixes: row.hotFileFixes, migrations: sorted(row.migrationGlobs), groups: row.sensitiveGroups, medium: row.medium, high: row.high, failAt: row.failAt, labelAt: row.labelAt, onFail: onFailText(pack, id), ...conventional });
 }
 
 function modelAsks(row: ModelCustomCheck): Record<string, unknown> {
@@ -239,6 +243,8 @@ function catalogLimits(pack: CheckPack, id: CatalogId): string[] {
       return row.forbiddenGlobs ?? [];
     case "conventional-commits":
     case "regression-risk":
+    case "sensitive-paths":
+    case "risk":
       return [catalogSentence(id, pack)];
     default:
       return ["on"];

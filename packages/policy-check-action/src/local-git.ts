@@ -186,9 +186,9 @@ export function localGithub(change: LocalChange): (url: URL) => Promise<Response
 
 const ON_HOST = "needs the pull request on its host";
 
-/** Rules that read what only the host knows: its CI, mergeability, reviews, default-branch fix history, its other open pull requests and the pull request's own title and description. */
+/** Rules that read what only the host knows: its CI, mergeability, reviews, default-branch fix history, its other open pull requests, the author's standing and the pull request's own title and description. */
 export function hostOnly(pack: CheckPack): Skipped[] {
   const described = pack.custom.flatMap((row) => (row.kind === "text" && row.fields.some((field) => field !== "commits") ? [row.id] : []));
   const titled = (pack.checks["conventional-commits"]?.fields ?? CONVENTIONAL_FIELDS).includes("title") ? ["conventional-commits"] : [];
-  return ["ci-green", "no-merge-conflicts", "linked-issue", "hidden-content", "regression-risk", "no-duplicate", NOT_A_DRAFT, NO_CHANGES_REQUESTED, ...titled, ...described].map((id) => ({ id, why: ON_HOST }));
+  return ["ci-green", "no-merge-conflicts", "linked-issue", "hidden-content", "regression-risk", "no-duplicate", "risk", NOT_A_DRAFT, NO_CHANGES_REQUESTED, ...titled, ...described].map((id) => ({ id, why: ON_HOST }));
 }

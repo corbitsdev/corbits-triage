@@ -463,6 +463,8 @@ function failedStep(c: CheckResult, sources: Sources): Step {
     case "linked-issue": return { actor: "author", action: "Link an issue" };
     case "no-duplicate": return { actor: "author", action: `Close it: it ${c.reason}` };
     case "regression-risk": return { actor: "maintainer", action: `Review closely: ${c.evidence.join("; ")}` };
+    case "sensitive-paths": return { actor: "maintainer", action: `Review closely: ${c.evidence.join("; ")}` };
+    case "risk": return { actor: "maintainer", action: `Review closely: ${riskLine(c)}` };
     case NO_CHANGES_REQUESTED: {
       const reviewers = c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ");
       return c.reason === REVIEW_ANSWERED_REASON
@@ -546,6 +548,22 @@ export function hostChecksPending(det: Pick<DeterministicResult, "checks">, noWa
   return !noWait && det.checks.some(hostPending);
 }
 
+/** "Risk: high (schema paths, 42 files, no tests)" */
+function riskLine(c: CheckResult): string {
+  const level = c.output.kind === "values" ? c.output.values.level : undefined;
+  return c.evidence.length ? `Risk: ${level} (${c.evidence.join(", ")})` : `Risk: ${level}`;
+}
+
+/** Risk whose history Triage could not read: the host will not read it again, so it is noted rather than waited on. */
+function isUnchecked(c: CheckResult): boolean {
+  return c.check === "risk" && c.result === "unconfirmed";
+}
+
+/** A rule that did not fail but still labels, so it is noted beside the labelling rules. */
+function isMarked(c: CheckResult): boolean {
+  return c.label !== undefined;
+}
+
 /** A labelling rule's result that labels and notes the pull request. */
 export function isLabelledFinding(c: CheckResult): boolean {
   return c.result === "fail" || unsure(c);
@@ -627,7 +645,9 @@ const NOTHING_TO_CHANGE = "No changes needed from you. ";
  * nothing else is not posted.
  */
 function noteOf(c: CheckResult, ctx: RenderContext): string {
-  return c.result === "fail" ? `- ${c.reason}${failureEvidence(c, ctx)}` : `- Not confirmed: ${passText(c.check, ctx.sources!)}`;
+  if (isUnchecked(c)) return `- Risk could not be checked: ${c.reason}`;
+  if (c.check === "risk") return `- ${riskLine(c)}`;
+  return c.result === "fail" || isMarked(c) ? `- ${c.reason}${failureEvidence(c, ctx)}` : `- Not confirmed: ${passText(c.check, ctx.sources!)}`;
 }
 
 function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: VerdictWord): string {
@@ -636,7 +656,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   const mine = authorFailures(checks, sources);
   const flagged = checks.filter(isFlagged);
   const unconfirmed = sources ? checks.filter(unsure) : [];
-  const pending = checks.filter(unsettledMachine);
+  const pending = checks.filter((c) => unsettledMachine(c) && !isUnchecked(c));
   const lines: string[] = [];
   if (mine.length) {
     lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
@@ -645,7 +665,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   }
   if (flagged.length) {
     if (lines.length) lines.push("");
-    lines.push("Asking a maintainer about:", ...flagged.map((c) => `- ${c.reason}${failureEvidence(c, ctx)}`));
+    lines.push("Asking a maintainer about:", ...flagged.map((c) => (c.check === "risk" ? `- ${riskLine(c)}` : `- ${c.reason}${failureEvidence(c, ctx)}`)));
   }
   if (unconfirmed.length) {
     if (lines.length) lines.push("");
@@ -666,7 +686,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   if (ctx.stack?.onto !== undefined && !holdsOthersChanges(ctx.stack)) lines.push("", `Stacked on #${ctx.stack.onto}: only this pull request's own changes were checked.`);
   const skipped = sources ? checks.flatMap((c) => skippedLine(c, sources)) : [];
   if (skipped.length) lines.push("", "Skipped:", ...skipped);
-  const notes = ctx.labelled.filter(isLabelledFinding);
+  const notes = [...ctx.labelled.filter((c) => isLabelledFinding(c) || isMarked(c) || isUnchecked(c)), ...checks.filter((c) => isMarked(c) || isUnchecked(c))];
   if (notes.length) lines.push("", "Notes:", ...notes.map((c) => noteOf(c, ctx)));
   return bounded([commentTitle(verdict), "", ...lines]);
 }

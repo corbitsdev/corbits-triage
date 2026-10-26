@@ -36,7 +36,7 @@ If the user says to go ahead with defaults, use the suggested answers.
 
 ## 3. Propose the rules
 
-Start from the four rules in reference.md's "Starter file", which hold for any repository and need no model. The size limits label large pull requests rather than fail them; keep 30 files and 3,000 lines unless the user names others. With no CI, `ci-green` passes until CI is added; keep it and say so.
+Start from the six rules in reference.md's "Starter file", which hold for any repository and need no model. The size limits label large pull requests rather than fail them, and sensitive paths and risk ask a maintainer about high-level changes and label medium ones; keep 30 files and 3,000 lines unless the user names others. With no CI, `ci-green` passes until CI is added; keep it and say so.
 
 Then add only the extras that fit, from "When to add" in [reference.md](reference.md), each with a one-line reason. Show the rules and actions as one line each and ask for a yes or changes before writing. Once the user agrees, each rule is `maintainer-stated`.
 
