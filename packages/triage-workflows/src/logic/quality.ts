@@ -535,6 +535,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
 /**
  * The verdict question: the rules' results with the pull request's metadata and as much of its diff as fits one request,
  * packed as focused's first slice is, asked with the instructed question since it carries the pull request's text.
+ * A file marked truncated that still fits does not end the pack; only a file that does not fit the budget does. Ticket
+ * goals uses packedFiles, which stops when a file is not read whole.
  * Refused when the metadata and rules alone leave too little room for files.
  */
 export function verdictRequest(facts: PrFacts, rules: PolicyRule[]): { request: JudgeRequest } | { judgeError: string } {
@@ -542,7 +544,18 @@ export function verdictRequest(facts: PrFacts, rules: PolicyRule[]): { request: 
   const empty: VerdictState = { pullRequest: judgeState(facts, [], false, listed).pullRequest, policy: { rules } };
   const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(empty);
   if (room < MIN_FILE_ROOM) return { judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${Math.ceil(jsonBytes(empty) / 1024)} KB)` };
-  return { request: { state: { ...empty, pullRequest: { ...empty.pullRequest, files: packedFiles(facts, room).files } }, questions: [VERDICT_QUESTION, INSTRUCTED_QUESTION] } };
+  const files: StateFile[] = [];
+  let used = 0;
+  for (const file of judgedFiles(facts)) {
+    const hunks = typeof file.patch === "string" ? patchHunks(file.patch) : [];
+    if (hunks.length === 0) continue;
+    const fitted = fitFile(room - used - (files.length > 0 ? 1 : 0), stateFile(file, hunks));
+    if (!fitted) break;
+    files.push(fitted);
+    used += jsonBytes(fitted) + (files.length > 1 ? 1 : 0);
+    if (fitted.hunks.length < hunks.length) break;
+  }
+  return { request: { state: { ...empty, pullRequest: { ...empty.pullRequest, files } }, questions: [VERDICT_QUESTION, INSTRUCTED_QUESTION] } };
 }
 
 /** As much of the diff as fits `room`, in order, stopping at the first file that does not fit whole, and the paths not read whole. */

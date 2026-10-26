@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { patchHunks } from "./hunks.js";
 import { NO_FACTS } from "./item.js";
-import { focusedPartRequests, MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation, type JudgeRequest } from "./quality.js";
+import { focusedPartRequests, MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation, verdictRequest, type JudgeRequest } from "./quality.js";
 
 const SOURCES = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
 
@@ -230,4 +230,14 @@ test("quality preflight gives the contribution rules only to requests that ask c
     [["migrations/001.sql"], { docs: { "README.md": "Run it." }, rules }],
   ]);
   expect(requests[1]!.questions.find((question) => question.id === "custom-1-file-003")?.instructions).toContain("`repository.rules`");
+});
+
+test("the verdict keeps a later file that fits after a truncated file that fits", () => {
+  const cut = "@@ -1 +1 @@\n-a\n+b";
+  const later = "@@ -1 +1 @@\n-c\n+d";
+  const verdict = verdictRequest(facts([
+    { path: "src/cut.ts", additions: 1, deletions: 1, patch: cut, patchTruncated: true },
+    { path: "src/later.ts", additions: 1, deletions: 1, patch: later },
+  ]), []);
+  expect(verdict).toMatchObject({ request: { state: { pullRequest: { files: [{ path: "src/cut.ts", hunks: [cut], truncated: true }, { path: "src/later.ts", hunks: [later] }] } } } });
 });
