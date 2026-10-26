@@ -18,6 +18,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       # The runner image ships Postgres 16; starting it avoids Docker Hub pulls and their rate limits.
       - name: Start Postgres
@@ -36,6 +37,8 @@ jobs:
         run: bun run check
       - name: Test
         run: bun run test
+      - name: Chain
+        run: bun run test:chain
 
   policy:
     if: github.event_name == 'pull_request'

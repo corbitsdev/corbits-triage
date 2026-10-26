@@ -413,6 +413,18 @@
         "@corbits/evals": "0.1.2",
       },
     },
+    "tests/chain": {
+      "name": "@corbits/chain-test",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/common": "workspace:*",
+        "@corbits/triage-contracts": "workspace:*",
+        "@intx/db": "workspace:*",
+        "@intx/hub-client": "workspace:*",
+        "drizzle-orm": "catalog:",
+        "isomorphic-git": "catalog:",
+      },
+    },
     "vendor/interchange/apps/hub": {
       "name": "@intx/hub-app",
       "version": "0.5.0",
@@ -961,6 +973,8 @@
     "@corbits/bitbucket-datacenter-reads": ["@corbits/bitbucket-datacenter-reads@workspace:packages/bitbucket-datacenter-reads"],
 
     "@corbits/bitbucket-datacenter-tool": ["@corbits/bitbucket-datacenter-tool@workspace:packages/bitbucket-datacenter-tool"],
+
+    "@corbits/chain-test": ["@corbits/chain-test@workspace:tests/chain"],
 
     "@corbits/common": ["@corbits/common@workspace:packages/common"],
 

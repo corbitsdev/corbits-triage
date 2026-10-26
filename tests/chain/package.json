@@ -1,0 +1,16 @@
+{
+  "name": "@corbits/chain-test",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "dependencies": {
+    "@corbits/common": "workspace:*",
+    "@corbits/triage-contracts": "workspace:*",
+    "@intx/db": "workspace:*",
+    "@intx/hub-client": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "isomorphic-git": "catalog:"
+  },
+  "description": "The live triage chain from webhook to verdict, run locally against a fake GitHub and a stub decision model"
+}

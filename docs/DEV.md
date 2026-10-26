@@ -78,11 +78,14 @@ Code review against the emulator: the emulator ignores GitHub's diff media type 
 
 ```sh
 bun run test     # unit + integration; hub tests need Postgres
+bun run test:chain  # the live chain: hub, sidecars, listener, manager, judge; about three minutes
 bun run check    # typecheck web, tooling, extension, hub; bundle the hub
 bun run lint
 ```
 
 Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` and ignore `DATABASE_URL`.
+
+`bun run test:chain` (`tests/chain/`) starts the hub on a database of its own, publishes and upgrades the workspace as Settings does, and sends GitHub's webhooks to it. GitHub and the decision model are local stand-ins, so it needs no account or key; each sidecar is a local process, and it installs the workflows' native modules from the npm registry as a deploy does. Code review needs an isolated sidecar, which a local process is not, so it is not part of the chain test.
 
 Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
