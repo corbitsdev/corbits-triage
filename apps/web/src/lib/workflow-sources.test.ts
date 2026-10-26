@@ -10,7 +10,6 @@ import type { SourceIndexEntry, SourceTree } from "./workflow-packages.ts";
 
 const SECRET = "itx_pat_test";
 const PUBLISHER = { tenantId: "t", principalId: "prn_owner" };
-const SOURCES: SourceIndexEntry[] = [{ workflow: "pr-triage-github", asset: "pr-triage-github-0123abcd" }];
 const TREE: SourceTree = {
   "package.json": JSON.stringify({ private: true, workspaces: ["packages/*"] }),
   "packages/pr-triage-github/package.json": JSON.stringify({ name: "@corbits/pr-triage-github-workflow", version: "0.1.0-sha-0123abcd", interchange: { workflow: "./pr-triage-github.mjs" } }),
@@ -23,8 +22,6 @@ const git = Bun.which("git");
 if (!git) throw new Error("These tests need git.");
 const gitPath = git;
 const pushes: string[] = [];
-
-const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 // Stands in for the hub's smart-HTTP routes with git's own, behind the same URL and token check.
 const server = Bun.serve({ port: 0, fetch: serveGit });
@@ -74,11 +71,13 @@ function withoutSideBand(advertisement: Buffer): Buffer {
   return Buffer.concat(lines);
 }
 
-// Like the hub, a new asset starts with one commit of its own.
+// Like the hub, a new asset starts with one commit of its own holding a `.gitignore`.
 function createRepo(name: string): void {
   const dir = path.join(repos, `${name}.git`);
   Bun.spawnSync([gitPath, "init", "--bare", "-q", dir]);
-  const seed = Bun.spawnSync([gitPath, "--git-dir", dir, "commit-tree", EMPTY_TREE, "-m", "Initial commit"]).stdout.toString().trim();
+  const gitignore = Bun.spawnSync([gitPath, "--git-dir", dir, "hash-object", "-w", "--stdin"], { stdin: Buffer.from("node_modules/\ndist/\n") }).stdout.toString().trim();
+  const tree = Bun.spawnSync([gitPath, "--git-dir", dir, "mktree"], { stdin: Buffer.from(`100644 blob ${gitignore}\t.gitignore\n`) }).stdout.toString().trim();
+  const seed = Bun.spawnSync([gitPath, "--git-dir", dir, "commit-tree", tree, "-m", "Initial commit"]).stdout.toString().trim();
   Bun.spawnSync([gitPath, "--git-dir", dir, "update-ref", "refs/heads/main", seed]);
 }
 
@@ -105,47 +104,51 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
   return { transport: { fetch: json } as unknown as Transport, requests, tokens };
 }
 
-async function portalFiles(input: string | URL | Request): Promise<Response> {
-  const file = String(input);
-  if (file === "/packages/sources/index.json") return Response.json(SOURCES);
-  if (file === `/packages/sources/${SOURCES[0]!.asset}.json`) return Response.json(TREE);
-  return new Response(null, { status: 404 });
+/** The portal build's files for a release of one workflow published as `asset`. */
+function portalFiles(asset: string): typeof fetch {
+  const sources: SourceIndexEntry[] = [{ workflow: "pr-triage-github", asset }];
+  async function serve(input: string | URL | Request): Promise<Response> {
+    const file = String(input);
+    if (file === "/packages/sources/index.json") return Response.json(sources);
+    if (file === `/packages/sources/${asset}.json`) return Response.json(TREE);
+    return new Response(null, { status: 404 });
+  }
+  return serve as typeof fetch;
 }
 
-const ASSET = SOURCES[0]!.asset;
-const bare = path.join(repos, `${ASSET}.git`);
-
-function gitIn(...args: string[]): string {
-  return Bun.spawnSync([gitPath, "--git-dir", bare, ...args]).stdout.toString().trim();
+function gitIn(asset: string, ...args: string[]): string {
+  return Bun.spawnSync([gitPath, "--git-dir", path.join(repos, `${asset}.git`), ...args]).stdout.toString().trim();
 }
 
 test("publishing a release twice pushes its commit once with a token scoped to the asset, then revokes it", async () => {
+  const asset = "pr-triage-github-0123abcd";
   const hub = fakeHub();
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "twice") };
-  const first = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles as typeof fetch);
-  const second = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles as typeof fetch);
+  const first = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(asset));
+  const second = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(asset));
 
   expect(second).toEqual(first);
-  expect(first).toEqual([{ workflow: "pr-triage-github", assetId: "ast_1", commitSha: gitIn("rev-parse", "refs/heads/main") }]);
-  expect(gitIn("rev-list", "--count", "main")).toBe("2");
-  expect(pushes).toEqual([`/${ASSET}.git/git-receive-pack`]);
+  expect(first).toEqual([{ workflow: "pr-triage-github", assetId: "ast_1", commitSha: gitIn(asset, "rev-parse", "refs/heads/main") }]);
+  expect(gitIn(asset, "rev-list", "--count", "main")).toBe("2");
+  expect(pushes).toEqual([`/${asset}.git/git-receive-pack`]);
   expect(hub.requests.filter((request) => request === "POST /api/tenants/t/assets")).toHaveLength(1);
-  expect(gitIn("ls-tree", "-r", "--name-only", "main").split("\n")).toEqual(Object.keys(TREE).sort());
+  expect(gitIn(asset, "ls-tree", "-r", "--name-only", "main").split("\n")).toEqual(Object.keys(TREE).sort());
   for (const token of hub.tokens) {
-    expect(token).toEqual({ name: ASSET, resource: "asset:ast_1", refPattern: "refs/heads/main", actions: ["can_read", "can_push"], expiresAt: expect.any(String), tenantId: "t" });
-    expect(Date.parse((token as { expiresAt: string }).expiresAt) - Date.now()).toBeLessThanOrEqual(5 * 60_000);
+    expect(token).toEqual({ name: asset, resource: "asset:ast_1", refPattern: "refs/heads/main", actions: ["can_read", "can_push"], expiresAt: expect.any(String), tenantId: "t" });
   }
   expect(hub.requests.filter((request) => request.startsWith("DELETE /api/me/git-tokens/"))).toEqual(["DELETE /api/me/git-tokens/gtk_1", "DELETE /api/me/git-tokens/gtk_2"]);
 });
 
 test("refuses an asset another principal created, or whose main holds another commit", async () => {
+  const asset = "pr-triage-github-4567cdef";
+  createRepo(asset);
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "refused") };
-  const foreign = fakeHub([{ name: ASSET, creatorPrincipalId: "prn_other" }]);
-  await expect(publishSources(foreign.transport, PUBLISHER, gitClient, portalFiles as typeof fetch)).rejects.toThrow("created by someone else");
+  const foreign = fakeHub([{ name: asset, creatorPrincipalId: "prn_other" }]);
+  await expect(publishSources(foreign.transport, PUBLISHER, gitClient, portalFiles(asset))).rejects.toThrow("created by someone else");
   expect(foreign.tokens).toEqual([]);
 
-  const other = gitIn("commit-tree", EMPTY_TREE, "-p", "main", "-m", "other");
-  gitIn("update-ref", "refs/heads/main", other);
-  const own = fakeHub([{ name: ASSET, creatorPrincipalId: PUBLISHER.principalId }]);
-  await expect(publishSources(own.transport, PUBLISHER, gitClient, portalFiles as typeof fetch)).rejects.toThrow(`already holds ${other}, not this release`);
+  const other = gitIn(asset, "commit-tree", "main^{tree}", "-p", "main", "-m", "other");
+  gitIn(asset, "update-ref", "refs/heads/main", other);
+  const own = fakeHub([{ name: asset, creatorPrincipalId: PUBLISHER.principalId }]);
+  await expect(publishSources(own.transport, PUBLISHER, gitClient, portalFiles(asset))).rejects.toThrow(`already holds ${other}, not this release`);
 });

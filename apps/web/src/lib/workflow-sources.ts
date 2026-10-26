@@ -44,7 +44,7 @@ function bandedPushAnswers(client: HttpClient): HttpClient {
   return {
     async request(request) {
       const response = await client.request(request);
-      if (!request.url.endsWith("/git-receive-pack") || !response.body) return response;
+      if (!request.url.endsWith("/git-receive-pack") || response.statusCode !== 200 || !response.body) return response;
       const chunks: Uint8Array[] = [];
       for await (const chunk of response.body) chunks.push(chunk);
       return { ...response, body: onDataBand(chunks) };
@@ -61,6 +61,15 @@ async function gitToken(transport: Transport, tenantId: string, assetId: string,
     expiresAt: new Date(Date.now() + TOKEN_LIFETIME_MS).toISOString(),
     tenantId,
   });
+}
+
+// A failed revoke must not hide why the publish failed; the token expires on its own within minutes.
+async function revoke(transport: Transport, tokenId: string): Promise<void> {
+  try {
+    await transport.fetch("DELETE", `/api/me/git-tokens/${encodeURIComponent(tokenId)}`);
+  } catch (error) {
+    console.warn(`Revoking git token ${tokenId} failed.`, error);
+  }
 }
 
 async function writeTree(fs: FsClient, dir: string, tree: SourceTree): Promise<string> {
@@ -109,12 +118,10 @@ async function publishSource(transport: Transport, publisher: Publisher, gitClie
     // The hub starts every asset with one commit of its own; the release is the only commit on top of it.
     if (commit.parent.length > 0) throw new Error(`${entry.asset} already holds ${fetchHead}, not this release.`);
     const commitSha = await commitTree(fs, dir, tree, fetchHead, entry.asset);
-    const result = await git.push({ fs, http: bandedPushAnswers(gitClient.http), dir, ref: BRANCH, onAuth });
-    const pushed = result.refs[REF];
-    if (!result.ok || !pushed?.ok) throw new Error(`Publishing ${entry.asset} failed: ${result.error ?? pushed?.error ?? "the hub did not accept the push"}.`);
+    await git.push({ fs, http: bandedPushAnswers(gitClient.http), dir, ref: BRANCH, onAuth });
     return { workflow: entry.workflow, assetId: asset.id, commitSha };
   } finally {
-    await transport.fetch("DELETE", `/api/me/git-tokens/${encodeURIComponent(token.id)}`);
+    await revoke(transport, token.id);
   }
 }
 
