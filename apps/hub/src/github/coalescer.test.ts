@@ -320,6 +320,50 @@ test("a window of only check runs is dropped while a check is pending, and the h
   expect(state.rows()).toEqual([triaged]);
 });
 
+test("a settled head first seen two hours ago is not decided while a check is still running, and is queued once CI is green", async () => {
+  const opened = new Date(START - 2 * 60 * 60_000).toISOString();
+  const triaged: PrTriageRow = { number: 8, headSha: "sha1", status: "triaged", attempts: 1, runId: "wfr_1", firstSeenAt: opened, updatedAt: opened };
+  const { clock, state, coalescer } = harness([triaged], {
+    async headChecks() {
+      return [{ name: "check", status: "in_progress", conclusion: null }];
+    },
+  });
+  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+  await coalescer.accept({ ...delivery("checks", "sha1"), pack });
+  await clock.advance(WINDOW.quietMs);
+  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting", firstSeenAt: clock.now().toISOString() })]);
+  const pr = { number: 8, headSha: "sha1", updatedAt: opened, draft: false };
+  const plan = (ci: "pending" | "success") => planTenant({ repos: [{ name: REPO, prs: [pr], rows: state.rows(), ci: new Map([["8@sha1", ci]]) }], runs: new Map(), now: clock.now(), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined }).get(REPO)!;
+  expect(plan("pending").enqueue).toEqual([]);
+  expect(plan("success").enqueue).toEqual([{ number: 8, reason: "waited for CI", events: ["checks"] }]);
+});
+
+test("a policy that reads CI holds a settled head when a checks-only window finds CI still pending, and queues it again once CI is green", async () => {
+  const triaged: PrTriageRow = { number: 8, headSha: "sha1", status: "triaged", attempts: 1, runId: "wfr_1", firstSeenAt: new Date(START).toISOString(), updatedAt: new Date(START).toISOString() };
+  let checks: CheckRun[] = [{ name: "cla", status: "completed", conclusion: "success" }, { name: "check", status: "in_progress", conclusion: null }];
+  const { clock, state, mails, coalescer } = harness([triaged], { headChecks: async () => checks });
+  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+  const event = { ...delivery("checks", "sha1"), pack, automatic: ["labels" as const] };
+
+  await coalescer.accept(event);
+  await clock.advance(WINDOW.quietMs);
+  expect(mails).toEqual([expect.objectContaining({ kind: "waiting", prNumber: 8, headSha: "sha1" })]);
+  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting", events: ["checks"] })]);
+  const pr = { number: 8, headSha: "sha1", updatedAt: new Date(START).toISOString(), draft: false };
+  const held = planTenant({ repos: [{ name: REPO, prs: [pr], rows: state.rows(), ci: new Map([["8@sha1", "pending"]]) }], runs: new Map(), now: clock.now(), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined }).get(REPO)!;
+  expect(held.enqueue).toEqual([]);
+  expect(held.rows).toEqual([expect.objectContaining({ status: "waiting" })]);
+
+  checks = checks.map((check) => ({ ...check, status: "completed" as const, conclusion: "success" as const }));
+  const released = planTenant({ repos: [{ name: REPO, prs: [pr], rows: state.rows(), ci: new Map([["8@sha1", "success"]]) }], runs: new Map(), now: clock.now(), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined }).get(REPO)!;
+  expect(released.enqueue).toEqual([{ number: 8, reason: "waited for CI", events: ["checks"] }]);
+
+  await coalescer.accept({ ...delivery("checks", "sha1"), pack, automatic: ["labels" as const] });
+  await clock.advance(WINDOW.quietMs);
+  expect(mails.map((mail) => mail.kind)).toEqual(["waiting", "pr"]);
+  expect(mails[1]).toEqual(expect.objectContaining({ headSha: "sha1", events: ["checks"] }));
+});
+
 test("a mail that fails at flush leaves the row failed for the reconciler", async () => {
   const { clock, state, coalescer } = harness([], {
     async sendMail() {

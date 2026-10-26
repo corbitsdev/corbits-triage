@@ -102,10 +102,14 @@ export function failHead(store: TriageStateStore, head: QueuedHead, error: strin
   });
 }
 
-/** Marks a still queued head waiting for its CI instead of mailing it, holding `events` for the run that starts once CI finishes. */
-export function waitHead(store: TriageStateStore, head: QueuedHead, events: TriageEvent[], now: Date): Promise<void> {
+/**
+ * Marks a still queued head waiting for its CI instead of mailing it, holding `events` for the run that starts once CI finishes.
+ * `since` starts the CI wait then; omitted, the head keeps the time it was first seen.
+ */
+export function waitHead(store: TriageStateStore, head: QueuedHead, events: TriageEvent[], now: Date, since?: Date): Promise<void> {
   return replaceQueued(store, head, function waiting(row) {
-    return { ...row, status: "waiting", events, updatedAt: now.toISOString() };
+    const at = now.toISOString();
+    return { ...row, status: "waiting", events, ...(since !== undefined && { firstSeenAt: since.toISOString() }), updatedAt: at };
   });
 }
 
