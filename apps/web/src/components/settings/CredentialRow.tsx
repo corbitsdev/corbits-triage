@@ -3,7 +3,7 @@ import { Button } from "@corbits/react-ui";
 import { useMutation } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { generateWebhookSecret } from "../../lib/connect-view.ts";
-import { runCredentialAction } from "../../lib/credential-actions.ts";
+import { runCredentialAction, type CredentialAction } from "../../lib/credential-actions.ts";
 import { isActiveCredential, type HubCredential } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CopyField } from "../CopyField.tsx";
@@ -18,8 +18,6 @@ type CredentialRowProps = {
   remove?: (credentialId: string) => Promise<void>;
 };
 
-type Action = "rotate" | "revoke";
-
 function confirmChange(message: string): boolean {
   return window.confirm(message);
 }
@@ -31,7 +29,7 @@ export function CredentialRow({ credential, name, rotatable, remove }: Credentia
   const [rotated, setRotated] = useState("");
   const change = useMutation({
     /** The new secret, once it is saved. */
-    mutationFn: async function applyChange(action: Action): Promise<string | undefined> {
+    mutationFn: async function applyChange(action: CredentialAction): Promise<string | undefined> {
       const secret = action === "rotate" ? generateWebhookSecret() : "";
       const completed = await runCredentialAction(action, credential, secret, { confirm: confirmChange, replaceSecret, revoke: remove ?? revoke }, name);
       return completed && action === "rotate" ? secret : undefined;

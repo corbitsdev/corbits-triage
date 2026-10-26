@@ -81,7 +81,8 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
     try {
       issued = await deps.renewal.issue(tenantId, appJson);
     } catch (err) {
-      return failure(400, "github_app_refused", `GitHub did not accept this App ID and private key: ${errorText(err)}.`);
+      const refused = body.appId === undefined ? "this private key for the connected App" : "this App ID and private key";
+      return failure(400, "github_app_refused", `GitHub did not accept ${refused}: ${errorText(err)}.`);
     }
     await store(tenantId, githubProvider.id, appJson, issued);
     if (issued.token) await deps.renewal.push(tenantId);

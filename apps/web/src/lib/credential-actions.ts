@@ -1,6 +1,6 @@
 import { ANTHROPIC_CREDENTIAL_NAME, BITBUCKET_DATACENTER_CREDENTIAL_NAME, GITHUB_APP_KEY_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
 
-type CredentialAction = "rotate" | "revoke";
+export type CredentialAction = "rotate" | "revoke";
 
 type CredentialActions = {
   confirm: (message: string) => boolean | Promise<boolean>;
