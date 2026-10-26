@@ -136,7 +136,7 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
   }).complete;
   const passes = outputs["passes"] as { iterations: number; final: Record<string, unknown> } | undefined;
   const last = passes?.final ?? outputs;
-  return { terminalStatus, passes: passes?.iterations, outputs: last, ran: Object.keys(last).filter((id) => !(last[id] as { skipped?: true } | undefined)?.skipped).toSorted() };
+  return { terminalStatus, stop: outputs["stop"], passes: passes?.iterations, outputs: last, ran: Object.keys(last).filter((id) => !(last[id] as { skipped?: true } | undefined)?.skipped).toSorted() };
 }
 
 /** The mail that wakes the manager's run, as its listener or one of its reviews sends it. */
@@ -184,10 +184,10 @@ async function heldApproval() {
 }
 
 describe("triage-manager", () => {
-  test.each([["new", PASS], ["resumed", RESUMED]])("a %s pass runs stage 1 on the mail the hub recorded, and the run stops itself when done ends its claim", async (_name, pass) => {
+  test.each([["new", PASS], ["resumed", RESUMED]])("a %s pass runs stage 1 on the mail the hub recorded, and the run's last step stops it once done ends its claim", async (_name, pass) => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [pass], dones: [ENDED] });
-    expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", passes: 1, ran: STAGE_1 });
+    expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: 1, ran: STAGE_1 });
     expect(writes).toContainEqual(READY);
     expect(hub.calls).toEqual([TAKE, DONE, END]);
   });
@@ -195,7 +195,7 @@ describe("triage-manager", () => {
   test("with an event pending after done, the manager runs its next pass at once, and a refused newcomer is harmless", async () => {
     const { writes, host } = githubHost();
     const newcomer = fakeHub({ takes: [REFUSED] });
-    expect(await runMail(github, wake(), host, newcomer.hub)).toMatchObject({ terminalStatus: "completed", passes: 1, ran: ["done", "paused", "ran", "take"] });
+    expect(await runMail(github, wake(), host, newcomer.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: 1, ran: ["done", "paused", "ran", "take"] });
     expect(newcomer.calls).toEqual([TAKE, END]);
     expect(writes).toEqual([]);
 

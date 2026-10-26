@@ -34,11 +34,10 @@ export const TakeOutput = type({
 });
 export type TakeOutput = typeof TakeOutput.infer;
 
-/** Posts to the manager route as this run; undefined when the claim names another run, which then ends itself. */
+/** Posts to the manager route as this run; undefined when the claim names another run. */
 async function asManager<T>(ctx: EffectContext, mail: ManagerMail, route: "take" | "done", body: object, schema: Type<T>): Promise<T | undefined> {
   const answer = await callHub(ctx, route, tenantPath(mail.tenantId, `/manager/${route}`), "POST", body);
   if (answer.status !== 409) return answered(answer, route, schema);
-  await endRun(ctx, mail.tenantId, mail.runId);
   return undefined;
 }
 
@@ -139,9 +138,8 @@ function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
 }
 
 /**
- * Closes the pass and stops the code reviews it no longer waits for; the run ends itself when the hub ends its claim, and
- * a run that take refused has ended already. `more` runs the next pass at once, or with `wait` after waiting for a code
- * review.
+ * Closes the pass and stops the code reviews it no longer waits for. `more` runs the next pass at once, or with `wait`
+ * after waiting for a code review.
  */
 export async function done(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ outcome: "ended" | "refused" } | { outcome: "more"; wait: boolean }> {
   const parsed = DoneInput(input);
@@ -152,13 +150,12 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const answer = await asManager(ctx, mail, "done", { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, mailed) }, Done);
   if (answer === undefined) return { outcome: "refused" };
   for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);
-  if (answer.outcome === "ended") await endRun(ctx, mail.tenantId, mail.runId);
   return answer;
 }
 
 /**
- * Stops the run when its passes fail or run out, so it never keeps the claim: the next manager's take finds the run gone
- * and claims the pull request.
+ * Stops the run once its passes end, fail or run out, so it never keeps the claim: the next manager's take finds the run
+ * gone and claims the pull request.
  */
 export async function stop(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ stopped: true }> {
   const mail = managerMailOf(input);
