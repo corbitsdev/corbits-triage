@@ -1,7 +1,6 @@
-// A pull request's latest code review: one its manager deployed and still waits on, else the newest result such a code
-// review reported. A head whose
-// diff is the one the latest review read, as after a rebase that changed no line of it, takes that review over instead
-// of being reviewed again.
+// A pull request's latest code review, as its manager recorded it: one still out, what one reported, or one the manager
+// gave up on. A head whose diff is the one the latest review read, as after a rebase that changed no line of it, takes
+// that review over instead of being reviewed again.
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
@@ -9,7 +8,7 @@ import { CodeReviewComment, DiffCut, REPO_SOURCES, repoSourceOf, StageResult, ty
 import { diffHash, type PullRequestToReview } from "./code-review-feed.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import type { Member } from "./integrations/app.js";
-import { reviewerResults, reviewersOut } from "./manager-state.js";
+import { codeReviews, type CodeReviewRecord } from "./manager-state.js";
 
 /** Heads compared with the review before them; only a comparison made is kept, never a read that failed. */
 const KEPT_CARRIES = 2_000;
@@ -31,8 +30,7 @@ const CompletedRun = type({
   "cut?": DiffCut,
   "diffHash?": "string",
 });
-/** A failed review's `reason` says in fixed words why it did not finish. */
-const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string", "reason?": "string" });
+const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string" });
 export type CompletedReview = typeof CompletedRun.infer;
 /**
  * The pull request's newest review, and its newest finished one, which is the same unless a newer one is running or
@@ -43,11 +41,13 @@ type Found = Omit<typeof CodeReviewFound.infer, "carriedTo">;
 
 type Review = typeof ReviewRun.infer;
 
-/** A reported review as the portal shows it; a review that did not finish says why in fixed words. */
-function reviewOf(event: { head: string; receivedAt: string; payload: Record<string, unknown> }): Review {
-  const reported = StageResult.assert({ ...event.payload, head: event.head });
-  const base = { headSha: event.head, startedAt: event.receivedAt };
-  if ("failed" in reported) return { ...base, status: "failed", reason: reported.failed };
+/** A code review as the portal shows it. */
+function reviewOf(record: CodeReviewRecord): Review {
+  const base = { headSha: record.head, startedAt: record.at };
+  if (record.state === "running") return { ...base, status: "running" };
+  if (record.state === "failed") return { ...base, status: "failed" };
+  const reported = StageResult.assert({ ...record.payload, head: record.head });
+  if ("failed" in reported) return { ...base, status: "failed" };
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
   const { summary, budgetExhausted, cut } = reported.result;
   const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
@@ -87,14 +87,8 @@ export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
   }
 
   async function reviewsOf(tenantId: string, source: RepoSource, repo: string, number: number): Promise<Found> {
-    const pr = { source, repo, number };
-    const [results, out] = await Promise.all([reviewerResults(deps.db, tenantId, pr, "code-review"), reviewersOut(deps.db, tenantId, pr, "code-review")]);
-    const reported = new Set(results.map((result) => result.runId));
-    const [running] = out.filter((reviewer) => !reported.has(reviewer.runId)).sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime());
-    const reviews = results.map(reviewOf);
-    const completed = reviews.find((review) => review.status === "completed") ?? null;
-    if (running) return { review: { status: "running", headSha: running.head, startedAt: running.deployedAt.toISOString() }, completed };
-    return { review: reviews[0] ?? null, completed };
+    const reviews = (await codeReviews(deps.db, tenantId, { source, repo, number })).map(reviewOf);
+    return { review: reviews[0] ?? null, completed: reviews.find((review) => review.status === "completed") ?? null };
   }
 
   function sameDiff(tenantId: string, record: RepoRecord, number: number, completed: CompletedReview, head: Pick<PullRequestToReview, "headSha" | "diff">): boolean {

@@ -127,7 +127,6 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       </h3>
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
       {send.error ? <p role="alert" className="error">Could not send to {hostName(item.source)}. {errorText(send.error)}</p> : null}
-      {reviews.review?.status === "failed" && reviews.review.reason ? <p className="note">{reviews.review.reason}</p> : null}
       {completed && carriedTo ? <p className="note">Carried over from {shortSha(completed.headSha)}: the new commits leave the diff as it was reviewed.</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
       {completed?.cut ? <CutNote cut={completed.cut} /> : null}

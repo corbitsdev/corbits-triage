@@ -886,8 +886,6 @@ export type CodeReviewRun = {
   budgetExhausted?: boolean;
   /** Set when the diff was cut to its first `lines` of `of` for size, with the files it cut part-way or left out. */
   cut?: { lines: number; of: number; unread?: string[] };
-  /** Why a failed review did not finish. */
-  reason?: string;
 };
 
 /**

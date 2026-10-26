@@ -561,10 +561,11 @@ naming the head (and the finding's index), so a send that failed part-way posts
 only what is missing, and none once the summary stands on either head.
 
 A pull request's latest review (`GET …/code-review`, `code-review-runs.ts`)
-is the code review its manager still waits on, shown as running, else the
-newest result a manager's code review reported through the reviewer-result
-route, read from `manager_state`. A review that did not finish says so in
-fixed words; its run log keeps the error itself.
+is read from `manager_state`: the newest of the code reviews its claim still
+waits on, shown as running, those the manager gave up on, such as one past its
+deadline, and the results its code reviews reported through the
+reviewer-result route that a pass took or that name a reviewer of the claim. A
+review that did not finish shows as failed; its run log keeps the error.
 
 Sending a review to GitHub is a person's write through
 `POST /api/integrations/github-actions/{tenantId}` (`action: "code-review"`,
