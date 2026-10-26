@@ -94,8 +94,9 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
 
   /**
    * Records each pull request a mail names. One whose manager is up is mailed that run; the rest go to the listener,
-   * which deploys them. False, with nothing recorded, when the workspace has no listener or the mail is not one a
-   * manager runs.
+   * which deploys them, including those recorded before a later one failed. True with nothing recorded when the mail
+   * names no pull request, as a backlog of a repository with none open; false when the workspace has no listener or
+   * the mail is not one a manager runs.
    */
   return async function toListener(tenantId: string, payload: unknown): Promise<boolean> {
     const request = asRecord(payload);
@@ -106,24 +107,26 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     if (!address || typeof repo !== "string") return false;
     const record = await recordOf(tenantId, repo, source);
     const pulls = await pullsOf(tenantId, record, request);
-    if (pulls.length === 0) return false;
     const domain = domainOf(address);
     const start: Named[] = [];
-    for (const asked of pulls) {
-      const request = await deps.gate(tenantId, record, asked.number, asked.request);
-      if (!request) continue;
-      const pull = { ...asked, request };
-      const recorded = await deps.withAppLogin(tenantId, await withReviewRequest(tenantId, record, pull));
-      await recordEvent(deps.db, tenantId, { source, repo, number: pull.number }, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
-      const runId = await liveManager(deps.db, tenantId, { source, repo, number: pull.number });
-      if (runId) {
-        await deps.deliver(tenantId, `${runId}@${domain}`, { kind: "manage", tenantId, repo, repoSource: source, prNumber: pull.number });
-      } else {
-        start.push(pull);
+    try {
+      for (const asked of pulls) {
+        const request = await deps.gate(tenantId, record, asked.number, asked.request);
+        if (!request) continue;
+        const pull = { ...asked, request };
+        const recorded = await deps.withAppLogin(tenantId, await withReviewRequest(tenantId, record, pull));
+        await recordEvent(deps.db, tenantId, { source, repo, number: pull.number }, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
+        const runId = await liveManager(deps.db, tenantId, { source, repo, number: pull.number });
+        if (runId) {
+          await deps.deliver(tenantId, `${runId}@${domain}`, { kind: "manage", tenantId, repo, repoSource: source, prNumber: pull.number });
+        } else {
+          start.push(pull);
+        }
       }
-    }
-    if (start.length > 0) {
-      await deps.deliver(tenantId, address, { kind: "pr", repo, ...(source !== "github" && { repoSource: source }), tenantId, items: start.map((pull) => ({ prNumber: pull.number, headSha: pull.head })) });
+    } finally {
+      if (start.length > 0) {
+        await deps.deliver(tenantId, address, { kind: "pr", repo, ...(source !== "github" && { repoSource: source }), tenantId, items: start.map((pull) => ({ prNumber: pull.number, headSha: pull.head })) });
+      }
     }
     return true;
   };

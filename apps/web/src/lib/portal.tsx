@@ -22,7 +22,6 @@ import {
   resolveApproval,
   revokeCredential,
   saveAnthropicKey,
-  setCodeReview,
   startBacklogTriage,
   githubPrAction,
   triagePullRequest as requestPullRequestTriage,
@@ -76,7 +75,6 @@ interface PortalContextValue {
   saveAnthropic: (secret: string) => Promise<void>;
   removeAnthropic: (credentialId: string) => Promise<void>;
   removeDecisionModel: (credentialId: string) => Promise<void>;
-  switchCodeReview: (repo: Pick<RepoRecord, "name" | "source">, enabled: boolean) => Promise<void>;
 }
 
 const NO_INVITATIONS: WorkspaceOption[] = [];
@@ -416,16 +414,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const switchCodeReview = useCallback(
-    async function switchCodeReview(repo: Pick<RepoRecord, "name" | "source">, enabled: boolean) {
-      const current = requireSnapshot();
-      await setCodeReview(createHubTransport(), current.workspace.tenantId, repo, enabled);
-      notify(enabled ? `Code review is on for ${repo.name}.` : `Code review is off for ${repo.name}.`);
-      await refreshNow();
-    },
-    [notify, refreshNow, requireSnapshot],
-  );
-
   const value = useMemo<PortalContextValue>(
     function portalValue() {
       return {
@@ -456,7 +444,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         saveAnthropic,
         removeAnthropic,
         removeDecisionModel,
-        switchCodeReview,
       };
     },
     [
@@ -486,7 +473,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       saveAnthropic,
       removeAnthropic,
       removeDecisionModel,
-      switchCodeReview,
     ],
   );
 

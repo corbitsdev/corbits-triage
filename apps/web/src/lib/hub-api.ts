@@ -136,8 +136,6 @@ export type PortalSnapshot = {
   /** Absent when the hub refused or failed to say where code review runs. */
   codeReviewPlace?: CodeReviewPlace["provisioner"];
   codeReviewPlaces?: CodeReviewPlace["places"];
-  /** The hosts whose PR workflow deploys; absent with `codeReviewPlace`. */
-  prWorkflowSources?: CodeReviewPlace["prWorkflow"];
   /** Set when the hub failed to list the keys for a reason other than access, so an empty `credentials` does not mean no key is stored. */
   credentialsError?: string;
   /** Set when the hub failed to say where code review runs for a reason other than access. */
@@ -903,10 +901,6 @@ export async function reviewAgain(transport: Transport, tenantId: string, repo: 
   await transport.fetch("POST", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}/run`, { repo: validateRepo(repo.name), source: repo.source, number });
 }
 
-export async function setCodeReview(transport: Transport, tenantId: string, repo: Pick<RepoRecord, "name" | "source">, enabled: boolean): Promise<void> {
-  await transport.fetch("POST", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}`, { repo: validateRepo(repo.name), source: repo.source, enabled });
-}
-
 /** The provider the workspace runs code review on: the one whose key it stores in Settings → Code review. */
 export function codeReviewProvider(credentials: readonly HubCredential[]): CodeReviewProvider | undefined {
   return codeReviewProviderOf(credentials.filter(isActiveCredential).map((credential) => credential.name));
@@ -1255,7 +1249,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
     ...(decisionModel && { decisionModel }),
-    ...(places.value && { codeReviewPlace: places.value.provisioner, codeReviewPlaces: places.value.places, prWorkflowSources: places.value.prWorkflow }),
+    ...(places.value && { codeReviewPlace: places.value.provisioner, codeReviewPlaces: places.value.places }),
     ...(credentials.failure && { credentialsError: credentials.failure.message }),
     ...(places.failure && { codeReviewPlaceError: places.failure.message }),
     denied: {
