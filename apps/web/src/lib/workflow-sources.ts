@@ -104,13 +104,13 @@ async function hex8(text: string): Promise<string> {
 }
 
 /**
- * A chain workflow's tree carries the release of the workflow it deploys, published before it, and its asset is named
- * for the build and that release together, so the same build with other offerings publishes a new asset. When that
+ * A chain workflow's tree carries the release of the workflow it deploys, published before it, and its hash covers the
+ * build and that release together, so the same build with other offerings publishes a new asset. When that
  * workflow was left out for a missing model, such as code review in a workspace without its model, the tree keeps the
  * build's empty release; any other gap is an ordering mistake and fails the publish.
  */
-async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[]): Promise<{ asset: string; tree: SourceTree }> {
-  const plain = { asset: `${entry.workflow}-${entry.hash}`, tree };
+async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[]): Promise<{ hash: string; tree: SourceTree }> {
+  const plain = { hash: entry.hash, tree };
   const chain = CHAIN_PACKAGES.find((row) => row.name === entry.workflow);
   if (!chain || !("deploys" in chain)) return plain;
   const deployed = published.find((row) => row.workflow === chain.deploys.workflow);
@@ -122,7 +122,15 @@ async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry
   if (!(file in tree)) throw new Error(`The portal build's ${entry.workflow} does not read a release.`);
   const release = { workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
   const json = `${JSON.stringify({ [chain.source]: { [chain.deploys.as]: release } }, null, 2)}\n`;
-  return { asset: `${entry.workflow}-${await hex8(`${entry.hash}\n${json}`)}`, tree: { ...tree, [file]: json } };
+  return { hash: await hex8(`${entry.hash}\n${json}`), tree: { ...tree, [file]: json } };
+}
+
+/**
+ * Each publisher's copy of a release is its own asset, since the asset's creator decides what its deployments may do;
+ * asset names are lowercase kebab, so the principal id's `prn_` becomes `prn-`.
+ */
+function assetName(workflow: string, publisher: Publisher, hash: string): string {
+  return `${workflow}-${publisher.principalId.replaceAll("_", "-")}-${hash}`;
 }
 
 /** A chain workflow publishes only while the workspace has every model it names; the others always publish. */
@@ -180,8 +188,8 @@ export async function publishSources(
     const published: PublishedSource[] = [];
     for (const entry of index.filter((row) => publishable(models, row.workflow))) {
       const built = await (await portalPackage(fetchRaw, `sources/${entry.workflow}-${entry.hash}.json`)).json() as SourceTree;
-      const { asset, tree } = await withRelease(models, entry, built, published);
-      published.push(await publishSource(transport, publisher, gitClient, entry.workflow, asset, tree));
+      const { hash, tree } = await withRelease(models, entry, built, published);
+      published.push(await publishSource(transport, publisher, gitClient, entry.workflow, assetName(entry.workflow, publisher, hash), tree));
     }
     return published;
   } finally {

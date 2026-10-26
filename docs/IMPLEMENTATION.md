@@ -77,9 +77,11 @@ with the `intx-src` export condition, so every hub command runs with
   only while the workspace has every model it names, so code review publishes
   once its model is set up; until then the manager publishes with no code
   review, and the publish after it is set up gives the manager a new asset.
-  An asset is named `<workflow>-<8 hex>`, the build's content hash, or for a
-  workflow with a release a hash of the build's hash and its `release.json`,
-  so other offerings publish a new asset.
+  An asset is named `<workflow>-<publisher>-<8 hex>`: the publishing
+  member's principal id (`prn_` written `prn-`), so each Deployer publishes
+  their own copy, and the build's content hash, or for a workflow with a
+  release a hash of the build's hash and its `release.json`, so other
+  offerings publish a new asset.
 - `scripts/build-workflows.ts`: packs the tools and workflows into
   `public/packages/` with `index.json`. Each version is
   `<base>-sha-<8 hex>` over the package's files (`tooling/pack-tarball.ts`),

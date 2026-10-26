@@ -10,6 +10,7 @@ import type { SourceTree } from "./workflow-packages.ts";
 
 const SECRET = "itx_pat_test";
 const PUBLISHER = { tenantId: "t", principalId: "prn_owner" };
+const OWNER = "prn-owner";
 const TREE: SourceTree = {
   "package.json": JSON.stringify({ private: true, workspaces: ["packages/*"] }),
   "packages/pr-triage-github/package.json": JSON.stringify({ name: "@corbits/pr-triage-github-workflow", version: "0.1.0-sha-0123abcd", interchange: { workflow: "./pr-triage-github.mjs" } }),
@@ -92,6 +93,8 @@ function createRepo(name: string): void {
 const OFFERINGS = { decision: ["mof_decision", "corbits-system-one"], "claude-opus-5-5": ["mof_opus", "anthropic"], "claude-haiku-5-5": ["mof_haiku", "anthropic"] };
 
 function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [], offerings: Record<string, string[]> = OFFERINGS) {
+  /** Who the hub's session is signed in as, which creates the assets. */
+  const session = { principalId: PUBLISHER.principalId };
   const assets = seeded.map((asset, n) => ({ id: `ast_seeded_${n}`, kind: "workflow", ...asset }));
   const requests: string[] = [];
   const tokens: unknown[] = [];
@@ -102,7 +105,7 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
       return Object.entries(offerings).map(([canonicalName, [offeringId, providerName]]) => ({ canonicalName, offerings: [{ offeringId, providerName }] })) as T;
     }
     if (method === "POST" && route === "/api/tenants/t/assets") {
-      const asset = { id: `ast_${assets.length + 1}`, creatorPrincipalId: PUBLISHER.principalId, ...(body as { kind: string; name: string }) };
+      const asset = { id: `ast_${assets.length + 1}`, creatorPrincipalId: session.principalId, ...(body as { kind: string; name: string }) };
       assets.push(asset);
       createRepo(asset.name);
       return asset as T;
@@ -114,7 +117,7 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
     if (method === "DELETE" && route.startsWith("/api/me/git-tokens/")) return undefined as T;
     throw new Error(`Unexpected ${method} ${route}`);
   }
-  return { transport: { fetch: json } as unknown as Transport, requests, tokens };
+  return { transport: { fetch: json } as unknown as Transport, requests, tokens, session };
 }
 
 /** The portal build's files: each workflow's tree under its build hash. */
@@ -133,7 +136,7 @@ function gitIn(asset: string, ...args: string[]): string {
 }
 
 test("publishing a release twice pushes its commit once with a token scoped to the asset, then revokes it", async () => {
-  const asset = "pr-triage-github-0123abcd";
+  const asset = `pr-triage-github-${OWNER}-0123abcd`;
   const hub = fakeHub();
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "twice") };
   const files = portalFiles([{ workflow: "pr-triage-github", hash: "0123abcd", tree: TREE }]);
@@ -153,7 +156,7 @@ test("publishing a release twice pushes its commit once with a token scoped to t
 });
 
 test("refuses an asset another principal created, or whose main holds another commit", async () => {
-  const asset = "pr-triage-github-4567cdef";
+  const asset = `pr-triage-github-${OWNER}-4567cdef`;
   createRepo(asset);
   const gitClient = { fs, http, origin: server.url.origin, dir: path.join(scratch, "refused") };
   const files = portalFiles([{ workflow: "pr-triage-github", hash: "4567cdef", tree: TREE }]);
@@ -190,8 +193,8 @@ test("each chain workflow carries the release of the one it deploys, and its ass
   function nameOf(id: string): string {
     return assets.find((asset) => asset.id === id)!.name;
   }
-  expect(nameOf(reviewer!.assetId)).toBe("pr-code-review-reviewer-github-aaaaaaaa");
-  expect(nameOf(listener!.assetId)).toMatch(/^triage-listener-github-[0-9a-f]{8}$/);
+  expect(nameOf(reviewer!.assetId)).toBe(`pr-code-review-reviewer-github-${OWNER}-aaaaaaaa`);
+  expect(nameOf(listener!.assetId)).toMatch(new RegExp(`^triage-listener-github-${OWNER}-[0-9a-f]{8}$`));
   expect(nameOf(listener!.assetId)).not.toBe("triage-listener-github-cccccccc");
   function releaseOf(entry: { assetId: string }, workflow: string): unknown {
     return JSON.parse(gitIn(nameOf(entry.assetId), "show", `main:packages/${workflow}/release.json`));
@@ -222,7 +225,7 @@ test("without code review's model the manager publishes with no code review, and
   const published = await publishSources(hub.transport, PUBLISHER, gitClient, portalFiles(builds));
 
   expect(published.map((row) => row.workflow)).toEqual(["triage-manager-github", "triage-listener-github"]);
-  expect(gitIn("triage-manager-github-eeeeeeee", "show", "main:packages/triage-manager-github/release.json")).toBe("{}");
+  expect(gitIn(`triage-manager-github-${OWNER}-eeeeeeee`, "show", "main:packages/triage-manager-github/release.json")).toBe("{}");
   const [manager, listener] = published;
   const assets = await hub.transport.fetch<Array<{ id: string; name: string }>>("GET", "/api/tenants/t/assets?kind=workflow");
   const listenerAsset = assets.find((asset) => asset.id === listener!.assetId)!.name;
@@ -233,4 +236,20 @@ test("without code review's model the manager publishes with no code review, and
   expect(reviewed.map((row) => row.workflow)).toEqual(["pr-code-review-reviewer-github", "triage-manager-github", "triage-listener-github"]);
   expect(reviewed[1]!.assetId).not.toBe(manager!.assetId);
   expect(reviewed[2]!.assetId).not.toBe(listener!.assetId);
+});
+
+test("two publishers of one release each get their own assets", async () => {
+  const builds = [{ workflow: "pr-triage-github", hash: "0a1b2c3d", tree: TREE }];
+  const hub = fakeHub();
+  const [owner] = await publishSources(hub.transport, PUBLISHER, { fs, http, origin: server.url.origin, dir: path.join(scratch, "owner") }, portalFiles(builds));
+  hub.session.principalId = "prn_deployer";
+  const deployerPublisher = { tenantId: "t", principalId: "prn_deployer" };
+  const [deployer] = await publishSources(hub.transport, deployerPublisher, { fs, http, origin: server.url.origin, dir: path.join(scratch, "deployer") }, portalFiles(builds));
+
+  expect(deployer!.assetId).not.toBe(owner!.assetId);
+  const assets = await hub.transport.fetch<Array<{ id: string; name: string; creatorPrincipalId: string }>>("GET", "/api/tenants/t/assets?kind=workflow");
+  expect(assets.map(({ name, creatorPrincipalId }) => ({ name, creatorPrincipalId }))).toEqual([
+    { name: `pr-triage-github-${OWNER}-0a1b2c3d`, creatorPrincipalId: "prn_owner" },
+    { name: "pr-triage-github-prn-deployer-0a1b2c3d", creatorPrincipalId: "prn_deployer" },
+  ]);
 });
