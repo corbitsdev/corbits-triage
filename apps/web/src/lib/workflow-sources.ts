@@ -5,7 +5,7 @@ import http from "isomorphic-git/http/web";
 import { createBrowserIsogitRuntime } from "@intx/storage-isogit/browser";
 import type { Transport } from "@intx/hub-client";
 import { hubOrigin } from "./hub-origin.ts";
-import { listModels, offeringsIn } from "./model-catalog.ts";
+import { listModels, offeringsIn, type ModelInfo } from "./model-catalog.ts";
 import { ensureAsset, portalPackage } from "./workflow-deploy.ts";
 import { CHAIN_PACKAGES, type SourceIndexEntry, type SourceTree } from "./workflow-packages.ts";
 
@@ -103,23 +103,21 @@ async function hex8(text: string): Promise<string> {
   return Array.from(digest.slice(0, 4), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-type Models = Awaited<ReturnType<typeof listModels>>;
-
 /**
  * A chain workflow's tree carries the release of the workflow it deploys, published before it, and its asset is named
  * for the build and that release together, so the same build with other offerings publishes a new asset. When that
- * workflow was not published, such as code review in a workspace without its model, the tree keeps the build's empty
- * release.
+ * workflow was left out for a missing model, such as code review in a workspace without its model, the tree keeps the
+ * build's empty release; any other gap is an ordering mistake and fails the publish.
  */
-async function withRelease(models: Models, entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[]): Promise<{ asset: string; tree: SourceTree }> {
+async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[]): Promise<{ asset: string; tree: SourceTree }> {
   const plain = { asset: `${entry.workflow}-${entry.hash}`, tree };
   const chain = CHAIN_PACKAGES.find((row) => row.name === entry.workflow);
   if (!chain || !("deploys" in chain)) return plain;
   const deployed = published.find((row) => row.workflow === chain.deploys.workflow);
-  if (!deployed) return plain;
+  if (!deployed && !publishable(models, chain.deploys.workflow)) return plain;
   const target = CHAIN_PACKAGES.find((row) => row.name === chain.deploys.workflow);
   const offerings = target && offeringsIn(models, target.models);
-  if (!target || !offerings) throw new Error(`${chain.deploys.workflow} was published without its models.`);
+  if (!deployed || !target || !offerings) throw new Error(`${entry.workflow} deploys ${chain.deploys.workflow}, which this release has not published before it.`);
   const file = `packages/${entry.workflow}/release.json`;
   if (!(file in tree)) throw new Error(`The portal build's ${entry.workflow} does not read a release.`);
   const release = { workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
@@ -128,7 +126,7 @@ async function withRelease(models: Models, entry: SourceIndexEntry, tree: Source
 }
 
 /** A chain workflow publishes only while the workspace has every model it names; the others always publish. */
-function publishable(models: Models, workflow: string): boolean {
+function publishable(models: readonly ModelInfo[], workflow: string): boolean {
   const chain = CHAIN_PACKAGES.find((row) => row.name === workflow);
   return !chain || offeringsIn(models, chain.models) !== undefined;
 }

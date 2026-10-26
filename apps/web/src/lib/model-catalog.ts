@@ -122,7 +122,7 @@ export async function removeModelKey(transport: Transport, tenantId: string, pro
   await revokeCredential(transport, tenantId, credentialId);
 }
 
-type ModelInfo = { canonicalName: string; offerings: Array<{ offeringId: string; providerName: string }> };
+export type ModelInfo = { canonicalName: string; offerings: Array<{ offeringId: string; providerName: string }> };
 
 export type Offerings = { ids: string[]; defaultId: string };
 
