@@ -84,7 +84,8 @@ with the `intx-src` export condition, so every hub command runs with
   tree to `public/packages/sources/`: a workspace root whose members are the
   workflow bundle and the built host tools, since Interchange installs only
   npm dependencies from a registry. The manager chain (`CHAIN_PACKAGES`) is
-  built only as source trees; its bundles import `./release.json` at run time,
+  built only as source trees; its bundles import `release.json` at run time
+  through the package's `#release` import, which resolves from any file in it,
   and `src/loops.ts`, where a package has one, ships as `interchange.loops`.
   The chain's bundles run on Bun only: Bun's bundler drops the import's
   `with { type: "json" }`, which Node requires, and every sidecar runs Bun.

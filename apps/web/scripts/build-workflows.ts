@@ -23,8 +23,12 @@ const NPM = "https://registry.npmjs.org";
 const DIRECTORS = "directors.mjs";
 const ACTIONS = "actions/index.mjs";
 const LOOPS = "loops.mjs";
-/** The release a chain workflow deploys from: the portal writes it into the published tree, so the bundle imports it at run time. */
-const RELEASE = "./release.json";
+/**
+ * The release a chain workflow deploys from: the portal writes `release.json` into the published tree, so the bundle
+ * imports it at run time through the package's own import map, which finds it from any file in the package.
+ */
+const RELEASE = "#release";
+const RELEASE_FILE = "release.json";
 const SOURCES = "sources";
 const SOURCE_ROOT = { private: true, workspaces: ["packages/*"] };
 
@@ -91,8 +95,7 @@ function assertOnlyToolImports(workflow: BuiltPackage, file: string, code: strin
     // Bundled dependencies import Node builtins without the node: prefix.
     if (isBuiltin(path.startsWith("node:") ? path : `node:${path}`) || RUN_TIME_NAMES.includes(path)) continue;
     if (path.startsWith(".") && outputs.includes(join(dirname(file), path))) continue;
-    // Only a file at the package root finds the release beside it.
-    if (path === RELEASE && dirname(file) === ".") continue;
+    if (path === RELEASE) continue;
     throw new Error(`${workflow.packageName} imports ${path} at run time; only ${RUN_TIME_NAMES.join(", ")} are installed beside it.`);
   }
 }
@@ -130,10 +133,12 @@ async function packWorkflow(workflow: BuiltPackage, tools: PackedTarball[], memb
   const code = await Promise.all(outputs.map((output) => readFile(join(stage, output), "utf8")));
   const imported = new Set(code.flatMap((source) => new Bun.Transpiler({ loader: "js" }).scanImports(source).map((entry) => entry.path)));
   const native = Object.entries(NATIVE).filter(([name]) => imported.has(name));
+  const release = imported.has(RELEASE);
   const fields = {
     type: "module",
     dependencies: Object.fromEntries([...tools.map((tool) => [tool.name, tool.version]), ...native]),
     interchange: interchangeEntries(workflow),
+    ...(release && { imports: { [RELEASE]: `./${RELEASE_FILE}` } }),
     files: [...outputs, "package.json"],
   };
   if (!code.some((source) => source.includes(workflow.packageName))) {
@@ -142,7 +147,6 @@ async function packWorkflow(workflow: BuiltPackage, tools: PackedTarball[], memb
   for (const [i, output] of outputs.entries()) assertOnlyToolImports(workflow, output, code[i]!, outputs);
   const version = await contentVersion("0.1.0", { name: workflow.packageName, ...fields }, files);
   const manifest = { name: workflow.packageName, version, ...fields };
-  const release = imported.has(RELEASE);
   const member = `packages/${workflow.name}`;
   const tree: SourceTree = {
     "package.json": `${JSON.stringify(SOURCE_ROOT, null, 2)}\n`,
@@ -150,7 +154,7 @@ async function packWorkflow(workflow: BuiltPackage, tools: PackedTarball[], memb
     [`${member}/package.json`]: `${JSON.stringify(manifest, null, 2)}\n`,
     ...Object.fromEntries(outputs.map((output, i) => [`${member}/${output}`, code[i]!])),
     // A workflow that deploys nothing reads an empty release.
-    ...(release && { [`${member}/release.json`]: "{}\n" }),
+    ...(release && { [`${member}/${RELEASE_FILE}`]: "{}\n" }),
   };
   const hash = version.slice(version.lastIndexOf("-") + 1);
   await Bun.write(join(outDir, SOURCES, `${workflow.name}-${hash}.json`), JSON.stringify(tree));
