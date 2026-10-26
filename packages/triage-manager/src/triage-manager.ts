@@ -50,15 +50,16 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
     // A pass that mailed its review records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
     doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "reviewMailed")] }, ["reviewSent"]),
     posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "done", after: ["reviewing"] }),
-    postReview: action({ handler: "postReview", input: { merge: [MAIL, stepsOf("take")] }, after: ["mirrorRules"], credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } }),
+    postReview: action({ handler: "postReview", input: { merge: [MAIL, stepsOf("take", "reviewScope")] }, after: ["mirrorRules"], credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } }),
   };
 }
 
 /**
- * The judge between the rules and the verdict. A pass that deploys it mails the rules output and posts nothing. The
- * pass that has its answers runs the verdict, and code review when the policy asks for it, still posting nothing while
- * a review is out. A judge the release does not publish posts nothing. One that failed, could not be mailed, or ran
- * past its deadline goes on to the verdict and is not deployed again.
+ * The judge between the rules and the verdict. A pass that deploys it mails the rules output and posts nothing; while
+ * the host's checks run it is not deployed, and the verdict waits for them. The pass that has the judge's verdict posts
+ * it, and code review when the policy asks for it, still posting nothing while a review is out. A judge the release
+ * does not publish posts nothing. One that failed, could not be mailed, or ran past its deadline goes on to the
+ * machine verdict and is not deployed again on that pass.
  */
 function judgeSteps(): Record<string, Primitive> {
   return {
@@ -81,7 +82,7 @@ function judgeSteps(): Record<string, Primitive> {
  * posts once both have reported or given up. A pass after one that waits for a reviewer first waits `POLL_MS`.
  */
 function passOf(id: string, sources: Sources) {
-  const { waiting, held, markWaiting, unready, rules, evaluateRules, mirrorRules, executeRules } = triageSteps(sources);
+  const { waiting, held, markWaiting, unready, rules, mirrorRules, executeRules } = triageSteps(sources);
   return defineWorkflow({
     id: `${id}-pass`,
     trigger: { type: "manual" },
@@ -98,11 +99,10 @@ function passOf(id: string, sources: Sources) {
       markWaiting,
       unready,
       facts: hostAction("facts", sources, TAKEN, ["unready"]),
-      recall: action({ handler: "recall", input: { merge: [stepsOf("facts", "take")] }, after: ["facts"] }),
-      rules: { ...rules, input: { from: "steps.recall.output" }, after: ["recall"] },
+      rules,
       route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "judgeScope", else: "evaluateRules", after: ["rules"] }),
       ...judgeSteps(),
-      evaluateRules: { ...evaluateRules, after: ["route", "judgeWait", "judgeSent"] },
+      evaluateRules: action({ handler: "verdict", input: { merge: [MAIL, stepsOf("take", "rules")] }, after: ["route", "judgeWait", "judgeSent"] }),
       ...reviewSteps(sources),
       mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] },
       // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.

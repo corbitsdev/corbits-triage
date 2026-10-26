@@ -1,6 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { APPROVE_DO_KIND, CodeReviewOutput, StageResult, VerdictDetail, WAITING_KIND } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, WAITING_KIND } from "@corbits/triage-contracts";
+import { decided } from "@corbits/triage-workflows/logic/settled";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
 export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "result?": "unknown" });
@@ -16,7 +17,7 @@ const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean
  * its deadline. `approvals` are the held Dos approved since, each run as pr-triage runs one. `triage` when the head is
  * triaged: `taken` is the newest pull request mail the hub recorded, or the mail that holds the head for CI when that
  * is the newest for it. `review` or `reviewFailed`, and `judge` or `judgeFailed`, is what one of its own reviewers
- * reported on `head`.
+ * reported on `head` on this pass; `verdict` is the judge's verdict on `head`, reported on this pass or an earlier one.
  */
 export const TakeOutput = type({
   run: "boolean",
@@ -27,8 +28,9 @@ export const TakeOutput = type({
   "head?": "string",
   "review?": CodeReviewOutput,
   "reviewFailed?": "string",
-  "judge?": VerdictDetail,
+  "judge?": JudgeVerdict,
   "judgeFailed?": "string",
+  "verdict?": JudgeVerdict,
   overdue: "boolean",
   reviewers: Reviewer.array(),
 });
@@ -45,6 +47,9 @@ function isOwn(reviewer: Reviewer, kind: string, head: string): boolean {
   return reviewer.kind === kind && reviewer.head === head;
 }
 
+/** A judge whose evaluate could not read the pull request reports a verdict that names no head, which decides nothing. */
+const NO_HEAD = "the judge's verdict names no head";
+
 /** What one of the manager's own reviewers reported on `head`. */
 function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: readonly Reviewer[]): Pick<TakeOutput, "review" | "reviewFailed" | "judge" | "judgeFailed"> {
   const reported: Pick<TakeOutput, "review" | "reviewFailed" | "judge" | "judgeFailed"> = {};
@@ -56,9 +61,20 @@ function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: 
       if ("failed" in result) reported.reviewFailed = result.failed;
       else reported.review = result.result;
     } else if ("failed" in result) reported.judgeFailed = result.failed;
+    else if (result.result.headSha === null) reported.judgeFailed = NO_HEAD;
     else reported.judge = result.result;
   }
   return reported;
+}
+
+/** The decided verdict a judge of `head` reported on an earlier pass, stored on its reviewer. */
+function storedVerdict(reviewers: readonly Reviewer[], head: string): JudgeVerdict | undefined {
+  for (const reviewer of reviewers) {
+    if (reviewer.kind !== "judge" || reviewer.head !== head) continue;
+    const verdict = JudgeVerdict(reviewer.result);
+    if (!(verdict instanceof type.errors) && decided(verdict, head)) return verdict;
+  }
+  return undefined;
 }
 
 /** A reviewer of `kind` on `head` whose deadline passed with no report and no result stored. */
@@ -84,7 +100,8 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage.
   const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue);
   const taken = forHead?.payload["kind"] === WAITING_KIND ? forHead.payload : request;
-  return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, overdue, reviewers };
+  const verdict = report.judge ?? storedVerdict(reviewers, head);
+  return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers };
 }
 
 const DoneInput = type({
@@ -113,14 +130,31 @@ function remembered(take: TakeOutput): Reviewer[] {
   });
 }
 
+/** The most one stored result takes of done's body, which the route caps at 1 MiB and holds a judge's and a review's. */
+const MAX_STORED_BYTES = 256 * 1024;
+
+function storable(reviewer: Reviewer): boolean {
+  return reviewer.result === undefined || Buffer.byteLength(JSON.stringify(reviewer.result)) <= MAX_STORED_BYTES;
+}
+
+/** A result a later pass on `head` posts as it is: a decided verdict, or a code review. */
+function lasting(reviewer: Reviewer, head: string): boolean {
+  if (reviewer.kind === "code-review") return !(CodeReviewOutput(reviewer.result) instanceof type.errors);
+  const verdict = JudgeVerdict(reviewer.result);
+  return reviewer.kind === "judge" && !(verdict instanceof type.errors) && decided(verdict, head);
+}
+
 /**
  * The reviewers to wait for. A result stays on its reviewer while another of this head is still out, so a judge that
- * reported before code review is not lost; once nothing is waiting, the settled ones are dropped. Plus one mailed now.
+ * reported before code review is not lost. Once nothing is waiting, only the lasting results of the pass's head stay, so
+ * a later pass on it posts them and deploys no other; a degraded, undecided, failed or late one is dropped, so the next
+ * event deploys its reviewer again. A result too large to store is dropped. Plus one mailed now.
  */
 function reviewersAfter(take: TakeOutput, mailed: Reviewer | undefined): Reviewer[] {
-  let current = remembered(take);
+  const { head } = take;
+  let current = remembered(take).filter(storable);
   const waiting = current.some((reviewer) => reviewer.result === undefined) || (mailed !== undefined && mailed.result === undefined);
-  if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined);
+  if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined || (head !== undefined && lasting(reviewer, head)));
   return mailed ? [...current, mailed] : current;
 }
 

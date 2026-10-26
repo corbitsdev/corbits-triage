@@ -1,7 +1,10 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { asRecord } from "@corbits/common";
-import { repoSourceOf } from "@corbits/triage-contracts";
+import { JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
+import { evaluate, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
+import type { Item } from "@corbits/triage-workflows/logic/item";
+import { hostChecksPending } from "@corbits/triage-workflows/logic/render";
+import { decided } from "@corbits/triage-workflows/logic/settled";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
 import { deploy, managerMailOf, manageMail } from "./hub.js";
@@ -10,61 +13,68 @@ import { Reviewer, TakeOutput } from "./manager.js";
 /** How long the manager waits for a judge it deployed, from its deploy to its report. */
 export const JUDGE_DEADLINE_MS = 60 * 60_000;
 
-const RecallInput = type({ facts: { output: { items: "object[]", batch: "boolean" } }, take: { output: TakeOutput } });
+const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: "object[]", batch: "boolean" } } });
 
-function judgedRecord(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const judged = (value as { judged?: unknown }).judged;
-  if (!judged || typeof judged !== "object") return undefined;
-  const entries = Object.entries(judged).filter((entry): entry is [string, string] => typeof entry[1] === "string");
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-/** Answers the judge reported for this head, on this pass or stored on its reviewer. */
-function answersOf({ head, judge, reviewers }: TakeOutput): Record<string, string> | undefined {
-  return judgedRecord(judge) ?? reviewers.map((reviewer) => reviewer.kind === "judge" && reviewer.head === head ? judgedRecord(reviewer.result) : undefined).find((judged) => judged !== undefined);
+/** Whether an item's rules wait on the host's own checks, so its judge is held until they finish. */
+function waitingOnHost(items: readonly object[]): boolean {
+  return (items as Item[]).some((item) => item.det !== undefined && hostChecksPending(item.det, item.noWait));
 }
 
 /**
- * Puts the judge's stored answers onto the facts items before rules run, so a head the judge already answered is not
- * asked again. An item facts could not read is left as it is. With no answers, the facts output is unchanged.
+ * The verdict the pass posts. When its rules need the judge and the judge reported a verdict for its head, that
+ * verdict as the judge made it, after checking that its repository, number, head and host, and its comment's
+ * repository and number, are the pass's. Otherwise pr-triage's evaluate of the rules output, the judge held back while
+ * the host's checks run, so the head waits for them.
  */
-export async function recall(input: unknown): Promise<{ items: object[]; batch: boolean }> {
-  const parsed = RecallInput(input);
-  if (parsed instanceof type.errors) throw new Error(`recall: ${parsed.summary}`);
-  const facts = parsed.facts.output;
-  const judged = answersOf(parsed.take.output);
-  if (!judged) return facts;
-  const items = facts.items.map(function attach(item) {
-    if ("error" in item && typeof item.error === "string") return item;
-    const prior = "judged" in item && item.judged && typeof item.judged === "object" ? item.judged as Record<string, string> : {};
-    return { ...item, judged: { ...prior, ...judged } };
-  });
-  return { items, batch: facts.batch };
+export async function verdict(input: unknown, ctx: EffectContext, signal: AbortSignal): Promise<JudgeVerdict | EvaluateOutput> {
+  const parsed = VerdictInput(input);
+  if (parsed instanceof type.errors) throw new Error(`verdict: ${parsed.summary}`);
+  const rules = parsed.rules.output;
+  const judged = parsed.take.output.verdict;
+  if (rules.needsJudgment && judged) {
+    const { pullRequest } = managerMailOf(parsed.payload);
+    const { repo, number, request } = judged;
+    const matches = repo === pullRequest.repo && number === pullRequest.number && judged.headSha === parsed.take.output.head
+      && request.repo === pullRequest.repo && request.number === pullRequest.number && repoSourceOf(judged.repoSource) === repoSourceOf(pullRequest.source);
+    if (!matches) throw new Error(`verdict: the judge's verdict names ${repo}#${number} at ${judged.headSha}, not the pass's pull request and head`);
+    return judged;
+  }
+  if (rules.needsJudgment && waitingOnHost(rules.items)) return evaluate({ ...rules, items: rules.items.map((item) => ({ ...item, judgeSkipped: true })) }, ctx, signal);
+  return evaluate(rules, ctx, signal);
 }
 
-const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: "unknown" } });
+const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: "object[]" } } });
 
 function ownJudge(reviewers: readonly Reviewer[], head: string | undefined): Reviewer[] {
   return reviewers.filter((reviewer) => reviewer.kind === "judge" && reviewer.head === head);
 }
 
+/** A verdict an earlier pass stored that the host's checks could still change. */
+function undecided(reviewer: Reviewer, head: string | undefined): boolean {
+  const verdict = JudgeVerdict(reviewer.result);
+  return !(verdict instanceof type.errors) && (head === undefined || !decided(verdict, head));
+}
+
 /**
- * Whether the pass deploys the judge, and whether it goes on to the verdict. The judge runs once per head, when the
- * rules still need it and the release publishes one. A pass that deploys it, and every pass until it reports, posts
- * nothing. One that reported, reported a failure, or ran past its deadline goes on to the verdict and is not deployed again.
+ * Whether the pass deploys the judge, and whether it goes on to the verdict. The judge runs when the rules still need
+ * it, the release publishes one and the host's checks have finished; while they run, the pass goes on to a verdict that
+ * waits for them. A pass that deploys it, and every pass until it reports, posts nothing. One that reported, reported a
+ * failure, or ran past its deadline goes on to the verdict and is not deployed again; one whose stored verdict the
+ * host's checks could still change is deployed again.
  */
 export async function judgeScope(input: unknown): Promise<{ deploy: boolean; post: boolean }> {
   const parsed = ScopeInput(input);
   if (parsed instanceof type.errors) throw new Error(`judgeScope: ${parsed.summary}`);
-  if (asRecord(parsed.rules.output)?.["needsJudgment"] !== true) return { deploy: false, post: false };
+  if (!parsed.rules.output.needsJudgment) return { deploy: false, post: false };
   const { head, judge, judgeFailed, reviewers } = parsed.take.output;
   if (publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "judge") === undefined) return { deploy: false, post: false };
   const pending = ownJudge(reviewers, head);
-  const overdue = pending.some((reviewer) => reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
-  const settled = judge !== undefined || judgeFailed !== undefined || pending.some((reviewer) => reviewer.result !== undefined);
-  if (judgeFailed !== undefined || overdue || settled) return { deploy: false, post: true };
-  if (pending.some((reviewer) => reviewer.result === undefined)) return { deploy: false, post: false };
+  const open = pending.filter((reviewer) => reviewer.result === undefined);
+  const overdue = open.some((reviewer) => Date.parse(reviewer.deadline) <= Date.now());
+  const settled = judge !== undefined || judgeFailed !== undefined || pending.some((reviewer) => reviewer.result !== undefined && !undecided(reviewer, head));
+  if (overdue || settled) return { deploy: false, post: true };
+  if (open.length > 0) return { deploy: false, post: false };
+  if (waitingOnHost(parsed.rules.output.items)) return { deploy: false, post: true };
   return { deploy: true, post: false };
 }
 

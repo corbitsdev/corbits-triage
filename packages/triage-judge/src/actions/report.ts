@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { REPO_SOURCES, VerdictDetail } from "@corbits/triage-contracts";
+import { JudgeVerdict, REPO_SOURCES } from "@corbits/triage-contracts";
 import type { MailInput } from "@corbits/triage-manager/mail";
 import { answered, callHub, endRun, mailOf, tenantPath } from "@corbits/triage-manager/actions/hub";
 
@@ -34,13 +34,13 @@ const NOT_FINISHED = "the judge did not finish";
 
 /**
  * Reports the verdict to the pull request's manager as a `StageResult` through the hub, or that the judge did not
- * finish; the reply then wakes the manager. The verdict keeps the answers a later pass replays. Posts nothing.
+ * finish; the reply then wakes the manager. The verdict goes whole, so the manager posts it as it was made. Posts nothing.
  */
 export async function report(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ recorded: boolean; mail: MailInput }> {
   const parsed = ReportInput(input);
   if (parsed instanceof type.errors) throw new Error(`report: ${parsed.summary}`);
   const { tenantId, number, checkout, reply } = judgeMailOf(parsed.payload).mail;
-  const verdict = VerdictDetail(parsed.evaluate?.output);
+  const verdict = JudgeVerdict(parsed.evaluate?.output);
   const outcome = parsed.evaluate?.output === undefined || verdict instanceof type.errors ? { failed: NOT_FINISHED } : { result: verdict };
   const result = { source: checkout.source, repo: checkout.repo, number, kind: "judge" as const, head: checkout.sha, ...outcome };
   const { recorded } = answered(await callHub(ctx, "report", tenantPath(tenantId, "/manager/reviewer-result"), "POST", result), "report", Recorded);

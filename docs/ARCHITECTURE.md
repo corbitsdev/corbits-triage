@@ -273,25 +273,40 @@ any other tenant or an unknown sender.
   the claim: the next manager's take finds the run gone and claims.
   A run left deployed with no sidecar for two minutes is gone too, and its
   cancellation is requested so it does not start after the claim has moved on.
-  When the rules need the judge and `release.json` publishes one for the host,
-  a pass deploys it under `workflow:*` `create` and `read` on exactly the
-  judge's asset, which the definition declares when its module loads with that
-  release, mails it the rules output until the judge's one-hour deadline, and
-  posts nothing. The pass that has its answers runs the verdict. A judge the
-  release does not publish posts nothing. One that could not be mailed,
-  reported a failure or ran past its deadline goes on to the verdict and is
-  not deployed again. When the policy turns code review on, the verdict's
-  rules let it past, the hub read the head's review request and the release
-  publishes a code review, a pass deploys it the same way (without one it
-  declares no code-review asset, and the verdict goes up alone), mails it the
-  request until the review's one-hour deadline, and still posts nothing while
-  that review is out. The pass that collects its report mirrors the verdict,
-  then posts the review through the host's `send_code_review` tool, so they
-  go up together. A review that could not be mailed, reported a failure or
-  ran past its deadline leaves the verdict to go up alone. Each reviewer the
-  manager records names the manager run that deployed it (`deployedBy`). Done
-  stops each judge or code review this run deployed and no longer waits for,
-  one on an older head or past its deadline, through the same stop-run route;
+  When the rules need the judge, the host's own checks have finished (or the
+  hub waits for them no longer) and `release.json` publishes a judge for the
+  host, a pass deploys it under `workflow:*` `create` and `read` on exactly
+  the judge's asset, which the definition declares when its module loads with
+  that release, mails it the rules output until the judge's one-hour deadline,
+  and posts nothing. While those checks run, the judge is held and the pass
+  marks the head waiting, as a pass of deterministic rules does. The pass that
+  collects the judge's report posts and executes its verdict as the judge made
+  it, once that verdict names the pass's pull request, head and host; facts
+  and rules still run, and when they no longer need the judge (a failed hard
+  rule, a draft or a closed pull request) the pass's own verdict goes up
+  instead. A decided verdict, one that does not wait and that nothing on the
+  host can still change, stays on the judge's reviewer on the claim for its
+  head, so a later pass on that head posts it again, whatever else changed,
+  and deploys no other judge; a new head gets its own. A verdict the host's
+  checks could still change, a degraded one or one over 256 KiB still goes up
+  on the pass that collects it, and a failure or a missed deadline leaves the
+  machine verdict to go up alone; none of them is kept, so the next event
+  deploys the judge again. A judge the release does not publish posts nothing.
+  When the policy turns code review on, the verdict's rules let it past, the
+  hub read the head's review request and the release publishes a code review,
+  a pass deploys it the same way (without one it declares no code-review
+  asset, and the verdict goes up alone), mails it the request until the
+  review's one-hour deadline, and still posts nothing while that review is
+  out. The pass that collects its report mirrors the verdict, then posts the
+  review through the host's `send_code_review` tool, so they go up together. A
+  review stays on its reviewer for its head like a decided verdict, so a later
+  pass on that head whose rules still let code review past posts it with the
+  verdict and deploys no other; a review that could not be mailed, reported a
+  failure or ran past its deadline leaves the verdict to go up alone and is
+  deployed again on the next event. Each reviewer the manager records names
+  the manager run that deployed it (`deployedBy`). Done stops each judge or
+  code review this run deployed and no longer waits for, one on an older head
+  or past its deadline, through the same stop-run route;
   one an earlier manager deployed runs out its own deadline. Stock grants the
   deployer `read` on a run it deployed, and the vendored Interchange carries
   `manage` instead (`vendor/interchange/VENDORED.md`).
@@ -306,16 +321,17 @@ any other tenant or an unknown sender.
   `triage-manager:result` and `manage` on `workflow-run:self`, sourced from
   its creator: it can report a result and stop itself, and reach no other
   manager route.
-- `triage-judge-github` and `triage-judge-bitbucket-datacenter`
-  (`triageJudge` in `@corbits/triage-judge`): the judge a manager deploys. It
-  takes mail only from that manager. It runs the model checks the machine
-  rules produced, then focused's follow-up questions, then evaluate. Stock
-  runs a step whose dependencies failed, so however the judge ended it records
-  a `StageResult` of kind `judge` through the reviewer-result route (a failure
-  as `failed`), including the answers a later pass of the same head replays,
-  mails the manager a wake-up and stops. It posts nothing to the pull request.
-  Its definition declares only `create` on `triage-manager:result` and
-  `manage` on `workflow-run:self`, sourced from its creator.
+- `triage-judge-github` and `triage-judge-bitbucket-datacenter` (`triageJudge`
+  in `@corbits/triage-judge`): the judge a manager deploys. It takes mail only
+  from that manager. It runs the model checks the machine rules produced, then
+  focused's follow-up questions, then evaluate. Stock runs a step whose
+  dependencies failed, so however the judge ended it records a `StageResult`
+  of kind `judge` through the reviewer-result route: the whole verdict
+  evaluate made, its comment, labels, Dos and rule results, or a failure as
+  `failed`. It mails the manager a wake-up and stops. It posts nothing to the
+  pull request. Its definition declares only `create` on
+  `triage-manager:result` and `manage` on `workflow-run:self`, sourced from
+  its creator.
 - A run sends mail only through an agent step's transport, so the listener,
   the manager, the judge and the code review mail through one agent whose
   director makes no model call: it runs its one tool, which waits for a
@@ -838,7 +854,7 @@ read it, and passes the rest of the request to stock.
   own run id, and the manager matches results to its reviewers by run id.
   Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's
   kind (`code-review` or `judge`), the head it reviewed and its result, a
-  code review's output or a judge's verdict detail, or `failed` with why it
+  code review's output or a judge's whole verdict, or `failed` with why it
   has none.
 - In a workspace with a host's listener live, pull request, waiting,
   held-Do approval and backlog mail goes to it instead of a pr-triage worker,
