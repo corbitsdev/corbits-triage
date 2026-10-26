@@ -118,7 +118,10 @@ function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init
 
 const loopFns = (ref: string) => (loops as Record<string, LoopFn>)[ref]!;
 
-/** Runs one mail's body; the mail agent's director runs its one tool, so the mail it would send is recorded and answered `mailed`. */
+/**
+ * Runs one mail's body; the mail agent's director runs its one tool, so the mail it would send is recorded and answered
+ * `mailed` in the `{ reply, turn }` a live agent step outputs.
+ */
 async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers = true) {
   const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the body is not inline");
@@ -128,7 +131,8 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
     invokeStep: async function mailAgent({ agent, input }) {
       if (!agent.id.startsWith("triage-mail")) throw new Error(`no agent but the mail agent runs, not ${agent.id}`);
       mailed.push(input);
-      return { output: JSON.stringify({ mailed: delivers }) };
+      const reply = JSON.stringify({ mailed: delivers });
+      return { output: { reply, turn: { role: "assistant", content: [{ type: "text", text: reply }] } } };
     },
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
     actionCredentials: actionCredentials((definition.credentialBindings ?? []) as Bindings, host, hub),

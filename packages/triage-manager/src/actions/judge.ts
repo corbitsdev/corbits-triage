@@ -100,7 +100,7 @@ export async function deployJudge(input: unknown, ctx: EffectContext, _signal: A
   return { reviewer: { kind: "judge", head, runId: judgeRun, deployedBy: runId, deadline }, mail: { tenantId, to: judgeRun, content, readyBy: deadline } };
 }
 
-const MailedInput = type({ deployJudge: { output: { reviewer: Reviewer } }, mailJudge: { output: "string" } });
+const MailedInput = type({ deployJudge: { output: { reviewer: Reviewer } }, mailJudge: { output: { reply: "string" } } });
 
 /**
  * The judge becomes a reviewer to wait for once its mail went. A mail that failed by its deadline leaves the pass to
@@ -109,7 +109,7 @@ const MailedInput = type({ deployJudge: { output: { reviewer: Reviewer } }, mail
 export async function judgeMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
   const parsed = MailedInput(input);
   if (parsed instanceof type.errors) throw new Error(`judgeMailed: ${parsed.summary}`);
-  const mailed = Mailed(parsed.mailJudge.output);
+  const mailed = Mailed(parsed.mailJudge.output.reply);
   if (mailed instanceof type.errors) throw new Error(`judgeMailed: ${mailed.summary}`);
   return mailed.mailed ? { reviewer: parsed.deployJudge.output.reviewer, post: false } : { post: true };
 }
