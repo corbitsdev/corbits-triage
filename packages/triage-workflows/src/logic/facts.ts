@@ -1,6 +1,5 @@
 import { checkCancelled, checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
 import { authorAssociation, authorKindOf, catalogCheckEnabled, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
-import type { RulesItem } from "../actions/rules.js";
 import { hiddenIn, hiddenMarkup, nothingRemoved, writtenDescription } from "./hidden-content.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
@@ -275,7 +274,7 @@ function shownDescription(pr: PrData, source: RepoSource, templates: string[], h
 }
 
 /** The judge and the comment read pull request text only as a reader sees it; a contains text rule also reads the description as written. */
-export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs, templates, source }: ItemContext): RulesItem {
+export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs, templates, source }: ItemContext): { error: string } | { facts: PrFacts; pack: CheckPack } {
   const { pr } = data;
   if (!pr) return { error: `github_get_pr failed for #${number}` };
   if (typeof data.files === "string") return { error: data.files };
