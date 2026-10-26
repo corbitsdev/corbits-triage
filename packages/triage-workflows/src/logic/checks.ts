@@ -194,6 +194,11 @@ export function forMaintainer(c: CheckResult, ask: readonly string[] | undefined
   return ask?.includes(c.check) ? { ...c, onFail: "ask" } : c;
 }
 
+/** The host diffs a pull request against its base branch, so one based on another's branch shows only its own changes; one with pull requests merged into its branch holds theirs too. */
+export function holdsOthersChanges(stack: Stack | undefined): stack is Stack {
+  return stack !== undefined && stack.includes.length > 0;
+}
+
 export function hasModelChecks(sources: DeterministicResult["sources"]): boolean {
   return sources !== undefined && (sources.quality.length > 0 || sources.custom.length > 0);
 }

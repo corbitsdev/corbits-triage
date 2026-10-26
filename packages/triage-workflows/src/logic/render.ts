@@ -4,7 +4,7 @@ import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
-import { forMaintainer, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
+import { forMaintainer, hasModelChecks, holdsOthersChanges, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
@@ -362,11 +362,11 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
 
   /**
    * Focused asks each request-sized slice of the diff whether it serves the pull request's purpose: any separate slice fails
-   * it, every serving slice passes it, with no lines to read it does not apply, and a stacked branch skips it. A failure names the files
+   * it, every serving slice passes it, with no lines to read it does not apply, and a branch other pull requests were merged into skips it. A failure names the files
    * most likely to be the separate change, from the follow-up file questions. The score is the least serving slice's.
    */
   function focusedCheck(plan: FocusedPlan | undefined) {
-    if (stack) {
+    if (holdsOthersChanges(stack)) {
       const reason = stackText(stack);
       return push("focused", { result: "pass" }, { kind: "not-applicable", reason }, [], `skipped: ${reason}`);
     }
@@ -620,7 +620,7 @@ function noteOf(c: CheckResult, ctx: RenderContext): string {
 }
 
 function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: VerdictWord): string {
-  const { author, repo, headSha, sources, purpose } = ctx;
+  const { author, sources, purpose } = ctx;
   const failing = checks.filter((c) => c.result === "fail");
   const mine = authorFailures(checks, sources);
   const flagged = checks.filter(isFlagged);
@@ -652,6 +652,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
     if (failing.some((c) => c.check === NO_CHANGES_REQUESTED)) return "";
     lines.push(`${verdict === "pass" ? NOTHING_TO_CHANGE : ""}A maintainer will review this pull request.`);
   }
+  if (ctx.stack?.onto !== undefined && ctx.stack.includes.length === 0) lines.push("", `Stacked on #${ctx.stack.onto}: only this pull request's own changes were checked.`);
   const skipped = sources ? checks.flatMap((c) => skippedLine(c, sources)) : [];
   if (skipped.length) lines.push("", "Skipped:", ...skipped);
   const notes = ctx.labelled.filter(isLabelledFinding);
@@ -681,6 +682,7 @@ interface RenderContext {
   reviewers: string[];
   /** Set whenever focused was asked. */
   purpose?: string;
+  stack?: Stack;
   labelled: CheckResult[];
 }
 
@@ -729,7 +731,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const { author, repo, repoSource, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait } = input;
   const evaluated = evaluateModel(input);
   const { deciding, labelled } = splitLabelled(det, evaluated.checks);
-  const ctx = { author, repo, repoSource, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, labelled };
+  const ctx = { author, repo, repoSource, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, stack: input.stack, labelled };
   const checks = [...det.checks, ...deciding];
   const flaggedReason = checks.filter(isFlagged).map((check) => reasonOf(check, det.sources)).join("; ");
   const reasons = reasonsOf(det, deciding);
