@@ -93,7 +93,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     under way is abandoned, its copy left running), carries no answers, and
     mails its heads through the manager intake. A listener counts as live as
     a manager does: running, on its sidecar, or deployed within the last two
-    minutes.
+    minutes; one deployed without a sidecar past that is released, so the next
+    Upgrade deploys it again. The workflow-versions route reports each
+    deployment's `live` the same way, which Settings reads.
   - **Coordinator**: every triage mail (webhook, retry, reconciler) and every
     code review mail is a job in one in-memory queue keyed per lane (triage or
     code review), host and pull request. Each job runs in a worker deployment

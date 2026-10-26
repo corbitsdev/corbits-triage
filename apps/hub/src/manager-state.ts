@@ -186,23 +186,34 @@ function runIsUp(run: ManagerRun | undefined, now: Date): boolean {
   return now.getTime() - run.createdAt.getTime() < MANAGER_START_GRACE_MS;
 }
 
-async function runGone(tx: Tx, runId: string, now: Date): Promise<boolean> {
+async function runGone(tx: Tx | DB["db"], runId: string, now: Date): Promise<boolean> {
   return !runIsUp(await managerRun(tx, runId), now);
 }
 
-/** Asks the sweep to stop a deploy that still counts as live but never became a process, so it cannot start after its claim has moved on. */
-async function releaseStuck(tx: Tx, runId: string, now: Date): Promise<void> {
+/** Whether a deployment is up as the hub counts a listener or a manager: running, on its sidecar, or just deployed. */
+export async function deploymentUp(db: DB["db"], runId: string): Promise<boolean> {
+  return !(await runGone(db, runId, new Date()));
+}
+
+/**
+ * Asks the sweep to stop a deploy that still counts as live but never became a process, so a manager cannot start after
+ * its claim has moved on, and a listener is deployed again by the next Upgrade.
+ */
+async function releaseStuck(tx: Tx | DB["db"], runId: string, now: Date, what: "manager" | "listener"): Promise<void> {
   await tx
     .update(schema.workflowRun)
-    .set({ cancellationRequestedAt: now, cancellationDeadline: now, cancellationReason: "manager deployed without a sidecar" })
+    .set({ cancellationRequestedAt: now, cancellationDeadline: now, cancellationReason: `${what} deployed without a sidecar` })
     .where(and(eq(schema.workflowRun.id, runId), inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]), isNull(schema.workflowRun.cancellationRequestedAt)));
 }
 
-/** The workspace's newest listener for the host while it is up, as a manager is: running, on its sidecar, or just deployed. */
+/** The workspace's newest listener for the host while it is up, as a manager is; one that never got a sidecar is released. */
 export async function liveListener(db: DB["db"], tenantId: string, source: RepoSource): Promise<LiveDeployment | undefined> {
   const listener = await resolveLiveDeployment(db, tenantId, TRIAGE_LISTENERS[source]);
-  if (!listener || !runIsUp(await managerRun(db, listener.runId), new Date())) return undefined;
-  return listener;
+  if (!listener) return undefined;
+  const now = new Date();
+  if (runIsUp(await managerRun(db, listener.runId), now)) return listener;
+  await releaseStuck(db, listener.runId, now, "listener");
+  return undefined;
 }
 
 /** The run id of the pull request's manager while that run is up. */
@@ -229,7 +240,7 @@ async function claimFor(tx: Tx, tenantId: string, pr: PullRequestRef, runId: str
   if (!claim) throw new Error(`manager_state ${key} vanished under its lock`);
   if (claim.status === "live" && claim.runId === runId) return claim;
   if (claim.status === "live" && claim.runId !== undefined && !(await runGone(tx, claim.runId, now))) return undefined;
-  if (claim.runId !== undefined && claim.runId !== runId) await releaseStuck(tx, claim.runId, now);
+  if (claim.runId !== undefined && claim.runId !== runId) await releaseStuck(tx, claim.runId, now, "manager");
   const taken = { ...claim, ...fresh, starts: claim.starts + 1 };
   await writeClaim(tx, tenantId, pr, taken);
   return taken;

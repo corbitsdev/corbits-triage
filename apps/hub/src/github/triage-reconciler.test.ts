@@ -34,6 +34,8 @@ const LONG_AGO = "2026-10-07T00:00:00.000Z";
 const VERSION = "0.1.0-sha-11111111";
 const OFFERING = "off_decision";
 const LIVE = deployment("run_live", new Date(LONG_AGO));
+/** A listener names no workflow version or offering. */
+const LISTENER = { runId: "run_listener", address: formatRunAddress("run_listener", DOMAIN), createdAt: new Date(LONG_AGO), cancelling: false };
 const MINUTE = 60_000;
 const BASE_MOVE_WINDOW = DEFAULT_RECONCILE_POLICY.baseMoveWindowMs / MINUTE;
 
@@ -352,17 +354,15 @@ function rotationLogs(logged: ReadonlyArray<Record<string, unknown>>): unknown[]
 
 describe("triage reconciler", () => {
   test("a host whose listener is live is caught up with no pr-triage deployment", async () => {
-    const listener = { runId: "run_listener", address: formatRunAddress("run_listener", DOMAIN), createdAt: new Date(LONG_AGO), cancelling: false };
-    const run = harness({}, [head(1)], { deployments: [], listener });
+    const run = harness({}, [head(1)], { deployments: [], listener: LISTENER });
     await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
   });
 
   test("a head mailed through the listener is mailed once while its manager runs and once it reported", async () => {
-    const listener = { runId: "run_listener", address: formatRunAddress("run_listener", DOMAIN), createdAt: new Date(LONG_AGO), cancelling: false };
     let minutes = 0;
     let managed: Record<string, ObservedRun[]> = {};
-    const run = harness({}, [head(1)], { deployments: [], listener, now: () => at(minutes), managed: () => managed });
+    const run = harness({}, [head(1)], { deployments: [], listener: LISTENER, now: () => at(minutes), managed: () => managed });
     await run.reconcile();
     managed = { [runKey(1, "sha1")]: [{ runId: "run_manager", source: "github", status: "running", startedAt: at(1).toISOString() }] };
     for (minutes = 1; minutes <= 3; minutes++) await run.reconcile();

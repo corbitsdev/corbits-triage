@@ -396,14 +396,17 @@ test("PostgreSQL: a manager deployed inside the startup window, or one with a si
   });
 }, 120_000);
 
-test("PostgreSQL: a listener counts as live as a manager does: not once deployed without a sidecar past the startup window", async () => {
+test("PostgreSQL: a listener counts as live as a manager does, and one deployed without a sidecar past the startup window is released", async () => {
   await withDatabase(async function listener(db) {
     await db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: "triage-listener-github" });
-    await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date(Date.now() - 3 * MINUTE) });
-    expect(await liveListener(db, TENANT, "github")).toBeUndefined();
-    await db.update(schema.workflowRun).set({ createdAt: new Date() }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date() });
     expect(await liveListener(db, TENANT, "github")).toMatchObject({ runId: "run_listener" });
     expect(await liveListener(db, TENANT, "bitbucket-datacenter")).toBeUndefined();
+    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 3 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    expect(await liveListener(db, TENANT, "github")).toBeUndefined();
+    const [left] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt, cancellationReason: schema.workflowRun.cancellationReason }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    expect(left?.cancellationRequestedAt).toBeInstanceOf(Date);
+    expect(left?.cancellationReason).toBe("listener deployed without a sidecar");
   });
 }, 120_000);
 

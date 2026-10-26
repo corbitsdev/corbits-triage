@@ -34,7 +34,7 @@ import { TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { liveListener, passRequest } from "./manager-state.js";
+import { deploymentUp, liveListener, passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
@@ -75,7 +75,7 @@ import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions, type LiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
@@ -313,7 +313,7 @@ const requireGrant = createRequireGrant({
   conditionRegistry: HUB_CONDITION_REGISTRY,
 });
 /** A workspace with a host's listener live runs that host's pull requests in managers. */
-function liveListenerOf(tenantId: string, source: RepoSource) {
+function liveListenerOf(tenantId: string, source: RepoSource): Promise<LiveDeployment | undefined> {
   return liveListener(composition.db, tenantId, source);
 }
 async function listenerAddress(tenantId: string, source: RepoSource): Promise<string | undefined> {
@@ -958,7 +958,13 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     workflows: [...TRIAGE_WORKFLOWS, ...PR_WORKFLOW_VARIANTS].map((workflow) => workflow.id),
   }),
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged, log: logJson }),
-  workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
+  workflowVersions: createWorkflowVersions({
+    db: composition.db,
+    launchSpecs,
+    up: function upOf(anchorRunId) {
+      return deploymentUp(composition.db, anchorRunId);
+    },
+  }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview, inPrWorkflow }),
   codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, prWorkflowSources, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview, inPrWorkflow }),
