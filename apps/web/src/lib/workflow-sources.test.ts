@@ -23,6 +23,7 @@ const git = Bun.which("git");
 if (!git) throw new Error("These tests need git.");
 const gitPath = git;
 const pushes: string[] = [];
+const unauthenticated: string[] = [];
 
 // Stands in for the hub's smart-HTTP routes with git's own, behind the same URL and token check.
 const server = Bun.serve({ port: 0, fetch: serveGit });
@@ -32,7 +33,10 @@ afterAll(async function cleanup() {
 });
 
 async function serveGit(request: Request): Promise<Response> {
-  if (request.headers.get("authorization") !== `Basic ${btoa(`git:${SECRET}`)}`) return new Response(null, { status: 401 });
+  if (request.headers.get("authorization") !== `Basic ${btoa(`git:${SECRET}`)}`) {
+    unauthenticated.push(request.url);
+    return new Response(null, { status: 401, headers: { "www-authenticate": "Basic" } });
+  }
   const url = new URL(request.url);
   const pathInfo = url.pathname.replace("/api/tenants/t/assets/workflow", "");
   if (pathInfo.endsWith("/git-receive-pack")) pushes.push(pathInfo);
@@ -165,6 +169,8 @@ test("publishing a release twice pushes its commit once with a token scoped to t
   expect(first).toEqual([{ workflow: "pr-triage-github", assetId: "ast_1", commitSha: gitIn(asset, "rev-parse", "refs/heads/main") }]);
   expect(gitIn(asset, "rev-list", "--count", "main")).toBe("2");
   expect(pushes).toEqual([`/${asset}.git/git-receive-pack`]);
+  // A browser answers a Basic challenge with a sign-in prompt, so no request may go without the token.
+  expect(unauthenticated).toEqual([]);
   expect(hub.requests.filter((request) => request === "POST /api/tenants/t/assets")).toHaveLength(1);
   expect(hub.grants).toEqual([{ principalId: PUBLISHER.principalId, resource: "asset:ast_1", action: "write", effect: "allow", origin: "creator" }]);
   expect(gitIn(asset, "ls-tree", "-r", "--name-only", "main").split("\n")).toEqual(Object.keys(TREE).sort());

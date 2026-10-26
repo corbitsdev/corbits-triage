@@ -164,16 +164,17 @@ async function publishSource(transport: Transport, publisher: Publisher, gitClie
   const token = await gitToken(transport, tenantId, asset.id, name);
   try {
     const url = `${gitClient.origin}/api/tenants/${encodeURIComponent(tenantId)}/assets/workflow/${encodeURIComponent(name)}.git`;
-    const onAuth = () => ({ username: "git", password: token.secret });
+    // Sent up front: a 401 asking for Basic credentials makes a browser prompt for them instead of answering the fetch.
+    const headers = { authorization: `Basic ${btoa(`git:${token.secret}`)}` };
     await git.addRemote({ fs, dir, remote: "origin", url, force: true });
-    const { fetchHead } = await git.fetch({ fs, http: gitClient.http, dir, ref: BRANCH, singleBranch: true, tags: false, onAuth });
+    const { fetchHead } = await git.fetch({ fs, http: gitClient.http, dir, ref: BRANCH, singleBranch: true, tags: false, headers });
     if (!fetchHead) throw new Error(`${name} has no ${BRANCH} branch.`);
     const { commit } = await git.readCommit({ fs, dir, oid: fetchHead });
     if (commit.tree === tree) return { workflow, assetId: asset.id, commitSha: fetchHead };
     // The hub starts every asset with one commit of its own; the release is the only commit on top of it.
     if (commit.parent.length > 0) throw new Error(`${name} already holds ${fetchHead}, not this release.`);
     const commitSha = await commitTree(fs, dir, tree, fetchHead, name);
-    await git.push({ fs, http: bandedPushAnswers(gitClient.http), dir, ref: BRANCH, onAuth });
+    await git.push({ fs, http: bandedPushAnswers(gitClient.http), dir, ref: BRANCH, headers });
     return { workflow, assetId: asset.id, commitSha };
   } finally {
     await revoke(transport, token.id);

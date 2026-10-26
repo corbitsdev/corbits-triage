@@ -177,7 +177,7 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     await db.update(schema.workflowRun).set(at).where(eq(schema.workflowRun.id, runId));
   }
 
-  return { anchor, update, reconcile, live, prepared, delivered, logged, hooks, rows, runs, reads, verdicts };
+  return { db, launchSpecs, anchor, update, reconcile, live, prepared, delivered, logged, hooks, rows, runs, reads, verdicts };
 }
 
 function messages(logged: readonly Record<string, unknown>[]): unknown[] {
@@ -283,5 +283,24 @@ test("PostgreSQL: a released worker's failed run fails its head, which is sent a
     expect(hub.verdicts).toEqual([]);
     expect(hub.rows.get(REPO)![0]).toMatchObject({ status: "queued", attempts: 2 });
     expect(hub.delivered).toHaveLength(1);
+  });
+}, 120_000);
+
+test("PostgreSQL: a listener published per person, whose definition is named for its asset, is found by its workflow's id", async () => {
+  await withHub(async (hub) => {
+    const listener = "triage-listener-github";
+    await hub.db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: `${listener}-prn-deployer-0123abcd` });
+    await hub.db.insert(schema.workflowRun).values({ id: "run_published", anchorRunId: "run_published", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: NOW });
+    await hub.launchSpecs.create({
+      anchorRunId: "run_published",
+      sessionId: "ses_run_published",
+      deploymentDomain: DOMAIN,
+      sourceAuthorityPrincipalId: "prn_deployer",
+      frozenApprovalBundle: { ...BUNDLE, projection: { ...BUNDLE.projection, id: listener } },
+      sourceOfferingIds: ["off_a"],
+      defaultSourceOfferingId: "off_a",
+      deployContent: { systemPrompt: "Route pull requests." },
+    });
+    expect((await resolveLiveDeployments(hub.db, TENANT, listener)).map((live) => [live.runId, live.workflow])).toEqual([["run_published", listener]]);
   });
 }, 120_000);

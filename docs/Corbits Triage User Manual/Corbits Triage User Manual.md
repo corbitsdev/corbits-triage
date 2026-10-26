@@ -489,6 +489,17 @@ Everything triage needs, top to bottom: its status, where pull requests come fro
 
 The first line says how many repositories Triage is running on, with a **Choose repositories** link. Until a decision model is added, it says **Triage needs a decision model before it can run. Add one below.**
 
+#### Upgrading to the new version
+
+In the new version, each pull request gets one manager that posts a single update. Once a source and a decision model are set up, a line below the status says which version runs, one line per connected host (named when there are two):
+
+- **Triage runs on its old workflow, which is being retired. Upgrade to keep it working.** That host has not switched yet.
+- **Triage runs version 0.1.0-sha-66ee60f0, published by Ana.** That host runs the new version, published by that person. When this portal has a newer release, it adds **A new version is ready.** If an earlier copy is somehow still running beside it, it adds **Another copy is still running too; upgrade to stop it.**
+
+Owners and Deployers (see [People](#people)) see **Upgrade to new version** whenever an upgrade is due. Pressing it publishes the new version under your name, starts it on each host, and then stops the versions started before it, whoever published them. If two people upgrade at once, the newer start stays, and the other person sees **Someone else's upgrade finished first; Triage runs their version.** The button says what it is doing. If the new version does not start within five minutes, it is stopped, the one already running keeps running, and the error names the host. Everyone else sees **Ask a workspace owner or a Deployer to upgrade.** **Advanced info** lists this portal's release, who published the running one and when, and the version of each workflow in the release.
+
+During first-time setup, saving the decision model starts the new version the same way when you are an owner or a Deployer.
+
 #### GitHub and Bitbucket Data Center
 
 Triage reads pull requests from GitHub, Bitbucket Data Center, or both. Each has a card of its own.
