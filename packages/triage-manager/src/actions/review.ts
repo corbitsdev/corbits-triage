@@ -56,7 +56,7 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   return { reviewer: { kind: "code-review", head, runId: reviewRun, deployedBy: runId, deadline }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
 }
 
-const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mailReview: { output: "string" } });
+const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mailReview: { output: { reply: "string" } } });
 
 /**
  * The review becomes a reviewer to wait for once its mail went. A mail that failed by its deadline leaves the pass to
@@ -65,7 +65,7 @@ const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mai
 export async function reviewMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
   const parsed = MailedInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewMailed: ${parsed.summary}`);
-  const mailed = Mailed(parsed.mailReview.output);
+  const mailed = Mailed(parsed.mailReview.output.reply);
   if (mailed instanceof type.errors) throw new Error(`reviewMailed: ${mailed.summary}`);
   return mailed.mailed ? { reviewer: parsed.deployReview.output.reviewer, post: false } : { post: true };
 }
