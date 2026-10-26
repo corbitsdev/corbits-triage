@@ -1,7 +1,8 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { repoSourceOf } from "@corbits/triage-contracts";
+import { repoSourceOf, type JudgeVerdict } from "@corbits/triage-contracts";
+import { evaluate, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
 import { deploy, managerMailOf, manageMail } from "./hub.js";
@@ -10,37 +11,18 @@ import { Reviewer, TakeOutput } from "./manager.js";
 /** How long the manager waits for a judge it deployed, from its deploy to its report. */
 export const JUDGE_DEADLINE_MS = 60 * 60_000;
 
-const RecallInput = type({ facts: { output: { items: "object[]", batch: "boolean" } }, take: { output: TakeOutput } });
-
-function judgedRecord(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const judged = (value as { judged?: unknown }).judged;
-  if (!judged || typeof judged !== "object") return undefined;
-  const entries = Object.entries(judged).filter((entry): entry is [string, string] => typeof entry[1] === "string");
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-/** Answers the judge reported for this head, on this pass or stored on its reviewer. */
-function answersOf({ head, judge, reviewers }: TakeOutput): Record<string, string> | undefined {
-  return judgedRecord(judge) ?? reviewers.map((reviewer) => reviewer.kind === "judge" && reviewer.head === head ? judgedRecord(reviewer.result) : undefined).find((judged) => judged !== undefined);
-}
+const VerdictInput = type({ take: { output: TakeOutput }, rules: { output: "unknown" } });
 
 /**
- * Puts the judge's stored answers onto the facts items before rules run, so a head the judge already answered is not
- * asked again. An item facts could not read is left as it is. With no answers, the facts output is unchanged.
+ * The verdict the pass posts: the judge's on its head, as the judge reported it, or without one pr-triage's evaluate of
+ * the rules output. A head the judge decided is not evaluated again, so what changed on the pull request since cannot
+ * change its verdict.
  */
-export async function recall(input: unknown): Promise<{ items: object[]; batch: boolean }> {
-  const parsed = RecallInput(input);
-  if (parsed instanceof type.errors) throw new Error(`recall: ${parsed.summary}`);
-  const facts = parsed.facts.output;
-  const judged = answersOf(parsed.take.output);
-  if (!judged) return facts;
-  const items = facts.items.map(function attach(item) {
-    if ("error" in item && typeof item.error === "string") return item;
-    const prior = "judged" in item && item.judged && typeof item.judged === "object" ? item.judged as Record<string, string> : {};
-    return { ...item, judged: { ...prior, ...judged } };
-  });
-  return { items, batch: facts.batch };
+export async function verdict(input: unknown, ctx: EffectContext, signal: AbortSignal): Promise<JudgeVerdict | EvaluateOutput> {
+  const parsed = VerdictInput(input);
+  if (parsed instanceof type.errors) throw new Error(`verdict: ${parsed.summary}`);
+  if (parsed.take.output.verdict) return parsed.take.output.verdict;
+  return evaluate(parsed.rules.output, ctx, signal);
 }
 
 const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: "unknown" } });

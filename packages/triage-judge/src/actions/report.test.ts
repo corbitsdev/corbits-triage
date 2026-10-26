@@ -9,7 +9,7 @@ const MAIL = {
   headers: { from: "run_manager@acme.test", to: ["run_judge@acme.test"] },
   parts: [{ contentType: "text/plain", text: JSON.stringify({ kind: "judge", tenantId: "tnt_acme", number: 8, checkout: CHECKOUT, rules: RULES, reply: REPLY }) }],
 };
-const VERDICT = { verdict: "pass", reasons: ["Every rule passed."], judged: { k: "v" }, extra: true };
+const VERDICT = { repo: "acme/widgets", number: 8, headSha: "h1", verdict: "pass", reasons: ["Every rule passed."], checks: [], request: { comment: "Ready." }, automatic: ["labels"], actions: [] };
 
 /** Each effect runs once against a hub that records its calls and records the result. */
 function hubContext() {
@@ -32,7 +32,7 @@ test("a manager's judge hands over the rules, reports the verdict through the hu
   expect(await stop(MAIL, ctx, signal)).toEqual({ stopped: true });
   const reported = { source: "github", repo: "acme/widgets", number: 8, kind: "judge", head: "h1" };
   expect(calls).toEqual([
-    { method: "POST", path: "/api/tenants/tnt_acme/manager/reviewer-result", body: { ...reported, result: { verdict: "pass", reasons: ["Every rule passed."], judged: { k: "v" } } } },
+    { method: "POST", path: "/api/tenants/tnt_acme/manager/reviewer-result", body: { ...reported, result: VERDICT } },
     { method: "POST", path: "/api/tenants/tnt_acme/manager/reviewer-result", body: { ...reported, failed: "the judge did not finish" } },
     { method: "DELETE", path: "/api/tenants/tnt_acme/workflows/runs/run_judge" },
   ]);

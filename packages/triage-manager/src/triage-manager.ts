@@ -81,7 +81,7 @@ function judgeSteps(): Record<string, Primitive> {
  * posts once both have reported or given up. A pass after one that waits for a reviewer first waits `POLL_MS`.
  */
 function passOf(id: string, sources: Sources) {
-  const { waiting, held, markWaiting, unready, rules, evaluateRules, mirrorRules, executeRules } = triageSteps(sources);
+  const { waiting, held, markWaiting, unready, rules, mirrorRules, executeRules } = triageSteps(sources);
   return defineWorkflow({
     id: `${id}-pass`,
     trigger: { type: "manual" },
@@ -98,11 +98,10 @@ function passOf(id: string, sources: Sources) {
       markWaiting,
       unready,
       facts: hostAction("facts", sources, TAKEN, ["unready"]),
-      recall: action({ handler: "recall", input: { merge: [stepsOf("facts", "take")] }, after: ["facts"] }),
-      rules: { ...rules, input: { from: "steps.recall.output" }, after: ["recall"] },
+      rules,
       route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "judgeScope", else: "evaluateRules", after: ["rules"] }),
       ...judgeSteps(),
-      evaluateRules: { ...evaluateRules, after: ["route", "judgeWait", "judgeSent"] },
+      evaluateRules: action({ handler: "verdict", input: stepsOf("take", "rules"), after: ["route", "judgeWait", "judgeSent"] }),
       ...reviewSteps(sources),
       mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] },
       // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.

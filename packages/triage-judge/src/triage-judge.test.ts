@@ -103,7 +103,7 @@ async function runJudge(rulesOutput: { chunks: unknown[] }) {
   return { terminalStatus, calls, mailed };
 }
 
-test("the judge runs the chunks the manager mailed, reports the verdict and stops, posting nothing", async () => {
+test("the judge runs the chunks the manager mailed, reports the whole verdict and stops, posting nothing", async () => {
   const rulesOutput = await ruled();
   expect(rulesOutput.chunks.length).toBeGreaterThan(0);
   const { terminalStatus, calls, mailed } = await runJudge(rulesOutput);
@@ -111,9 +111,7 @@ test("the judge runs the chunks the manager mailed, reports the verdict and stop
   const posted = calls.find((call) => call.method === "POST");
   expect(posted).toMatchObject({ path: `/api/tenants/${TENANT}/manager/reviewer-result`, body: { kind: "judge", head: SHA, source: "github", repo: "acme/widgets", number: 8 } });
   if (posted === undefined) throw new Error("the judge posted nothing");
-  const result = (posted.body as { result?: { verdict?: string; judged?: Record<string, string> } }).result;
-  expect(result?.verdict).toBe("pass");
-  expect(Object.keys(result?.judged ?? {}).length).toBeGreaterThan(0);
+  expect((posted.body as { result?: unknown }).result).toMatchObject({ headSha: SHA, verdict: "pass", request: { header: { head: SHA, verdict: "pass" } }, automatic: [], actions: [] });
   expect(calls.some((call) => call.path.includes("github.com"))).toBe(false);
   expect(mailed).toHaveLength(1);
   expect(calls.at(-1)).toEqual({ method: "DELETE", path: `/api/tenants/${TENANT}/workflows/runs/${RUN}` });

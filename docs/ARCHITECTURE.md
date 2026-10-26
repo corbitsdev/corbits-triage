@@ -277,10 +277,15 @@ any other tenant or an unknown sender.
   a pass deploys it under `workflow:*` `create` and `read` on exactly the
   judge's asset, which the definition declares when its module loads with that
   release, mails it the rules output until the judge's one-hour deadline, and
-  posts nothing. The pass that has its answers runs the verdict. A judge the
-  release does not publish posts nothing. One that could not be mailed,
-  reported a failure or ran past its deadline goes on to the verdict and is
-  not deployed again. When the policy turns code review on, the verdict's
+  posts nothing. The pass that collects its report posts and executes the
+  judge's verdict as the judge made it, without evaluating the head again;
+  facts and rules still run on it. The judge's reviewer, with its verdict,
+  stays on the claim for its head, so every later pass on that head posts the
+  same verdict, whatever changed on the pull request since, and deploys no
+  other judge; a new head gets its own. A judge the release does not publish
+  posts nothing. One that could not be mailed, reported a failure or ran past
+  its deadline leaves the machine verdict to go up alone and is not deployed
+  again on that head. When the policy turns code review on, the verdict's
   rules let it past, the hub read the head's review request and the release
   publishes a code review, a pass deploys it the same way (without one it
   declares no code-review asset, and the verdict goes up alone), mails it the
@@ -311,9 +316,9 @@ any other tenant or an unknown sender.
   takes mail only from that manager. It runs the model checks the machine
   rules produced, then focused's follow-up questions, then evaluate. Stock
   runs a step whose dependencies failed, so however the judge ended it records
-  a `StageResult` of kind `judge` through the reviewer-result route (a failure
-  as `failed`), including the answers a later pass of the same head replays,
-  mails the manager a wake-up and stops. It posts nothing to the pull request.
+  a `StageResult` of kind `judge` through the reviewer-result route: the
+  whole verdict evaluate made, its comment, labels, Dos and rule results, or a
+  failure as `failed`. It mails the manager a wake-up and stops. It posts nothing to the pull request.
   Its definition declares only `create` on `triage-manager:result` and
   `manage` on `workflow-run:self`, sourced from its creator.
 - A run sends mail only through an agent step's transport, so the listener,
@@ -838,7 +843,7 @@ read it, and passes the rest of the request to stock.
   own run id, and the manager matches results to its reviewers by run id.
   Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's
   kind (`code-review` or `judge`), the head it reviewed and its result, a
-  code review's output or a judge's verdict detail, or `failed` with why it
+  code review's output or a judge's whole verdict, or `failed` with why it
   has none.
 - In a workspace with a host's listener live, pull request, waiting,
   held-Do approval and backlog mail goes to it instead of a pr-triage worker,

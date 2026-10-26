@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { APPROVE_DO_KIND, CodeReviewOutput, StageResult, VerdictDetail, WAITING_KIND } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, WAITING_KIND } from "@corbits/triage-contracts";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
 export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "result?": "unknown" });
@@ -16,7 +16,7 @@ const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean
  * its deadline. `approvals` are the held Dos approved since, each run as pr-triage runs one. `triage` when the head is
  * triaged: `taken` is the newest pull request mail the hub recorded, or the mail that holds the head for CI when that
  * is the newest for it. `review` or `reviewFailed`, and `judge` or `judgeFailed`, is what one of its own reviewers
- * reported on `head`.
+ * reported on `head` on this pass; `verdict` is the judge's verdict on `head`, reported on this pass or an earlier one.
  */
 export const TakeOutput = type({
   run: "boolean",
@@ -27,8 +27,9 @@ export const TakeOutput = type({
   "head?": "string",
   "review?": CodeReviewOutput,
   "reviewFailed?": "string",
-  "judge?": VerdictDetail,
+  "judge?": JudgeVerdict,
   "judgeFailed?": "string",
+  "verdict?": JudgeVerdict,
   overdue: "boolean",
   reviewers: Reviewer.array(),
 });
@@ -61,6 +62,16 @@ function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: 
   return reported;
 }
 
+/** The verdict a judge of `head` reported on an earlier pass, stored on its reviewer. */
+function storedVerdict(reviewers: readonly Reviewer[], head: string): JudgeVerdict | undefined {
+  for (const reviewer of reviewers) {
+    if (reviewer.kind !== "judge" || reviewer.head !== head) continue;
+    const verdict = JudgeVerdict(reviewer.result);
+    if (!(verdict instanceof type.errors)) return verdict;
+  }
+  return undefined;
+}
+
 /** A reviewer of `kind` on `head` whose deadline passed with no report and no result stored. */
 function late(reviewers: readonly Reviewer[], head: string, kind: string, reported: boolean): boolean {
   return !reported && reviewers.some((reviewer) => isOwn(reviewer, kind, head) && reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
@@ -84,7 +95,8 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage.
   const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue);
   const taken = forHead?.payload["kind"] === WAITING_KIND ? forHead.payload : request;
-  return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, overdue, reviewers };
+  const verdict = report.judge ?? storedVerdict(reviewers, head);
+  return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers };
 }
 
 const DoneInput = type({
@@ -115,12 +127,13 @@ function remembered(take: TakeOutput): Reviewer[] {
 
 /**
  * The reviewers to wait for. A result stays on its reviewer while another of this head is still out, so a judge that
- * reported before code review is not lost; once nothing is waiting, the settled ones are dropped. Plus one mailed now.
+ * reported before code review is not lost; once nothing is waiting, the settled ones are dropped, except the judge of
+ * this head, so a later pass on it posts that judge's verdict and deploys no other. Plus one mailed now.
  */
 function reviewersAfter(take: TakeOutput, mailed: Reviewer | undefined): Reviewer[] {
   let current = remembered(take);
   const waiting = current.some((reviewer) => reviewer.result === undefined) || (mailed !== undefined && mailed.result === undefined);
-  if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined);
+  if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined || (reviewer.kind === "judge" && reviewer.head === take.head));
   return mailed ? [...current, mailed] : current;
 }
 
