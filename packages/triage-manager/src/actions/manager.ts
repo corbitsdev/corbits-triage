@@ -97,9 +97,11 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
   const report = reportOf(events, head, reviewers);
   const overdue = late(reviewers, head, "code-review", report.review !== undefined || report.reviewFailed !== undefined) || late(reviewers, head, "judge", report.judge !== undefined || report.judgeFailed !== undefined);
-  // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage.
-  const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue);
-  const taken = forHead?.payload["kind"] === WAITING_KIND ? forHead.payload : request;
+  const held = forHead?.payload["kind"] === WAITING_KIND;
+  // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage; a head held for CI is
+  // marked waiting even before its first pull request mail.
+  const triage = held || (request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue));
+  const taken = held ? forHead.payload : request;
   const verdict = report.judge ?? storedVerdict(reviewers, head);
   return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers };
 }
