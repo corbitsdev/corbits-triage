@@ -30,7 +30,8 @@ import {
 } from "@corbits/cron";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
+import { repoSourceOf, TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
+import { asRecord } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
@@ -52,8 +53,8 @@ import { createIntegrationsApp, INTEGRATIONS_PREFIX, logRefusal } from "./integr
 import { createBitbucketCodeReviewSend } from "./bitbucket-datacenter/code-review-send.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { checkedBitbucketSpawner, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { createPrWorkflowRouter, PR_WORKFLOW_VARIANTS, prWorkflowVariantOf } from "./github/pr-workflow.js";
-import { codeReviewKeys, codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, jobWorkflowsFor, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
+import { createPauseGate, PR_WORKFLOW_VARIANTS, prWorkflowVariantOf } from "./github/pr-workflow.js";
+import { codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourceDeployments, jobWorkflowsFor, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -61,7 +62,7 @@ import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, 
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
@@ -75,7 +76,7 @@ import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions, type LiveDeployment } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, readyMaterializer, recentWorkers, systemSenderMaterializer, resolveLiveDeployments, TriageStoppedError, withWorkflowVersions, type LiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
@@ -109,7 +110,7 @@ import { createSettledStatusReader, createTriageRuns } from "./github/triage-run
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { failHead, markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs, type RepoRecord } from "./github/tenant-config.js";
+import { prepareCorbitsTriagePatch, repoRecords, sourceOf, tenantManager, triageNs } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead } from "@corbits/github-tool";
@@ -333,6 +334,9 @@ const toListener = createManagerIntake({
     if (!read) throw new Error("no active source credential");
     return read(record);
   },
+  gate: function gateOf(tenantId, record, number, request) {
+    return pauseGate(tenantId, record, number, request);
+  },
   deliver: deliverToDeployment,
   log: logJson,
 });
@@ -466,27 +470,20 @@ async function readyWorkerCredentials(job: TriageJob): Promise<void> {
     logJson({ level: "error", msg: "github_token_renew_failed", tenantId: job.tenantId, error: String(err) });
   }
 }
-/** A hook credential written before hosts names `pr-triage`; its mail goes to the GitHub workflow that replaced it. */
-async function sendBridgeMail(tenantId: string, workflow: string, payload: unknown): Promise<void> {
-  const id = triageWorkflowOf(workflow)?.id ?? workflow;
-  const live = await resolveLiveDeployment(composition.db, tenantId, id);
-  if (!live) throw new NoLiveDeploymentError(id);
-  await deliverToDeployment(tenantId, live.address, payload);
-}
-/** The workflow a job's worker is seeded from: a host's triage workflow, by either name it goes by. */
-function workflowIdFor(name: string): string {
-  const triage = triageWorkflowOf(name);
-  if (!triage) throw new Error(`Not a triage workflow: ${name}`);
-  return triage.id;
-}
 /** Every triage and code review mail, whatever started it, runs in a worker of its own. */
 async function sendToWorker(job: TriageJob): Promise<void> {
   coordinator!.enqueue(job);
 }
-/** A paused pull request's job is dropped; the reconciler leaves it alone until its label comes off. A workspace with a listener runs its pull requests in managers. */
 async function sendTriageMail(job: TriageJob): Promise<void> {
-  const routed = await routePrWorkflow({ ...job, workflow: workflowIdFor(job.workflow) });
-  if (routed && !(await toListener(routed.tenantId, routed.payload))) await sendToWorker(routed);
+  await sendToListener(job.tenantId, job.payload);
+}
+/**
+ * A workspace's pull requests run in managers its listener deploys; one without a listener runs none. Each pull request
+ * passes the pause gate at intake, whatever sent it: a paused one is dropped, and the reconciler leaves it alone until its
+ * label comes off.
+ */
+async function sendToListener(tenantId: string, payload: unknown): Promise<void> {
+  if (!(await toListener(tenantId, payload))) throw new TriageStoppedError(repoSourceOf(asRecord(payload)?.["repoSource"]));
 }
 const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
 async function codeReviewPlaced(tenantId: string): Promise<boolean> {
@@ -497,10 +494,9 @@ async function inPrWorkflow(tenantId: string, repo: string, source: RepoSource):
   const read = await readCheckPack(tenantId, repo, source);
   return read.status === "ok" && read.policyWorkflow !== undefined;
 }
-// Repositories left switched on send nothing while code review has nowhere to run, nor one the PR workflow or a manager reviews.
-async function reviewedSources(tenantId: string, record: RepoRecord) {
-  if (!(await codeReviewPlaced(tenantId)) || (await inPrWorkflow(tenantId, record.name, sourceOf(record))) || (await listenerAddress(tenantId, sourceOf(record)))) return [];
-  return codeReviewSources(composition.db, tenantId);
+// Code review runs in the managers a listener deploys, and nothing runs without one, so the feed sends nothing.
+async function reviewedSources(): Promise<RepoSource[]> {
+  return [];
 }
 /** The hosts whose PR workflow deploys: a connected repository's policy file needs it, and code review has a place to run. */
 async function prWorkflowSources(tenantId: string): Promise<RepoSource[]> {
@@ -519,17 +515,7 @@ const codeReviewFeed = createCodeReviewFeed({
   send: sendToWorker,
   log: logJson,
 });
-const routePrWorkflow = createPrWorkflowRouter({
-  credentials: function workspaceCodeReviewKeys(tenantId) {
-    return codeReviewKeys(composition.db, tenantId);
-  },
-  live: async function variantLive(tenantId, workflow) {
-    return (await resolveLiveDeployment(composition.db, tenantId, workflow)) !== null;
-  },
-  readHead: pullRequests.head,
-  readPull: pullRequests.withDiff,
-  log: logJson,
-});
+const pauseGate = createPauseGate({ readHead: pullRequests.head, log: logJson });
 const tenantSources = { ...credentialDeps, githubApiOrigin: githubOrigin, tenantBitbucket };
 const tenantOpenPrs = keptOpenPrs(createTenantOpenPrs(tenantSources), repoReads);
 const openPullsCache = createOpenPullsCache(now);
@@ -641,7 +627,7 @@ function recordingStack(workflowId: string, workerIds: readonly string[] = [work
 /** One host's observer, run recorder, rotation and reconciler over its own workflow's deployments. */
 function triageStack(triage: TriageWorkflow) {
   const variants = PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === triage.source).map((variant) => variant.id);
-  const { observer, recordPass, liveDeployments } = recordingStack(triage.id, [triage.id, ...variants]);
+  const { observer, recordPass } = recordingStack(triage.id, [triage.id, ...variants]);
   const rotation = createDeploymentRotation({
     db: composition.db,
     launchSpecs,
@@ -654,16 +640,10 @@ function triageStack(triage: TriageWorkflow) {
   });
   const reconcile = createTriageReconciler({
     source: triage.source,
-    rotationKey: triage.rotationKey,
     tenants: reconcileTenants,
-    liveDeployments,
     listener: liveListenerOf,
     headChecks: tenantHeadChecks,
     verdicts: verdictRecordStore,
-    latestDeployments: function latestTriageDeployments(tenantId, limit) {
-      return latestDeployments(composition.db, tenantId, triage.id, limit);
-    },
-    rotation: { afterRuns: triageRotateAfterRuns(env), ...rotation },
     openHeadsFor: tenantOpenHeads,
     activity: repoActivity,
     observeTenant: observer.observe,
@@ -721,9 +701,7 @@ const githubPrTriage = createGithubPrTriage({
     return (await openHead(record, number))?.headSha;
   },
   readCheckPack,
-  liveDeployments: liveTriageDeployments,
   listener: liveListenerOf,
-  observeRuns: observeTriageRuns,
   managerRuns,
   store: triageStateStore,
   send: sendTriageMail,
@@ -736,8 +714,6 @@ const githubHeldDos = createGithubHeldDos({
   authorize: authorizePortal,
   runReader: composition.runReader,
   verdicts: verdictRecordStore,
-  liveDeployments: liveTriageDeployments,
-  deliver: deliverToDeployment,
   toListener,
   passRequest: function managerPassRequest(tenantId, pr, runId, head) {
     return passRequest(composition.db, tenantId, pr, runId, head);
@@ -827,7 +803,7 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number |
   return due;
 }
 async function sendBacklogMail(tenantId: string, payload: unknown) {
-  if (!(await toListener(tenantId, payload))) await sendBridgeMail(tenantId, prTriageHistoricalWorkflow.id, payload);
+  await sendToListener(tenantId, payload);
 }
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
@@ -967,7 +943,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview, inPrWorkflow }),
   codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, prWorkflowSources, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
-  codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview, inPrWorkflow }),
+  codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, place: placeCodeReview, readCheckPack, readHead: pullRequests.head, send: sendToListener }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({
     ...credentialDeps,

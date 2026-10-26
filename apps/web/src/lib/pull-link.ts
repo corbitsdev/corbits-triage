@@ -1,8 +1,6 @@
-import type { RepoSource } from "@corbits/triage-contracts";
+import { HOST_FULL_NAMES, type RepoSource } from "@corbits/triage-contracts";
 
 const HOST_NAMES: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket" };
-
-const HOST_FULL_NAMES: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" };
 
 export function hostName(source: RepoSource): string {
   return HOST_NAMES[source];

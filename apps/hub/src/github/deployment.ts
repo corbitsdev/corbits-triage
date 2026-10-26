@@ -5,11 +5,20 @@ import { MAIL_ADMISSION_DENIED_CODE, type WorkflowAllocationService, type Workfl
 import type { RunTriggerMaterialize } from "@corbits/webhooks";
 import type { ToolPackageManifest } from "@intx/types/tool-packages";
 import type { FrozenApprovalBundle } from "@intx/types/sidecar";
+import { TRIAGE_LISTENERS, triageStopped, type RepoSource } from "@corbits/triage-contracts";
 import { claimRotation, clearRotation, type RotationRecord } from "./tenant-config.js";
 
 export class NoLiveDeploymentError extends Error {
   constructor(readonly workflow: string) {
     super(`no live ${workflow} deployment`);
+  }
+}
+
+/** A workspace runs no listener for the host, so its pull requests wait for an upgrade; the message says what to press. */
+export class TriageStoppedError extends NoLiveDeploymentError {
+  constructor(source: RepoSource) {
+    super(TRIAGE_LISTENERS[source]);
+    this.message = triageStopped(source);
   }
 }
 
@@ -128,21 +137,6 @@ export async function liveWorkers(db: DB["db"]): Promise<{ tenantId: string; run
     .from(workflowRun)
     .innerJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
     .where(and(eq(workflowRun.id, workflowRun.anchorRunId), inArray(workflowRun.status, [...liveWorkflowRunStatuses]), markedAs("worker")));
-}
-
-/** A deployment in any status: `cancelling` tells one released on purpose from one Interchange failed. */
-export type DeploymentRecord = { runId: string; status: (typeof schema.workflowRun.$inferSelect)["status"]; endedAt: Date | null; cancelling: boolean };
-
-export async function latestDeployments(db: DB["db"], tenantId: string, definitionName: string, limit: number): Promise<DeploymentRecord[]> {
-  const { workflowRun, workflowDefinition } = schema;
-  const rows = await db
-    .select({ runId: workflowRun.id, status: workflowRun.status, endedAt: workflowRun.endedAt, cancellationRequestedAt: workflowRun.cancellationRequestedAt })
-    .from(workflowRun)
-    .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
-    .where(and(eq(workflowRun.tenantId, tenantId), eq(workflowDefinition.name, definitionName), eq(workflowRun.id, workflowRun.anchorRunId)))
-    .orderBy(desc(workflowRun.createdAt), desc(workflowRun.id))
-    .limit(limit);
-  return rows.map(({ cancellationRequestedAt, ...row }) => ({ ...row, cancelling: cancellationRequestedAt !== null }));
 }
 
 export type ActiveTenant = { id: string; domain: string };

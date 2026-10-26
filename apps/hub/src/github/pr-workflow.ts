@@ -1,12 +1,8 @@
-// Picks the workflow a pull request's mail runs: its host's pr-triage, or, while the policy file turns a block on or
-// writes its own `decide`, the PR workflow variant of the provider whose key the workspace stores, which triages, runs
-// the blocks and decides once. Only key names are read, never secrets. In doubt nothing approves or merges unattended.
+// The policy file's v4 keys as a pull request's mail carries them, and the gate every pull request mail passes before
+// the listener: a paused pull request starts no run, and in doubt nothing approves or merges unattended.
 import { isDeepStrictEqual } from "node:util";
-import { asRecord, errorText } from "@corbits/common";
-import { BLOCK_KINDS, CODE_REVIEW_PROVIDERS, codeReviewProviderOf, decideOf, EVERYONE, repoSourceOf, VERDICTS, type BlockKind, type CheckPack, type CodeReviewProvider, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
-import { reviewRequestOf, type PullRequestHead, type PullRequestToReview } from "../code-review-feed.js";
-import type { TriageJob } from "./coordinator.js";
-import { GithubRateLimited } from "./github-usage.js";
+import { BLOCK_KINDS, decideOf, EVERYONE, repoSourceOf, VERDICTS, type BlockKind, type CheckPack, type CodeReviewProvider, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
+import type { PullRequestHead } from "../code-review-feed.js";
 import type { RepoRecord } from "./tenant-config.js";
 
 /** `blocks` are those the variant runs; a policy turning any other on runs nowhere yet. */
@@ -48,90 +44,33 @@ export function workflowPart(workflow: PolicyWorkflow | undefined) {
   return { codeReview, blocks, ...(workflow.decide && { decide: workflow.decide }) };
 }
 
-/** The host's variant for the policy's provider, else the first in the default order whose key is stored; undefined without that key. */
-export function variantFor(source: RepoSource, provider: unknown, credentials: readonly string[]): PrWorkflowVariant | undefined {
-  const chosen = provider ?? codeReviewProviderOf(credentials);
-  return PR_WORKFLOW_VARIANTS.find((variant) => variant.source === source && variant.provider === chosen && credentials.includes(CODE_REVIEW_PROVIDERS[variant.provider].credential));
-}
+/** Only a person approves or merges a pull request whose policy writes its own `decide`, which no running workflow carries out. */
+const HELD_UNDER_DECIDE = new Set(["approve", "merge"]);
 
-/** Only a person approves or merges a pull request whose policy no running workflow can carry out. */
-const HELD_WITHOUT_VARIANT = new Set(["approve", "merge"]);
-
-export type PrWorkflowRouterDeps = {
-  /** The names of the workspace's active code review provider credentials. */
-  credentials: (tenantId: string) => Promise<string[]>;
-  live: (tenantId: string, workflow: string) => Promise<boolean>;
+export type PauseGateDeps = {
   /** The pull request as its host shows it now, without its diff. */
   readHead: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestHead>;
-  /** The same with its diff, read only for code review. */
-  readPull: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
   log: (entry: Record<string, unknown>) => void;
 };
 
-function hasDiff(pull: PullRequestHead): pull is PullRequestToReview {
-  return "diff" in pull;
-}
-
-export function createPrWorkflowRouter(deps: PrWorkflowRouterDeps) {
-  /**
-   * Undefined when it cannot be read: the run goes ahead, and records a review it needed incomplete. While a pause can fire,
-   * a diff that cannot be read falls back to the head, whose labels decide the pause, and a head that cannot be read throws.
-   */
-  async function pullOf(job: TriageJob, record: RepoRecord, reviewed: boolean, pausable: boolean): Promise<PullRequestHead | undefined> {
-    try {
-      if (reviewed) return await deps.readPull(job.tenantId, record, job.number);
-      return await deps.readHead(job.tenantId, record, job.number);
-    } catch (err) {
-      // An unreadable head cannot be told from a paused one: the mail waits on a rate limit, and otherwise fails to be retried.
-      if (err instanceof GithubRateLimited || (pausable && !reviewed)) throw err;
-      deps.log({ level: "warn", msg: "pull_request_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error: errorText(err) });
-      return pausable ? await pullOf(job, record, false, true) : undefined;
-    }
-  }
-
-  /** The review of the job's head, or undefined when the pull request has moved on or its diff is unusable. */
-  function reviewOf(job: TriageJob, record: RepoRecord, pull: PullRequestToReview): object | undefined {
-    if (pull.headSha !== job.headSha) return undefined;
-    try {
-      return reviewRequestOf(record, job.number, pull);
-    } catch (err) {
-      deps.log({ level: "warn", msg: "code_review_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error: errorText(err) });
-      return undefined;
-    }
-  }
-
-  /** The variant that runs the mail, or why none can. */
-  async function variantOf(job: TriageJob, request: Record<string, unknown>, blocks: readonly unknown[]): Promise<PrWorkflowVariant | string> {
-    const variant = variantFor(repoSourceOf(request["repoSource"]), asRecord(request["codeReview"])?.["provider"], await deps.credentials(job.tenantId));
-    if (!variant) return "no_provider_key";
-    if (!blocks.every((kind) => variant.blocks.some((runs) => runs === kind))) return "block_not_runnable";
-    if (!(await deps.live(job.tenantId, variant.id))) return "variant_not_running";
-    return variant;
-  }
-
-  /** Undefined when the pull request carries the policy's pause label: no run starts. */
-  return async function route(job: TriageJob): Promise<TriageJob | undefined> {
-    const request = asRecord(job.payload);
-    if (!request || request["kind"] !== "pr") return job;
-    const blocks = request["blocks"];
+/**
+ * One pull request's mail as the listener gets it, or undefined when the pull request carries the policy's pause label:
+ * no run starts. A head whose labels can't be read throws, to be retried. Only `pr` mails are gated.
+ */
+export function createPauseGate(deps: PauseGateDeps) {
+  return async function gate(tenantId: string, record: RepoRecord, number: number, request: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+    if (request["kind"] !== "pr") return request;
     const pauseLabel = request["pauseLabel"];
     // Only GitHub heads carry labels, so only there can a pause fire.
-    const pausable = typeof pauseLabel === "string" && repoSourceOf(request["repoSource"]) === "github";
-    const reviewed = Array.isArray(blocks) && asRecord(request["codeReview"])?.["on"] === true;
-    if (reviewed && !job.record) deps.log({ level: "warn", msg: "code_review_unread", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, reason: "no_record" });
-    const pull = job.record && (typeof pauseLabel === "string" || reviewed) ? await pullOf(job, job.record, reviewed, pausable) : undefined;
-    if (typeof pauseLabel === "string" && pull?.labels?.includes(pauseLabel)) {
-      deps.log({ level: "info", msg: "pr_paused", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, label: pauseLabel });
-      return undefined;
+    if (typeof pauseLabel === "string" && repoSourceOf(request["repoSource"]) === "github") {
+      const pull = await deps.readHead(tenantId, record, number);
+      if (pull.labels?.includes(pauseLabel)) {
+        deps.log({ level: "info", msg: "pr_paused", tenantId, repo: record.name, pr: number, headSha: request["headSha"], label: pauseLabel });
+        return undefined;
+      }
     }
-    if (!Array.isArray(blocks)) return job;
-    const variant = await variantOf(job, request, blocks);
-    if (typeof variant === "string") {
-      deps.log({ level: "warn", msg: "pr_workflow_unavailable", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, reason: variant });
-      const automatic = Array.isArray(request["automatic"]) ? request["automatic"].filter((kind) => !HELD_WITHOUT_VARIANT.has(kind)) : [];
-      return { ...job, payload: { ...request, automatic } };
-    }
-    const codeReviewRequest = job.record && pull && hasDiff(pull) ? reviewOf(job, job.record, pull) : undefined;
-    return { ...job, workflow: variant.id, payload: { ...request, ...(codeReviewRequest && { codeReviewRequest }) } };
+    if (request["decide"] === undefined) return request;
+    const automatic = Array.isArray(request["automatic"]) ? request["automatic"].filter((kind) => !HELD_UNDER_DECIDE.has(kind)) : [];
+    return { ...request, automatic };
   };
 }

@@ -59,9 +59,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     and export routes take the repository's host as `source`; without it,
     a name connected on both hosts is refused.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
-    mail to the tenant's live pr-triage deployment for the repository's host,
-    as the tenant system sender, the same path cron uses, naming the host as
-    `repoSource`. When the policy depends on CI, a head whose CI is still
+    mail to the tenant's live listener for the repository's host, as the
+    tenant system sender, the same path cron uses, naming the host as
+    `repoSource`. A workspace with no live listener runs nothing: the head
+    fails with what to press, **Upgrade to new version** in Settings. When the policy depends on CI, a head whose CI is still
     running is not mailed: its triage-state row turns `waiting` and keeps the
     window's events (`triage_waiting_ci`). The window that sees CI finish, or
     its first check fail, mails the head once with those events; a head with
@@ -70,8 +71,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     When a head starts waiting and the role holds Labels (GitHub) or Comment
     (Bitbucket), the hub also mails it once with `kind: "waiting"`, which only
     mirrors the waiting marker.
-  - **Reconciler**: one per host. On an interval it compares each enabled
-    repository's open pull requests with the run logs and stored state, and
+  - **Reconciler**: one per host, for workspaces whose listener for the host
+    is live. On an interval it compares each enabled repository's open pull
+    requests with the managers' runs, the run logs and stored state, and
     re-queues every head without a verdict, and every stale head at most once
     per 15 minutes, under a per-tenant in-flight cap. A repository's open pull
     requests are listed again only once a webhook named it, until a minute
@@ -83,21 +85,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     releases Bitbucket heads, whose builds send no webhook, and any head whose
     `check_run` never arrived. Moving a head from `waiting` to `queued` is a
     compare-and-swap write, so a check run and the reconciler releasing it
-    together start one run. A catch-up mail carries the decision-model
-    answers from the head's last verdict when the deployment runs the same
-    workflow version and decision-model offering. It also replaces a pr-triage
-    deployment once its run log grows past `TRIAGE_ROTATE_AFTER_RUNS`, and
-    redeploys one Interchange failed, after two minutes and at most three
-    times an hour. While the host's listener is live, a pass needs no
-    pr-triage deployment, neither replaces nor redeploys one (a replacement
-    under way is abandoned, its copy left running), carries no answers, and
-    mails its heads through the manager intake. A listener counts as live as
-    a manager does: running, on its sidecar, or deployed within the last two
-    minutes; one deployed without a sidecar past that is released, so the next
-    Upgrade deploys it again. The workflow-versions route reports each
-    deployment's `live` the same way, which Settings reads.
-  - **Coordinator**: every triage mail (webhook, retry, reconciler) and every
-    code review mail is a job in one in-memory queue keyed per lane (triage or
+    together start one run. It mails its heads to the listener. A listener
+    counts as live as a manager does: running, on its sidecar, or deployed
+    within the last two minutes; one deployed without a sidecar past that is
+    released, so the next Upgrade deploys it again. The workflow-versions route
+    reports each deployment's `live` the same way, which Settings reads.
+  - **Coordinator**: every standalone code review mail is a job in one in-memory queue keyed per lane (triage or
     code review), host and pull request. Each job runs in a worker deployment
     of its own, copied from the host's live deployment, which only seeds
     workers, and released once its run ends. How many run at once is the
@@ -216,10 +209,11 @@ any other tenant or an unknown sender.
   connected host. A deployment of the earlier `pr-triage` workflow is released
   once `pr-triage-github` is live.
 - `pr-triage-historical`: one run that triages every open pull request of a
-  GitHub repository, skipping drafts. The hub mails it through its backlog
-  route when triage is turned on, when a push to the default branch changes the
-  policy file of an enabled repository and leaves it valid, or when someone clicks **Triage open pull requests
-  again**, and records its verdicts like pr-triage's.
+  GitHub repository, skipping drafts. The hub no longer mails it: its backlog
+  route, run when triage is turned on, when a push to the default branch
+  changes the policy file of an enabled repository and leaves it valid, or
+  when someone clicks **Triage open pull requests again**, mails the listener
+  instead.
 - `repo-scan`: one run that reads a repository's most recently updated closed
   pull requests (200 by default) and measures what maintainers merged and
   closed. Not deployed by the hub yet.
@@ -518,7 +512,11 @@ is built from the files' patches. The files a cut leaves unread, read from the
 diff's headers, ride as `cut.unread` and never reach a prompt; the review sent
 to GitHub lists them. The title and description are read as the facts step
 reads them (`shownBody` and `visibleText` in `@corbits/triage-contracts`), so
-hidden text never reaches the review. `…/run` reviews the current head again.
+hidden text never reaches the review. `…/run` (Review again) records a pull
+request mail for the current head with code review on for everyone, on any
+verdict and whatever the rules say, and names it with an `again` id. The
+manager deploys one more review of a head for each `again` it has not
+reviewed, even where an earlier review of the head settled.
 Code review only reads: a checkout action downloads the head through the host
 credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>`, and
 its tools are the host read bundle and repository reads confined to that
@@ -644,39 +642,12 @@ alone holds nothing back: triage's execute is one step after the mirror and
 scope. The definition binds both pipelines' credentials and, like code review,
 requires `isolation:workload`.
 
-The hub picks the workflow per mail, wherever the mail came from
-(`github/pr-workflow.ts`). A policy file needs the PR workflow when it turns a
-block on or its `decide` is not the one the parser derives from its `actions`;
-only then does the stored policy keep its v4 keys, and its pull request mails
-carry `codeReview`, `blocks` and `decide`. Such a `pr` mail goes to the host's
-variant for code review's `provider`, else the first provider in the default
-order whose key is stored; only credential names are read. With code review
-on, the hub reads the diff, through the repository record the job carries,
-into `codeReviewRequest`, and leaves it out when the head moved or the read
-failed, so the review is incomplete. The mail runs in a worker copied from the
-variant's listener, like pr-triage's. Without that key, with a block on that
-the variant does not run (`security`, `deslop`), or with no live variant
-listener, pr-triage runs it with approve and merge taken out of `automatic`,
-so they wait in Needs you, and the hub logs `pr_workflow_unavailable`. Saved
-rules carry no v4 keys, so they always run pr-triage.
-
-The coordinator keeps one triage job per pull request whichever workflow it
-names, so a newer head's job replaces a queued one and a deferred job a newer
-head replaced is dropped. In a repository the PR workflow reviews, the file
-alone decides code review: the standalone feed skips it, and the code review
-switch and "Review again" refuse with `policy_file_decides`. A host's
-pr-triage observer also reads its variants' workers, so their runs settle its
-heads, and reads a run's Dos from `decide`: the Dos it made, then evaluate's it
-did not make that wait, those `decide` left held with its reason and those
-evaluate held itself, such as for a missing grant. A held Do's approval goes to
-the listener of the workflow whose run held it; with that listener released,
-the approval is refused. The portal deploys a variant while a connected
-repository's policy file needs it (`prWorkflow` on the code review place
-route) and the provider's key is stored, redeploys it with the key or the
-decision model, and releases it once no repository needs it or either is
-removed; the hub releases it once its host is disconnected or code review has
-no place to run. The separate `pr-code-review` deployments still run beside
-it.
+No deployment of the PR workflow is reached any more: every pull request mail
+goes to the host's listener, whose manager runs triage and code review as
+stages of their own. A policy file that turns a block on keeps its v4 keys in
+the stored policy, and its pull request mails carry `codeReview`, `blocks`
+and `decide`; the manager does not run `decide`, so the hub takes approve and
+merge out of such a mail's `automatic` and they wait in Needs you.
 
 ## Tenancy and authority
 
@@ -897,12 +868,14 @@ read it, and passes the rest of the request to stock.
   kind (`code-review` or `judge`), the head it reviewed and its result, a
   code review's output or a judge's whole verdict, or `failed` with why it
   has none.
-- In a workspace with a host's listener live, pull request, waiting,
-  held-Do approval and backlog mail goes to it instead of a pr-triage worker,
-  pr-triage-historical or the deployment that held the Do
-  (`apps/hub/src/manager-intake.ts`). The hub records one webhook event per
-  pull request the mail names (a reconciler's `items`, a backlog's open
-  pull requests), with the head's code review request when the policy turns
+- Pull request, waiting, held-Do approval and backlog mail goes to the
+  host's listener (`apps/hub/src/manager-intake.ts`), on both hosts. Each
+  pull request the mail names (a reconciler's `items`, a backlog's open pull
+  requests) passes one gate first, whatever sent the mail: on GitHub, a pull
+  request carrying the policy's pause label is dropped, and a policy file
+  that writes its own `decide` leaves approve and merge to a person, since no
+  workflow carries it out. The hub records one webhook event per pull request
+  that passed, with the head's code review request when the policy turns
   code review on and the App's login on GitHub, then mails the listener the
   heads. When the host's head moved past the mail's, the event goes without
   a review request and the hub logs `code_review_head_moved`; the new head's
@@ -910,8 +883,11 @@ read it, and passes the rest of the request to stock.
   the coalescer's mail carries, so a redelivery records nothing new; any
   other mail is a new
   event, so a head mailed again, as after its base moved or its CI settled,
-  is triaged again. The code review feed sends nothing
-  for that host. A workspace with no listener routes as before.
+  is triaged again. The code review feed sends nothing. A workspace with no
+  live listener for the host mails nothing: Triage again, Review again, a
+  held Do's approval and backlog triage answer 503 `service_not_running`, and
+  a webhook's head fails, each saying Triage is stopped on that host until
+  someone presses **Upgrade to new version** in Settings.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

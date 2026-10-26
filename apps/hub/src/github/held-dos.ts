@@ -1,11 +1,11 @@
 // Approves a Do a triage run held, or one it failed or could not run
-// unattended. The hub checks the clicker holds the Do kind's grant and mails the
-// deployment of the workflow that held it, pr-triage or a PR workflow variant, the Do as the run's verdict recorded it, with who
-// approved it; the run writes it at most once under its effect id.
+// unattended. The hub checks the clicker holds the Do kind's grant and hands the
+// host's listener the Do as the run's verdict recorded it, with who approved it;
+// the pull request's manager writes it at most once under its effect id.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
-import { ACTION_KINDS, AGENT_DO, APPROVE_DO_KIND, DoList, repoPolicy, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, AGENT_DO, APPROVE_DO_KIND, DoList, repoPolicy, triageStopped, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -16,9 +16,7 @@ import { doRefused, failure, type PortalCredentialDeps } from "./portal-credenti
 import type { Member } from "../integrations/app.js";
 import type { PullRequestRef } from "../manager-state.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
-import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
-import { prWorkflowVariantOf } from "./pr-workflow.js";
-import { triageWorkflowFor } from "./source-workflow.js";
+import { DeploymentNotReadyError } from "./deployment.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
 
@@ -43,8 +41,6 @@ const MirrorRequest = type({ repo: "string", number: "number", labels: "string[]
 export type GithubHeldDosDeps = PortalCredentialDeps & {
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
   verdicts: Pick<VerdictRecordStore, "forPull">;
-  liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
-  deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   /** Hands the approval to the workspace's listener, whose manager runs it; false when the workspace has none. */
   toListener: (tenantId: string, payload: unknown) => Promise<boolean>;
   /** The mirror request a manager's pass kept with the verdict it posted on the head. */
@@ -83,9 +79,6 @@ function heldDo(verdict: Record<string, unknown>, body: Body, principalId: strin
   return { kind: APPROVE_DO_KIND, runId: body.runId, principalId, list, index, request, step: { effectId, headSha, kind, target } };
 }
 
-/** The run that held the Do has no workflow definition, which every run has: the store is broken, so trying again cannot help. */
-class RunWithoutDefinitionError extends Error {}
-
 export function createGithubHeldDos(deps: GithubHeldDosDeps) {
   async function runEvents(tenantId: string, domain: string, runId: string) {
     const run = await deps.db.query.workflowRun.findFirst({
@@ -95,22 +88,6 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     if (!run?.anchorRunId) return undefined;
     const repoId = workflowRunRepoIdForAddress(formatRunAddress(run.anchorRunId, domain));
     return { anchorRunId: run.anchorRunId, events: await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId) };
-  }
-
-  /**
-   * The workflow whose deployment held the Do: a worker is its listener's copy, so it goes by the listener's name. The
-   * anchor run was just read from the run that held it, and every run has a definition, so a missing one is a broken store.
-   */
-  async function heldBy(tenantId: string, anchorRunId: string): Promise<string> {
-    const { workflowRun, workflowDefinition } = schema;
-    const [row] = await deps.db
-      .select({ name: workflowDefinition.name })
-      .from(workflowRun)
-      .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
-      .where(and(eq(workflowRun.id, anchorRunId), eq(workflowRun.tenantId, tenantId)))
-      .limit(1);
-    if (!row) throw new RunWithoutDefinitionError(`run ${anchorRunId} has no workflow definition`);
-    return row.name;
   }
 
   /** An approval stands only on the newest verdict that judged something; a run not recorded yet has none newer that is known. */
@@ -160,21 +137,10 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     // A held merge on a Fail or Unsure list may still be approved, and the person approving it is told so.
     const warning = approval.step.kind === "merge" && approval.list !== "pass" ? `The verdict on this head was ${approval.list}, not pass.` : undefined;
     try {
-      if (!(await deps.toListener(tenantId, mailed))) {
-        const variant = prWorkflowVariantOf(await heldBy(tenantId, run.anchorRunId));
-        const heldByVariant = variant?.source === repoSource;
-        const workflow = heldByVariant ? variant.id : triageWorkflowFor(repoSource).id;
-        const deployment = newestLive(await deps.liveDeployments(tenantId, workflow));
-        if (!deployment && heldByVariant) {
-          return failure(503, "service_not_running", "Code review held this action, and it is not running now, so the action can't be approved. It runs again once the repository's policy turns a check on, the Anthropic key is saved and code review has a place to run.");
-        }
-        if (!deployment) return failure(503, "service_not_running", `The ${workflow} service is not running.`);
-        await deps.deliver(tenantId, deployment.address, mailed);
-      }
+      if (!(await deps.toListener(tenantId, mailed))) return failure(503, "service_not_running", triageStopped(repoSource));
     } catch (err) {
       deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
-      if (err instanceof RunWithoutDefinitionError) return failure(500, "run_without_definition", `Could not send the approval: ${err.message}.`);
       const unroutable = isRunTriggerUnroutable(err);
       return failure(unroutable ? 503 : 502, unroutable ? "service_not_running" : "hub_unavailable", `Could not send the approval: ${errorText(err)}. Try again.`);
     }

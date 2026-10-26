@@ -1,57 +1,37 @@
 // Brings every open pull request on an enabled repository to a triaged head
 // without relying on any webhook, sidecar or portal visit having survived:
-// reads GitHub's open pull requests, the live deployments' run logs and the
-// stored state, then queues what the plan says, each head to a worker of its own,
-// or to the host's listener while one is live.
+// reads GitHub's open pull requests, the managers' runs and the stored state,
+// then mails what the plan says to the host's listener. A workspace without a
+// live listener is left alone.
 // A head waiting for CI is released here once its CI finished or its wait ran
 // out, on hosts and pull requests whose CI results send no webhook.
 import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
-import { WorkflowProvisioningError } from "@intx/hub-sessions";
-import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { triageWorkflowFor } from "./source-workflow.js";
-import { failHead } from "./triage-queue.js";
+import { deliveryFailure, failHead } from "./triage-queue.js";
 import type { PolicyReader, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks, type CiState } from "@corbits/github-reads";
-import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
+import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
 import type { RepoActivity } from "./repo-activity.js";
-import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
+import type { LiveDeployment } from "./deployment.js";
 import type { ManagerRuns } from "./manager-runs.js";
-import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
+import { mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
 export type ReconcileTenant = { id: string; domain: string; config: unknown };
 
-type DeploymentRotation = {
-  afterRuns: number;
-  redeploy: (tenantId: string, anchorRunId: string) => Promise<Redeployed>;
-  sameSource: (anchorRunId: string, otherAnchorRunId: string) => Promise<boolean>;
-  /** Requests cancellation; the deployment stays listed, `cancelling`, until the lifecycle sweep stops it. */
-  release: (tenantId: string, anchorRunId: string) => Promise<void>;
-  claim: (tenantId: string, record: RotationRecord) => Promise<boolean>;
-  clear: (tenantId: string, record: RotationRecord) => Promise<void>;
-};
-
 export type TriageReconcilerDeps = {
-  /** The host whose repositories this reconciler brings to a triaged head; the deployment deps below are its workflow's. */
+  /** The host whose repositories this reconciler brings to a triaged head. */
   source: RepoSource;
-  rotationKey: string;
   tenants: () => Promise<ReconcileTenant[]>;
-  liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
-  /**
-   * The host's live listener, whose managers run its pull requests: the pass then needs no pr-triage deployment, and
-   * neither rotates nor heals one, so a rotation under way is abandoned. A listener names no workflow version, so no
-   * head starts over for one.
-   */
+  /** The host's live listener, whose managers run its pull requests; a listener names no workflow version, so no head starts over for one. */
   listener: (tenantId: string, source: RepoSource) => Promise<LiveDeployment | undefined>;
-  latestDeployments: (tenantId: string, limit: number) => Promise<DeploymentRecord[]>;
-  rotation: DeploymentRotation;
   /** Undefined when the tenant holds no credential for any pull request host. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
   /** A repository's open pull requests are listed again only once its last listing may be stale. */
@@ -81,20 +61,10 @@ type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: Ope
 type LoadedRepo = EnabledRepo & (StoredPack | PolicyUnreadable) & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
 
 /**
- * `retry` asks for another pass soon: a repository's or a tenant's pass failed, or a failed deployment is being redeployed.
+ * `retry` asks for another pass soon: a repository's or a tenant's pass failed.
  * `retryAt` is when a GitHub rate limit the pass ran into lifts; no sooner pass could read anything.
  */
 export type ReconcileOutcome = { retry: boolean; retryAt?: number };
-
-/** A failed deployment is left this long first, so a portal visit can bring one back. */
-const HEAL_AFTER_MS = 2 * 60_000;
-/** Failed deployments of one source in a row, within `HEAL_CAP_WINDOW_MS`, after which no more copies are made. */
-const HEAL_CAP = 3;
-const HEAL_CAP_WINDOW_MS = 60 * 60_000;
-
-function failedByInterchange(deployment: DeploymentRecord): deployment is DeploymentRecord & { endedAt: Date } {
-  return deployment.status === "failed" && !deployment.cancelling && deployment.endedAt !== null;
-}
 
 function enabledRepos(config: unknown, source: RepoSource): EnabledRepo[] {
   return repoRecords(triageNs(config)).flatMap(function enabled(record) {
@@ -320,156 +290,24 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       } catch (err) {
         if (err instanceof GithubRateLimited) throw err;
         deps.log({ level: "error", msg: "forward_failed", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, error: String(err) });
-        await failHead(deps.store, { tenantId: pass.tenantId, repo: key, number: queued.number, headSha }, `delivery failed: ${String(err)}`, deps.now());
+        await failHead(deps.store, { tenantId: pass.tenantId, repo: key, number: queued.number, headSha }, deliveryFailure(err), deps.now());
         continue;
       }
       deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, reason: queued.reason });
     }
   }
 
-  /**
-   * Keeps a recorded rotation, or drops it, and returns the deployment to
-   * mail: the copy while the rotation stands. The replaced deployment gets no
-   * new mail; it is released once its heads settled and mail it was sent has
-   * had time to start, or once a head still running there counts as stuck and
-   * is queued again on the copy. A deployment newer than the replaced one
-   * that the hub did not make, such as the portal's of a new version,
-   * supersedes the copy, which is released. The record is dropped once the
-   * replaced deployment or the copy is gone, the copy is being cancelled, or
-   * the copy is superseded.
-   */
-  async function settle(tenantId: string, record: RotationRecord, deployments: readonly LiveDeployment[], runningOn: ReadonlySet<string>, now: Date): Promise<LiveDeployment | undefined> {
-    const from = deployments.find((live) => live.runId === record.from);
-    const copy = deployments.find((live) => live.runId === record.to);
-    const superseded = from !== undefined && deployments.some(function newer(live) {
-      return live.runId !== record.from && live.runId !== record.to && !live.cancelling && live.createdAt > from.createdAt;
-    });
-    if (copy !== undefined && !copy.cancelling && superseded) {
-      await deps.rotation.release(tenantId, copy.runId);
-      deps.log({ level: "info", msg: "triage_rotation_superseded", tenantId, deployment: record.from, copy: copy.runId });
-    }
-    if (from === undefined || copy === undefined || copy.cancelling || superseded) {
-      await deps.rotation.clear(tenantId, record);
-      return newestLive(superseded ? deployments.filter((live) => live.runId !== record.to) : deployments);
-    }
-    const since = now.getTime() - copy.createdAt.getTime();
-    const quiet = !runningOn.has(from.runId) && since >= deps.policy.unstartedAfterMs;
-    if (!from.cancelling && (quiet || since > deps.policy.stuckAfterMs)) {
-      await deps.rotation.release(tenantId, from.runId);
-      deps.log({ level: "info", msg: "triage_deployment_released", tenantId, deployment: from.runId, replacedBy: copy.runId });
-    }
-    return copy;
-  }
-
-  /**
-   * Two live deployments of the same source with no rotation recorded are a
-   * rotation whose record was never written, or a portal redeploy whose cancel
-   * of the older one failed; the newer is recorded as the older one's copy so
-   * the older one is retired like any replaced deployment.
-   */
-  async function adopt(tenantId: string, deployments: readonly LiveDeployment[], now: Date): Promise<RotationRecord | undefined> {
-    if (deployments.length !== 2 || deployments.some((live) => live.cancelling)) return undefined;
-    const [newer, older] = deployments as [LiveDeployment, LiveDeployment];
-    if (!await deps.rotation.sameSource(older.runId, newer.runId)) return undefined;
-    const record = { from: older.runId, to: newer.runId, at: now.toISOString() };
-    if (!await deps.rotation.claim(tenantId, record)) return undefined;
-    deps.log({ level: "info", msg: "triage_rotation_adopted", tenantId, deployment: older.runId, copy: newer.runId });
-    return record;
-  }
-
-  /**
-   * Returns the deployment this pass mails. The only live deployment is
-   * replaced by a copy once its log holds more than `afterRuns` runs; the
-   * rotation is recorded before the copy is mailed, so a later pass, even
-   * after a restart, releases only what the record names.
-   */
-  async function route(tenant: ReconcileTenant, deployments: readonly LiveDeployment[], observed: readonly ObservedRuns[]): Promise<LiveDeployment | undefined> {
-    const now = deps.now();
-    const runningOn = new Set(deployments.filter((_live, index) => isRunning(observed[index]!)).map((live) => live.runId));
-    const recorded = rotationRecord(triageNs(tenant.config), deps.rotationKey);
-    if (recorded) return settle(tenant.id, recorded, deployments, runningOn, now);
-    const adopted = await adopt(tenant.id, deployments, now);
-    if (adopted) return settle(tenant.id, adopted, deployments, runningOn, now);
-    const newest = newestLive(deployments);
-    const runCount = observed[0]!.runCount;
-    if (deployments.length !== 1 || newest === undefined || runCount <= deps.rotation.afterRuns) return newest;
-    // A deployment made while this pass ran, such as the portal's of a newer version, must not be replaced by a copy of the one it superseded.
-    const current = await deps.liveDeployments(tenant.id);
-    if (current.length !== 1 || current[0]!.runId !== newest.runId || current[0]!.cancelling) {
-      deps.log({ level: "info", msg: "triage_rotation_skipped", tenantId: tenant.id, deployment: newest.runId, reason: "deployments_changed" });
-      return newestLive(current);
-    }
-    const redeployed = await deps.rotation.redeploy(tenant.id, newest.runId);
-    if (redeployed.status === "skipped") {
-      deps.log({ level: "warn", msg: "triage_rotation_skipped", tenantId: tenant.id, deployment: newest.runId, reason: redeployed.reason });
-      return newest;
-    }
-    const record = { from: newest.runId, to: redeployed.runId, at: now.toISOString() };
-    if (!await deps.rotation.claim(tenant.id, record)) {
-      await deps.rotation.release(tenant.id, redeployed.runId);
-      deps.log({ level: "warn", msg: "triage_rotation_skipped", tenantId: tenant.id, deployment: newest.runId, reason: "rotation_recorded" });
-      return newest;
-    }
-    deps.log({ level: "info", msg: "triage_deployment_rotated", tenantId: tenant.id, deployment: newest.runId, replacedBy: redeployed.runId, runs: runCount });
-    const after = await deps.liveDeployments(tenant.id);
-    return settle(tenant.id, record, after, runningOn, now);
-  }
-
-  /** The newest `HEAL_CAP` failed within the window, from the same source. */
-  async function healCapped(latest: readonly DeploymentRecord[], now: number): Promise<boolean> {
-    if (latest.length < HEAL_CAP) return false;
-    if (!latest.every((deployment) => failedByInterchange(deployment) && now - deployment.endedAt.getTime() < HEAL_CAP_WINDOW_MS)) return false;
-    for (const older of latest.slice(1)) {
-      if (!await deps.rotation.sameSource(latest[0]!.runId, older.runId)) return false;
-    }
-    return true;
-  }
-
-  /**
-   * With no live deployment, the newest one is deployed again from its launch
-   * spec when Interchange failed it, rather than someone cancelling it. True
-   * when a pass soon is worth it: the failure is still recent, a copy was just
-   * made and its sidecar is starting, or the host had no room for it yet.
-   */
-  async function heal(tenantId: string): Promise<boolean> {
-    const latest = await deps.latestDeployments(tenantId, HEAL_CAP);
-    const failed = latest[0];
-    if (failed === undefined || !failedByInterchange(failed)) return false;
-    const now = deps.now().getTime();
-    if (now - failed.endedAt.getTime() < HEAL_AFTER_MS) return true;
-    if (await healCapped(latest, now)) {
-      deps.log({ level: "warn", msg: "triage_heal_capped", tenantId, deployment: failed.runId });
-      return false;
-    }
-    // The portal may have deployed while this pass read; a copy of the old source would then outrank it.
-    if ((await deps.liveDeployments(tenantId)).length > 0) return true;
-    let redeployed: Redeployed;
-    try {
-      redeployed = await deps.rotation.redeploy(tenantId, failed.runId);
-    } catch (error) {
-      const full = error instanceof WorkflowProvisioningError && error.code === CAPACITY_UNAVAILABLE;
-      deps.log({ level: "warn", msg: full ? "triage_heal_deferred" : "triage_heal_skipped", tenantId, deployment: failed.runId, reason: String(error) });
-      return full;
-    }
-    if (redeployed.status === "skipped") {
-      deps.log({ level: "warn", msg: "triage_heal_skipped", tenantId, deployment: failed.runId, reason: redeployed.reason });
-      return false;
-    }
-    deps.log({ level: "info", msg: "triage_deployment_healed", tenantId, deployment: failed.runId, replacedBy: redeployed.runId });
-    return true;
-  }
-
-  /** True when the pass is worth repeating soon: a repository's pass failed, or a failed deployment is being redeployed. */
+  /** True when the pass is worth repeating soon: a repository's pass failed. */
   async function reconcileTenant(tenant: ReconcileTenant): Promise<boolean> {
     const repos = enabledRepos(tenant.config, deps.source);
     if (repos.length === 0) return false;
     const listener = await deps.listener(tenant.id, deps.source);
-    // Only live deployments' and recent workers' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
-    const { deployments, observed, workers } = await deps.observeTenant(tenant.id, tenant.domain);
-    if (!listener && deployments.length === 0) {
-      deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
-      return heal(tenant.id);
+    if (!listener) {
+      deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_listener" });
+      return false;
     }
+    // Only live deployments' and recent workers' logs are read; heads triaged under a released one stay settled in the stored state.
+    const { observed, workers } = await deps.observeTenant(tenant.id, tenant.domain);
     let openHeads: OpenHeadsReader | undefined;
     try {
       openHeads = await deps.openHeadsFor(tenant.id);
@@ -483,19 +321,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       return false;
     }
     const runs = mergeObservedRuns([...observed, ...workers]);
-    let deployment = listener ?? newestLive(deployments);
-    if (!listener) {
-      try {
-        deployment = await route(tenant, deployments, observed);
-      } catch (err) {
-        deps.log({ level: "error", msg: "triage_rotation_failed", tenantId: tenant.id, error: String(err) });
-      }
-    }
-    if (!deployment) {
-      deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
-      return false;
-    }
-    const pass: TenantPass = { tenantId: tenant.id, deployment, openHeads, runs };
+    const pass: TenantPass = { tenantId: tenant.id, deployment: listener, openHeads, runs };
     const loaded: LoadedRepo[] = [];
     let failed = false;
     for (const repo of repos) {

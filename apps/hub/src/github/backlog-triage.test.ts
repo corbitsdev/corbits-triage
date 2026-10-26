@@ -3,7 +3,7 @@ import { checkPackName, emptyPack } from "@corbits/triage-contracts";
 
 /** One rule on; with every rule off the hub starts no run. */
 const PACK = { ...emptyPack("octocat/hello"), checks: { "no-merge-conflicts": { enabled: true } } };
-import { createGithubBacklog } from "./backlog-triage.js";
+import { createBacklogStart, createGithubBacklog } from "./backlog-triage.js";
 import { NoLiveDeploymentError } from "./deployment.js";
 
 /** No deployment holds the credential in these tests. */
@@ -36,7 +36,7 @@ function backlog(repo: Record<string, unknown>, sent: unknown[], sendMail = asyn
   });
 }
 
-test("a backlog request mails pr-triage-historical the bridge's payload as a backlog, and only for an enabled repository with a live deployment", async () => {
+test("a backlog request mails the listener the bridge's payload as a backlog, and only for an enabled repository with a live listener", async () => {
   const sent: unknown[] = [];
   const started = await backlog({ name: REPO, connected: true, enabled: true }, sent)({ repo: REPO }, MEMBER);
   expect(started.status).toBe(202);
@@ -45,8 +45,24 @@ test("a backlog request mails pr-triage-historical the bridge's payload as a bac
   const disabled = await backlog({ name: REPO, connected: true, enabled: false }, sent)({ repo: REPO }, MEMBER);
   expect(await disabled.json()).toMatchObject({ error: { code: "repo_not_enabled" } });
   const notRunning = await backlog({ name: REPO, connected: true, enabled: true }, sent, async function noDeployment() {
-    throw new NoLiveDeploymentError("pr-triage-historical");
+    throw new NoLiveDeploymentError("triage-listener-github");
   })({ repo: REPO }, MEMBER);
   expect(notRunning.status).toBe(503);
   expect(sent).toHaveLength(1);
+});
+
+test("a Bitbucket Data Center repository's backlog goes to its listener like a GitHub one's", async () => {
+  const sent: unknown[] = [];
+  const start = createBacklogStart({
+    async readCheckPack() {
+      return { status: "ok", pack: PACK, automatic: ["labels"], source: SOURCE };
+    },
+    async sendMail(_tenant, payload) {
+      sent.push(payload);
+    },
+    log() {},
+  });
+  const started = await start(MEMBER.tenantId, { name: "TRI/widgets", source: "bitbucket-datacenter", connected: true, enabled: true });
+  expect(started.status).toBe(202);
+  expect(sent).toEqual([expect.objectContaining({ kind: "backlog", repo: "TRI/widgets", repoSource: "bitbucket-datacenter" })]);
 });

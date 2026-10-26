@@ -22,6 +22,8 @@ export type ManagerIntakeDeps = {
   /** The mail as a GitHub workspace's runs read it, naming the App's bot account. */
   withAppLogin: (tenantId: string, payload: Record<string, unknown>) => Promise<unknown>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
+  /** The pull request's mail as its manager takes it, or undefined when none is to be taken, as for a paused pull request. */
+  gate: (tenantId: string, record: RepoRecord, number: number, request: Record<string, unknown>) => Promise<Record<string, unknown> | undefined>;
   log: (entry: Record<string, unknown>) => void;
 };
 
@@ -107,7 +109,10 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     if (pulls.length === 0) return false;
     const domain = domainOf(address);
     const start: Named[] = [];
-    for (const pull of pulls) {
+    for (const asked of pulls) {
+      const request = await deps.gate(tenantId, record, asked.number, asked.request);
+      if (!request) continue;
+      const pull = { ...asked, request };
       const recorded = await deps.withAppLogin(tenantId, await withReviewRequest(tenantId, record, pull));
       await recordEvent(deps.db, tenantId, { source, repo, number: pull.number }, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
       const runId = await liveManager(deps.db, tenantId, { source, repo, number: pull.number });

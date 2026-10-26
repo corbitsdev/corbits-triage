@@ -393,6 +393,24 @@ describe("triage-manager with code review", () => {
     expect(hub.calls).toEqual([TAKE, { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] }) }, END]);
   });
 
+  test("Review again on a head whose review settled deploys one more review for it, and that review's report is posted", async () => {
+    const { writes, host } = githubHost();
+    const mailed: unknown[] = [];
+    const again = hubRequest(RULES, { codeReview: { ...CODE_REVIEW.codeReview, again: "again_1" }, ...REVIEW_REQUEST });
+    const settled = { ...reviewer(), runId: "run_earlier", result: REVIEW };
+    const first = fakeHub({ takes: [{ ...PASS, request: again, events: [mailEvent(HEAD, again, "evt_2")], reviewers: [settled] }], dones: [ENDED] });
+    expect((await runMail(reviewed, wake(), host, first.hub, mailed)).ran).toContain("deployReview");
+    expect(writes).toEqual([]);
+    expect(mailed).toHaveLength(1);
+    expect(first.calls.at(-2)).toMatchObject({ ...DONE, body: { reviewers: [settled, { kind: "code-review", head: HEAD, runId: DEPLOYED, again: "again_1" }] } });
+
+    const second = fakeHub({ takes: [{ ...reported({ result: REVIEW }, again), reviewers: [settled, { ...reviewer(), again: "again_1" }] }], dones: [ENDED] });
+    const { ran } = await runMail(reviewed, wake(), host, second.hub, mailed);
+    expect(ran).not.toContain("deployReview");
+    expect(writes).toContainEqual(POSTED_REVIEW);
+    expect(mailed).toHaveLength(1);
+  });
+
   test("a stored review is not posted once this pass's policy no longer asks for code review", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, reviewers: [{ ...reviewer(), result: REVIEW }] }], dones: [ENDED] });

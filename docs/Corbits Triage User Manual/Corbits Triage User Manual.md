@@ -352,7 +352,7 @@ On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repos
 
 ### Code review
 
-Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. In a repository whose [policy file](#writing-the-file) turns a check on or writes its own `decide`, the file decides instead: changing the switch, or pressing **Review again**, says **This repository's policy file decides code review, which runs with triage.**
+Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. In a repository whose [policy file](#writing-the-file) turns a check on or writes its own `decide`, the file decides instead: changing the switch says **This repository's policy file decides code review, which runs with triage.** **Review again** still reviews the latest commit once more.
 
 ![The popup Code review needs an Anthropic key, with the Anthropic key field, You won't see it again, Cancel and Save and turn on](images/27.png)
 
@@ -465,8 +465,6 @@ The bar at the bottom of the pane always offers the next step first. For a passi
 
 Anything you do here is also written to the audit log.
 
-An action that code review held can be approved only while code review runs. If it has stopped, because the policy file no longer turns a check on, the Anthropic key was removed or code review has no place to run, approving it says **Code review held this action, and it is not running now, so the action can't be approved.** Set code review up again, or press **Triage again**.
-
 ### What the author sees
 
 Authors do not use the portal. Depending on the repository's actions, they see a comment from Triage on their pull request with the verdict and reasons, review requests, and on GitHub labels such as **Triage: Ready**, **Triage: Not Ready** or **Triage: Needs Human Review** and assignments. On Bitbucket they see the verdict as the **Corbits Triage** build status instead of a label. **Triage: Ready** comes off as soon as Triage sees a new commit and returns once that commit passes, so it never stands on a commit Triage has not checked. While Triage waits for CI, they see **Triage: Waiting for CI** in its place, or no Triage label when the commit has no checks; **Triage: Not Ready** and **Triage: Needs Human Review** stay until the new verdict. When Triage could not read the pull request, or the repository's policy, it shows **Triage: Failed to Run** in place of any verdict label, or on Bitbucket a failed **Corbits Triage** build status that says **Triage couldn't run**, and posts nothing else. It does this only where Triage adds labels on its own, or on Bitbucket comments on its own. It clears on the next run that can read the pull request, which shows the verdict again. Triage keeps one comment and edits it in place as the pull request changes, so an author who pushes a fix sees the fresh verdict in the same comment. Each change Triage asks to split out names what it is not part of: the pull request's title. When new commits change the verdict, the comment also says what the verdict was, how many commits arrived since and which pull requests were merged into the branch. Only when someone changes the repository's policy and that changes the verdict on the same commit does Triage post a new comment, which says it supersedes the one above.
@@ -493,7 +491,7 @@ The first line says how many repositories Triage is running on, with a **Choose 
 
 In the new version, each pull request gets one manager that posts a single update. Once a source and a decision model are set up, a line below the status says which version runs, one line per connected host (named when there are two):
 
-- **Triage runs on its old workflow, which is being retired. Upgrade to keep it working.** That host has not switched yet.
+- **Triage is stopped until it is upgraded.** That host has not switched yet, so nothing is triaged there until someone presses **Upgrade to new version**.
 - **Triage runs version 0.1.0-sha-66ee60f0, published by Ana.** That host runs the new version, published by that person. When this portal has a newer release, it adds **A new version is ready.** If an earlier copy is somehow still running beside it, it adds **Another copy is still running too; upgrade to stop it.**
 
 Owners and Deployers (see [People](#people)) see **Upgrade to new version** whenever an upgrade is due. Pressing it publishes the new version under your name, starts it on each host, and then stops the versions started before it, whoever published them. If two people upgrade at once, the newer start stays, and the other person sees **Someone else's upgrade finished first; Triage runs their version.** The button says what it is doing. If the new version does not start within five minutes, it is stopped, the one already running keeps running, and the error names the host. Everyone else sees **Ask a workspace owner or a Deployer to upgrade.** **Advanced info** lists this portal's release, who published the running one and when, and the version of each workflow in the release.

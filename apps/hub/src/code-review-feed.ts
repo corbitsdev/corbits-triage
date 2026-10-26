@@ -42,7 +42,7 @@ export type CodeReviewFeedDeps = {
   log: (entry: Record<string, unknown>) => void;
 };
 
-export type Offered = "sent" | "not_reviewed" | "draft" | "not_open";
+type Unreviewed = "not_reviewed" | "draft" | "not_open";
 
 /**
  * The diff's hash, its `index` lines' blob ids included, so a base change to a file the diff touches changes it; undefined
@@ -172,7 +172,7 @@ export function createCodeReviewFeed(deps: CodeReviewFeedDeps) {
   }
 
   /** The pull request to review and its request, or why it is not reviewed. */
-  async function toReview(tenantId: string, record: RepoRecord, number: number): Promise<{ pull: PullRequestToReview; request: ReviewRequest } | Exclude<Offered, "sent">> {
+  async function toReview(tenantId: string, record: RepoRecord, number: number): Promise<{ pull: PullRequestToReview; request: ReviewRequest } | Unreviewed> {
     if (record.codeReview !== true || !(await deps.reviewed(tenantId, record)).includes(sourceOf(record))) return "not_reviewed";
     const pull = await deps.read(tenantId, record, number);
     if (!pull.open) return "not_open";
@@ -181,15 +181,15 @@ export function createCodeReviewFeed(deps: CodeReviewFeedDeps) {
   }
 
   /** Sends the reserved head, which is let go when the send fails. */
-  async function send(tenantId: string, record: RepoRecord, number: number, request: ReviewRequest, again: boolean): Promise<void> {
+  async function send(tenantId: string, record: RepoRecord, number: number, request: ReviewRequest): Promise<void> {
     const headSha = request.checkout.sha;
     try {
-      await deps.send({ tenantId, workflow: codeReviewWorkflowFor(sourceOf(record)).id, repo: record.name, number, headSha, source: again ? "retry" : "event", payload: request });
+      await deps.send({ tenantId, workflow: codeReviewWorkflowFor(sourceOf(record)).id, repo: record.name, number, headSha, source: "event", payload: request });
     } catch (err) {
       sent.delete(keyOf(tenantId, record, number, headSha));
       throw err;
     }
-    deps.log({ level: "info", msg: "code_review_sent", tenantId, repo: record.name, pr: number, headSha, again, ...(request.cut && { cut: request.cut }) });
+    deps.log({ level: "info", msg: "code_review_sent", tenantId, repo: record.name, pr: number, headSha, ...(request.cut && { cut: request.cut }) });
   }
 
   /** A new head is sent once, unless it takes the newest review over. */
@@ -202,7 +202,7 @@ export function createCodeReviewFeed(deps: CodeReviewFeedDeps) {
       deps.log({ level: "info", msg: "code_review_carried", tenantId, repo: record.name, pr: number, headSha: pull.headSha });
       return;
     }
-    await send(tenantId, record, number, request, false);
+    await send(tenantId, record, number, request);
   }
 
   return {
@@ -216,14 +216,6 @@ export function createCodeReviewFeed(deps: CodeReviewFeedDeps) {
       } catch (err) {
         deps.log({ level: "error", msg: "code_review_send_failed", tenantId, repo: record.name, pr: mail.prNumber, error: String(err) });
       }
-    },
-    /** "Review again": the pull request's current head, even when it was reviewed already or took a review over. */
-    async again(tenantId: string, record: RepoRecord, number: number): Promise<Offered> {
-      const found = await toReview(tenantId, record, number);
-      if (typeof found === "string") return found;
-      reserve(keyOf(tenantId, record, number, found.pull.headSha));
-      await send(tenantId, record, number, found.request, true);
-      return "sent";
     },
     /** A queued review whose worker could not run, so a later event for its head sends it again. */
     forget(job: TriageJob): void {

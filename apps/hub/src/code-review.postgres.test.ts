@@ -6,9 +6,9 @@ import { createDB, runMigrations, schema } from "@intx/db";
 import { createSidecarPluginRegistry, type SidecarProvisioner } from "@intx/hub-sessions";
 import type { SidecarCapabilityDeclaration } from "@intx/types";
 import { DOCKER_PLACE, DOCKER_REMOTE_PLACE } from "@corbits/provisioner-docker";
-import type { CodeReviewPlace } from "@corbits/triage-contracts";
+import { emptyPack, type CodeReviewPlace } from "@corbits/triage-contracts";
 import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
-import type { Offered } from "./code-review-feed.js";
+import { NoLiveDeploymentError } from "./github/deployment.js";
 import { codeReviewSources } from "./github/source-workflow.js";
 import { repoRecords, triageNs } from "./github/tenant-config.js";
 
@@ -102,32 +102,38 @@ test("PostgreSQL: code review turns on only with an isolated place to run, the h
     expect(repoRecords(triageNs(tenant?.config)).map((record) => [record.name, record.codeReview])).toEqual([["acme/widgets", false], ["TRI/widgets", undefined], ["acme/gone", undefined]]);
     expect(changed).toEqual([TENANT, TENANT]);
 
-    const outcomes: Array<Offered | Error> = ["sent", "draft", new Error("github GET /repos/acme/widgets/pulls/7 -> 404")];
-    const runCodeReview = createCodeReviewRun({
+    await db.update(schema.tenant).set({ config: { corbitsTriage: { repos: repos.map((record) => ({ ...record, enabled: true })) } } }).where(eq(schema.tenant.id, TENANT));
+    const heads: Array<{ open: boolean; draft: boolean } | Error> = [{ open: true, draft: false }, { open: true, draft: true }, { open: false, draft: false }, new Error("github GET /repos/acme/widgets/pulls/7 -> 404")];
+    const sent: unknown[] = [];
+    const runDeps = {
       db,
       authorize: async () => true,
-      feed: {
-        async again() {
-          const next = outcomes.shift()!;
-          if (next instanceof Error) throw next;
-          return next;
-        },
-      },
       place,
-      inPrWorkflow: async () => false,
-    });
-    const runNowhere = createCodeReviewRun({ db, authorize: async () => true, feed: { again: async () => "sent" }, place: nowhere, inPrWorkflow: async () => false });
-    const runDecided = createCodeReviewRun({ db, authorize: async () => true, feed: { again: async () => "sent" }, place, inPrWorkflow: async () => true });
-    expect(((await (await runDecided({ repo: "acme/widgets", number: 7 }, MEMBER)).json()) as { error: { code: string } }).error.code).toBe("policy_file_decides");
+      readCheckPack: async () => ({ status: "ok" as const, pack: { ...emptyPack("acme/widgets"), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
+      async readHead() {
+        const next = heads.shift()!;
+        if (next instanceof Error) throw next;
+        return { title: "Fix", description: "", headSha: "sha1", ...next };
+      },
+      async send(_tenantId: string, payload: unknown) {
+        sent.push(payload);
+      },
+    };
+    const runCodeReview = createCodeReviewRun(runDeps);
+    const runNowhere = createCodeReviewRun({ ...runDeps, place: nowhere });
+    const runUnlistened = createCodeReviewRun({ ...runDeps, readHead: async () => ({ title: "Fix", description: "", headSha: "sha1", open: true, draft: false }), send: async () => Promise.reject(new NoLiveDeploymentError("triage-listener-github")) });
     expect((await runNowhere({ repo: "acme/widgets", number: 7 }, MEMBER)).status).toBe(409);
-    async function run(repo: string) {
-      const response = await runCodeReview({ repo, number: 7 }, MEMBER);
+    async function run(repo: string, runner = runCodeReview) {
+      const response = await runner({ repo, number: 7 }, MEMBER);
       return [response.status, ((await response.json()) as { status?: string; error?: { code: string } }).error?.code ?? "queued"];
     }
     expect(await run("acme/missing")).toEqual([404, "repo_not_found"]);
     expect(await run("acme/widgets")).toEqual([202, "queued"]);
+    expect(sent).toEqual([expect.objectContaining({ kind: "pr", prNumber: 7, headSha: "sha1", noWait: true, codeReview: { on: true, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "any", again: expect.any(String) } })]);
     expect(await run("acme/widgets")).toEqual([409, "draft"]);
+    expect(await run("acme/widgets")).toEqual([409, "not_open"]);
     expect(await run("acme/widgets")).toEqual([502, "code_review_unavailable"]);
+    expect(await run("acme/widgets", runUnlistened)).toEqual([503, "service_not_running"]);
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

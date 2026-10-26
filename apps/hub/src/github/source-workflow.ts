@@ -73,7 +73,7 @@ export function entrySource(entry: string): RepoSource | undefined {
 }
 
 /** The names of the code review provider credentials the workspace holds active; names only, never secrets. */
-export async function codeReviewKeys(db: DB["db"], tenantId: string): Promise<string[]> {
+async function codeReviewKeys(db: DB["db"], tenantId: string): Promise<string[]> {
   const credentials = Object.values(CODE_REVIEW_PROVIDERS).map((provider) => provider.credential);
   const rows = await db.query.credential.findMany({
     where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.status, "active"), inArray(schema.credential.name, credentials)),

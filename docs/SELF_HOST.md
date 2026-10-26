@@ -279,7 +279,6 @@ All optional; the defaults suit most installs.
 | `TRIAGE_RECONCILE_INTERVAL_MS` | 300000 | How often the hub re-queues open pull requests whose latest commit has no verdict. |
 | `TRIAGE_MAX_IN_FLIGHT` | 5 | Pull request heads a workspace may have queued or running at once. |
 | `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
-| `TRIAGE_ROTATE_AFTER_RUNS` | 15 | Runs a pr-triage deployment's log may hold before the hub deploys a fresh copy. |
 | `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run, at most four times this after the first. A new commit, an opened, reopened or ready pull request, an approval or a change request waits only 3 seconds. Must stay below 150000. |
 
 ### Hub and sidecars

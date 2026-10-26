@@ -41,16 +41,12 @@ test("each new non-draft head is sent to its host's code review once; Review aga
     source: "event",
     payload: { kind: "code-review", number: 7, title: "Fix", description: "Body", diff: PULL.diff, diffHash: diffHash(PULL.diff), checkout: { source: "github", repo: "acme/widgets", sha: "sha1" } },
   }]);
-  expect(await feed.again("t", RECORD, 7)).toBe("sent");
-  expect(sent.map((job) => job.source)).toEqual(["event", "retry"]);
 });
 
-test("a head that takes the newest review over is not sent, and Review again sends it anyway", async () => {
+test("a head that takes the newest review over is not sent", async () => {
   const { feed, sent } = harness(["github"], PULL, true);
   await feed.offer("t", RECORD, mail("synchronize"));
   expect(sent).toEqual([]);
-  expect(await feed.again("t", RECORD, 7)).toBe("sent");
-  expect(sent.map((job) => job.source)).toEqual(["retry"]);
 });
 
 test("a diff's hash changes with any blob id, and a diff with none, as GitHub rebuilds from the file list, has none and is sent unhashed", async () => {
@@ -64,9 +60,11 @@ test("a diff's hash changes with any blob id, and a diff with none, as GitHub re
 });
 
 test("nothing is sent while code review is off, the key is missing or the pull request turned draft", async () => {
-  expect(await harness([]).feed.again("t", RECORD, 7)).toBe("not_reviewed");
-  expect(await harness().feed.again("t", { ...RECORD, codeReview: false }, 7)).toBe("not_reviewed");
-  expect(await harness(["github"], { ...PULL, draft: true }).feed.again("t", RECORD, 7)).toBe("draft");
+  for (const [reviewed, record, pull] of [[[], RECORD, PULL], [["github"], { ...RECORD, codeReview: false }, PULL], [["github"], RECORD, { ...PULL, draft: true }]] as const) {
+    const { feed, sent } = harness([...reviewed], pull);
+    await feed.offer("t", record, mail("synchronize"));
+    expect(sent).toEqual([]);
+  }
 });
 
 test("a diff over the limit is cut at a line boundary and names the files it cut part-way or left out", () => {
@@ -95,7 +93,7 @@ test("a cut names files as git writes them with or without prefixes and quotes, 
 
 test("a host answer that is not a unified diff is refused, not reviewed", async () => {
   const { feed, sent } = harness(["github"], { ...PULL, diff: "{\"url\":\"…\"}" });
-  await expect(feed.again("t", RECORD, 7)).rejects.toThrow("the host returned no unified diff");
+  await feed.offer("t", RECORD, mail("synchronize"));
   expect(sent).toEqual([]);
 });
 
