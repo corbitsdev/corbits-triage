@@ -16,6 +16,7 @@ test("the mail director runs its one tool on the step's input without a model ca
   const strict = mailDirector.factory({ tolerate: false }, {} as never, { systemPrompt: "" } as never);
   const input = { tenantId: "tnt_acme", to: "run_manager", content: "{}" };
   expect(await strict.decide({ type: "message.received", message: { content: JSON.stringify(input) } } as never, STATE, caps)).toEqual({ type: "execute_tools", calls: [{ id: "mail", name: "mail", arguments: input }] });
+  await expect(strict.decide({ type: "message.received", message: {} } as never, STATE, caps)).rejects.toThrow("mail: the message has no content");
   expect(await strict.decide({ type: "tool.done", result: SENT }, STATE, caps)).toEqual({ type: "reply", content: JSON.stringify(SENT.content) });
   await expect(strict.decide({ type: "tool.done", result: REFUSED }, STATE, caps)).rejects.toThrow("mail:");
   const tolerant = mailDirector.factory({ tolerate: true }, {} as never, { systemPrompt: "" } as never);

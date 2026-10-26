@@ -80,8 +80,11 @@ function mailDirector({ tolerate }: typeof MailDirectorConfig.infer): ReactorDir
   return {
     async decide(event, _state, caps) {
       switch (event.type) {
-        case "message.received":
-          return caps.executeTools([{ id: MAIL_TOOL, name: MAIL_TOOL, arguments: JSON.parse(event.message.content ?? "") }], false, false);
+        case "message.received": {
+          const { content } = event.message;
+          if (content === undefined) throw new Error("mail: the message has no content");
+          return caps.executeTools([{ id: MAIL_TOOL, name: MAIL_TOOL, arguments: JSON.parse(content) }], false, false);
+        }
         case "tool.done":
           if (!event.result.isError) return caps.reply(JSON.stringify(event.result.content));
           if (tolerate) return caps.reply(JSON.stringify({ mailed: false, error: event.result.content }));
