@@ -1,10 +1,11 @@
 // Switching a workspace to the per-pull-request manager: publish this portal's release as the person upgrading, deploy
-// each connected host's listener from it, and stop every other listener of that host once the new one is up.
+// each connected host's listener from it, and once it is up stop that host's listeners deployed before it.
 import { skipToken, useMutation, useQuery } from "@tanstack/react-query";
+import { errorText } from "@corbits/common";
 import { deployWorkflow, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import { isDeployerRole, isOwnerRole } from "./automation-grid.ts";
-import { connectedSources, currentDeployment, isLiveDeployment, listDeployedWorkflows, pause, type DeployedWorkflow } from "./hub-api.ts";
+import { connectedSources, isLiveDeployment, listDeployedWorkflows, pause, type DeployedWorkflow } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { offeringsFor } from "./model-catalog.ts";
 import { TRIAGE_RELEASE_QUERY_KEY, usePortal } from "./portal.tsx";
@@ -15,6 +16,8 @@ import { publishSources, type PublishedSource, type Publisher } from "./workflow
 
 export type UpgradeStep = "publishing" | "starting" | "stopping";
 
+export const SOURCE_NAME: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" };
+
 export const UPGRADE_STEP_LABEL: Record<UpgradeStep, string> = { publishing: "Publishing the new version…", starting: "Starting the new version…", stopping: "Stopping the old version…" };
 
 const START_DEADLINE_MS = 5 * 60_000;
@@ -23,10 +26,12 @@ const FAILED_STATUSES = new Set(["failed", "cancelled", "released"]);
 
 type Asset = { id: string; name: string; creatorPrincipalId: string | null };
 
-/** A host's live listener: the release it runs, by its build hash, and who published it. */
-export type RunningListener = { source: RepoSource; release: string | undefined; publisherPrincipalId: string | null; since: string };
-/** This portal's release by each workflow's build hash, and the listeners running now. */
-export type TriageRelease = { portal: SourceIndexEntry[]; running: RunningListener[] };
+/** A host's newest live listener: its package version, the release's build hash, and who published it. */
+export type RunningListener = { version: string | undefined; release: string | undefined; publisherPrincipalId: string | null; since: string };
+/** A connected host: its newest live listener, and how many are live. */
+export type HostRelease = { source: RepoSource; running: RunningListener | undefined; live: number };
+/** This portal's release by each workflow's build hash, and each connected host's listeners. */
+export type TriageRelease = { portal: SourceIndexEntry[]; hosts: HostRelease[] };
 
 function chainOf(workflow: string) {
   const chain = CHAIN_PACKAGES.find((row) => row.name === workflow);
@@ -51,13 +56,18 @@ async function waitUntilStarted(transport: Transport, tenantId: string, id: stri
     if (deployment && FAILED_STATUSES.has(deployment.status)) throw new Error("The new version did not start, so the current one keeps running.");
     await pause(START_POLL_MS);
   }
+  await cancelDeployment(transport, tenantId, id);
   throw new Error("The new version did not start within five minutes, so the current one keeps running.");
 }
 
-/** Every other live listener of the host, whoever published it. */
-async function stopOtherListeners(transport: Transport, tenantId: string, source: RepoSource, keep: string): Promise<void> {
+function olderThan(deployment: { id: string; createdAt: string }, newer: WorkflowDeployment): boolean {
+  return deployment.createdAt < newer.createdAt || (deployment.createdAt === newer.createdAt && deployment.id < newer.id);
+}
+
+/** Only listeners deployed before this one, whoever published them, so of two upgrades at once the newer stays. */
+async function stopOlderListeners(transport: Transport, tenantId: string, source: RepoSource, started: WorkflowDeployment): Promise<void> {
   for (const deployment of await listDeployedWorkflows(transport, tenantId)) {
-    if (deployment.workflow === TRIAGE_LISTENERS[source] && deployment.id !== keep && !deployment.cancelling && !deployment.worker) await cancelDeployment(transport, tenantId, deployment.id);
+    if (deployment.workflow === TRIAGE_LISTENERS[source] && olderThan(deployment, started) && !deployment.cancelling && !deployment.worker) await cancelDeployment(transport, tenantId, deployment.id);
   }
 }
 
@@ -85,20 +95,31 @@ export async function upgradeTriage(
   onStep("publishing");
   const published = await publish(transport, publisher);
   for (const source of sources) {
-    onStep("starting");
-    const deployment = await deployListener(transport, publisher.tenantId, source, published);
-    await waitUntilStarted(transport, publisher.tenantId, deployment.id);
-    onStep("stopping");
-    await stopOtherListeners(transport, publisher.tenantId, source, deployment.id);
+    try {
+      onStep("starting");
+      const deployment = await deployListener(transport, publisher.tenantId, source, published);
+      await waitUntilStarted(transport, publisher.tenantId, deployment.id);
+      onStep("stopping");
+      await stopOlderListeners(transport, publisher.tenantId, source, deployment);
+    } catch (cause: unknown) {
+      throw new Error(`${SOURCE_NAME[source]}: ${errorText(cause)}`, { cause });
+    }
   }
 }
 
-function runningOn(source: RepoSource, deployed: readonly DeployedWorkflow[], deployments: readonly WorkflowDeployment[], assets: readonly Asset[]): RunningListener | undefined {
-  const live = currentDeployment(deployed, TRIAGE_LISTENERS[source]);
-  if (!live) return undefined;
-  const assetId = deployments.find((row) => row.id === live.id)?.definitionAssetId;
+function hostOf(source: RepoSource, deployed: readonly DeployedWorkflow[], deployments: readonly WorkflowDeployment[], assets: readonly Asset[]): HostRelease {
+  const listeners = deployed.filter((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling && !row.worker);
+  const [newest] = [...listeners].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+  if (!newest) return { source, running: undefined, live: 0 };
+  const assetId = deployments.find((row) => row.id === newest.id)?.definitionAssetId;
   const asset = assets.find((row) => row.id === assetId);
-  return { source, release: live.package ? buildHash(live.package.version) : undefined, publisherPrincipalId: asset?.creatorPrincipalId ?? null, since: live.createdAt };
+  const running = {
+    version: newest.package?.version,
+    release: newest.package ? buildHash(newest.package.version) : undefined,
+    publisherPrincipalId: asset?.creatorPrincipalId ?? null,
+    since: newest.createdAt,
+  };
+  return { source, running, live: listeners.length };
 }
 
 async function readPortalIndex(fetchRaw: typeof fetch): Promise<SourceIndexEntry[]> {
@@ -112,16 +133,12 @@ export async function readTriageRelease(transport: Transport, tenantId: string, 
     listWorkflowDeployments(transport, tenantId),
     transport.fetch<Asset[]>("GET", `/api/tenants/${encodeURIComponent(tenantId)}/assets?kind=workflow`),
   ]);
-  const running = sources.map((source) => runningOn(source, deployed, deployments, assets)).filter((row) => row !== undefined);
-  return { portal, running };
+  return { portal, hosts: sources.map((source) => hostOf(source, deployed, deployments, assets)) };
 }
 
-/** Upgrade is offered while a connected host runs no listener, or one from another release than this portal's. */
-export function upgradeDue(release: TriageRelease, sources: readonly RepoSource[]): boolean {
-  return sources.some(function behind(source) {
-    const running = release.running.find((row) => row.source === source);
-    return !running || running.release !== portalRelease(release.portal, source);
-  });
+/** Upgrade is offered while a host runs no listener, one from another release than this portal's, or more than one. */
+export function upgradeDue(release: TriageRelease, host: HostRelease): boolean {
+  return !host.running || host.live > 1 || host.running.release !== portalRelease(release.portal, host.source);
 }
 
 /** Owners hold every grant, and the Deployer role every grant publishing needs. */

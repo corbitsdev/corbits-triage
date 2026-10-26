@@ -236,8 +236,11 @@ any other tenant or an unknown sender.
   The portal deploys it from Settings, **Upgrade to new version**
   (`apps/web/src/lib/triage-upgrade.ts`): it publishes the release as the
   person upgrading, deploys each connected host's listener through the stock
-  deploy route from that person's source asset, waits for it to be live, then
-  cancels every other live listener of the host, found by workflow name. A
+  deploy route from that person's source asset, waits for it to be live
+  (cancelling it after five minutes), then cancels the host's live listeners
+  created before it, found by workflow name, so of two upgrades at once the
+  newer stays. Settings offers Upgrade again while a host has more than one
+  live listener. A
   published workflow's asset, and so its definition, is named for its
   publisher and release, so the hub finds a deployment by the workflow id in
   its frozen projection (`apps/hub/src/github/deployment.ts`), and the

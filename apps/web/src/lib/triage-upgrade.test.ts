@@ -57,3 +57,45 @@ test("an upgrade deploys the listener from its published source, then stops ever
     "/api/tenants/t/workflows/runs/run_other",
   ]);
 });
+
+type Row = { id: string; tenantId: string; definitionAssetId: string; status: string; createdAt: string };
+
+function sharedHub() {
+  const deployments: Row[] = [{ id: "run_old", tenantId: "t", definitionAssetId: "ast_old", status: "deployed", createdAt: "2026-10-01T00:00:00.000Z" }];
+  let n = 0;
+  function transportFor(who: string): Transport {
+    async function json<T>(method: string, path: string): Promise<T> {
+      await Promise.resolve();
+      if (path === "/api/tenants/t/models") return [{ canonicalName: "decision", offerings: [{ offeringId: "mof_1", providerName: "corbits-system-one" }] }] as T;
+      if (method === "POST" && path === "/api/tenants/t/workflows/deployments") {
+        const created = { id: `run_${who}`, tenantId: "t", definitionAssetId: `ast_${who}`, status: "deployed", createdAt: `2026-10-03T00:00:0${n++}.000Z` };
+        deployments.push(created);
+        return created as T;
+      }
+      if (path === "/api/tenants/t/workflows/deployments") return deployments.map((row) => ({ ...row })) as T;
+      if (path === "/api/integrations/workflow-versions/t") {
+        return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: "triage-listener-github", createdAt: row.createdAt, cancelling: false, worker: false, package: null, tools: [] })) } as T;
+      }
+      if (method === "DELETE" && path.startsWith("/api/tenants/t/workflows/runs/")) {
+        deployments.find((row) => path.endsWith(row.id))!.status = "cancelled";
+        return undefined as T;
+      }
+      throw new Error(`Unexpected ${method} ${path}`);
+    }
+    return { fetch: json } as unknown as Transport;
+  }
+  return { deployments, transportFor };
+}
+
+test("two Deployers upgrading at once leave exactly one listener live", async () => {
+  const hub = sharedHub();
+  function published(who: string) {
+    return async () => [{ workflow: "triage-listener-github", assetId: `ast_${who}`, commitSha: who }];
+  }
+  const settled = await Promise.allSettled([
+    upgradeTriage(hub.transportFor("a"), { tenantId: "t", principalId: "prn_a" }, ["github"], () => {}, published("a")),
+    upgradeTriage(hub.transportFor("b"), { tenantId: "t", principalId: "prn_b" }, ["github"], () => {}, published("b")),
+  ]);
+  expect(settled.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+  expect(hub.deployments.filter((row) => row.status === "deployed")).toHaveLength(1);
+});
