@@ -544,8 +544,8 @@ incomplete. A repository with no config is not linted. A lint that fails is
 Each request carries `diffHash`, a SHA-256 of the full diff, `index` lines
 included, so a base change to a file the diff touches, or a binary change,
 changes it. A diff with no `index` line, as GitHub's rebuilt from the file
-list, is sent unhashed. The hash lives in the run log, so carrying over works
-after a restart: a new head whose diff hashes the same as the newest review's,
+list, is sent unhashed. A manager's code review reports the hash with its
+review, so carrying over works after a restart: a new head whose diff hashes the same as the newest review's,
 when that review finished, is not mailed but takes the review over (`carries`
 in `code-review-runs.ts`). `GET …/code-review` with `head` answers `carriedTo`,
 reading that head's diff once; a failed read is not retried for five minutes.
@@ -560,13 +560,16 @@ comment with the rest. Each comment's first line is a link-reference marker
 naming the head (and the finding's index), so a send that failed part-way posts
 only what is missing, and none once the summary stands on either head.
 
-A pull request's reviews are read from the run logs. A failed run's reason is
-a fixed sentence for why its first step that failed for good did
-(`failureReason` in `pr-code-review`); the run log keeps the error itself.
+A pull request's latest review (`GET …/code-review`, `code-review-runs.ts`)
+is read from `manager_state`: the newest of the code reviews its claim still
+waits on, shown as running, those the manager gave up on, such as one past its
+deadline, and the results its code reviews reported through the
+reviewer-result route that a pass took or that name a reviewer of the claim. A
+review that did not finish shows as failed; its run log keeps the error.
 
 Sending a review to GitHub is a person's write through
 `POST /api/integrations/github-actions/{tenantId}` (`action: "code-review"`,
-the Comment grant): the hub reads the newest finished review from the run logs
+the Comment grant): the hub reads the newest finished review the same way
 and posts it as one `COMMENT` review pinned to its head. The review's marker
 and `commit_id` are its effect id, so the App's marked review of that head is
 found before anything is written.

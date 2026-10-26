@@ -10,6 +10,7 @@ const ReviewMail = type({
   tenantId: "string > 0",
   number: "number.integer > 0",
   checkout: { source: type.enumerated(...REPO_SOURCES), repo: "string > 0", sha: "string > 0" },
+  "diffHash?": "string > 0",
   reply: { to: "string > 0", content: "string > 0" },
 });
 
@@ -38,9 +39,9 @@ const NOT_FINISHED = "the review did not finish";
 export async function report(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ recorded: boolean; mail: MailInput }> {
   const parsed = ReportInput(input);
   if (parsed instanceof type.errors) throw new Error(`report: ${parsed.summary}`);
-  const { tenantId, number, checkout, reply } = reviewMailOf(parsed.payload).mail;
+  const { tenantId, number, checkout, diffHash, reply } = reviewMailOf(parsed.payload).mail;
   const review = CodeReviewOutput(parsed.review?.output);
-  const outcome = review instanceof type.errors ? { failed: NOT_FINISHED } : { result: review };
+  const outcome = review instanceof type.errors ? { failed: NOT_FINISHED } : { result: review, ...(diffHash && { diffHash }) };
   const result = { source: checkout.source, repo: checkout.repo, number, kind: "code-review", head: checkout.sha, ...outcome };
   const { recorded } = answered(await callHub(ctx, "report", tenantPath(tenantId, "/manager/reviewer-result"), "POST", result), "report", Recorded);
   return { recorded, mail: { tenantId, ...reply } };

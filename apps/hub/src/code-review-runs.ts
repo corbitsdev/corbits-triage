@@ -1,23 +1,15 @@
-// A pull request's latest code review, read from the committed run logs of its host's pr-code-review deployments; no
-// table holds reviews. A head whose diff is the one the latest review read, as after a rebase that changed no line of
-// it, takes that review over instead of being reviewed again.
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+// A pull request's latest code review, as its manager recorded it: one still out, what one reported, or one the manager
+// gave up on. A head whose diff is the one the latest review read, as after a rebase that changed no line of it, takes
+// that review over instead of being reviewed again.
+import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
-import { formatRunAddress } from "@intx/types";
-import { classifyTerminalEvent, WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
-import { failureReason } from "@corbits/pr-code-review/failures";
-import { CodeReviewComment, CodeReviewOutput, DiffCut, REPO_SOURCES, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
+import { CodeReviewComment, DiffCut, REPO_SOURCES, repoSourceOf, StageResult, type RepoSource } from "@corbits/triage-contracts";
 import { diffHash, type PullRequestToReview } from "./code-review-feed.js";
-import { CODE_REVIEW_WORKFLOWS } from "./github/source-workflow.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
-import { inlineOutput } from "./github/triage-runs.js";
 import type { Member } from "./integrations/app.js";
+import { codeReviews, type CodeReviewRecord } from "./manager-state.js";
 
-/** How many of a workspace's newest code review runs are looked through for a pull request's latest. */
-const RECENT_RUNS = 200;
-/** Finished runs read once and kept, as their logs never change again. */
-const KEPT_RUNS = 2_000;
 /** Heads compared with the review before them; only a comparison made is kept, never a read that failed. */
 const KEPT_CARRIES = 2_000;
 /** A head whose diff could not be read is not read again for the portal sooner than this. */
@@ -38,8 +30,7 @@ const CompletedRun = type({
   "cut?": DiffCut,
   "diffHash?": "string",
 });
-/** A failed run's `reason` says in fixed words why it failed; the run log keeps the detail. */
-const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string", "reason?": "string" });
+const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string" });
 export type CompletedReview = typeof CompletedRun.infer;
 /**
  * The pull request's newest review, and its newest finished one, which is the same unless a newer one is running or
@@ -48,47 +39,23 @@ export type CompletedReview = typeof CompletedRun.infer;
 export const CodeReviewFound = type({ review: ReviewRun.or("null"), completed: CompletedRun.or("null"), carriedTo: "string | null" });
 type Found = Omit<typeof CodeReviewFound.infer, "carriedTo">;
 
-type Run = { source: RepoSource; repo: string; number: number; review: typeof ReviewRun.infer };
+type Review = typeof ReviewRun.infer;
 
-const REQUEST = type({ kind: "'code-review'", number: "number", checkout: { source: Source, repo: "string", sha: "string" }, "cut?": DiffCut, "diffHash?": "string" });
-
-function isTerminal(event: WorkflowRunEvent): boolean {
-  return classifyTerminalEvent(event.type).terminal;
-}
-
-/** The run's request and outcome; undefined for a run that names no pull request, such as one an eval started. */
-function runOf(events: readonly WorkflowRunEvent[], status: string, createdAt: Date): Run | undefined {
-  const started = events.find((event) => event.type === "RunStarted");
-  const request = REQUEST(triggerRequestOf((started?.body["trigger"] as { payload?: unknown } | undefined)?.payload));
-  if (request instanceof type.errors) return undefined;
-  const run = { source: request.checkout.source, repo: request.checkout.repo, number: request.number };
-  const base = { headSha: request.checkout.sha, startedAt: createdAt.toISOString() };
-  const output = CodeReviewOutput(inlineOutput(events.findLast((event) => event.type === "StepCompleted" && event.body["stepId"] === "review")));
-  if (!(output instanceof type.errors)) {
-    const comments = output.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
-    return { ...run, review: { ...base, status: "completed", summary: output.summary, comments, budgetExhausted: output.budgetExhausted, ...(output.cut && { cut: output.cut }), ...(request.diffHash && { diffHash: request.diffHash }) } };
-  }
-  const ended = !schema.isLiveWorkflowRunStatus(status) || events.some(isTerminal);
-  if (!ended) return { ...run, review: { ...base, status: "running" } };
-  const reason = reasonOf(events);
-  return { ...run, review: { ...base, status: "failed", ...(reason && { reason }) } };
-}
-
-const StepFailed = type({ stepId: "string", error: { message: "string" }, retriesExhausted: "true" });
-
-/** Why the first step that failed for good did; the steps after it fail only for want of its output. */
-function reasonOf(events: readonly WorkflowRunEvent[]): string | undefined {
-  for (const event of events) {
-    if (event.type !== "StepFailed") continue;
-    const failed = StepFailed(event.body);
-    if (!(failed instanceof type.errors)) return failureReason(failed.stepId, failed.error.message);
-  }
-  return undefined;
+/** A code review as the portal shows it. */
+function reviewOf(record: CodeReviewRecord): Review {
+  const base = { headSha: record.head, startedAt: record.at };
+  if (record.state === "running") return { ...base, status: "running" };
+  if (record.state === "failed") return { ...base, status: "failed" };
+  const reported = StageResult.assert({ ...record.payload, head: record.head });
+  if ("failed" in reported) return { ...base, status: "failed" };
+  if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
+  const { summary, budgetExhausted, cut } = reported.result;
+  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
+  return { ...base, status: "completed", summary, comments, budgetExhausted, ...(cut && { cut }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 
 type CodeReviewRunsDeps = {
   db: DB["db"];
-  runReader: Pick<WorkflowRunReader, "readRunEvents">;
   read: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -106,33 +73,11 @@ function carriable({ review, completed }: Found, headSha: string): CompletedRevi
 }
 
 export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
-  const finished = new Map<string, Run | undefined>();
   const compared = new Map<string, boolean>();
   const unread = new Map<string, number>();
 
   function comparedKey(tenantId: string, source: RepoSource, repo: string, number: number, from: string, to: string): string {
     return `${tenantId}\n${source}\n${repo}\n${number}\n${from}\n${to}`;
-  }
-
-  async function recentRuns(tenantId: string) {
-    const { workflowRun, workflowDefinition } = schema;
-    return deps.db
-      .select({ id: workflowRun.id, anchorRunId: workflowRun.anchorRunId, status: workflowRun.status, createdAt: workflowRun.createdAt })
-      .from(workflowRun)
-      .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
-      .where(and(eq(workflowRun.tenantId, tenantId), inArray(workflowDefinition.name, CODE_REVIEW_WORKFLOWS.map((workflow) => workflow.id)), ne(workflowRun.id, workflowRun.anchorRunId)))
-      .orderBy(desc(workflowRun.createdAt), desc(workflowRun.id))
-      .limit(RECENT_RUNS);
-  }
-
-  async function readRun(row: { id: string; anchorRunId: string; status: string; createdAt: Date }, domain: string): Promise<Run | undefined> {
-    if (finished.has(row.id)) return finished.get(row.id);
-    const repoId = workflowRunRepoIdForAddress(formatRunAddress(row.anchorRunId, domain));
-    const events = await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, row.id);
-    const run = runOf(events, row.status, row.createdAt);
-    // Only a log that has ended is kept: one whose status is ahead of its log is read again.
-    if (events.some(isTerminal)) keep(finished, row.id, run, KEPT_RUNS);
-    return run;
   }
 
   async function tenantOf(tenantId: string) {
@@ -141,16 +86,9 @@ export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
     return tenant;
   }
 
-  async function reviewsOf(tenantId: string, domain: string, source: RepoSource, repo: string, number: number): Promise<Found> {
-    let review: Run["review"] | null = null;
-    for (const row of await recentRuns(tenantId)) {
-      if (row.anchorRunId === null) continue;
-      const run = await readRun({ ...row, anchorRunId: row.anchorRunId }, domain);
-      if (!run || run.source !== source || run.repo !== repo || run.number !== number) continue;
-      review ??= run.review;
-      if (run.review.status === "completed") return { review, completed: run.review };
-    }
-    return { review, completed: null };
+  async function reviewsOf(tenantId: string, source: RepoSource, repo: string, number: number): Promise<Found> {
+    const reviews = (await codeReviews(deps.db, tenantId, { source, repo, number })).map(reviewOf);
+    return { review: reviews[0] ?? null, completed: reviews.find((review) => review.status === "completed") ?? null };
   }
 
   function sameDiff(tenantId: string, record: RepoRecord, number: number, completed: CompletedReview, head: Pick<PullRequestToReview, "headSha" | "diff">): boolean {
@@ -190,15 +128,14 @@ export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
 
   async function latest(tenantId: string, query: typeof CodeReviewQuery.infer): Promise<typeof CodeReviewFound.infer> {
     const tenant = await tenantOf(tenantId);
-    const reviews = await reviewsOf(tenantId, tenant.domain, repoSourceOf(query.source), query.repo, query.number);
+    const reviews = await reviewsOf(tenantId, repoSourceOf(query.source), query.repo, query.number);
     return { ...reviews, carriedTo: await carriedTo(tenantId, tenant.config, query, reviews) };
   }
 
   /** Whether `pull`'s head takes the newest review over rather than being reviewed; false when that can't be told. */
   async function carries(tenantId: string, record: RepoRecord, number: number, pull: PullRequestToReview): Promise<boolean> {
     try {
-      const { domain } = await tenantOf(tenantId);
-      const completed = carriable(await reviewsOf(tenantId, domain, sourceOf(record), record.name, number), pull.headSha);
+      const completed = carriable(await reviewsOf(tenantId, sourceOf(record), record.name, number), pull.headSha);
       return completed !== undefined && sameDiff(tenantId, record, number, completed, pull);
     } catch (err) {
       deps.log({ level: "warn", msg: "code_review_carry_unread", tenantId, repo: record.name, pr: number, error: String(err) });

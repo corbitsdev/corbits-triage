@@ -6,6 +6,7 @@ import { and, desc, eq, inArray, isNull, like, sql } from "drizzle-orm";
 import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
+import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployment, type LiveDeployment } from "./github/deployment.js";
@@ -260,6 +261,46 @@ async function newestRequest(tx: Tx, tenantId: string, pr: PullRequestRef, head?
     .orderBy(desc(sql`${managerState.state}->>'receivedAt'`), desc(managerState.key))
     .limit(1);
   return row && eventOf(row.key, row.state).payload;
+}
+
+/** A code review the pull request's manager deployed: still out, what it reported, or that the manager gave up on it. */
+export type CodeReviewRecord = { runId: string; head: string; at: string } & ({ state: "running" } | { state: "reported"; payload: Record<string, unknown> } | { state: "failed"; failed: string });
+
+/**
+ * The pull request's code reviews, newest first: each result a reviewer reported that a pass took or that names a
+ * reviewer of the claim, and each reviewer the claim records without one, running until its deadline or failed as the
+ * manager recorded it.
+ */
+export async function codeReviews(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<CodeReviewRecord[]> {
+  const key = claimKey(pr);
+  const [row] = await db.select({ state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), eq(managerState.key, key), eq(managerState.kind, "claim")));
+  if (!row) return [];
+  const claim = claimOf(key, row.state);
+  const reviewers = claim.reviewers.filter((reviewer) => reviewer.kind === "code-review");
+  const taken = new Set([...claim.history.flatMap((pass) => pass.events), ...(claim.pass ? claim.pass.events : [])]);
+  const named = new Set(reviewers.map((reviewer) => reviewer.runId));
+  const prefix = eventKey(pr, "");
+  const events = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${eventPrefix(pr)}%`), sql`${managerState.state}->>'type' = 'reviewer-result'`, sql`${managerState.state}->'payload'->>'kind' = 'code-review'`));
+  const results = eventsOf(events).filter((result) => taken.has(result.key) || named.has(result.key.slice(prefix.length)));
+  const records: CodeReviewRecord[] = results.map((result) => ({ runId: result.key.slice(prefix.length), head: result.event.head, at: result.event.receivedAt, state: "reported", payload: result.event.payload }));
+  const reported = new Set(records.map((record) => record.runId));
+  const pending = reviewers.filter((reviewer) => !reported.has(reviewer.runId));
+  if (pending.length > 0) {
+    const runs = await db.select({ id: schema.workflowRun.id, createdAt: schema.workflowRun.createdAt }).from(schema.workflowRun)
+      .where(inArray(schema.workflowRun.id, pending.map((reviewer) => reviewer.runId)));
+    for (const reviewer of pending) {
+      // A reviewer's run outlives its claim record; one the store no longer holds has nothing to show.
+      const run = runs.find((candidate) => candidate.id === reviewer.runId);
+      if (!run) continue;
+      const failed = asRecord(reviewer.result)?.["failed"];
+      const base = { runId: reviewer.runId, head: reviewer.head, at: run.createdAt.toISOString() };
+      if (typeof failed === "string") records.push({ ...base, state: "failed", failed });
+      else if (reviewer.result === undefined && claim.status === "live" && Date.parse(reviewer.deadline) > Date.now()) records.push({ ...base, state: "running" });
+    }
+  }
+  return records.sort((a, b) => b.at.localeCompare(a.at));
 }
 
 /**
