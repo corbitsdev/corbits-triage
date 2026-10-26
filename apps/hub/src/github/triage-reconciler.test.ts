@@ -5,7 +5,7 @@ import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type ActionKind, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import type { CheckRun } from "@corbits/github-reads";
-import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
+import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 import { createRunTriggerDeliverer } from "@corbits/webhooks";
@@ -189,6 +189,8 @@ type HarnessOptions = {
   now?: () => Date;
   deployments?: LiveDeployment[];
   listener?: LiveDeployment;
+  /** The managers' runs by head, read on each pass. */
+  managed?: () => Record<string, ObservedRun[]>;
   whileRedeploying?: (deployments: LiveDeployment[]) => void;
   rotation?: RotationRecord;
   sameSource?: boolean;
@@ -297,7 +299,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     },
     activity: options.activity ?? { stale: () => true },
     observeTenant: observer.observe,
-    managerRuns: async () => ({ byRepo: new Map(), runCount: 0, verdicts: [], approved: [] }),
+    managerRuns: async () => ({ byRepo: new Map(options.managed ? [[REPO, new Map(Object.entries(options.managed()))]] : []), runCount: 0, verdicts: [], approved: [] }),
     headChecks: async () => options.headChecks ?? [],
     verdicts: { latest: async () => options.recorded ?? [] },
     store: store(),
@@ -353,6 +355,19 @@ describe("triage reconciler", () => {
     const listener = { runId: "run_listener", address: formatRunAddress("run_listener", DOMAIN), createdAt: new Date(LONG_AGO), cancelling: false };
     const run = harness({}, [head(1)], { deployments: [], listener });
     await run.reconcile();
+    expect(mailedNumbers(run.delivered)).toEqual([1]);
+  });
+
+  test("a head mailed through the listener is mailed once while its manager runs and once it reported", async () => {
+    const listener = { runId: "run_listener", address: formatRunAddress("run_listener", DOMAIN), createdAt: new Date(LONG_AGO), cancelling: false };
+    let minutes = 0;
+    let managed: Record<string, ObservedRun[]> = {};
+    const run = harness({}, [head(1)], { deployments: [], listener, now: () => at(minutes), managed: () => managed });
+    await run.reconcile();
+    managed = { [runKey(1, "sha1")]: [{ runId: "run_manager", source: "github", status: "running", startedAt: at(1).toISOString() }] };
+    for (minutes = 1; minutes <= 3; minutes++) await run.reconcile();
+    managed = { [runKey(1, "sha1")]: [{ runId: "run_manager", source: "github", status: "completed", startedAt: at(1).toISOString() }] };
+    for (minutes = 4; minutes <= 60; minutes += 14) await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
   });
 
