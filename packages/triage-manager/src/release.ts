@@ -15,11 +15,12 @@ export type Release = typeof Release.infer;
 /** What each host's listener and manager deploy: the portal writes `release.json` into each published tree; a source run has none. */
 const Published = type({ "[string]": { "manager?": Release, "codeReview?": Release } });
 
-/** The creator-sourced grants to deploy the published workflow: create a deployment, and read exactly its asset. */
+/** The creator-sourced grants to deploy the published workflow: create a deployment, read exactly its asset, and read the run it starts. */
 export function deployGrants({ workflow }: Release) {
   return [
     { resource: "workflow:*", action: "create", source: "creator" as const },
     { resource: `asset:${workflow.assetId}`, action: "read", source: "creator" as const },
+    { resource: "workflow-run:*", action: "read", source: "creator" as const },
   ];
 }
 

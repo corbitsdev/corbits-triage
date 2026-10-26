@@ -20,6 +20,7 @@ const PUBLISH_AND_CHAIN = [
   [MANAGER_STATE_RESOURCE, MANAGER_STATE_ACTION],
   [MANAGER_RESULT_RESOURCE, MANAGER_RESULT_ACTION],
   ["workflow-run:run_manager", "manage"],
+  ["workflow-run:run_manager", "read"],
 ] as const;
 
 test("PostgreSQL: an admin publishes and deploys the chain only once given the Deployer role, pushing only to assets it granted itself, and every connected workspace gets the role once", async () => {
@@ -57,8 +58,8 @@ test("PostgreSQL: an admin publishes and deploys the chain only once given the D
         return (await authorize(grants, principalId, TENANT, resource, action, { conditions: HUB_CONDITION_REGISTRY })).effect === "allow";
       }));
     }
-    expect(await allowed("prn_deployer")).toEqual([true, true, true, true, true, true, true]);
-    expect(await allowed("prn_admin")).toEqual([true, true, true, true, false, true, true]);
+    expect(await allowed("prn_deployer")).toEqual([true, true, true, true, true, true, true, true]);
+    expect(await allowed("prn_admin")).toEqual([true, true, true, true, false, true, true, true]);
     expect((await authorize(grants, "prn_deployer", TENANT, "asset:ast_theirs", "write", { conditions: HUB_CONDITION_REGISTRY })).effect).not.toBe("allow");
   } finally {
     await handle?.close();
