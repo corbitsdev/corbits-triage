@@ -329,6 +329,7 @@ const toListener = createManagerIntake({
     return read(record);
   },
   deliver: deliverToDeployment,
+  log: logJson,
 });
 mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, now });
 async function tenantDomain(tenantId: string): Promise<string> {

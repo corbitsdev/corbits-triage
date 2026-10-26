@@ -38,19 +38,21 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
   }
 }
 
-function stack(db: Db, listener: string | undefined) {
+function stack(db: Db, listener: string | undefined, pull = PULL) {
   const mailed: { address: string; payload: unknown }[] = [];
+  const logged: Record<string, unknown>[] = [];
   const toListener = createManagerIntake({
     db,
     listener: async () => listener,
-    readPull: async () => PULL,
+    readPull: async () => pull,
     openHeads: async () => [{ number: 7, headSha: "h1", draft: false }, { number: 9, headSha: "h9", draft: true }],
     withAppLogin: async (_tenantId, payload) => ({ ...payload, appLogin: "triage[bot]" }),
     async deliver(_tenantId, address, payload) {
       mailed.push({ address, payload });
     },
+    log: (entry) => logged.push(entry),
   });
-  return { toListener, mailed };
+  return { toListener, mailed, logged };
 }
 
 async function events(db: Db): Promise<{ key: string; state: { head: string; payload: Record<string, unknown> } }[]> {
@@ -138,5 +140,16 @@ test("PostgreSQL: with code review on, the recorded mail carries the head's revi
     expect(await toListener(TENANT, { ...mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h1" }), codeReview: { on: true } })).toBe(true);
     const [row] = await events(db);
     expect(row!.state.payload).toMatchObject({ codeReviewRequest: { kind: "code-review", number: 7, title: PULL.title, checkout: { source: "github", repo: RECORD.name, sha: "h1" } } });
+  });
+}, 60_000);
+
+test("PostgreSQL: with code review on, a head that moved before intake is recorded as mailed, without a review request, and logged", async () => {
+  await withDatabase(async function moved(db) {
+    const { toListener, logged } = stack(db, LISTENER, { ...PULL, headSha: "h2" });
+    expect(await toListener(TENANT, { ...mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h1" }), codeReview: { on: true } })).toBe(true);
+    const [row] = await events(db);
+    expect(row!.state.head).toBe("h1");
+    expect(row!.state.payload).not.toHaveProperty("codeReviewRequest");
+    expect(logged).toEqual([expect.objectContaining({ msg: "code_review_head_moved", pr: 7, headSha: "h1", hostHeadSha: "h2" })]);
   });
 }, 60_000);
