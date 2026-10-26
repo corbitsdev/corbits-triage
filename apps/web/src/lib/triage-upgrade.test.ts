@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Transport } from "@intx/hub-client";
-import { upgradeTriage, type UpgradeStep } from "./triage-upgrade.ts";
+import { restartListener, upgradeTriage, type UpgradeStep } from "./triage-upgrade.ts";
 import type { PublishedSource } from "./workflow-sources.ts";
 
 const PUBLISHER = { tenantId: "t", principalId: "prn_deployer" };
@@ -41,7 +41,7 @@ function fakeHub() {
     }
     if (path === "/api/tenants/t/workflows/deployments") return deployments as T;
     if (path === "/api/integrations/workflow-versions/t") {
-      return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: workflows[row.id], createdAt: row.createdAt, cancelling: false, live: true, worker: false, package: null, tools: [] })) } as T;
+      return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: workflows[row.id], createdAt: row.createdAt, cancelling: false, live: true, worker: false, package: null, tools: [], source: { assetId: row.definitionAssetId, commitSha: `c_${row.id}` } })) } as T;
     }
     if (method === "DELETE" && path.startsWith("/api/tenants/t/workflows/runs/")) {
       deployments.find((row) => path.endsWith(row.id))!.status = "cancelled";
@@ -73,6 +73,19 @@ test("an upgrade deploys the listener from its published source, then stops the 
   ]);
 });
 
+test("restarting a host's listener after a credential is replaced deploys its newest listener again from the same source and stops the older ones", async () => {
+  const hub = fakeHub();
+  await restartListener(hub.transport, "t", "github");
+  expect(hub.requests.find((row) => row.method === "POST")?.body).toMatchObject({
+    source: { kind: "asset", assetId: "ast_other_listener", package: { format: "source", commitSha: "c_run_other", packageName: "@corbits/triage-listener-github-workflow" } },
+  });
+  expect(hub.requests.filter((row) => row.method === "DELETE").map((row) => row.path)).toEqual(expect.arrayContaining([
+    "/api/tenants/t/workflows/runs/run_owner",
+    "/api/tenants/t/workflows/runs/run_other",
+  ]));
+  expect(hub.requests.some((row) => row.path.endsWith("run_manager") || row.path.endsWith("run_bitbucket"))).toBe(false);
+});
+
 type Row = { id: string; tenantId: string; definitionAssetId: string; status: string; createdAt: string };
 
 function sharedHub() {
@@ -91,7 +104,7 @@ function sharedHub() {
       }
       if (path === "/api/tenants/t/workflows/deployments") return deployments.map((row) => ({ ...row })) as T;
       if (path === "/api/integrations/workflow-versions/t") {
-        return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: "triage-listener-github", createdAt: row.createdAt, cancelling: false, live: true, worker: false, package: null, tools: [] })) } as T;
+        return { deployments: deployments.filter((row) => row.status === "deployed").map((row) => ({ id: row.id, workflow: "triage-listener-github", createdAt: row.createdAt, cancelling: false, live: true, worker: false, package: null, tools: [], source: null })) } as T;
       }
       if (method === "DELETE" && path.startsWith("/api/tenants/t/workflows/runs/")) {
         deployments.find((row) => path.endsWith(row.id))!.status = "cancelled";

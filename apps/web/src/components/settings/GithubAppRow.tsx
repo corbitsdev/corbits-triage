@@ -7,6 +7,7 @@ import { connectGithubApp } from "../../lib/github-manifest.ts";
 import { isActiveCredential, type HubCredential } from "../../lib/hub-api.ts";
 import { createHubTransport } from "../../lib/hub-transport.ts";
 import { usePortal } from "../../lib/portal.tsx";
+import { RestartFailed, useRestartTriage } from "./RestartFailed.tsx";
 
 type GithubAppRowProps = {
   credential: HubCredential;
@@ -32,6 +33,7 @@ async function readKey(file: File): Promise<string> {
 /** The GitHub App: a new key is sent alone, so the hub checks it with GitHub as the stored App's before saving it. */
 export function GithubAppRow({ credential, name, tenantId, replaceable, remove }: GithubAppRowProps) {
   const { readOnly, notify } = usePortal();
+  const restart = useRestartTriage("github");
   const fileId = useId();
   const [editing, setEditing] = useState(false);
   const [replaced, setReplaced] = useState(false);
@@ -47,6 +49,7 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
       setEditing(false);
       setReplaced(true);
       notify("GitHub App key replaced.");
+      restart.mutate();
     },
   });
   const removal = useMutation({
@@ -113,6 +116,7 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
         {key.error && <p role="alert" className="field-error">Could not read the private key. {errorText(key.error)}</p>}
         {replace.error && <p role="alert" className="field-error">Could not replace the {name} key. {errorText(replace.error)} Try again.</p>}
         {removal.error && <p role="alert" className="field-error">Could not remove {name}. {errorText(removal.error)} Try again.</p>}
+        <RestartFailed restart={restart} />
       </div>
       {replaceable && !editing && <Button type="button" variant="outline" size="sm" aria-label={`Replace ${name} key`} disabled={disabled} onClick={startReplacing}>Replace key</Button>}
       <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${name}`} disabled={disabled} onClick={() => removal.mutate()}>Remove</Button>

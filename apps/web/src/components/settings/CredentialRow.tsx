@@ -7,6 +7,7 @@ import { runCredentialAction, type CredentialAction } from "../../lib/credential
 import { isActiveCredential, type HubCredential } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CopyField } from "../CopyField.tsx";
+import { RestartFailed, useRestartTriage } from "./RestartFailed.tsx";
 
 type CredentialRowProps = {
   credential: HubCredential;
@@ -23,6 +24,7 @@ function confirmChange(message: string): boolean {
 
 export function CredentialRow({ credential, name, rotatable, remove }: CredentialRowProps) {
   const { replaceSecret, revoke, readOnly } = usePortal();
+  const restart = useRestartTriage("github");
   // Shown once, until dismissed: the vault never returns it.
   const [rotated, setRotated] = useState("");
   const change = useMutation({
@@ -35,6 +37,7 @@ export function CredentialRow({ credential, name, rotatable, remove }: Credentia
     onSuccess: function showRotated(secret) {
       if (secret === undefined) return;
       setRotated(secret);
+      restart.mutate();
     },
   });
 
@@ -63,6 +66,7 @@ export function CredentialRow({ credential, name, rotatable, remove }: Credentia
           </>
         )}
         {change.error && <p role="alert" className="field-error">Could not change the {name} secret. {errorText(change.error)} Try again.</p>}
+        <RestartFailed restart={restart} />
       </div>
       {rotatable && !rotated && <Button type="button" variant="outline" size="sm" aria-label={`Rotate ${name} secret`} disabled={disabled} onClick={rotate}>{change.isPending && change.variables === "rotate" ? "Rotating…" : "Rotate secret"}</Button>}
       <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${name}`} disabled={disabled} onClick={removeSecret}>Remove</Button>

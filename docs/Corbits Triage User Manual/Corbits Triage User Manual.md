@@ -536,7 +536,7 @@ The row says **Key stored** or **No key**. With no key, its form is open below i
 
 #### Rolling credentials
 
-Every secret Triage holds can be replaced from Settings without disconnecting anything. Triage uses the new value from its next pull request.
+Every secret Triage holds can be replaced from Settings without disconnecting anything. After you replace a credential, Triage restarts its listener and uses the new value; pull requests in progress finish with the old one. If the restart fails, the row says **Saved. Restarting Triage failed; try again** with a **Try again** button; the new secret is already saved.
 
 **GitHub App key.** Press **Replace key** on the GitHub App row. In your App's settings on GitHub, generate a new private key, then choose the downloaded `.pem` file and press **Save**; GitHub checks that the key belongs to the connected App before it is saved. Then delete the old key on GitHub. To switch to another App, use **Create GitHub App**.
 

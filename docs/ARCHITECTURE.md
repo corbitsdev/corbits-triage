@@ -227,14 +227,18 @@ any other tenant or an unknown sender.
   published workflow's asset, and so its definition, is named for its
   publisher and release, so the hub finds a deployment by the workflow id in
   its frozen projection (`apps/hub/src/github/deployment.ts`), and the
-  workflow-versions route reports a source deployment's package from its
+  workflow-versions route reports a source deployment's asset, commit and package from its
   closure. Onboarding runs the same upgrade once the decision model is saved,
   for an owner or Deployer. The upgrade also sets the tenant's
   `lifecycle.maxLifetime` to the longest Interchange accepts, so a listener
   lives until a newer one replaces it. A host's listener and its managers are
   released once the host is disconnected: right away when Bitbucket Data
   Center is disconnected through its route, and on the next reconcile pass
-  when the GitHub App credential is removed.
+  when the GitHub App credential is removed. A running listener keeps the
+  credentials it launched with, so after a host's credential is replaced the
+  portal deploys that host's newest listener again from the same asset
+  commit, which the workflow-versions route reports, and cancels the older
+  ones, as Upgrade does; managers and judges launch with the current value.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes
