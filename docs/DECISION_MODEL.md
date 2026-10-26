@@ -113,17 +113,8 @@ Two different numbers come out of the answers:
 
 ## Reused answers
 
-A re-check of a head the judge already answered, such as after a merge moved
-the base branch, does not ask the model again for an unchanged request. Each
-verdict keeps the answers it got, keyed by a SHA-256 of the judge's system
-prompt and the exact request (`judgeKey`, `logic/quality.ts`). The reconciler
-carries them in its catch-up mail only to a deployment on the same workflow
-version and decision-model offering, and the facts step accepts them only from
-the hub's own triage sender. Rules sends the judge only requests no carried
-answer matches; changed content or docs are asked again.
-
-Only well-formed answers clear of the unsure band are kept, up to 16 KB per
-verdict (`MAX_JUDGED_BYTES`, `actions/evaluate.ts`); the rest are asked again.
+Every pass asks the judge afresh, including a re-check of a head it already
+answered, such as after a merge moved the base branch.
 
 ## Cost per pull request
 

@@ -6,12 +6,10 @@ import {
   listDeployedWorkflows,
   listPrincipals,
   listRoles,
-  listRuns,
   type DeployedWorkflow,
   type HubApproval,
   type HubPrincipal,
   type HubRole,
-  type HubRun,
 } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import {
@@ -20,7 +18,6 @@ import {
   DEPLOYED_WORKFLOWS_QUERY_KEY,
   PRINCIPALS_QUERY_KEY,
   ROLES_QUERY_KEY,
-  RUNS_QUERY_KEY,
   usePortal,
   useSignOutWhenRejected,
 } from "./portal.tsx";
@@ -75,10 +72,6 @@ export function useApprovalsFirstLoad(): boolean {
 
 export function useApprovals(): TenantSection<HubApproval> {
   return useTenantSection(APPROVALS_QUERY_KEY, listApprovals, LIVE_REFRESH_MS);
-}
-
-export function useRuns(): TenantSection<HubRun> {
-  return useTenantSection(RUNS_QUERY_KEY, listRuns, LIVE_REFRESH_MS);
 }
 
 export function usePrincipals(): TenantSection<HubPrincipal> {

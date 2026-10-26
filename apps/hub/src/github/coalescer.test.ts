@@ -375,7 +375,7 @@ test("a paused-label head whose pull request cannot be read is left failed, and 
   expect(mails).toEqual([]);
   expect(state.rows()).toEqual([expect.objectContaining({ status: "failed", error: "delivery failed: Error: 502 Bad Gateway" })]);
   const pr = { number: 8, headSha: "sha1", updatedAt: new Date(START).toISOString(), draft: false };
-  const plan = planTenant({ repos: [{ name: REPO, prs: [pr], rows: state.rows() }], runs: new Map(), now: new Date(START + DEFAULT_RECONCILE_POLICY.backoffMaxMs), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined });
+  const plan = planTenant({ repos: [{ name: REPO, prs: [pr], rows: state.rows() }], runs: new Map(), now: new Date(START + DEFAULT_RECONCILE_POLICY.backoffMaxMs), policy: DEFAULT_RECONCILE_POLICY });
   expect(plan.get(REPO)?.enqueue.map((entry) => entry.number)).toEqual([8]);
 });
 

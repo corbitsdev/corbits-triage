@@ -18,8 +18,6 @@ import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
 import type { RepoActivity } from "./repo-activity.js";
 import type { LiveDeployment } from "./deployment.js";
 import type { ManagerRuns } from "./manager-runs.js";
-import { mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
-import type { TenantObserver } from "./tenant-observer.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
@@ -41,10 +39,8 @@ export type TriageReconcilerDeps = {
    * finishes and for a completed check run whose event was lost or not delivered.
    */
   headChecks: HeadChecksReader;
-  /** Recorded verdicts, so a head is polled whichever deployment's run, live or released since, gave its verdict. */
+  /** Recorded verdicts, whose CI a settled head is polled for. */
   verdicts: Pick<VerdictRecordStore, "latest">;
-  /** Reads and records the live deployments' runs, shared with the recording loop. */
-  observeTenant: TenantObserver["observe"];
   /** The host's pull request managers, read from their claims and the verdicts they reported. */
   managerRuns: ManagerRuns;
   store: TriageStateStore;
@@ -56,7 +52,7 @@ export type TriageReconcilerDeps = {
 };
 
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
-type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
+type TenantPass = { tenantId: string; openHeads: OpenHeadsReader };
 type LoadedRepo = EnabledRepo & (StoredPack | PolicyUnreadable) & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
 
 /**
@@ -145,9 +141,9 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     return prs;
   }
 
-  /** The newest verdict on the head, from the live logs or as recorded, since the run that gave it may be on a released deployment. */
-  function latestVerdict(pass: TenantPass, recorded: readonly VerdictRecord[], repo: string, row: PrTriageRow) {
-    return [...pass.runs.verdicts, ...recorded].filter((verdict) => verdict.repo === repo && verdict.number === row.number && verdict.headSha === row.headSha).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
+  /** The newest verdict recorded on the head. */
+  function latestVerdict(recorded: readonly VerdictRecord[], repo: string, row: PrTriageRow) {
+    return recorded.filter((verdict) => verdict.repo === repo && verdict.number === row.number && verdict.headSha === row.headSha).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
   }
 
   /** Queues a settled head whose CI the verdict waited on once its build statuses are no longer pending. */
@@ -158,7 +154,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const recorded = (await deps.verdicts.latest(pass.tenantId, triaged.map((row) => ({ repo: name, number: row.number })))).filter((verdict) => verdict.source === deps.source);
     for (const row of triaged) {
       const key = `${pass.tenantId}\n${name}\n${runKey(row.number, row.headSha)}`;
-      const verdict = latestVerdict(pass, recorded, name, row);
+      const verdict = latestVerdict(recorded, name, row);
       if (!verdict || !waitsOnCi(verdict)) {
         buildPolls.delete(key);
         continue;
@@ -280,7 +276,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     for (const queued of claimed.enqueue) {
       const headSha = headShaOf(queued);
       const extra = queued.events === undefined
-        ? { items: [{ prNumber: queued.number, headSha, ...(queued.judged && { judged: queued.judged }) }] }
+        ? { items: [{ prNumber: queued.number, headSha }] }
         : { prNumber: queued.number, headSha, events: queued.events };
       const mailed = { ...extra, ...(queued.noWait && { noWait: true }) };
       const payload = "pack" in repo ? mailPayload(repo.record, repo.policy, repo, mailed) : unreadablePayload(repo.record, repo.policy, repo, mailed);
@@ -305,8 +301,6 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_listener" });
       return false;
     }
-    // Only live deployments' and recent workers' logs are read; heads triaged under a released one stay settled in the stored state.
-    const { observed, workers } = await deps.observeTenant(tenant.id, tenant.domain);
     let openHeads: OpenHeadsReader | undefined;
     try {
       openHeads = await deps.openHeadsFor(tenant.id);
@@ -319,8 +313,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_source_credential" });
       return false;
     }
-    const runs = mergeObservedRuns([...observed, ...workers]);
-    const pass: TenantPass = { tenantId: tenant.id, deployment: listener, openHeads, runs };
+    const pass: TenantPass = { tenantId: tenant.id, openHeads };
     const loaded: LoadedRepo[] = [];
     let failed = false;
     for (const repo of repos) {
@@ -332,14 +325,12 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       }
     }
     const pulls = loaded.flatMap((repo) => repo.prs.map((pr) => ({ source: deps.source, repo: repo.record.name, number: pr.number })));
-    const managed = await deps.managerRuns(tenant.id, pulls, pass.deployment.workflowVersion);
+    const managed = await deps.managerRuns(tenant.id, pulls);
     const plans = planTenant({
       repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored.rows, ci: repo.ci })),
-      runs: mergeObservedRuns([pass.runs, managed]).byRepo,
+      runs: managed.byRepo,
       now: deps.now(),
       policy: deps.policy,
-      workflowVersion: pass.deployment.workflowVersion,
-      offeringId: pass.deployment.offeringId,
     });
     for (const repo of loaded) {
       try {

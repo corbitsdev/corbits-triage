@@ -9,23 +9,18 @@ function persistedKeys(client: QueryClient): unknown[] {
   return dehydrate(client, { shouldDehydrateQuery: isPersistedQuery }).queries.map((query) => query.queryKey);
 }
 
-test("the open set, its verdicts and finished logs are kept; running logs and other reads are not", () => {
+test("the open set, its verdicts and what the inbox handled are kept; other reads are not", () => {
   const client = new QueryClient();
   client.setQueryData(["open-pulls", "t1"], OPEN);
   client.setQueryData(["triage-verdicts", "t1"], { pulls: [], triaged: [] });
-  client.setQueryData(["run-ids", "t1", "a"], []);
-  client.setQueryData(["run-log", "t1", "a", "done"], { runId: "done", anchorRunId: "a", events: [{ type: "RunCompleted" }] });
-  client.setQueryData(["run-log", "t1", "a", "live"], { runId: "live", anchorRunId: "a", events: [{ type: "RunStarted" }] });
   client.setQueryData(["handled-pulls", "t1"], {});
   client.setQueryData(["hidden-dos", "t1"], []);
   client.setQueryData(["approvals", "t1"], []);
-  client.setQueryData(["runs", "t1"], []);
   client.getQueryCache().build(client, { queryKey: ["open-pulls", "t2"] });
 
   expect(persistedKeys(client)).toEqual([
     ["open-pulls", "t1"],
     ["triage-verdicts", "t1"],
-    ["run-log", "t1", "a", "done"],
     ["handled-pulls", "t1"],
     ["hidden-dos", "t1"],
   ]);

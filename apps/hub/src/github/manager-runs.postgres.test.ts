@@ -80,10 +80,10 @@ test("PostgreSQL: the reconciler does not mail a head again while a live manager
     const queued: PrTriageRow = { number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt };
     function plan(rows: PrTriageRow[], runs: Awaited<ReturnType<typeof managerRuns>>) {
       const ci = new Map([[runKey(8, "h1"), "pending" as const]]);
-      return planTenant({ repos: [{ name: REPO, prs: [open(7, now), open(8, now)], rows, ci }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: "1.0.0" }).get(REPO)!;
+      return planTenant({ repos: [{ name: REPO, prs: [open(7, now), open(8, now)], rows, ci }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY }).get(REPO)!;
     }
 
-    const running = plan([queued], await managerRuns(TENANT, [pr7, pr8], "1.0.0"));
+    const running = plan([queued], await managerRuns(TENANT, [pr7, pr8]));
     expect(running.rows.find((row) => row.number === 7)).toMatchObject({ status: "running", runId: "run_triaged" });
     expect(running.enqueue.map((queuedPr) => queuedPr.number)).not.toContain(7);
 
@@ -92,9 +92,9 @@ test("PostgreSQL: the reconciler does not mail a head again while a live manager
     await take(db, TENANT, held, "run_held");
     await done(db, TENANT, held, "run_held", [], { head: "h1", waiting: true });
     const firstSeenAt = new Date(now.getTime() - MINUTE).toISOString();
-    const fresh: PrTriageRow = { number: 8, headSha: "h1", status: "new", attempts: 0, workflowVersion: "1.0.0", firstSeenAt, updatedAt: firstSeenAt };
+    const fresh: PrTriageRow = { number: 8, headSha: "h1", status: "new", attempts: 0, firstSeenAt, updatedAt: firstSeenAt };
 
-    const settled = plan([...running.rows.filter((row) => row.number === 7), fresh], await managerRuns(TENANT, [pr7, pr8], "1.0.0"));
+    const settled = plan([...running.rows.filter((row) => row.number === 7), fresh], await managerRuns(TENANT, [pr7, pr8]));
     expect(settled.rows).toEqual([expect.objectContaining({ number: 7, status: "triaged", runId: "run_triaged" }), expect.objectContaining({ number: 8, status: "waiting", runId: "run_held" })]);
     expect(settled.enqueue).toEqual([]);
   });
@@ -111,8 +111,8 @@ test("PostgreSQL: on the listener path a head is mailed once while its manager r
     let mails = 0;
     async function reconcile(afterMs: number): Promise<PrTriageRow> {
       now = new Date(start.getTime() + afterMs);
-      const runs = await managerRuns(TENANT, [pr], undefined);
-      const plan = planTenant({ repos: [{ name: REPO, prs: [open(7, start)], rows }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined }).get(REPO)!;
+      const runs = await managerRuns(TENANT, [pr]);
+      const plan = planTenant({ repos: [{ name: REPO, prs: [open(7, start)], rows }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY }).get(REPO)!;
       rows = plan.rows;
       mails += plan.enqueue.length;
       return rows[0]!;
@@ -143,11 +143,11 @@ test("PostgreSQL: a manager that went away mid-pass fails its pass's head, so th
     await take(db, TENANT, pr7, "run_gone");
     await db.update(schema.workflowRun).set({ status: "failed" }).where(sql`${schema.workflowRun.id} = 'run_gone'`);
 
-    const runs = await managerRuns(TENANT, [pr7], undefined);
+    const runs = await managerRuns(TENANT, [pr7]);
     expect(runs.byRepo.get(REPO)?.get(runKey(7, "h1"))).toEqual([expect.objectContaining({ runId: "run_gone", status: "failed" })]);
     const queuedAt = new Date(now.getTime() - MINUTE).toISOString();
     const queued: PrTriageRow = { number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt };
-    const plan = planTenant({ repos: [{ name: REPO, prs: [open(7, now)], rows: [queued] }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined }).get(REPO)!;
+    const plan = planTenant({ repos: [{ name: REPO, prs: [open(7, now)], rows: [queued] }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY }).get(REPO)!;
     expect(plan.rows).toEqual([expect.objectContaining({ status: "failed", runId: "run_gone", error: "run failed" })]);
     expect(plan.enqueue).toEqual([]);
   });

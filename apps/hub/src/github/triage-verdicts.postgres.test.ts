@@ -12,7 +12,7 @@ import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/records.js";
 import { createGithubOpenPulls, createOpenPullsCache, GITHUB_OPEN_PULLS_PATH, type RepoPulls } from "./open-pulls.js";
 import type { RepoRecord } from "./tenant-config.js";
 import type { ObservedRun } from "./reconcile-plan.js";
-import { createTenantVersions, type TenantObservation } from "./tenant-observer.js";
+import type { ObservedRuns } from "./manager-runs.js";
 import { createTriageVerdicts } from "./triage-verdicts.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
@@ -47,22 +47,19 @@ function live(runId: string, status: ObservedRun["status"], startedAt: Date, tri
   return { runId, source: "github", status, startedAt: startedAt.toISOString(), ...(trigger !== undefined && { trigger }) };
 }
 
-/** The live deployment's runs: #8's newest run failed after its verdict, #9 and #10 are still running and #6's run failed early; #7 has no run, but waits for CI. */
-const OBSERVATION: TenantObservation = {
-  deployments: [{ runId: "run_anchor", address: "pr-triage@verdicts.test", createdAt: minutes(-600), cancelling: false }],
-  observed: [{
-    byRepo: new Map([[REPO, new Map([
-      ["8@sha_run_3", [live("run_3", "failed", minutes(9))]],
-      ["9@sha9", [live("run_9", "running", minutes(-5), "pull_request:synchronize")]],
-      ["10@sha10", [live("run_10", "running", minutes(-120))]],
-      ["6@sha6", [live("run_6", "failed", minutes(-3))]],
-    ])]]),
-    runCount: 4,
-    verdicts: [],
-    approved: [],
-  }],
-  workers: [],
-};
+function observed(byHead: Array<[string, ObservedRun[]]>): ObservedRuns {
+  return { byRepo: new Map([[REPO, new Map(byHead)]]) };
+}
+
+const NO_RUNS: ObservedRuns = { byRepo: new Map() };
+
+/** The managers' runs: #8's newest run failed after its verdict, #9 and #10 are still running and #6's run failed early; #7 has no run, but waits for CI. */
+const MANAGED = observed([
+  ["8@sha_run_3", [live("run_3", "failed", minutes(9))]],
+  ["9@sha9", [live("run_9", "running", minutes(-5), "pull_request:synchronize")]],
+  ["10@sha10", [live("run_10", "running", minutes(-120))]],
+  ["6@sha6", [live("run_6", "failed", minutes(-3))]],
+]);
 
 const OPEN: RepoPulls[] = [
   { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
@@ -122,9 +119,8 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     };
     let session: { user: { id: string } } | null = { user: { id: "usr_member" } };
     const grants: GrantRule[] = [{ id: "grt_runs", resource: "workflow-run:*", action: "read", effect: "allow", origin: "system", conditions: null, expiresAt: null, roleId: null, principalId: "prn_verdicts" }];
-    let ready = false;
     let now = minutes(0);
-    const versions = createTenantVersions();
+    let managed = MANAGED;
     // The portal's github-open-pulls listing; the workspace has no GitHub credential, so the route never lists on its own.
     const openPulls = createOpenPullsCache(() => minutes(0));
     await openPulls.read(TENANT, async () => OPEN);
@@ -134,9 +130,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       onKeyMoved: noKeyPush,
       authorize: async () => true,
       verdicts,
-      observer: { last: () => OBSERVATION },
-      ready: () => ready,
-      versions,
+      managerRuns: async () => managed,
       openPulls,
       list: () => async () => { throw new Error("the workspace has no host credential"); },
       triageState: { load: async (_tenant, key) => ({ rows: key === REPO ? waitingRows : [], version: null }) },
@@ -147,10 +141,6 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       return app.request(`/api/integrations/triage-verdicts/${TENANT}${query}`, { headers });
     }
 
-    // Until the hub read the live logs since it started, any pull request may have a run going.
-    const warming = TriageVerdicts.assert(await (await get()).json());
-    expect(new Set(warming.pulls.map((pull) => pull.run?.status))).toEqual(new Set(["unknown", "waiting-ci"]));
-    ready = true;
     // The listing is past 30 seconds old; without the GitHub credential the route keeps using it.
     now = minutes(1);
     const res = await get();
@@ -185,10 +175,10 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     const etag = res.headers.get("etag")!;
     expect((await get("", { "sec-fetch-site": "same-origin", "if-none-match": etag })).status).toBe(304);
     expect((await get()).status).toBe(200);
+    expect(reads).toBe(1);
+    managed = observed([...MANAGED.byRepo.get(REPO)!].filter(([key]) => key !== "6@sha6"));
+    expect((await get("", { "sec-fetch-site": "same-origin", "if-none-match": etag })).status).toBe(200);
     expect(reads).toBe(2);
-    versions.bump(TENANT);
-    expect((await get("", { "sec-fetch-site": "same-origin", "if-none-match": etag })).status).toBe(304);
-    expect(reads).toBe(3);
 
     const closed = TriageVerdicts.assert(await (await get(`?repo=${REPO}&number=5`)).json());
     expect(closed.pulls.map((pull) => [pull.number, pull.verdict?.runId])).toEqual([[5, "run_5"]]);
@@ -228,9 +218,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
       onKeyMoved: noKeyPush,
       authorize: async () => true,
       verdicts,
-      observer: { last: () => undefined },
-      ready: () => true,
-      versions: createTenantVersions(),
+      managerRuns: async () => NO_RUNS,
       openPulls,
       list: () => async () => { throw new Error("the workspace has no host credential"); },
       triageState: { load: async () => ({ rows: [], version: null }) },
@@ -281,9 +269,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
     const triageVerdicts = createTriageVerdicts({
       ...deps,
       verdicts,
-      observer: { last: () => undefined },
-      ready: () => true,
-      versions: createTenantVersions(),
+      managerRuns: async () => NO_RUNS,
       triageState: { load: async () => ({ rows: [], version: null }) },
       now: () => now,
     });
@@ -361,7 +347,7 @@ test("PostgreSQL: the same repository and number on both hosts come back separat
       verdict("run_github_off", 2, old, { repo: off }),
       verdict("run_bitbucket_off", 2, old, { repo: off }),
     ]);
-    let observation: TenantObservation | undefined;
+    let managed = NO_RUNS;
     let listedAt = 0;
     const openPulls = createOpenPullsCache(() => new Date(NOW + listedAt));
     const triageVerdicts = createTriageVerdicts({
@@ -370,9 +356,7 @@ test("PostgreSQL: the same repository and number on both hosts come back separat
       onKeyMoved: noKeyPush,
       authorize: async () => true,
       verdicts: store,
-      observer: { last: () => observation },
-      ready: () => true,
-      versions: createTenantVersions(),
+      managerRuns: async () => managed,
       openPulls,
       list: () => async () => { throw new Error("the workspace has no host credential"); },
       triageState: { load: async () => ({ rows: [], version: null }) },
@@ -409,11 +393,7 @@ test("PostgreSQL: the same repository and number on both hosts come back separat
     await listing(1_000, "unreachable");
     expect(rows(await get())).toEqual([["github", REPO, 8, "run_github", minutes(-1).toISOString(), null]]);
 
-    observation = {
-      deployments: [],
-      observed: [{ byRepo: new Map([[REPO, new Map([["8@sha_live", [{ ...live("run_bitbucket_live", "running", minutes(-1)), source: "bitbucket-datacenter" as const }]]])]]), runCount: 1, verdicts: [], approved: [] }],
-      workers: [],
-    };
+    managed = observed([["8@sha_live", [{ ...live("run_bitbucket_live", "running", minutes(-1)), source: "bitbucket-datacenter" as const }]]]);
     await listing(2_000);
     const running = await get();
     expect(rows(running).filter((row) => row[1] === REPO).map((row) => [row[0], row[5]])).toEqual([["bitbucket-datacenter", "running"], ["github", null]]);

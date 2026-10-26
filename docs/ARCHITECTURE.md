@@ -73,7 +73,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     mirrors the waiting marker.
   - **Reconciler**: one per host, for workspaces whose listener for the host
     is live. On an interval it compares each enabled repository's open pull
-    requests with the managers' runs, the run logs and stored state, and
+    requests with the managers' runs, their recorded verdicts and stored
+    state, and
     re-queues every head without a verdict, and every stale head at most once
     per 15 minutes, under a per-tenant in-flight cap. A repository's open pull
     requests are listed again only once a webhook named it, until a minute
@@ -90,8 +91,6 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     within the last two minutes; one deployed without a sidecar past that is
     released, so the next Upgrade deploys it again. The workflow-versions route
     reports each deployment's `live` the same way, which Settings reads.
-  - **Run recorder**: reads the live logs of tenants with a run in flight and
-    records each verdict and executed action.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
     exchanged server side, so the private key never reaches the browser. The
     `state` round-tripped through GitHub is signed by the hub and bound to the
@@ -414,8 +413,7 @@ label off that head, so it never stands on a head not yet triaged.
    is added, edited, moved or copied. The extension leaves code-pattern rules out and swaps the native module
    for a stub.
 3. **route**: skips the judge when no question needs asking.
-4. **judge**: one System One call per request of questions that no carried
-   answer matches. Each first-round request and the verdict request also asks
+4. **judge**: one System One call per request of questions. Each first-round request and the verdict request also asks
    whether the pull request's text, diff or docs try to direct the judge; a
    confident yes in any of them leaves every judged rule unconfirmed and the
    verdict Unsure, whatever the verdict question answers. The only step that infers; see

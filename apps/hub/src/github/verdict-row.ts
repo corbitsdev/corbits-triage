@@ -9,7 +9,7 @@ import type { RecordedDo, RecordedVerdict } from "./verdict-record-store.js";
 
 export type Trigger = { repo: string; source: RepoSource; number: number; headSha: string; startedAt: string; event?: string };
 export type Summary = Omit<RecordedVerdict, "runId" | "repo" | "number" | "headSha" | "startedAt">;
-export type Ruled = { facts: Record<string, unknown>; evidence: string[] };
+type Ruled = { facts: Record<string, unknown>; evidence: string[] };
 
 /** A webhook mail's `event:action`; catch-up and portal mails name none. */
 export function eventOf(payload: Record<string, unknown>): string | undefined {

@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { schema, type DB, type ResolvedSenderPrincipal, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { MAIL_ADMISSION_DENIED_CODE } from "@intx/hub-sessions";
 import type { RunTriggerMaterialize } from "@corbits/webhooks";
@@ -50,12 +50,8 @@ export function systemSenderMaterializer(materialize: RunTriggerMaterialize, sen
   };
 }
 
-/**
- * `cancelling` once cancellation was requested: the run stays live until the lifecycle sweep stops it. `workflowVersion`
- * once read from its launch spec, for one pinned from the package registry; `offeringId`, the decision-model offering
- * the deployment resolved, once read from its launch spec.
- */
-export type LiveDeployment = { runId: string; address: string; createdAt: Date; cancelling: boolean; endedAt?: Date; workflowVersion?: string; offeringId?: string };
+/** `cancelling` once cancellation was requested: the run stays live until the lifecycle sweep stops it. */
+export type LiveDeployment = { runId: string; address: string; createdAt: Date; cancelling: boolean };
 
 export type TenantDeployment = LiveDeployment & { workflow: string };
 
@@ -72,7 +68,7 @@ function markedAs(kind: DeploymentKind) {
   return kind === "worker" ? eq(marker, "true") : isNull(marker);
 }
 
-type DeploymentQuery = { tenantId: string; definitionName?: string; kind: DeploymentKind; endedSince?: Date };
+type DeploymentQuery = { tenantId: string; definitionName?: string; kind: DeploymentKind };
 
 /**
  * A workflow the portal publishes per person deploys from an asset named for its publisher and release, which names
@@ -80,10 +76,9 @@ type DeploymentQuery = { tenantId: string; definitionName?: string; kind: Deploy
  */
 export const workflowName = sql<string>`coalesce(${schema.workflowRunLaunchSpec.frozenApprovalBundle} -> 'projection' ->> 'id', ${schema.workflowDefinition.name})`;
 
-/** Matches how the hub lists deployments: a deployment is its anchor run. Newest first; live, or ended since `endedSince`. */
+/** Matches how the hub lists deployments: a deployment is its anchor run. Newest first, live only. */
 async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<TenantDeployment[]> {
   const { workflowRun, workflowDefinition, workflowRunLaunchSpec, tenant, liveWorkflowRunStatuses } = schema;
-  const live = inArray(workflowRun.status, [...liveWorkflowRunStatuses]);
   const rows = await db
     .select({
       runId: workflowRun.id,
@@ -91,7 +86,6 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
       domain: tenant.domain,
       createdAt: workflowRun.createdAt,
       cancellationRequestedAt: workflowRun.cancellationRequestedAt,
-      endedAt: workflowRun.endedAt,
     })
     .from(workflowRun)
     .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
@@ -102,7 +96,7 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
       query.definitionName === undefined ? undefined : eq(workflowName, query.definitionName),
       isNotNull(workflowRun.anchorRunId),
       eq(workflowRun.id, workflowRun.anchorRunId),
-      query.endedSince === undefined ? live : or(live, gt(workflowRun.endedAt, query.endedSince)),
+      inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
       markedAs(query.kind),
     ))
     .orderBy(desc(workflowRun.createdAt), desc(workflowRun.id));
@@ -111,7 +105,6 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
     address: `${row.runId}@${row.domain}`,
     createdAt: row.createdAt,
     cancelling: row.cancellationRequestedAt !== null,
-    ...(row.endedAt !== null && { endedAt: row.endedAt }),
     workflow: row.workflow,
   }));
 }
@@ -119,34 +112,6 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
 /** Live deployments; every workflow's when no name is given; listeners unless workers are asked for. */
 export function resolveLiveDeployments(db: DB["db"], tenantId: string, definitionName?: string, kind: DeploymentKind = "listener"): Promise<TenantDeployment[]> {
   return deploymentsWhere(db, { tenantId, definitionName, kind });
-}
-
-/** Workers live or released since `endedSince`: a worker's one body run landed in its log before its anchor was cancelled, so the log outlives the deployment. */
-export function recentWorkers(db: DB["db"], tenantId: string, definitionName: string, endedSince: Date): Promise<TenantDeployment[]> {
-  return deploymentsWhere(db, { tenantId, definitionName, kind: "worker", endedSince });
-}
-
-export type ActiveTenant = { id: string; domain: string };
-
-/**
- * Tenants with a child run of the definition in flight, or ended or created since `endedSince`: a run inserted already
- * completed, as a Bitbucket run is, keeps a null `endedAt` (stock leaves a terminal run routable that way), so its
- * creation time is what says it just ended, and its verdict is recorded within a pass.
- */
-export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments", endedSince?: Date): Promise<ActiveTenant[]> {
-  const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
-  const running = eq(workflowRun.status, "running");
-  const childRuns = endedSince === undefined ? running : or(running, gt(workflowRun.endedAt, endedSince), gt(workflowRun.createdAt, endedSince));
-  return db
-    .selectDistinct({ id: tenant.id, domain: tenant.domain })
-    .from(workflowRun)
-    .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
-    .innerJoin(tenant, eq(workflowRun.tenantId, tenant.id))
-    .where(and(
-      eq(workflowDefinition.name, definitionName),
-      what === "runs" ? ne(workflowRun.id, workflowRun.anchorRunId) : eq(workflowRun.id, workflowRun.anchorRunId),
-      what === "runs" ? childRuns : inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
-    ));
 }
 
 export function newestLive(deployments: readonly LiveDeployment[]): LiveDeployment | undefined {
@@ -199,20 +164,6 @@ export function closureVersions(bundle: FrozenApprovalBundle): ClosureVersions |
 function pinFor(bundle: FrozenApprovalBundle): string | undefined {
   if (bundle.source.kind !== "asset" || bundle.source.package.format !== "tarball") return undefined;
   return pinOf(bundle.closure);
-}
-
-export async function withWorkflowVersions<T extends LiveDeployment>(
-  launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">,
-  deployments: readonly T[],
-): Promise<T[]> {
-  const versioned: T[] = [];
-  for (const deployment of deployments) {
-    const spec = await launchSpecs.get(deployment.runId);
-    const workflowVersion = spec ? closureVersions(spec.frozenApprovalBundle)?.workflow.version : undefined;
-    const offeringId = spec?.defaultSourceOfferingId ?? undefined;
-    versioned.push({ ...deployment, ...(workflowVersion !== undefined && { workflowVersion }), ...(offeringId !== undefined && { offeringId }) });
-  }
-  return versioned;
 }
 
 /** The reason the hub gave when it replaced a busy deployment with a fresh copy, which earlier audit entries carry. */

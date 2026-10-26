@@ -6,11 +6,13 @@ import type { DB } from "@intx/db";
 import { unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import { managedPulls, type PullRequestRef } from "../manager-state.js";
 import { runKey, type ObservedRun } from "./reconcile-plan.js";
-import type { ObservedRuns } from "./triage-runs.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 
-/** The runs of `pulls`' managers; `workflowVersion` is the version new mail goes to, which a manager's runs count as. */
-export type ManagerRuns = (tenantId: string, pulls: readonly PullRequestRef[], workflowVersion: string | undefined) => Promise<ObservedRuns>;
+/** Runs by repository, then by `${number}@${headSha}`. */
+export type ObservedRuns = { byRepo: Map<string, Map<string, ObservedRun[]>> };
+
+/** The runs of `pulls`' managers. */
+export type ManagerRuns = (tenantId: string, pulls: readonly PullRequestRef[]) => Promise<ObservedRuns>;
 
 function settlesBy(verdict: VerdictRecord): Pick<ObservedRun, "unsettled" | "unconfirmed"> {
   const { detail } = verdict;
@@ -18,10 +20,9 @@ function settlesBy(verdict: VerdictRecord): Pick<ObservedRun, "unsettled" | "unc
 }
 
 export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStore, "ofRuns">, now: () => Date): ManagerRuns {
-  return async function managerRuns(tenantId, asked, workflowVersion) {
+  return async function managerRuns(tenantId, asked) {
     const pulls = await managedPulls(db, tenantId, asked);
     const recorded = await verdicts.ofRuns(tenantId, [...new Set(pulls.flatMap((pull) => pull.history.map((pass) => pass.runId)))], asked);
-    const stamp = workflowVersion === undefined ? {} : { workflowVersion };
     const byRepo: ObservedRuns["byRepo"] = new Map();
 
     function observed(repo: string, number: number, head: string, run: ObservedRun): void {
@@ -29,8 +30,8 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
       byRepo.set(repo, byHead);
       const key = runKey(number, head);
       const listed = byHead.get(key);
-      if (listed) listed.push({ ...run, ...stamp });
-      else byHead.set(key, [{ ...run, ...stamp }]);
+      if (listed) listed.push(run);
+      else byHead.set(key, [run]);
     }
 
     for (const { pr, history, live, gone } of pulls) {
@@ -47,6 +48,6 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
         observed(pr.repo, pr.number, verdict.headSha, { runId: verdict.runId, source, status: "completed", startedAt: verdict.startedAt.toISOString(), ...settlesBy(verdict), ...(verdict.trigger !== null && { trigger: verdict.trigger }) });
       }
     }
-    return { byRepo, runCount: 0, verdicts: [], approved: [] };
+    return { byRepo };
   };
 }

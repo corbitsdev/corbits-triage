@@ -63,7 +63,7 @@ export type ApprovedDo = { repo: string; number: number; effectId: string; statu
 const WRITTEN = new Set(["done", "satisfied"]);
 
 /** The verdict with each approved Do's outcome on its action; an approval that wrote it is not undone by one refused later. */
-export function withApproved(detail: VerdictDetail, approved: readonly ApprovedDo[]): VerdictDetail {
+function withApproved(detail: VerdictDetail, approved: readonly ApprovedDo[]): VerdictDetail {
   if (!detail.actions || approved.length === 0) return detail;
   const actions = detail.actions.map(function outcomeOf(action) {
     return approved.reduce(function apply(current, { effectId, status, error }) {
@@ -164,10 +164,6 @@ export function createVerdictRecordStore(db: DB["db"]) {
           runStatus: sql`coalesce(excluded.run_status, ${verdictRecord.runStatus})`,
         },
       });
-    },
-
-    recordApproved(tenantId: string, approved: readonly ApprovedDo[]): Promise<void> {
-      return recordApproved(db, tenantId, approved);
     },
 
     /** The newest verdict of each pull request on each host. */

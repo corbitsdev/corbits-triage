@@ -38,9 +38,9 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads through the listener. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
-| `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads run logs and records verdicts. |
+| `src/github/manager-runs.ts`, `triage-runs.ts` | The managers' runs of each open pull request as the reconciler and the verdicts route read them; the verdict and approval in a run's log, for held Dos and the audit log. |
 | `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts`, `pr-outcomes.ts` | Verdict records and the routes that serve them, including outcomes before and after Triage. Outcomes read at most the 50 newest-created pull requests on GitHub, or the newest page holding any (at most 8 pages of 50) on Bitbucket Data Center, with at most 8 reads at once, cached per pull request and per UTC day. |
-| `src/github/backlog-triage.ts` | Mails `pr-triage-historical` to triage a repository's open pull requests. |
+| `src/github/backlog-triage.ts` | Mails the host's listener a backlog to triage a repository's open pull requests. |
 | `src/github/manifest.ts` | GitHub App Manifest flow; setup state is an HMAC token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes. |
 | `src/github/pr-*.ts`, `held-dos.ts` | Pull request actions, details and single-PR triage; approving a held action. |
 | `src/github/github-app-credential-adapter.ts` | The hub's GitHub fetch: App JWT to installation token, cached per installation. |

@@ -12,7 +12,7 @@ import { createGithubPrTriage } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
 import { createTriageStateStore, type TriageStateStore } from "./triage-state-store.js";
-import type { ObservedRuns } from "./triage-runs.js";
+import type { ObservedRuns } from "./manager-runs.js";
 
 /** No deployment holds the credential in these tests. */
 async function noKeyPush(): Promise<void> {}
@@ -39,7 +39,7 @@ function stubDb() {
 }
 
 async function noRuns(): Promise<ObservedRuns> {
-  return { byRepo: new Map(), runCount: 0, verdicts: [], approved: [] };
+  return { byRepo: new Map() };
 }
 
 function route(store: TriageStateStore, deliver: Deliver) {
@@ -67,7 +67,6 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver, 
     listener: async () => DEPLOYMENT,
     openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt: LONG_AGO, draft: false })),
     activity: { stale: () => true },
-    observeTenant: async () => ({ deployments: [DEPLOYMENT], observed: [await noRuns()], workers: [] }),
     managerRuns: noRuns,
     headChecks: async () => checks,
     verdicts: { latest: async () => [] },
