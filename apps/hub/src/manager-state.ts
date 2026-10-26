@@ -400,10 +400,10 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
 }
 
 /**
- * A pull request a manager claimed: its closed passes; while its manager is up, that run and the head of the newest pull
- * request mail recorded; and the pass a manager that went away left open.
+ * A pull request a manager claimed: its closed passes; while its manager is up, that run, the head of the newest pull
+ * request mail recorded and the pass it has open; and the pass a manager that went away left open.
  */
-export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string }; gone?: { runId: string; pass: Pass } };
+export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass }; gone?: { runId: string; pass: Pass } };
 
 /** The newest head a pull request mail named, which a live manager takes next or has taken. */
 async function newestHead(tx: Tx, tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
@@ -434,7 +434,7 @@ export async function managedPulls(db: DB["db"], tenantId: string, pulls: readon
         managed.push({ pr, history: claim.history, ...(claim.pass && { gone: { runId, pass: claim.pass } }) });
       } else {
         const head = await newestHead(tx, tenantId, pr);
-        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }) } });
+        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }), ...(claim.pass && { pass: claim.pass }) } });
       }
     }
     return managed;

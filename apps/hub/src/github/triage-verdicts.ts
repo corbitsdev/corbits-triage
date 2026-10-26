@@ -92,10 +92,13 @@ function livePulls(runs: ObservedRuns): Map<string, LivePull> {
   return byPull;
 }
 
+/** A manager up between passes, as while it waits on a reviewer, runs nothing; a running one counts from the pass it took. */
 function runOf(live: ObservedRun | undefined, now: Date): Run | null {
   if (!live || live.status === "completed") return null;
-  const { runId, startedAt } = live;
-  if (live.status === "failed" || live.status === "cancelled") return { runId, startedAt, status: live.status };
+  const { runId } = live;
+  if (live.status === "failed" || live.status === "cancelled") return { runId, startedAt: live.startedAt, status: live.status };
+  if (live.passAt === undefined) return null;
+  const startedAt = live.passAt;
   const stuck = now.getTime() - Date.parse(startedAt) > PR_TRIAGE_STUCK_RUN_MS;
   return { runId, startedAt, status: stuck ? "stuck" : "running" };
 }

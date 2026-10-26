@@ -37,7 +37,7 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
     for (const { pr, history, live, gone } of pulls) {
       const { source } = pr;
       // The hub checked the run is up, so it is running now and never stuck.
-      if (live?.head !== undefined) observed(pr.repo, pr.number, live.head, { runId: live.runId, source, status: "running", startedAt: now().toISOString() });
+      if (live?.head !== undefined) observed(pr.repo, pr.number, live.head, { runId: live.runId, source, status: "running", startedAt: now().toISOString(), ...(live.pass && { passAt: live.pass.takenAt }) });
       if (gone) observed(pr.repo, pr.number, gone.pass.head, { runId: gone.runId, source, status: "failed", startedAt: gone.pass.takenAt });
       // A head's last pass decides whether it still waits for CI; a waiting run is listed first so it outranks an older verdict.
       const lastOfHead = new Map(history.map((pass) => [pass.head, pass]));

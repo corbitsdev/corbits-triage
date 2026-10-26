@@ -20,6 +20,8 @@ export type ObservedRun = {
   /** The run waited for CI still running on the head instead of deciding, so the head waits for its CI. */
   heldForCi?: true;
   trigger?: string;
+  /** When a running manager took the pass it has open; absent while it is up between passes, as while it waits on a reviewer. */
+  passAt?: string;
 };
 
 export type ReconcilePolicy = {

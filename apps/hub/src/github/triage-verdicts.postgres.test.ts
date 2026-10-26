@@ -43,8 +43,9 @@ function verdict(runId: string, number: number, at: number, fields: Partial<Reco
   };
 }
 
+/** A running manager has a pass open, taken when it started. */
 function live(runId: string, status: ObservedRun["status"], startedAt: Date, trigger?: string): ObservedRun {
-  return { runId, source: "github", status, startedAt: startedAt.toISOString(), ...(trigger !== undefined && { trigger }) };
+  return { runId, source: "github", status, startedAt: startedAt.toISOString(), ...(status === "running" && { passAt: startedAt.toISOString() }), ...(trigger !== undefined && { trigger }) };
 }
 
 function observed(byHead: Array<[string, ObservedRun[]]>): ObservedRuns {
@@ -400,6 +401,11 @@ test("PostgreSQL: the same repository and number on both hosts come back separat
     expect(running.active).toEqual([{ repo: REPO, source: "github" }, { repo: REPO, source: "bitbucket-datacenter" }]);
     expect((await get(`?repo=${REPO}&number=8&source=bitbucket-datacenter`)).pulls.map((pull) => pull.verdict?.runId)).toEqual(["run_bitbucket"]);
     expect((await get(`?repo=${REPO}&number=8`)).pulls.map((pull) => pull.verdict?.runId)).toEqual(["run_github"]);
+
+    // A manager up between passes, such as one waiting on a reviewer, runs nothing, so its pull request shows no run.
+    const { passAt: _passAt, ...between } = live("run_bitbucket_live", "running", minutes(-1));
+    managed = observed([["8@sha_live", [{ ...between, source: "bitbucket-datacenter" as const }]]]);
+    expect((await get(`?repo=${REPO}&number=8&source=bitbucket-datacenter`)).pulls.map((pull) => pull.run)).toEqual([null]);
 
     // A name only Bitbucket holds is found without naming its host.
     await db.insert(schema.workflowRun).values({ id: "run_bitbucket_only", definitionId: "wfd_bitbucket", anchorRunId: "run_bitbucket_only", tenantId: TENANT, status: "completed" });
