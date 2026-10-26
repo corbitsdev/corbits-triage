@@ -9,7 +9,7 @@ import { createDB, createGrantStore, createRunTokenStore, runMigrations, schema 
 import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession } from "@intx/hub-api";
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
-import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
+import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { recordEvent, type PullRequestRef } from "./manager-state.js";
@@ -96,16 +96,20 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
   }
 }
 
-async function allowManagerState(db: Db, principalId: string): Promise<void> {
-  await db.insert(schema.grant).values({ id: randomUUID(), tenantId: TENANT, principalId, resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION, effect: "allow", origin: "creator" });
+const STATE = { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION };
+const RESULT = { resource: MANAGER_RESULT_RESOURCE, action: MANAGER_RESULT_ACTION };
+type Grant = typeof STATE | typeof RESULT;
+
+async function allow(db: Db, principalId: string, { resource, action }: Grant): Promise<void> {
+  await db.insert(schema.grant).values({ id: randomUUID(), tenantId: TENANT, principalId, resource, action, effect: "allow", origin: "creator" });
 }
 
-/** A running workflow run with its own principal, and the run token its tool presents. */
-async function runWithToken(db: Db, runId: string, granted: boolean): Promise<string> {
+/** A running workflow run with its own principal and `grants`, and the run token its tool presents. */
+async function runWithToken(db: Db, runId: string, grants: readonly Grant[]): Promise<string> {
   const principalId = `prn_${runId}`;
   await db.insert(schema.principal).values({ id: principalId, tenantId: TENANT, kind: "workflow", refId: runId, status: "active" });
   await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wfd_manager", tenantId: TENANT, principalId, status: "running" });
-  if (granted) await allowManagerState(db, principalId);
+  for (const grant of grants) await allow(db, principalId, grant);
   const tokens = createRunTokenStore({ db, cipher: createNoopCredentialCipher() });
   await tokens.mintIfAbsent({ principalId, consumers: ["tool:@corbits/triage-manager"] }, db);
   const [delivery] = await tokens.loadDelivery(principalId);
@@ -135,8 +139,8 @@ async function errorCode(response: Response): Promise<string> {
 test("PostgreSQL: the manager's run token takes, finishes and a reviewer's records its result, on both hosts", async () => {
   await withDatabase(async function routes(db) {
     const app = buildHub(db);
-    const manager = bearer(await runWithToken(db, "run_manager", true));
-    const reviewer = bearer(await runWithToken(db, "run_reviewer", true));
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
     for (const pr of [GITHUB, BITBUCKET]) {
       await webhook(db, pr);
 
@@ -163,10 +167,11 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
 test("PostgreSQL: a run the claim does not name, a session and a run without the grant are refused", async () => {
   await withDatabase(async function refusals(db) {
     const app = buildHub(db);
-    await allowManagerState(db, "prn_member");
-    const manager = bearer(await runWithToken(db, "run_manager", true));
-    const other = bearer(await runWithToken(db, "run_other", true));
-    const ungranted = bearer(await runWithToken(db, "run_ungranted", false));
+    await allow(db, "prn_member", STATE);
+    await allow(db, "prn_member", RESULT);
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
+    const other = bearer(await runWithToken(db, "run_other", [STATE]));
+    const ungranted = bearer(await runWithToken(db, "run_ungranted", []));
     await webhook(db, GITHUB);
     expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { takes: 1 } });
 
@@ -187,10 +192,23 @@ test("PostgreSQL: a run the claim does not name, a session and a run without the
   });
 }, 60_000);
 
+test("PostgreSQL: a reviewer reports only with the result grant, and the result grant reaches no other manager route", async () => {
+  await withDatabase(async function resultGrant(db) {
+    const app = buildHub(db);
+    const result = { ...GITHUB, kind: "code-review", head: "h1", result: REVIEW };
+    const stateOnly = await post(app, "reviewer-result", result, bearer(await runWithToken(db, "run_state", [STATE])));
+    expect(stateOnly.status).toBe(403);
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
+    expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: true });
+    expect((await post(app, "take", GITHUB, reviewer)).status).toBe(403);
+    expect((await post(app, "done", { ...GITHUB, reviewers: [] }, reviewer)).status).toBe(403);
+  });
+}, 60_000);
+
 test("PostgreSQL: a malformed, non-JSON or oversized body is refused before the store is touched", async () => {
   await withDatabase(async function malformed(db) {
     const app = buildHub(db);
-    const manager = bearer(await runWithToken(db, "run_manager", true));
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE, RESULT]));
     const bodies: [string, unknown][] = [
       ["take", { ...GITHUB, source: "gitlab" }],
       ["take", { source: "github", repo: "widgets", number: 7 }],

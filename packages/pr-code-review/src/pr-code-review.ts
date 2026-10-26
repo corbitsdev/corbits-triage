@@ -1,6 +1,6 @@
 import { action, defineWorkflow, map, onTrigger, SELF_RUN_RESOURCE, step, type Primitive, type Selector } from "@intx/workflow";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
+import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
 import { HUB_WRITE } from "@corbits/triage-manager/actions/hub";
 import { READ_REPOSITORY } from "./actions/checkout.js";
 import { credentialBindingsFor, type CodeReviewAgents, type Sources } from "./agents.js";
@@ -128,7 +128,7 @@ export function codeReviewReviewer(agents: CodeReviewAgents) {
       id,
       credentialBindings: credentialBindingsFor(sources),
       grantRequirements: [
-        { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION, source: "creator" },
+        { resource: MANAGER_RESULT_RESOURCE, action: MANAGER_RESULT_ACTION, source: "creator" },
         { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
       ],
       mailAccept: { invoker: true },

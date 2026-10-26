@@ -9,7 +9,7 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute } from "hono-openapi";
 import { schema, type DB } from "@intx/db";
 import type { RequireGrant, RunTokenRoute, TenantEnv } from "@intx/hub-api";
-import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
+import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
@@ -72,6 +72,7 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     await next();
   });
   const granted = requireGrant(MANAGER_STATE_RESOURCE, MANAGER_STATE_ACTION);
+  const reports = requireGrant(MANAGER_RESULT_RESOURCE, MANAGER_RESULT_ACTION);
 
   app.post(
     TAKE_PATH,
@@ -116,13 +117,13 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     REVIEWER_RESULT_PATH,
     describeRoute({
       summary: "Record a reviewer's result for the pull request's manager",
-      description: "Run token only. The body is a `StageResult`. The event is recorded under the calling run's id, so `recorded` is false when that run reported before. The reviewer then mails the manager that deployed it, which collects the result on its next take.",
+      description: "Run token only, for a reviewer granted `create` on `triage-manager:result`, which reaches no other manager route. The body is a `StageResult`. The event is recorded under the calling run's id, so `recorded` is false when that run reported before. The reviewer then mails the manager that deployed it, which collects the result on its next take.",
       tags: TAGS,
-      responses: { 200: json("Whether the result was recorded now", Recorded), ...refusals },
+      responses: { 200: json("Whether the result was recorded now", Recorded), ...refusals, 403: json("Not a workflow run, or the run lacks `create` on `triage-manager:result`", Failure) },
     }),
     limited,
     asRun,
-    granted,
+    reports,
     body(ReviewerResultBody),
     async function reviewerResult(c) {
       const { source, repo, number, head, ...reported } = c.req.valid("json");

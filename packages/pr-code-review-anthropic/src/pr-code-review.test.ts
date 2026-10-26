@@ -15,7 +15,18 @@ import { runLocalWorkflow } from "../../triage-workflows/src/run-local.js";
 import * as actions from "./actions/index.js";
 import { workflow as bitbucket } from "./pr-code-review-bitbucket-datacenter.js";
 import { workflow as github } from "./pr-code-review-github.js";
+import { workflow as reviewerBitbucket } from "./pr-code-review-reviewer-bitbucket-datacenter.js";
+import { workflow as reviewerGithub } from "./pr-code-review-reviewer-github.js";
 import { ANTHROPIC } from "./profile.js";
+
+test("a manager's code review may only report its result and stop its own run", () => {
+  for (const reviewer of [reviewerGithub, reviewerBitbucket]) {
+    expect(reviewer.grantRequirements).toEqual([
+      { resource: "triage-manager:result", action: "create", source: "creator" },
+      { resource: "workflow-run:self", action: "manage", source: "creator" },
+    ]);
+  }
+});
 
 test("every deployed code review requires a sidecar of its own", () => {
   for (const definition of [github, bitbucket]) {

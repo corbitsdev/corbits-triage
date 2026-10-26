@@ -6,6 +6,10 @@ import { VerdictDetail } from "./hub-responses.js";
 export const MANAGER_STATE_RESOURCE = "triage-manager:state";
 export const MANAGER_STATE_ACTION = "write";
 
+/** The grant a reviewer needs to report its result to the pull request's manager, and nothing else. */
+export const MANAGER_RESULT_RESOURCE = "triage-manager:result";
+export const MANAGER_RESULT_ACTION = "create";
+
 const Reported = type({ head: "string > 0" });
 
 /**

@@ -270,7 +270,10 @@ any other tenant or an unknown sender.
   Stock runs a step whose dependencies failed, so however the review ended it
   records its `StageResult` through the reviewer-result route (a failure as
   `failed`), mails the manager a wake-up and stops. It posts nothing to the
-  pull request.
+  pull request. Its definition declares only `create` on
+  `triage-manager:result` and `manage` on `workflow-run:self`, sourced from
+  its creator: it can report a result and stop itself, and reach no other
+  manager route.
 - A run sends mail only through an agent step's transport, so the listener,
   the manager and the code review mail through one agent whose director makes
   no model call: it runs its one tool, which waits for a just-deployed run to
@@ -756,8 +759,10 @@ read it, and passes the rest of the request to stock.
   result (under its own run id), through `POST
   /api/tenants/:tenantId/manager/{take,done,reviewer-result}`
   (`apps/hub/src/manager-routes.ts`). They admit a run token only, as the
-  hub's extra run-token routes, and need `write` on `triage-manager:state`;
-  the calling run is the token's run, never a body field. Take and done
+  hub's extra run-token routes. Take and done need `write` on
+  `triage-manager:state`; reviewer-result needs `create` on
+  `triage-manager:result` and nothing more. The calling run is the token's
+  run, never a body field. Take and done
   answer 409 `not_manager` to a run the claim does not name.
   Reviewer-result is not fenced: any run with the grant records under its
   own run id, and the manager matches results to its reviewers by run id.
