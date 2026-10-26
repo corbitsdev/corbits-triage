@@ -80,6 +80,9 @@ function heldDo(verdict: Record<string, unknown>, body: Body, principalId: strin
   return { kind: APPROVE_DO_KIND, runId: body.runId, principalId, list, index, request, step: { effectId, headSha, kind, target } };
 }
 
+/** The run that held the Do has no workflow definition, which every run has: the store is broken, so trying again cannot help. */
+class RunWithoutDefinitionError extends Error {}
+
 export function createGithubHeldDos(deps: GithubHeldDosDeps) {
   async function runEvents(tenantId: string, domain: string, runId: string) {
     const run = await deps.db.query.workflowRun.findFirst({
@@ -103,7 +106,7 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
       .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
       .where(and(eq(workflowRun.id, anchorRunId), eq(workflowRun.tenantId, tenantId)))
       .limit(1);
-    if (!row) throw new Error(`run ${anchorRunId} has no workflow definition`);
+    if (!row) throw new RunWithoutDefinitionError(`run ${anchorRunId} has no workflow definition`);
     return row.name;
   }
 
@@ -154,6 +157,7 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     } catch (err) {
       deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
+      if (err instanceof RunWithoutDefinitionError) return failure(500, "run_without_definition", `Could not send the approval: ${err.message}.`);
       const unroutable = isRunTriggerUnroutable(err);
       return failure(unroutable ? 503 : 502, unroutable ? "service_not_running" : "hub_unavailable", `Could not send the approval: ${errorText(err)}. Try again.`);
     }

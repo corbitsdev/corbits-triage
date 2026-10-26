@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { APPROVE_DO_KIND, emptyPack, repoPolicy, WAITING_KIND } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, emptyPack, repoPolicy } from "@corbits/triage-contracts";
 import type { PullRequestToReview } from "./code-review-feed.js";
 import { mailPayload, waitingPayload } from "./github/bridge.js";
 import { createManagerIntake } from "./manager-intake.js";
