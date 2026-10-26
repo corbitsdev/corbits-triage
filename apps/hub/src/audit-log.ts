@@ -9,7 +9,6 @@ import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
 import type { CheckPackRead } from "./github/check-pack-store.js";
-import { ROTATION_REASON } from "./github/deployment.js";
 import { failure } from "./github/portal-credential.js";
 import { repoRecords, sourceOf, triageNs } from "./github/tenant-config.js";
 import { approvalIn, type Approval } from "./github/triage-runs.js";
@@ -37,6 +36,9 @@ const DO_OUTCOMES: Record<string, string> = { done: "Ran", satisfied: "Found don
 type Entry = Omit<AuditEntry, "time"> & { at: Date };
 
 /** `people` is whether the caller may read the workspace's principals, which emails and members need. */
+/** The reason the hub gave when it replaced a busy deployment with a fresh copy, which earlier entries carry. */
+export const ROTATION_REASON = "Replaced by a fresh deployment of the same workflow";
+
 type Window = { tenantId: string; repo?: string; since?: Date; limit: number; people: boolean };
 
 export type AuditLogDeps = {
@@ -44,9 +46,8 @@ export type AuditLogDeps = {
   artifacts: ArtifactDb;
   readCheckPack: (tenantId: string, repo: string, source: RepoSource) => Promise<CheckPackRead>;
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
-  sameSource: (anchorRunId: string, otherAnchorRunId: string) => Promise<boolean>;
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
-  /** The pr-triage workflows whose approval runs are read, one per pull request host. */
+  /** The workflows whose approval runs are read. */
   workflows: readonly string[];
 };
 
@@ -227,8 +228,7 @@ export function createAuditLog(deps: AuditLogDeps) {
       const previous = rows.slice(index + 1).find((older) => older.name === row.name);
       const rotated = previous?.cancellationReason === ROTATION_REASON
         && previous.cancellationRequestedAt !== null
-        && row.createdAt <= previous.cancellationRequestedAt
-        && await deps.sameSource(previous.id, row.id);
+        && row.createdAt <= previous.cancellationRequestedAt;
       entries.push({ at: row.createdAt, actor: rotated ? HUB : row.principalId ?? UNKNOWN, action: "Deployed", target: row.name, detail: row.id });
       if (row.endedAt === null) continue;
       const byHub = row.status === "failed" || row.cancellationReason === ROTATION_REASON;

@@ -1,11 +1,5 @@
 import { expect, test } from "bun:test";
-import { createHostRelease, triageWorkflowOf } from "./source-workflow.js";
-
-test("the pre-host workflow name and each package entry name a host's workflow", () => {
-  expect(triageWorkflowOf("pr-triage")?.id).toBe("pr-triage-github");
-  expect(triageWorkflowOf("./pr-triage-bitbucket-datacenter.mjs")?.source).toBe("bitbucket-datacenter");
-  expect(triageWorkflowOf("./pr-triage-historical.mjs")).toBeUndefined();
-});
+import { createHostRelease } from "./source-workflow.js";
 
 test("disconnecting a host releases its listener and managers and leaves the other host's running", async () => {
   const live: Record<string, Array<{ runId: string; cancelling: boolean }>> = {

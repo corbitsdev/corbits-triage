@@ -1,13 +1,7 @@
 import { expect, test } from "bun:test";
 
-import { workflow as codeReviewBitbucket } from "../packages/pr-code-review-anthropic/src/pr-code-review-bitbucket-datacenter";
-import { workflow as codeReviewGithub } from "../packages/pr-code-review-anthropic/src/pr-code-review-github";
-import { workflow as prWorkflowBitbucket } from "../packages/pr-workflow-anthropic/src/pr-workflow-bitbucket-datacenter";
-import { workflow as prWorkflowGithub } from "../packages/pr-workflow-anthropic/src/pr-workflow-github";
-import { workflow as prTriageBitbucket } from "../packages/triage-workflows/src/pr-triage-bitbucket-datacenter";
-import { workflow as prTriageGithub } from "../packages/triage-workflows/src/pr-triage-github";
-import { workflow as prTriageHistorical } from "../packages/triage-workflows/src/pr-triage-historical";
-import { workflow as repoScan } from "../packages/triage-workflows/src/repo-scan";
+import { workflow as listenerBitbucket } from "../packages/triage-manager/src/triage-listener-bitbucket-datacenter";
+import { workflow as listenerGithub } from "../packages/triage-manager/src/triage-listener-github";
 import { evaluateMailAdmission, type MailAcceptCoordinate } from "../vendor/interchange/packages/authz/src/index";
 // Stock's first-fire derivation is not exported; the hub's materializer runs exactly this before a run starts.
 import { deriveMailAcceptGrantRows } from "../vendor/interchange/packages/hub-api/src/run-grant-materialization";
@@ -17,7 +11,7 @@ const TENANT = "tnt_acme";
 const HUB: MailAcceptCoordinate[] = [{ coordType: "principal", id: "prn_github" }, { coordType: "tenant", id: TENANT }];
 const OTHER_TENANT: MailAcceptCoordinate[] = [{ coordType: "principal", id: "prn_stranger" }, { coordType: "tenant", id: "tnt_other" }];
 
-const DEPLOYED = { prTriageGithub, prTriageBitbucket, prTriageHistorical, repoScan, codeReviewGithub, codeReviewBitbucket, prWorkflowGithub, prWorkflowBitbucket };
+const DEPLOYED = { listenerGithub, listenerBitbucket };
 
 /** Whether stock's sender gate lets `sender` fire a fresh deployment of `definition` in the hub's tenant. */
 async function admits(definition: (typeof DEPLOYED)[keyof typeof DEPLOYED], sender: MailAcceptCoordinate[] | null) {

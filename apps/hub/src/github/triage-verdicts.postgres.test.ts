@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { createInMemoryGrantStore, type GrantRule } from "@intx/authz";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { TriageVerdicts, type PrTriageRow } from "@corbits/triage-contracts";
+import { TRIAGE_MANAGERS, TriageVerdicts, type PrTriageRow } from "@corbits/triage-contracts";
 import { guardedApp } from "../integrations/test-app.js";
 import { migrateTriageTables } from "../triage-db.js";
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/records.js";
@@ -14,8 +14,7 @@ import type { RepoRecord } from "./tenant-config.js";
 import type { ObservedRun } from "./reconcile-plan.js";
 import type { ObservedRuns } from "./manager-runs.js";
 import { createTriageVerdicts } from "./triage-verdicts.js";
-import { triageWorkflowFor } from "./source-workflow.js";
-import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
+import { createVerdictRecordStore, type RecordedVerdict, replaceVerdict } from "./verdict-record-store.js";
 
 /** No deployment holds the credential in these tests. */
 async function noKeyPush(): Promise<void> {}
@@ -41,6 +40,11 @@ function verdict(runId: string, number: number, at: number, fields: Partial<Reco
     runId, repo: REPO, number, headSha: `sha_${runId}`, startedAt: minutes(at - 1), verdictAt: minutes(at), settled: true,
     state: "awaiting-review", actor: "maintainer", humanGated: false, degraded: null, checks: [{ check: "ci-green", result: "pass" }], dos: [], commented: false, ...fields,
   };
+}
+
+/** Seeds verdict rows as managers record them. */
+async function seed(db: DB, tenantId: string, verdicts: readonly RecordedVerdict[]): Promise<void> {
+  for (const verdict of verdicts) await replaceVerdict(db, tenantId, verdict);
 }
 
 /** A running manager has a pass open, taken when it started. */
@@ -99,8 +103,8 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
 
     const store = createVerdictRecordStore(db);
     // Recorded before verdicts carried their detail or trigger.
-    await store.record(TENANT, [verdict("run_1", 8, 0), verdict("run_7", 7, 1)]);
-    await store.record(TENANT, [
+    await seed(db, TENANT, [verdict("run_1", 8, 0), verdict("run_7", 7, 1)]);
+    await seed(db, TENANT, [
       verdict("run_2", 8, 5, { trigger: "issue_comment:created", detail: DETAIL }),
       verdict("run_3", 8, 10, { detail: DETAIL }),
       verdict("run_5", 5, 5),
@@ -108,7 +112,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       verdict("run_u1", 1, -30 * 24 * 60, { repo: UNREAD }),
       verdict("run_u2", 2, -60, { repo: UNREAD }),
     ]);
-    await store.record(OTHER_TENANT, [verdict("run_other", 8, 30)]);
+    await seed(db, OTHER_TENANT, [verdict("run_other", 8, 30)]);
 
     let reads = 0;
     const verdicts = {
@@ -209,7 +213,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
       toolDefinition: { name: "github_mirror" }, toolArguments: { repo: off, number: 2 },
     });
     const verdicts = createVerdictRecordStore(db);
-    await verdicts.record(TENANT, [verdict("run_on", 1, 0), verdict("run_off", 1, 0, { repo: off }), verdict("run_held", 2, 0, { repo: off })]);
+    await seed(db, TENANT, [verdict("run_on", 1, 0), verdict("run_off", 1, 0, { repo: off }), verdict("run_held", 2, 0, { repo: off })]);
     const openPulls = createOpenPullsCache(() => minutes(0));
     const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null });
     await openPulls.read(TENANT, async () => [{ repo: REPO, source: "github" as const, prs: [pr(1)] }, { repo: off, source: "github" as const, prs: [pr(1), pr(2)] }]);
@@ -250,7 +254,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
       id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key", secret: "unused", status: "active",
     });
     const verdicts = createVerdictRecordStore(db);
-    await verdicts.record(TENANT, [verdict("run_1", 1, 0)]);
+    await seed(db, TENANT, [verdict("run_1", 1, 0)]);
     let now = minutes(0);
     const openPulls = createOpenPullsCache(() => now);
     const listed: string[] = [];
@@ -314,7 +318,7 @@ test("PostgreSQL: a re-triage started before a push and done after it does not r
   await withDatabase(async function latestHead(db) {
     await db.insert(schema.tenant).values({ id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config: CONFIG });
     const store = createVerdictRecordStore(db);
-    await store.record(TENANT, [
+    await seed(db, TENANT, [
       verdict("run_backlog", 8, 5, { headSha: "sha_old", startedAt: minutes(0) }),
       verdict("run_push", 8, 3, { headSha: "sha_new", startedAt: minutes(2) }),
     ]);
@@ -330,8 +334,8 @@ test("PostgreSQL: the same repository and number on both hosts come back separat
     await db.insert(schema.tenant).values({ id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config: { corbitsTriage: { repos } } });
     await db.insert(schema.principal).values({ id: "prn_verdicts", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" });
     await db.insert(schema.workflowDefinition).values([
-      { id: "wfd_github", tenantId: TENANT, name: triageWorkflowFor("github").id, status: "stopped" },
-      { id: "wfd_bitbucket", tenantId: TENANT, name: triageWorkflowFor("bitbucket-datacenter").id, status: "stopped" },
+      { id: "wfd_github", tenantId: TENANT, name: TRIAGE_MANAGERS.github, status: "stopped" },
+      { id: "wfd_bitbucket", tenantId: TENANT, name: TRIAGE_MANAGERS["bitbucket-datacenter"], status: "stopped" },
     ]);
     await db.insert(schema.workflowRun).values(["run_github", "run_github_off", "run_bitbucket", "run_bitbucket_off"].map((id) => ({
       id, definitionId: id.startsWith("run_github") ? "wfd_github" : "wfd_bitbucket", anchorRunId: id, tenantId: TENANT, status: "completed" as const,
@@ -342,7 +346,7 @@ test("PostgreSQL: the same repository and number on both hosts come back separat
     });
     const old = -20 * 24 * 60;
     const store = createVerdictRecordStore(db);
-    await store.record(TENANT, [
+    await seed(db, TENANT, [
       verdict("run_github", 8, 0, { trigger: "pull_request:synchronize" }),
       verdict("run_bitbucket", 8, old, { trigger: "issue_comment:created" }),
       verdict("run_github_off", 2, old, { repo: off }),
@@ -409,7 +413,7 @@ test("PostgreSQL: the same repository and number on both hosts come back separat
 
     // A name only Bitbucket holds is found without naming its host.
     await db.insert(schema.workflowRun).values({ id: "run_bitbucket_only", definitionId: "wfd_bitbucket", anchorRunId: "run_bitbucket_only", tenantId: TENANT, status: "completed" });
-    await store.record(TENANT, [verdict("run_bitbucket_only", 3, 0, { repo: only })]);
+    await seed(db, TENANT, [verdict("run_bitbucket_only", 3, 0, { repo: only })]);
     expect((await get(`?repo=${only}&number=3`)).pulls.map((pull) => [pull.source, pull.verdict?.runId])).toEqual([["bitbucket-datacenter", "run_bitbucket_only"]]);
   });
 }, 120_000);

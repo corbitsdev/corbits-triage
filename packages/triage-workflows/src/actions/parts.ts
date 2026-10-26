@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { judgeKey, prepareQualityEvaluation } from "../logic/quality.js";
+import { prepareQualityEvaluation } from "../logic/quality.js";
 import { choiceFirst, choiceOf, Input, partsOf, repliesTo, type EvaluateInput } from "./evaluate.js";
 import type { JudgeChunk } from "./rules.js";
 
@@ -18,14 +18,14 @@ export async function parts(input: unknown, _ctx: EffectContext, _signal: AbortS
   const chunks = items.flatMap(function partChunks(it, item): JudgeChunk[] {
     if (it.error !== undefined || !it.det.needsJudgment) return [];
     const evaluation = prepareQualityEvaluation(it.facts, it.det.sources);
-    const first = repliesTo(it, evaluation.requests, replies);
+    const first = repliesTo(evaluation.requests, replies);
     const choice = choiceOf(it, evaluation, first);
     const asking = choice && "request" in choice ? [choice.request] : [];
     // A verdict question asked in the first round took its reply there.
-    if (choiceFirst(it, evaluation)) repliesTo(it, asking, replies);
-    const late = choiceFirst(it, evaluation) ? [] : asking;
+    if (choiceFirst(evaluation)) repliesTo(asking, replies);
+    const late = choiceFirst(evaluation) ? [] : asking;
     const asked = [...(partsOf(it.det.sources, evaluation, first)?.requests ?? []), ...late];
-    return asked.filter((request) => it.judged?.[judgeKey(request)] === undefined).map(({ state, questions }) => ({ item, state, questions }));
+    return asked.map(({ state, questions }) => ({ item, state, questions }));
   });
   return { chunks };
 }

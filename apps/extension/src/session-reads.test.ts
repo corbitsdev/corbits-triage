@@ -8,7 +8,7 @@ import { fixtureGithub } from "@corbits/triage-workflows/evals/serve";
 import { runChecks } from "./run-checks.ts";
 import { sessionGithub, type Session } from "./session-reads.ts";
 
-const PR = JSON.parse(readFileSync(join(import.meta.dir, "../../../packages/pr-workflow-anthropic/fixtures/godotenv-262.json"), "utf8")) as Snapshot;
+const PR = JSON.parse(readFileSync(join(import.meta.dir, "../fixtures/godotenv-262.json"), "utf8")) as Snapshot;
 const SHA = "c0ffee".padEnd(40, "0");
 // Tag characters spell text no reader sees; only the commit's body, past its headline, carries them.
 const HIDDEN = "\u{E0041}\u{E0042}\u{E0043}";

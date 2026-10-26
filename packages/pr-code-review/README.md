@@ -2,14 +2,14 @@
 
 The `pr-code-review` workflow, on no provider in particular: one mail names one pull request and the run returns a
 review, a summary and one comment per defect anchored to its lines. Each provider's package builds it from a provider
-profile (`src/profile.ts`); the hub imports its workflow addresses and placement.
+profile (`src/profile.ts`); the hub imports its placement.
 
 ## Use
 
 Every file under `src/` is a subpath export (`@corbits/pr-code-review/pr-code-review`, `/agents`, `/directors`,
 `/findings`, `/profile`, `/actions/review`, `/actions/checkout`, `/actions/lint`).
 `codeReviewSteps(agents, sources, { prefix, request, after })` places the same steps in another definition, every id
-under `prefix`, as [pr-workflow-anthropic](../pr-workflow-anthropic/README.md) does.
+under `prefix`, as `codeReviewReviewer`, the review a pull request's manager deploys, does.
 
 The request is `{ kind: "code-review", title, description, diff, checkout }`. The title and description are as the host
 shows them, without hidden text. Optional fields are `number` (the pull request's), `efforts` per step,
@@ -19,7 +19,7 @@ naming the files it cut part-way or left out; the review carries it and never pu
 ### Process
 
 1. **plan** names the risky changed areas and the code outside the diff they depend on; meanwhile **checkout** puts the
-   head in a folder on the sidecar. Each review runs in a worker deployment of its own; releasing it when the run ends,
+   head in a folder on the sidecar. Each review runs in a deployment of its own; releasing it when the run ends,
    failed or not, removes the sidecar and the checkout with it.
    **lint** then runs the sidecar's pinned oxlint with the repository's `.oxlintrc.json` over the changed files and
    keeps hits on added lines; only its data keys are kept, a config with any other key is refused unrun, and with none
@@ -58,13 +58,13 @@ package of its own, `packages/pr-code-review-<provider>`, shaped like
    nothing else; `src/actions/index.ts` re-exports the actions of `@corbits/pr-code-review/actions/review` with
    `reviewInput = reviewInputFor(profile)`, `checkout` from `@corbits/pr-code-review/actions/checkout` and `lint` from
    `@corbits/pr-code-review/actions/lint`.
-3. `src/pr-code-review.ts` is `codeReviewWorkflow(agents)`, and one entry per host builds it under
-   `PR_CODE_REVIEW_GITHUB_ADDRESS` or `PR_CODE_REVIEW_BITBUCKET_DATACENTER_ADDRESS`, so the hub mails it whichever
-   provider runs it.
+3. `src/pr-code-review.ts` is `codeReviewWorkflow(agents)`, which the tests and evals run, and one entry per host,
+   `src/pr-code-review-reviewer-<host>.ts`, builds `codeReviewReviewer(agents)` under that host's reviewer id, which
+   the host's manager deploys.
 4. Add the provider, the credential that holds its key and its models to `CODE_REVIEW_PROVIDERS` in
    `triage-contracts`, its models and catalog provider to `DECLARED_MODELS` in `apps/web/src/lib/model-catalog.ts`,
-   and one row per host to `WORKFLOW_PACKAGES` in `apps/web/src/lib/workflow-packages.ts` with its own `packageName`
-   and the same `name`. The portal deploys the rows of the provider whose key the workspace stores.
+   and one row per host to `CHAIN_PACKAGES` in `apps/web/src/lib/workflow-packages.ts` with its own `packageName`,
+   named in its host's manager row under `deploys`.
 5. Give it an eval like [pr-code-review-anthropic/evals](../pr-code-review-anthropic/evals/README.md).
 
 ## Test

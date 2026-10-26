@@ -5,9 +5,8 @@ import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
 import { forMaintainer, hasModelChecks, holdsOthersChanges, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
-import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
+import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
 type ModelAnswer = Decision;
 
@@ -217,24 +216,6 @@ export function separateSlices(answers: ParsedAnswers, focused: FocusedPlan, exp
     const answer = answers.decisions[id];
     return (sides(answer)?.separate ?? 0) >= FOCUSED_DECIDES;
   });
-}
-
-/** An answer clear of the unsure band: the verdict it drives would not change were it asked again. A custom rule's choice or level is, when one option or level holds the band's yes edge. */
-function isDecisive(answer: ModelAnswer): boolean {
-  if (answer.type === "noul") return answer.noul >= YES || answer.noul <= NO;
-  const verdict = choiceOver(answer, VERDICT_CHOICES);
-  if (verdict) return verdict.pass >= VERDICT_DECIDES || verdict.fail >= VERDICT_DECIDES;
-  const focused = sides(answer);
-  if (focused) return focused.serves >= FOCUSED_DECIDES || focused.separate >= FOCUSED_DECIDES;
-  const docs = choiceOver(answer, DOCS_CHOICES);
-  if (docs) return docs.unaffected >= YES || docs.unaffected <= NO;
-  return Math.max(...Object.values(answer.probabilities)) >= YES;
-}
-
-/** A later run may reuse it. */
-export function isReusableReply(reply: string): boolean {
-  const { decisions, malformed } = parseAnswers(reply);
-  return !malformed && Object.values(decisions).every(isDecisive);
 }
 
 // The score, out of 100, at which a model check's answer passes: the band's yes edge, or focused's deciding probability.
@@ -825,7 +806,6 @@ export type Verdict = RenderOutput & {
   request: MirrorRequest;
   automatic: ActionKind[];
   actions: SuggestedAction[];
-  judged?: Judged;
   /** Set when the pack has an approve Do: whether this head may be approved. */
   approvable?: boolean;
   /** Set when the pack has a request-changes Do: whether anything failed is the author's to fix on this head. */

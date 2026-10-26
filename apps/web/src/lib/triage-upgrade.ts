@@ -75,7 +75,7 @@ function olderThan(deployment: { id: string; createdAt: string }, newer: Workflo
 
 /** Only listeners deployed before this one, whoever published them, so of two upgrades at once the newer stays. */
 function isOlderListener(deployment: DeployedWorkflow, source: RepoSource, started: WorkflowDeployment): boolean {
-  return deployment.workflow === TRIAGE_LISTENERS[source] && olderThan(deployment, started) && !deployment.worker;
+  return deployment.workflow === TRIAGE_LISTENERS[source] && olderThan(deployment, started);
 }
 
 async function stopOldDeployments(transport: Transport, tenantId: string, source: RepoSource, started: WorkflowDeployment): Promise<void> {
@@ -87,7 +87,7 @@ async function stopOldDeployments(transport: Transport, tenantId: string, source
 
 /** A host's live listener deployed after this one, which an upgrade finishing later started and keeps. */
 async function newerLive(transport: Transport, tenantId: string, source: RepoSource, ours: WorkflowDeployment): Promise<boolean> {
-  return (await listDeployedWorkflows(transport, tenantId)).some((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling && !row.worker && row.id !== ours.id && !olderThan(row, ours));
+  return (await listDeployedWorkflows(transport, tenantId)).some((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling && row.id !== ours.id && !olderThan(row, ours));
 }
 
 /** "superseded" when another upgrade's newer listener replaced this one. */
@@ -128,7 +128,7 @@ async function deployFrom(transport: Transport, tenantId: string, source: RepoSo
  * again from the same source and the older ones stop; a host with no listener is left for Upgrade.
  */
 export async function restartListener(transport: Transport, tenantId: string, source: RepoSource): Promise<void> {
-  const listeners = (await listDeployedWorkflows(transport, tenantId)).filter((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling && !row.worker);
+  const listeners = (await listDeployedWorkflows(transport, tenantId)).filter((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling);
   const [newest] = listeners.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
   if (!newest?.source) return;
   await replaceListener(transport, tenantId, source, await deployFrom(transport, tenantId, source, newest.source), function quiet() {});
@@ -157,7 +157,7 @@ export async function upgradeTriage(
 }
 
 function hostOf(source: RepoSource, deployed: readonly DeployedWorkflow[], deployments: readonly WorkflowDeployment[], assets: readonly Asset[]): HostRelease {
-  const listeners = deployed.filter((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling && !row.worker);
+  const listeners = deployed.filter((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling);
   const [newest] = [...listeners].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
   if (!newest) return { source, running: undefined, live: 0 };
   const assetId = deployments.find((row) => row.id === newest.id)?.definitionAssetId;

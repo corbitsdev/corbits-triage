@@ -4,11 +4,11 @@ import { ApiError, type Transport } from "@intx/hub-client";
 
 type Asset = { id: string; kind: string; name: string; creatorPrincipalId: string | null };
 
-export async function ensureAsset(transport: Transport, tenantId: string, kind: "workflow" | "package-registry", name: string): Promise<Asset> {
+export async function ensureAsset(transport: Transport, tenantId: string, name: string): Promise<Asset> {
   const base = `/api/tenants/${encodeURIComponent(tenantId)}/assets`;
-  const assets = await transport.fetch<Asset[]>("GET", `${base}?kind=${kind}`);
+  const assets = await transport.fetch<Asset[]>("GET", `${base}?kind=workflow`);
   return assets.find((asset) => asset.name === name)
-    ?? transport.fetch<Asset>("POST", base, { kind, name });
+    ?? transport.fetch<Asset>("POST", base, { kind: "workflow", name });
 }
 
 export async function portalPackage(fetchRaw: typeof fetch, file: string): Promise<Response> {

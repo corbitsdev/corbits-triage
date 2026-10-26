@@ -13,9 +13,7 @@ import type { SuggestedDo } from "./logic/actions.js";
 import { INSTRUCTED_QUESTION, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { RULES_PASS_REASON, type Verdict } from "./logic/render.js";
 import { decidesDos, unsettledBy } from "./logic/settled.js";
-import { workflow } from "./pr-triage.js";
-import { workflow as historical } from "./pr-triage-historical.js";
-import { workflow as bitbucket } from "./pr-triage-bitbucket-datacenter.js";
+import { prTriage, workflow } from "./pr-triage.js";
 
 const REPO = "acme/widgets";
 const HI: Step[] = [{ do: "comment", target: { body: "hi" } }];
@@ -169,7 +167,7 @@ function servedBy(gh: GithubFetch) {
   };
 }
 
-function runTriage(gh: GithubFetch, judged: SystemOne[], judgeFails: boolean, triggerPayload: unknown, backlog = false, definition = backlog ? historical : workflow, bindings = credentialBindings) {
+function runTriage(gh: GithubFetch, judged: SystemOne[], judgeFails: boolean, triggerPayload: unknown, backlog = false, definition = workflow, bindings = credentialBindings) {
   const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("triage body is not inline");
   return runLocal(body.inline, {
@@ -837,6 +835,7 @@ describe("pr-triage body", () => {
 });
 
 const BB_REPO = "ACME/widgets";
+const bitbucket = prTriage({ id: "pr-triage-bitbucket-datacenter", sources: ["bitbucket-datacenter"] });
 const BB_PULL = "/rest/api/1.0/projects/ACME/repos/widgets/pull-requests/8";
 const BB_BUILDS = "/rest/build-status/1.0/commits/abc";
 

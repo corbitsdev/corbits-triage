@@ -98,5 +98,5 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
 - **"The workspace has no decision model"**: store a decision model key in the **Triage** section of Settings.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
-- **New PRs never reach triage**: the hub logs `stale_deployment` when the tenant has no live pr-triage deployment for the repository's host (`pr-triage-github` or `pr-triage-bitbucket-datacenter`). Reload the portal, or wait about two minutes for the hub to redeploy it.
+- **New PRs never reach triage**: the host has no live listener (`triage-listener-github` or `triage-listener-bitbucket-datacenter`), and Settings says Triage is stopped until it is upgraded. Press **Upgrade to new version** in Settings.
 - **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.

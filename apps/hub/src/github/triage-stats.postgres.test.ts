@@ -2,11 +2,11 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { createDB, runMigrations, schema } from "@intx/db";
+import { createDB, runMigrations, schema, type DB } from "@intx/db";
 import { TriageStats } from "@corbits/triage-contracts";
 import { migrateTriageTables } from "../triage-db.js";
 import { createTriageStats } from "./triage-stats.js";
-import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
+import { createVerdictRecordStore, type RecordedVerdict, replaceVerdict } from "./verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_stats";
@@ -18,6 +18,11 @@ function verdict(runId: string, number: number, runStatus: string | null): Recor
     runId, repo: REPO, number, headSha: `sha${number}`, startedAt: AT, verdictAt: AT, settled: true, state: "ready-monitoring", actor: "author",
     humanGated: false, degraded: null, checks: [], dos: [], commented: false, runStatus,
   };
+}
+
+/** Seeds verdict rows as managers record them. */
+async function seed(db: DB["db"], tenantId: string, verdicts: readonly RecordedVerdict[]): Promise<void> {
+  for (const verdict of verdicts) await replaceVerdict(db, tenantId, verdict);
 }
 
 test("PostgreSQL: only verdicts of completed runs count as triaged", async () => {
@@ -36,7 +41,7 @@ test("PostgreSQL: only verdicts of completed runs count as triaged", async () =>
     // #4 was recorded before runs' ends were, when only completed runs were recorded.
     // Rows under ids from before the rules were renamed: an old size row counts for the limit its evidence names, or for both without evidence.
     const oversized = { checks: [{ check: "size", kind: "machine", result: "fail", evidence: ["40 files (max 30)"] }] };
-    await verdicts.record(TENANT, [
+    await seed(db, TENANT, [
       { ...verdict("run_1", 1, "completed"), checks: [{ check: "size", result: "fail" }, { check: "ci", result: "pass" }], detail: oversized },
       verdict("run_2", 2, "failed"),
       verdict("run_3", 3, "running"),

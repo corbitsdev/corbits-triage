@@ -4,7 +4,7 @@ import * as actions from "@corbits/triage-workflows/actions/index";
 import type { RulesOutput } from "@corbits/triage-workflows/actions/rules";
 import { credentialBindings } from "@corbits/triage-workflows/agents";
 import { localActionCredentials } from "@corbits/triage-workflows/local-credentials";
-import { workflow } from "@corbits/triage-workflows/pr-triage-github";
+import { workflow } from "@corbits/triage-workflows/pr-triage";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker, type WorkflowAuthorizeFn, type WorkflowRun } from "@intx/workflow";
 import { fileNotes, type FileNote } from "./notes.ts";
 import type { PrRef } from "./pr.ts";

@@ -1,8 +1,6 @@
 import type { ActionKind, CheckPack, PolicySource, RepoSource } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 
-export type Judged = Record<string, string>;
-
 export interface Item {
   facts: PrFacts;
   det: DeterministicResult;
@@ -15,7 +13,6 @@ export interface Item {
    * answer wait on it, and the head waits for those checks or a human decides.
    */
   judgeSkipped?: true;
-  judged?: Judged;
   automatic?: ActionKind[];
   pack?: CheckPack;
   source?: PolicySource;

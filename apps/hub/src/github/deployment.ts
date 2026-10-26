@@ -1,5 +1,5 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
-import { schema, type DB, type ResolvedSenderPrincipal, type WorkflowRunLaunchSpecStore } from "@intx/db";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { schema, type DB, type ResolvedSenderPrincipal } from "@intx/db";
 import { MAIL_ADMISSION_DENIED_CODE } from "@intx/hub-sessions";
 import type { RunTriggerMaterialize } from "@corbits/webhooks";
 import type { ToolPackageManifest } from "@intx/types/tool-packages";
@@ -55,20 +55,7 @@ export type LiveDeployment = { runId: string; address: string; createdAt: Date; 
 
 export type TenantDeployment = LiveDeployment & { workflow: string };
 
-/**
- * A worker deployment carries this key in its deploy content, so the hub can tell it from the listener it was copied
- * from: a worker ran one mail and was released when that run ended.
- */
-const WORKER_MARKER = "corbitsTriageWorker";
-
-export type DeploymentKind = "listener" | "worker";
-
-function markedAs(kind: DeploymentKind) {
-  const marker = sql`${schema.workflowRunLaunchSpec.deployContent} ->> ${WORKER_MARKER}`;
-  return kind === "worker" ? eq(marker, "true") : isNull(marker);
-}
-
-type DeploymentQuery = { tenantId: string; definitionName?: string; kind: DeploymentKind };
+type DeploymentQuery = { tenantId: string; definitionName?: string };
 
 /**
  * A workflow the portal publishes per person deploys from an asset named for its publisher and release, which names
@@ -97,7 +84,6 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
       isNotNull(workflowRun.anchorRunId),
       eq(workflowRun.id, workflowRun.anchorRunId),
       inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
-      markedAs(query.kind),
     ))
     .orderBy(desc(workflowRun.createdAt), desc(workflowRun.id));
   return rows.map((row) => ({
@@ -109,9 +95,9 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
   }));
 }
 
-/** Live deployments; every workflow's when no name is given; listeners unless workers are asked for. */
-export function resolveLiveDeployments(db: DB["db"], tenantId: string, definitionName?: string, kind: DeploymentKind = "listener"): Promise<TenantDeployment[]> {
-  return deploymentsWhere(db, { tenantId, definitionName, kind });
+/** Live deployments; every workflow's when no name is given. */
+export function resolveLiveDeployments(db: DB["db"], tenantId: string, definitionName?: string): Promise<TenantDeployment[]> {
+  return deploymentsWhere(db, { tenantId, definitionName });
 }
 
 export function newestLive(deployments: readonly LiveDeployment[]): LiveDeployment | undefined {
@@ -134,12 +120,6 @@ function rootOf(closure: ToolPackageManifest): PackageVersion {
   return { name: root.name, version: root.version };
 }
 
-/** The launch spec does not store the pin, so it is read back from the frozen closure. */
-export function pinOf(closure: ToolPackageManifest): string {
-  const { name, version } = rootOf(closure);
-  return `${name}@${version}`;
-}
-
 export type ClosureVersions = { workflow: PackageVersion; tools: PackageVersion[] };
 
 /** A tarball-format source pins its one top-level package; a source-format one names its package, at the version it built. */
@@ -158,25 +138,4 @@ export function closureVersions(bundle: FrozenApprovalBundle): ClosureVersions |
     .filter((entry) => entry.name !== workflow.name)
     .map((entry) => ({ name: entry.name, version: entry.version }));
   return { workflow, tools };
-}
-
-/** A tarball-format source names its package only through the pin. */
-function pinFor(bundle: FrozenApprovalBundle): string | undefined {
-  if (bundle.source.kind !== "asset" || bundle.source.package.format !== "tarball") return undefined;
-  return pinOf(bundle.closure);
-}
-
-/** The reason the hub gave when it replaced a busy deployment with a fresh copy, which earlier audit entries carry. */
-export const ROTATION_REASON = "Replaced by a fresh deployment of the same workflow";
-
-/** Whether two deployments were made from the same request: one source, package, pin and entry. */
-export async function sameSource(launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">, anchorRunId: string, otherAnchorRunId: string): Promise<boolean> {
-  const [spec, other] = await Promise.all([launchSpecs.get(anchorRunId), launchSpecs.get(otherAnchorRunId)]);
-  if (!spec || !other) return false;
-  const a = spec.frozenApprovalBundle;
-  const b = other.frozenApprovalBundle;
-  if (a.source.kind !== "asset" || b.source.kind !== "asset" || a.entry !== b.entry) return false;
-  return a.source.assetId === b.source.assetId
-    && JSON.stringify(a.source.package) === JSON.stringify(b.source.package)
-    && pinFor(a) === pinFor(b);
 }

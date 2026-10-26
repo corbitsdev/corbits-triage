@@ -30,7 +30,7 @@ import {
 } from "@corbits/cron";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { repoSourceOf, TRIAGE_MAIL_SENDER, type RepoSource } from "@corbits/triage-contracts";
+import { REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake } from "./manager-intake.js";
@@ -53,11 +53,10 @@ import { createIntegrationsApp, INTEGRATIONS_PREFIX, logRefusal } from "./integr
 import { createBitbucketCodeReviewSend } from "./bitbucket-datacenter/code-review-send.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { checkedBitbucketDelivery, createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { createPauseGate, PR_WORKFLOW_VARIANTS } from "./github/pr-workflow.js";
-import { codeReviewWorkflowFor, connectedSources, createHostRelease, TRIAGE_WORKFLOWS, triageWorkflowFor, type TriageWorkflow } from "./github/source-workflow.js";
+import { createPauseGate } from "./github/pr-workflow.js";
+import { APPROVAL_WORKFLOWS, connectedSources, createHostRelease } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
-import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun } from "./code-review.js";
 import { createPullRequestReader } from "./pull-request-reader.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
@@ -74,7 +73,7 @@ import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { readyMaterializer, systemSenderMaterializer, resolveLiveDeployments, sameSource, TriageStoppedError, type LiveDeployment } from "./github/deployment.js";
+import { readyMaterializer, systemSenderMaterializer, resolveLiveDeployments, TriageStoppedError, type LiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, keptOpenPrs } from "./github/open-pulls.js";
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
@@ -106,34 +105,17 @@ import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved, type TriageJob } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
 import { prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
-import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
-import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead } from "@corbits/github-tool";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 
-// Per host, the workflows from before the listener that the hub still names, and the tools a workspace runs once that
-// host's credential exists.
-function variantsOf(source: RepoSource) {
-  return PR_WORKFLOW_VARIANTS.filter((variant) => variant.source === source).map((variant) => ({ address: variant.id, id: variant.id }));
+// Per host: Upgrade deploys the host's listener and tools once that host's credential exists, and the listener deploys
+// a manager per pull request. A workspace with both hosts runs both listeners.
+function chainOf(source: RepoSource) {
+  return [TRIAGE_LISTENERS[source], TRIAGE_MANAGERS[source]].map((id) => ({ address: id, id }));
 }
 const EXPECTED_DEPLOYMENT_SET = {
-  github: {
-    workflows: [
-      { address: triageWorkflowFor("github").address, id: prTriageGithub.id },
-      { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
-      { address: codeReviewWorkflowFor("github").id, id: codeReviewWorkflowFor("github").id },
-      ...variantsOf("github"),
-    ],
-    tools: [githubRead.id],
-  },
-  "bitbucket-datacenter": {
-    workflows: [
-      { address: triageWorkflowFor("bitbucket-datacenter").address, id: triageWorkflowFor("bitbucket-datacenter").id },
-      { address: codeReviewWorkflowFor("bitbucket-datacenter").id, id: codeReviewWorkflowFor("bitbucket-datacenter").id },
-      ...variantsOf("bitbucket-datacenter"),
-    ],
-    tools: [bitbucketRead.id],
-  },
+  github: { workflows: chainOf("github"), tools: [githubRead.id] },
+  "bitbucket-datacenter": { workflows: chainOf("bitbucket-datacenter"), tools: [bitbucketRead.id] },
 };
 
 const TRIAGE_RETRY_MS = 15_000;
@@ -516,9 +498,9 @@ const triageStateStore = createTriageStateStore({ db: composition.db, writerFor:
 const reconcilePolicy = triageReconcilePolicy(env);
 
 /** One host's reconciler. */
-function reconcilerFor(triage: TriageWorkflow) {
+function reconcilerFor(source: RepoSource) {
   return createTriageReconciler({
-    source: triage.source,
+    source,
     tenants: reconcileTenants,
     listener: liveListenerOf,
     headChecks: tenantHeadChecks,
@@ -535,7 +517,7 @@ function reconcilerFor(triage: TriageWorkflow) {
   });
 }
 
-const reconcilers = TRIAGE_WORKFLOWS.map(reconcilerFor);
+const reconcilers = REPO_SOURCES.map(reconcilerFor);
 async function reconcileAll(): Promise<ReconcileOutcome> {
   // A host removed through the stock credential route tells the hub nothing, so each pass releases what it left running.
   for (const tenant of await reconcileTenants()) await releaseHostsOf(tenant.id);
@@ -752,13 +734,9 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     artifacts: composition.db,
     readCheckPack: readStoredCheckPack,
     runReader: composition.runReader,
-    sameSource: function sameSourceOf(anchorRunId, otherAnchorRunId) {
-      return sameSource(launchSpecs, anchorRunId, otherAnchorRunId);
-    },
     authorize: authorizePortal,
-    workflows: [...TRIAGE_WORKFLOWS, ...PR_WORKFLOW_VARIANTS].map((workflow) => workflow.id),
+    workflows: APPROVAL_WORKFLOWS,
   }),
-  workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged, log: logJson }),
   workflowVersions: createWorkflowVersions({
     db: composition.db,
     launchSpecs,

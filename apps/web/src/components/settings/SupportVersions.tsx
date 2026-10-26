@@ -13,7 +13,7 @@ function versionLine(deployments: readonly DeployedWorkflow[], sources: readonly
       continue;
     }
     parts.push(`${workflow} ${deployment.package?.version ?? "not from the package registry"}${deployment.live ? "" : " (not running)"}`);
-    for (const tool of deployment.tools) tools.add(`${tool.name} ${tool.version}`);
+    if (deployment.tools) for (const tool of deployment.tools) tools.add(`${tool.name} ${tool.version}`);
   }
   return [...parts, ...tools].join(" · ");
 }
