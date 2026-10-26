@@ -86,6 +86,9 @@ with the `intx-src` export condition, so every hub command runs with
   npm dependencies from a registry. The manager chain (`CHAIN_PACKAGES`) is
   built only as source trees; its bundles import `./release.json` at run time,
   and `src/loops.ts`, where a package has one, ships as `interchange.loops`.
+  The chain's bundles run on Bun only: Bun's bundler drops the import's
+  `with { type: "json" }`, which Node requires, and every sidecar runs Bun.
+  The tarball workflows still load under Node.
 
 The workflows name one decision model, `corbits-system-one:decision`, so their
 source is the same for every tenant. Saving a model key stores it in the vault

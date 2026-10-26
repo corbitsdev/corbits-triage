@@ -1,6 +1,7 @@
 // Packs each workflow as a tarball into public/packages/ beside the host tools it depends on, and as a source tree
 // with those tools as workspace members, so the portal can publish them to the hub.
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
@@ -13,7 +14,6 @@ import githubPkg from "../../../packages/github-tool/package.json";
 import triageWorkflowsPkg from "../../../packages/triage-workflows/package.json";
 import { tarballFilename } from "../../../packages/triage-contracts/src/tarball.ts";
 import { contentVersion, packPackage, type PackedTarball } from "../../../tooling/pack-tarball.ts";
-import { existsSync } from "node:fs";
 import { CHAIN_PACKAGES, WORKFLOW_PACKAGES, type BuiltPackage, type PackageIndexEntry, type SourceIndexEntry, type SourceTree } from "../src/lib/workflow-packages.ts";
 
 const PACKAGES = resolve(import.meta.dir, "../../../packages");

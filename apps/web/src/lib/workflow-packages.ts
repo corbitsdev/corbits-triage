@@ -13,16 +13,21 @@ type Kind =
   | { kind: "code-review"; provider: CodeReviewProvider; workspace: `pr-code-review-${CodeReviewProvider}` }
   | { kind: "pr-workflow"; provider: CodeReviewProvider; workspace: `pr-workflow-${CodeReviewProvider}` };
 
-export type WorkflowPackage = Kind & {
+/** Where a release's workflow comes from: the package under packages/ and its entry, built into its own package. */
+export type BuiltPackage = {
   /** The workflow's name, which its hub address and deployment go by whatever package it comes from. */
   name: string;
-  /** The pull request host whose credential the workflow binds; it deploys only while that host is connected. */
-  source: RepoSource;
+  workspace: string;
   packageName: string;
   entry: `./${string}.mjs`;
   src: `src/${string}.ts`;
   /** The catalog models the workflow's agents name; the first is its default source. */
   models: readonly [DeclaredModel, ...DeclaredModel[]];
+};
+
+export type WorkflowPackage = Kind & BuiltPackage & {
+  /** The pull request host whose credential the workflow binds; it deploys only while that host is connected. */
+  source: RepoSource;
 };
 
 // One pr-triage package per pull request host: each binds only its host's credential, and the hub deploys those of the
@@ -38,9 +43,6 @@ export const WORKFLOW_PACKAGES = [
 ] as const satisfies readonly WorkflowPackage[];
 
 export type PackageIndexEntry = { name: string; version: string; filename: string; integrity: string };
-
-/** Where a release's workflow comes from: the package under packages/ and its entry, built into its own package. */
-export type BuiltPackage = { name: string; workspace: string; packageName: string; entry: `./${string}.mjs`; src: `src/${string}.ts`; models: readonly [DeclaredModel, ...DeclaredModel[]] };
 
 /** A workflow of the manager chain; one that deploys another is published after it, with that one's release as `as`. */
 export type ChainPackage = BuiltPackage & { source: RepoSource; deploys?: { workflow: string; as: "codeReview" | "manager" } };
