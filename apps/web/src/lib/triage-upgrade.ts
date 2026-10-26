@@ -1,6 +1,6 @@
 // Switching a workspace to the per-pull-request manager: publish this portal's release as the person upgrading, deploy
 // each connected host's listener from it, and once it is up stop that host's listeners deployed before it.
-import { skipToken, useMutation, useQuery } from "@tanstack/react-query";
+import { skipToken, useIsMutating, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { deployWorkflow, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
@@ -170,29 +170,79 @@ export function useMayUpgrade(): boolean {
   return you?.roles.some((role) => upgraders.has(role.id)) === true;
 }
 
-export function useTriageRelease() {
+/** Skipped for someone who may not upgrade wherever only an upgrade would use it. */
+export function useTriageRelease(wanted: boolean) {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   const sources = snapshot ? connectedSources(snapshot.credentials) : [];
   return useQuery({
     queryKey: [TRIAGE_RELEASE_QUERY_KEY, tenantId, sources],
-    queryFn: tenantId === undefined ? skipToken : function readRelease() {
+    queryFn: tenantId === undefined || !wanted ? skipToken : function readRelease() {
       return readTriageRelease(createHubTransport(), tenantId, sources);
     },
   });
 }
 
-export function useTriageUpgrade(onStep: (step: UpgradeStep) => void) {
+const UPGRADE_MUTATION_KEY = ["triage-upgrade"];
+
+function isUpgradeStep(value: unknown): value is UpgradeStep {
+  return value === "publishing" || value === "starting" || value === "stopping";
+}
+
+export type UpgradeRun = { start: () => void; running: boolean; step: UpgradeStep | undefined; error: Error | null };
+
+/** The workspace's one upgrade, whichever page started it: every page sees its step and last error, and none starts a second while it runs. */
+export function useUpgradeRun(run: (onStep: (step: UpgradeStep) => void) => Promise<RepoSource[]>, onSuperseded: () => void, onSettled: () => void): UpgradeRun {
+  const queryClient = useQueryClient();
+  const running = useIsMutating({ mutationKey: UPGRADE_MUTATION_KEY }) > 0;
+  const latest = useMutationState({
+    filters: { mutationKey: UPGRADE_MUTATION_KEY },
+    select: function shownUpgrade(mutation) {
+      const { status, context, error } = mutation.state;
+      return {
+        step: status === "pending" && isUpgradeStep(context) ? context : undefined,
+        error: status === "error" ? error : null,
+      };
+    },
+  }).at(-1);
+  const mutation = useMutation<RepoSource[], Error, void, UpgradeStep>({
+    mutationKey: UPGRADE_MUTATION_KEY,
+    mutationFn: function upgrade() {
+      return run(function rememberStep(next) {
+        const pending = queryClient.getMutationCache().find<RepoSource[], Error, void, UpgradeStep>({ mutationKey: UPGRADE_MUTATION_KEY, status: "pending" });
+        if (!pending) return;
+        // A running mutation does not notify again until it settles, so the step would stay invisible.
+        pending.state = { ...pending.state, context: next };
+        queryClient.getMutationCache().notify({ type: "updated", mutation: pending, action: { type: "continue" } });
+      });
+    },
+    onSuccess: function warnWhenSuperseded(superseded) {
+      if (superseded.length > 0) onSuperseded();
+    },
+    onSettled,
+  });
+
+  // Read from the cache, not the last render, so a second click before React re-renders starts nothing.
+  function start() {
+    if (queryClient.isMutating({ mutationKey: UPGRADE_MUTATION_KEY }) > 0) return;
+    mutation.mutate();
+  }
+
+  return { start, running, step: latest?.step, error: latest?.error ?? null };
+}
+
+export function useTriageUpgrade(): UpgradeRun {
   const { snapshot, refresh, notify } = usePortal();
-  return useMutation({
-    async mutationFn() {
+  function warnSuperseded() {
+    notify(SUPERSEDED);
+  }
+  return useUpgradeRun(
+    async function upgradeWorkspace(onStep) {
       if (!snapshot) throw new Error("The service is unavailable. Reload the page and try again.");
       const { tenantId, principalId } = snapshot.workspace;
       return upgradeTriage(createHubTransport(), { tenantId, principalId }, connectedSources(snapshot.credentials), onStep);
     },
-    onSuccess(superseded) {
-      if (superseded.length > 0) notify(SUPERSEDED);
-    },
-    onSettled: refresh,
-  });
+    warnSuperseded,
+    refresh,
+  );
 }

@@ -105,10 +105,11 @@
 :is(.pulse, .settings) { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 960px; margin: 0 auto; padding: 40px 40px 80px; }
 :is(.pulse, .settings) h1 { font-size: 34px; margin: 0; letter-spacing: -0.02em; }
 .pulse { display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px; align-content: start; }
-.upgrade-banner { display: grid; gap: 6px; padding: 12px 14px; background: var(--heat-wash); color: var(--heat-ink); border-radius: var(--r-md); font-size: 14px; font-weight: 600; }
+.upgrade-banner { display: grid; gap: 6px; padding: 12px 14px; background: var(--heat-wash); color: var(--heat-ink); border-radius: var(--r-md); font-size: 14px; }
+.upgrade-banner .host { font-weight: 600; }
 .upgrade-banner .sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .upgrade-banner .txt { flex: 1 1 16rem; min-width: 0; }
-.upgrade-banner .field-error { margin: 0; font-weight: 400; }
+.upgrade-banner .field-error { margin: 0; }
 .settings h1 { font-weight: 700; }
 .settings .lede { margin: 6px 0 10px; font-size: 16px; color: var(--ink); }
 .settings > .byline { margin-bottom: 28px; }

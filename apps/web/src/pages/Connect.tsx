@@ -23,7 +23,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { hostedRepos } from "../lib/repo-rows.ts";
 import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
-import { UPGRADE_STEP_LABEL, useMayUpgrade, useTriageUpgrade, type UpgradeStep } from "../lib/triage-upgrade.ts";
+import { UPGRADE_STEP_LABEL, useMayUpgrade, useTriageUpgrade } from "../lib/triage-upgrade.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
 import { CopyField } from "../components/CopyField.tsx";
 import { BitbucketDatacenterSource } from "../components/settings/BitbucketDatacenterSource.tsx";
@@ -77,12 +77,11 @@ export default function Connect() {
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const modelStored = snapshot?.decisionModel !== undefined;
   const mayUpgrade = useMayUpgrade();
-  const [upgradeStep, setUpgradeStep] = useState<UpgradeStep | null>(null);
-  const upgrade = useTriageUpgrade(setUpgradeStep);
+  const upgrade = useTriageUpgrade();
 
   /** Whoever may publish starts the workspace on the newest workflow as soon as it has a decision model. */
   function startNewestWorkflow() {
-    if (mayUpgrade) upgrade.mutate();
+    if (mayUpgrade) upgrade.start();
   }
 
   async function generateAndCopyWebhookSecret() {
@@ -290,7 +289,7 @@ export default function Connect() {
       {modelStored
         ? <div className="success-callout" role="status"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>Decision model connected</strong><p>Triage is still off for every repository. Turn it on under Repositories.</p></div></div>
         : <><p className="muted">You can skip this for now. Triage asks for it when you turn it on for a repository.</p><DecisionModelForm onSaved={startNewestWorkflow} /></>}
-      {upgrade.isPending && upgradeStep && <p className="muted" role="status">{UPGRADE_STEP_LABEL[upgradeStep]}</p>}
+      {upgrade.step && <p className="muted" role="status">{UPGRADE_STEP_LABEL[upgrade.step]}</p>}
       {upgrade.error && <p role="alert" className="field-error">Could not start the newest workflow. {errorText(upgrade.error)} You can upgrade from Settings.</p>}
       <div className="task-actions">
         {modelStored && <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>}

@@ -5,8 +5,8 @@ import { UpgradeOffer } from "./settings/TriageUpgrade.tsx";
 /** The Settings upgrade, at the top of the main pages, for someone who may upgrade while a host is due. */
 export function TriageUpgradeBanner() {
   const { snapshot } = usePortal();
-  const release = useTriageRelease();
   const mayUpgrade = useMayUpgrade();
+  const release = useTriageRelease(mayUpgrade);
 
   if (!release.data || !mayUpgrade || snapshot?.decisionModel === undefined) return null;
   const data = release.data;

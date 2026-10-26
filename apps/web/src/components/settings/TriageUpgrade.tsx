@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import type { RepoSource } from "@corbits/triage-contracts";
@@ -7,7 +6,7 @@ import type { HubPrincipal } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { hostFullName } from "../../lib/pull-link.ts";
 import { usePrincipals } from "../../lib/tenant-entities.ts";
-import { portalRelease, UPGRADE_STEP_LABEL, upgradeDue, useMayUpgrade, useTriageRelease, useTriageUpgrade, type HostRelease, type TriageRelease, type UpgradeStep } from "../../lib/triage-upgrade.ts";
+import { portalRelease, UPGRADE_STEP_LABEL, upgradeDue, useMayUpgrade, useTriageRelease, useTriageUpgrade, type HostRelease, type TriageRelease } from "../../lib/triage-upgrade.ts";
 
 const SUMMARY = "Each pull request gets one manager that posts a single update.";
 
@@ -51,20 +50,19 @@ export function UpgradeOffer({ release, hosts }: { release: TriageRelease; hosts
   const { readOnly } = usePortal();
   const people = usePrincipals();
   const mayUpgrade = useMayUpgrade();
-  const [step, setStep] = useState<UpgradeStep | null>(null);
-  const upgrade = useTriageUpgrade(setStep);
+  const upgrade = useTriageUpgrade();
   const named = release.hosts.length > 1;
   const due = release.hosts.some((host) => upgradeDue(release, host));
 
   return (
     <>
-      {hosts.map((host) => <div className="sentence" key={host.source}><span className="txt">{hostText(release, host, people.rows, named)}</span></div>)}
+      {hosts.map((host) => <div className="sentence host" key={host.source}><span className="txt">{hostText(release, host, people.rows, named)}</span></div>)}
       {due && (
         <div className="sentence">
           <span className="txt">{SUMMARY}</span>
           {mayUpgrade && (
-            <Button type="button" size="sm" disabled={readOnly || upgrade.isPending} onClick={() => upgrade.mutate()}>
-              {upgrade.isPending && step ? UPGRADE_STEP_LABEL[step] : "Upgrade to new version"}
+            <Button type="button" size="sm" disabled={readOnly || upgrade.running} onClick={upgrade.start}>
+              {upgrade.step ? UPGRADE_STEP_LABEL[upgrade.step] : "Upgrade to new version"}
             </Button>
           )}
         </div>
@@ -77,7 +75,7 @@ export function UpgradeOffer({ release, hosts }: { release: TriageRelease; hosts
 /** Which version of the per-pull-request manager each host runs, and the switch to this portal's; a deprecation notice for a host that has none. */
 export function TriageUpgrade() {
   const people = usePrincipals();
-  const release = useTriageRelease();
+  const release = useTriageRelease(true);
   const mayUpgrade = useMayUpgrade();
 
   if (!release.data) return null;
