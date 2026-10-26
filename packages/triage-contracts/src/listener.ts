@@ -13,6 +13,8 @@ export const DEPLOYER_GRANTS: ReadonlyArray<{ resource: string; action: string }
   { resource: "workflow:*", action: "create" },
   // The manager and the code review stop their own runs, and an upgrade stops the listeners it replaces.
   { resource: "workflow-run:*", action: "manage" },
+  // The listener and the manager read the run they just deployed before mailing it; manage does not satisfy read.
+  { resource: "workflow-run:*", action: "read" },
   { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION },
   { resource: MANAGER_RESULT_RESOURCE, action: MANAGER_RESULT_ACTION },
 ];

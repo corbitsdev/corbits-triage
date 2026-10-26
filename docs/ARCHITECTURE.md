@@ -691,9 +691,10 @@ creator. The hub keeps a system `Deployer` role per workspace
 (`apps/hub/src/deployer-role.ts`), ensured with the `pr-triage` role when a
 host is connected and at every migrate for workspaces already connected. It
 holds `DEPLOYER_GRANTS` (`@corbits/triage-contracts`): `create` on `asset:*`
-and `workflow:*`, `manage` on `workflow-run:*`, `write` on
-`triage-manager:state` and `create` on `triage-manager:result`. It holds no
-read, since it is given to admins, whose role reads everything. Stock gives an
+and `workflow:*`, `manage` and `read` on `workflow-run:*`, `write` on
+`triage-manager:state` and `create` on `triage-manager:result`. Read is only
+`workflow-run:*`, which the listener and the manager need to read the run they
+just deployed; other reads stay with admins, whose role reads everything. Stock gives an
 asset's creator no grant on it, and a push needs `write`, so before pushing to a
 workflow asset its user created, the portal grants that user `write` on that
 one asset through the stock grants route (admins hold `create` on `grant:*`),
