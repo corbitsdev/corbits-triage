@@ -329,8 +329,9 @@ any other tenant or an unknown sender.
   the claim: the next manager's take finds the run gone and claims.
   A run left deployed with no sidecar for two minutes is gone too, and its
   cancellation is requested so it does not start after the claim has moved on.
-  A run whose placement waits for a free slot on a full sidecar is not gone
-  for half an hour. A manager or judge is deployed with the mail that starts
+  A run whose allocation has not reached a sidecar yet (`provisioning` or
+  `replacing`), as when it waits for a free slot on a full sidecar, is not
+  gone for half an hour from the allocation's creation. A manager or judge is deployed with the mail that starts
   it, so one still `deployed` five minutes after it reached its sidecar never
   ran: it is gone for the claim, and each reconcile pass ends it and logs
   `triage_deployment_never_ran` with its run id and workflow. The hub times

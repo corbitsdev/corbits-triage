@@ -10,7 +10,6 @@ import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
-import { WAITING_FOR_SLOT } from "./sidecar/placement.js";
 import { triageSchema } from "./triage-db.js";
 import { START_DEADLINE_MS } from "./workflow-release/rollout.js";
 
@@ -231,7 +230,7 @@ type ManagerRun = {
   generation: number | null;
   allocationStatus: string | null;
   sidecarId: string | null;
-  failureCode: string | null;
+  allocationCreatedAt: Date | null;
 };
 
 /** How long the run has sat on its sidecar: from its deploy, or its placement there when that came later. */
@@ -252,7 +251,7 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
       generation: schema.sidecarAllocation.generation,
       allocationStatus: schema.sidecarAllocation.status,
       sidecarId: schema.sidecarAllocation.sidecarId,
-      failureCode: schema.sidecarAllocation.failureCode,
+      allocationCreatedAt: schema.sidecarAllocation.createdAt,
     })
     .from(schema.workflowRun)
     .leftJoin(schema.sidecarAllocation, eq(schema.sidecarAllocation.anchorRunId, schema.workflowRun.id))
@@ -273,14 +272,19 @@ type UpRule = { readonly graceMs?: number; readonly startedByMail: boolean };
 
 /**
  * A running run; one on its sidecar, unless it is started by its mail and sat there past `NEVER_RAN_MS`; one whose
- * placement waits for a free slot, for up to `SLOT_WAIT_MS`; or one deployed inside the startup window.
+ * allocation has not reached a sidecar yet, which it may wait for while the sidecar is full, for up to `SLOT_WAIT_MS`
+ * from the allocation's creation; or one deployed inside the startup window.
  */
 function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = MANAGER_START_GRACE_MS, startedByMail }: UpRule): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
   if (run.status === "running") return true;
   const age = now.getTime() - run.createdAt.getTime();
   if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < NEVER_RAN_MS;
-  if (run.allocationStatus === "replacing" && run.failureCode === WAITING_FOR_SLOT) return age < SLOT_WAIT_MS;
+  // Stock moves a placement refused for room between `replacing` and `provisioning` on each retry, recording why only
+  // in the first, so any placement not yet on its sidecar may be waiting for a slot.
+  if ((run.allocationStatus === "provisioning" || run.allocationStatus === "replacing") && run.allocationCreatedAt !== null) {
+    return now.getTime() - run.allocationCreatedAt.getTime() < SLOT_WAIT_MS;
+  }
   return age < graceMs;
 }
 

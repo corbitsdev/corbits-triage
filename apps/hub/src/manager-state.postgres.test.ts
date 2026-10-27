@@ -464,7 +464,7 @@ test("PostgreSQL: a manager being cancelled is mailed nothing and takes nothing,
   });
 }, 120_000);
 
-async function allocate(db: Db, runId: string, fields: { status: "allocated" | "provisioning" | "replacing"; sidecarId?: string; failureCode?: string; generation?: number; deploymentCleanupConfirmed?: boolean }): Promise<void> {
+async function allocate(db: Db, runId: string, fields: { status: "allocated" | "provisioning" | "replacing"; sidecarId?: string; failureCode?: string | null; generation?: number; deploymentCleanupConfirmed?: boolean; createdAt?: Date }): Promise<void> {
   if (fields.sidecarId !== undefined) {
     await db.insert(schema.sidecar).values({ id: fields.sidecarId, tokenHashSha256: new Uint8Array(32).fill(runId.length), provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest" }).onConflictDoNothing();
   }
@@ -509,17 +509,30 @@ test("PostgreSQL: a manager that waited past five minutes for a slot is timed fr
   });
 }, 120_000);
 
-test("PostgreSQL: a manager whose placement waits for a free slot keeps the pull request for half an hour", async () => {
-  await withDatabase(async function waiting(db) {
-    await deployedRun(db, "run_waiting", new Date(Date.now() - 10 * MINUTE));
-    // What stock writes for a placement refused for room while it waits to try again.
-    await allocate(db, "run_waiting", { status: "replacing", failureCode: "sidecar_reuse_rejected", generation: 1, deploymentCleanupConfirmed: true });
-    await claimRun(db, "run_waiting");
-    await liveRun(db, "run_next");
-    expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
+type Unplaced = Parameters<typeof allocate>[2];
 
-    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 31 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_waiting'`);
-    expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "idle" });
+async function keepsClaimWhileUnplaced(db: Db, row: Unplaced): Promise<void> {
+  await deployedRun(db, "run_waiting", new Date(Date.now() - 10 * MINUTE));
+  await allocate(db, "run_waiting", { ...row, createdAt: new Date(Date.now() - 10 * MINUTE) });
+  await claimRun(db, "run_waiting");
+  await liveRun(db, "run_next");
+  expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
+
+  await db.update(schema.sidecarAllocation).set({ createdAt: new Date(Date.now() - 31 * MINUTE) }).where(sql`${schema.sidecarAllocation.id} = 'alc_run_waiting'`);
+  expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "idle" });
+}
+
+test("PostgreSQL: a manager whose placement was refused for room keeps the pull request for half an hour from its allocation", async () => {
+  await withDatabase(async function refused(db) {
+    // What stock writes for a placement refused for room while it waits to try again.
+    await keepsClaimWhileUnplaced(db, { status: "replacing", failureCode: "sidecar_reuse_rejected", generation: 1, deploymentCleanupConfirmed: true });
+  });
+}, 120_000);
+
+test("PostgreSQL: a manager between retries of its placement, its refusal cleared, still keeps the pull request for half an hour", async () => {
+  await withDatabase(async function retrying(db) {
+    // What stock writes when it tries the placement again: the refusal's code is cleared.
+    await keepsClaimWhileUnplaced(db, { status: "provisioning", failureCode: null, generation: 1 });
   });
 }, 120_000);
 
