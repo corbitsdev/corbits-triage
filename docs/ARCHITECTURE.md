@@ -241,7 +241,8 @@ any other tenant or an unknown sender.
   is connected or its key replaced, a Bitbucket Data Center instance is
   connected, its token replaced or its webhook secret rotated, and when
   GitHub installations sync; and when a reconcile pass finds a connected host
-  with no live listener. At most two rolls run at once across the hub, and
+  with no live listener, or with one whose connected sidecar the hub holds no
+  route to. At most two rolls run at once across the hub, and
   one per workspace across hub processes, under a Postgres session advisory
   lock held on a connection reserved for it, so a roll holds no transaction
   while it waits. A hub whose build has no `packages/sources/index.json`
@@ -298,6 +299,33 @@ any other tenant or an unknown sender.
   removed. A running listener keeps the credentials it launched with, which is
   why a credential write deploys its host's listener again; managers and
   judges launch with the current value.
+
+  Stock routes a deployment's mail through the sidecar router's address
+  index, per allocation generation, and acts on a lost route only when a
+  sidecar connects or reports a stop, or once it stayed disconnected past the
+  deployment's `maxDisconnected`. Each reconcile pass therefore asks the
+  router, through `isAllocatedWorkflowActive`, stock's deploy-readiness check,
+  which reads the same per-connection route table mail is routed by, whether
+  it routes the generation of each host's live listener whose first deploy
+  completed. Like stock's own reconciler calling it, the check undeploys a
+  sidecar whose identity is no longer current. When the listener's sidecar is
+  connected but the router holds no route to it, the hub starts that host's
+  listener again exactly as a credential write does and logs
+  `listener_unroutable` with the workspace, host, run, allocation, generation
+  and reason. A host whose roll is running or already due to redeploy it is
+  left to that roll, so one unroutable listener is replaced once. A listener whose sidecar is not
+  connected is left to stock, which fails it once it stays away past
+  `maxDisconnected`; each pass logs `listener_disconnected` at debug level
+  for it, or `listener_identity_unknown` when the router could not validate
+  the sidecar's identity. After asking stock to stop the listeners and
+  workflows a roll replaces, the roll polls stock's lifecycle status until
+  each ends. One that stays live once stock gave up stopping it, which
+  stock's lifecycle status shows as its allocation no longer dispatchable,
+  one still live five minutes after the stop was requested, and one whose
+  status could not be read after three retries are logged and the roll goes
+  on: a listener as `listener_cancel_stuck`, which every reconcile pass logs
+  again while stock has given up on it, and a replaced workflow once as
+  `rollout_cancel_stuck` with its name.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes

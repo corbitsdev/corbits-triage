@@ -68,8 +68,8 @@ import { triageTenants } from "./deployer-role.js";
 import { bundleAt, bundled, type Publisher } from "./workflow-release/publish.js";
 import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers.js";
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
-import { catalogModels, createWorkspaceLock, deploymentState, liveDeployments } from "./workflow-release/reads.js";
-import { createRolloutQueue, createWorkflowRollout, type DeployRequest } from "./workflow-release/rollout.js";
+import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
+import { createRolloutQueue, createWorkflowRollout, stopGivenUp, type DeployRequest } from "./workflow-release/rollout.js";
 import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, localSidecarMaxDeployments, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
@@ -570,6 +570,9 @@ const workflowRollout = createWorkflowRollout({
   async cancel(tenantId, runId) {
     await composition.workflowLifecycleService.requestCancellation(tenantId, runId, "replaced");
   },
+  status(tenantId, runId) {
+    return composition.workflowLifecycleService.getStatus(tenantId, runId);
+  },
   lock: createWorkspaceLock(composition.db.$client),
   sleep: Bun.sleep,
   now,
@@ -583,14 +586,35 @@ function rollHost(source: RepoSource) {
     if (workflowsBundled) workflowReleases.request(tenantId, [source]);
   };
 }
+/** The host's listeners still live after stock gave up stopping them. */
+async function stuckListeners(tenantId: string, source: RepoSource): Promise<string[]> {
+  const stuck: string[] = [];
+  for (const listener of await resolveLiveDeployments(composition.db, tenantId, TRIAGE_LISTENERS[source])) {
+    if (!listener.cancelling) continue;
+    const run = await composition.workflowLifecycleService.getStatus(tenantId, listener.runId);
+    if (run && stopGivenUp(run)) stuck.push(listener.runId);
+  }
+  return stuck;
+}
 const watchListeners = createListenerWatch({
   connectedSources: function sourcesOf(tenantId) {
     return connectedSources(composition.db, tenantId);
   },
   listener: liveListenerOf,
+  stuck: stuckListeners,
+  allocation: function allocationOf(runId) {
+    return deployedAllocation(composition.db, runId);
+  },
+  routable: function routableOf(target) {
+    return composition.sidecarRouter.isAllocatedWorkflowActive(target);
+  },
   ensure: function rollWorkspace(tenantId) {
     if (workflowsBundled) workflowReleases.ensure(tenantId);
   },
+  replace: function replaceListener(tenantId, source) {
+    return workflowsBundled && workflowReleases.replace(tenantId, source);
+  },
+  log: logJson,
 });
 const managerRuns = createManagerRuns(composition.db, verdictRecordStore, now);
 const tenantOpenHeads = createTenantOpenHeads(tenantSources);

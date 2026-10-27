@@ -1,5 +1,7 @@
 // Rolls a workspace onto the hub build's release: publishes it as the workspace's system principal, deploys each
 // connected host's listener from it once the running one differs, waits for it to start and stops what it replaces.
+import { schema } from "@intx/db";
+import { isSidecarAllocationDispatchable, type WorkflowLifecycleResponse } from "@intx/types";
 import { errorText } from "@corbits/common";
 import { chainOf, offeringsIn, publishable, TRIAGE_LISTENERS, type DeployedVersions, type ModelInfo, type PublishedSource, type RepoSource } from "@corbits/triage-contracts";
 import { revokeHumanDeployers } from "../deployer-role.js";
@@ -12,6 +14,8 @@ export type DeployRequest = { tenantId: string; principalId: string; assetId: st
 
 /** `live` once the deployment runs, `ended` once it stopped or failed without running. */
 export type DeployState = "starting" | "live" | "ended";
+
+export type RunStop = Pick<typeof WorkflowLifecycleResponse.infer, "status" | "allocation">;
 
 /** Releases a held workspace lock. */
 export type Unlock = () => Promise<void>;
@@ -31,6 +35,8 @@ type RolloutDeps = PublishDeps & {
   deploy: (request: DeployRequest) => Promise<string>;
   state: (runId: string) => Promise<DeployState>;
   cancel: (tenantId: string, runId: string) => Promise<void>;
+  /** Stock's lifecycle status of the deployment; null once it is gone. */
+  status: (tenantId: string, runId: string) => Promise<RunStop | null>;
   /** Takes the workspace's lock across hub processes; undefined while another holds it. */
   lock: (tenantId: string) => Promise<Unlock | undefined>;
   sleep: (ms: number) => Promise<void>;
@@ -42,7 +48,19 @@ const ROLL_FAILED = "Updating Triage failed; see the hub log.";
 
 /** A new listener that is not live by then is stopped, and the one before it keeps running. */
 export const START_DEADLINE_MS = 5 * 60_000;
-const START_POLL_MS = 2_000;
+const POLL_MS = 2_000;
+
+/** A replaced deployment stock has neither stopped nor given up on by then is logged as stuck, and the roll goes on. */
+const STOP_WAIT_MS = 5 * 60_000;
+const STATUS_RETRIES = 3;
+
+/**
+ * Whether stock gave up stopping a deployment whose stop was requested: it stays live while stock reclaims its sidecar,
+ * as stock's forced release does once the stop goes unconfirmed past its grace.
+ */
+export function stopGivenUp(run: RunStop): boolean {
+  return schema.isLiveWorkflowRunStatus(run.status) && run.allocation !== null && !isSidecarAllocationDispatchable(run.allocation.status);
+}
 
 /** Each host's workflows from before the listener, which nothing mails any more. */
 const REPLACED: Record<RepoSource, readonly string[]> = {
@@ -78,19 +96,64 @@ export function createWorkflowRollout(deps: RolloutDeps) {
       const state = await deps.state(runId);
       if (state === "live") return;
       if (state === "ended") throw new Error(`Listener ${runId} ended before it started.`);
-      await deps.sleep(START_POLL_MS);
+      await deps.sleep(POLL_MS);
     }
     await deps.cancel(tenantId, runId);
     throw new Error(`Listener ${runId} did not start within five minutes and was stopped.`);
   }
 
-  /** The host's other listeners and the workflows they replaced stop, and the host is recorded as on the release. */
-  async function settle(tenantId: string, source: RepoSource, kept: string, msg: string): Promise<void> {
-    for (const workflow of [TRIAGE_LISTENERS[source], ...REPLACED[source]]) {
-      for (const live of await liveOf(tenantId, workflow)) {
-        if (live.runId !== kept) await deps.cancel(tenantId, live.runId);
+  function logStuck(tenantId: string, source: RepoSource, workflow: string, runId: string, error?: unknown): void {
+    const reason = error === undefined ? {} : { error: errorText(error) };
+    if (workflow === TRIAGE_LISTENERS[source]) deps.log({ level: "warn", msg: "listener_cancel_stuck", tenantId, source, deployment: runId, ...reason });
+    else deps.log({ level: "warn", msg: "rollout_cancel_stuck", tenantId, source, workflow, deployment: runId, ...reason });
+  }
+
+  /** Stock's status of the deployment, read again after a failure until the retries are spent. */
+  async function statusOf(tenantId: string, runId: string): Promise<RunStop | null> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await deps.status(tenantId, runId);
+      } catch (error) {
+        if (attempt > STATUS_RETRIES) throw error;
+        await deps.sleep(POLL_MS * attempt);
       }
     }
+  }
+
+  /**
+   * Waits until a deployment whose stop was requested ends. One stock gave up stopping, or that outlasts the wait, stays
+   * live and is only logged: stopping it is stock's.
+   */
+  async function waitUntilStopped(tenantId: string, source: RepoSource, workflow: string, runId: string): Promise<void> {
+    const deadline = deps.now().getTime() + STOP_WAIT_MS;
+    for (;;) {
+      let run: RunStop | null;
+      try {
+        run = await statusOf(tenantId, runId);
+      } catch (error) {
+        logStuck(tenantId, source, workflow, runId, error);
+        return;
+      }
+      if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return;
+      if (stopGivenUp(run) || deps.now().getTime() >= deadline) {
+        logStuck(tenantId, source, workflow, runId);
+        return;
+      }
+      await deps.sleep(POLL_MS);
+    }
+  }
+
+  /** The host's other listeners and the workflows they replaced stop, and the host is recorded as on the release. */
+  async function settle(tenantId: string, source: RepoSource, kept: string, msg: string): Promise<void> {
+    const stopped: Array<{ workflow: string; runId: string }> = [];
+    for (const workflow of [TRIAGE_LISTENERS[source], ...REPLACED[source]]) {
+      for (const live of await liveOf(tenantId, workflow)) {
+        if (live.runId === kept) continue;
+        await deps.cancel(tenantId, live.runId);
+        stopped.push({ workflow, runId: live.runId });
+      }
+    }
+    await Promise.all(stopped.map((run) => waitUntilStopped(tenantId, source, run.workflow, run.runId)));
     record(tenantId, { source, at: deps.now().toISOString() });
     deps.log({ level: "info", msg, tenantId, source, deployment: kept });
   }
@@ -277,5 +340,16 @@ export function createRolloutQueue(rollout: { roll: (tenantId: string, redeploy:
     schedule(tenantId, [], timing.quietMs, true);
   }
 
-  return { run, request, ensure };
+  /**
+   * Starts the host's listener again unless a roll is running, which may already be replacing it, or one due already
+   * starts it again. Whether this asked for it.
+   */
+  function replace(tenantId: string, source: RepoSource): boolean {
+    const state = stateOf(tenantId);
+    if (state.running || state.redeploy.has(source)) return false;
+    schedule(tenantId, [source], timing.quietMs, false);
+    return true;
+  }
+
+  return { run, request, ensure, replace };
 }

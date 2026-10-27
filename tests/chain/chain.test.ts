@@ -8,11 +8,11 @@ import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
 import { listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents } from "@intx/hub-client";
-import { VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
+import { TRIAGE_LISTENERS, VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
 import { approveHeldDo } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, RECONCILE_INTERVAL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 setDefaultTimeout(20 * 60_000);
 
@@ -20,6 +20,8 @@ const MANAGER = "triage-manager-github";
 const SETTLE_MS = 90_000;
 // The listener waits two minutes for a manager's key before its wake mail fails; stock then stops it within its 30-second cancel grace.
 const UNWOKEN_MS = 5 * 60_000;
+// The hub drops a silent sidecar's socket after stock's one-minute ping timeout, and the next reconcile pass checks it.
+const DISCONNECT_MS = 60_000 + 2 * RECONCILE_INTERVAL_MS + SETTLE_MS;
 
 const DETERMINISTIC = `${OWNER}/deterministic`;
 const JUDGED = `${OWNER}/judged`;
@@ -28,6 +30,7 @@ const PUSHED = `${OWNER}/pushed`;
 const HELD = `${OWNER}/held`;
 const WOKEN = `${OWNER}/woken`;
 const UNWOKEN = `${OWNER}/unwoken`;
+const DISCONNECTED = `${OWNER}/disconnected`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -67,6 +70,7 @@ beforeAll(async () => {
   github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
   github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
   github.addRepo(UNWOKEN, policy([MAX_FILES]));
+  github.addRepo(DISCONNECTED, policy([MAX_FILES]));
   const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
   database = created;
   hub = await startHub(database, github, portalDir);
@@ -436,4 +440,44 @@ test("a manager whose wake mail failed is cancelled, and the next event deploys 
   expect(deployed.map((run) => run.id)).toEqual([cancelled.id, claim.history.at(-1)!.runId]);
   expect(claim).toMatchObject({ status: "ended", history: [{ head: second }] });
   expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
+});
+
+/** Every GitHub listener deployment's anchor run, oldest first, and the pid of the local sidecar it runs on. */
+async function listeners(): Promise<{ id: string; status: string; pid: number }[]> {
+  const found = await rows(`select r.id, r.status, a.external_ref from workflow_run r join workflow_definition d on d.id = r.definition_id left join workflow_run_launch_spec s on s.anchor_run_id = r.id join sidecar_allocation a on a.anchor_run_id = r.id where r.id = r.anchor_run_id and coalesce(s.frozen_approval_bundle -> 'projection' ->> 'id', d.name) = '${TRIAGE_LISTENERS.github}' order by r.created_at`);
+  return found.map((row) => ({ id: String(row["id"]), status: String(row["status"]), pid: Number(row["external_ref"]) }));
+}
+
+function logged(msg: string): Record<string, unknown>[] {
+  return hub.logs.filter((line) => line.includes(`"msg":"${msg}"`)).map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+const disconnected = once(async function disconnected() {
+  await after(approved);
+  const [listener] = (await listeners()).filter((row) => isLiveDeployment(row.status));
+  if (!listener) throw new Error("The GitHub listener is not live.");
+  // A frozen sidecar keeps its process and stops pinging, so stock drops its socket, and with it the listener's route,
+  // while the run stays live and its allocation allocated.
+  process.kill(listener.pid, "SIGSTOP");
+  try {
+    await until("a pass to find the listener's sidecar disconnected", function seen() {
+      return logged("listener_disconnected").find((entry) => entry["deployment"] === listener.id);
+    }, DISCONNECT_MS);
+  } finally {
+    process.kill(listener.pid, "SIGCONT");
+  }
+  const head = sha("disconnected-1");
+  const missed = github.misses.length;
+  await pushed(DISCONNECTED, pullOf(1, head));
+  await settled(DISCONNECTED, 1);
+  return { listener, unroutable: logged("listener_unroutable"), writes: github.writesTo(DISCONNECTED, 1), misses: github.misses.slice(missed) };
+});
+
+test("a listener whose sidecar disconnected is left to stock, and once it reconnects the next pull request gets its verdict", async () => {
+  const { listener, unroutable, writes, misses } = await disconnected();
+  expect(unroutable).toEqual([]);
+  expect((await listeners()).filter((row) => isLiveDeployment(row.status)).map((row) => row.id)).toEqual([listener.id]);
+  expect(misses).toEqual([]);
+  expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
+  expect(labelled(writes)).toEqual([VERDICT_LABELS.pass]);
 });
