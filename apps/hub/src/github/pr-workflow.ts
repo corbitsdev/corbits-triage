@@ -7,11 +7,14 @@ import type { RepoRecord } from "./tenant-config.js";
 
 /**
  * The policy file's v4 keys when the mail has to carry them: a block is on, or `decide` is not the one the pack's
- * actions give. Undefined otherwise.
+ * actions give. A `decide` the actions give is left out, so only one the policy writes holds approve and merge.
+ * Undefined otherwise.
  */
 export function prWorkflowKeys(workflow: PolicyWorkflow, pack: Pick<CheckPack, "actions">): PolicyWorkflow | undefined {
   const blocksOn = BLOCK_KINDS.some((kind) => workflow[kind]?.on === true);
-  return blocksOn || (workflow.decide !== undefined && !isDeepStrictEqual(workflow.decide, decideOf(pack.actions, false))) ? workflow : undefined;
+  const { decide, ...keys } = workflow;
+  if (decide !== undefined && !isDeepStrictEqual(decide, decideOf(pack.actions, blocksOn))) return workflow;
+  return blocksOn ? keys : undefined;
 }
 
 /** The mail's part: code review's block as its scope reads it, gated on triage's rules unless it says otherwise, `decide`, and the blocks that are on. */
