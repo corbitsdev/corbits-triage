@@ -27,6 +27,8 @@ const SECRETS = {
 export const HOOK_SECRET = "chain-hook-secret";
 const READY_MS = 60_000;
 const LISTENER_START_MS = 10 * 60_000;
+/** The reconcile pass, short so a scenario waits on it for seconds rather than the default five minutes. */
+export const RECONCILE_INTERVAL_MS = 15_000;
 
 export type Database = { name: string; url: string; config: typeof ADMIN_DB };
 
@@ -90,6 +92,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
       BETTER_AUTH_BASE_URL: origin,
       GITHUB_API_ORIGIN: github.origin,
       TRIAGE_COALESCE_QUIET_MS: "500",
+      TRIAGE_RECONCILE_INTERVAL_MS: String(RECONCILE_INTERVAL_MS),
       // Every sidecar a local process, as on a hub without Docker, so each reaches the fake GitHub and model on loopback.
       DOCKER_HOST: "unix:///nonexistent/docker.sock",
       ...env,

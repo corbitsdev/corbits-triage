@@ -396,7 +396,7 @@ test("a connected host found with no live listener rolls its workspace", async (
   expect(ensured).toEqual(["tnt_watch"]);
 });
 
-test("a listener whose mail the router cannot route, or whose check throws, is started again once, and each is logged", async () => {
+test("a listener whose connected sidecar the router holds no route to is started again once, and one whose sidecar is not connected is left to stock", async () => {
   const listeners: Record<RepoSource, { runId: string }> = { github: { runId: "run_github" }, "bitbucket-datacenter": { runId: "run_bitbucket" } };
   const routes: Record<string, () => boolean> = {
     alc_github: () => false,
@@ -450,10 +450,14 @@ test("a listener whose mail the router cannot route, or whose check throws, is s
   await Bun.sleep(10);
   await watch("tnt_unroutable");
   await Bun.sleep(10);
-  expect(rolled).toEqual([["bitbucket-datacenter", "github"]]);
+  expect(rolled).toEqual([["github"]]);
+  const disconnected = { level: "debug", msg: "listener_disconnected", tenantId: "tnt_unroutable", source: "bitbucket-datacenter", deployment: "run_bitbucket", allocationId: "alc_bitbucket", generation: 1, reason: "Allocation alc_bitbucket is not connected" };
   expect(logged).toEqual([
-    { level: "warn", msg: "listener_unroutable", tenantId: "tnt_unroutable", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, reason: "the hub holds no route to it" },
-    { level: "warn", msg: "listener_unroutable", tenantId: "tnt_unroutable", source: "bitbucket-datacenter", deployment: "run_bitbucket", allocationId: "alc_bitbucket", generation: 1, reason: "Allocation alc_bitbucket is not connected" },
+    { level: "warn", msg: "listener_unroutable", tenantId: "tnt_unroutable", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, reason: "its sidecar is connected but the hub holds no route to it" },
+    disconnected,
+    disconnected,
+    disconnected,
+    disconnected,
   ]);
 });
 

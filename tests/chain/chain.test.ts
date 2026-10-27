@@ -12,7 +12,7 @@ import { TRIAGE_LISTENERS, VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage
 import { approveHeldDo } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, RECONCILE_INTERVAL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 setDefaultTimeout(20 * 60_000);
 
@@ -20,9 +20,8 @@ const MANAGER = "triage-manager-github";
 const SETTLE_MS = 90_000;
 // The listener waits two minutes for a manager's key before its wake mail fails; stock then stops it within its 30-second cancel grace.
 const UNWOKEN_MS = 5 * 60_000;
-// The hub drops a silent sidecar's socket after stock's one-minute ping timeout, and the reconcile pass that finds the
-// listener unroutable comes up to five minutes later.
-const REPLACE_MS = 9 * 60_000;
+// The hub drops a silent sidecar's socket after stock's one-minute ping timeout, and the next reconcile pass checks it.
+const DISCONNECT_MS = 60_000 + 2 * RECONCILE_INTERVAL_MS + SETTLE_MS;
 
 const DETERMINISTIC = `${OWNER}/deterministic`;
 const JUDGED = `${OWNER}/judged`;
@@ -31,7 +30,7 @@ const PUSHED = `${OWNER}/pushed`;
 const HELD = `${OWNER}/held`;
 const WOKEN = `${OWNER}/woken`;
 const UNWOKEN = `${OWNER}/unwoken`;
-const UNROUTABLE = `${OWNER}/unroutable`;
+const DISCONNECTED = `${OWNER}/disconnected`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -71,7 +70,7 @@ beforeAll(async () => {
   github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
   github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
   github.addRepo(UNWOKEN, policy([MAX_FILES]));
-  github.addRepo(UNROUTABLE, policy([MAX_FILES]));
+  github.addRepo(DISCONNECTED, policy([MAX_FILES]));
   const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
   database = created;
   hub = await startHub(database, github, portalDir);
@@ -449,48 +448,35 @@ async function listeners(): Promise<{ id: string; status: string; pid: number }[
   return found.map((row) => ({ id: String(row["id"]), status: String(row["status"]), pid: Number(row["external_ref"]) }));
 }
 
-function loggedUnroutable(): Record<string, unknown>[] {
-  return hub.logs.filter((line) => line.includes(`"msg":"listener_unroutable"`)).map((line) => JSON.parse(line) as Record<string, unknown>);
+function logged(msg: string): Record<string, unknown>[] {
+  return hub.logs.filter((line) => line.includes(`"msg":"${msg}"`)).map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-/** Wakes the frozen sidecar so the hub can stop it, unless the hub already killed it. */
-function resume(pid: number): void {
-  try {
-    process.kill(pid, "SIGCONT");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-  }
-}
-
-const unroutable = once(async function unroutable() {
+const disconnected = once(async function disconnected() {
   await after(approved);
-  const [old] = (await listeners()).filter((row) => isLiveDeployment(row.status));
-  if (!old) throw new Error("The GitHub listener is not live.");
-  // A frozen sidecar keeps its process and stops pinging, so stock drops its socket and with it the listener's route,
+  const [listener] = (await listeners()).filter((row) => isLiveDeployment(row.status));
+  if (!listener) throw new Error("The GitHub listener is not live.");
+  // A frozen sidecar keeps its process and stops pinging, so stock drops its socket, and with it the listener's route,
   // while the run stays live and its allocation allocated.
-  process.kill(old.pid, "SIGSTOP");
-  let fresh: { id: string; status: string; pid: number };
+  process.kill(listener.pid, "SIGSTOP");
   try {
-    fresh = await until("a fresh listener", async function rolled() {
-      const now = await listeners();
-      const newest = now.at(-1)!;
-      const replaced = now.find((row) => row.id === old.id);
-      return newest.id !== old.id && isLiveDeployment(newest.status) && !isLiveDeployment(replaced!.status) ? newest : undefined;
-    }, REPLACE_MS);
+    await until("a pass to find the listener's sidecar disconnected", function seen() {
+      return logged("listener_disconnected").find((entry) => entry["deployment"] === listener.id);
+    }, DISCONNECT_MS);
   } finally {
-    resume(old.pid);
+    process.kill(listener.pid, "SIGCONT");
   }
-  const head = sha("unroutable-1");
+  const head = sha("disconnected-1");
   const missed = github.misses.length;
-  await pushed(UNROUTABLE, pullOf(1, head));
-  await settled(UNROUTABLE, 1);
-  return { old, fresh, logged: loggedUnroutable(), writes: github.writesTo(UNROUTABLE, 1), misses: github.misses.slice(missed) };
+  await pushed(DISCONNECTED, pullOf(1, head));
+  await settled(DISCONNECTED, 1);
+  return { listener, unroutable: logged("listener_unroutable"), writes: github.writesTo(DISCONNECTED, 1), misses: github.misses.slice(missed) };
 });
 
-test("a listener whose mail the hub can no longer route is replaced once, and the next pull request gets its verdict", async () => {
-  const { old, fresh, logged, writes, misses } = await unroutable();
-  expect(logged).toEqual([expect.objectContaining({ tenantId: workspace.tenantId, source: "github", deployment: old.id })]);
-  expect((await listeners()).filter((row) => isLiveDeployment(row.status)).map((row) => row.id)).toEqual([fresh.id]);
+test("a listener whose sidecar disconnected is left to stock, and once it reconnects the next pull request gets its verdict", async () => {
+  const { listener, unroutable, writes, misses } = await disconnected();
+  expect(unroutable).toEqual([]);
+  expect((await listeners()).filter((row) => isLiveDeployment(row.status)).map((row) => row.id)).toEqual([listener.id]);
   expect(misses).toEqual([]);
   expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
   expect(labelled(writes)).toEqual([VERDICT_LABELS.pass]);

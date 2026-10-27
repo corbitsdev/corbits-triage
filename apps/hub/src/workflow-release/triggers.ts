@@ -69,18 +69,11 @@ export type ListenerWatchDeps = {
 
 /**
  * Rolls a workspace once a connected host has no live listener, as after one stopped on its own, and starts a host's
- * listener again once the hub can no longer route its mail. Stock acts on a lost route only when a sidecar connects or
- * reports a stop, or once it stayed disconnected past its deployment's limit, and until then the listener stays live.
+ * listener again once its sidecar is connected but the hub holds no route to it. Stock acts on a lost route only when a
+ * sidecar connects or reports a stop, so such a listener would otherwise stay live and unreachable. A listener whose
+ * sidecar is not connected is left to stock, which fails it once it stays away past its deployment's limit.
  */
 export function createListenerWatch(deps: ListenerWatchDeps) {
-  async function unroutable(target: AllocatedSidecarTarget): Promise<string | undefined> {
-    try {
-      return (await deps.routable(target)) ? undefined : "the hub holds no route to it";
-    } catch (error) {
-      return errorText(error);
-    }
-  }
-
   return async function watch(tenantId: string): Promise<void> {
     for (const source of await deps.connectedSources(tenantId)) {
       const listener = await deps.listener(tenantId, source);
@@ -90,9 +83,16 @@ export function createListenerWatch(deps: ListenerWatchDeps) {
       }
       const target = await deps.allocation(listener.runId);
       if (!target) continue;
-      const reason = await unroutable(target);
-      if (reason === undefined || !deps.replace(tenantId, source)) continue;
-      deps.log({ level: "warn", msg: "listener_unroutable", tenantId, source, deployment: listener.runId, allocationId: target.allocationId, generation: target.generation, reason });
+      const entry = { tenantId, source, deployment: listener.runId, allocationId: target.allocationId, generation: target.generation };
+      let routed: boolean;
+      try {
+        routed = await deps.routable(target);
+      } catch (error) {
+        deps.log({ level: "debug", msg: "listener_disconnected", ...entry, reason: errorText(error) });
+        continue;
+      }
+      if (routed || !deps.replace(tenantId, source)) continue;
+      deps.log({ level: "warn", msg: "listener_unroutable", ...entry, reason: "its sidecar is connected but the hub holds no route to it" });
     }
   };
 }
