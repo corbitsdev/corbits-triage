@@ -56,6 +56,12 @@ function Place({ place }: { place: CodeReviewPlaceOption }) {
   );
 }
 
+/** Shown until a place is in use. The list below already carries each place's lines and guide, so this names none. */
+export function CodeReviewPlaceNotice({ place }: { place: string | null | undefined }) {
+  if (place !== null) return null;
+  return <p role="status" className="note">Code review needs an isolated place to run.</p>;
+}
+
 function WhereItRuns({ places }: { places: CodeReviewPlaceOption[] }) {
   return (
     <div className="gcard source" aria-labelledby="code-review-places" role="group">
@@ -80,6 +86,7 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
         <p>Reads each new commit of a pull request for bugs, in the repositories where it is switched on.</p>
       </header>
       <div>
+        <CodeReviewPlaceNotice place={snapshot.codeReviewPlace} />
         {snapshot.denied.credentials && <DeniedNotice section="credentials" />}
         <div className="sentences">
           <KeyRow

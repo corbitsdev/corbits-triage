@@ -57,7 +57,7 @@ import { createPauseGate } from "./github/pr-workflow.js";
 import { APPROVAL_WORKFLOWS, connectedSources, createHostRelease } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
-import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun } from "./code-review.js";
+import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, isolatedPlaceBootWarning } from "./code-review.js";
 import { createPullRequestReader } from "./pull-request-reader.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
@@ -170,6 +170,9 @@ if (typeof railway === "string") logJson({ level: "info", msg: "railway_sidecars
 // First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, then Railway, the rest on the hub host.
 const workloadProvisioners = [dockerUp, e2b, railway].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
 const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
+const codeReviewProbes = [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }];
+const noIsolatedPlace = isolatedPlaceBootWarning(workloadProvisioners.length > 0, codeReviewProbes.map((probe) => probe.guide));
+if (noIsolatedPlace) logJson(noIsolatedPlace);
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
@@ -744,7 +747,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
       return deploymentUp(composition.db, anchorRunId);
     },
   }),
-  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }] }),
+  codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: codeReviewProbes }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, place: placeCodeReview, readCheckPack, readHead: pullRequests.head, send: sendToListener }),
   codeReviewLatest: codeReviewRuns.latestCodeReview,
   invitations: createInvitations({

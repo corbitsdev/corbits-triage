@@ -42,6 +42,39 @@ const GUIDES = "https://github.com/corbitsdev/corbits-triage/blob/main/docs/prov
 /** A place and what boot found there: undefined when it is not set up, why it could not be registered, or what was. */
 export type PlaceProbe = { readonly guide: PlaceGuide; readonly found: { readonly provisioner: { readonly id: string } } | string | undefined };
 
+function envName(line: string): string {
+  const at = line.indexOf("=");
+  if (at <= 0) throw new Error("a place .env line has no variable name");
+  return line.slice(0, at);
+}
+
+/** Variable names the places declare, in place order, with no duplicates. */
+function declaredEnvNames(guides: readonly Pick<PlaceGuide, "env">[]): string[] {
+  const names: string[] = [];
+  for (const guide of guides) {
+    for (const line of guide.env) {
+      const name = envName(line);
+      if (!names.includes(name)) names.push(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * One boot line when no isolated place is registered. The hub still starts and triage still runs.
+ * The line names the variables the places declare and docs/provisioners/, and does not choose a place.
+ */
+export function isolatedPlaceBootWarning(registered: boolean, guides: readonly Pick<PlaceGuide, "env">[]): { level: "warn"; msg: "code_review_no_isolated_place"; reason: string } | undefined {
+  if (registered) return undefined;
+  const declared = declaredEnvNames(guides);
+  if (declared.length === 0) throw new Error("isolated places declare no environment variables");
+  return {
+    level: "warn",
+    msg: "code_review_no_isolated_place",
+    reason: `Code review needs an isolated place to run. Environment variables the places declare: ${declared.join(", ")}. See docs/provisioners/.`,
+  };
+}
+
 function placeOption({ guide, found }: PlaceProbe, active: string | null, showReason: boolean): CodeReviewPlaceOption {
   const option = { ...guide, guide: `${GUIDES}/${guide.guide}` };
   if (found === undefined) return { ...option, state: "not_set_up" };
