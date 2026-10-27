@@ -18,7 +18,7 @@ You need a GitHub account that can create a GitHub App, and one of:
 | Way to run it | Needs | Portal |
 | --- | --- | --- |
 | Docker Compose ([steps](docs/SELF_HOST.md#docker-compose)) | Docker with Compose, about 3 GB free Docker disk | http://localhost:3000 |
-| `bun run dev` ([steps](docs/DEV.md)) | Bun 1.4+, Postgres 15+ | http://localhost:5173 |
+| `bun run dev` ([steps](docs/DEV.md)) | Bun 1.4.4+, Postgres 15+ | http://localhost:5173 |
 
 On this machine GitHub cannot reach the hub, so the GitHub App is created
 without a webhook and pull requests are picked up every five minutes. On a
