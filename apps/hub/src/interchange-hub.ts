@@ -47,6 +47,7 @@ import {
   resolveSenderKey,
   resolveSenderPrincipal,
   withExecutableWorkflowRun,
+  type DB,
 } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import {
@@ -112,12 +113,10 @@ export type CreateHubServerOpts = {
   readonly credentialCipher: CredentialCipher;
   /** Provisioners eligible to host frozen workflow deployments. */
   readonly sidecarProvisioners?: readonly SidecarProvisioner[];
-  /** Selects among matching deployment provisioners. Defaults to the first. */
-  readonly sidecarProvisionerChooser?: SidecarProvisionerChooser;
+  /** Selects among matching deployment provisioners, reading the hub's database. Defaults to the first. */
+  readonly sidecarProvisionerChooser?: (db: DB["db"]) => SidecarProvisionerChooser;
   /** Provisioners eligible to evaluate workflow source code. */
   readonly probeSidecarProvisioners?: readonly SidecarProvisioner[];
-  /** Selects among matching probe provisioners. Defaults to the first. */
-  readonly probeSidecarProvisionerChooser?: SidecarProvisionerChooser;
   readonly probeSidecarCapabilityRules?: readonly SidecarCapabilityRule[];
   /** Maximum simultaneous allocation reconciliations. Defaults to eight. */
   readonly sidecarAllocationConcurrency?: number;
@@ -138,7 +137,6 @@ export async function createInterchangeHub({
   sidecarProvisioners = [],
   sidecarProvisionerChooser,
   probeSidecarProvisioners = [],
-  probeSidecarProvisionerChooser,
   probeSidecarCapabilityRules = [],
   sidecarAllocationConcurrency = DEFAULT_SIDECAR_ALLOCATION_CONCURRENCY,
   sidecarOperationTimeoutMs,
@@ -355,14 +353,11 @@ export async function createInterchangeHub({
   const sidecarPlugins = createSidecarPluginRegistry({
     provisioners: sidecarProvisioners,
     ...(sidecarProvisionerChooser !== undefined
-      ? { chooser: sidecarProvisionerChooser }
+      ? { chooser: sidecarProvisionerChooser(db) }
       : {}),
   });
   const probeSidecarPlugins = createSidecarPluginRegistry({
     provisioners: probeSidecarProvisioners,
-    ...(probeSidecarProvisionerChooser !== undefined
-      ? { chooser: probeSidecarProvisionerChooser }
-      : {}),
   });
   const workflowAllocationService = createWorkflowAllocationService({
     db,

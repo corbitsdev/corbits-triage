@@ -1,9 +1,7 @@
-// Whether this box has the memory for one more local sidecar: free memory in
+// Whether this box has the memory to start the local sidecar: free memory in
 // the container's cgroup (v2, else v1) where a limit is set, else Linux's
-// MemAvailable, less one footprint for each sidecar started that has not
-// connected yet, as its memory is not in use yet. A box with neither, such as
-// a macOS dev machine, never declines: os.freemem there leaves out memory the
-// system would reclaim.
+// MemAvailable. A box with neither, such as a macOS dev machine, never
+// declines: os.freemem there leaves out memory the system would reclaim.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -69,9 +67,8 @@ export function createHostCapacity({ cgroupRoot, meminfo }: HostCapacityOpts): H
   };
 }
 
-/** Why there is no room for one more sidecar beside `starting` ones not connected yet, or undefined when there is. */
-export function shortfall(free: number | undefined, starting: number): string | undefined {
-  const needed = SIDECAR_BYTES * (starting + 1);
-  if (free === undefined || free >= needed) return undefined;
-  return `${Math.floor(free / MiB)} MiB free, ${needed / MiB} MiB needed`;
+/** Why there is no room to start the sidecar, or undefined when there is. */
+export function shortfall(free: number | undefined): string | undefined {
+  if (free === undefined || free >= SIDECAR_BYTES) return undefined;
+  return `${Math.floor(free / MiB)} MiB free, ${SIDECAR_BYTES / MiB} MiB needed`;
 }

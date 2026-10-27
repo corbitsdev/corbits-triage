@@ -13,7 +13,7 @@
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
 import { authorize } from "@intx/authz";
-import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
+import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type DB, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
 import { generateId } from "@intx/hub-common";
@@ -37,7 +37,7 @@ import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { deploymentUp, liveListener, passRequest } from "./manager-state.js";
+import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
@@ -45,6 +45,7 @@ import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisione
 import { connectRailwaySidecars, sweepRailwaySidecarsOf, type RailwaySidecarProvisioner } from "./sidecar/railway.js";
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
+import { createPlacementChooser, localSidecarUsage } from "./sidecar/placement.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
@@ -69,7 +70,7 @@ import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { catalogModels, createWorkspaceLock, deploymentState, liveDeployments } from "./workflow-release/reads.js";
 import { createRolloutQueue, createWorkflowRollout, type DeployRequest } from "./workflow-release/rollout.js";
-import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, localSidecarMaxDeployments, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
@@ -155,12 +156,14 @@ await assertMigrated(database);
 
 const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
+const localSidecarCap = localSidecarMaxDeployments(env);
 const local = createLocalProcessSidecarProvisioner({
   dataRoot: localSidecarDataRoot,
   ...(env.HUB_SIDECAR_STOP_TIMEOUT_MS !== undefined && { stopTimeoutMs: Number(env.HUB_SIDECAR_STOP_TIMEOUT_MS) }),
   spawnSidecar: createSpawnLocalSidecar({
     interchangeDir: V,
     credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
+    maxActiveDeployments: localSidecarCap,
     processEnv: childProcessEnv(env),
   }),
   manifests: createLocalSidecarManifestStore({
@@ -170,6 +173,7 @@ const local = createLocalProcessSidecarProvisioner({
   }),
   capacity: createHostCapacity({ cgroupRoot: "/sys/fs/cgroup", meminfo: "/proc/meminfo" }),
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
+  onAccepted: notePlaced,
   log: logJson,
 });
 const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
@@ -187,6 +191,9 @@ const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
 const codeReviewProbes = [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }];
 const noIsolatedPlace = isolatedPlaceBootWarning(workloadProvisioners.length > 0, codeReviewProbes.map((probe) => probe.guide));
 if (noIsolatedPlace) logJson(noIsolatedPlace);
+function placeDeployments(db: DB["db"]) {
+  return createPlacementChooser({ db, local: local.provisioner, maxDeployments: localSidecarCap });
+}
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
@@ -233,12 +240,13 @@ const composition = await createInterchangeHub({
   credentialCipher,
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
   sidecarProvisioners,
+  sidecarProvisionerChooser: placeDeployments,
   probeSidecarProvisioners: sidecarProvisioners,
   probeSidecarCapabilityRules: workloadProvisioners.length > 0 ? [{ capability: "isolation:workload", effect: "require" }] : [],
   extraRunTokenRoutes: MANAGER_RUN_TOKEN_ROUTES,
 });
 const stock = composition.server;
-composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
+composition.sidecarRouter.events.on("sidecar.allocated.connected", notePlaced);
 
 /** The hub's credentials, and the push that takes back from sidecars an App key a read moved to the hub. */
 const credentialDeps = {
@@ -626,6 +634,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
     await supersedeAll(tenant.id);
     await wakeOverdue(tenant.id);
   }
+  await endNeverRan(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
   const outcomes: ReconcileOutcome[] = [];
   for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);
@@ -851,6 +860,9 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
       return deploymentUp(composition.db, anchorRunId);
     },
     rollouts: workflowRollout.rollouts,
+    sidecar: function sidecarUsage() {
+      return localSidecarUsage(composition.db, local.provisioner, localSidecarCap);
+    },
   }),
   codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: codeReviewProbes }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, place: placeCodeReview, readCheckPack, readHead: pullRequests.head, send: sendToListener }),

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { type, type ArkError } from "arktype";
 import type { DockerTls, FindDockerHostOpts } from "@corbits/provisioner-docker";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
+import { DEFAULT_SIDECAR_RETAINED_DEPLOYMENTS, MAX_SIDECAR_INCARNATIONS } from "@intx/types/sidecar";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 import type { CoalesceWindow } from "./github/coalescer.js";
 import { DEFAULT_RECONCILE_POLICY, type ReconcilePolicy } from "./github/reconcile-plan.js";
@@ -12,6 +13,10 @@ const secret = type("string").narrow((value, ctx) =>
 
 const positiveInteger = type("string.integer").narrow((value, ctx) =>
   Number(value) > 0 || ctx.mustBe("a positive integer"));
+
+/** The sidecar holds its active and kept deployments within Interchange's combined limit; the hub leaves it the default kept ones. */
+const MAX_LOCAL_SIDECAR_DEPLOYMENTS = MAX_SIDECAR_INCARNATIONS - DEFAULT_SIDECAR_RETAINED_DEPLOYMENTS;
+const DEFAULT_LOCAL_SIDECAR_DEPLOYMENTS = 16;
 
 const lifecycleDuration = type("string.trim").pipe(LifecycleDuration);
 
@@ -75,6 +80,8 @@ const HubEnvSchema = type({
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
   "TRIAGE_CAPPED_RETRY_MS?": positiveInteger,
   "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
+  "TRIAGE_SIDECAR_MAX_DEPLOYMENTS?": positiveInteger.narrow((value, ctx) =>
+    Number(value) <= MAX_LOCAL_SIDECAR_DEPLOYMENTS || ctx.mustBe(`at most ${String(MAX_LOCAL_SIDECAR_DEPLOYMENTS)}`)),
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -267,13 +274,18 @@ export function triageReconcileIntervalMs(env: HubEnv): number {
   return env.TRIAGE_RECONCILE_INTERVAL_MS === undefined ? 5 * 60_000 : Number(env.TRIAGE_RECONCILE_INTERVAL_MS);
 }
 
-/** Heads the reconciler lets a tenant have queued or running at once; each runs in a worker sidecar of its own. */
+/** Heads the reconciler lets a tenant have queued or running at once. */
 export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" | "TRIAGE_CAPPED_RETRY_MS">): ReconcilePolicy {
   return {
     ...DEFAULT_RECONCILE_POLICY,
     maxInFlight: numberOr(env.TRIAGE_MAX_IN_FLIGHT, DEFAULT_RECONCILE_POLICY.maxInFlight),
     cappedRetryAfterMs: numberOr(env.TRIAGE_CAPPED_RETRY_MS, DEFAULT_RECONCILE_POLICY.cappedRetryAfterMs),
   };
+}
+
+/** Deployments the hub's local sidecar runs at once. */
+export function localSidecarMaxDeployments(env: Pick<HubEnv, "TRIAGE_SIDECAR_MAX_DEPLOYMENTS">): number {
+  return numberOr(env.TRIAGE_SIDECAR_MAX_DEPLOYMENTS, DEFAULT_LOCAL_SIDECAR_DEPLOYMENTS);
 }
 
 const COALESCE_BURST_MS = 3_000;

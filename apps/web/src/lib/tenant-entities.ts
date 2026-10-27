@@ -86,12 +86,12 @@ export function useRoles(): TenantSection<HubRole> {
   return useTenantSection(ROLES_QUERY_KEY, listRoles, DIRECTORY_REFRESH_MS);
 }
 
-export type DeployedSection = TenantSection<DeployedWorkflow> & { rollouts: DeployedVersions["rollouts"] };
+export type DeployedSection = TenantSection<DeployedWorkflow> & { rollouts: DeployedVersions["rollouts"]; sidecar: DeployedVersions["sidecar"] | undefined };
 
-/** The live deployments and the hub's last roll of each host, read often so a roll's outcome shows soon after it ends. */
+/** The live deployments, the hub's last roll of each host and its local sidecar's use, read often so a roll's outcome shows soon after it ends. */
 export function useDeployedVersions(): DeployedSection {
   const query = useTenantRead(DEPLOYED_VERSIONS_QUERY_KEY, readDeployedVersions, LIVE_REFRESH_MS);
-  return { ...sectionOf(query, (versions) => versions.deployments), rollouts: query.data?.rollouts ?? NO_ROWS };
+  return { ...sectionOf(query, (versions) => versions.deployments), rollouts: query.data?.rollouts ?? NO_ROWS, sidecar: query.data?.sidecar };
 }
 
 export function useAccess(resource: string, action: string): UseQueryResult<boolean> {

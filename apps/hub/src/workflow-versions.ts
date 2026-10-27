@@ -15,6 +15,8 @@ export type WorkflowVersionsDeps = {
   /** Whether the deployment is up as the hub counts a listener or a manager. */
   up: (anchorRunId: string) => Promise<boolean>;
   rollouts: (tenantId: string) => DeployedVersions["rollouts"];
+  /** The hub's local sidecar: what it runs, its cap, and what overflowed to a sandbox. */
+  sidecar: () => Promise<DeployedVersions["sidecar"]>;
 };
 
 export function sourceOf(bundle: FrozenApprovalBundle): DeployedVersions["deployments"][number]["source"] {
@@ -39,6 +41,6 @@ export function createWorkflowVersions(deps: WorkflowVersionsDeps) {
         source: spec ? sourceOf(spec.frozenApprovalBundle) : null,
       });
     }
-    return Response.json({ deployments, rollouts: deps.rollouts(tenantId) } satisfies DeployedVersions);
+    return Response.json({ deployments, rollouts: deps.rollouts(tenantId), sidecar: await deps.sidecar() } satisfies DeployedVersions);
   };
 }

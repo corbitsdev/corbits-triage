@@ -7,6 +7,9 @@ export const TRIAGE_LISTENERS: Record<RepoSource, string> = { github: "triage-li
 /** Each host's pull request manager by its definition id, also its mail address. */
 export const TRIAGE_MANAGERS: Record<RepoSource, string> = { github: "triage-manager-github", "bitbucket-datacenter": "triage-manager-bitbucket-datacenter" };
 
+/** Each host's judge by its definition id, also its mail address; a manager deploys one when its rules need the model. */
+export const TRIAGE_JUDGES: Record<RepoSource, string> = { github: "triage-judge-github", "bitbucket-datacenter": "triage-judge-bitbucket-datacenter" };
+
 /** The system role the hub's publisher holds to publish the listener's chain and deploy it, which every deployment of it then acts under. */
 export const DEPLOYER_ROLE = "Deployer";
 

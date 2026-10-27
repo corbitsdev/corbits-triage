@@ -95,7 +95,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     counts as live while it runs or is on its sidecar, and as starting for six
     minutes after it is deployed, longer than a roll waits for it; the
     reconciler mails the newest running listener, else the newest starting
-    one. One deployed without a sidecar past that is released, and a host
+    one. A listener on its sidecar stays deployed until its first pull request
+    arrives, so it is never ended for not running. One deployed without a
+    sidecar past that is released, and a host
     left with no live listener has its workspace rolled again. The
     workflow-versions route reports each deployment's `live` as a manager's
     is counted, which Settings reads.
@@ -147,10 +149,28 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     is never logged: the manifest callback's carries GitHub's one-time code.
     A refused workflow deploy also logs `workflow_deploy_refused` with its
     code and reason.
-- **Sidecars**: one per live deployment, started by the hub's
-  `SidecarProvisioner`s. The local-process provisioner runs child processes
-  on the hub's machine, restores them on boot and declines a placement while
-  free memory is short. The Docker provisioner (`packages/provisioner-docker`),
+- **Sidecars**: started by the hub's `SidecarProvisioner`s. The local-process
+  provisioner runs one sidecar, a child process on the hub's machine, that
+  hosts every deployment placed there, each in a workflow child process of
+  its own: the first ensure starts it under the
+  identity Interchange offered, and every later ensure answers with that
+  sidecar, which stock deploys into over the same connection. It keeps a hold
+  per allocation beside one process manifest, and persists each destroy's
+  fence so a late ensure stays refused across a restart; a destroy releases the hold and
+  leaves the copy for the hub to undeploy, so the process lives as long as the
+  hub. On boot it respawns the sidecar once if any hold is still allocated or
+  the hub still waits for it to remove a copy.
+  It starts the sidecar only with 1 GiB free. The sidecar advertises
+  `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` (default 16) active deployments in its hello,
+  and stock refuses to place more there. The hub's placement chooser
+  (`apps/hub/src/sidecar/placement.ts`) counts the local sidecar's active
+  allocations and probes, and the placements waiting there for a slot, and
+  sends a deployment to the first matching sandbox provisioner once the cap is
+  reached. With no sandbox it stays local, where stock retries its placement
+  for up to 10 ensure attempts (about two and a half minutes) and then fails
+  it; the pull request is tried again on its next event. Probes run on the local
+  sidecar only when no sandbox is registered, since with one they require
+  `isolation:workload`. The Docker provisioner (`packages/provisioner-docker`),
   registered after it when a daemon with the sidecar image answers, runs each
   sidecar in a container of its own. A published hub image carries the digest
   of the sidecar image CI pushed just before it, and the provisioner pulls that
@@ -313,6 +333,12 @@ any other tenant or an unknown sender.
   the claim: the next manager's take finds the run gone and claims.
   A run left deployed with no sidecar for two minutes is gone too, and its
   cancellation is requested so it does not start after the claim has moved on.
+  A manager or judge is deployed with the mail that starts
+  it, so one still `deployed` five minutes after it reached its sidecar never
+  ran: it is gone for the claim, and each reconcile pass ends it and logs
+  `triage_deployment_never_ran` with its run id and workflow. The hub times
+  that from the sidecar's connection for the run, or from its own start for a
+  run placed before it.
   When the rules need the judge, the host's own checks have finished (or the
   hub waits for them no longer) and `release.json` publishes a judge for the
   host, a pass deploys it under `workflow:*` `create` and `read` on exactly

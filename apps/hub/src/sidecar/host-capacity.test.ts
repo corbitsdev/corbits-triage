@@ -52,8 +52,8 @@ test("without a cgroup limit MemAvailable decides, and a box reporting neither h
   expect(await createHostCapacity(await box({})).freeBytes()).toBeUndefined();
 });
 
-test("each sidecar still starting holds one footprint, and no figure never declines", () => {
-  expect(shortfall(2 * SIDECAR_BYTES, 1)).toBeUndefined();
-  expect(shortfall(2 * SIDECAR_BYTES, 2)).toBe(`${(2 * SIDECAR_BYTES) / MiB} MiB free, ${(3 * SIDECAR_BYTES) / MiB} MiB needed`);
-  expect(shortfall(undefined, 100)).toBeUndefined();
+test("the sidecar needs one footprint free, and no figure never declines", () => {
+  expect(shortfall(SIDECAR_BYTES)).toBeUndefined();
+  expect(shortfall(SIDECAR_BYTES / 2)).toBe(`${SIDECAR_BYTES / 2 / MiB} MiB free, ${SIDECAR_BYTES / MiB} MiB needed`);
+  expect(shortfall(undefined)).toBeUndefined();
 });
