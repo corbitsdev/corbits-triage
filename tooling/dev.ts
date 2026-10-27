@@ -1,5 +1,6 @@
-// `bun run dev`: runs the hub and web portal concurrently with prefixed logs and
-// tears both down on SIGINT/SIGTERM. Env is passed through untouched.
+// `bun run dev`: packs the workflows the hub publishes, then runs the hub and web
+// portal concurrently with prefixed logs and tears both down on SIGINT/SIGTERM.
+// Env is passed through untouched.
 import { resolve } from "node:path";
 
 type Proc = {
@@ -14,7 +15,7 @@ const ROOT = resolve(import.meta.dir, "..");
 // The Vite dev portal (:5173) proxies /api to the hub, which must trust its origin; a developer's own env wins.
 const SERVICES: Array<{ name: string; cmd: string[]; cwd: string; env: Record<string, string> }> = [
   { name: "hub", cmd: ["bun", "--conditions=intx-src", "src/server.ts"], cwd: `${ROOT}/apps/hub`, env: { PORTAL_ORIGIN: "http://localhost:5173" } },
-  { name: "web", cmd: ["bun", "run", "dev"], cwd: `${ROOT}/apps/web`, env: {} },
+  { name: "web", cmd: ["bun", "run", "vite"], cwd: `${ROOT}/apps/web`, env: {} },
 ];
 
 let shuttingDown = false;
@@ -128,4 +129,6 @@ function onSignal() {
 process.on("SIGINT", onSignal);
 process.on("SIGTERM", onSignal);
 
+// The hub rolls every workspace onto the packed workflows as it starts, so they are packed first.
+await Bun.$`bun scripts/build-workflows.ts`.cwd(`${ROOT}/apps/web`);
 spawnAll();

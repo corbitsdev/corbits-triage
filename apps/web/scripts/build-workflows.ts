@@ -1,5 +1,5 @@
 // Packs each workflow as a source tree into public/packages/, with the host tools it depends on as workspace members,
-// so the portal can publish them to the hub.
+// which the hub publishes from the built portal.
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { isBuiltin } from "node:module";
@@ -12,7 +12,7 @@ import * as githubTool from "../../../packages/github-tool/build.ts";
 import githubPkg from "../../../packages/github-tool/package.json";
 import triageWorkflowsPkg from "../../../packages/triage-workflows/package.json";
 import { contentVersion, type PackedTarball } from "../../../tooling/pack-tarball.ts";
-import { CHAIN_PACKAGES, type BuiltPackage, type SourceIndexEntry, type SourceTree } from "../src/lib/workflow-packages.ts";
+import { CHAIN_PACKAGES, type BuiltPackage, type SourceIndexEntry, type SourceTree } from "@corbits/triage-contracts";
 
 const PACKAGES = resolve(import.meta.dir, "../../../packages");
 const PUBLIC = resolve(import.meta.dir, "../public");
@@ -20,7 +20,7 @@ const DIRECTORS = "directors.mjs";
 const ACTIONS = "actions/index.mjs";
 const LOOPS = "loops.mjs";
 /**
- * The release a chain workflow deploys from: the portal writes `release.json` into the published tree, so the bundle
+ * The release a chain workflow deploys from: the hub writes `release.json` into the published tree, so the bundle
  * imports it at run time through the package's own import map, which finds it from any file in the package.
  */
 const RELEASE = "#release";

@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -16,12 +16,8 @@ export const GITHUB_CREDENTIAL_NAME = "github";
 export const GITHUB_HOOK_CREDENTIAL_NAME = "github-hook";
 /** The App's private key: the hub moves it here off the GitHub App credential, which then holds an installation token. */
 export const GITHUB_APP_KEY_CREDENTIAL_NAME = "github-app";
-export const INFERENCE_PROVIDER = "corbits-system-one";
 const INFERENCE_PROVIDER_PLUGIN = "corbits-system-one";
 export const INFERENCE_CREDENTIAL_NAME = "corbits-system-one";
-/** Catalog model the triage workflows declare; its offering carries the provider's own model name. */
-export const DECISION_MODEL_ALIAS = "decision";
-export const ANTHROPIC_PROVIDER = "anthropic";
 export const ANTHROPIC_API = "https://api.anthropic.com";
 export const ANTHROPIC_CREDENTIAL_NAME = CODE_REVIEW_PROVIDERS.anthropic.credential;
 
@@ -779,21 +775,13 @@ async function forgetRepo(transport: Transport, tenantId: string, repo: string):
   });
 }
 
-// Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and
-// flips to `running` on its first trigger. The db package that defines it is
-// server-only, so the set is repeated here.
-const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
-
-export function isLiveDeployment(status: string): boolean {
-  return LIVE_DEPLOYMENT_STATUSES.has(status);
-}
-
 /** A live deployment with the versions its frozen closure pins; `package` is null when the closure does not name its workflow. */
 export type DeployedWorkflow = DeployedVersions["deployments"][number];
 
-export async function listDeployedWorkflows(transport: Transport, tenantId: string): Promise<DeployedWorkflow[]> {
+/** The live deployments, and how the hub's last roll of each host went. */
+export async function readDeployedVersions(transport: Transport, tenantId: string): Promise<DeployedVersions> {
   const tid = enc(requireTenantId(tenantId));
-  return DeployedVersions.assert(await transport.fetch<unknown>("GET", `/api/integrations/workflow-versions/${tid}`)).deployments;
+  return DeployedVersions.assert(await transport.fetch<unknown>("GET", `/api/integrations/workflow-versions/${tid}`));
 }
 
 export function currentDeployment(deployments: readonly DeployedWorkflow[], workflow: string): DeployedWorkflow | undefined {
@@ -809,7 +797,7 @@ function isDeploymentNotReady(cause: unknown): boolean {
   return cause instanceof ApiError && cause.status === 409 && cause.code === "deployment_not_ready";
 }
 
-export function pause(ms: number): Promise<void> {
+function pause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -1115,18 +1103,6 @@ export async function listPrincipals(transport: Transport, tenantId: string): Pr
 export async function listRoles(transport: Transport, tenantId: string): Promise<HubRole[]> {
   const tid = enc(requireTenantId(tenantId));
   return listAll<HubRole>(transport, `/api/tenants/${tid}/roles`);
-}
-
-export async function assignRole(transport: Transport, tenantId: string, principalId: string, roleId: string): Promise<void> {
-  await transport.fetch("POST", principalRolePath(tenantId, principalId, roleId));
-}
-
-export async function removeRole(transport: Transport, tenantId: string, principalId: string, roleId: string): Promise<void> {
-  await transport.fetch("DELETE", principalRolePath(tenantId, principalId, roleId));
-}
-
-function principalRolePath(tenantId: string, principalId: string, roleId: string): string {
-  return `/api/tenants/${enc(requireTenantId(tenantId))}/principals/${enc(requireId(principalId, "Principal id"))}/roles/${enc(requireId(roleId, "Role id"))}`;
 }
 
 export async function evaluateAccess(

@@ -8,7 +8,7 @@ import bitbucketTool from "../../../packages/bitbucket-datacenter-tool/package.j
 import githubTool from "../../../packages/github-tool/package.json";
 import triageWorkflows from "../../../packages/triage-workflows/package.json";
 import { packWorkflows } from "./build-workflows.ts";
-import { CHAIN_PACKAGES, type SourceIndexEntry, type SourceTree } from "../src/lib/workflow-packages.ts";
+import { CHAIN_PACKAGES, type SourceIndexEntry, type SourceTree } from "@corbits/triage-contracts";
 // Interchange exports only the type; the hub resolves a source deploy's closure with this function.
 import { resolveSourceWorkflowClosure, type SourceTreeReads } from "../../../vendor/interchange/packages/hub-sessions/src/workflow-source-closure.ts";
 

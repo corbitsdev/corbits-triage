@@ -6,8 +6,9 @@
 // /api/hooks/:provider/:tenantId (./provider-hooks). Every other /api/* path falls
 // through to stock unchanged.
 //
-// createHubServer takes no workflow/tool registry: the portal deploys the
-// triage workflows per tenant and the bridge finds them by name.
+// createHubServer takes no workflow/tool registry: the hub publishes the
+// triage workflows the portal build bundles and deploys them per tenant
+// (./workflow-release), and the bridge finds them by name.
 // EXPECTED_DEPLOYMENT_SET is that contract, referenced (not stringly typed) so
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
@@ -15,6 +16,7 @@ import { authorize } from "@intx/authz";
 import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
+import { generateId } from "@intx/hub-common";
 import { eq } from "drizzle-orm";
 import { getPath } from "hono/utils/url";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
@@ -31,7 +33,7 @@ import {
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
-import { asRecord } from "@corbits/common";
+import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
@@ -61,6 +63,12 @@ import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, 
 import { createPullRequestReader } from "./pull-request-reader.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
+import { triageTenants } from "./deployer-role.js";
+import { bundleAt, bundled, type Publisher } from "./workflow-release/publish.js";
+import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers.js";
+import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
+import { catalogModels, createWorkspaceLock, deploymentState, liveDeployments } from "./workflow-release/reads.js";
+import { createRolloutQueue, createWorkflowRollout, type DeployRequest } from "./workflow-release/rollout.js";
 import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
@@ -108,14 +116,14 @@ import { prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config
 import { githubRead } from "@corbits/github-tool";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 
-// Per host: Upgrade deploys the host's listener and tools once that host's credential exists, and the listener deploys
+// Per host: the hub deploys the host's listener and tools once that host's credential exists, and the listener deploys
 // a manager per pull request. A workspace with both hosts runs both listeners.
-function chainOf(source: RepoSource) {
+function hostWorkflows(source: RepoSource) {
   return [TRIAGE_LISTENERS[source], TRIAGE_MANAGERS[source]].map((id) => ({ address: id, id }));
 }
 const EXPECTED_DEPLOYMENT_SET = {
-  github: { workflows: chainOf("github"), tools: [githubRead.id] },
-  "bitbucket-datacenter": { workflows: chainOf("bitbucket-datacenter"), tools: [bitbucketRead.id] },
+  github: { workflows: hostWorkflows("github"), tools: [githubRead.id] },
+  "bitbucket-datacenter": { workflows: hostWorkflows("bitbucket-datacenter"), tools: [bitbucketRead.id] },
 };
 
 const TRIAGE_RETRY_MS = 15_000;
@@ -130,6 +138,12 @@ const E2B_TEND_MS = 10 * 60_000;
 /** A GitHub token that could not be renewed is tried again within its remaining quarter hour. */
 const GITHUB_TOKEN_RETRY_MS = 60_000;
 const GITHUB_TOKEN_RETRY_MAX_MS = 5 * 60_000;
+/** A key is saved as several writes, so a workspace rolls once its writes stop for this long. */
+const WORKFLOW_RELEASE_QUIET_MS = 3_000;
+/** A roll that failed, or found another hub process rolling the workspace, is tried again about this much later. */
+const WORKFLOW_RELEASE_RETRY_MS = 10 * 60_000;
+/** Each roll holds a reserved connection while it waits for a listener, so few run at once and the pool stays free. */
+const WORKFLOW_RELEASE_CONCURRENCY = 2;
 
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
@@ -487,6 +501,73 @@ function reconcileTenants() {
   return composition.db.select({ id: schema.tenant.id, domain: schema.tenant.domain, config: schema.tenant.config }).from(schema.tenant);
 }
 const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
+async function deployListener(request: DeployRequest): Promise<string> {
+  const prepared = await composition.workflowAllocationService.prepareProvisionedDeployment({
+    tenantId: request.tenantId,
+    anchorRunId: generateId("workflowRun"),
+    deploymentDomain: await tenantDomain(request.tenantId),
+    source: { kind: "asset", assetId: request.assetId, package: { format: "source", commitSha: request.commitSha, packageName: request.packageName } },
+    entry: request.entry,
+    definitionAssetId: request.assetId,
+    sessionId: generateId("session"),
+    sourceAuthorityPrincipalId: request.principalId,
+    sourceOfferingIds: request.offerings.ids,
+    defaultSourceOfferingId: request.offerings.defaultId,
+    deployContent: { systemPrompt: "" },
+  });
+  return prepared.anchorRunId;
+}
+async function workspacePublisher(tenantId: string): Promise<Publisher> {
+  const { principalId } = await systemSenderOf(TRIAGE_PUBLISHER, tenantId);
+  await setUpPublisher(composition.db, tenantId, principalId, now());
+  return { tenantId, principalId };
+}
+// The portal build writes the workflows under its public files, which the hub serves from PORTAL_DIR once built.
+const workflowBundleDir = resolve(env.PORTAL_DIR ?? resolve(ROOT, "apps/web/public"), "packages");
+const workflowRollout = createWorkflowRollout({
+  db: composition.db,
+  assets: composition.assetService,
+  repoStore: composition.repoStore,
+  bundle: bundleAt(workflowBundleDir),
+  publisher: workspacePublisher,
+  models: function modelsOf(tenantId) {
+    return catalogModels(composition.db, tenantId);
+  },
+  connectedSources: function sourcesOf(tenantId) {
+    return connectedSources(composition.db, tenantId);
+  },
+  deployments: function deploymentsOf(tenantId, workflow) {
+    return liveDeployments(composition.db, launchSpecs, tenantId, workflow);
+  },
+  deploy: deployListener,
+  state: function stateOf(runId) {
+    return deploymentState(composition.db, runId);
+  },
+  async cancel(tenantId, runId) {
+    await composition.workflowLifecycleService.requestCancellation(tenantId, runId, "replaced");
+  },
+  lock: createWorkspaceLock(composition.db.$client),
+  sleep: Bun.sleep,
+  now,
+  log: logJson,
+});
+const workflowReleases = createRolloutQueue(workflowRollout, { quietMs: WORKFLOW_RELEASE_QUIET_MS, retryMs: WORKFLOW_RELEASE_RETRY_MS, concurrency: WORKFLOW_RELEASE_CONCURRENCY, random: Math.random }, logJson);
+const workflowsBundled = bundled(workflowBundleDir);
+/** A host's credential was written or replaced: its listener starts again with it, from the newest release. */
+function rollHost(source: RepoSource) {
+  return function rollWithCredentials(tenantId: string): void {
+    if (workflowsBundled) workflowReleases.request(tenantId, [source]);
+  };
+}
+const watchListeners = createListenerWatch({
+  connectedSources: function sourcesOf(tenantId) {
+    return connectedSources(composition.db, tenantId);
+  },
+  listener: liveListenerOf,
+  ensure: function rollWorkspace(tenantId) {
+    if (workflowsBundled) workflowReleases.ensure(tenantId);
+  },
+});
 const managerRuns = createManagerRuns(composition.db, verdictRecordStore, now);
 const tenantOpenHeads = createTenantOpenHeads(tenantSources);
 const tenantOpenHead = createTenantOpenHead(tenantSources);
@@ -523,7 +604,10 @@ function reconcilerFor(source: RepoSource) {
 const reconcilers = REPO_SOURCES.map(reconcilerFor);
 async function reconcileAll(): Promise<ReconcileOutcome> {
   // A host removed through the stock credential route tells the hub nothing, so each pass releases what it left running.
-  for (const tenant of await reconcileTenants()) await releaseHostsOf(tenant.id);
+  for (const tenant of await reconcileTenants()) {
+    await releaseHostsOf(tenant.id);
+    await watchListeners(tenant.id);
+  }
   const outcomes: ReconcileOutcome[] = [];
   for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);
@@ -590,6 +674,7 @@ const syncInstallations = createInstallationSync({
   onSynced: function installationsSynced(tenantId) {
     void renewGithubToken(tenantId);
     void onSourcesChanged(tenantId);
+    if (workflowsBundled) workflowReleases.request(tenantId, []);
   },
 });
 function setTimer(fire: () => Promise<void>, ms: number): () => void {
@@ -679,7 +764,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   authMethods: authMethods(signIn, smtp !== undefined),
   manifest: githubManifest,
   syncInstallations,
-  connectGithubApp: createGithubAppConnection({ ...credentialDeps, authorize: authorizePortal, githubApiOrigin: githubOrigin, renewal: githubToken }),
+  connectGithubApp: createGithubAppConnection({ ...credentialDeps, authorize: authorizePortal, githubApiOrigin: githubOrigin, renewal: githubToken, onConnected: rollHost("github") }),
   prActions: githubPrActions,
   bitbucketCodeReviewSend: createBitbucketCodeReviewSend({
     ...credentialDeps,
@@ -746,6 +831,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     up: function upOf(anchorRunId) {
       return deploymentUp(composition.db, anchorRunId);
     },
+    rollouts: workflowRollout.rollouts,
   }),
   codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: codeReviewProbes }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, place: placeCodeReview, readCheckPack, readHead: pullRequests.head, send: sendToListener }),
@@ -775,6 +861,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     egressAllowlist: bitbucketEgressAllowlist(env),
     onEnabled: triageLoop.kick,
     onConnectionChanged: onSourcesChanged,
+    onCredentialsReplaced: rollHost("bitbucket-datacenter"),
     now,
     log: logJson,
   }),
@@ -799,6 +886,14 @@ function decodedSegment(segment: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Rolls the workspace after a release write succeeds, starting again the listeners of the hosts the write reaches. */
+async function forwardReleaseWrite(req: Request, path: string, forward: () => Promise<Response> | Response): Promise<Response> {
+  const release = workflowsBundled ? await releaseWriteOf(composition.db, req, path) : undefined;
+  const response = await forward();
+  if (release && response.ok) workflowReleases.request(release.tenantId, release.redeploy);
+  return response;
 }
 
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
@@ -863,17 +958,37 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
   }
   const written = req.method === "POST" || req.method === "PATCH" ? CREDENTIAL_WRITE.exec(path) : null;
   const writtenTenant = written ? decodedSegment(written[1]!) : undefined;
-  if (writtenTenant === undefined) return stock.fetch(req, server);
+  if (writtenTenant === undefined) {
+    return forwardReleaseWrite(req, path, function forwardStock() {
+      return stock.fetch(req, server);
+    });
+  }
   const refused = await appKeyWriteRefusal(composition.db, writtenTenant, written?.[2] === undefined ? undefined : decodedSegment(written[2]), req);
   if (refused) return refused;
-  const response = await stock.fetch(req, server);
-  // A backstop for App JSON a write still leaves in `github`.
-  if (response.ok) await githubToken.secure(writtenTenant);
-  return response;
+  return forwardReleaseWrite(req, path, async function forwardCredential() {
+    const response = await stock.fetch(req, server);
+    // A backstop for App JSON a write still leaves in `github`.
+    if (response.ok) await githubToken.secure(writtenTenant);
+    return response;
+  });
 }
 
 triageLoop.start();
 tokenLoop.start();
+
+/** Rolls every workspace onto a new build's release, as many at once as the queue allows. */
+async function rollWorkspaces(): Promise<void> {
+  if (!workflowsBundled) {
+    logJson({ level: "error", msg: "workflow_release_unbundled", path: workflowBundleDir, error: "The hub found no built workflows here, so it publishes and deploys none. Build the portal, or set PORTAL_DIR to its build." });
+    return;
+  }
+  try {
+    await Promise.all((await triageTenants(composition.db)).map((tenantId) => workflowReleases.run(tenantId)));
+  } catch (error) {
+    logJson({ level: "error", msg: "workflow_release_boot_failed", error: errorText(error) });
+  }
+}
+void rollWorkspaces();
 
 logJson({
   level: "info",

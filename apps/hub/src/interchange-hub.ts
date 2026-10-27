@@ -28,8 +28,9 @@
 //   instance invites send magic links through), `runReader` (stock's
 //   `workflowRunReader`) wrapped by `withBlobOutputs` so step outputs spilled
 //   to blobs read back inline, the workflow allocation and lifecycle services
-//   the pr-triage deployment rotation calls, and the deployment plugin
-//   registry code review's placement asks.
+//   the pr-triage deployment rotation and the workflow release call, the asset
+//   service and repo store the workflow release publishes through, and the
+//   deployment plugin registry code review's placement asks.
 // - Named functions in place of inline callbacks, and `errorText(err)`, per
 //   this repository's code rules.
 // `resolveHubApiOrigin` is imported from stock's hub app source, which is not
@@ -625,6 +626,8 @@ export async function createInterchangeHub({
     runReader: withBlobOutputs(runReader, agentRepoStore.repoStore, log),
     workflowAllocationService,
     workflowLifecycleService,
+    assetService,
+    repoStore: agentRepoStore.repoStore,
     sidecarPlugins,
   };
 }

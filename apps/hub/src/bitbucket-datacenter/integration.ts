@@ -5,7 +5,6 @@ import { type } from "arktype";
 import { BITBUCKET_DATACENTER_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { TRIAGE_LISTENERS } from "@corbits/triage-contracts";
-import { ensureDeployerRole } from "../deployer-role.js";
 import { ensureTriageRole, grantEnabledKinds } from "../github/automation.js";
 import { tenantConfigOf } from "../github/bridge.js";
 import { activeCredential, credentialSecret, failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
@@ -61,6 +60,8 @@ type BitbucketDeps = PortalCredentialDeps & {
   onEnabled: (tenantId: string) => void;
   /** Called after connect and disconnect, so a disconnected host's listener and managers are released. */
   onConnectionChanged: (tenantId: string) => Promise<void>;
+  /** Called after the token or the webhook secret is saved, so the workspace's listeners start with them. */
+  onCredentialsReplaced: (tenantId: string) => void;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -239,6 +240,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
         return forgetWebhooks(ns, unsaved);
       });
     }
+    deps.onCredentialsReplaced(member.tenantId);
     return Response.json({ webhooksByHand });
   }
 
@@ -267,11 +269,11 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     if (hookFailed) return hookFailed;
     const written = await patchCorbitsTriage(db, member.tenantId, async function setConnection(next, tx) {
       await ensureTriageRole(tx, member.tenantId, deps.now());
-      await ensureDeployerRole(tx, member.tenantId, deps.now());
       return { ...next, bitbucketDatacenter: { baseUrl, user } };
     });
     if (!written) return failure(404, "not_found", "Workspace not found.");
     await deps.onConnectionChanged(member.tenantId);
+    deps.onCredentialsReplaced(member.tenantId);
     return Response.json({ baseUrl, hookUrl: hookUrl(member.tenantId), hookSecretSet: true });
   }
 

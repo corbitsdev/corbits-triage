@@ -26,7 +26,8 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role. |
 | `src/audit-log.ts` | The audit list, read from what the workspace already recorded. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
-| `src/workflow-versions.ts` | Lists what is deployed and the versions it runs. |
+| `src/workflow-versions.ts` | Lists what is deployed, the versions it runs and the hub's last roll of each host. |
+| `src/workflow-release/` | Publishes the portal build's workflows as each workspace's `triage-publisher` system principal and rolls each connected host's listener onto them (`rollout.ts`, `publish.ts`, `publisher.ts`, `reads.ts`): at start for every workspace, and in the background after a host connects or a credential or catalog write. |
 | `src/code-review.ts`, `src/pull-request-reader.ts`, `src/code-review-runs.ts` | `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; reading a pull request and building its review request; the latest review, read from the manager's state, and whether a head takes it over. |
 | `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and Docker registration (`docker.ts`). |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider). |
@@ -51,33 +52,16 @@ with the `intx-src` export condition, so every hub command runs with
 
 - `src/lib/portal.tsx`: the workspace snapshot and the Settings actions.
 - `src/lib/hub-api.ts`: typed calls over the hub routes.
-- `src/lib/model-catalog.ts`: the models the workflows name (`decision` on
-  `corbits-system-one`, `claude-opus-5-5` and `claude-haiku-5-5` on
-  `anthropic`); adds what the tenant catalog lacks through the stock catalog
-  routes, and picks each deploy's offerings.
-- `src/lib/workflow-deploy.ts`: workflow assets, the build's files, the
-  tenant's deployment lifetime and cancelling a deployment.
-- `src/lib/workflow-sources.ts`: publishes each workflow as a source-format
-  `workflow` asset, through the stock git smart-HTTP route with a short-lived
-  personal git token that is revoked afterwards, and returns each asset id and
-  commit. It writes the release's tree locally and fetches the asset's `main`:
-  when that commit holds the same tree it is returned as is; when it is the
-  hub's first commit, the release is committed on top of it and pushed;
-  anything else, or an asset created by someone else, is refused, since a
-  deployment's permissions come from its asset's creator. Each host's code
-  review, manager and listener publish in that order: the manager's tree gets
-  a `release.json` naming the code review just published and the offerings it
-  runs on, the listener's the same for the manager. A chain workflow publishes
-  only while the workspace has every model it names, so code review publishes
-  once its model is set up; until then the manager publishes with no code
-  review, and the publish after it is set up gives the manager a new asset.
-  An asset is named `<workflow>-<publisher>-<8 hex>`: the publishing
-  member's principal id (`prn_` written `prn-`), so each Deployer publishes
-  their own copy, and the build's content hash, or for a workflow with a
-  release a hash of the build's hash and its `release.json`, so other
-  offerings publish a new asset.
+- `src/lib/model-catalog.ts`: adds what the tenant catalog lacks for the
+  models the workflows name (`DECLARED_MODELS` in `@corbits/triage-contracts`:
+  `decision` on `corbits-system-one`, `claude-opus-5-5` and `claude-haiku-5-5`
+  on `anthropic`) through the stock catalog routes.
+- `src/components/settings/TriageVersions.tsx`: each connected host's running
+  version and when it started, and the error of the hub's last roll when it
+  failed, from the workflow-versions route.
 - `scripts/build-workflows.ts`: writes each workflow of the manager chain
-  (`CHAIN_PACKAGES`) as a source tree to `public/packages/sources/`: a
+  (`CHAIN_PACKAGES` in `@corbits/triage-contracts`) as a source tree to
+  `public/packages/sources/`, which the hub publishes: a
   workspace root whose members are the workflow bundle and the built host
   tools, since Interchange installs only npm dependencies from a registry.
   Each version is `<base>-sha-<8 hex>` over the package's files
@@ -108,7 +92,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | Package | Holds |
 | --- | --- |
 | `triage-workflows` | The triage steps, `pr-triage`, the definition that runs them locally, `repo-scan`, the judge's director, the actions under `actions/`, the deterministic logic under `logic/`, and the decision-model eval. |
-| `triage-contracts` | Policy schema and parsers, the policy file, resolving a file over the one it extends, repository settings, triage state, labels, trigger mail and shared types; see [its README](../packages/triage-contracts/README.md). |
+| `triage-contracts` | Policy schema and parsers, the policy file, resolving a file over the one it extends, repository settings, triage state, labels, trigger mail, the manager chain's workflows and the `release.json` each publishes (`workflow-release.ts`), and shared types; see [its README](../packages/triage-contracts/README.md). |
 | `github-reads`, `bitbucket-datacenter-reads` | Host read helpers, both returning the GitHub shapes. |
 | `github-tool`, `bitbucket-datacenter-tool` | The sidecar tool bundles: reads, the mirror, and actions. |
 | `repo-read-tool` | `read_file`, `grep` and `list`, read-only and confined to a checkout folder under the sidecar data dir's `checkouts` (no `..`, absolute path or symlink out); the host tool packages export `checkout` and their read bundles add `*_read_file`. |

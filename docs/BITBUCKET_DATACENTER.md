@@ -26,8 +26,8 @@ is a wrapper over them.
 Bitbucket repositories are triaged by the `triage-listener-bitbucket-datacenter`
 listener and the managers it deploys, the same steps as on GitHub built over the
 Bitbucket tools. They bind only the `bitbucket-datacenter` credential, so
-**Upgrade to new version** starts them once the instance is connected; a
-workspace with GitHub as well runs both hosts' listeners.
+the hub starts them once the instance is connected and the workspace has a
+decision model; a workspace with GitHub as well runs both hosts' listeners.
 Disconnecting releases the host's listener and its managers and leaves the Bitbucket repository records disabled and disconnected, so the open pull request listing carries on with the other hosts. The webhook credential names this
 listener, and every mail carries `repoSource: "bitbucket-datacenter"`.
 

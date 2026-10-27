@@ -187,7 +187,7 @@ test("PostgreSQL: connecting an App writes its key and token together, another A
   await withWorkspace([first, replacement], async function connectAndReplace({ db, cipher, origin, github }) {
     const { router, pushed } = deliveries();
     const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
-    const connect = createGithubAppConnection({ db, cipher, authorize: allowAll, githubApiOrigin: origin, renewal });
+    const connect = createGithubAppConnection({ db, cipher, authorize: allowAll, githubApiOrigin: origin, renewal, onConnected() {} });
     const member = { tenantId: TENANT, principalId: "prn_admin" };
     const secretOf = secrets(db, cipher);
 

@@ -1,20 +1,17 @@
-// The live chain on one machine: a migrated database of its own, the hub process with its local sidecars, and a
-// workspace set up and upgraded through the same routes and portal code a person's browser uses.
+// The live chain on one machine: a migrated database of its own, the hub process with its local sidecars serving a
+// portal build, and a workspace set up through the same routes and portal code a person's browser uses.
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
-import fs from "node:fs";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
-import http from "isomorphic-git/http/web";
 import { createDB, schema } from "@intx/db";
 import { ApiError, type Transport } from "@intx/hub-client";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { packWorkflows } from "../../apps/web/scripts/build-workflows.ts";
-import { DECISION_MODEL_ALIAS, INFERENCE_CREDENTIAL_NAME, INFERENCE_PROVIDER, patchAppConfig } from "../../apps/web/src/lib/hub-api.ts";
+import { DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, TRIAGE_LISTENERS } from "@corbits/triage-contracts";
+import { currentDeployment, INFERENCE_CREDENTIAL_NAME, patchAppConfig, readDeployedVersions } from "../../apps/web/src/lib/hub-api.ts";
 import { connectGithubApp } from "../../apps/web/src/lib/github-manifest.ts";
-import { upgradeTriage } from "../../apps/web/src/lib/triage-upgrade.ts";
-import { publishSources, type Publisher } from "../../apps/web/src/lib/workflow-sources.ts";
 import type { FakeGithub } from "./github.ts";
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -29,6 +26,7 @@ const SECRETS = {
 };
 export const HOOK_SECRET = "chain-hook-secret";
 const READY_MS = 60_000;
+const LISTENER_START_MS = 10 * 60_000;
 
 export type Database = { name: string; url: string; config: typeof ADMIN_DB };
 
@@ -73,8 +71,8 @@ async function collect(stream: ReadableStream<Uint8Array>, lines: string[]): Pro
 
 export type Hub = { origin: string; dataDir: string; logs: string[]; stop: () => Promise<void> };
 
-/** The hub as `bun run hub` starts it, with every sidecar a local process under its data directory. */
-export async function startHub(database: Database, github: FakeGithub): Promise<Hub> {
+/** The hub as the image starts it, serving the portal build in `portalDir`, with every sidecar a local process under its data directory. */
+export async function startHub(database: Database, github: FakeGithub, portalDir: string): Promise<Hub> {
   const port = freePort();
   const origin = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "corbits-chain-"));
@@ -87,6 +85,7 @@ export async function startHub(database: Database, github: FakeGithub): Promise<
       ...SECRETS,
       DATABASE_URL: database.url,
       HUB_DATA_DIR: dataDir,
+      PORTAL_DIR: portalDir,
       PORT: String(port),
       BETTER_AUTH_BASE_URL: origin,
       GITHUB_API_ORIGIN: github.origin,
@@ -139,7 +138,7 @@ function cookieTransport(origin: string, cookie: string): Transport {
   };
 }
 
-export type Workspace = { tenantId: string; principalId: string; transport: Transport };
+export type Workspace = { tenantId: string; transport: Transport };
 
 /** The hub's first account, verified as its emailed link would, and the workspace it creates. */
 export async function signUp(hub: Hub, database: Database): Promise<Workspace> {
@@ -159,11 +158,7 @@ export async function signUp(hub: Hub, database: Database): Promise<Workspace> {
   const cookie = signUp.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
   const transport = cookieTransport(hub.origin, cookie);
   const tenant = await transport.fetch<{ id: string }>("POST", "/api/tenants", { name: "Acme", slug: "acme" });
-  const principals = await transport.fetch<{ data?: { id: string; email?: string }[] } | { id: string; email?: string }[]>("GET", `/api/tenants/${tenant.id}/principals`);
-  const rows = Array.isArray(principals) ? principals : principals.data!;
-  const owner = rows.find((row) => row.email === email);
-  if (!owner) throw new Error(`The workspace lists no principal for ${email}: ${JSON.stringify(rows)}`);
-  return { tenantId: tenant.id, principalId: owner.id, transport };
+  return { tenantId: tenant.id, transport };
 }
 
 async function vaultKey(workspace: Workspace, provider: { name: string; plugin: string; apiBaseUrl: string }, credential: string): Promise<string> {
@@ -203,27 +198,24 @@ export async function setUpWorkspace(workspace: Workspace, github: FakeGithub, m
   await offer(workspace, { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER, baseURL: modelOrigin, credentialId: decisionKey }, [{ name: DECISION_MODEL_ALIAS, quirks: { model: "stub" } }]);
 }
 
-/** Builds the portal's workflow packages once into `dir`, as `bun run dev` does on start. */
-export async function buildRelease(dir: string): Promise<void> {
-  await packWorkflows(dir);
+/** The portal build the hub serves and publishes: its page, and the workflow packages `bun run dev` builds on start. */
+export async function buildPortal(dir: string): Promise<void> {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "index.html"), "<!doctype html><title>Corbits Triage</title>\n");
+  await packWorkflows(join(dir, "packages"));
 }
 
-/** Settings' Upgrade: publishes the build from `releaseDir` as the owner and starts GitHub's listener from it. */
-export async function upgrade(workspace: Workspace, hub: Hub, releaseDir: string): Promise<void> {
-  const publisher: Publisher = { tenantId: workspace.tenantId, principalId: workspace.principalId };
-  const gitDir = mkdtempSync(join(tmpdir(), "corbits-chain-sources-"));
-  async function packaged(input: string | URL | Request): Promise<Response> {
-    const path = String(input).replace(/^\/packages\//, "");
-    const file = Bun.file(join(releaseDir, path));
-    return (await file.exists()) ? new Response(file) : new Response(null, { status: 404 });
+/** Waits for the hub to roll the workspace onto the build's release and its GitHub listener to be up. */
+export async function listenerStarted(workspace: Workspace): Promise<void> {
+  const deadline = Date.now() + LISTENER_START_MS;
+  while (Date.now() < deadline) {
+    const versions = await readDeployedVersions(workspace.transport, workspace.tenantId);
+    const failed = versions.rollouts.find((rollout) => rollout.error !== undefined);
+    if (failed) throw new Error(`The hub could not roll ${failed.source}: ${failed.error}`);
+    if (currentDeployment(versions.deployments, TRIAGE_LISTENERS.github)?.live && versions.rollouts.length > 0) return;
+    await Bun.sleep(1_000);
   }
-  try {
-    await upgradeTriage(workspace.transport, publisher, ["github"], function onStep() {}, function publish(transport, who) {
-      return publishSources(transport, who, { fs, http, origin: hub.origin, dir: gitDir }, packaged as typeof fetch);
-    });
-  } finally {
-    rmSync(gitDir, { recursive: true, force: true });
-  }
+  throw new Error("The hub did not start the GitHub listener.");
 }
 
 /** A webhook delivery GitHub would send, signed with the App's secret. */

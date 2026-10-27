@@ -540,16 +540,14 @@ Everything triage needs, top to bottom: its status, where pull requests come fro
 
 The first line says how many repositories Triage is running on, with a **Choose repositories** link. Until a decision model is added, it says **Triage needs a decision model before it can run. Add one below.**
 
-#### Upgrading to the new version
+#### Which version runs
 
-In the new version, each pull request gets one manager that posts a single update. Once a source and a decision model are set up, a line below the status says which version runs, one line per connected host (named when there are two):
+Once a source and a decision model are set up, a line below the status says which version of Triage runs, one line per connected host (named when there are two):
 
-- **Triage is stopped until it is upgraded.** That host has not switched yet, so nothing is triaged there until someone presses **Upgrade to new version**.
-- **Triage runs version 0.1.0-sha-66ee60f0, published by Ana.** That host runs the new version, published by that person. When this portal has a newer release, it adds **A new version is ready.** If an earlier copy is somehow still running beside it, it adds **Another copy is still running too; upgrade to stop it.**
+- **Triage is starting.** Triage has not started on that host yet. It starts on its own a few minutes after the host is connected or the decision model is saved.
+- **Triage runs version 0.1.0-sha-66ee60f0, started 10/26/2026, 9:14:03 AM.** That host runs that version, started then.
 
-Owners and Deployers (see [People](#people)) see **Upgrade to new version** whenever an upgrade is due. Nothing starts Triage on a host by itself: a host connected after the last upgrade, or a decision model saved in Settings, waits for someone to press it. Pressing it publishes the new version under your name, starts it on each host, and then stops the versions started before it, whoever published them, along with the earlier triage and code review workflows it replaces. If two people upgrade at once, the newer start stays, and the other person sees **Someone else's upgrade finished first; Triage runs their version.** The button says what it is doing. If the new version does not start within five minutes, it is stopped, the one already running keeps running, and the error names the host. Everyone else sees **Ask a workspace owner or a Deployer to upgrade.** **Advanced info** lists this portal's release, who published the running one and when, and the version of each workflow in the release.
-
-During first-time setup, saving the decision model starts the new version the same way when you are an owner or a Deployer.
+Nobody presses anything to keep Triage current. It starts or updates itself on each connected host when the Triage server starts with a new version, when a host is connected or one of its credentials is replaced, and when a model key is saved or removed, so saving the Anthropic key under [Code review](#code-review-2) turns code review on with nothing else to do. Each time, the new version starts, and once it runs the version before it stops, along with the earlier triage and code review workflows it replaces. If the new version does not start within five minutes, it is stopped and the version already running keeps running. A line under the version then says **Updating Triage failed; see the hub log.** The Triage server's log says why. Triage tries again about every ten minutes, and also when a connected host is found with no Triage running, and the line goes away once an update succeeds.
 
 #### GitHub and Bitbucket Data Center
 
@@ -589,7 +587,7 @@ The row says **Key stored** or **No key**. With no key, its form is open below i
 
 #### Rolling credentials
 
-Every secret Triage holds can be replaced from Settings without disconnecting anything. After you replace a credential, Triage restarts its listener and uses the new value; pull requests in progress finish with the old one. If the restart fails, the row says **Saved. Restarting Triage failed; try again** with a **Try again** button; the new secret is already saved.
+Every secret Triage holds can be replaced from Settings without disconnecting anything. After you replace a credential, Triage starts again with the new value a few seconds later; pull requests in progress finish with the old one. If it cannot start again, the new secret is still saved, the version before keeps running, and the line under the version says why (see [Which version runs](#which-version-runs)).
 
 **GitHub App key.** Press **Replace key** on the GitHub App row. In your App's settings on GitHub, generate a new private key, then choose the downloaded `.pem` file and press **Save**; GitHub checks that the key belongs to the connected App before it is saved. Then delete the old key on GitHub. To switch to another App, use **Create GitHub App**.
 
@@ -631,7 +629,7 @@ There are three roles:
 | Admin | Manage repositories, rules and people. |
 | Member | Use the Inbox and approve the held actions their role allows. |
 
-Once a source is connected, an admin can also be a **Deployer**. Deployers publish Triage's workflows, which then run with their permissions, so give the role only to admins you trust with them. Owners and admins see **Make Deployer** on each admin's row, and **Remove Deployer** on every row that has the role, such as an admin since made a member; owners can already do everything a Deployer can. The **Role** column lists every role a person holds, such as **Admin, Deployer**. Someone without the role who tries to publish is told to ask a workspace owner.
+The **Role** column lists every role a person holds.
 
 ### Your account
 

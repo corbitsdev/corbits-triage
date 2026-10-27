@@ -189,7 +189,7 @@ function bitbucketHost() {
   return { builds, host };
 }
 
-/** Publishes `release` as the release.json the portal writes beside the workflows; the repository's own holds none. */
+/** Publishes `release` as the release.json the hub writes beside the workflows; the repository's own holds none. */
 function publish(release: Record<string, unknown>): void {
   mock.module(new URL("./release.json", import.meta.url).pathname, () => ({ default: release }));
 }

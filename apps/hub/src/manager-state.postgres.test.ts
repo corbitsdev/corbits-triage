@@ -402,11 +402,26 @@ test("PostgreSQL: a listener counts as live as a manager does, and one deployed 
     await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date() });
     expect(await liveListener(db, TENANT, "github")).toMatchObject({ runId: "run_listener" });
     expect(await liveListener(db, TENANT, "bitbucket-datacenter")).toBeUndefined();
-    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 3 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 7 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
     expect(await liveListener(db, TENANT, "github")).toBeUndefined();
     const [left] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt, cancellationReason: schema.workflowRun.cancellationReason }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_listener'`);
     expect(left?.cancellationRequestedAt).toBeInstanceOf(Date);
     expect(left?.cancellationReason).toBe("listener deployed without a sidecar");
+  });
+}, 120_000);
+
+test("PostgreSQL: while a roll waits for a new listener to start, pull requests go to the running one and the new one is not released", async () => {
+  await withDatabase(async function swap(db) {
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: "triage-listener-github" });
+    await db.insert(schema.workflowRun).values([
+      { id: "run_old", anchorRunId: "run_old", definitionId: "wfd_listener", tenantId: TENANT, status: "running", createdAt: new Date(Date.now() - 60 * MINUTE) },
+      { id: "run_new", anchorRunId: "run_new", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date(Date.now() - 4 * MINUTE) },
+    ]);
+    expect(await liveListener(db, TENANT, "github")).toMatchObject({ runId: "run_old" });
+    const [waiting] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_new'`);
+    expect(waiting?.cancellationRequestedAt).toBeNull();
+    await db.update(schema.workflowRun).set({ status: "running" }).where(sql`${schema.workflowRun.id} = 'run_new'`);
+    expect(await liveListener(db, TENANT, "github")).toMatchObject({ runId: "run_new" });
   });
 }, 120_000);
 

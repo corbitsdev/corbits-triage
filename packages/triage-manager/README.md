@@ -23,7 +23,7 @@ A workspace's listener and a pull request's manager.
   request's claim, take is refused because another run holds it, or the passes fail or run out.
 
 What each deploys next, a published workflow's source asset at one commit and the offerings it runs on (`Release`), is
-read per host from `src/release.json`, which the portal writes into each published tree and the bundle keeps external,
+read per host from `src/release.json`, which the hub writes into each published tree and the bundle keeps external,
 as each body runs, so every entry imports without one: a listener body fails without the manager's, and a manager runs
 code review only when the code review's is set, and the judge only when the judge's is set. The repository's own `release.json` is empty.
 

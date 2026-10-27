@@ -1,5 +1,6 @@
 // No stock route exposes a deployment's pin, so the portal reads the versions
-// and source it runs from each live deployment's frozen bundle here.
+// and source it runs from each live deployment's frozen bundle here, beside how
+// the hub's last roll of each host went.
 import type { DB, WorkflowRunLaunchSpecStore } from "@intx/db";
 import type { FrozenApprovalBundle } from "@intx/types/sidecar";
 import type { DeployedVersions } from "@corbits/triage-contracts";
@@ -13,9 +14,10 @@ export type WorkflowVersionsDeps = {
   launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">;
   /** Whether the deployment is up as the hub counts a listener or a manager. */
   up: (anchorRunId: string) => Promise<boolean>;
+  rollouts: (tenantId: string) => DeployedVersions["rollouts"];
 };
 
-function sourceOf(bundle: FrozenApprovalBundle): DeployedVersions["deployments"][number]["source"] {
+export function sourceOf(bundle: FrozenApprovalBundle): DeployedVersions["deployments"][number]["source"] {
   if (bundle.source.kind !== "asset" || bundle.source.package.format !== "source") return null;
   return { assetId: bundle.source.assetId, commitSha: bundle.source.package.commitSha };
 }
@@ -37,6 +39,6 @@ export function createWorkflowVersions(deps: WorkflowVersionsDeps) {
         source: spec ? sourceOf(spec.frozenApprovalBundle) : null,
       });
     }
-    return Response.json({ deployments } satisfies DeployedVersions);
+    return Response.json({ deployments, rollouts: deps.rollouts(tenantId) } satisfies DeployedVersions);
   };
 }

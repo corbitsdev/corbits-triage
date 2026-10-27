@@ -77,7 +77,7 @@ test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enable
       db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
       async stockFetch() { return new Response(null, { status: 500 }); },
       publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201), lookup: lookupBitbucket,
-      onEnabled() {}, async onConnectionChanged() {}, now: () => new Date(), log() {},
+      onEnabled() {}, async onConnectionChanged() {}, onCredentialsReplaced() {}, now: () => new Date(), log() {},
     });
     const automation = createAutomation({ db, now: () => new Date() });
 
@@ -98,7 +98,7 @@ test("PostgreSQL: a hand-made webhook needs use on the hook credential, its setu
       async authorize(_principal, _tenant, resource) { return resource !== `credential:${HOOK_ID}` || hookUse; },
       async stockFetch() { return new Response(null, { status: 500 }); },
       publicOrigin: "https://hub.test", fetchImpl: instanceFetch(403), lookup: lookupBitbucket,
-      onEnabled() { enabledCalls += 1; }, async onConnectionChanged() {}, now: () => new Date(), log() {},
+      onEnabled() { enabledCalls += 1; }, async onConnectionChanged() {}, onCredentialsReplaced() {}, now: () => new Date(), log() {},
     });
     async function stored() {
       const tenant = await db.query.tenant.findFirst({ where: (row, { eq }) => eq(row.id, TENANT) });
@@ -161,7 +161,7 @@ test("PostgreSQL: rotating the webhook secret stores it, then saves each webhook
     const integration = createBitbucketIntegration({
       db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
       stockFetch: stock, publicOrigin: "https://hub.test", fetchImpl: instance as typeof fetch, lookup: lookupBitbucket,
-      onEnabled() {}, async onConnectionChanged() {}, now: () => new Date(), log() {},
+      onEnabled() {}, async onConnectionChanged() {}, onCredentialsReplaced() {}, now: () => new Date(), log() {},
     });
     for (const slug of ["widgets", "gadgets", "gizmos"]) expect((await integration.enable(MEMBER, "TRI", slug)).status).toBe(200);
 

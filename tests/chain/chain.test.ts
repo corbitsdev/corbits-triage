@@ -9,10 +9,10 @@ import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
 import { listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents } from "@intx/hub-client";
 import { VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
-import { approveHeldDo, isLiveDeployment } from "../../apps/web/src/lib/hub-api.ts";
+import { approveHeldDo } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
-import { buildRelease, createDatabase, deliver, dropDatabase, setUpWorkspace, signUp, startHub, upgrade, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 setDefaultTimeout(20 * 60_000);
 
@@ -24,6 +24,13 @@ const JUDGED = `${OWNER}/judged`;
 const WAITING = `${OWNER}/waiting`;
 const PUSHED = `${OWNER}/pushed`;
 const HELD = `${OWNER}/held`;
+
+// Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
+const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
+
+function isLiveDeployment(status: string): boolean {
+  return LIVE_DEPLOYMENT_STATUSES.has(status);
+}
 
 const MAX_FILES = "  - check: max-files-changed\n    text: Flag pull requests over 30 files changed.\n    max: 30\n";
 const FOCUSED = "  - check: focused\n    text: Check the change is focused on one thing.\n";
@@ -43,7 +50,7 @@ function decide(id: string, question: Question): Answer {
 
 const github = fakeGithub();
 const model = stubModel(decide);
-const releaseDir = mkdtempSync(join(tmpdir(), "corbits-chain-release-"));
+const portalDir = mkdtempSync(join(tmpdir(), "corbits-chain-portal-"));
 let database: Database;
 let hub: Hub;
 let workspace: Workspace;
@@ -54,13 +61,12 @@ beforeAll(async () => {
   github.addRepo(WAITING, policy([CI_GREEN]));
   github.addRepo(PUSHED, policy([MAX_FILES]));
   github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
-  database = await createDatabase();
-  const built = buildRelease(releaseDir);
-  hub = await startHub(database, github);
+  const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
+  database = created;
+  hub = await startHub(database, github, portalDir);
   workspace = await signUp(hub, database);
   await setUpWorkspace(workspace, github, model.origin);
-  await built;
-  await upgrade(workspace, hub, releaseDir);
+  await listenerStarted(workspace);
 });
 
 afterAll(async () => {
@@ -68,7 +74,7 @@ afterAll(async () => {
   if (database) await dropDatabase(database);
   github.stop();
   model.stop();
-  rmSync(releaseDir, { recursive: true, force: true });
+  rmSync(portalDir, { recursive: true, force: true });
 });
 
 function sha(seed: string): string {

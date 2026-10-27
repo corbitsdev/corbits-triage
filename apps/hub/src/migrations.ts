@@ -5,7 +5,6 @@ import { createDB } from "@intx/db";
 import { runArtifactMigrations } from "@corbits/artifacts";
 import { runCronMigrations } from "@corbits/cron/migrations";
 import { grantAdminsPolicyWrites } from "./artifact-grants.js";
-import { ensureDeployerRoles } from "./deployer-role.js";
 import type { DatabaseConfig } from "./env.js";
 import { migrateRepoEnabledFlag } from "./github/tenant-config.js";
 import { migrateWebhooks } from "./hooks.js";
@@ -29,7 +28,6 @@ export async function migrateDatabase(database: DatabaseConfig, log: (entry: Rec
     await migrateTriageTables(db, schema);
     await migrateRepoEnabledFlag(db);
     await grantAdminsPolicyWrites(db, function now() { return new Date(); }, log);
-    await ensureDeployerRoles(db, function now() { return new Date(); }, log);
   } finally {
     await close();
   }
