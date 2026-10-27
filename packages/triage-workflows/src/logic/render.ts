@@ -141,6 +141,9 @@ const UNAVAILABLE_REASON = "decision model unavailable";
 /** The decision model answered, but not decisively, or could not read every file it needed. */
 const UNDECIDED_REASON = "not enough evidence to decide";
 
+/** Focused stayed undecided: one sentence, and it does not open with the rule's name. */
+const FOCUSED_UNDECIDED_REASON = "Triage could not tell whether the changed files serve this pull request.";
+
 /** A file or hunk scoped check with no changed lines in scope to ask about. */
 const NOT_APPLICABLE_REASON = "does not apply";
 
@@ -374,8 +377,8 @@ export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeEr
       return unchecked("focused", unavailable);
     }
     // A file the judge could not get whole may be the separate change, so only a fully read pull request passes.
-    if (plan.unread.length > 0) return push("focused", { result: "unconfirmed", reason: UNDECIDED_REASON }, { kind: "could-not-check", reason: UNREAD_REASON, items: plan.unread });
-    return push("focused", serves >= FOCUSED_DECIDES ? { result: "pass" } : { result: "unconfirmed", reason: UNDECIDED_REASON }, scored(serves, FOCUSED_PASS_AT, []));
+    if (plan.unread.length > 0) return push("focused", { result: "unconfirmed", reason: FOCUSED_UNDECIDED_REASON }, { kind: "could-not-check", reason: UNREAD_REASON, items: plan.unread });
+    return push("focused", serves >= FOCUSED_DECIDES ? { result: "pass" } : { result: "unconfirmed", reason: FOCUSED_UNDECIDED_REASON }, scored(serves, FOCUSED_PASS_AT, []));
   }
 
   /**

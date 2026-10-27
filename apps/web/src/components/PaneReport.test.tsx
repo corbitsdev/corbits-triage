@@ -23,3 +23,8 @@ test("a reason that opens with the rule's name as a word is not repeated after i
   expect(text(failed("no-merge-conflicts", "merge conflicts with base"))).toBe("!Not met: Merge conflicts with base.");
   expect(text(failed("focused", "focusedness is unclear"))).toBe("!Not met: Focused: Focusedness is unclear.");
 });
+
+test("a rule to decide does not repeat the status line's Decide before its name", () => {
+  const unsure: CheckResult = { check: "focused", kind: "model", result: "unconfirmed", reason: "Triage could not tell whether the changed files serve this pull request.", evidence: [], output: null, gate: false };
+  expect(renderToStaticMarkup(<Problems problems={paneProblems([unsure], null)} pack={null} item={{ source: "github", repo: "acme/widgets", verdictSha: "head-1" } as PrItem} authorsTurn={false} />)).toContain('<span class="sr-only">Decide: </span>Focused: Triage could not tell');
+});
