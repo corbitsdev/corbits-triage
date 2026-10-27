@@ -67,10 +67,9 @@ only code review does ([Where sidecars run](#where-sidecars-run)).
 ### Railway
 
 [Railway Sandboxes](provisioners/railway-sandboxes.md) for code review need
-the `RAILWAY_GIT_*` variables to name a public repository, this one or your
-public fork, at the commit the hub runs. Railway sets them on a service it
-deploys from GitHub; on a hub deployed with `railway up`, set them yourself
-with each deploy. With the [Railway CLI](https://docs.railway.com/cli) logged
+`SANDBOX_REPOSITORY` and `SANDBOX_COMMIT_SHA` to name a public repository,
+this one or your public fork, at the commit the hub runs; set them with each
+deploy (step 7). With the [Railway CLI](https://docs.railway.com/cli) logged
 in:
 
 1. Create the project. With more than one Railway workspace, `railway init`
@@ -121,13 +120,12 @@ in:
 
 7. Deploy from a clean checkout of the commit you want to run. The commit must
    already be pushed to the public repository, this one or your public fork,
-   because the Railway sidecar template fetches it from GitHub. Set the three
-   commit variables and deploy; repeat both with each deploy.
+   because the Railway sidecar template fetches it from GitHub. Set the
+   repository and commit variables and deploy; repeat both with each deploy.
 
    ```sh
    railway variable set --service hub --skip-deploys \
-     RAILWAY_GIT_COMMIT_SHA=$(git rev-parse HEAD) \
-     RAILWAY_GIT_REPO_OWNER=<owner> RAILWAY_GIT_REPO_NAME=<name>
+     SANDBOX_REPOSITORY=<owner>/<name> SANDBOX_COMMIT_SHA=$(git rev-parse HEAD)
    railway up --service hub
    ```
 
@@ -141,8 +139,8 @@ The hub is ready when its deploy logs show `Started server`.
 A Postgres instance and one Docker web service from this repository, with a
 disk at `/data`. Variables as on Railway, without
 `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`, and the [migrations](#migrations) as
-the pre-deploy command. Render sets no `RAILWAY_GIT_*`, so
-Railway Sandboxes need them set by hand.
+the pre-deploy command. Railway Sandboxes need `SANDBOX_REPOSITORY` and
+`SANDBOX_COMMIT_SHA` set with each deploy, as on Railway.
 
 ### Any other host
 
@@ -305,7 +303,7 @@ All optional; the defaults suit most installs.
 | `DOCKER_TLS_KEY` | unset | `key.pem`, the client certificate's key, as one line of base64. |
 | `E2B_API_KEY` | unset | Registers the [E2B provisioner](provisioners/e2b.md), which runs each isolated sidecar in an E2B sandbox. |
 | `RAILWAY_SANDBOX_TOKEN`, `RAILWAY_SANDBOX_ENVIRONMENT_ID` | unset | A Railway workspace token and the environment the [Railway Sandboxes provisioner](provisioners/railway-sandboxes.md) creates sandboxes in. Set both or neither. |
-| `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | unset | The public repository and full commit hash the Railway sidecar template checks out, set with each deploy ([Railway](#railway)). Required with `RAILWAY_SANDBOX_TOKEN`. |
+| `SANDBOX_REPOSITORY`, `SANDBOX_COMMIT_SHA` | unset | The public GitHub repository (`owner/name`) and full commit hash the Railway sidecar template checks out, set with each deploy ([Railway](#railway)). Required with `RAILWAY_SANDBOX_TOKEN`; a service Railway deploys from GitHub may leave them unset, since Railway's own `RAILWAY_GIT_*` values are used then. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `BITBUCKET_EGRESS_ALLOWLIST` | unset | Comma-separated hostnames or IPs of Bitbucket Data Center instances on a private network. The hub sends a Bitbucket token only to public addresses, plus private or loopback addresses of a host listed here. Set it before upgrading when a workspace is already connected to a private-network instance: until then that workspace's Bitbucket requests and runs are refused. Workflow runs resolve the instance in their sidecar, so on cloud hosts also deny sidecar egress to metadata addresses (`169.254.0.0/16`, `fd00:ec2::254`, `100.100.100.200`) at the network layer. See [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md). |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |

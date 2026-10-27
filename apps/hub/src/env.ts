@@ -65,6 +65,8 @@ const HubEnvSchema = type({
   "E2B_API_KEY?": "string",
   "RAILWAY_SANDBOX_TOKEN?": "string",
   "RAILWAY_SANDBOX_ENVIRONMENT_ID?": "string",
+  "SANDBOX_REPOSITORY?": "string",
+  "SANDBOX_COMMIT_SHA?": "string",
   "RAILWAY_GIT_COMMIT_SHA?": "string",
   "RAILWAY_GIT_REPO_OWNER?": "string",
   "RAILWAY_GIT_REPO_NAME?": "string",
@@ -195,24 +197,34 @@ export type RailwaySandboxSettings = {
   readonly publicHubWebSocketUrl: string;
 };
 
+type SandboxSource = Pick<HubEnv, "SANDBOX_REPOSITORY" | "SANDBOX_COMMIT_SHA" | "RAILWAY_GIT_COMMIT_SHA" | "RAILWAY_GIT_REPO_OWNER" | "RAILWAY_GIT_REPO_NAME">;
+
 /**
- * Unset token and environment mean no Railway sandboxes. Railway sets the `RAILWAY_GIT_*` variables on a service it
- * deploys from GitHub; a hub deployed any other way sets them itself.
+ * The sidecar template checks the hub's own code out, so it needs the public repository and the commit the hub runs.
+ * `SANDBOX_REPOSITORY` and `SANDBOX_COMMIT_SHA` are set with each deploy. Railway fills `RAILWAY_GIT_*` in only on a
+ * service it deploys from GitHub and drops those names from any other container. Its commit is the one it deployed,
+ * so it wins over a hand-set value left behind; the repository may still be overridden to a public fork.
  */
+export function sandboxSource(env: SandboxSource): { repository: string; commit: string } {
+  const repository = env.SANDBOX_REPOSITORY ?? (env.RAILWAY_GIT_REPO_OWNER !== undefined && env.RAILWAY_GIT_REPO_NAME !== undefined ? `${env.RAILWAY_GIT_REPO_OWNER}/${env.RAILWAY_GIT_REPO_NAME}` : undefined);
+  const commit = env.RAILWAY_GIT_COMMIT_SHA ?? env.SANDBOX_COMMIT_SHA;
+  if (repository === undefined || commit === undefined) {
+    throw new Error("RAILWAY_SANDBOX_TOKEN requires SANDBOX_REPOSITORY (owner/name on GitHub) and SANDBOX_COMMIT_SHA, set with each deploy");
+  }
+  // They go into the template's shell commands.
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("the sandbox commit must be a full commit hash");
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error("the sandbox repository must be a GitHub owner/name");
+  return { repository: `https://github.com/${repository}`, commit };
+}
+
+/** Unset token and environment mean no Railway sandboxes. */
 export function railwaySandboxSettings(env: HubEnv): RailwaySandboxSettings | undefined {
   const { RAILWAY_SANDBOX_TOKEN: token, RAILWAY_SANDBOX_ENVIRONMENT_ID: environmentId } = env;
   if (token === undefined && environmentId === undefined) return undefined;
   if (token === undefined || environmentId === undefined) {
     throw new Error("RAILWAY_SANDBOX_TOKEN and RAILWAY_SANDBOX_ENVIRONMENT_ID must be set together");
   }
-  const { RAILWAY_GIT_COMMIT_SHA: commit, RAILWAY_GIT_REPO_OWNER: owner, RAILWAY_GIT_REPO_NAME: name } = env;
-  if (commit === undefined || owner === undefined || name === undefined) {
-    throw new Error("RAILWAY_SANDBOX_TOKEN requires RAILWAY_GIT_COMMIT_SHA, RAILWAY_GIT_REPO_OWNER and RAILWAY_GIT_REPO_NAME");
-  }
-  // They go into the template's shell commands.
-  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("RAILWAY_GIT_COMMIT_SHA must be a full commit hash");
-  if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(name)) throw new Error("RAILWAY_GIT_REPO_OWNER and RAILWAY_GIT_REPO_NAME must be a GitHub owner and repository name");
-  return { token, environmentId, repository: `https://github.com/${owner}/${name}`, commit, publicHubWebSocketUrl: publicHubWebSocketUrl(env) };
+  return { token, environmentId, ...sandboxSource(env), publicHubWebSocketUrl: publicHubWebSocketUrl(env) };
 }
 
 export type ChildProcessEnv = { PATH?: string; HOME?: string; TMPDIR?: string };
