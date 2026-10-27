@@ -4,10 +4,12 @@ import { anthropicSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
 import { isActiveCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
+import { useCodeReviewAwaitsUpgrade } from "../../lib/triage-upgrade.ts";
 import { CopyButton } from "../CopyField.tsx";
 import { ExternalIcon } from "../inbox-icons.tsx";
 import { AnthropicKeyForm } from "./AnthropicKeyForm.tsx";
 import { KeyRow } from "./KeyRow.tsx";
+import { UpgradeControl } from "./TriageUpgrade.tsx";
 
 const STATE: Record<CodeReviewPlaceOption["state"], { label: string; tone: BadgeTone }> = {
   active: { label: "In use", tone: "success" },
@@ -72,6 +74,7 @@ function WhereItRuns({ places }: { places: CodeReviewPlaceOption[] }) {
 
 export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
   const { removeAnthropic } = usePortal();
+  const awaitsUpgrade = useCodeReviewAwaitsUpgrade();
 
   return (
     <section className="sec" id="code-review" aria-labelledby="sec-code-review">
@@ -90,6 +93,7 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
             remove={removeAnthropic}
             editor={(onSaved) => <AnthropicKeyForm layout="row" submitLabel="Save key" onCancel={null} onSaved={onSaved} />}
           />
+          {awaitsUpgrade && <UpgradeControl lead="Your key is saved, but Triage reviews code only after it is upgraded." />}
         </div>
         {snapshot.codeReviewPlaces && <WhereItRuns places={snapshot.codeReviewPlaces} />}
         {snapshot.codeReviewPlaceError && <p role="alert" className="error">Could not read where code review runs. {snapshot.codeReviewPlaceError}</p>}

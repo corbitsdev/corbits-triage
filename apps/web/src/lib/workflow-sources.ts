@@ -145,12 +145,12 @@ async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry
  * Each publisher's copy of a release is its own asset, since the asset's creator decides what its deployments may do;
  * asset names are lowercase kebab, so the principal id's `prn_` becomes `prn-`.
  */
-function assetName(workflow: string, publisher: Publisher, hash: string): string {
-  return `${workflow}-${publisher.principalId.replaceAll("_", "-")}-${hash}`;
+export function assetName(workflow: string, principalId: string, hash: string): string {
+  return `${workflow}-${principalId.replaceAll("_", "-")}-${hash}`;
 }
 
 /** A chain workflow publishes only while the workspace has every model it names; the others always publish. */
-function publishable(models: readonly ModelInfo[], workflow: string): boolean {
+export function publishable(models: readonly ModelInfo[], workflow: string): boolean {
   const chain = CHAIN_PACKAGES.find((row) => row.name === workflow);
   return !chain || offeringsIn(models, chain.models) !== undefined;
 }
@@ -214,7 +214,7 @@ export async function publishSources(
     for (const entry of index.filter((row) => publishable(models, row.workflow))) {
       const built = await (await portalPackage(fetchRaw, `sources/${entry.workflow}-${entry.hash}.json`)).json() as SourceTree;
       const { hash, tree } = await withRelease(models, entry, built, published);
-      published.push(await publishSource(transport, publisher, gitClient, entry.workflow, assetName(entry.workflow, publisher, hash), tree));
+      published.push(await publishSource(transport, publisher, gitClient, entry.workflow, assetName(entry.workflow, publisher.principalId, hash), tree));
     }
     return published;
   } finally {

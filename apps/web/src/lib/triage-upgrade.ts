@@ -8,13 +8,13 @@ import { TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import { isDeployerRole, isOwnerRole } from "./automation-grid.ts";
 import { connectedSources, isLiveDeployment, listDeployedWorkflows, pause, type DeployedWorkflow } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
-import { offeringsFor } from "./model-catalog.ts";
+import { listModels, offeringsFor, type ModelInfo } from "./model-catalog.ts";
 import { hostFullName } from "./pull-link.ts";
 import { TRIAGE_RELEASE_QUERY_KEY, usePortal } from "./portal.tsx";
 import { usePrincipals, useRoles } from "./tenant-entities.ts";
 import { cancelDeployment, ensureKeepDeployedLifetime, portalPackage } from "./workflow-deploy.ts";
 import { CHAIN_PACKAGES, type SourceIndexEntry } from "./workflow-packages.ts";
-import { publishSources, type PublishedSource, type Publisher } from "./workflow-sources.ts";
+import { assetName, publishable, publishSources, type PublishedSource, type Publisher } from "./workflow-sources.ts";
 
 export type UpgradeStep = "publishing" | "starting" | "stopping";
 
@@ -36,8 +36,8 @@ type Asset = { id: string; name: string; creatorPrincipalId: string | null };
 
 /** A host's newest live listener: its package version, the release's build hash, and who published it. */
 export type RunningListener = { version: string | undefined; release: string | undefined; publisherPrincipalId: string | null; since: string };
-/** A connected host: its newest live listener, and how many are live. */
-export type HostRelease = { source: RepoSource; running: RunningListener | undefined; live: number };
+/** A connected host: its newest live listener, how many are live, and the workflows its release left out that the workspace can now publish. */
+export type HostRelease = { source: RepoSource; running: RunningListener | undefined; live: number; omits: string[] };
 /** This portal's release by each workflow's build hash, and each connected host's listeners. */
 export type TriageRelease = { portal: SourceIndexEntry[]; hosts: HostRelease[] };
 
@@ -156,10 +156,29 @@ export async function upgradeTriage(
   return superseded;
 }
 
-function hostOf(source: RepoSource, deployed: readonly DeployedWorkflow[], deployments: readonly WorkflowDeployment[], assets: readonly Asset[]): HostRelease {
+const CODE_REVIEWS = new Set<string>(CHAIN_PACKAGES.flatMap((row) => "deploys" in row ? row.deploys.filter((slot) => slot.as === "codeReview").map((slot) => slot.workflow) : []));
+
+/**
+ * A release publishes each workflow that another deploys first, as an asset named for its publisher and build hash, so
+ * one the running listener's publisher has no asset for in this build was left out of the release it runs.
+ */
+function omittedFrom(source: RepoSource, running: RunningListener, portal: readonly SourceIndexEntry[], models: readonly ModelInfo[], assets: readonly Asset[]): string[] {
+  const publisher = running.publisherPrincipalId;
+  if (!publisher || running.release !== portalRelease(portal, source)) return [];
+  const names = new Set(assets.filter((asset) => asset.creatorPrincipalId === publisher).map((asset) => asset.name));
+  const omitted: string[] = [];
+  for (const row of CHAIN_PACKAGES) {
+    const hash = portal.find((entry) => entry.workflow === row.name)?.hash;
+    if (row.source !== source || "deploys" in row || !hash || !publishable(models, row.name)) continue;
+    if (!names.has(assetName(row.name, publisher, hash))) omitted.push(row.name);
+  }
+  return omitted;
+}
+
+function hostOf(source: RepoSource, portal: readonly SourceIndexEntry[], models: readonly ModelInfo[], deployed: readonly DeployedWorkflow[], deployments: readonly WorkflowDeployment[], assets: readonly Asset[]): HostRelease {
   const listeners = deployed.filter((row) => row.workflow === TRIAGE_LISTENERS[source] && !row.cancelling);
   const [newest] = [...listeners].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
-  if (!newest) return { source, running: undefined, live: 0 };
+  if (!newest) return { source, running: undefined, live: 0, omits: [] };
   const assetId = deployments.find((row) => row.id === newest.id)?.definitionAssetId;
   const asset = assets.find((row) => row.id === assetId);
   const running = {
@@ -168,7 +187,7 @@ function hostOf(source: RepoSource, deployed: readonly DeployedWorkflow[], deplo
     publisherPrincipalId: asset?.creatorPrincipalId ?? null,
     since: newest.createdAt,
   };
-  return { source, running, live: listeners.length };
+  return { source, running, live: listeners.length, omits: omittedFrom(source, running, portal, models, assets) };
 }
 
 async function readPortalIndex(fetchRaw: typeof fetch): Promise<SourceIndexEntry[]> {
@@ -176,18 +195,27 @@ async function readPortalIndex(fetchRaw: typeof fetch): Promise<SourceIndexEntry
 }
 
 export async function readTriageRelease(transport: Transport, tenantId: string, sources: readonly RepoSource[], fetchRaw: typeof fetch = fetch): Promise<TriageRelease> {
-  const [portal, deployed, deployments, assets] = await Promise.all([
+  const [portal, models, deployed, deployments, assets] = await Promise.all([
     readPortalIndex(fetchRaw),
+    listModels(transport, tenantId),
     listDeployedWorkflows(transport, tenantId),
     listWorkflowDeployments(transport, tenantId),
     transport.fetch<Asset[]>("GET", `/api/tenants/${encodeURIComponent(tenantId)}/assets?kind=workflow`),
   ]);
-  return { portal, hosts: sources.map((source) => hostOf(source, deployed, deployments, assets)) };
+  return { portal, hosts: sources.map((source) => hostOf(source, portal, models, deployed, deployments, assets)) };
 }
 
-/** Upgrade is offered while a host runs no listener, one from another release than this portal's, or more than one. */
+/**
+ * Upgrade is offered while a host runs no listener, one from another release than this portal's, more than one, or one
+ * whose release left out a workflow the workspace can now publish.
+ */
 export function upgradeDue(release: TriageRelease, host: HostRelease): boolean {
-  return !host.running || host.live > 1 || host.running.release !== portalRelease(release.portal, host.source);
+  return !host.running || host.live > 1 || host.running.release !== portalRelease(release.portal, host.source) || host.omits.length > 0;
+}
+
+/** The host's running release left out code review, which the workspace can now publish. */
+export function lacksCodeReview(host: HostRelease): boolean {
+  return host.omits.some((workflow) => CODE_REVIEWS.has(workflow));
 }
 
 /** Owners hold every grant, and the Deployer role every grant publishing needs. */
@@ -210,6 +238,12 @@ export function useTriageRelease() {
       return readTriageRelease(createHubTransport(), tenantId, sources);
     },
   });
+}
+
+/** Code review waits for an upgrade on any connected host, or on `source` when one is named. */
+export function useCodeReviewAwaitsUpgrade(source?: RepoSource): boolean {
+  const release = useTriageRelease();
+  return release.data?.hosts.some((host) => (source === undefined || host.source === source) && lacksCodeReview(host)) === true;
 }
 
 export function useTriageUpgrade(onStep: (step: UpgradeStep) => void) {

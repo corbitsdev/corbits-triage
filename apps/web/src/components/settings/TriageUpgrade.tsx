@@ -7,7 +7,7 @@ import type { HubPrincipal } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { hostFullName } from "../../lib/pull-link.ts";
 import { usePrincipals } from "../../lib/tenant-entities.ts";
-import { portalRelease, UPGRADE_STEP_LABEL, upgradeDue, useMayUpgrade, useTriageRelease, useTriageUpgrade, type HostRelease, type TriageRelease, type UpgradeStep } from "../../lib/triage-upgrade.ts";
+import { lacksCodeReview, portalRelease, UPGRADE_STEP_LABEL, upgradeDue, useMayUpgrade, useTriageRelease, useTriageUpgrade, type HostRelease, type TriageRelease, type UpgradeStep } from "../../lib/triage-upgrade.ts";
 
 const SUMMARY = "Each pull request gets one manager that posts a single update.";
 
@@ -24,6 +24,7 @@ function hostText(release: TriageRelease, host: HostRelease, people: readonly Hu
   const what = host.running.version === undefined ? "the new workflow" : `version ${host.running.version}`;
   const ran = `Triage${on} runs ${what}, published by ${publisherName(host.running.publisherPrincipalId, people)}.`;
   if (host.live > 1) return `${ran} Another copy is still running too; upgrade to stop it.`;
+  if (lacksCodeReview(host)) return `${ran} It does not review code yet; upgrade to start reviews.`;
   if (upgradeDue(release, host)) return `${ran} A new version is ready.`;
   return ran;
 }
@@ -46,14 +47,33 @@ function AdvancedInfo({ release, people }: { release: TriageRelease; people: rea
   );
 }
 
-/** Which version of the per-pull-request manager each host runs, and the switch to this portal's; a deprecation notice for a host that has none. */
-export function TriageUpgrade() {
+/** The sentence `lead` with the switch to this portal's release, or who to ask for it. */
+export function UpgradeControl({ lead }: { lead: string }) {
   const { readOnly } = usePortal();
-  const people = usePrincipals();
-  const release = useTriageRelease();
   const mayUpgrade = useMayUpgrade();
   const [step, setStep] = useState<UpgradeStep | null>(null);
   const upgrade = useTriageUpgrade(setStep);
+
+  return (
+    <>
+      <div className="sentence">
+        <span className="txt">{lead}</span>
+        {mayUpgrade && (
+          <Button type="button" size="sm" disabled={readOnly || upgrade.isPending} onClick={() => upgrade.mutate()}>
+            {upgrade.isPending && step ? UPGRADE_STEP_LABEL[step] : "Upgrade to new version"}
+          </Button>
+        )}
+      </div>
+      {!mayUpgrade && <p className="muted small-text">Ask a workspace owner or a Deployer to upgrade.</p>}
+      {upgrade.error && <p role="alert" className="field-error">Could not upgrade. {errorText(upgrade.error)}</p>}
+    </>
+  );
+}
+
+/** Which version of the per-pull-request manager each host runs, and the switch to this portal's; a deprecation notice for a host that has none. */
+export function TriageUpgrade() {
+  const people = usePrincipals();
+  const release = useTriageRelease();
 
   if (!release.data) return null;
   const data = release.data;
@@ -63,18 +83,7 @@ export function TriageUpgrade() {
   return (
     <>
       {data.hosts.map((host) => <div className="sentence" key={host.source}><span className="txt">{hostText(data, host, people.rows, named)}</span></div>)}
-      {due && (
-        <div className="sentence">
-          <span className="txt">{SUMMARY}</span>
-          {mayUpgrade && (
-            <Button type="button" size="sm" disabled={readOnly || upgrade.isPending} onClick={() => upgrade.mutate()}>
-              {upgrade.isPending && step ? UPGRADE_STEP_LABEL[step] : "Upgrade to new version"}
-            </Button>
-          )}
-        </div>
-      )}
-      {due && !mayUpgrade && <p className="muted small-text">Ask a workspace owner or a Deployer to upgrade.</p>}
-      {upgrade.error && <p role="alert" className="field-error">Could not upgrade. {errorText(upgrade.error)}</p>}
+      {due && <UpgradeControl lead={SUMMARY} />}
       <AdvancedInfo release={data} people={people.rows} />
     </>
   );

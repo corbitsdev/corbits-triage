@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Transport } from "@intx/hub-client";
-import { restartListener, upgradeTriage, type UpgradeStep } from "./triage-upgrade.ts";
+import { lacksCodeReview, readTriageRelease, restartListener, upgradeDue, upgradeTriage, type UpgradeStep } from "./triage-upgrade.ts";
 import type { PublishedSource } from "./workflow-sources.ts";
 
 const PUBLISHER = { tenantId: "t", principalId: "prn_deployer" };
@@ -131,4 +131,47 @@ test("two Deployers upgrading at once leave exactly one listener live", async ()
   const stopped = ["a", "b"].map((who) => hub.deployments.find((row) => row.id === `run_${who}`)!.status === "cancelled");
   expect(settled.map((result) => result.status === "fulfilled" && result.value.includes("github"))).toEqual(stopped);
   expect(hub.deployments.filter((row) => row.status === "deployed")).toHaveLength(1);
+});
+
+const DECISION = { canonicalName: "decision", offerings: [{ offeringId: "mof_decision", providerName: "corbits-system-one" }] };
+const ANTHROPIC = [
+  { canonicalName: "claude-opus-5-5", offerings: [{ offeringId: "mof_opus", providerName: "anthropic" }] },
+  { canonicalName: "claude-haiku-5-5", offerings: [{ offeringId: "mof_haiku", providerName: "anthropic" }] },
+];
+const BUILD = [
+  { workflow: "pr-code-review-reviewer-github", hash: "hreview" },
+  { workflow: "triage-judge-github", hash: "hjudge" },
+  { workflow: "triage-manager-github", hash: "hmanager" },
+  { workflow: "triage-listener-github", hash: "hlistener" },
+];
+
+/** A GitHub listener of this portal's build that prn_deployer published, with the workspace's models and the assets it published. */
+async function releaseOf(models: unknown[], published: string[]) {
+  const assets = [{ id: "ast_listener", name: "triage-listener-github-prn-deployer-h0", creatorPrincipalId: "prn_deployer" }, ...published.map((name, n) => ({ id: `ast_${n}`, name, creatorPrincipalId: "prn_deployer" }))];
+  async function json<T>(_method: string, path: string): Promise<T> {
+    if (path === "/api/tenants/t/models") return models as T;
+    if (path === "/api/tenants/t/workflows/deployments") return [{ id: "run_listener", tenantId: "t", definitionAssetId: "ast_listener", status: "deployed", createdAt: "2026-10-01T00:00:00.000Z" }] as T;
+    if (path === "/api/tenants/t/assets?kind=workflow") return assets as T;
+    if (path === "/api/integrations/workflow-versions/t") {
+      return { deployments: [{ id: "run_listener", workflow: "triage-listener-github", createdAt: "2026-10-01T00:00:00.000Z", cancelling: false, live: true, package: { name: "@corbits/triage-listener-github-workflow", version: "0.1.0-hlistener" }, source: { assetId: "ast_listener", commitSha: "l1" } }] } as T;
+    }
+    throw new Error(`Unexpected ${path}`);
+  }
+  async function fetchRaw() {
+    return Response.json(BUILD);
+  }
+  const release = await readTriageRelease({ fetch: json } as unknown as Transport, "t", ["github"], fetchRaw as unknown as typeof fetch);
+  return { release, host: release.hosts[0]! };
+}
+
+test("a release published before the workspace had the code review models is due for an upgrade, and says code review waits for it", async () => {
+  const omitted = await releaseOf([DECISION, ...ANTHROPIC], ["triage-judge-github-prn-deployer-hjudge"]);
+  expect(upgradeDue(omitted.release, omitted.host)).toBe(true);
+  expect(lacksCodeReview(omitted.host)).toBe(true);
+
+  const reviewing = await releaseOf([DECISION, ...ANTHROPIC], ["triage-judge-github-prn-deployer-hjudge", "pr-code-review-reviewer-github-prn-deployer-hreview"]);
+  expect(upgradeDue(reviewing.release, reviewing.host)).toBe(false);
+
+  const keyless = await releaseOf([DECISION], ["triage-judge-github-prn-deployer-hjudge"]);
+  expect(upgradeDue(keyless.release, keyless.host)).toBe(false);
 });
