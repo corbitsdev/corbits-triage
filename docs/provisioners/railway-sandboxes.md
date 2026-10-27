@@ -16,7 +16,7 @@ You need:
 - A Railway plan that lets a sandbox never idle out: Hobby or Pro. Railway's [sandbox docs](https://docs.railway.com/sandboxes) say Trial and Free cannot turn the idle timeout off, so no sidecar starts there; how Railway words that refusal is to be confirmed on the first live run.
 - Sandboxes enabled for your Railway workspace.
 - The hub reachable at a public `https://` address (`BETTER_AUTH_BASE_URL`), with `HUB_SIDECAR_WEBSOCKET_URL` unset or set to its public `wss://` address. The hub refuses to register the provisioner when sandboxes would dial plain `ws://` or the hub's own machine.
-- The hub deployed from a commit of a public GitHub repository, such as this one or your public fork.
+- The hub running a commit that is pushed to a public GitHub repository, such as this one or your public fork.
 
 ### 1. Environment
 
@@ -36,7 +36,7 @@ Set on the hub, then restart it (Settings → Code review shows the first two li
 | --- | --- |
 | `RAILWAY_SANDBOX_TOKEN` | the workspace token |
 | `RAILWAY_SANDBOX_ENVIRONMENT_ID` | the sandbox environment's id |
-| `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | set by Railway on a hub it deploys from GitHub; set them yourself on any other hub, to the commit it runs |
+| `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | the full commit hash the hub runs and the public GitHub repository holding it. Set them on the hub with each deploy ([Self-hosting](../SELF_HOST.md#railway)); Railway sets them itself only on a service it deploys from GitHub |
 
 The hub talks to Railway's public API and exec endpoints by their fixed addresses: the Railway SDK's own variables (`RAILWAY_GRAPHQL_ENDPOINT`, `RAILWAY_TCP_PROXY_WS_ENDPOINT`, `RAILWAY_TOKEN`, `RAILWAY_API_TOKEN`, `RAILWAY_VERBOSE`) have no effect on it, so none can send the token elsewhere.
 
