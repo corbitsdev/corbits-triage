@@ -575,13 +575,13 @@ Every secret Triage holds can be replaced from Settings without disconnecting an
 
 **Bitbucket Data Center webhook secret.** Press **Rotate secret** on the webhook secret row. Triage saves a new secret and updates every webhook it created to use it. Repositories whose webhook was set up by hand, or whose webhook Triage could not update, are named afterwards: each one's repository page shows the new secret, so update its webhook in Bitbucket from there. Pull requests that change in the meantime are picked up automatically.
 
-**Model keys.** Press **Change** on the [decision model](#decision-model) or on the Anthropic key under [Code review](#code-review-2) and paste the new key.
+**Model keys.** Press **Change** on the [decision model](#decision-model), or **Rotate** on the Anthropic key under [Code review](#code-review-2), and paste the new key. The key already stored is not shown.
 
 ### Code review
 
 ![The Code review section: Review code with Anthropic, No key, with the Anthropic key field and Save key, then Where it runs: Docker on this machine, In use; Docker on another machine (TLS), Not set up, with its .env lines, Copy and Setup guide](images/43.png)
 
-[Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**; with no key, paste it and press **Save key**. **Change** and **Remove** work as for the decision model.
+[Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**. With no key, the Anthropic key field is open: paste the key and press **Save key**. When a key is stored, that field is hidden and the key itself is not shown. **Rotate** opens a blank field for a new key; press **Save key** to replace the stored one. **Remove** deletes it after you confirm.
 
 Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine**, **Docker on another machine (TLS)** **E2B sandboxes** and **Railway Sandboxes**, each with a line on why you would choose it. Code review never runs inside Triage itself. It runs in the first place in the list, in the order shown, that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
 

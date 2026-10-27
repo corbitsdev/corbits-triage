@@ -12,10 +12,12 @@ type KeyRowProps = {
   denied: boolean;
   remove: (credentialId: string) => Promise<void>;
   editor: (onSaved: () => void) => ReactNode;
+  /** Opens the form again to replace a stored key. The form starts empty; the stored key is not shown. */
+  replaceLabel?: string;
 };
 
-/** One model and its key: stored keys can be changed or removed; without one, its form is open. Without access to credentials, only the sentence shows. */
-export function KeyRow({ words, name, keys, denied, remove, editor }: KeyRowProps) {
+/** One model and its key: a stored key can be replaced or removed; without one, its form is open. Without access to credentials, only the sentence shows. */
+export function KeyRow({ words, name, keys, denied, remove, editor, replaceLabel = "Change" }: KeyRowProps) {
   const { readOnly } = usePortal();
   const [editing, setEditing] = useState(false);
   const removal = useMutation({
@@ -34,7 +36,7 @@ export function KeyRow({ words, name, keys, denied, remove, editor }: KeyRowProp
         <span className="txt">{words}</span>
         <span className="key-acts">
           <span className="model">{stored ? "Key stored" : "No key"}</span>
-          {stored && <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={() => setEditing(!editing)}>{editing ? "Cancel" : "Change"}</Button>}
+          {stored && <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={() => setEditing(!editing)}>{editing ? "Cancel" : replaceLabel}</Button>}
           {stored && <Button type="button" variant="ghost" size="sm" disabled={readOnly || removal.isPending} onClick={() => removal.mutate()}>Remove</Button>}
         </span>
       </div>
