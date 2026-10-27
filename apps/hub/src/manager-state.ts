@@ -10,6 +10,7 @@ import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
+import { WAITING_FOR_SLOT } from "./sidecar/placement.js";
 import { triageSchema } from "./triage-db.js";
 import { START_DEADLINE_MS } from "./workflow-release/rollout.js";
 
@@ -204,9 +205,6 @@ const NEVER_RAN_MS = 5 * 60_000;
 /** How long a run whose placement waits for a free slot on a full sidecar still counts as up. */
 const SLOT_WAIT_MS = 30 * 60_000;
 
-/** Stock's code for a placement refused because the sidecar's active slots were full; it retries the placement. */
-const WAITING_FOR_SLOT = "sidecar_reuse_rejected";
-
 /** The workflows deployed with the mail that starts them. */
 const MAILED_WORKFLOWS = [...Object.values(TRIAGE_MANAGERS), ...Object.values(TRIAGE_JUDGES)];
 
@@ -282,7 +280,7 @@ function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = MANAGER_STA
   if (run.status === "running") return true;
   const age = now.getTime() - run.createdAt.getTime();
   if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < NEVER_RAN_MS;
-  if (run.failureCode === WAITING_FOR_SLOT) return age < SLOT_WAIT_MS;
+  if (run.allocationStatus === "provisioning" && run.failureCode === WAITING_FOR_SLOT) return age < SLOT_WAIT_MS;
   return age < graceMs;
 }
 

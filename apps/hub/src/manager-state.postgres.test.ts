@@ -522,6 +522,17 @@ test("PostgreSQL: a manager whose placement waits for a free slot keeps the pull
   });
 }, 120_000);
 
+test("PostgreSQL: a placement that stopped waiting for a slot no longer keeps the pull request, whatever failure it last recorded", async () => {
+  await withDatabase(async function stoppedWaiting(db) {
+    await deployedRun(db, "run_failed", new Date(Date.now() - 10 * MINUTE));
+    await db.insert(schema.sidecarAllocation).values({ id: "alc_run_failed", anchorRunId: "run_failed", tenantId: TENANT, provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest", maxDisconnectedMs: 60_000, status: "failed", failureCode: "sidecar_reuse_rejected" });
+    await claimRun(db, "run_failed");
+    await liveRun(db, "run_next");
+
+    expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "idle" });
+  });
+}, 120_000);
+
 test("PostgreSQL: a listener counts as live as a manager does, and one deployed without a sidecar past the startup window is released", async () => {
   await withDatabase(async function listener(db) {
     await db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: "triage-listener-github" });

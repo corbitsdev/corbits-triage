@@ -18,14 +18,30 @@ const LocalSidecarHold = type({ allocationId: "string > 0", generation: "number.
 export type LocalSidecarHold = typeof LocalSidecarHold.infer;
 const LocalSidecarHolds = LocalSidecarHold.array();
 
+/** A destroyed generation of an allocation, and the identities a late ensure at it may still carry. */
+const LocalSidecarFence = type({ allocationId: "string > 0", generation: "number.integer >= 0", sidecarIds: "string[]" });
+export type LocalSidecarFence = typeof LocalSidecarFence.infer;
+const LocalSidecarFences = LocalSidecarFence.array();
+
+/** A sidecar a hub that ran one per allocation started, as its manifest in `manifests/` names it. */
+const LegacySidecar = type({ allocationId: "string > 0", sidecarId: "string > 0" });
+export type LegacySidecar = typeof LegacySidecar.infer;
+
 export interface LocalSidecarManifestStore {
   read(): Promise<LocalSidecarManifest | null>;
   write(manifest: LocalSidecarManifest): Promise<void>;
   remove(): Promise<void>;
   readHolds(): Promise<LocalSidecarHold[]>;
   writeHolds(holds: readonly LocalSidecarHold[]): Promise<void>;
-  /** Removes what a hub that ran one sidecar per allocation left, when it left its `manifests/` directory; names what went. */
-  removeLegacyLayout(): Promise<string[]>;
+  readFences(): Promise<LocalSidecarFence[]>;
+  writeFences(fences: readonly LocalSidecarFence[]): Promise<void>;
+  /** The sidecars a hub that ran one per allocation left manifests for. */
+  legacySidecars(): Promise<LegacySidecar[]>;
+  /**
+   * Removes the manifests and data directories that hub left, tokens with them, but for the allocations in `kept`;
+   * names what went.
+   */
+  removeLegacyLayout(kept: ReadonlySet<string>): Promise<string[]>;
 }
 
 export type CreateLocalSidecarManifestStoreOpts = {
@@ -35,7 +51,8 @@ export type CreateLocalSidecarManifestStoreOpts = {
 };
 
 const LEGACY_MANIFESTS = "manifests";
-const LEGACY_DATA_DIR = /^.+-[A-Za-z0-9]{6}$/;
+const LEGACY_MANIFEST = /^(.+)\.json$/;
+const LEGACY_DATA_DIR = /^(.+)-[A-Za-z0-9]{6}$/;
 
 /** Domain-separated from `credentialAad` so a manifest token never decrypts as a credential secret. */
 function manifestTokenAad(sidecarId: string): string {
@@ -84,6 +101,7 @@ export function createLocalSidecarManifestStore({
 }: CreateLocalSidecarManifestStoreOpts): LocalSidecarManifestStore {
   const manifestFile = path.join(dataRoot, "sidecar.json");
   const holdsFile = path.join(dataRoot, "holds.json");
+  const fencesFile = path.join(dataRoot, "fences.json");
 
   async function write(manifest: LocalSidecarManifest): Promise<void> {
     const stored = { ...manifest, token: await cipher.encrypt(manifest.token, manifestTokenAad(manifest.sidecarId)) };
@@ -108,33 +126,80 @@ export function createLocalSidecarManifestStore({
     await fs.rm(manifestFile, { force: true });
   }
 
-  // An unreadable holds file names nothing restore can bring back; the hub places that work again.
-  async function readHolds(): Promise<LocalSidecarHold[]> {
-    const text = await readOptional(holdsFile);
+  // An unreadable list names nothing restore can bring back: the hub places held work again, and a fence only guards
+  // against a late ensure stock already gave up on.
+  async function readList<T>(file: string, schema: { assert(data: unknown): T[] }): Promise<T[]> {
+    const text = await readOptional(file);
     if (text === null) return [];
     try {
-      return LocalSidecarHolds.assert(JSON.parse(text));
+      return schema.assert(JSON.parse(text));
     } catch (error) {
-      await fs.rm(holdsFile, { force: true });
-      log({ level: "warn", msg: "local_sidecar_holds_unreadable_removed", file: holdsFile, error: errorText(error) });
+      await fs.rm(file, { force: true });
+      log({ level: "warn", msg: "local_sidecar_list_unreadable_removed", file, error: errorText(error) });
       return [];
     }
+  }
+
+  function readHolds(): Promise<LocalSidecarHold[]> {
+    return readList(holdsFile, LocalSidecarHolds);
   }
 
   async function writeHolds(holds: readonly LocalSidecarHold[]): Promise<void> {
     await writeAtomically(holdsFile, JSON.stringify(holds));
   }
 
-  async function removeLegacyLayout(): Promise<string[]> {
+  function readFences(): Promise<LocalSidecarFence[]> {
+    return readList(fencesFile, LocalSidecarFences);
+  }
+
+  async function writeFences(fences: readonly LocalSidecarFence[]): Promise<void> {
+    await writeAtomically(fencesFile, JSON.stringify(fences));
+  }
+
+  async function legacyEntries(dir: string): Promise<string[]> {
+    try {
+      return (await fs.readdir(dir)).sort();
+    } catch (error) {
+      if (isMissing(error)) return [];
+      throw error;
+    }
+  }
+
+  // A manifest that cannot be read names no sidecar to retire; it goes with the layout.
+  async function legacySidecars(): Promise<LegacySidecar[]> {
+    const manifestsDir = path.join(dataRoot, LEGACY_MANIFESTS);
+    const sidecars: LegacySidecar[] = [];
+    for (const name of await legacyEntries(manifestsDir)) {
+      if (!LEGACY_MANIFEST.test(name)) continue;
+      try {
+        sidecars.push(LegacySidecar.assert(JSON.parse(await fs.readFile(path.join(manifestsDir, name), "utf8"))));
+      } catch (error) {
+        log({ level: "warn", msg: "local_sidecar_legacy_manifest_unreadable", file: name, error: errorText(error) });
+      }
+    }
+    return sidecars;
+  }
+
+  async function removeLegacyLayout(kept: ReadonlySet<string>): Promise<string[]> {
     const manifestsDir = path.join(dataRoot, LEGACY_MANIFESTS);
     if (!(await exists(manifestsDir))) return [];
-    const removed = [LEGACY_MANIFESTS];
-    for (const entry of await fs.readdir(dataRoot, { withFileTypes: true })) {
-      if (entry.isDirectory() && LEGACY_DATA_DIR.test(entry.name)) removed.push(entry.name);
+    const removed: string[] = [];
+    for (const name of await legacyEntries(manifestsDir)) {
+      const allocationId = LEGACY_MANIFEST.exec(name)?.[1];
+      if (allocationId !== undefined && kept.has(allocationId)) continue;
+      removed.push(path.join(LEGACY_MANIFESTS, name));
+    }
+    for (const name of await legacyEntries(dataRoot)) {
+      const allocationId = LEGACY_DATA_DIR.exec(name)?.[1];
+      if (allocationId !== undefined && !kept.has(allocationId) && (await fs.stat(path.join(dataRoot, name))).isDirectory()) removed.push(name);
     }
     for (const name of removed) await fs.rm(path.join(dataRoot, name), { recursive: true, force: true });
+    if ((await legacyEntries(manifestsDir)).length === 0) {
+      await fs.rm(manifestsDir, { recursive: true, force: true });
+      removed.push(LEGACY_MANIFESTS);
+    }
     return removed;
   }
 
-  return { read, write, remove, readHolds, writeHolds, removeLegacyLayout };
+  return { read, write, remove, readHolds, writeHolds, readFences, writeFences, legacySidecars, removeLegacyLayout };
 }

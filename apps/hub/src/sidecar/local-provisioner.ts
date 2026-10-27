@@ -10,6 +10,7 @@ import type {
   EnsureSidecarRequest,
   EnsureSidecarResult,
   SidecarProvisioner,
+  SidecarProvisionerHost,
 } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
 import { CAPACITY_UNAVAILABLE, shortfall, type HostCapacity } from "./host-capacity.js";
@@ -48,6 +49,8 @@ export type LocalSidecarRecords = {
   isLive(hold: LocalSidecarHold & { readonly sidecarId: string }): Promise<boolean>;
   /** Whether the hub still has work on the sidecar, including copies it waits for the sidecar to remove. */
   hasWork(sidecarId: string): Promise<boolean>;
+  /** Whether stock may still ensure this allocation or probe: one it ended is never ensured again. */
+  isOpen(allocationId: string): Promise<boolean>;
 };
 
 export interface LocalProcessSidecarProvisioner {
@@ -115,6 +118,7 @@ export function createLocalProcessSidecarProvisioner({
   let running: ManagedProcess | null = null;
   let queue: Promise<void> = Promise.resolve();
   let shutdownPromise: Promise<void> | null = null;
+  let host: SidecarProvisionerHost | undefined;
 
   // Every operation runs alone: the sidecar starts once, and the holds file is written whole.
   async function serialize<R, T>(request: R, run: (request: R) => Promise<T>): Promise<T> {
@@ -136,6 +140,13 @@ export function createLocalProcessSidecarProvisioner({
     const live = [...holds.values()].flatMap((state) =>
       state.kind === "live" ? [{ allocationId: state.allocationId, generation: state.generation, offeredSidecarId: state.offeredSidecarId }] : []);
     await manifests.writeHolds(live);
+  }
+
+  // The hub never repeats a destroy, so a fence only memory held would let a late ensure through after a restart.
+  async function persistFences(): Promise<void> {
+    const fences = [...holds.entries()].flatMap(([allocationId, state]) =>
+      state.kind === "destroyed" ? [{ allocationId, generation: state.generation, sidecarIds: [...state.sidecarIds] }] : []);
+    await manifests.writeFences(fences);
   }
 
   // One exit takes down every deployment the sidecar hosts, so each is logged.
@@ -222,6 +233,7 @@ export function createLocalProcessSidecarProvisioner({
     if (sidecar.kind === "rejected") return sidecar;
     holds.set(request.allocationId, { kind: "live", allocationId: request.allocationId, generation: request.generation, offeredSidecarId: request.sidecarId });
     await persistHolds();
+    if (existing?.kind === "destroyed") await persistFences();
     return {
       kind: "accepted",
       externalRef: String(sidecar.process.handle.pid),
@@ -241,9 +253,46 @@ export function createLocalProcessSidecarProvisioner({
     if (!stale) {
       const sidecarIds = existing?.kind === "live" ? [request.sidecarId, existing.offeredSidecarId] : [request.sidecarId];
       holds.set(request.allocationId, { kind: "destroyed", generation: request.generation, sidecarIds });
+      await persistFences();
       if (existing?.kind === "live") await persistHolds();
     }
     return { kind: "destroyed", cleanup: request.sidecarId === manifest?.sidecarId ? "required" : "confirmed" };
+  }
+
+  function attached(): SidecarProvisionerHost {
+    if (host === undefined) throw new Error("Local sidecar provisioner is not attached to the hub");
+    return host;
+  }
+
+  // A hub that ran one sidecar per allocation stopped them all at shutdown, and none comes back. Retiring each identity
+  // gives its allocations no reconnect window, so the reconciler replaces them at once; a sidecar the hub could not
+  // retire keeps its files for the next boot to try again.
+  async function retireLegacySidecars(): Promise<void> {
+    const legacy = await manifests.legacySidecars();
+    const kept = new Set<string>();
+    if (legacy.length > 0) {
+      const hub = attached();
+      for (const { allocationId, sidecarId } of legacy) {
+        try {
+          await hub.sidecarStopped(sidecarId, { endReconnectWindow: true });
+        } catch (error) {
+          kept.add(allocationId);
+          log({ level: "warn", msg: "local_sidecar_legacy_retire_failed", allocationId, sidecarId, error: errorText(error) });
+        }
+      }
+    }
+    const removed = await manifests.removeLegacyLayout(kept);
+    if (removed.length > 0) log({ level: "info", msg: "local_sidecar_legacy_layout_removed", retired: legacy.length - kept.size, removed });
+  }
+
+  // Ensure or destroy may reach an allocation before restore does; their outcome wins.
+  async function restoreFences(isOpen: LocalSidecarRecords["isOpen"]): Promise<void> {
+    const stored = await manifests.readFences();
+    for (const fence of stored) {
+      if (holds.has(fence.allocationId) || !(await isOpen(fence.allocationId))) continue;
+      holds.set(fence.allocationId, { kind: "destroyed", generation: fence.generation, sidecarIds: fence.sidecarIds });
+    }
+    if (stored.length > 0) await persistFences();
   }
 
   async function forget(): Promise<void> {
@@ -254,9 +303,9 @@ export function createLocalProcessSidecarProvisioner({
 
   // A copy whose hold a destroy released is removed only once the sidecar reconnects and the hub undeploys it, so the
   // sidecar comes back for that cleanup too; forgetting it would leave the copy holding a slot for good.
-  async function restoreSidecar({ isLive, hasWork }: LocalSidecarRecords): Promise<void> {
-    const legacy = await manifests.removeLegacyLayout();
-    if (legacy.length > 0) log({ level: "info", msg: "local_sidecar_legacy_layout_removed", removed: legacy });
+  async function restoreSidecar({ isLive, hasWork, isOpen }: LocalSidecarRecords): Promise<void> {
+    await retireLegacySidecars();
+    await restoreFences(isOpen);
     const stored = await manifests.read();
     const recorded = await manifests.readHolds();
     if (stored === null) {
@@ -306,6 +355,9 @@ export function createLocalProcessSidecarProvisioner({
     apiVersion: 2,
     bindingFingerprint: "local-process:v1",
     capabilities: [],
+    attach(hub) {
+      host = hub;
+    },
     ensure(request) {
       return serialize(request, ensureAllocation);
     },

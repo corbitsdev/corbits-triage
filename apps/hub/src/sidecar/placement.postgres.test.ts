@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { SidecarProvisioner } from "@intx/hub-sessions";
-import { createPlacementChooser, localSidecarUsage } from "./placement.js";
+import { createPlacementChooser, localSidecarUsage, WAITING_FOR_SLOT } from "./placement.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_placement";
@@ -52,7 +52,7 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
 
 let next = 0;
 
-async function deployed(db: Db, on: SidecarProvisioner, status: Status, { deploymentCleanupConfirmed = false, requires = [] as string[] } = {}): Promise<void> {
+async function deployed(db: Db, on: SidecarProvisioner, status: Status, { deploymentCleanupConfirmed = false, requires = [] as string[], failureCode = null as string | null } = {}): Promise<void> {
   const id = `run_${String(++next)}`;
   await db.insert(schema.workflowRun).values({ id, anchorRunId: id, definitionId: "wfd_manager", tenantId: TENANT, status: "running" });
   await db.insert(schema.workflowRunLaunchSpec).values({
@@ -75,7 +75,25 @@ async function deployed(db: Db, on: SidecarProvisioner, status: Status, { deploy
     adapterManifestDigest: "digest",
     status,
     deploymentCleanupConfirmed,
+    failureCode,
     maxDisconnectedMs: 60_000,
+  });
+}
+
+async function probing(db: Db, on: SidecarProvisioner, status: typeof schema.workflowProbe.$inferInsert.status): Promise<void> {
+  const id = `wpr_${String(++next)}`;
+  await db.insert(schema.asset).values({ id: `ast_${id}`, tenantId: TENANT, kind: "workflow", name: id, creatorPrincipalId: "prn_owner" });
+  await db.insert(schema.workflowProbe).values({
+    id,
+    tenantId: TENANT,
+    definitionAssetId: `ast_${id}`,
+    source: { kind: "asset", assetId: `ast_${id}`, package: { format: "source", commitSha: "0".repeat(40) } },
+    entry: "index.ts",
+    status,
+    provisionerId: on.id,
+    provisionerApiVersion: 2,
+    provisionerBindingFingerprint: on.bindingFingerprint,
+    adapterManifestDigest: "digest",
   });
 }
 
@@ -96,7 +114,7 @@ test("a deployment goes to the local sidecar until its active slots are taken, t
     expect(await choose([sandbox])).toBe(sandbox);
 
     // Only the sandbox deployment that could have run locally overflowed; the one that requires isolation did not.
-    expect(await localSidecarUsage(db, local, 2)).toEqual({ active: 2, cap: 2, overflow: 1 });
+    expect(await localSidecarUsage(db, local, 2)).toEqual({ active: 2, waiting: 0, cap: 2, overflow: 1 });
   });
 }, 120_000);
 
@@ -111,5 +129,21 @@ test("placements side by side cannot both take the local sidecar's last slot, wh
 
     clock += 31_000;
     expect(await choose([local, sandbox])).toBe(local);
+  });
+}, 120_000);
+
+test("probes on the local sidecar take its slots, and placements waiting there for one are counted apart and still fill it", async () => {
+  await withDatabase(async function shared(db) {
+    const choose = createPlacementChooser({ db, local, maxDeployments: 3 });
+    await deployed(db, local, "allocated");
+    await probing(db, local, "probing");
+    await probing(db, local, "failed");
+    await probing(db, sandbox, "probing");
+    expect(await localSidecarUsage(db, local, 3)).toEqual({ active: 2, waiting: 0, cap: 3, overflow: 0 });
+
+    await deployed(db, local, "provisioning", { failureCode: WAITING_FOR_SLOT });
+    await deployed(db, local, "failed", { failureCode: WAITING_FOR_SLOT });
+    expect(await localSidecarUsage(db, local, 3)).toEqual({ active: 2, waiting: 1, cap: 3, overflow: 0 });
+    expect(await choose([local, sandbox])).toBe(sandbox);
   });
 }, 120_000);

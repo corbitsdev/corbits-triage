@@ -1,7 +1,7 @@
 import { schema, type DB } from "@intx/db";
 import type { SidecarProvisioner, SidecarProvisionerChooser } from "@intx/hub-sessions";
 import type { DeployedVersions } from "@corbits/triage-contracts";
-import { and, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 
 export type CreatePlacementChooserOpts = {
   readonly db: DB["db"];
@@ -26,22 +26,50 @@ async function settle(decision: Promise<unknown>): Promise<void> {
 }
 
 const allocation = schema.sidecarAllocation;
+const probe = schema.workflowProbe;
 
-/** An allocation holding an active slot, as stock counts a sidecar's room at placement. */
+/** Stock's code for a placement refused because the sidecar's active slots were full; it retries the placement. */
+export const WAITING_FOR_SLOT = "sidecar_reuse_rejected";
+
+/** Stock's probe statuses short of an outcome, as its probe store counts them. */
+const ACTIVE_PROBE_STATUSES = ["pending", "provisioning", "probing", "releasing"] as const;
+
+/** A placement refused for room that waits in stock's retry: it holds no slot yet, but takes the next one that frees. */
+function waitsForSlot(): SQL | undefined {
+  return and(eq(allocation.status, "provisioning"), eq(allocation.failureCode, WAITING_FOR_SLOT));
+}
+
+/** An allocation holding an active slot, as stock counts a sidecar's room at placement, less those waiting for one. */
 function holdsSlot(): SQL | undefined {
   return or(
-    inArray(allocation.status, ["provisioning", "allocated"]),
+    and(eq(allocation.status, "provisioning"), or(isNull(allocation.failureCode), ne(allocation.failureCode, WAITING_FOR_SLOT))),
+    eq(allocation.status, "allocated"),
     and(inArray(allocation.status, ["replacing", "releasing", "destroy_failed"]), eq(allocation.deploymentCleanupConfirmed, false)),
   );
 }
 
-async function activeDeployments(db: DB["db"], provisionerId: string): Promise<number> {
-  const [row] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(allocation)
-    .where(and(eq(allocation.provisionerId, provisionerId), holdsSlot()));
+async function countAllocations(db: DB["db"], where: SQL | undefined): Promise<number> {
+  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(allocation).where(where);
   if (row === undefined) throw new Error("placement: count query returned no row");
   return row.count;
+}
+
+async function activeProbes(db: DB["db"], provisionerId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(probe)
+    .where(and(eq(probe.provisionerId, provisionerId), inArray(probe.status, [...ACTIVE_PROBE_STATUSES])));
+  if (row === undefined) throw new Error("placement: count query returned no row");
+  return row.count;
+}
+
+/** Deployments and probes on the provisioner's sidecar: probes run there too, so both draw from its slots. */
+async function activeDeployments(db: DB["db"], provisionerId: string): Promise<number> {
+  return (await activeProbes(db, provisionerId)) + (await countAllocations(db, and(eq(allocation.provisionerId, provisionerId), holdsSlot())));
+}
+
+function waitingDeployments(db: DB["db"], provisionerId: string): Promise<number> {
+  return countAllocations(db, and(eq(allocation.provisionerId, provisionerId), waitsForSlot()));
 }
 
 /** Deployments elsewhere whose workflow requires no capability, so the local sidecar was a candidate for them. */
@@ -58,7 +86,12 @@ async function overflowDeployments(db: DB["db"], localId: string): Promise<numbe
 }
 
 export async function localSidecarUsage(db: DB["db"], local: SidecarProvisioner, cap: number): Promise<DeployedVersions["sidecar"]> {
-  return { active: await activeDeployments(db, local.id), cap, overflow: await overflowDeployments(db, local.id) };
+  return {
+    active: await activeDeployments(db, local.id),
+    waiting: await waitingDeployments(db, local.id),
+    cap,
+    overflow: await overflowDeployments(db, local.id),
+  };
 }
 
 /**
@@ -79,7 +112,9 @@ export function createPlacementChooser({ db, local, maxDeployments, now = Date.n
     if (sandbox === undefined) return local;
     const at = now();
     reservations = reservations.filter((until) => until > at);
-    if ((await activeDeployments(db, local.id)) + reservations.length >= maxDeployments) return sandbox;
+    // A placement waiting for a slot takes the next one that frees, so a new deployment would only queue behind it.
+    const taken = (await activeDeployments(db, local.id)) + (await waitingDeployments(db, local.id)) + reservations.length;
+    if (taken >= maxDeployments) return sandbox;
     reservations.push(at + RESERVATION_MS);
     return local;
   }

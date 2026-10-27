@@ -1,6 +1,6 @@
 import { schema, type DB } from "@intx/db";
 import { createSidecarCredentialResolver } from "@intx/hub-sessions";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, notInArray } from "drizzle-orm";
 import type { LocalProcessSidecarProvisioner } from "./local-provisioner.js";
 import type { LocalSidecarHold } from "./manifest-store.js";
 
@@ -26,5 +26,17 @@ export async function restoreLocalSidecars(
   async function hasWork(sidecarId: string): Promise<boolean> {
     return (await credentials.resolveBindings(sidecarId)).length > 0;
   }
-  await local.restore({ isLive, hasWork });
+  async function isOpen(allocationId: string): Promise<boolean> {
+    const allocation = await db.query.sidecarAllocation.findFirst({
+      columns: { id: true },
+      where: and(eq(schema.sidecarAllocation.id, allocationId), notInArray(schema.sidecarAllocation.status, ["released", "failed"])),
+    });
+    if (allocation !== undefined) return true;
+    const probe = await db.query.workflowProbe.findFirst({
+      columns: { id: true },
+      where: and(eq(schema.workflowProbe.id, allocationId), notInArray(schema.workflowProbe.status, ["succeeded", "failed"])),
+    });
+    return probe !== undefined;
+  }
+  await local.restore({ isLive, hasWork, isOpen });
 }

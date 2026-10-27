@@ -31,7 +31,7 @@ const SPECS: Record<string, unknown> = {
 };
 
 const ROLLOUT = { source: "github" as const, at: CREATED_AT.toISOString(), error: "Updating Triage failed; see the hub log." };
-const SIDECAR = { active: 3, cap: 16, overflow: 1 };
+const SIDECAR = { active: 3, waiting: 0, cap: 16, overflow: 1 };
 
 const ROWS = [
   { runId: "run_tarball", workflow: "pr-triage", domain: "tenant.example", createdAt: CREATED_AT, cancellationRequestedAt: null },

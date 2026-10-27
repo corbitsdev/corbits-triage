@@ -6,7 +6,7 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import type { EnsureSidecarRequest } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
 import { SIDECAR_BYTES } from "./host-capacity.js";
-import { createLocalProcessSidecarProvisioner } from "./local-provisioner.js";
+import { createLocalProcessSidecarProvisioner, type LocalSidecarRecords } from "./local-provisioner.js";
 import { createLocalSidecarManifestStore, type LocalSidecarHold, type LocalSidecarManifest } from "./manifest-store.js";
 
 const HUB_ADAPTERS: AdapterManifest = [
@@ -96,6 +96,8 @@ function nothingElse(): Promise<boolean> {
   return Promise.resolve(false);
 }
 
+const NOTHING_HELD: LocalSidecarRecords = { isLive: nothingElse, hasWork: nothingElse, isOpen: nothingElse };
+
 test("restore respawns the sidecar once for the holds still live and drops the rest", async () => {
   const { dataRoot, manifests, spawned, logs, create } = await setup();
   const stored: LocalSidecarManifest = { sidecarId: "sc_first", token: "token_first", hubWebSocketUrl: "ws://hub", dataDir: path.join(dataRoot, "sidecar") };
@@ -113,7 +115,7 @@ test("restore respawns the sidecar once for the holds still live and drops the r
     asked.push(`${hold.allocationId}@${String(hold.generation)} on ${hold.sidecarId}`);
     return hold.allocationId !== "released";
   }
-  await local.restore({ isLive, hasWork: nothingElse });
+  await local.restore({ ...NOTHING_HELD, isLive });
 
   expect(asked).toEqual(["listener@1 on sc_first", "manager@3 on sc_first", "released@1 on sc_first"]);
   expect(spawned).toEqual([{ manifest: stored, adapterManifest: HUB_ADAPTERS }]);
@@ -133,7 +135,7 @@ test("restore with no live hold and no copy left to remove forgets the sidecar, 
   await manifests.writeHolds([{ allocationId: "released", generation: 1, offeredSidecarId: "sc_first" }]);
   const local = create();
 
-  await local.restore({ isLive: nothingElse, hasWork: nothingElse });
+  await local.restore(NOTHING_HELD);
 
   expect(spawned).toEqual([]);
   expect(await manifests.read()).toBeNull();
@@ -151,7 +153,7 @@ test("restore brings the sidecar back while the hub still waits for it to remove
   await manifests.writeHolds([]);
   const local = create();
 
-  await local.restore({ isLive: nothingElse, hasWork: async (sidecarId) => sidecarId === "sc_first" });
+  await local.restore({ ...NOTHING_HELD, hasWork: async (sidecarId) => sidecarId === "sc_first" });
 
   expect(spawned).toEqual([{ manifest: stored, adapterManifest: HUB_ADAPTERS }]);
   expect(await manifests.read()).toEqual(stored);
@@ -200,24 +202,70 @@ test("an unreadable holds file is removed and restore goes on without it", async
   await fs.writeFile(path.join(dataRoot, "holds.json"), "[{\"allocationId\":");
   const local = create();
 
-  await local.restore({ isLive: nothingElse, hasWork: nothingElse });
+  await local.restore(NOTHING_HELD);
 
   expect(await fs.readdir(dataRoot)).toEqual([]);
 
   await local.shutdown();
 });
 
-test("restore removes what a hub with one sidecar per allocation left, only when its manifests directory is there", async () => {
+test("restore retires the sidecars a hub with one per allocation left and removes their files, keeping one it could not retire for the next boot", async () => {
   const { dataRoot, logs, create } = await setup();
-  await fs.mkdir(path.join(dataRoot, "sal_kept-Ab12Cd"));
-  await create().restore({ isLive: nothingElse, hasWork: nothingElse });
-  expect(await fs.readdir(dataRoot)).toContain("sal_kept-Ab12Cd");
+  await fs.mkdir(path.join(dataRoot, "sal_orphan-Ab12Cd"));
+  const untouched = create();
+  await untouched.restore(NOTHING_HELD);
+  expect(await fs.readdir(dataRoot)).toContain("sal_orphan-Ab12Cd");
 
-  await fs.mkdir(path.join(dataRoot, "manifests"));
-  await fs.writeFile(path.join(dataRoot, "manifests", "sal_old.json"), "{}");
+  const legacyDir = path.join(dataRoot, "manifests");
+  await fs.mkdir(legacyDir);
+  for (const allocationId of ["sal_old", "sal_stuck"]) {
+    const legacy = { allocationId, generation: 1, sidecarId: `sc_${allocationId}`, tenantId: "tnt_1", anchorRunId: `run_${allocationId}`, hubWebSocketUrl: "ws://hub", dataDir: path.join(dataRoot, `${allocationId}-Xy34Zw`), token: "sealed" };
+    await fs.writeFile(path.join(legacyDir, `${allocationId}.json`), JSON.stringify(legacy));
+    await fs.mkdir(legacy.dataDir);
+  }
+  await fs.writeFile(path.join(legacyDir, "sal_torn.json"), "{");
   await fs.mkdir(path.join(dataRoot, "sidecar"));
-  await create().restore({ isLive: nothingElse, hasWork: nothingElse });
+  const reported: unknown[] = [];
+  const local = create();
+  local.provisioner.attach?.({
+    async sidecarStopped(sidecarId, options) {
+      reported.push({ sidecarId, options });
+      if (sidecarId === "sc_sal_stuck") throw new Error("database unavailable");
+      return { kind: "retired" };
+    },
+  });
 
-  expect(await fs.readdir(dataRoot)).toEqual(["sidecar"]);
-  expect(logs).toContainEqual({ level: "info", msg: "local_sidecar_legacy_layout_removed", removed: ["manifests", "sal_kept-Ab12Cd"] });
+  await local.restore(NOTHING_HELD);
+
+  expect(reported).toEqual([
+    { sidecarId: "sc_sal_old", options: { endReconnectWindow: true } },
+    { sidecarId: "sc_sal_stuck", options: { endReconnectWindow: true } },
+  ]);
+  expect((await fs.readdir(dataRoot)).sort()).toEqual(["manifests", "sal_stuck-Xy34Zw", "sidecar"]);
+  expect(await fs.readdir(legacyDir)).toEqual(["sal_stuck.json"]);
+  expect(logs).toContainEqual(expect.objectContaining({ msg: "local_sidecar_legacy_retire_failed", allocationId: "sal_stuck", sidecarId: "sc_sal_stuck" }));
+  expect(logs).toContainEqual({
+    level: "info",
+    msg: "local_sidecar_legacy_layout_removed",
+    retired: 1,
+    removed: [path.join("manifests", "sal_old.json"), path.join("manifests", "sal_torn.json"), "sal_old-Xy34Zw", "sal_orphan-Ab12Cd"],
+  });
+});
+
+test("a destroy with no hold is fenced across a restart, until stock has ended the allocation", async () => {
+  const { manifests, create } = await setup();
+  const before = create();
+  expect(await before.provisioner.destroy({ allocationId: "a", generation: 1, sidecarId: "sc_a" })).toEqual({ kind: "destroyed", cleanup: "confirmed" });
+  await before.shutdown();
+
+  const after = create();
+  await after.restore({ ...NOTHING_HELD, isOpen: async (allocationId) => allocationId === "a" });
+  expect(await after.provisioner.ensure(request("a"))).toMatchObject({ kind: "rejected", code: "generation_destroyed" });
+  await after.shutdown();
+
+  const ended = create();
+  await ended.restore(NOTHING_HELD);
+  expect(await manifests.readFences()).toEqual([]);
+  expect((await ended.provisioner.ensure(request("a"))).kind).toBe("accepted");
+  await ended.shutdown();
 });

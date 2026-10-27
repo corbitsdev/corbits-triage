@@ -534,7 +534,7 @@ Everything triage needs, top to bottom: its status, where pull requests come fro
 
 The first line says how many repositories Triage is running on, with a **Choose repositories** link. Until a decision model is added, it says **Triage needs a decision model before it can run. Add one below.** Judgement rules are the ones that use the model. Add it on this page: pick a provider, paste the key and save it. The key is stored in the server's vault and you will not see it again.
 
-The next line says how busy this server is, for example **This server runs 3 of up to 16 Triage workflows at once.** Each host's listener takes one of those places, and each pull request being triaged takes another while it runs. When they are all taken and the server has a sandbox set up, the line adds **2 more run in a sandbox because it is full.** Without a sandbox it says **it is full, so new pull requests wait for one to finish.** The server's operator sets how many there are.
+The next line says how busy this server is, for example **This server runs 3 of up to 16 Triage workflows at once.** Each host's listener takes one of those places, and each pull request being triaged takes another while it runs. When they are all taken and the server has a sandbox set up, the line adds **2 more run in a sandbox because it is full.** Without a sandbox it says **it is full, so new pull requests wait for one to finish.**, and once some are waiting it says how many instead, for example **3 more wait for one to finish.** The server's operator sets how many there are.
 
 #### Which version runs
 

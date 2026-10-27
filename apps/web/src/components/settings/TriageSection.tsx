@@ -34,11 +34,12 @@ function statusText({ sources, undeployed, model, triaging, total }: Status): st
 }
 
 /** How full this server is, and where pull requests go once it is. */
-function sidecarText({ active, cap, overflow }: DeployedVersions["sidecar"]): string {
+function sidecarText({ active, waiting, cap, overflow }: DeployedVersions["sidecar"]): string {
   const runs = `This server runs ${active} of up to ${cap} Triage workflows at once`;
   const elsewhere = overflow > 0 ? `; ${overflow} more ${overflow === 1 ? "runs" : "run"} in a sandbox because it is full` : "";
-  if (active >= cap && overflow === 0) return `${runs}: it is full, so new pull requests wait for one to finish.`;
-  return `${runs}${elsewhere}.`;
+  const queued = waiting > 0 ? `; ${waiting} more ${waiting === 1 ? "waits" : "wait"} for one to finish` : "";
+  if (active >= cap && overflow === 0 && waiting === 0) return `${runs}: it is full, so new pull requests wait for one to finish.`;
+  return `${runs}${elsewhere}${queued}.`;
 }
 
 /** A preset by its name; your own provider by its endpoint and model. */

@@ -155,7 +155,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
   its own: the first ensure starts it under the
   identity Interchange offered, and every later ensure answers with that
   sidecar, which stock deploys into over the same connection. It keeps a hold
-  per allocation beside one process manifest; a destroy releases the hold and
+  per allocation beside one process manifest, and persists each destroy's
+  fence so a late ensure stays refused across a restart; a destroy releases the hold and
   leaves the copy for the hub to undeploy, so the process lives as long as the
   hub. On boot it respawns the sidecar once if any hold is still allocated or
   the hub still waits for it to remove a copy.
@@ -163,7 +164,7 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
   `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` (default 16) active deployments in its hello,
   and stock refuses to place more there. The hub's placement chooser
   (`apps/hub/src/sidecar/placement.ts`) counts the local sidecar's active
-  allocations and sends a deployment to the first matching sandbox
+  allocations and probes, and the placements waiting there for a slot, and sends a deployment to the first matching sandbox
   provisioner once the cap is reached; with no sandbox it stays local and
   waits in stock's placement retry until a slot frees. The Docker provisioner (`packages/provisioner-docker`),
   registered after it when a daemon with the sidecar image answers, runs each
