@@ -13,7 +13,7 @@
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
 import { authorize } from "@intx/authz";
-import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type ResolvedSenderPrincipal } from "@intx/db";
+import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type DB, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
 import { generateId } from "@intx/hub-common";
@@ -45,6 +45,7 @@ import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisione
 import { connectRailwaySidecars, sweepRailwaySidecarsOf, type RailwaySidecarProvisioner } from "./sidecar/railway.js";
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
+import { createPlacementChooser } from "./sidecar/placement.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
@@ -155,13 +156,14 @@ await assertMigrated(database);
 
 const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
+const localSidecarCap = localSidecarMaxDeployments(env);
 const local = createLocalProcessSidecarProvisioner({
   dataRoot: localSidecarDataRoot,
   ...(env.HUB_SIDECAR_STOP_TIMEOUT_MS !== undefined && { stopTimeoutMs: Number(env.HUB_SIDECAR_STOP_TIMEOUT_MS) }),
   spawnSidecar: createSpawnLocalSidecar({
     interchangeDir: V,
     credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
-    maxActiveDeployments: localSidecarMaxDeployments(env),
+    maxActiveDeployments: localSidecarCap,
     processEnv: childProcessEnv(env),
   }),
   manifests: createLocalSidecarManifestStore({
@@ -188,6 +190,9 @@ const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
 const codeReviewProbes = [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }];
 const noIsolatedPlace = isolatedPlaceBootWarning(workloadProvisioners.length > 0, codeReviewProbes.map((probe) => probe.guide));
 if (noIsolatedPlace) logJson(noIsolatedPlace);
+function placeDeployments(db: DB["db"]) {
+  return createPlacementChooser({ db, local: local.provisioner, maxDeployments: localSidecarCap });
+}
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
@@ -234,6 +239,7 @@ const composition = await createInterchangeHub({
   credentialCipher,
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
   sidecarProvisioners,
+  sidecarProvisionerChooser: placeDeployments,
   probeSidecarProvisioners: sidecarProvisioners,
   probeSidecarCapabilityRules: workloadProvisioners.length > 0 ? [{ capability: "isolation:workload", effect: "require" }] : [],
   extraRunTokenRoutes: MANAGER_RUN_TOKEN_ROUTES,

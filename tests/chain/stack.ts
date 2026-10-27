@@ -71,8 +71,8 @@ async function collect(stream: ReadableStream<Uint8Array>, lines: string[]): Pro
 
 export type Hub = { origin: string; dataDir: string; logs: string[]; stop: () => Promise<void> };
 
-/** The hub as the image starts it, serving the portal build in `portalDir`, with every sidecar a local process under its data directory. */
-export async function startHub(database: Database, github: FakeGithub, portalDir: string): Promise<Hub> {
+/** The hub as the image starts it, serving the portal build in `portalDir`, with its sidecar a local process under its data directory. */
+export async function startHub(database: Database, github: FakeGithub, portalDir: string, env: Record<string, string> = {}): Promise<Hub> {
   const port = freePort();
   const origin = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "corbits-chain-"));
@@ -92,6 +92,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
       TRIAGE_COALESCE_QUIET_MS: "500",
       // Every sidecar a local process, as on a hub without Docker, so each reaches the fake GitHub and model on loopback.
       DOCKER_HOST: "unix:///nonexistent/docker.sock",
+      ...env,
     },
     stdin: "ignore",
     stdout: "pipe",
