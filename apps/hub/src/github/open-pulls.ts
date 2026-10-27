@@ -101,35 +101,38 @@ export async function listConnectedPulls(list: OpenPrsLister, tenantId: string, 
 
 export type OpenPullsRead = { at: number; repos: RepoPulls[] };
 
-/** GitHub's last listing of each tenant's open pull requests, shared by the portal's listing and the verdict route. */
+/**
+ * GitHub's last listing of open pull requests under `key`: each tenant's, shared by the portal's listing and the verdict route,
+ * or one repository's, read for a single pull request.
+ */
 export type OpenPullsCache = {
-  kept(tenantId: string, maxAgeMs: number): OpenPullsRead | undefined;
+  kept(key: string, maxAgeMs: number): OpenPullsRead | undefined;
   /** Lists now and keeps the listing; callers while it is read share it. */
-  read(tenantId: string, list: () => Promise<RepoPulls[]>): Promise<OpenPullsRead>;
+  read(key: string, list: () => Promise<RepoPulls[]>): Promise<OpenPullsRead>;
 };
 
 export function createOpenPullsCache(now: () => Date): OpenPullsCache {
   const kept = new Map<string, OpenPullsRead>();
   const reading = new Map<string, Promise<OpenPullsRead>>();
 
-  async function readOnce(tenantId: string, list: () => Promise<RepoPulls[]>): Promise<OpenPullsRead> {
+  async function readOnce(key: string, list: () => Promise<RepoPulls[]>): Promise<OpenPullsRead> {
     try {
       const listed = { at: now().getTime(), repos: await list() };
-      kept.set(tenantId, listed);
+      kept.set(key, listed);
       return listed;
     } finally {
-      reading.delete(tenantId);
+      reading.delete(key);
     }
   }
 
   return {
-    kept(tenantId, maxAgeMs) {
-      const listed = kept.get(tenantId);
+    kept(key, maxAgeMs) {
+      const listed = kept.get(key);
       return listed && now().getTime() - listed.at < maxAgeMs ? listed : undefined;
     },
-    read(tenantId, list) {
-      const pending = reading.get(tenantId) ?? readOnce(tenantId, list);
-      reading.set(tenantId, pending);
+    read(key, list) {
+      const pending = reading.get(key) ?? readOnce(key, list);
+      reading.set(key, pending);
       return pending;
     },
   };

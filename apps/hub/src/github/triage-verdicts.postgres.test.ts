@@ -284,7 +284,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
 test("PostgreSQL: a host with no credential costs only its own repositories, while a member barred from a host's credential is refused and leaves the shared listing as it was", async () => {
   await withDatabase(async function hostWithoutCredential(db) {
     const bitbucket = "TRI/widgets";
-    const config = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true }, { name: bitbucket, connected: true, source: "bitbucket-datacenter", enabled: true }] } };
+    const config = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true }, { name: UNREAD, connected: true, enabled: true }, { name: bitbucket, connected: true, source: "bitbucket-datacenter", enabled: true }] } };
     await db.insert(schema.tenant).values({ id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config });
     await db.insert(schema.principal).values({ id: "prn_verdicts", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" });
     await db.insert(schema.provider).values({ id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: "https://api.github.test" });
@@ -292,12 +292,15 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
       id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key", secret: "unused", status: "active",
     });
     const verdicts = createVerdictRecordStore(db);
-    await seed(db, TENANT, [verdict("run_1", 1, 0), verdict("run_3", 3, 0)]);
+    await seed(db, TENANT, [verdict("run_3", 3, 0)]);
     let now = minutes(0);
     const openPulls = createOpenPullsCache(() => now);
     const listed: string[] = [];
-    /** #1's run failed on its open head. */
-    const noted: PrTriageRow[] = [{ number: 1, headSha: "sha1", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-1).toISOString(), updatedAt: minutes(-1).toISOString() }];
+    /** #1's run failed on its open head; #3's failed too, but #3 has a verdict. */
+    const noted: PrTriageRow[] = [
+      { number: 1, headSha: "sha1", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-1).toISOString(), updatedAt: minutes(-1).toISOString() },
+      { number: 3, headSha: "sha3", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-1).toISOString(), updatedAt: minutes(-1).toISOString() },
+    ];
     const deps = {
       db,
       cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
@@ -330,7 +333,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
       return TriageVerdicts.assert(await res.json()).pulls.map((pull) => `${pull.repo}#${pull.number}`);
     }
 
-    // A single read lists open pull requests only for a note, and within the listing's 30 seconds only once.
+    // A single read lists only its own repository, only for a note a verdict does not replace, and within the listing's 30 seconds only once.
     async function single(number: number): Promise<void> {
       expect((await app.request(`/api/integrations/triage-verdicts/${TENANT}?repo=${REPO}&number=${number}`, { headers: { "sec-fetch-site": "same-origin" } })).status).toBe(200);
     }
@@ -339,13 +342,15 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
     await single(1);
     now = minutes(0.1);
     await single(1);
-    expect(await pullsListed()).toEqual([`${REPO}#1`]);
     expect(listed).toEqual([REPO]);
+    expect(await pullsListed()).toEqual([`${REPO}#1`]);
+    expect(listed).toEqual([REPO, REPO, UNREAD]);
     const res = await get(GITHUB_OPEN_PULLS_PATH);
     expect(res.status).toBe(200);
     const { repos } = await res.json() as { repos: RepoPulls[] };
     expect(repos.map((row) => [row.repo, row.source, row.prs.length, row.error])).toEqual([
       [REPO, "github", 1, undefined],
+      [UNREAD, "github", 1, undefined],
       [bitbucket, "bitbucket-datacenter", 0, "Connect Bitbucket Data Center first."],
     ]);
 
@@ -358,7 +363,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({ error: { code: "forbidden", message: "You do not have access to the Bitbucket Data Center credential." } });
     expect(await pullsListed()).toEqual([`${REPO}#1`]);
-    expect(listed).toEqual([REPO]);
+    expect(listed).toEqual([REPO, REPO, UNREAD]);
     expect(openPulls.kept(TENANT, Infinity)).toBe(kept);
   });
 }, 120_000);

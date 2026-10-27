@@ -177,9 +177,8 @@ function openHeads(listed: OpenPullsRead | undefined, records: readonly RepoReco
 function noteCurrent(open: OpenHeads, pull: HostedPull, headSha: string): boolean {
   const listing = open.get(hostKey(pull));
   if (listing === undefined) return true;
-  if (!listing.heads.has(pull.number)) return false;
   const head = listing.heads.get(pull.number);
-  return !head || head === headSha;
+  return head !== undefined && (head === "" || head === headSha);
 }
 
 const ApprovalPull = type({ repo: "string", number: "number.integer" });
@@ -204,17 +203,18 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
   const kept = new Map<string, { key: string; body: Body }>();
 
   /**
-   * The listing kept from the last 30 seconds, else one read now on each repository's host, like github-open-pulls, when
-   * the caller holds `read` on every host's credential, a host with none listed as errors. When github-open-pulls would refuse,
-   * the route asks nothing and uses the last listing of any age, or none, rather than refusing: the verdicts themselves need only the run grant.
+   * The open pull requests of `records`, kept under `key`: a listing from the last 30 seconds under `key`, or the workspace's
+   * shared one, else one read now on each repository's host, like github-open-pulls, when the caller holds `read` on every host's
+   * credential, a host with none listed as errors. When github-open-pulls would refuse, the route asks nothing and uses the last
+   * listing of any age, or none, rather than refusing: the verdicts themselves need only the run grant.
    */
-  async function listingOf(member: Member, connected: readonly RepoRecord[]): Promise<OpenPullsRead | undefined> {
+  async function listingOf(member: Member, key: string, records: readonly RepoRecord[]): Promise<OpenPullsRead | undefined> {
     const { tenantId } = member;
-    const fresh = deps.openPulls.kept(tenantId, LISTING_MS);
+    const fresh = deps.openPulls.kept(key, LISTING_MS) ?? deps.openPulls.kept(tenantId, LISTING_MS);
     if (fresh) return fresh;
-    const refused = await refusedSources(deps, member, connected);
-    if (listingRefusal(connected, refused)) return deps.openPulls.kept(tenantId, Infinity);
-    return deps.openPulls.read(tenantId, () => listConnectedPulls(deps.list, tenantId, connected, refused));
+    const refused = await refusedSources(deps, member, records);
+    if (listingRefusal(records, refused)) return deps.openPulls.kept(key, Infinity) ?? deps.openPulls.kept(tenantId, Infinity);
+    return deps.openPulls.read(key, () => listConnectedPulls(deps.list, tenantId, records, refused));
   }
 
   async function activityOf(tenantId: string, pulls: readonly HostedPull[], live: Map<string, LivePull>): Promise<Map<string, string>> {
@@ -334,7 +334,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       const [latest, notes, runs] = await Promise.all([deps.verdicts.latestFor(tenantId, pull), notesOf(tenantId, [record], () => true), deps.managerRuns(tenantId, [pull])]);
       const key = pullKey(pull);
       const note = notes.untriaged.get(key);
-      const current = note !== undefined && noteCurrent(openHeads(await listingOf(member, connected), [record], []), note, note.headSha);
+      const current = note !== undefined && !latest && noteCurrent(openHeads(await listingOf(member, `${tenantId}\n${triageStateKey(record)}`, [record]), [record], []), note, note.headSha);
       const untriaged = new Map(current ? [[key, note]] : []);
       const one = await build(tenantId, latest ? [latest] : [], new Map([...livePulls(runs)].filter(([id]) => id === key)), {
         waiting: new Map([...notes.waiting].filter(([id]) => id === key)),
@@ -344,7 +344,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     }
 
     const enabled = connected.filter((record) => repoPolicy(record).enabled);
-    const [listed, held] = await Promise.all([listingOf(member, connected), heldPulls(tenantId)]);
+    const [listed, held] = await Promise.all([listingOf(member, tenantId, connected), heldPulls(tenantId)]);
     const open = openHeads(listed, enabled, held);
     const pulls = [...open.values()].flatMap(({ repo, source, heads }) => [...heads.keys()].map((number) => ({ repo, source, number })));
     const live = livePulls(await deps.managerRuns(tenantId, pulls));
