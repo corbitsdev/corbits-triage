@@ -36,7 +36,7 @@ Set on the hub, then restart it (Settings → Code review shows the first two li
 | --- | --- |
 | `RAILWAY_SANDBOX_TOKEN` | the workspace token |
 | `RAILWAY_SANDBOX_ENVIRONMENT_ID` | the sandbox environment's id |
-| `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | the full commit hash the hub runs and the public GitHub repository holding it. Set them on the hub with each deploy ([Self-hosting](../SELF_HOST.md#railway)); Railway sets them itself only on a service it deploys from GitHub |
+| `SANDBOX_REPOSITORY`, `SANDBOX_COMMIT_SHA` | the public GitHub repository (`owner/name`) holding the hub's code and the full commit hash the hub runs. Set them with each deploy ([Self-hosting](../SELF_HOST.md#railway)). A service Railway deploys from GitHub may leave them unset: Railway's own `RAILWAY_GIT_*` values are used then, and on any other service Railway drops those names, which is why they cannot be set by hand |
 
 The hub talks to Railway's public API and exec endpoints by their fixed addresses: the Railway SDK's own variables (`RAILWAY_GRAPHQL_ENDPOINT`, `RAILWAY_TCP_PROXY_WS_ENDPOINT`, `RAILWAY_TOKEN`, `RAILWAY_API_TOKEN`, `RAILWAY_VERBOSE`) have no effect on it, so none can send the token elsewhere.
 
@@ -48,7 +48,7 @@ railway variable set --service hub RAILWAY_SANDBOX_TOKEN=<token> RAILWAY_SANDBOX
 
 ### 4. Template
 
-Nothing to do by hand. At boot the hub builds the sidecar template: Railway's standard image, Bun 1.4.2 from its official Linux x64 release archive, checked against the SHA-256 Bun publishes for it in the release's `SHASUMS256.txt` (the value in the code was checked against that file; the same Bun as the hub's image, `oven/bun:1.4.2`), the repository at `RAILWAY_GIT_COMMIT_SHA` checked out at `/app`, as in the hub's image, its dependencies installed, and oxlint for the code review's lint step. Railway caches the build by its content, so each new hub version builds once; the hub logs `railway_sidecar_template_built`, or `railway_sidecar_template_failed` with the reason. No sandbox is created before the build is done: a sidecar requested earlier waits for it, and if the hub stops waiting first, the provisioner answers `template_not_ready` and the hub tries again. A failed build is tried again by the next sidecar requested.
+Nothing to do by hand. At boot the hub builds the sidecar template: Railway's standard image, Bun 1.4.2 from its official Linux x64 release archive, checked against the SHA-256 Bun publishes for it in the release's `SHASUMS256.txt` (the value in the code was checked against that file; the same Bun as the hub's image, `oven/bun:1.4.2`), the repository at `SANDBOX_COMMIT_SHA` checked out at `/app`, as in the hub's image, its dependencies installed, and oxlint for the code review's lint step. Railway caches the build by its content, so each new hub version builds once; the hub logs `railway_sidecar_template_built`, or `railway_sidecar_template_failed` with the reason. No sandbox is created before the build is done: a sidecar requested earlier waits for it, and if the hub stops waiting first, the provisioner answers `template_not_ready` and the hub tries again. A failed build is tried again by the next sidecar requested.
 
 Railway's standard image cannot be pinned by digest: in Railway's public GraphQL schema, neither `SandboxCreateInput` nor `SandboxTemplateInput` takes a base image. The template trusts Railway for it.
 
@@ -84,7 +84,7 @@ With the variables set, the place says **Failing** with one of these reasons, al
 | `A Railway sandbox is on another machine, which cannot reach Triage at its own address` | Set `BETTER_AUTH_BASE_URL` to the hub's public address. |
 | `Triage cannot read its database's identity` | Postgres refused the hub id query; the error says why. |
 
-Without the variables the place says **Not set up**. The hub does not start when `RAILWAY_SANDBOX_TOKEN` and `RAILWAY_SANDBOX_ENVIRONMENT_ID` are not set together, or when the `RAILWAY_GIT_*` variables are missing.
+Without the variables the place says **Not set up**. The hub does not start when `RAILWAY_SANDBOX_TOKEN` and `RAILWAY_SANDBOX_ENVIRONMENT_ID` are not set together, or when `SANDBOX_REPOSITORY` and `SANDBOX_COMMIT_SHA` are missing.
 
 ## Proving it against Railway
 
