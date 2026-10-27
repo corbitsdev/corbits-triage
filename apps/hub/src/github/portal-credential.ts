@@ -3,9 +3,10 @@ import { and, eq } from "drizzle-orm";
 import { resolveCredentialByName, schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
-import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
+import { DO_GRANT_ACTION, doResource, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
 import { GITHUB_CREDENTIAL, githubAppKey, githubAppLogin, type AppKeyDeps } from "./app-key.js";
+import { triageRoleId } from "./automation.js";
 import { githubUsage } from "./github-usage.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
@@ -107,10 +108,11 @@ export async function githubAppCredential(d: PortalCredentialDeps, principalId: 
 }
 
 async function holdsTriageRole(db: DB["db"], principalId: string, tenantId: string): Promise<boolean> {
-  const { principalRole, role } = schema;
+  const roleId = await triageRoleId(db, tenantId);
+  if (!roleId) return false;
+  const { principalRole } = schema;
   const [held] = await db.select({ roleId: principalRole.roleId }).from(principalRole)
-    .innerJoin(role, eq(role.id, principalRole.roleId))
-    .where(and(eq(principalRole.principalId, principalId), eq(role.tenantId, tenantId), eq(role.name, TRIAGE_ROLE), eq(role.isSystem, true)));
+    .where(and(eq(principalRole.principalId, principalId), eq(principalRole.roleId, roleId)));
   return held !== undefined;
 }
 

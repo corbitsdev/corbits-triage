@@ -400,7 +400,7 @@ cronTicker = createCronTicker({
   onDeliveryError: function logCronDeliveryError(error, schedule) { logJson({ level: "warn", msg: "cron_delivery_failed", scheduleId: schedule.id, tenantId: schedule.tenantId, error: String(error) }); },
 });
 cronTicker.start();
-const automation = createAutomation({ db: composition.db, now });
+const automation = createAutomation({ db: composition.db });
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];

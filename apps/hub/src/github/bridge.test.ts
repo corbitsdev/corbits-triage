@@ -63,7 +63,8 @@ function stubDb(rows: Row[], config: unknown = CONNECTED_HELLO, opts: { missingT
   }
   const tx = {
     select() {
-      return { from() { return { where() { return { async for() { return tenantRows(); } }; } }; } };
+      // Unlocked, it is the pr-triage role lookup, and the workspace has none.
+      return { from() { return { where() { return Object.assign([], { async for() { return tenantRows(); } }); } }; } };
     },
     update() {
       return {

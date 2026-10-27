@@ -826,10 +826,20 @@ its review that way. Routes that read the host check the caller's `read`
 (or `use`) grant on `github` and never return a secret; routes that write
 check `use`. A pull request action of a kind triage can run also checks
 `invoke` on `triage-do:<kind>:<owner>/<name>` (the repository name in
-lowercase); the admin role holds `triage-do:*` from GitHub setup, and owners
-hold every grant. A member given the `pr-triage` role is refused every action
-until it is removed, so what triage does unattended never becomes what a person
-may do. Approving a held action checks only its kind's grant.
+lowercase). Every connect of either host (`connectTriage`,
+`apps/hub/src/github/automation.ts`) creates the `pr-triage` role when missing
+and gives the admin role `use` on the host's credentials and `triage-do:*`,
+again on each reconnect; owners hold every grant. Reading the kinds never
+creates the role: a workspace without it has no automatic kinds. Grants are
+written under an advisory lock on their holder, as stock's grant table has no
+unique index to insert against. Enabling a repository grants the role its
+enabled kinds; every write of the `corbitsTriage` namespace that switches a
+repository off or removes it deletes the role's `triage-do:<kind>:<repo>`
+grants in the same transaction, on both hosts. A member given the `pr-triage`
+role is refused every action until it is removed, so what triage does
+unattended never becomes what a person may do, and an invite into the
+`pr-triage` or `Deployer` role is refused. Approving a held action checks only
+its kind's grant.
 
 A deployment acts with the grants its source asset's creator holds, so the
 hub's publisher needs every grant the listener's chain declares from its

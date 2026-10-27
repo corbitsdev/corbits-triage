@@ -14,7 +14,8 @@ import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-meta
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { replaceVerdict } from "./github/verdict-record-store.js";
 import { mirrorOutcomesOf, summaryOf } from "./github/verdict-row.js";
-import { ensureTriageRole } from "./github/automation.js";
+import { ensureDeployerRole } from "./deployer-role.js";
+import { connectTriage, triageRoleId } from "./github/automation.js";
 import { patchCorbitsTriage, upsertConnectedRepos } from "./github/tenant-config.js";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -827,12 +828,16 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     expect(await refusal(annIn.headers, "POST", `/${annId}/resend`)).toEqual(noGrant);
     expect(await refusal(annIn.headers, "DELETE", `/${annId}`)).toEqual(noGrant);
     expect(await refusal(await signedIn(origin), "GET", "")).toEqual({ status: 403, body: { error: { code: "forbidden", message: "Not a member of this tenant" } } });
-    // Triage's own role is never offered to, or given to, a person.
-    const triageRole = await db.transaction(async function addTriageRole(tx) {
-      return ensureTriageRole(tx, tenantId, new Date());
+    // Triage's own roles are never offered to, or given to, a person.
+    const ownRoles = await db.transaction(async function addTriageRoles(tx) {
+      await connectTriage(tx, tenantId, [], new Date());
+      return [(await triageRoleId(tx, tenantId))!, await ensureDeployerRole(tx, tenantId, new Date())];
     });
-    expect((await refusal(owner, "GET", "")).body).toMatchObject({ assignableRoleIds: expect.not.arrayContaining([triageRole]) });
-    expect(await refusal({ ...owner, origin }, "POST", "", { email: emailOf("tri"), roleId: triageRole })).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
+    const offered = (await refusal(owner, "GET", "")).body as { assignableRoleIds: string[] };
+    for (const roleId of ownRoles) {
+      expect(offered.assignableRoleIds).not.toContain(roleId);
+      expect(await refusal({ ...owner, origin }, "POST", "", { email: emailOf("tri"), roleId })).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
+    }
     const malformed = await fetch(invitations, { method: "POST", headers: { ...owner, origin }, body: "{" });
     expect({ status: malformed.status, body: await malformed.json() }).toMatchObject({ status: 400, body: { error: { code: "invalid_request" } } });
     expect(await follow(annLink)).toMatchObject({ location: `${fromEmail}&error=INVALID_TOKEN` });

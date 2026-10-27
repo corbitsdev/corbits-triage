@@ -6,6 +6,7 @@ import { REPO_SOURCES, repoPolicy, repoSourceOf, type RepoPolicy, type RepoSourc
 import { asRecord, isRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
 import type { Tx } from "./admin-github-grant.js";
+import { revokeRepoKinds } from "./automation.js";
 import { failure, memberPrincipal, sourceCredentialGrant, type GrantDeps } from "./portal-credential.js";
 
 const CONFIG_KEY = "corbitsTriage";
@@ -73,9 +74,23 @@ function nsRev(ns: CorbitsTriageNs): number {
 }
 
 /**
+ * Repositories the patch switches off or removes. Grants name a repository alone, so one whose name another host's
+ * record keeps on is left out.
+ */
+function switchedOff(before: CorbitsTriageNs, after: CorbitsTriageNs): string[] {
+  const kept = new Set(repoRecords(after).map(triageStateKey));
+  const on = new Set(repoRecords(after).filter((row) => row.enabled === true).map((row) => row.name.toLowerCase()));
+  return repoRecords(before)
+    .filter((row) => (row.enabled === true || !kept.has(triageStateKey(row))) && !on.has(row.name.toLowerCase()))
+    .map((row) => row.name);
+}
+
+/**
  * Rewrites `tenant.config.corbitsTriage` under a row lock; undefined when the
  * tenant is missing. Bumps `rev` so a concurrent portal PATCH can 409 instead
  * of clobbering install writes. A patch returning undefined writes nothing.
+ * Every writer of the namespace comes through here, so a repository switched
+ * off or removed loses what triage may do on it on its own in the same write.
  */
 export async function patchCorbitsTriage(
   db: DB["db"],
@@ -89,6 +104,7 @@ export async function patchCorbitsTriage(
     const current = triageNs(existing);
     const patched = await patch(current, tx);
     if (patched === undefined) return current;
+    for (const repo of switchedOff(current, patched)) await revokeRepoKinds(tx, tenantId, repo);
     const nextNs = { ...patched, rev: nsRev(current) + 1 };
     await tx.update(schema.tenant)
       .set({ config: { ...existing, [CONFIG_KEY]: nextNs }, updatedAt: new Date() })
