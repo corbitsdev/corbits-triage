@@ -425,17 +425,7 @@ function reviewerKey({ kind, head, runId }: Reviewer): string {
 }
 
 /**
- * The claim's reviewers as the manager reports them, merged by key into those the claim holds now rather than written
- * back from its take: each it reports replaces the claim's entry of that key, and one it no longer reports is dropped.
- * One the claim does not hold is added only on the newest head, so a reviewer supersede took off mid-pass stays off.
- */
-function mergedReviewers(held: readonly Reviewer[], reported: readonly Reviewer[], newest: string | undefined): Reviewer[] {
-  const keys = new Set(held.map(reviewerKey));
-  return reported.filter((reviewer) => keys.has(reviewerKey(reviewer)) || newest === undefined || reviewer.head === newest);
-}
-
-/**
- * Closes the open pass with what it reported and merges in `reviewers`. The manager has more to do while an event is
+ * Closes the open pass with what it reported and records `reviewers`. The manager has more to do while an event is
  * pending, at once, and once more after a pass that asks to `wait`; otherwise the claim ends, and a later event or
  * reviewer result starts the next manager. A reviewer the pass gave up on past its deadline with no report is logged.
  */
@@ -443,9 +433,8 @@ export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, r
   return db.transaction(async function finishPass(tx) {
     const claim = await lockClaim(tx, tenantId, pr);
     if (!fencedTo(claim, runId)) return { outcome: "refused" };
-    const reported = ReviewerState.array()(asStored(reviewers));
-    if (reported instanceof type.errors) throw new Error(`reviewers for ${claimKey(pr)} are malformed: ${reported.summary}`);
-    const recorded = mergedReviewers(claim.reviewers, reported, await newestHead(tx, tenantId, pr));
+    const recorded = ReviewerState.array()(asStored(reviewers));
+    if (recorded instanceof type.errors) throw new Error(`reviewers for ${claimKey(pr)} are malformed: ${recorded.summary}`);
     const now = new Date();
     const closed = closing(claim, runId, now, report);
     const history = closed ? closedInto(claim.history, closed) : claim.history;
@@ -486,7 +475,7 @@ function mails(tenantId: string, pr: PullRequestRef): SQL | undefined {
 const newestFirst = sql`${managerState.state}->>'receivedAt' DESC, ${managerState.key} DESC`;
 
 /** The newest head a pull request mail named, which a live manager takes next or has taken; undefined before any. */
-export async function newestHead(tx: Tx | DB["db"], tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
+async function newestHead(tx: Tx | DB["db"], tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
   const [row] = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
     .where(mails(tenantId, pr))
     .orderBy(newestFirst)
@@ -494,19 +483,23 @@ export async function newestHead(tx: Tx | DB["db"], tenantId: string, pr: PullRe
   return row && eventOf(row.key, row.state).head;
 }
 
-/**
- * Takes off the claim each reviewer still out on a head older than the newest one a pull request mail named, which no
- * manager waits for any more, and answers them for the caller to stop.
- */
-export async function supersede(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<Reviewer[]> {
-  return db.transaction(async function superseded(tx) {
+/** The claim's reviewers still out on a head older than the newest one a pull request mail named, which no manager waits for any more. */
+export async function superseded(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<Reviewer[]> {
+  return db.transaction(async function older(tx) {
     const claim = await lockClaim(tx, tenantId, pr);
     const head = await newestHead(tx, tenantId, pr);
     if (!claim || head === undefined) return [];
-    const older = claim.reviewers.filter((reviewer) => reviewer.head !== head && reviewer.result === undefined);
-    if (older.length === 0) return [];
-    await writeClaim(tx, tenantId, pr, { ...claim, reviewers: claim.reviewers.filter((reviewer) => !older.includes(reviewer)) });
-    return older;
+    return claim.reviewers.filter((reviewer) => reviewer.head !== head && reviewer.result === undefined);
+  });
+}
+
+/** Takes the reviewer off the claim, once its run was asked to stop. */
+export async function dropReviewer(db: DB["db"], tenantId: string, pr: PullRequestRef, reviewer: Reviewer): Promise<void> {
+  await db.transaction(async function drop(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) return;
+    const key = reviewerKey(reviewer);
+    await writeClaim(tx, tenantId, pr, { ...claim, reviewers: claim.reviewers.filter((held) => reviewerKey(held) !== key) });
   });
 }
 
@@ -539,6 +532,13 @@ export async function recordOverdueWake(db: DB["db"], tenantId: string, pr: Pull
   });
 }
 
+/** The tenant's pull requests whose claim holds a reviewer with no result. */
+export async function reviewedPulls(db: DB["db"], tenantId: string): Promise<PullRequestRef[]> {
+  const rows = await db.select({ key: managerState.key }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), eq(managerState.kind, "claim"), sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)))')`));
+  return rows.map((row) => pullOf(row.key));
+}
+
 /** Each claim with a reviewer result recorded that no pass has taken, with its newest such result. */
 async function unreadResults(db: DB["db"], tenantId: string): Promise<Map<string, ManagerEvent>> {
   const rows = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
@@ -550,9 +550,9 @@ async function unreadResults(db: DB["db"], tenantId: string): Promise<Map<string
 /**
  * The tenant's pull requests whose manager has gone, with the head to wake one on: each with a reviewer result no pass
  * has taken, as when waking a manager for it failed, once the manager start grace has passed since that result, so a
- * manager its own wake deployed is not deployed again while it starts; and each whose reviewer of its newest head is past its
- * deadline with no result recorded, so a manager posts its verdict without the reviewer, unless one woken for that is
- * within its grace.
+ * manager its own wake deployed is not deployed again while it starts; and each whose reviewer of its newest head is past
+ * its deadline with no result recorded, so a manager posts its verdict without the reviewer. Either is skipped while the
+ * claim's last overdue wake is within its grace.
  */
 export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr: PullRequestRef; head: string }[]> {
   const now = new Date();
@@ -564,14 +564,14 @@ export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr
   for (const { key, state } of rows) {
     const claim = claimOf(key, state);
     const pr = pullOf(key);
-    if (claim.status === "live" && claim.runId !== undefined && !(await runGone(db, claim.runId, now))) continue;
+    if (recentlyWoken(claim, now) || (claim.status === "live" && claim.runId !== undefined && !(await runGone(db, claim.runId, now)))) continue;
     const head = await newestHead(db, tenantId, pr);
     const result = unread.get(key);
     if (result !== undefined) {
       if (now.getTime() - Date.parse(result.receivedAt) >= MANAGER_START_GRACE_MS) overdue.push({ pr, head: head ?? result.head });
       continue;
     }
-    if (recentlyWoken(claim, now) || head === undefined) continue;
+    if (head === undefined) continue;
     const pastDeadline = claim.reviewers.filter((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime());
     if (pastDeadline.length === 0) continue;
     const reported = await db.select({ key: managerState.key }).from(managerState)

@@ -22,7 +22,7 @@ A workspace's listener and a pull request's manager.
   pass on that head posts the stored review again without deploying another. A reviewer that could not be mailed,
   failed or ran past its one-hour deadline leaves the verdict to go up alone and is deployed again on the next event;
   a judge the release does not publish posts nothing. `done` stops a reviewer this run deployed that ran past its
-  deadline; the hub stops one on an older head when it records the newer head, and wakes a manager once a deadline
+  deadline; the hub stops one on an older head when it records the newer head or when `done` reports it, and wakes a manager once a deadline
   passes with no manager up. The run's last step is its only end: it stops the run once `done` ends the pull
   request's claim, take is refused because another run holds it, or the passes fail or run out.
 

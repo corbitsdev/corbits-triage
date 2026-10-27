@@ -7,7 +7,7 @@ import { APPROVE_DO_KIND, emptyPack, repoPolicy } from "@corbits/triage-contract
 import type { PullRequestToReview } from "./pull-request-reader.js";
 import { mailPayload, waitingPayload } from "./github/bridge.js";
 import { createPauseGate } from "./github/pr-workflow.js";
-import { createManagerIntake, createManagerWake, createOverdueWake } from "./manager-intake.js";
+import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { recordEvent } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -52,6 +52,15 @@ function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = p
   const mailed: { address: string; payload: unknown }[] = [];
   const logged: Record<string, unknown>[] = [];
   const cancelled: { runId: string; reason: string }[] = [];
+  const refusing = new Set<string>();
+  const { supersede, supersedeAll } = createSupersede({
+    db,
+    async cancel(_tenantId, runId, reason) {
+      if (refusing.has(runId)) throw new Error("cancel failed");
+      cancelled.push({ runId, reason });
+    },
+    log: (entry) => logged.push(entry),
+  });
   const toListener = createManagerIntake({
     db,
     listener: async () => listener,
@@ -61,13 +70,11 @@ function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = p
     async deliver(_tenantId, address, payload) {
       mailed.push({ address, payload });
     },
-    async cancel(_tenantId, runId, reason) {
-      cancelled.push({ runId, reason });
-    },
+    supersede,
     gate,
     log: (entry) => logged.push(entry),
   });
-  return { toListener, mailed, logged, cancelled };
+  return { toListener, mailed, logged, cancelled, refusing, supersedeAll };
 }
 
 async function events(db: Db): Promise<{ key: string; state: { head: string; payload: Record<string, unknown> } }[]> {
@@ -165,23 +172,34 @@ test("PostgreSQL: a reviewer's result wakes the pull request's live manager, or 
   });
 }, 60_000);
 
-test("PostgreSQL: a push stops the judge and the code review still out on the older head, once each", async () => {
+test("PostgreSQL: a push stops the judge and the code review still out on the older head, once each, and one whose stop failed stays on the claim until a reconcile pass stops it", async () => {
   await withDatabase(async function superseded(db) {
     const deadline = new Date(Date.now() + 60 * 60_000).toISOString();
     const judge = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_old", deadline };
     const review = { ...judge, kind: "code-review", runId: "run_review" };
     const current = { ...judge, head: "h2", runId: "run_current" };
     await claimManager(db, "run_old", 7, "completed", undefined, [judge, review, current]);
-    const { toListener, cancelled, logged } = stack(db, LISTENER);
+    const { toListener, cancelled, logged, refusing, supersedeAll } = stack(db, LISTENER);
+    async function held(): Promise<unknown[]> {
+      const [claim] = await db.execute<{ state: { reviewers: unknown[] } }>(sql`SELECT state FROM corbits_triage.manager_state WHERE kind = 'claim'`);
+      return claim!.state.reviewers;
+    }
+    const where = { tenantId: TENANT, source: "github", repo: RECORD.name, number: 7 };
+    refusing.add("run_review");
     expect(await toListener(TENANT, mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h2", deliveryId: "push-1" }))).toBe(true);
+    expect(cancelled).toEqual([{ runId: "run_judge", reason: "superseded by a newer head" }]);
+    expect(await held()).toEqual([review, current]);
+    expect(logged.filter((entry) => entry["msg"] === "reviewer_supersede_failed")).toEqual([{ level: "error", msg: "reviewer_supersede_failed", ...where, kind: "code-review", head: "h1", runId: "run_review", error: "Error: cancel failed" }]);
+
+    refusing.clear();
+    await supersedeAll(TENANT);
     expect(await toListener(TENANT, mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h2", deliveryId: "push-2" }))).toBe(true);
     expect(cancelled).toEqual([{ runId: "run_judge", reason: "superseded by a newer head" }, { runId: "run_review", reason: "superseded by a newer head" }]);
     expect(logged.filter((entry) => entry["msg"] === "reviewer_superseded")).toEqual([
-      { level: "info", msg: "reviewer_superseded", tenantId: TENANT, source: "github", repo: RECORD.name, number: 7, kind: "judge", head: "h1", runId: "run_judge" },
-      { level: "info", msg: "reviewer_superseded", tenantId: TENANT, source: "github", repo: RECORD.name, number: 7, kind: "code-review", head: "h1", runId: "run_review" },
+      { level: "info", msg: "reviewer_superseded", ...where, kind: "judge", head: "h1", runId: "run_judge" },
+      { level: "info", msg: "reviewer_superseded", ...where, kind: "code-review", head: "h1", runId: "run_review" },
     ]);
-    const [claim] = await db.execute<{ state: { reviewers: unknown[] } }>(sql`SELECT state FROM corbits_triage.manager_state WHERE kind = 'claim'`);
-    expect(claim!.state.reviewers).toEqual([current]);
+    expect(await held()).toEqual([current]);
   });
 }, 60_000);
 

@@ -35,7 +35,7 @@ import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
-import { createManagerIntake, createManagerWake, createOverdueWake } from "./manager-intake.js";
+import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { deploymentUp, liveListener, passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
@@ -300,6 +300,13 @@ function liveListenerOf(tenantId: string, source: RepoSource): Promise<LiveDeplo
 async function listenerAddress(tenantId: string, source: RepoSource): Promise<string | undefined> {
   return (await liveListenerOf(tenantId, source))?.address;
 }
+const { supersede, supersedeAll } = createSupersede({
+  db: composition.db,
+  async cancel(tenantId, runId, reason) {
+    await composition.workflowLifecycleService.requestCancellation(tenantId, runId, reason);
+  },
+  log: logJson,
+});
 const toListener = createManagerIntake({
   db: composition.db,
   listener: listenerAddress,
@@ -320,9 +327,7 @@ const toListener = createManagerIntake({
   deliver: function deliverOf(tenantId, address, payload) {
     return deliverToListener(tenantId, address, payload);
   },
-  async cancel(tenantId, runId, reason) {
-    await composition.workflowLifecycleService.requestCancellation(tenantId, runId, reason);
-  },
+  supersede,
   log: logJson,
 });
 const wakeManager = createManagerWake({
@@ -333,7 +338,7 @@ const wakeManager = createManagerWake({
   },
 });
 const wakeOverdue = createOverdueWake({ db: composition.db, wake: wakeManager, log: logJson });
-mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, now });
+mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede, now });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
     where: eq(schema.tenant.id, tenantId),
@@ -618,6 +623,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
   for (const tenant of await reconcileTenants()) {
     await releaseHostsOf(tenant.id);
     await watchListeners(tenant.id);
+    await supersedeAll(tenant.id);
     await wakeOverdue(tenant.id);
   }
   const outcomes: ReconcileOutcome[] = [];

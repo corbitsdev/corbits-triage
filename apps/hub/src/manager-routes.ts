@@ -75,6 +75,8 @@ export type ManagerRoutesDeps = {
   log: (entry: Record<string, unknown>) => void;
   /** Wakes the pull request's manager for a reviewer result, as a host event does; false when the workspace has no listener for the host. */
   wake: (tenantId: string, pr: PullRequestRef, head: string) => Promise<boolean>;
+  /** Stops the pull request's reviewers on a head older than its newest and takes them off the claim; never throws. */
+  supersede: (tenantId: string, pr: PullRequestRef) => Promise<void>;
 };
 
 type Reported = typeof Report.infer;
@@ -92,7 +94,7 @@ function passReport(report: Reported | undefined, posted: Record<string, unknown
   return { head: report.head, ...(request && { request }) };
 }
 
-export function createManagerRoutes({ db, requireGrant, log, wake }: ManagerRoutesDeps) {
+export function createManagerRoutes({ db, requireGrant, log, wake, supersede }: ManagerRoutesDeps) {
   const app = new Hono<RunEnv>();
   // Hono throws on a body that is not JSON; it keeps the hub's error envelope.
   app.onError(function onError(err) {
@@ -136,7 +138,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake }: ManagerRout
     DONE_PATH,
     describeRoute({
       summary: "Close the manager's pass and record its reviewers and its verdict",
-      description: `Run token only. In the same transaction, a \`report\` of a verdict the pass posted is recorded as the run's verdict on the pull request, replacing one the run recorded before, and \`approvals\` sets each approved Do's outcome on the verdicts that suggest it. A reviewer the claim recorded that ran past its deadline with no result and that \`reviewers\` no longer waits for is logged. \`more\`: an event is pending, so the manager takes again at once, or the pass asked to \`wait\` because it posted to the host or mailed a reviewer, so it takes again after waiting. \`ended\`: otherwise; the claim ended and the run should end, and a later event or reviewer result starts the next manager. ${NOT_MANAGER}`,
+      description: `Run token only. In the same transaction, a \`report\` of a verdict the pass posted is recorded as the run's verdict on the pull request, replacing one the run recorded before, and \`approvals\` sets each approved Do's outcome on the verdicts that suggest it. A reviewer the claim recorded that ran past its deadline with no result and that \`reviewers\` no longer waits for is logged. Each reviewer the claim then holds on a head older than the newest a pull request mail named, as one the pass deployed while a push arrived, is stopped and taken off the claim. \`more\`: an event is pending, so the manager takes again at once, or the pass asked to \`wait\` because it posted to the host or mailed a reviewer, so it takes again after waiting. \`ended\`: otherwise; the claim ended and the run should end, and a later event or reviewer result starts the next manager. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("Whether the manager is done", Done), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),
@@ -162,6 +164,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake }: ManagerRout
       }
       const result = await done(db, tenantId, pr, runId, reviewers, { ...(wait !== undefined && { wait }), ...(kept && { report: kept }), record: recordPass, log });
       if (result.outcome === "refused") return refused();
+      await supersede(tenantId, pr);
       return c.json(result);
     },
   );

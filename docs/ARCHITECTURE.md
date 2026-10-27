@@ -354,7 +354,8 @@ any other tenant or an unknown sender.
   while a reviewer result no pass has taken waits for it, as after the
   reviewer-result route could not wake one, once two minutes have passed
   since that result was recorded, so a manager the route's own wake deployed
-  is not deployed again while it starts. So
+  is not deployed again while it starts, and with the same hold after its
+  own overdue wake. So
   within one pass of the deadline that manager posts the verdict without the
   reviewer and the pull request needs a person. Each reviewer the manager
   records names the manager run that deployed it (`deployedBy`). Done stops a
@@ -874,11 +875,10 @@ read it, and passes the rest of the request to stock.
   workspace with no listener logs `reviewer_result_unrouted`. A wake that
   fails leaves the result recorded and nothing else, is logged as
   `reviewer_result_wake_failed`, and answers 502 `wake_failed`; the next
-  reconcile pass wakes a manager for it. Done merges the reviewers the
-  manager reports into the claim's by kind, head and run id instead of
-  writing back the list its take read: one the manager no longer reports is
-  dropped, and one the claim does not hold is added only on the newest head,
-  so a reviewer superseded mid-pass stays off the claim.
+  reconcile pass wakes a manager for it. Done records the reviewers the
+  manager reports, then the hub stops each the claim holds on a head older
+  than the newest, as one the pass deployed while a push arrived, the way
+  intake does below.
 - Pull request, waiting, held-Do approval and backlog mail goes to the
   host's listener (`apps/hub/src/manager-intake.ts`), on both hosts. Each
   pull request the mail names (a reconciler's `items`, a backlog's open pull
@@ -889,10 +889,12 @@ read it, and passes the rest of the request to stock.
   that passed, with the head's code review request when the policy turns
   code review on and the App's login on GitHub, then mails the listener the
   heads. Once it records a head, every judge or code review the claim still
-  waits on for an older head of that pull request is taken off the claim and
-  stopped through the stock run lifecycle with the hub's own authority, each
-  logged once as `reviewer_superseded`; a stop that fails is logged as
-  `reviewer_supersede_failed`. When the host's head moved past the mail's, the event goes without
+  waits on for an older head of that pull request is stopped through the
+  stock run lifecycle with the hub's own authority and then taken off the
+  claim, each logged once as `reviewer_superseded`. A stop that fails is
+  logged as `reviewer_supersede_failed` and leaves the reviewer on the claim;
+  each triage reconcile pass stops the superseded reviewers of every claim
+  again (`createSupersede`). When the host's head moved past the mail's, the event goes without
   a review request and the hub logs `code_review_head_moved`; the new head's
   own mail carries one. An event's id is the webhook's delivery id, which
   the coalescer's mail carries, so a redelivery records nothing new; any

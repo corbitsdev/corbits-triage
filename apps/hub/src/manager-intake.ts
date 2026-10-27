@@ -9,7 +9,7 @@ import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, repoSourceOf, WAITING_KIND, type RepoSource } from "@corbits/triage-contracts";
 import { reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
-import { liveManager, overduePulls, recordEvent, recordOverdueWake, supersede, type PullRequestRef } from "./manager-state.js";
+import { dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, type PullRequestRef } from "./manager-state.js";
 
 export type ManagerIntakeDeps = {
   db: DB["db"];
@@ -22,8 +22,8 @@ export type ManagerIntakeDeps = {
   /** The mail as a GitHub workspace's runs read it, naming the App's bot account. */
   withAppLogin: (tenantId: string, payload: Record<string, unknown>) => Promise<unknown>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
-  /** Stops a run through the stock run lifecycle with the hub's own authority; stopping one already ending is a no-op. */
-  cancel: (tenantId: string, runId: string, reason: string) => Promise<void>;
+  /** Stops the pull request's reviewers on a head older than its newest, as `createSupersede` does. */
+  supersede: (tenantId: string, pr: PullRequestRef) => Promise<void>;
   /** The pull request's mail as its manager takes it, or undefined when none is to be taken, as for a paused pull request. */
   gate: (tenantId: string, record: RepoRecord, number: number, request: Record<string, unknown>) => Promise<Record<string, unknown> | undefined>;
   log: (entry: Record<string, unknown>) => void;
@@ -117,6 +117,46 @@ export function createOverdueWake(deps: Pick<ManagerIntakeDeps, "db" | "log"> & 
   };
 }
 
+type SupersedeDeps = Pick<ManagerIntakeDeps, "db" | "log"> & {
+  /** Stops a run through the stock run lifecycle with the hub's own authority; stopping one already ending is a no-op. */
+  cancel: (tenantId: string, runId: string, reason: string) => Promise<void>;
+};
+
+/**
+ * Stops each reviewer a pull request's claim still waits on for a head older than its newest, then takes it off the
+ * claim. A reviewer whose stop fails is logged and stays on the claim, so the next reconcile pass, which runs this over
+ * every pull request with a reviewer out (`supersedeAll`), stops it again.
+ */
+export function createSupersede(deps: SupersedeDeps) {
+  async function supersede(tenantId: string, pr: PullRequestRef): Promise<void> {
+    const base = { tenantId, source: pr.source, repo: pr.repo, number: pr.number };
+    try {
+      for (const reviewer of await superseded(deps.db, tenantId, pr)) {
+        const entry = { ...base, kind: reviewer.kind, head: reviewer.head, runId: reviewer.runId };
+        try {
+          await deps.cancel(tenantId, reviewer.runId, "superseded by a newer head");
+          await dropReviewer(deps.db, tenantId, pr, reviewer);
+          deps.log({ level: "info", msg: "reviewer_superseded", ...entry });
+        } catch (err) {
+          deps.log({ level: "error", msg: "reviewer_supersede_failed", ...entry, error: String(err) });
+        }
+      }
+    } catch (err) {
+      deps.log({ level: "error", msg: "reviewer_supersede_failed", ...base, error: String(err) });
+    }
+  }
+
+  async function supersedeAll(tenantId: string): Promise<void> {
+    try {
+      for (const pr of await reviewedPulls(deps.db, tenantId)) await supersede(tenantId, pr);
+    } catch (err) {
+      deps.log({ level: "error", msg: "reviewer_supersede_failed", tenantId, error: String(err) });
+    }
+  }
+
+  return { supersede, supersedeAll };
+}
+
 export function createManagerIntake(deps: ManagerIntakeDeps) {
   async function recordOf(tenantId: string, repo: string, source: RepoSource): Promise<RepoRecord> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
@@ -151,19 +191,6 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     return request;
   }
 
-  /** Stops each reviewer of the pull request still out on a head older than its newest; a stop that fails is logged. */
-  async function stopSuperseded(tenantId: string, pr: PullRequestRef): Promise<void> {
-    for (const reviewer of await supersede(deps.db, tenantId, pr)) {
-      const entry = { tenantId, source: pr.source, repo: pr.repo, number: pr.number, kind: reviewer.kind, head: reviewer.head, runId: reviewer.runId };
-      try {
-        await deps.cancel(tenantId, reviewer.runId, "superseded by a newer head");
-        deps.log({ level: "info", msg: "reviewer_superseded", ...entry });
-      } catch (err) {
-        deps.log({ level: "error", msg: "reviewer_supersede_failed", ...entry, error: String(err) });
-      }
-    }
-  }
-
   /**
    * Records each pull request a mail names. One whose manager is up is mailed that run; the rest go to the listener,
    * which deploys them, including those recorded before a later one failed. True with nothing recorded when the mail
@@ -189,7 +216,7 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
         const recorded = await deps.withAppLogin(tenantId, await withReviewRequest(tenantId, record, pull));
         const pr = { source, repo, number: pull.number };
         await recordEvent(deps.db, tenantId, pr, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
-        await stopSuperseded(tenantId, pr);
+        await deps.supersede(tenantId, pr);
         if (!(await mailedLive(deps, tenantId, domain, pr))) start.push(pull);
       }
     } finally {
