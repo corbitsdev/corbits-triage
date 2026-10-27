@@ -23,7 +23,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
 | `src/hooks.ts`, `src/provider-hooks/` | `@corbits/webhooks` migrations and mount path; webhook intake for hosts other than GitHub. |
 | `src/integrations/app.ts` | The `/api/integrations/*` routes and their OpenAPI descriptions. |
-| `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role. |
+| `src/stored-policies.ts` | Archives, at start, every policy once stored as a tenant artifact. |
 | `src/audit-log.ts` | The audit list, read from what the workspace already recorded. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-versions.ts` | Lists what is deployed, the versions it runs and the hub's last roll of each host. |
@@ -34,7 +34,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/bitbucket-datacenter/` | Bitbucket Data Center connection, repository and webhook routes, payload normalizing. |
 | `src/github/bridge.ts` | GitHub webhook verification and routing; `logJson`, the hub's one JSON-line logger, passed down as `log`. |
 | `src/github/tenant-config.ts` | Reads and writes `corbitsTriage` in tenant config; checks the stock tenant patch. |
-| `src/github/policy-file.ts`, `check-pack-store.ts`, `policy-read.ts`, `policy-pull.ts` | The policy file (read again when a push touches it or a pull request merges into the default branch, and at most a minute old while the repository's webhook (the App's, on GitHub) has been silent for half an hour), the stored policy and which applies, the policy route, and the one `corbits-triage/policy` pull request. |
+| `src/github/policy-file.ts`, `repo-policy.ts`, `policy-read.ts`, `policy-pull.ts`, `policy-push.ts`, `src/bitbucket-datacenter/policy-push.ts` | The policy file (read again when a push touches it or a pull request merges into the default branch, and at most a minute old while the repository's webhook (the App's, on GitHub) has been silent for half an hour), the policy resolved from it, the policy and preview routes, the one `corbits-triage/policy` pull request, and the push straight to the default branch with each host's check of whether the branch allows it. |
 | `src/github/automation.ts` | Which action kinds triage writes unattended, from the `pr-triage` role's grants. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads through the listener. |

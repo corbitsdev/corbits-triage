@@ -93,7 +93,7 @@ Once you press **Open Repositories**, the portal takes you to Repositories, wher
 
 ## Setting up a repository: rules, verdicts and actions
 
-Every repository has its own page under **Repositories** in the menu under your name. A repository's rules, and what Triage does with each verdict, live in a file in the repository called `.corbits-triage.yml`. The page reads that file back to you. From top to bottom it holds the triage switch, **Actions Triage takes on its own**, the **Policy**, **Code review**, **Outcomes** and **Remove repository**. Switches are saved as you change them; the word beside the repository's name says **Saving…** while a change is on its way, **Saved** once it is stored, and **Not saved** if the save failed.
+Every repository has its own page under **Repositories** in the menu under your name. A repository's rules, and what Triage does with each verdict, live in a file in the repository called `.corbits-triage.yml`. The page reads that file back to you. From top to bottom it holds the triage switch, **Actions Triage takes on its own**, the **Policy**, **Code review**, **Outcomes** and **Remove repository**. The triage switch takes effect as you flip it; if it cannot, the page says **Could not switch triage** and offers **Try again**.
 
 ![The repository page for acme/gadgets beside the Repositories list: the triage switch on, then Policy with Change on GitHub and its rules read back as sentences, from Flag pull requests over 25 files changed to Never accept changes to vendor/**, node_modules/**, then Pass: Comment with the verdict, Label “Triage: Ready”, Approve, for maintainers; Fail: Comment with the verdict, Label “Triage: Not Ready”; Unsure: Comment with the verdict, Label “Triage: Needs Human Review”, Request review from code owners, and Code review below](images/06.png)
 
@@ -128,42 +128,29 @@ A few things work differently from GitHub, because Bitbucket works differently:
 
 ### Policy
 
-A repository's policy is the file `.corbits-triage.yml` (`.corbits-triage.yaml` works too) on its default branch, so changes to it are reviewed like any other code. The **Policy** section reads it back in plain sentences: each rule that is on, then what Triage does on **Pass**, **Fail** and **Unsure**. Rules and actions change only in the file. **Change on GitHub**, or **Change on Bitbucket** for a Bitbucket repository, opens it there.
+A repository's policy is the file `.corbits-triage.yml` (`.corbits-triage.yaml` works too) on its default branch, so changes to it are reviewed like any other code. The **Policy** section reads it back in plain sentences: each rule that is on, then what Triage does on **Pass**, **Fail** and **Unsure**. Rules and actions live only in the file. **Open on GitHub**, or **Open on Bitbucket** for a Bitbucket repository, opens it there, and **Edit** changes it here.
 
-- With no file and no rules saved in Triage, the section shows a **Start a policy file** card with the steps **Review**, **Open pull request**, **Merge** (**Merge on Bitbucket** for a Bitbucket repository) and **Done**. It lists the rules the file starts with: at most 30 files and 3,000 lines changed, no merge conflicts, passing CI, sensitive paths and risk, with no actions. **Open the pull request** opens one adding `.corbits-triage.yml`, or shows the one already open; change the rules there before you merge. Triage runs nothing on the repository until it is merged.
+- With no file, Triage runs nothing on the repository. The section shows a **Start a policy file** card with the steps **Review**, **Create pull request**, **Merge** (**Merge on Bitbucket** for a Bitbucket repository) and **Done**. It lists the rules the file starts with: at most 30 files and 3,000 lines changed, no merge conflicts, passing CI, sensitive paths and risk, with no actions. **Create pull request** opens one adding `.corbits-triage.yml`, or shows the one already open; change the rules there before you merge. You can also add the file to the default branch yourself. Triage starts on the repository once the file is there.
 
-  ![The Policy section for acme/widgets: Start a policy file, Triage runs nothing until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge and Done, the six starter rules with Comment with the verdict and its label on Pass, Fail and Unsure, and Open the pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
+  ![The Policy section for acme/widgets: Start a policy file, the steps Review, Create pull request, Merge and Done, the six starter rules with Comment with the verdict and its label on Pass, Fail and Unsure, and Create pull request; the Repositories list marks acme/widgets Add a policy file](images/39.png)
 
 - When a change to the file reaches the default branch, the next triage uses it. Where GitHub or Bitbucket cannot reach Triage to tell it about the change, Triage notices it within a minute.
-- If the file has a mistake, Triage runs nothing on the repository until it is fixed. The section says so and lists each problem, and Triage names the repository. A repository that still has rules saved in Triage keeps running on them instead, and its card below says **Triage can't read** the file and why.
+- If the file has a mistake, Triage runs nothing on the repository until it is fixed. The section says so and lists each problem, and Triage names the repository.
 
-#### Moving saved rules into the file
+#### Editing the file
 
-A repository set up before policy files has its rules saved in Triage. They move into the file once, through a pull request, with one card in the Policy section that walks through the steps **Review**, **Open pull request**, **Merge** (**Merge on Bitbucket** for a Bitbucket repository) and **Done**. Your saved rules keep applying until the move is done.
+**Edit** opens the file's text in the Policy section. Change it, then save it one of two ways:
 
-- **Move this repository's rules into a policy file.** The repository has saved rules and no file. **Open the pull request** opens one adding the file with your saved rules and actions. Anything a file can't hold is listed above it, one plain line each, such as "Risk stops after the merge; a policy file can't hold it."
+- **Create pull request** opens a pull request changing the file, to review and merge on GitHub or Bitbucket like any other change. Triage uses the new rules once it is merged.
+- **Push to main** (named for the repository's default branch) commits the change straight to that branch, so Triage uses it at once. It shows only when the branch lets Triage push to it: on GitHub, a branch that is not protected and has no ruleset needing a pull request or checks; on Bitbucket, a branch with no permission that keeps Triage's account from pushing. When the branch does not, the editor says why below its buttons.
 
-  ![The Policy section for acme/widgets: Move this repository's rules into a policy file, They keep working here until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge on GitHub and Done, the line Risk stops after the merge; a policy file can't hold it, and Open the pull request](images/30.png)
+Before either save, Triage reads the text as it would read the file. If the text has a mistake, the editor lists each problem and saves nothing. If the new policy lets Triage approve or merge on its own something that can let unintended code in, such as pull requests from first-time contributors or changes to CI workflows, the editor says so and waits: press **Create pull request anyway** or **Push to main anyway** to go ahead, or **Keep editing**. If someone changed the file since you opened the editor, the save is refused; close the editor with **Cancel**, open it again and redo your change. While a policy pull request is open, **Create pull request** asks you to merge or close it first.
 
-- **Your policy file differs from your saved rules.** The repository has both, and they don't do the same thing. Each difference shows the rule with its **Saved** and **File** values, the changed value marked. **Update the file to match** opens a pull request changing the file to your saved rules. **Use the file instead** keeps the file as it is and puts the saved rules away. It first asks you to confirm, with one line for each thing that will change, such as "Pull requests that change vendor/** will no longer fail." Press **Use the file** to go ahead, or **Cancel**.
+After a save the editor says **Pull request #… opened**, with **Review on GitHub**, or **Pushed to main**. **Done** closes it.
 
-  ![The Policy section for corbitsdev/corbits-code: Your policy file differs from your saved rules, the rule Never accept changes to with Saved vendor/** and node_modules/** and File node_modules/**, vendor/** marked, then Update the file to match and Use the file instead](images/29.png)
+When a repository's first policy file is merged while the page is open, the Policy section says **Done. Your rules now come from .corbits-triage.yml.** above the rules.
 
-  ![The same card after Use the file instead: Pull requests that change vendor/** will no longer fail, with Use the file and Cancel](images/31.png)
-
-- **While the pull request is open,** the card shows it as **Open, waiting for merge**, with **Review on GitHub** to read it there and **Merge** to merge it from the card. On Bitbucket, **Merge on Bitbucket** opens it there. **Update the pull request with your saved rules** brings it up to date; a second one is never opened. The card notices the merge on its own. If your file differs, **Use the file instead** is still offered.
-
-  ![The card at Merge: Pull request #2, Open, waiting for merge, a Review on GitHub link, a Merge button and the link Update the pull request with your saved rules; the Repositories list marks acme/widgets Waiting for merge](images/32.png)
-
-- **Finish moving to the policy file.** The file holds everything from your saved rules that a file can hold. What is left is shown as a difference; press **Use the file**, then confirm, to switch.
-
-  ![The card Finish moving to the policy file: The file holds everything it can, the rule Risk with a saved score question and off in the file, and Use the file](images/33.png)
-
-Once the move is done, the file alone is the policy. If the page is open when that happens, the Policy section says **Done. Your rules now come from .corbits-triage.yml.** above the rules.
-
-![The Policy section for acme/widgets after the move: Done. Your rules now come from .corbits-triage.yml, above its rules and its Pass, Fail and Unsure steps](images/34.png)
-
-The Repositories list marks each repository that still has a step to take: **Add a policy file**, **Move rules to a file**, **Rules differ from file**, **Waiting for merge** or **Switch to the file**. Triage shows the same words in one line, each repository linking to its page; repositories with no policy file yet are counted in a line of their own that links to Repositories.
+The Repositories list marks each repository that still needs a file **Add a policy file**, or **Waiting for merge** while its pull request is open. Triage shows the same words in one line, each repository linking to its page; repositories with no policy file yet are counted in a line of their own that links to Repositories.
 
 ![The Repositories list: acme/widgets and corbitsdev/corbits-code marked Waiting for merge, acme/gadgets Needs setup](images/35.png)
 
@@ -182,7 +169,7 @@ rules:
     evidence: ["#44", "#57"]
 ```
 
-A file exported before rules carried reasons keeps working as it is.
+A file written before rules carried reasons keeps working as it is.
 
 A coding agent can write the file for you with the skill in [`skills/corbits-triage-setup`](../../skills/corbits-triage-setup/SKILL.md). It looks at the repository, asks only what it can't tell, suggests the starter rules and any that fit, writes `.corbits-triage.yml` and checks it the same way Triage reads it. To use it, copy the `corbits-triage-setup` folder into your coding agent's skills folder, such as `.claude/skills/` in the repository for Claude Code or `.agents/skills/` for agents that read that path, then ask the agent to set up Corbits Triage.
 
@@ -401,9 +388,9 @@ If [Settings → Code review](#code-review-2) says **Could not read where code r
 
 ### Outcomes
 
-The **Outcomes** card shows what happened to the pull requests Triage saw, beside those closed before the repository's policy was first saved. Each side gives the median time from opening to **Merge or close**, to the **First response** from someone other than the author, to the **First approval** (approved pull requests only), and the **Longest wait** between two people's touches. **Waiting on reviewer** is the time from Triage's first verdict to the first approval, change request or merge by someone other than the author (a plain comment is not a review), so it shows only on the Triage side. Each figure is the median with its 75th percentile (**P75**) beside it, which shows how long the slower quarter of pull requests took. Above them is how many people were involved. Each side also says how many pull requests it stands on and how many are closed. Triage reads these from the host in the background, so the card appears once they are measured.
+The **Outcomes** card shows what happened to the pull requests Triage saw, beside those closed before Triage's first verdict in the repository. Each side gives the median time from opening to **Merge or close**, to the **First response** from someone other than the author, to the **First approval** (approved pull requests only), and the **Longest wait** between two people's touches. **Waiting on reviewer** is the time from Triage's first verdict to the first approval, change request or merge by someone other than the author (a plain comment is not a review), so it shows only on the Triage side. Each figure is the median with its 75th percentile (**P75**) beside it, which shows how long the slower quarter of pull requests took. Above them is how many people were involved. Each side also says how many pull requests it stands on and how many are closed. Triage reads these from the host in the background, so the card appears once they are measured.
 
-When the before-Triage side is missing, the card says why: nothing closed before Triage was switched on, there is no saved policy yet, or the host did not answer. When nothing can be read, the card says that instead: you need a credential for the host, the host did not answer (the numbers return once it does), or the repository is not connected.
+When the before-Triage side is missing, the card says why: nothing closed before Triage was switched on, Triage has given no verdict there yet, or the host did not answer. When nothing can be read, the card says that instead: you need a credential for the host, the host did not answer (the numbers return once it does), or the repository is not connected.
 
 ## Day to day: Triage
 

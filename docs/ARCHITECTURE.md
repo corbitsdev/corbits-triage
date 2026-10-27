@@ -15,8 +15,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
 ```
 
 - **Hub** (`apps/hub`): the stock Interchange hub plus one composition
-  block: `@corbits/webhooks` at `/api/hooks`, `@corbits/artifacts`,
-  `@corbits/cron`. Its generic hook route answers 404 `unknown_hook`:
+  block: `@corbits/webhooks` at `/api/hooks`, `@corbits/artifacts` (its
+  tables only; the hub mounts none of its routes), `@corbits/cron`. Its generic hook route answers 404 `unknown_hook`:
   `@corbits/webhooks` 0.3.1 fires a run without naming its sender, which the
   sender gate refuses. In the image it also serves the built portal, so one
   origin carries the portal, the API and the webhooks. Triage adds:
@@ -32,36 +32,51 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     `@corbits/common/x-hub-signature`, the scheme `@corbits/webhooks` 0.4 adds
     as `verify: "x-hub-signature"`; once the hub runs that release, the
     bridges move onto the stock hook routes.
-  - **Policy file**: every trigger mail and portal read takes a
-    repository's policy from `.corbits-triage.yml` (or `.yaml`) on its default
-    branch, naming the file and its blob sha as the source. The hub keeps each
-    read in memory, nothing stored; a push to the default branch that touches
-    the file (GitHub `push`, Bitbucket `repo:refs_changed`) reads it again,
-    and a failed read is not kept. While a repository also has a stored
-    policy and the two run differently (compared rule by rule and step by
-    step, never as text), or the file is refused, the stored policy applies;
-    once they run the same, the hub archives the stored policy. A refused file
-    with no stored policy is `invalid`, and a stored policy the hub refuses
-    is `corrupt`; for either, a pull request event or the reconciler mails the listener
-    `policyUnreadable` with the reason and no pack, so the manager marks the head
-    failed instead of triaging it, once per head. A push that leaves the policy
-    unreadable, and on Bitbucket Data Center any default branch push, triages
-    every open pull request again. Routes:
-    `GET …/policy/file` (the file and why it is refused),
+  - **Policy file**: a repository's policy is `.corbits-triage.yml` (or
+    `.yaml`) on its default branch, `extends` included, and nothing else; the
+    hub stores no policy text. Every trigger mail and portal read takes it
+    from there, naming the file and its blob sha as the source. The hub keeps
+    each read in memory; a push to the default branch that touches the file
+    (GitHub `push`, Bitbucket `repo:refs_changed`) reads it again, and a
+    failed read is not kept. A repository without a file reads `missing`: a
+    pull request event answers `needs-setup` and no manager is deployed for
+    it. A refused file is `invalid`; a pull request event or the reconciler
+    mails the listener `policyUnreadable` with the reason and no pack, so the
+    manager marks the head failed instead of triaging it, once per head. A
+    push that leaves the policy unreadable, and on Bitbucket Data Center any
+    default branch push, triages every open pull request again; a push that
+    changes the file triages them as turning triage on does. Policies once
+    stored as `check-pack/…` tenant artifacts are archived, not migrated, by
+    the first hub start after the change (`archiveStoredPolicies`, through the
+    artifact package's archive). Routes:
+    `GET …/policy/file` (the file, its text and why it is refused),
+    `POST …/policy/preview` (edited text read as the policy read would read
+    it once it is the file, merge risks included; writes nothing),
     `POST /api/integrations/policy/validate` (open, reads only its body),
-    `GET …/policy/upgrades` (`start`, `upgrade`, `differs` or `ok` per enabled
-    repository, each naming its host as `source`) and `POST …/policy/export`,
-    which opens or updates one pull request on `corbits-triage/policy`
-    writing the stored policy, or the starter policy for `start`, as a
-    schema 3 file. For a repository with no file, no stored policy and no
-    policy pull request open it can instead write a chosen `text`, refused
-    when triage would refuse it once merged, `extends` resolved.
-    `POST …/policy/patch` changes only the requested parts of the existing
-    file, so comments stay, and opens that same pull request, or adds the
-    batch to the open one's body under its title.
-    A preview returns the file before and after and writes nothing. The file,
-    export and patch routes take the repository's host as `source`; without it,
-    a name connected on both hosts is refused.
+    `GET …/policy/upgrades` (`start` or `ok` per enabled repository, each
+    naming its host as `source`) and `POST …/policy/export`, which opens one
+    pull request on `corbits-triage/policy`: without `text`, the starter
+    policy for a repository with no file (asking again answers the open
+    one); with `text`, the edited file at its own path, refused while a
+    policy pull request is open, when the file is no longer the blob `sha`
+    names, and when triage would refuse the text once merged, `extends`
+    resolved. `GET …/policy/push` asks the host whether the hub may push to
+    the default branch: on GitHub the branch must not be protected and every
+    ruleset rule on it must be one a single signed fast-forward commit
+    passes; on Bitbucket Data Center no `read-only` or `pull-request-only`
+    branch permission may apply to it unless it exempts the connected
+    account by name (unreadable permissions count as no). `POST …/policy/push`
+    writes exactly the file, at its own path, as one commit with the message
+    `chore: update the Corbits Triage policy` through the App (GitHub) or the
+    account (Bitbucket Data Center), after asking that, refused when the file
+    on the branch is no longer the blob the editor loaded; the push then
+    reaches triage as any push does. `POST …/policy/patch` changes only the
+    requested parts of the existing file, so comments stay, and opens that
+    same pull request, or adds the batch to the open one's body under its
+    title. A patch preview returns the file before and after and writes
+    nothing. The file, export, push and patch routes take the repository's
+    host as `source`; without it, a name connected on both hosts is
+    refused.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live listener for the repository's host, as the
     tenant system sender, the same path cron uses, naming the host as
@@ -727,8 +742,8 @@ eval and its numbers in
 
 ## Policy blocks
 
-A policy file that turns a block on keeps its v4 keys in the stored policy,
-and its pull request mails carry `codeReview`, `blocks` and `decide`. The
+A policy file that turns a block on keeps its v4 keys in the policy the hub
+reads, and its pull request mails carry `codeReview`, `blocks` and `decide`. The
 manager runs code review behind `rulesGate` in `triage-contracts`: under
 `rules: pass`, the hub's default unless the block's `when.rules` is `any`, the
 review stays shut unless every policy rule in the verdict's `checks` read
@@ -881,11 +896,10 @@ dismissed; an approve action a person lets through from Triage is.
 The portal saves repository settings through the stock tenant update (`PATCH
 /api/tenants/:id`), which the hub checks first. Besides tenant `manage`, it
 takes only the workspace's `automation` (`policy` or `ask`), a repository's
-`enabled` and `checkPack`, and dropping a repository. Switching a GitHub repository on needs `use` on the App
-credential; switching a Bitbucket one, or dropping it while on, is refused
-(409 `use_bitbucket_route`), since its own route also manages the webhook;
-changing the pinned policy needs `write` on the policy pinned before and
-after. Every other key keeps its stored value. The hub writes `corbitsTriage`
+`enabled`, and dropping a repository. Switching a GitHub repository on needs
+`use` on the App credential; switching a Bitbucket one, or dropping it while
+on, is refused (409 `use_bitbucket_route`), since its own route also manages
+the webhook. Every other key keeps its stored value. The hub writes `corbitsTriage`
 itself under the tenant row's lock, refusing 409 if it changed since the hub
 read it, and passes the rest of the request to stock.
 
@@ -893,26 +907,18 @@ read it, and passes the rest of the request to stock.
 
 - Interchange's own tables, artifacts and run logs hold tenants, credentials,
   deployments and runs.
-- Artifacts: the stored policy and the triage state
-  (`triage-state/{owner}/{repo}`) per repository. The stored policy is the
-  artifact the repository's record on its host pins by id (`checkPack.id`).
-  A GitHub repository's is titled `check-pack/{owner}/{repo}` and a Bitbucket
-  Data Center repository's `check-pack/bitbucket-datacenter/{owner}/{repo}`;
-  a Bitbucket Data Center policy titled the GitHub way is read by its pin
-  and retitled on its next save. The trigger mail names its title for
-  the repository's host (`policy.checkPack.name`). A GitHub repository
-  without a usable pin falls back to the newest titled
-  `check-pack/{owner}/{repo}` that a record of the same name on another host
-  does not pin; a Bitbucket Data Center repository has none. The triage
-  state holds each open head's status (`new`, `queued`, `waiting`, `running`,
-  `triaged`, `failed`, `stale`) and attempts. Each new artifact is writable
-  and archivable by its creator and the admin role.
+- Artifacts: the triage state (`triage-state/{owner}/{repo}`) per
+  repository, which the hub writes itself. It holds each open head's status
+  (`new`, `queued`, `waiting`, `running`, `triaged`, `failed`, `stale`) and
+  attempts. Policies once stored as `check-pack/…` artifacts stay archived.
+  The trigger mail still names `policy.checkPack.name` for deployments that
+  read it.
 - A policy file whose `extends` is a repository name is resolved over that
   repository's policy file (`resolvePolicy`), read through the same
   per-repository cache, at the time the policy is read: built-in rules merge
   field by field, custom rules by id (at most eight together), and `when`, each
   verdict's steps and each verdict's label come from the extending file only
-  when it sets them. A stored policy can't extend. Each trigger mail names the
+  when it sets them. Each trigger mail names the
   versions its pack was resolved from under `policy.source`;
   `policy.source.sharedFile` names the extended file and its blob. A push or
   merge to the shared repository refreshes its cache entry, so no dependent is

@@ -205,7 +205,7 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
 3. **Choose repositories on GitHub.** They arrive with triage off. Press **Open Repositories** to leave setup. Nothing runs yet.
 4. **Add a policy file.** A repository's rules and actions come only from
    `.corbits-triage.yml` on its default branch ([Policy file](PRODUCT.md#policy-file)).
-   A repository without one offers **Start a policy file**: **Open the pull
+   A repository without one offers **Start a policy file**: **Create pull
    request** and merge it.
 5. **Turn on triage.** Open the repository under Repositories and turn on
    **Triage pull requests in this repository**. When the policy has judgement rules and no model is saved,
@@ -413,9 +413,10 @@ any roll that failed.
   straight to the default branch, rather than merged in a pull request, is
   read only after a hub restart, and a pull request waiting for CI is triaged after
   the quiet time instead of seconds after CI finishes.
-- Rules saved in the portal by an earlier build keep running until they move
-  into a policy file: the repository's Policy section offers **Move this
-  repository's rules into a policy file**.
+- Rules saved in the portal by an earlier build are archived on the first
+  start of this one and no longer run: a repository runs on its
+  `.corbits-triage.yml` only. Before upgrading, move any you still need into
+  that file on an earlier build, or write the file again afterwards.
 - Earlier builds left tables the hub no longer uses; drop them if present:
   `DROP TABLE IF EXISTS corbits_triage_tenant_migration, corbits_triage_verdict_backfill, corbits_github_manifest_state;`
 - `bun run db:migrate` drops `corbits_triage.invitation`; invites still open then

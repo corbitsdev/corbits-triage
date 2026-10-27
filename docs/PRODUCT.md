@@ -373,18 +373,20 @@ rules that need no model, except ci-green, against each one.
 A push to the default branch that changes the file is read before the next
 verdict. A file Triage refuses stops triage on the repository until it is
 fixed; the portal shows each problem with its line. Score and choose rules and
-file or hunk scope are written in the stored policy's shape, which a file
-without `rules` is read in; see
+file or hunk scope are written in the older shape, which a file without
+`rules` is read in; see
 [@corbits/triage-contracts](../packages/triage-contracts/README.md).
 
-A repository without the file offers **Start a policy file**: a pull request
-adding the starter rules (at most 30 files and 3,000 lines changed, no merge
-conflicts, CI green, sensitive paths and risk; no actions). Rules saved in the portal by earlier builds
-keep running until they move into the file through a pull request the portal
-opens, and only their creator, the workspace's admins and its owners can change
-them; [the manual](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#moving-saved-rules-into-the-file)
-walks through it. Wording, reasons and evidence never count as a difference
-between the two.
+The file is the only policy: a repository without it runs no triage and offers
+**Start a policy file**, a pull request adding the starter rules (at most 30
+files and 3,000 lines changed, no merge conflicts, CI green, sensitive paths
+and risk; no actions). The portal edits the file in place and saves it as a
+pull request, or pushes it straight to the default branch where the branch's
+rules let Triage push, cautioning first when the edit lets Triage approve or
+merge risky changes on its own;
+[the manual](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#editing-the-file)
+walks through it. Rules saved in the portal by earlier builds are archived,
+not carried over.
 
 ### Shared policies
 
