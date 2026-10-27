@@ -93,6 +93,9 @@ export type GithubTokenDeps = {
   fetch?: typeof fetch;
 };
 
+/** Only the read token was refused: the write token renewed, so only `github-read` is marked failed. */
+class ReadTokenRefused extends Error {}
+
 export function createGithubTokenRenewal(deps: GithubTokenDeps) {
   const transport = { apiOrigin: deps.githubApiOrigin, ...(deps.fetch && { fetch: deps.fetch }) };
   const appFetch = createGithubAppCredentialFetch(transport);
@@ -164,10 +167,10 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
    * Keeps why a renewal failed for the portal. A token past its expiry marks the credential `expired`, which stock
    * does not resolve for a launch, so no worker is deployed with it; one with time left stays usable meanwhile.
    */
-  async function markFailed(tenantId: string, reason: string): Promise<void> {
+  async function markFailed(tenantId: string, reason: string, names: readonly string[]): Promise<void> {
     await deps.db.transaction(async function markFailure(tx) {
       await lockGithubCredentials(tx, tenantId);
-      for (const name of [GITHUB_CREDENTIAL, GITHUB_READ_CREDENTIAL]) {
+      for (const name of names) {
         const held = await lockedCredential(tx, tenantId, name);
         if (!held || held.status === "revoked") continue;
         const expired = held.expiresAt === null || held.expiresAt.getTime() <= Date.now();
@@ -181,13 +184,15 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     if (!(await store(tenantId, appJson, issued)) || !issued.token) return;
     await push(tenantId);
     deps.log({ level: "info", msg: "github_token_renewed", tenantId, expiresAt: new Date(issued.token.expiresAt).toISOString() });
+    // Thrown after the write token is pushed, so the workspace is retried early rather than at the next full pass.
+    if (issued.read && "error" in issued.read) throw new ReadTokenRefused(issued.read.error);
   }
 
   async function recorded(tenantId: string, attempt: () => Promise<void>): Promise<void> {
     try {
       await attempt();
     } catch (err) {
-      await markFailed(tenantId, errorText(err));
+      await markFailed(tenantId, errorText(err), err instanceof ReadTokenRefused ? [GITHUB_READ_CREDENTIAL] : [GITHUB_CREDENTIAL, GITHUB_READ_CREDENTIAL]);
       throw err;
     }
   }

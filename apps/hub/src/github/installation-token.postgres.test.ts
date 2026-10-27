@@ -392,11 +392,14 @@ test("PostgreSQL: code review is launched with a token that can only read the wo
     expect(await secretsOf(reviewBindingsFor(["github"]))).toEqual(["ghr_1_7_2"]);
     expect(await secretsOf(credentialBindingsFor(["github"]))).toEqual(["ghs_1_7_1"]);
 
-    // A read token GitHub let write is refused; the write token still renews, and code review waits for a good read token.
+    // A read token GitHub let write is refused, failing the renewal so it is retried early; the write token still
+    // renews without a failure, and code review waits for a good read token.
     github.hooks.widen = { pull_requests: "write" };
     await db.update(schema.credential).set({ expiresAt: new Date(Date.now() - 1000) }).where(and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github-read")));
-    await renewal.renew(TENANT);
+    await expect(renewal.renew(TENANT)).rejects.toThrow("pull_requests write");
     expect(await secretsOf(credentialBindingsFor(["github"]))).toEqual(["ghs_1_7_3"]);
+    const write = await db.query.credential.findFirst({ where: and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github")) });
+    expect(write?.metadata).not.toHaveProperty("tokenError");
     expect(await secretsOf(reviewBindingsFor(["github"]))).toBe("unresolved");
     const read = await db.query.credential.findFirst({ where: and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github-read")) });
     expect(read).toMatchObject({ status: "expired", metadata: { tokenError: expect.stringContaining("pull_requests write") } });
