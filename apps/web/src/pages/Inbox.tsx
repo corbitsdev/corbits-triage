@@ -167,7 +167,7 @@ function Byline({ item, author, detail }: { item: PrItem; author: string | null;
       {author === null ? null : <span className="who"><span className="av">{initialsOf(author)}</span><span className="nm">{author}</span></span>}
       <AuthorTag kind={item.authorKind} />
       {detail === undefined ? null : <span>opened {ageText(detail.pr.createdAt)} ago</span>}
-      {detail === undefined ? null : <span><span className="mono">+{detail.pr.additions} −{detail.pr.deletions}</span></span>}
+      {detail === undefined ? null : <span className="mono"><span className="add">+{detail.pr.additions}</span> <span className="del">−{detail.pr.deletions}</span></span>}
     </div>
   );
 }

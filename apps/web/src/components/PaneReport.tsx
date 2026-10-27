@@ -188,7 +188,7 @@ function Files({ files, changed }: { files: GithubPullDetail["files"]; changed: 
         {files.map((file) => (
           <TableRow key={file.path}>
             <TableCell className="mono path">{file.path}</TableCell>
-            <TableCell className="r mono">+{file.additions} −{file.deletions}</TableCell>
+            <TableCell className="r mono"><span className="add">+{file.additions}</span> <span className="del">−{file.deletions}</span></TableCell>
           </TableRow>
         ))}
         {changed > files.length ? <TableRow><TableCell colSpan={2}>and {changed - files.length} more</TableCell></TableRow> : null}
