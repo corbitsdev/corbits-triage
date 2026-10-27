@@ -37,7 +37,7 @@ import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { deploymentUp, liveListener, passRequest } from "./manager-state.js";
+import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
@@ -245,6 +245,9 @@ const composition = await createInterchangeHub({
   extraRunTokenRoutes: MANAGER_RUN_TOKEN_ROUTES,
 });
 const stock = composition.server;
+composition.sidecarRouter.events.on("sidecar.allocated.connected", function placed(allocation) {
+  notePlaced(allocation);
+});
 
 /** The hub's credentials, and the push that takes back from sidecars an App key a read moved to the hub. */
 const credentialDeps = {
@@ -632,6 +635,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
     await supersedeAll(tenant.id);
     await wakeOverdue(tenant.id);
   }
+  await endNeverRan(composition.db, new Date(), logJson);
   const outcomes: ReconcileOutcome[] = [];
   for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);

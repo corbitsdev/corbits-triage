@@ -95,7 +95,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     counts as live while it runs or is on its sidecar, and as starting for six
     minutes after it is deployed, longer than a roll waits for it; the
     reconciler mails the newest running listener, else the newest starting
-    one. One deployed without a sidecar past that is released, and a host
+    one. A listener on its sidecar stays deployed until its first pull request
+    arrives, so it is never ended for not running. One deployed without a
+    sidecar past that is released, and a host
     left with no live listener has its workspace rolled again. The
     workflow-versions route reports each deployment's `live` as a manager's
     is counted, which Settings reads.
@@ -326,6 +328,13 @@ any other tenant or an unknown sender.
   the claim: the next manager's take finds the run gone and claims.
   A run left deployed with no sidecar for two minutes is gone too, and its
   cancellation is requested so it does not start after the claim has moved on.
+  A run whose placement waits for a free slot on a full sidecar is not gone
+  for half an hour. A manager or judge is deployed with the mail that starts
+  it, so one still `deployed` five minutes after it reached its sidecar never
+  ran: it is gone for the claim, and each reconcile pass ends it and logs
+  `triage_deployment_never_ran` with its run id and workflow. The hub times
+  that from the sidecar's connection for the run, or from its own start for a
+  run placed before it.
   When the rules need the judge, the host's own checks have finished (or the
   hub waits for them no longer) and `release.json` publishes a judge for the
   host, a pass deploys it under `workflow:*` `create` and `read` on exactly

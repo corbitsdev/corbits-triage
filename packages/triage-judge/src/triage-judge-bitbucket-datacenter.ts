@@ -1,5 +1,4 @@
+import { TRIAGE_JUDGES } from "@corbits/triage-contracts";
 import { triageJudge } from "./triage-judge.js";
 
-export const TRIAGE_JUDGE_BITBUCKET_DATACENTER_ADDRESS = "triage-judge-bitbucket-datacenter";
-
-export const workflow = triageJudge({ id: TRIAGE_JUDGE_BITBUCKET_DATACENTER_ADDRESS });
+export const workflow = triageJudge({ id: TRIAGE_JUDGES["bitbucket-datacenter"] });
