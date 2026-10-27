@@ -138,8 +138,8 @@ export default function Layout({ children }: { children: ReactNode }) {
   const pullPage = path.startsWith("/triage/pr/") || path.startsWith("/prs/");
   const room = roomOf(path, pullPage);
   const triageActive = room === "inbox" || room === "pr";
-  // The triage list and the repositories table draw their own inset panels, so they skip the stage card. Audit does too.
-  const ownPanels = room === "inbox" || room === "repos" || room === "other";
+  // Only settings and the pull request page sit in the stage card; every other page draws its own inset panels.
+  const ownPanels = room !== "settings" && room !== "pr";
   const stageClass = room === "pr" ? "stage has-sliver" : "stage";
 
   useEffect(function markBody() {

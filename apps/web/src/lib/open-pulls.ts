@@ -242,10 +242,7 @@ export function useQueueLoadingPulse(): boolean {
 }
 
 export function openItems(items: PrItem[], handled: Handled, held: Handled): OpenItem[] {
-  return items
-    .filter((item) => !item.closed)
-    .map((item) => ({ item, handled: handledMark(held, item) ?? handledMark(handled, item) }))
-    .filter((open) => !LEAVING.has(open.handled?.kind ?? null));
+  return knownItems(items, handled, held).filter((open) => !LEAVING.has(open.handled?.kind ?? null));
 }
 
 /** Every open pull request in the queue, with the ones merged or closed here still in it until the next refresh. */

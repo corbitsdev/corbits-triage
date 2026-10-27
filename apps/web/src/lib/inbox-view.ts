@@ -265,7 +265,7 @@ export function matchesQuery(item: PrItem, query: string): boolean {
 
 export type ListView = "needs-you" | "ready" | "all-open";
 
-/** Ready, Open and All are filters on Triage. Open is the old All open list. All is every open pull request across the repositories Triage runs on. */
+/** Ready, Open and All are filters on Triage. */
 export type TriageView = ListView | "all";
 
 const VIEW_PARAM = "view";
@@ -350,7 +350,7 @@ export function needsYouCount(open: OpenItem[], enabled: ReadonlySet<string>): n
   return needsYou(open, enabled).filter((entry) => inNeedsYou(entry.item)).length;
 }
 
-/** Needs you, Ready and Open match the old lists. All is every open pull request across the repositories Triage runs on, plus any merged or closed here before the next refresh. */
+/** All is every open pull request across the repositories Triage runs on, plus any merged or closed here before the next refresh. */
 export function entriesFor(view: TriageView, open: OpenItem[], known: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
   switch (view) {
     case "needs-you":

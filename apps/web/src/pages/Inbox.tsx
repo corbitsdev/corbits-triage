@@ -95,35 +95,26 @@ type Slice = { view: TriageView; waiting: boolean; label: string };
 
 const SLICES: Slice[] = [
   { view: "needs-you", waiting: false, label: "Needs you" },
-  { view: "needs-you", waiting: true, label: "Waiting" },
+  { view: "needs-you", waiting: true, label: WAITING },
   { view: "ready", waiting: false, label: "Ready" },
   { view: "all-open", waiting: false, label: "Open" },
   { view: "all", waiting: false, label: "All" },
 ];
 
-function sliceTarget(params: URLSearchParams, slice: Slice): string {
-  const next = withTriageView(params, slice.view);
-  if (slice.waiting) next.set(WAITING_PARAM, "1");
-  else next.delete(WAITING_PARAM);
+function sliceTarget(params: URLSearchParams, view: TriageView, waiting: boolean): string {
+  const next = withTriageView(params, view);
+  if (waiting) next.set(WAITING_PARAM, "1");
   const search = next.toString();
   return search === "" ? "/" : `/?${search}`;
 }
 
-/** Needs you, Waiting, Ready, Open and All. Choosing Needs you leaves Waiting. */
-function TriageSliceButtons({ waitingCount }: { waitingCount: number }) {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const view = triageView(searchParams);
-  const waiting = view === "needs-you" && searchParams.has(WAITING_PARAM);
+type SliceButtonsProps = { view: TriageView; waiting: boolean; waitingCount: number; onShow: (view: TriageView, waiting: boolean) => void };
 
-  function showSlice(slice: Slice) {
-    navigate(sliceTarget(searchParams, slice));
-  }
-
+function SliceButtons({ view, waiting, waitingCount, onShow }: SliceButtonsProps) {
   return (
     <div className="seg" role="group" aria-label="Show">
       {SLICES.map((slice) => (
-        <button key={slice.label} type="button" aria-pressed={slice.waiting ? waiting : !waiting && view === slice.view} onClick={() => showSlice(slice)}>{slice.label}{slice.waiting && waitingCount > 0 ? <span className="n">{waitingCount}</span> : null}</button>
+        <button key={slice.label} type="button" aria-pressed={slice.waiting ? waiting : !waiting && view === slice.view} onClick={() => onShow(slice.view, slice.waiting)}>{slice.label}{slice.waiting && waitingCount > 0 ? <span className="n">{waitingCount}</span> : null}</button>
       ))}
     </div>
   );
@@ -690,12 +681,12 @@ export default function Inbox() {
     return waiting ? waitingGrouping : needsYouGrouping;
   }
 
-  function showSlice(slice: Slice) {
-    navigate(sliceTarget(searchParams, slice));
+  function showSlice(next: TriageView, nextWaiting: boolean) {
+    navigate(sliceTarget(searchParams, next, nextWaiting));
   }
 
   function toggleWaiting() {
-    showSlice({ view: "needs-you", waiting: !waiting, label: WAITING });
+    showSlice("needs-you", !waiting);
   }
 
   function groupBy(index: number) {
@@ -805,7 +796,7 @@ export default function Inbox() {
             <h1>Triage</h1>
             {openPullsUnanswered ? null : <span className="n">{flat.length}</span>}
             {view === "needs-you" && !waiting && !packsPending(packs) && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}
-            <TriageSliceButtons waitingCount={waitingEntries.length} />
+            <SliceButtons view={view} waiting={waiting} waitingCount={waitingEntries.length} onShow={showSlice} />
           </div>
           {searchable ? (
             <div className="tools">

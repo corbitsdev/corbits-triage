@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@corbits/react-ui";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@corbits/react-ui/ui/toast";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { INVITE_PATH, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { HeldInboxProvider, useSignOutAfterSending } from "./lib/held-inbox.tsx";
 import { SessionProvider, useSession } from "./lib/session.tsx";
@@ -31,18 +31,6 @@ import { legacyTriageTarget } from "./lib/inbox-view.ts";
 function LegacyListRedirect() {
   const { pathname, search } = useLocation();
   return <Navigate to={legacyTriageTarget(pathname, search) ?? "/"} replace />;
-}
-
-const TRIAGE_ROOTS = new Set(["triage", "queue", "runs", "approvals"]);
-
-/** `/:owner/:repo/:number` outranks splat routes, so the old list roots are told apart from owners here. */
-function SelectedPullRedirect() {
-  const { pathname, search } = useLocation();
-  const { owner } = useParams();
-  const legacy = legacyTriageTarget(pathname, search);
-  if (legacy !== null) return <Navigate to={legacy} replace />;
-  if (owner !== undefined && TRIAGE_ROOTS.has(owner)) return <TriageRedirect />;
-  return <Navigate to={`/pr${pathname}${search}`} replace />;
 }
 
 function TriageRedirect() {
@@ -194,7 +182,6 @@ function Gate() {
         <Route path="/settings/:tab" element={<Settings />} />
         <Route path="/" element={<Inbox />} />
         <Route path="/pr/:owner/:repo/:number" element={<Inbox />} />
-        <Route path="/:owner/:repo/:number" element={<SelectedPullRedirect />} />
         <Route path="*" element={<div className="empty">Page not found. Choose a page from the navigation.</div>} />
       </Routes>
     </Layout>

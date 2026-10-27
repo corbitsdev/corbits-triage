@@ -18,7 +18,7 @@ function policyKinds(pack: CheckPack, decide: readonly ActionKind[], source: Rep
 
 const RISK_NAMES: Record<MergeRisk, string> = { "first-timers": "pull requests from first-time contributors", "ci-config": "changes to CI workflows" };
 
-export type GrantsReading = { text: string } | { roleId: string; kinds: ActionKind[]; missing: ActionKind[]; risks: readonly MergeRisk[] | undefined };
+type GrantsReading = { text: string } | { roleId: string; kinds: ActionKind[]; missing: ActionKind[]; risks: readonly MergeRisk[] | undefined };
 
 type PolicyResult = Pick<UseQueryResult<CheckPackArtifact | null>, "isPending" | "isError" | "data">;
 

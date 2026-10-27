@@ -182,17 +182,11 @@ test("signing in without a decision model lands on Triage, with the Connect prom
   expect([...document.querySelectorAll("button")].find((button) => button.textContent?.startsWith("Waiting"))?.textContent).toBe("Waiting1");
 });
 
-test.each(["/runs/abc/def", "/triage/acme/widgets"])("%s opens Triage", (path) => {
-  renderAt(path);
+test("a pull request open on the old Ready list opens on Triage with the Ready filter", () => {
+  renderAt("/ready/acme/widgets/1");
 
-  expect(window.location.pathname).toBe("/");
+  expect(`${window.location.pathname}${window.location.search}`).toBe("/pr/acme/widgets/1?view=ready");
   expect(document.querySelector("h1")?.textContent).toBe("Triage");
-});
-
-test("an owner named like an app page keeps its pull request address", () => {
-  renderAt("/settings/a/1");
-
-  expect(window.location.pathname).toBe("/pr/settings/a/1");
 });
 
 test("Triage reads no policy when the workspace has no Triage role to allow actions to", () => {
