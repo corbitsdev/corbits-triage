@@ -832,7 +832,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),
-  policyPreview: createPolicyPreview({ preview: previewPolicy }),
+  policyPreview: createPolicyPreview({ preview: policyGrants.previewGranted }),
   policyFileRead: policyFile.fileRoute,
   policyFileExport: policyFile.exportRoute,
   policyFilePatch: policyFile.patchRoute,

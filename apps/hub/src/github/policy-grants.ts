@@ -34,6 +34,19 @@ export function createPolicyGrants(deps: PolicyGrantsDeps) {
   }
 
   /**
+   * Edited text read as triage would read it once merged, with `automatic` as the role will hold it then: under `policy`
+   * merging it grants what it uses, so the editor's merge caution is judged on those grants and not today's.
+   */
+  async function previewGranted(tenantId: string, repo: string, source: RepoSource, text: string): Promise<CheckPackRead> {
+    const read = await deps.preview(tenantId, repo, source, text);
+    if (read.status !== "ok") return read;
+    const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
+    if (automationMode(triageNs(tenant?.config)) === "ask") return read;
+    const wanted = policyKinds(read.pack, read.policyWorkflow?.decide ?? [], source);
+    return { ...read, automatic: [...new Set([...read.automatic, ...wanted])] };
+  }
+
+  /**
    * Under `ask`, the kinds a policy file holding `text` uses that the role does not hold on the repository, which wait for
    * a person once it is merged. Under `policy` none do, and a file triage would refuse runs nothing.
    */
@@ -47,5 +60,5 @@ export function createPolicyGrants(deps: PolicyGrantsDeps) {
     return waits.filter((kind) => !read.automatic.includes(kind));
   }
 
-  return { followPolicy, waitingKinds };
+  return { followPolicy, previewGranted, waitingKinds };
 }
