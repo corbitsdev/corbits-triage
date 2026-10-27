@@ -387,7 +387,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const current = requireSnapshot();
       const transport = createHubTransport();
       await removeModelKey(transport, current.workspace.tenantId, INFERENCE_PROVIDER, credentialId);
-      notify("Secret removed.");
+      notify("Decision model removed.");
       refresh();
     },
     [notify, refresh, requireSnapshot],
