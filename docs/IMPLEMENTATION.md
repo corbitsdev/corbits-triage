@@ -35,7 +35,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/bridge.ts` | GitHub webhook verification and routing; `logJson`, the hub's one JSON-line logger, passed down as `log`. |
 | `src/github/tenant-config.ts` | Reads and writes `corbitsTriage` in tenant config; checks the stock tenant patch. |
 | `src/github/policy-file.ts`, `repo-policy.ts`, `policy-read.ts`, `policy-pull.ts`, `policy-push.ts`, `src/bitbucket-datacenter/policy-push.ts` | The policy file (read again when a push touches it or a pull request merges into the default branch, and at most a minute old while the repository's webhook (the App's, on GitHub) has been silent for half an hour), the policy resolved from it, the policy and preview routes, the one `corbits-triage/policy` pull request, and the push straight to the default branch with each host's check of whether the branch allows it. |
-| `src/github/automation.ts` | Which action kinds triage writes unattended, from the `pr-triage` role's grants. |
+| `src/github/automation.ts`, `policy-grants.ts`, `admin-github-grant.ts` | Which action kinds triage writes unattended, from the `pr-triage` role's grants; the role and admin grants on each host connect; the grant writer that follows each policy read under `policy` automation; grant writes under a lock on their holder. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads through the listener. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
@@ -45,7 +45,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/manifest.ts` | GitHub App Manifest flow; setup state is an HMAC token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes. |
 | `src/github/pr-*.ts`, `held-dos.ts` | Pull request actions, details and single-PR triage; approving a held action. |
 | `src/github/github-app-credential-adapter.ts` | The hub's GitHub fetch: App JWT to installation token, cached per installation. |
-| `src/github/app-key.ts`, `installation-token.ts`, `app-connection.ts` | The hub-only App key; the `github` credential's installation token, minted and renewed on the hub and pushed to running deployments; connecting an existing App. |
+| `src/github/app-key.ts`, `installation-token.ts`, `app-connection.ts` | The hub-only App key; the `github` credential's installation token and code review's read-only `github-read` token, minted and renewed on the hub and pushed to running deployments; connecting an existing App. |
 | `src/github/source-fetch.ts` | A repository's host fetch, as the GitHub App or the Bitbucket token. |
 
 ## Portal (`apps/web`)

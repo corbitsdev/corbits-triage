@@ -41,16 +41,14 @@ How to use the portal, screen by screen, is in the
   the description, and folded rows for the linked issue, the changed files and
   the rules that passed (**Checked and fine**). A bar at the bottom offers the
   next step; merging from the portal is pinned to the commit Triage checked.
-  Without a decision model, a card at the top links to Settings → Triage to add one. After
-  a policy file is merged, a card at the top names actions the policy
-  wants that are not allowed yet.
+  Without a decision model, a card at the top links to Settings → Triage to add one.
 - **Repositories**: per repository, the triage switch and **Triage open pull
   requests again**, its policy file read back as sentences, where code review
   runs when the server has no place for it (the policy file turns code review
   on), the actions Triage takes on its own, and outcomes before and after
   Triage.
 - **Settings**: Triage (sources, policy files, the decision model key, and
-  one switch per action kind for every repository), Code review (the
+  whether Triage takes the actions each policy file names on its own), Code review (the
   provider's key and where reviews run), people and invitations, the account,
   and each host's listener version for support. Roles and grants change only through
   the hub routes.
@@ -222,13 +220,16 @@ actions:
 
 ### Which actions run on their own
 
-Actions of the kinds Triage's own `pr-triage` role holds run during triage,
-allowed per repository on its page, where one approval allows every kind its
-policy uses; the rest wait on Triage for a person whose role holds that
-kind. Turning triage on for a repository lets
-Triage post its comment and verdict label there; everything else waits until
-you allow it. Close never runs on its own on Unsure, and merge never on
-anything but Pass.
+An action runs during triage when Triage's own `pr-triage` role holds its
+kind on the repository; the rest wait on Triage for a person whose role holds
+that kind. The policy file decides what the role holds: by default Triage
+takes every action the file names, from a few minutes after triage is turned
+on, and stops taking one once it is taken out of the file. With **Take the
+actions each policy file names without asking** off in Settings → Triage,
+Triage only posts its comment and verdict label on its own, and a policy pull
+request from the portal lists the actions that will wait. Turning triage off
+for a repository takes back everything Triage did there on its own. Close
+never runs on its own on Unsure, and merge never on anything but Pass.
 
 Approve runs only on a Pass with CI green. A merge waits until CI passes on
 the head (or runs without CI only when the policy switches CI green off), and

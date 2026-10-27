@@ -25,9 +25,10 @@ is a wrapper over them.
 
 Bitbucket repositories are triaged by the `triage-listener-bitbucket-datacenter`
 listener and the managers it deploys, the same steps as on GitHub built over the
-Bitbucket tools. They bind only the `bitbucket-datacenter` credential, so
-the hub starts them once the instance is connected and the workspace has a
-decision model; a workspace with GitHub as well runs both hosts' listeners.
+Bitbucket tools. The managers, and the code review a manager deploys, bind
+the `bitbucket-datacenter` credential and no other (see [Token](#token)); the
+listener binds none. The hub starts the listener once the instance is
+connected and the workspace has a decision model; a workspace with GitHub as well runs both hosts' listeners.
 Disconnecting releases the host's listener and its managers and leaves the Bitbucket repository records disabled and disconnected, so the open pull request listing carries on with the other hosts. The webhook credential names this
 listener, and every mail carries `repoSource: "bitbucket-datacenter"`.
 
@@ -116,11 +117,13 @@ A recorded repository the token no longer sees is listed with
 
 Needs `manage` on the workspace and `use` on both credentials. Records the
 repository enabled with its default branch and creates its webhook, or keeps
-the one it created before. Enabling a repository switches on Comment, which
-also writes the verdict as the `Corbits Triage` build status, since the host
-has no labels; every other action stays off until you switch it on. Turning
-triage off and on again switches Comment back on. At each start the hub
-removes Labels and Assign grants left on Bitbucket repositories.
+the one it created before. In the same write it grants the `pr-triage` role
+Comment, which also writes the verdict as the `Corbits Triage` build status,
+since the host has no labels, then wakes the reconcile pass. Under the
+workspace's `policy` automation that pass's policy read grants the other kinds
+the policy file names, and takes back Labels and Assign, which the host lacks;
+under `ask` every other action waits for a person
+([ARCHITECTURE.md](ARCHITECTURE.md#tenancy-and-authority)).
 
 | Status | Body |
 | --- | --- |
@@ -146,7 +149,8 @@ Answered with `Cache-Control: no-store`, as is enable's `manual` answer.
 ### `POST /repositories/{project}/{slug}/disable`
 
 Needs `manage` on the workspace, and `use` on the `bitbucket-datacenter`
-credential to remove the webhook triage created. Disables the repository and
+credential to remove the webhook triage created. Disables the repository,
+taking back every grant the `pr-triage` role holds on it in the same write, and
 removes the webhook. 200 `{ "repository", "webhookLeft" }`; `webhookLeft` is
 true when the webhook could not be removed, including when the caller lacks
 `use` on the credential. 404 when no such repository is recorded.

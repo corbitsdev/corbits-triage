@@ -634,12 +634,13 @@ label off that head, so it never stands on a head not yet triaged.
    CI finishes; any other hold waits for a person.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
-`triage-do:<kind>:<owner>/<name>`) and mails them with each trigger; the run
-trusts them only from the hub's sender. The kinds are acted on later than they
+`triage-do:<kind>:<owner>/<name>`), after the grant writer has followed that
+policy read (see [Tenancy and authority](#tenancy-and-authority)), and mails
+them with each trigger; the run trusts them only from the hub's sender. The kinds are acted on later than they
 are read, so a condition checked at read time would not hold at action time:
 a conditioned allow does not count and a conditioned deny always applies. Close on Unsure, and merge on anything but Pass, are
 always held. The hub mails the policy twice: `pack` as resolved
-from the repository policy and any policy file it extends, and `checkPack`
+from the repository's policy file and any policy file it extends, and `checkPack`
 in the shape a deployment built before steps reads.
 
 A person holding the same grant approves a held action, or one the run failed
@@ -792,26 +793,32 @@ when it holds one address; otherwise every caller shares one bucket per path,
 so the hub logs `auth_client_ip_unresolved` once at start-up.
 
 A workspace is an Interchange tenant; repositories are tenant config
-(`corbitsTriage.repos`) plus a per-repository policy and triage state, both
-tenant artifacts. Runs act under the grants materialized for their deployment.
+(`corbitsTriage.repos`) plus a triage state artifact each, and each one's
+policy is its own policy file. Runs act under the grants materialized for
+their deployment.
 
 A model step gets only read tools confined to the checkout or the pull
 request's head (repo-read-tool's `read_file`, `grep` and `list`, and the
 host's `*_read_file`), never a shell, network, write or push tool, and
 `tooling/model-step-tools.test.ts` fails `bun run test` otherwise.
 
-GitHub access is the tenant credential `github` (provider `github`, stock
-`http`), bound by the listener, manager and judge to the GitHub tools and host
-actions. It holds an installation token, never the App key. Code review, which
-runs a model over the pull request's code, binds only `github-read` (same
-provider): a second token for the same installation the hub mints with
-`contents: read` and the workspace's repositories from that installation, and
-refuses to keep if GitHub answers with any other permission, so no code review
-deployment holds a token that can write. It is minted, stored, pushed and marked
-`expired` with `github`, in the same transaction under the same lock, and minted
-again when installation sync or an installation webhook changes the repositories.
-A refused read token leaves `github` renewed, keeps its reason as `tokenError` on
-`github-read`, and code review is not deployed until a good one is minted. The vault holds the App as
+Each workflow binds at most one credential per host. On GitHub the manager
+binds `github` (provider `github`, stock `http`), an installation token,
+never the App key, to its host actions (facts, mirror, execute, approvals and
+posting a review); it is the only deployed workflow that can write to GitHub.
+The listener and the judge bind no host credential, only the hub's. Code
+review, which runs a model over the pull request's code, binds only
+`github-read` (same provider): a second token for the same installation the
+hub mints with `contents: read` and the workspace's repositories from that
+installation, and refuses to keep if GitHub answers with any other
+permission, so no code review deployment holds a token that can write. It is
+minted, stored, pushed and marked `expired` with `github`, in the same
+transaction under the same lock, and minted again when installation sync or
+an installation webhook changes the repositories. A refused read token leaves
+`github` renewed, keeps its reason as `tokenError` on `github-read`, and code
+review is not deployed until a good one is minted. Bitbucket Data Center has
+no token the hub can narrow, so its manager and its code review both bind the
+workspace's one `bitbucket-datacenter` token. The vault holds the App as
 `{"appId","privateKey"}` under `github-app`, which no workflow binds, and its
 webhook secret under `github-hook`. The manifest callback and
 `PUT /api/integrations/github-app/:tenantId` write the key and the token minted
@@ -843,40 +850,65 @@ its review that way. Routes that read the host check the caller's `read`
 (or `use`) grant on `github` and never return a secret; routes that write
 check `use`. A pull request action of a kind triage can run also checks
 `invoke` on `triage-do:<kind>:<owner>/<name>` (the repository name in
-lowercase). Every connect of either host (`connectTriage`,
-`apps/hub/src/github/automation.ts`) creates the `pr-triage` role when missing
-and gives the admin role `use` on the host's credentials and `triage-do:*`,
-again on each reconnect; owners hold every grant. Reading the kinds never
-creates the role: a workspace without it has no automatic kinds. Grants are
-written under an advisory lock on their holder, as stock's grant table has no
-unique index to insert against. Enabling a repository grants the role its
-posting kinds (comment, and labels where the host has them); every write of
-the `corbitsTriage` namespace that switches a repository off or removes it
-deletes the role's `triage-do:<kind>:<repo>` grants in the same transaction,
-on both hosts.
+lowercase).
 
-The workspace's `corbitsTriage.automation` decides what else the role holds.
-Under `policy`, the default when it is absent, every successful policy read
-of an enabled repository (`readCheckPack` in `apps/hub/src/server.ts`, through
-`followPolicy` in `apps/hub/src/github/policy-grants.ts`) runs `grantWanted`
-(`automation.ts`) with `policyKinds` of the pack and its `decide` rules: under
-the role's advisory lock it inserts the missing allows and deletes the role's
-allows on `triage-do:<kind>:<repo>` for every other kind, so the same policy
-read again touches no row, and the read carries the kinds as granted. The read
-shares the tenant row's lock, so a repository switched off meanwhile is not
-granted again. A read that is invalid, corrupt or missing changes nothing.
-Switching a GitHub repository on wakes the reconcile pass, whose read grants
-the rest; switching the workspace from `ask` to `policy` takes effect on the
-next pass, which reads every enabled repository's policy. Under `ask` the hub
-writes no grant but posting, on enable, and switching from `policy` to `ask`
-takes back every kind but posting on each enabled repository in the same
-write; a policy pull request the hub opens lists the
-kinds its file uses that the role does not hold, which will wait for a
-person. A member given the `pr-triage`
-role is refused every action until it is removed, so what triage does
-unattended never becomes what a person may do, and an invite into the
-`pr-triage` or `Deployer` role is refused. Approving a held action checks only
-its kind's grant.
+Every connect of either host (`connectTriage` in
+`apps/hub/src/github/automation.ts`, run by GitHub connect, manifest
+completion and Bitbucket Data Center connect) creates the `pr-triage` system
+role when it is missing and gives the admin role `use` on the host's
+credentials and `invoke` on `triage-do:*`, again on each reconnect; owners
+hold every grant. Nothing else creates the role, so a workspace without it has
+no automatic kinds. Stock's grant table has no unique index to insert
+against, so the hub writes every grant only after looking for it under a
+transaction advisory lock on its holder (`lockHolder`,
+`apps/hub/src/github/admin-github-grant.ts`): writing one twice leaves one
+row.
+
+What the role holds on a repository is decided by the policy file and the
+workspace's `corbitsTriage.automation`, `policy` (the default when absent) or
+`ask`, never by a list in the hub:
+
+- **Enable.** Switching a repository on grants the role its posting kinds
+  (`postingKinds`: comment, and labels where the host has labels) in the
+  transaction that writes the record, through the tenant update on GitHub
+  and the enable route on Bitbucket Data Center, in either mode. Both then
+  wake the reconcile pass, whose policy read grants the rest under `policy`.
+- **Grant writer, under `policy`.** Every successful policy read of an
+  enabled repository, on both hosts and whoever asked for it (a webhook, the
+  reconciler, a backlog, Review again, the portal's policy route), is
+  followed by `followPolicy` (`apps/hub/src/github/policy-grants.ts`, called
+  from `readCheckPack` in `apps/hub/src/server.ts`). In one transaction it
+  takes a share lock on the tenant row, which every writer of the
+  `corbitsTriage` namespace locks for update, and goes on only while that
+  repository is still enabled on that host and the mode is still `policy`, so
+  a repository switched off meanwhile is not granted again. `grantWanted`
+  (`automation.ts`) then takes the role's holder lock and makes the role
+  hold exactly the kinds the host can write among `policyKinds` (every kind
+  the verdict steps and `decide` rules name, never a step `alwaysHeld` on its
+  verdict, whose grant would allow nothing) and posting: it inserts only the missing allows on
+  `triage-do:<kind>:<repo>` and deletes the role's allows there for every
+  other kind, so the same policy read again touches no row, and a kind taken
+  out of the file, or one the host lacks (Labels and Assign on Bitbucket),
+  is taken back. The read carries the kinds as granted. A `missing` or
+  `invalid` read changes nothing. Switching the workspace from `ask` to
+  `policy` writes nothing itself; the next reconcile pass reads every enabled
+  repository's policy and grants.
+- **Under `ask`** the hub writes no grant but posting on enable, and
+  switching from `policy` to `ask` takes back every kind but posting on each
+  enabled repository in the same write (`patchCorbitsTriage`). A policy pull request the hub opens lists the kinds its
+  file uses, posting aside, that the role does not hold, which will wait for
+  a person.
+- **Switch off or remove.** Every write of the namespace
+  (`patchCorbitsTriage` in `tenant-config.ts`) that switches a repository off
+  or removes it deletes the role's `triage-do` grants on it in the same
+  transaction, on both hosts, unless another host's record of the same name
+  stays on, since a grant names the repository alone. Enabling it again
+  starts from posting.
+
+A member given the `pr-triage` role is refused every action until it is
+removed, so what triage does unattended never becomes what a person may do,
+and an invite into the `pr-triage` or `Deployer` role is refused. Approving a
+held action checks only its kind's grant.
 
 A deployment acts with the grants its source asset's creator holds, so the
 hub's publisher needs every grant the listener's chain declares from its
@@ -913,9 +945,8 @@ read it, and passes the rest of the request to stock.
 - Artifacts: the triage state (`triage-state/{owner}/{repo}`) per
   repository, which the hub writes itself. It holds each open head's status
   (`new`, `queued`, `waiting`, `running`, `triaged`, `failed`, `stale`) and
-  attempts. Policies once stored as `check-pack/…` artifacts stay archived.
-  The trigger mail still names `policy.checkPack.name` for deployments that
-  read it.
+  attempts. No policy is stored (see Policy file above); the trigger mail
+  still names `policy.checkPack.name` for deployments that read it.
 - A policy file whose `extends` is a repository name is resolved over that
   repository's policy file (`resolvePolicy`), read through the same
   per-repository cache, at the time the policy is read: built-in rules merge
