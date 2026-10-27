@@ -25,7 +25,7 @@ const SIZE_RULE_IDS = Object.keys(SIZE_RULES) as SizeRuleId[];
 
 const SIMPLE_CHECKS = ["focused", "docs", "no-merge-conflicts", "ci-green", "hidden-content", "no-duplicate", "duplicates-open-pull-request"] as const satisfies readonly CatalogId[];
 
-const RuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS), max: Limit })
+export const policyRuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS), max: Limit })
   .or({ ...RULE_BASE, check: "'linked-issue'", "tracker?": type.enumerated(...ISSUE_TRACKERS.filter((tracker) => tracker !== "off")) })
   .or({ ...RULE_BASE, check: "'no-forbidden-paths'", paths: Lines })
   .or({ ...RULE_BASE, check: "'regression-risk'", "hotFileFixes?": Limit, "migrations?": Lines })
@@ -37,14 +37,14 @@ const RuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS)
   .or({ ...OWN_RULE, check: "'code-patterns'", "presets?": type.enumerated(...Object.keys(PATTERN_PRESETS)).array().atLeastLength(1), "patterns?": PatternRuleSchema.array().atLeastLength(1) })
   .or({ ...OWN_RULE, check: "'text'", fields: type.enumerated(...TEXT_FIELDS).array().atLeastLength(1), failWhen: type.enumerated(...TEXT_MATCHES), phrases: Lines });
 
-type PolicyRule = typeof RuleSchema.infer;
+type PolicyRule = typeof policyRuleSchema.infer;
 type OnFailWord = typeof OnFailWord.infer;
 
 export const policyRulesSchema = type({
   "+": "reject",
   "extends?": RepoName,
   "onFail?": OnFailWord,
-  rules: RuleSchema.array(),
+  rules: policyRuleSchema.array(),
   "actions?": { "+": "reject", "on?": type.enumerated(...POLICY_EVENTS).array().atLeastLength(1), "pass?": stepListSchema, "fail?": stepListSchema, "unsure?": stepListSchema },
   "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
   ...WORKFLOW_PROPS,

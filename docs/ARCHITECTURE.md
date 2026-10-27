@@ -55,8 +55,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     writing the stored policy, or the starter policy for `start`, as a
     schema 3 file. For a repository with no file, no stored policy and no
     policy pull request open it can instead write a chosen `text`, refused
-    when triage would refuse it once merged, `extends` resolved. The file
-    and export routes take the repository's host as `source`; without it,
+    when triage would refuse it once merged, `extends` resolved.
+    `POST …/policy/patch` changes only the requested parts of the existing
+    file, so comments stay, and opens that same pull request, or adds the
+    batch to the open one's body under its title.
+    A preview returns the file before and after and writes nothing. The file,
+    export and patch routes take the repository's host as `source`; without it,
     a name connected on both hosts is refused.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live listener for the repository's host, as the

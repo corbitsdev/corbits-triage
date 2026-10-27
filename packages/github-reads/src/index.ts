@@ -44,8 +44,13 @@ async function request(gh: GithubFetch, path: string, init?: RequestInit): Promi
     ...init,
     headers: { accept: "application/vnd.github+json", ...init?.headers },
   });
-  if (!res.ok) throw new Error(`github ${init?.method ?? "GET"} ${path} -> ${res.status} ${await errorMessage(res)}`.trimEnd());
+  if (!res.ok) throw await requestError(res, init?.method ?? "GET", path);
   return res;
+}
+
+/** The error a refused GitHub request throws, carrying its status and GitHub's reason; for a caller that sent the request itself. */
+export async function requestError(res: Response, method: string, path: string): Promise<Error> {
+  return new Error(`github ${method} ${path} -> ${res.status} ${await errorMessage(res)}`.trimEnd());
 }
 
 export async function json(gh: GithubFetch, path: string, init?: RequestInit): Promise<any> {
@@ -921,10 +926,11 @@ function base64Text(content: string): string {
   return new TextDecoder().decode(Uint8Array.from(atob(content.replace(/\s/g, "")), (char) => char.charCodeAt(0)));
 }
 
-/** A file on the default branch, or undefined when nothing is there. */
-export async function readRepoFile(gh: GithubFetch, repo: string, path: string): Promise<RepoFileRead | undefined> {
+/** A file on `ref`, the default branch when none is named, or undefined when nothing is there. */
+export async function readRepoFile(gh: GithubFetch, repo: string, path: string, ref?: string): Promise<RepoFileRead | undefined> {
   const url = `/repos/${repo}/contents/${path}`;
-  return readRepoFileResponse(await gh(url, { headers: { accept: "application/vnd.github+json" } }), url);
+  const at = ref === undefined ? url : `${url}?ref=${encodeURIComponent(ref)}`;
+  return readRepoFileResponse(await gh(at, { headers: { accept: "application/vnd.github+json" } }), url);
 }
 
 /** A contents API response for one path, read as `readRepoFile` reads it; for a caller that sent the request itself. */

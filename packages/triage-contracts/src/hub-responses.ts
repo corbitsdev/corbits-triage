@@ -274,6 +274,13 @@ const PolicyPull = type({ url: "string", number: "number", "headSha?": "string" 
 export const PolicyExported = type({ status: "'opened'" }).and(PolicyPull);
 export type PolicyExported = typeof PolicyExported.infer;
 
+/** No diff library is a dependency, so a preview is the file before the patch and the patched file. */
+export const PolicyPatchPreview = type({ before: "string", after: "string" });
+export type PolicyPatchPreview = typeof PolicyPatchPreview.infer;
+
+export const PolicyPatchResponse = PolicyPatchPreview.or(PolicyExported);
+export type PolicyPatchResponse = typeof PolicyPatchResponse.infer;
+
 /**
  * One way the file's policy runs differently from the saved one: the rule or step list, its values in each (empty is
  * off or nothing), and in plain words what changes if the file is used instead.
