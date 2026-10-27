@@ -22,11 +22,6 @@ export const FOR_NAMES = {
 
 type ForChoice = keyof typeof FOR_NAMES;
 
-/** What Triage posts with every verdict: a comment, and a label where the host has labels. */
-export function postingKinds(source: RepoSource): ActionKind[] {
-  return hostKinds(source).filter((kind) => kind === "comment" || kind === "labels");
-}
-
 /** A host without labels shows the verdict as a build status, written with the comment. */
 export function doName(source: RepoSource, kind: ActionKind): string {
   return kind === "comment" && !hostKinds(source).includes("labels") ? "Comment and build status" : DO_NAMES[kind];

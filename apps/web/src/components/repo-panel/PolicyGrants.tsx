@@ -2,11 +2,11 @@ import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, VERDICTS, type ActionKind, type CheckPack, type MergeRisk, type RepoSource } from "@corbits/triage-contracts";
+import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, postingKinds, VERDICTS, type ActionKind, type CheckPack, type MergeRisk, type RepoSource } from "@corbits/triage-contracts";
 import { findTriageRole } from "../../lib/automation-grid.ts";
 import { checkPackQuery } from "../../lib/check-packs.ts";
 import type { CheckPackArtifact, HubRole } from "../../lib/hub-api.ts";
-import { doName, postingKinds } from "../../lib/policy-view.ts";
+import { doName } from "../../lib/policy-view.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { useAllowed, useRoles, type TenantSection } from "../../lib/tenant-entities.ts";
 

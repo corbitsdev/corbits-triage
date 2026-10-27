@@ -1,5 +1,6 @@
 import { type } from "arktype";
-import { ACTION_KINDS, VERDICTS, type ActionKind, type VerdictWord } from "./check-pack.js";
+import { ACTION_KINDS, VERDICTS, type ActionKind, type CheckPack, type VerdictWord } from "./check-pack.js";
+import { kindsOf, type DecideRule } from "./policy-workflow.js";
 import type { RepoSource } from "./repo-source.js";
 
 export const DoList = type.enumerated(...VERDICTS);
@@ -31,6 +32,21 @@ export function hostKinds(source: RepoSource): ActionKind[] {
 /** Closing on an unsure verdict, and merging on anything but a pass, always waits for a person. */
 export function alwaysHeld(list: VerdictWord, kind: ActionKind): boolean {
   return (list === "unsure" && kind === "close") || (list !== "pass" && kind === "merge");
+}
+
+/** What Triage posts with every verdict: a comment, and a label where the host has labels. */
+export function postingKinds(source: RepoSource): ActionKind[] {
+  return hostKinds(source).filter((kind) => kind === "comment" || kind === "labels");
+}
+
+/**
+ * Every kind a policy has Triage do on the host: what it posts, what its decide rules and verdict steps do. A kind
+ * `alwaysHeld` on its verdict is still used; it waits for a person when it runs.
+ */
+export function policyKinds(pack: CheckPack, decide: readonly DecideRule[], source: RepoSource): ActionKind[] {
+  const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].map((step) => step.do));
+  const used = new Set<string>([...postingKinds(source), ...decide.flatMap((rule) => kindsOf(rule.do)), ...steps]);
+  return hostKinds(source).filter((kind) => used.has(kind));
 }
 
 /** `unlabel` names labels the step owns that are on the pull request and no longer apply, which it removes; `ciOptional` lets a merge go ahead on a head with no CI. */
