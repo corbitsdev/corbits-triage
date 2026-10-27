@@ -26,13 +26,14 @@ function app(appId: string, installations: number[]): App {
 }
 
 /**
- * GitHub as the hub sees it: each App's slug, installations and installation tokens, named `ghs_<appId>_<n>`, or
- * `ghr_<appId>_<n>` for one asked to be narrowed, which grants what was asked unless `widen` names more.
+ * GitHub as the hub sees it: each App's slug, installations, the repositories `listed` in them, and installation
+ * tokens, named `ghs_<appId>_<n>`, or `ghr_<appId>_<n>` for one asked to be narrowed, which grants what was asked
+ * unless `widen` names more permissions or `widenTo` another repository.
  */
 function fakeGithub(apps: App[]) {
   let minted = 0;
   const scoped: unknown[] = [];
-  const hooks = { down: false, widen: undefined as Record<string, string> | undefined, async onMint(): Promise<void> {} };
+  const hooks = { down: false, listed: [] as string[], widen: undefined as Record<string, string> | undefined, widenTo: undefined as string | undefined, async onMint(): Promise<void> {} };
   function signer(authorization: string | null): App | undefined {
     const [header, payload, signature] = (authorization ?? "").replace(/^Bearer /, "").split(".");
     if (!payload || !signature) return undefined;
@@ -43,6 +44,9 @@ function fakeGithub(apps: App[]) {
   async function github(req: Request): Promise<Response> {
     const { pathname } = new URL(req.url);
     if (hooks.down) return new Response(null, { status: 503 });
+    if (pathname === "/installation/repositories" && req.headers.get("authorization")?.startsWith("Bearer ghs_")) {
+      return Response.json({ total_count: hooks.listed.length, repositories: hooks.listed.map((full_name) => ({ full_name })) });
+    }
     const signed = signer(req.headers.get("authorization"));
     if (!signed) return new Response(null, { status: 401 });
     if (pathname === "/app") return Response.json({ slug: `app-${signed.appId}` });
@@ -56,9 +60,13 @@ function fakeGithub(apps: App[]) {
       const expires_at = new Date(Date.now() + 3_600_000).toISOString();
       const text = await req.text();
       if (text === "") return Response.json({ token: `ghs_${signed.appId}_${mint[1]}_${minted}`, expires_at });
-      const asked = JSON.parse(text) as { permissions: Record<string, string> };
+      const asked = JSON.parse(text) as { permissions: Record<string, string>; repositories: string[] };
       scoped.push(asked);
-      return Response.json({ token: `ghr_${signed.appId}_${mint[1]}_${minted}`, expires_at, permissions: { metadata: "read", ...asked.permissions, ...hooks.widen } });
+      const repositories = [...asked.repositories.map((name) => `acct-${mint[1]}/${name}`), ...(hooks.widenTo ? [hooks.widenTo] : [])];
+      return Response.json({
+        token: `ghr_${signed.appId}_${mint[1]}_${minted}`, expires_at, permissions: { metadata: "read", ...asked.permissions, ...hooks.widen },
+        repository_selection: "selected", repositories: repositories.map((full_name) => ({ name: full_name.slice(full_name.indexOf("/") + 1), full_name })),
+      });
     }
     return new Response(null, { status: 404 });
   }
@@ -372,10 +380,13 @@ test("PostgreSQL: a provider write cannot rename the App key's provider or give 
   });
 }, 120_000);
 
-test("PostgreSQL: code review is launched with a token that can only read the workspace's repositories, and one GitHub widened is never kept", async () => {
+test("PostgreSQL: code review is launched with a token that can only read the workspace's repositories GitHub still lists, one GitHub widened is never kept, and none left takes it away", async () => {
   const theApp = app("1", [7]);
   await withWorkspace([theApp], async function readToken({ db, cipher, origin, github }) {
-    await db.update(schema.tenant).set({ config: { corbitsTriage: { repos: [{ name: "acct-7/app", connected: true, enabled: true, installationId: 7 }] } } }).where(eq(schema.tenant.id, TENANT));
+    // `acct-7/old` was renamed or transferred: naming it would make GitHub refuse the whole token.
+    const repos = ["acct-7/app", "acct-7/old"].map((name) => ({ name, connected: true, enabled: true, installationId: 7 }));
+    await db.update(schema.tenant).set({ config: { corbitsTriage: { repos } } }).where(eq(schema.tenant.id, TENANT));
+    github.hooks.listed = ["acct-7/app", "acct-7/other"];
     const { router } = deliveries();
     const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
     const connect = createGithubAppConnection({ db, cipher, authorize: allowAll, githubApiOrigin: origin, renewal, onConnected() {} });
@@ -389,7 +400,7 @@ test("PostgreSQL: code review is launched with a token that can only read the wo
       const launch = await launched(bindings);
       return launch.ok ? [...new Set(launch.delivery?.materials.map((material) => material.secret))] : launch.reason.code;
     }
-    expect(await secretsOf(reviewBindingsFor(["github"]))).toEqual(["ghr_1_7_2"]);
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toEqual(["ghr_1_7_3"]);
     expect(await secretsOf(credentialBindingsFor(["github"]))).toEqual(["ghs_1_7_1"]);
 
     // A read token GitHub let write is refused, failing the renewal so it is retried early; the write token still
@@ -397,7 +408,7 @@ test("PostgreSQL: code review is launched with a token that can only read the wo
     github.hooks.widen = { pull_requests: "write" };
     await db.update(schema.credential).set({ expiresAt: new Date(Date.now() - 1000) }).where(and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github-read")));
     await expect(renewal.renew(TENANT)).rejects.toThrow("pull_requests write");
-    expect(await secretsOf(credentialBindingsFor(["github"]))).toEqual(["ghs_1_7_3"]);
+    expect(await secretsOf(credentialBindingsFor(["github"]))).toEqual(["ghs_1_7_4"]);
     const write = await db.query.credential.findFirst({ where: and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github")) });
     expect(write?.metadata).not.toHaveProperty("tokenError");
     expect(await secretsOf(reviewBindingsFor(["github"]))).toBe("unresolved");
@@ -405,7 +416,18 @@ test("PostgreSQL: code review is launched with a token that can only read the wo
     expect(read).toMatchObject({ status: "expired", metadata: { tokenError: expect.stringContaining("pull_requests write") } });
 
     github.hooks.widen = undefined;
+    github.hooks.widenTo = "acct-7/other";
+    await expect(renewal.renew(TENANT)).rejects.toThrow("acct-7/other");
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toBe("unresolved");
+
+    github.hooks.widenTo = undefined;
     await renewal.renew(TENANT);
-    expect(await secretsOf(reviewBindingsFor(["github"]))).toEqual(["ghr_1_7_6"]);
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toEqual(["ghr_1_7_9"]);
+
+    github.hooks.listed = [];
+    await renewal.renew(TENANT);
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toBe("unresolved");
+    expect(await db.query.credential.findFirst({ where: and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github-read")) })).toMatchObject({ status: "expired" });
+    expect(await secrets(db, cipher)("github-read")).toBe("");
   });
 }, 120_000);

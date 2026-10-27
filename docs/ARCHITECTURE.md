@@ -825,8 +825,15 @@ The listener and the judge bind no host credential, only the hub's. Code
 review, which runs a model over the pull request's code, binds only
 `github-read` (same provider): a second token for the same installation the
 hub mints with `contents: read` and the workspace's repositories from that
-installation, and refuses to keep if GitHub answers with any other
-permission, so no code review deployment holds a token that can write. It is
+installation that GitHub still lists in it, so a renamed or transferred
+repository is left out rather than failing the token. Past GitHub's limit
+of 500 repositories it asks for no list and reads every repository of the
+installation, still read-only. It refuses to keep a token GitHub answers
+with any other permission, a repository it did not ask for, or every
+repository when it asked for some, so no code review deployment holds a
+token that can write or reach past the workspace. With none of the
+workspace's repositories left, `github-read` is marked `expired` and its
+token blanked. It is
 minted, stored, pushed and marked `expired` with `github`, in the same
 transaction under the same lock, and minted again when installation sync or
 an installation webhook changes the repositories. A refused read token leaves
