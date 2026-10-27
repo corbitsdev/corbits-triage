@@ -321,6 +321,7 @@ Unset keeps the default shown. Durations are whole numbers ending in `s`, `m`,
 | `HUB_AGENT_GC_LOOSE_THRESHOLD` | 2048 |
 | `HUB_AGENT_GC_WARN_BYTES` | 268435456 |
 | `HUB_PROBE_TIMEOUT_MS` | 60000 |
+| `HUB_SIDECAR_REQUEST_TIMEOUT_MS` | 30000 |
 | `HUB_MAIL_HOLD_TTL_MS` | 900000 |
 | `HUB_MAIL_ACK_RETRY_INTERVAL_MS` | 30000 |
 | `HUB_MAIL_ACK_MAX_RETRIES` | 10 |
