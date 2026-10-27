@@ -31,6 +31,7 @@ import type { HeadChecksReader, OpenHeadReader } from "./tenant-open-heads.js";
 import { inFlight, waitedOut, waitsForCi, type ReconcilePolicy } from "./reconcile-plan.js";
 import { deliveryFailure, failHead, queueHead, restoreHead, waitHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
+import { createKeyedSerial } from "../keyed-serial.js";
 
 export type CoalesceWindow = { quietMs: number; maxWaitMs: number; burstMs: number };
 
@@ -130,18 +131,10 @@ function eventsOf(input: CoalescedEvent, rows: readonly PrTriageRow[]): TriageEv
   return untriaged ? ["ready", "opened"] : [input.event];
 }
 
-async function settled(work: Promise<unknown>): Promise<void> {
-  try {
-    await work;
-  } catch {
-    // The caller of `work` handles its failure; the chain only waits for it.
-  }
-}
-
 export function createCoalescer(deps: CoalescerDeps): Coalescer {
   const windows = new Map<string, Open>();
-  /** The last accept or flush of each pull request, so they never interleave. */
-  const tails = new Map<string, Promise<void>>();
+  /** Each pull request's accepts and flushes, so they never interleave. */
+  const serialized = createKeyedSerial();
   /** The head each pull request's latest new commit or opening named, kept past its window so a late event cannot move it back. */
   const newest = new Map<string, string>();
 
@@ -151,23 +144,6 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
 
   function headOf({ tenantId, record, number }: CoalescedEvent, headSha: string): QueuedHead {
     return { tenantId, repo: triageStateKey(record), number, headSha };
-  }
-
-  async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
-    const previous = tails.get(key);
-    const current = runAfter(previous, work);
-    const tail = settled(current);
-    tails.set(key, tail);
-    try {
-      return await current;
-    } finally {
-      if (tails.get(key) === tail) tails.delete(key);
-    }
-  }
-
-  async function runAfter<T>(previous: Promise<void> | undefined, work: () => Promise<T>): Promise<T> {
-    await previous;
-    return work();
   }
 
   function timer(key: string, ms: number): () => void {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bitbucketFetch } from "./client.js";
+import { BitbucketFailed, bitbucketFetch } from "./client.js";
+import { bodyWith, DescriptionNotUpdated, PolicyFileMoved } from "../github/policy-pull.js";
 import { openPolicyPull, proposePolicy } from "./policy-pull.js";
 
 const REPO = "ACME/widgets";
@@ -12,12 +13,19 @@ const pulls: Array<{ id: number; version: number; title: string; description: st
 const edits: Array<Record<string, string>> = [];
 /** Set, the next commit is followed by another caller opening the pull request first. */
 let raced: (typeof pulls)[number] | undefined;
+/** Each commit made through the browse API, newest last. */
+const log: Array<{ branch: string; id: string; message: string }> = [];
+/** How many description edits fail next. */
+let pullPutFailures = 0;
+/** Set, the policy file appears on the branch just before the next commit. */
+let appearsBeforePut: string | undefined;
 
 async function bitbucket(req: Request): Promise<Response> {
   const url = new URL(req.url);
   if (req.method === "DELETE" && url.pathname === "/rest/branch-utils/1.0/projects/ACME/repos/widgets/branches") {
     const { name } = await req.json() as { name: string };
     branches.delete(name.slice("refs/heads/".length));
+    log.splice(0, log.length, ...log.filter((row) => row.branch !== name.slice("refs/heads/".length)));
     return new Response(null, { status: 204 });
   }
   const path = url.pathname.slice(BASE.length);
@@ -34,9 +42,12 @@ async function bitbucket(req: Request): Promise<Response> {
     expect(req.headers.get("content-type")).toStartWith("multipart/form-data");
     const form = Object.fromEntries(await Promise.all([...(await req.formData()).entries()].map(async ([key, value]) => [key, typeof value === "string" ? value : await value.text()])));
     edits.push(form);
+    if (appearsBeforePut !== undefined) branches.set(form.branch!, { text: appearsBeforePut, commit: "c-appeared" });
+    appearsBeforePut = undefined;
     const from = branches.get(form.sourceBranch ?? form.branch!)!;
     if (form.sourceCommitId !== (from.text === undefined ? undefined : from.commit)) return new Response(null, { status: 409 });
     branches.set(form.branch!, { text: form.content, commit: `c${edits.length}` });
+    log.push({ branch: form.branch!, id: `c${edits.length}`, message: form.message! });
     if (raced) pulls.push(raced);
     raced = undefined;
     return Response.json({ id: `c${edits.length}` });
@@ -49,7 +60,20 @@ async function bitbucket(req: Request): Promise<Response> {
     pulls.push({ id: pulls.length + 1, version: 0, open: true, ...(await req.json() as Omit<(typeof pulls)[number], "id" | "version" | "open">) });
     return Response.json(pullJson(pulls.at(-1)!), { status: 201 });
   }
+  if (req.method === "GET" && /^\/pull-requests\/\d+\/commits$/.test(path)) {
+    const pull = pulls.find((row) => row.id === Number(path.split("/")[2]))!;
+    const all = log.filter((row) => `refs/heads/${row.branch}` === pull.fromRef.id).toReversed();
+    const start = Number(url.searchParams.get("start") ?? "0");
+    const end = start + Number(url.searchParams.get("limit") ?? "25");
+    const values = all.slice(start, end).map((row) => ({ id: row.id, message: row.message, author: { name: "triage" }, committerTimestamp: 0 }));
+    return Response.json({ values, isLastPage: end >= all.length, ...(end < all.length && { nextPageStart: end }) });
+  }
+  if (req.method === "GET" && path.startsWith("/pull-requests/")) return Response.json(pullJson(pulls.find((row) => row.id === Number(path.slice("/pull-requests/".length)))!));
   if (req.method === "PUT" && path.startsWith("/pull-requests/")) {
+    if (pullPutFailures > 0) {
+      pullPutFailures -= 1;
+      return new Response(null, { status: 502 });
+    }
     const pull = pulls.find((row) => row.id === Number(path.slice("/pull-requests/".length)))!;
     const body = await req.json() as { version: number; title: string; description: string };
     if (body.version !== pull.version) return new Response(null, { status: 409 });
@@ -60,7 +84,7 @@ async function bitbucket(req: Request): Promise<Response> {
 }
 
 function pullJson(pull: (typeof pulls)[number]) {
-  return { id: pull.id, version: pull.version, links: { self: [{ href: `https://bitbucket.test/projects/ACME/repos/widgets/pull-requests/${pull.id}` }] } };
+  return { id: pull.id, version: pull.version, title: pull.title, description: pull.description, links: { self: [{ href: `https://bitbucket.test/projects/ACME/repos/widgets/pull-requests/${pull.id}` }] } };
 }
 
 test("the Bitbucket pull request is made once from a new branch, then brought up to date in place", async () => {
@@ -80,11 +104,57 @@ test("the Bitbucket pull request is made once from a new branch, then brought up
     expect(pulls[0]!.description).toBe("second");
     expect(await openPolicyPull(bb, REPO)).toEqual(opened);
 
+    expect(await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Go }\n", title: "chore: another title", body: "appended", append: true })).toEqual(opened);
+    expect(pulls[0]!.title).toBe(change.title);
+    expect(pulls[0]!.description).toStartWith("second\n\n");
+    expect(pulls[0]!.description).toEndWith("\nappended");
+    const appended = pulls[0]!.description;
+    await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Go }\n", body: "unchanged", append: true });
+    expect(pulls[0]!.description).toBe(appended);
+    await expect(proposePolicy(bb, REPO, "main", { ...change, text: "rules: [] # stale\n", body: "stale", append: true, readSha: "c1" })).rejects.toBeInstanceOf(PolicyFileMoved);
+    expect(pulls[0]!.description).toBe(appended);
+
+    // A description edit that keeps failing names the commit that landed, and the next batch adds its section.
+    pullPutFailures = 4;
+    const lost = proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Lost }\n", body: "lost", append: true });
+    await expect(lost).rejects.toBeInstanceOf(DescriptionNotUpdated);
+    await expect(lost).rejects.toMatchObject({ commit: log.at(-1)!.id });
+    expect(pulls[0]!.description).not.toContain("lost");
+    await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Found }\n", body: "found", append: true });
+    expect(pulls[0]!.description).toStartWith(appended);
+    expect(pulls[0]!.description).toMatch(/\nlost\n[\s\S]*\nfound$/);
+
+    // An export's refused edit is Bitbucket's refusal, sent once and not retried.
+    pullPutFailures = 1;
+    await expect(proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Export }\n", body: "export" })).rejects.toBeInstanceOf(BitbucketFailed);
+    expect(pullPutFailures).toBe(0);
+
+    // A file that appears on a branch read without one is a moved file.
+    branches.set("corbits-triage/policy", { commit: branches.get("corbits-triage/policy")!.commit });
+    appearsBeforePut = "rules: []\n";
+    await expect(proposePolicy(bb, REPO, "main", { ...change, text: "rules: [] # new\n", body: "new", append: true, readSha: null })).rejects.toBeInstanceOf(PolicyFileMoved);
+
+    // An export over a description holding batch sections keeps them and adds its own, so the next batch adds none back.
+    await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Kept }\n", body: "kept", append: true });
+    await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Exported }\n", body: "exported" });
+    expect(pulls[0]!.description).toContain("\nkept\n");
+    expect(pulls[0]!.description).toEndWith("\nexported");
+    await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: After }\n", body: "after", append: true });
+    expect(pulls[0]!.description.split("\nkept\n")).toHaveLength(2);
+    expect(pulls[0]!.description.split("\nlost\n")).toHaveLength(2);
+
+    // A lost section older than the newest hundred commits is found on a later page.
+    const older = Array.from({ length: 101 }, (_, at) => ({ branch: "corbits-triage/policy", id: `x${at + 1}`, message: `${change.title}\n\nolder ${at + 1}` }));
+    log.unshift(...older);
+    pulls[0]!.description = bodyWith(pulls[0]!.description, older.slice(1).map((row) => ({ commit: row.id, text: row.message.slice(change.title.length + 2) })));
+    await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Paged }\n", body: "paged", append: true });
+    expect(pulls[0]!.description).toContain("(corbits-triage added x1)\n\nolder 1\n");
+
     // Merged and left behind, the branch starts over from main for the next pull request.
     pulls[0]!.open = false;
     branches.set("main", { text: "rules: []\nlabels: { pass: Ready }\n", commit: "c9" });
     expect(await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\n", body: "third" })).toMatchObject({ number: 2 });
-    expect(edits[2]).toEqual({ content: "rules: []\n", message: change.title, branch: "corbits-triage/policy", sourceBranch: "main", sourceCommitId: "c9" });
+    expect(edits.at(-1)).toEqual({ content: "rules: []\n", message: change.title, branch: "corbits-triage/policy", sourceBranch: "main", sourceCommitId: "c9" });
 
     // Another caller opening it between the check and the create is answered with theirs.
     pulls[1]!.open = false;

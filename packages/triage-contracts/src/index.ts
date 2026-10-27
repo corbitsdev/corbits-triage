@@ -27,6 +27,7 @@ export * from "./stage-result.js";
 export * from "./listener.js";
 export * from "./rules-gate.js";
 export * from "./policy-export.js";
+export * from "./policy-patch.js";
 export * from "./code-patterns.js";
 export * from "./visible-text.js";
 export * from "./workflow-release.js";
