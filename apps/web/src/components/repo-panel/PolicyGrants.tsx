@@ -27,10 +27,10 @@ export function readGrants(policy: PolicyResult, roles: TenantSection<HubRole>, 
   if (policy.isError) return { text: "Could not read what Triage may do here, so it asks before every action." };
   const found = policy.data;
   if (found?.kind !== "file" && found?.kind !== "pack") return { text: "This repository has no policy to allow, so Triage asks before every action." };
-  if (!found.automatic || roles.unavailable || roles.denied) return { text: "Could not read what Triage may do here, so it asks before every action." };
+  if (!found.automatic || !found.decide || roles.unavailable || roles.denied) return { text: "Could not read what Triage may do here, so it asks before every action." };
   const triage = findTriageRole(roles.rows);
   if (!triage) return { text: "This workspace has no Triage role, so Triage asks before every action." };
-  const kinds = policyKinds(found.pack, found.decide ?? [], source);
+  const kinds = policyKinds(found.pack, found.decide, source);
   return { roleId: triage.id, kinds, missing: kinds.filter((kind) => !found.automatic?.includes(kind)), risks: found.mergeRisks };
 }
 
