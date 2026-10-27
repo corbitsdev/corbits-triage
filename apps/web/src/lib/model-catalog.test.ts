@@ -68,7 +68,7 @@ describe("reconcileModelCatalog", () => {
 const ACCESS: MemberAccess = { kind: "member", workspace: { tenantId: "t", principalId: "p", userId: "u" }, workspaces: [], invitations: [] };
 
 async function savedModel(transport: Transport) {
-  return (await loadPortal(transport, ACCESS, async () => false)).decisionModel;
+  return (await loadPortal(transport, ACCESS)).decisionModel;
 }
 
 describe("saveInference", () => {
@@ -98,7 +98,7 @@ describe("saveInference", () => {
 describe("loadPortal", () => {
   test("a failed code review place read leaves the other sections loaded", async () => {
     const hub = fakeHub(["anthropic"], new ApiError(500, "internal", "The hub could not list the places."));
-    const snapshot = await loadPortal(hub.transport, ACCESS, async () => false);
+    const snapshot = await loadPortal(hub.transport, ACCESS);
 
     expect(snapshot).toMatchObject({ tenantName: "Acme", credentials: [{ name: "anthropic" }], codeReviewPlaceError: "The hub could not list the places." });
     expect(snapshot.codeReviewPlace).toBeUndefined();

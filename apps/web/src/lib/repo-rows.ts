@@ -2,7 +2,7 @@ import { REPO_SOURCES, repoPolicy, repoSourceOf, type RepoSource } from "@corbit
 import type { PackState } from "./check-packs.ts";
 import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
-import { hasRuleOn } from "./pack-draft.ts";
+import { hasRuleOn } from "./pack-rules.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
 

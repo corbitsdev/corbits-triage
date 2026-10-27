@@ -18,7 +18,13 @@ function policyKinds(pack: CheckPack, decide: readonly ActionKind[], source: Rep
 
 const RISK_NAMES: Record<MergeRisk, string> = { "first-timers": "pull requests from first-time contributors", "ci-config": "changes to CI workflows" };
 
-type GrantsReading = { text: string } | { roleId: string; kinds: ActionKind[]; missing: ActionKind[]; risks: readonly MergeRisk[] | undefined };
+type GrantsReading = { text: string } | { roleId: string; kinds: ActionKind[]; missing: ActionKind[]; risks: readonly MergeRisk[] };
+
+/** What Triage approving or merging on its own can let in; the risks name GitHub's author associations and workflow paths. */
+export function MergeCaution({ source, risks }: { source: RepoSource; risks: readonly MergeRisk[] }) {
+  if (source !== "github" || risks.length === 0) return null;
+  return <div className="sentence"><span className="txt">Triage approves or merges on its own, which can let unintended code in: {risks.map((risk) => RISK_NAMES[risk]).join(", ")}.</span></div>;
+}
 
 type PolicyResult = Pick<UseQueryResult<CheckPackArtifact | null>, "isPending" | "isError" | "data">;
 
@@ -26,12 +32,12 @@ export function readGrants(policy: PolicyResult, roles: TenantSection<HubRole>, 
   if (policy.isPending || roles.loading) return { text: "Checking what Triage may do here…" };
   if (policy.isError) return { text: "Could not read what Triage may do here, so it asks before every action." };
   const found = policy.data;
-  if (found?.kind !== "file" && found?.kind !== "pack") return { text: "This repository has no policy to allow, so Triage asks before every action." };
-  if (!found.automatic || !found.decide || roles.unavailable || roles.denied) return { text: "Could not read what Triage may do here, so it asks before every action." };
+  if (found?.kind !== "file") return { text: "This repository has no policy to allow, so Triage asks before every action." };
+  if (roles.unavailable || roles.denied) return { text: "Could not read what Triage may do here, so it asks before every action." };
   const triage = findTriageRole(roles.rows);
   if (!triage) return { text: "This workspace has no Triage role, so Triage asks before every action." };
   const kinds = policyKinds(found.pack, found.decide, source);
-  return { roleId: triage.id, kinds, missing: kinds.filter((kind) => !found.automatic?.includes(kind)), risks: found.mergeRisks };
+  return { roleId: triage.id, kinds, missing: kinds.filter((kind) => !found.automatic.includes(kind)), risks: found.mergeRisks };
 }
 
 export function missesGrants(reading: GrantsReading): boolean {
@@ -70,14 +76,9 @@ export function GrantsCard({ repo, source, disabled, reading, listIndex }: Grant
     return <div className="sentence">{text}</div>;
   }
 
-  function caution(risks: readonly MergeRisk[] | undefined) {
-    if (source !== "github" || !risks?.length) return null;
-    return sentence(<span className="txt">Triage approves or merges on its own, which can let unintended code in: {risks.map((risk) => RISK_NAMES[risk]).join(", ")}.</span>);
-  }
-
   function body() {
     if ("text" in reading) return sentence(<span className="txt">{reading.text}</span>);
-    if (reading.missing.length === 0) return <>{sentence(<span className="txt">Triage does these on its own: {names(reading.kinds)}.</span>)}{caution(reading.risks)}</>;
+    if (reading.missing.length === 0) return <>{sentence(<span className="txt">Triage does these on its own: {names(reading.kinds)}.</span>)}<MergeCaution source={source} risks={reading.risks} /></>;
     const { roleId, missing } = reading;
     return (
       <>
@@ -87,7 +88,7 @@ export function GrantsCard({ repo, source, disabled, reading, listIndex }: Grant
             <Button type="button" size="sm" disabled={disabled || !canCreate || allow.isPending} onClick={() => allow.mutate({ roleId, kinds: missing })}>{allow.isPending ? "Allowing…" : "Allow"}</Button>
           </>,
         )}
-        {caution(reading.risks)}
+        <MergeCaution source={source} risks={reading.risks} />
       </>
     );
   }

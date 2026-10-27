@@ -17,7 +17,7 @@ import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
-import { useHubRepoPackStore } from "../lib/repo-pack.ts";
+import { createHubTransport } from "../lib/hub-transport.ts";
 import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { relativeTime } from "../lib/triage-view.ts";
@@ -41,7 +41,6 @@ function sourcesNote(accounts: string[], fromBitbucket: boolean): string {
 function checksLabel(state: PackState | undefined): string {
   if (!state || state.pending) return "";
   if (state.error) return "Could not read";
-  if (state.found?.kind === "corrupt") return "Unreadable";
   if (state.found?.kind === "invalid") return "Policy file refused";
   return state.found ? `${plural(enabledCheckCount(state.found.pack), "rule")} on` : "Not set up";
 }
@@ -59,7 +58,10 @@ function isPlainClick(event: MouseEvent): boolean {
 
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
-  const packStore = useHubRepoPackStore();
+  const tenantId = snapshot?.workspace.tenantId;
+  const stats = useMemo(function statsReader() {
+    return tenantId ? { tenantId, transport: createHubTransport() } : null;
+  }, [tenantId]);
   const verdicts = useTriageVerdicts();
   const navigate = useNavigate();
   const params = useParams();
@@ -208,7 +210,7 @@ export default function Repositories() {
           )}
         </main>
       </section>
-      {selectedConfig && selectedRow ? <RepoPanel key={selectedRow.href} repo={selectedConfig} row={selectedRow} live={!loading && !packs.get(selectedRow.name)?.pending} store={packStore} onClose={closePanel} /> : null}
+      {selectedConfig && selectedRow ? <RepoPanel key={selectedRow.href} repo={selectedConfig} row={selectedRow} live={!loading && !packs.get(selectedRow.name)?.pending} stats={stats} onClose={closePanel} /> : null}
     </div>
   );
 }

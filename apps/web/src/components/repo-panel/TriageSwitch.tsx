@@ -3,14 +3,13 @@ import { Link } from "react-router-dom";
 import { Switch } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { usePortal } from "../../lib/portal.tsx";
-import type { RepoPack } from "../../lib/repo-pack.ts";
 
 type TriageSwitchProps = {
   repo: string;
   enabled: boolean;
   triaging: boolean;
   disabled: boolean;
-  edit: RepoPack["edit"];
+  onSwitch: (enabled: boolean) => void;
   /** Whether a rule is switched on; triage runs without one, but triggers nothing. */
   ruleOn: boolean;
   /** Whether the policy has a judgement rule. With no saved model, the switch says so. */
@@ -28,7 +27,7 @@ function ModelGap({ show }: { show: boolean }) {
   );
 }
 
-export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, ruleOn, needsModel, rerunnable }: TriageSwitchProps) {
+export default function TriageSwitch({ repo, enabled, triaging, disabled, onSwitch, ruleOn, needsModel, rerunnable }: TriageSwitchProps) {
   const { snapshot, runBacklog } = usePortal();
   const [rerunError, setRerunError] = useState("");
   const switchId = useId();
@@ -40,10 +39,6 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
     } catch (cause) {
       setRerunError(`Could not triage again. ${errorText(cause)}`);
     }
-  }
-
-  function setEnabled(next: boolean) {
-    edit((current) => ({ ...current, policy: { ...current.policy, enabled: next } }));
   }
 
   function hint() {
@@ -59,7 +54,7 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
           <label htmlFor={switchId}>Triage pull requests in this repository</label>
           {hint()}
         </div>
-        <Switch id={switchId} className="sw lg" checked={enabled} onCheckedChange={setEnabled} label="Triage pull requests in this repository" disabled={disabled} />
+        <Switch id={switchId} className="sw lg" checked={enabled} onCheckedChange={onSwitch} label="Triage pull requests in this repository" disabled={disabled} />
       </div>
       <ModelGap show={needsModel && snapshot?.decisionModel === undefined} />
       {triaging && !ruleOn ? <p className="help" role="status">Triage is on. It starts once the policy has a rule.</p> : null}

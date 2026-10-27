@@ -6,8 +6,7 @@ import type { RepoSource, TriageStats } from "@corbits/triage-contracts";
 import OutcomesCard from "../components/repo-panel/OutcomesCard.tsx";
 import { fakeHub } from "./fake-hub.ts";
 import { isPersistedQuery } from "./persisted-queries.ts";
-import { transportRepoPackStore, type RepoPackStore } from "./repo-pack-store.ts";
-import { repoStatsQuery, useRepoStats } from "./repo-stats.ts";
+import { repoStatsQuery, useRepoStats, type StatsReader } from "./repo-stats.ts";
 
 const REPO = "o/r";
 const STATS: TriageStats = {
@@ -34,12 +33,12 @@ const STATS: TriageStats = {
   daily: [0, 1, 0, 2, 0, 0, 2].map((triaged, i) => ({ date: `2026-10-0${i + 1}`, triaged })),
 };
 
-function Panel({ store }: { store: RepoPackStore }) {
+function Panel({ store }: { store: StatsReader }) {
   const stats = useRepoStats(store, REPO);
   return stats ? createElement(OutcomesCard, { outcomes: stats.outcomes, source: "github" }) : null;
 }
 
-function render(client: QueryClient, store: RepoPackStore): string {
+function render(client: QueryClient, store: StatsReader): string {
   return renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(Panel, { store })));
 }
 
@@ -50,7 +49,7 @@ function statsRequests(requests: string[]): string[] {
 test("the outcomes read the weekly stats from one request", async () => {
   const hub = fakeHub();
   hub.stats = STATS;
-  const store = transportRepoPackStore(hub.transport, "t");
+  const store = { tenantId: "t", transport: hub.transport };
   const client = new QueryClient();
   await client.prefetchQuery(repoStatsQuery(store, REPO, 7));
 
@@ -61,7 +60,7 @@ test("the outcomes read the weekly stats from one request", async () => {
 });
 
 test("persisted stats render from the cache after a reload", () => {
-  const store = transportRepoPackStore(fakeHub().transport, "t");
+  const store = { tenantId: "t", transport: fakeHub().transport };
   const before = new QueryClient();
   before.setQueryData(repoStatsQuery(store, REPO, 7).queryKey, STATS);
   const persisted = dehydrate(before, { shouldDehydrateQuery: isPersistedQuery });

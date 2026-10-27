@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { recommendedPack, starterPack, type CheckPack } from "@corbits/triage-contracts";
 import { HeldInboxProvider } from "../../lib/held-inbox.tsx";
-import { policyNeedsModel } from "../../lib/pack-draft.ts";
+import { policyNeedsModel } from "../../lib/pack-rules.ts";
 import { GITHUB_CREDENTIAL_NAME, type HubCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
 import type { usePortal } from "../../lib/portal.tsx";
 import { SessionProvider } from "../../lib/session.tsx";
@@ -115,7 +115,7 @@ function mountSwitch(pack: CheckPack, model: PortalSnapshot["decisionModel"]) {
         enabled={false}
         triaging={false}
         disabled={false}
-        edit={() => {}}
+        onSwitch={() => {}}
         ruleOn
         needsModel={policyNeedsModel(pack)}
         rerunnable

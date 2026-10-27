@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -65,7 +65,6 @@ export type RepoRecord = {
   selection?: "all" | "selected";
   enabled?: boolean;
   checks?: RepoCheckFlags;
-  checkPack?: { name: string; id?: string };
 };
 
 export function githubAppInstallUrl(slug: string): string {
@@ -182,7 +181,7 @@ function requireContent(content: string, what: string): string {
 
 type Listed<T> = { rows: T[] | undefined; next: string | null };
 
-async function listPages<T>(transport: Transport, path: string, read: (raw: unknown) => Listed<T>, enough?: (items: T[]) => boolean): Promise<T[]> {
+async function listPages<T>(transport: Transport, path: string, read: (raw: unknown) => Listed<T>): Promise<T[]> {
   const items: T[] = [];
   const seen = new Set<string>();
   let cursor: string | null = null;
@@ -197,7 +196,7 @@ async function listPages<T>(transport: Transport, path: string, read: (raw: unkn
       throw new Error("The hub returned a page without data.");
     }
     items.push(...rows);
-    if (!next || seen.has(next) || enough?.(items)) return items;
+    if (!next || seen.has(next)) return items;
     seen.add(next);
     cursor = next;
   }
@@ -335,84 +334,36 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
   return parsed;
 }
 
-export type ArtifactListItem = { id: string; title: string; kind?: string };
-type ArtifactPage = { artifacts?: ArtifactListItem[]; nextCursor?: string | null };
-
-/**
- * Artifact pages come newest first under `artifacts`. The hub matches `query`
- * against title or content, so callers filter titles exactly.
- */
-export async function listArtifacts(
-  transport: Transport,
-  tenantId: string,
-  query: string,
-  enough?: (rows: ArtifactListItem[]) => boolean,
-): Promise<ArtifactListItem[]> {
-  const tid = enc(requireTenantId(tenantId));
-  return listPages<ArtifactListItem>(transport, `/api/tenants/${tid}/artifacts?query=${enc(query)}`, function readPage(raw) {
-    const page = raw as ArtifactPage | undefined;
-    return { rows: page?.artifacts, next: page?.nextCursor ?? null };
-  }, enough);
-}
-
-/** Titles are not unique; a title resolves to its newest artifact, which the listing order puts first. */
-export function newestByTitle(rows: ArtifactListItem[]): Map<string, ArtifactListItem> {
-  const byTitle = new Map<string, ArtifactListItem>();
-  for (const row of rows) {
-    if (!byTitle.has(row.title)) byTitle.set(row.title, row);
-  }
-  return byTitle;
-}
-
-export async function findArtifactByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
-  function found(rows: ArtifactListItem[]): boolean {
-    return rows.some((row) => row.title === title);
-  }
-  return newestByTitle(await listArtifacts(transport, tenantId, title, found)).get(title) ?? null;
-}
-
 /**
  * `automatic` is what Triage may do on its own in the repository; `decide` the kinds the policy file's `decide` names;
  * `mergeRisks` what its automatic approve or merge can let in.
  */
-type PolicyKinds = { automatic?: ActionKind[]; decide?: ActionKind[]; mergeRisks?: MergeRisk[] };
-export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack } & PolicyKinds;
-/** The repository's artifact holds something that is not a check pack; a save replaces it in place. */
-type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
-/** Read from the repository's policy file, which only a change to the file edits; `codeReview` is whether it turns code review on. */
-type FileCheckPack = { kind: "file"; path: string; pack: CheckPack; codeReview: boolean } & PolicyKinds;
+type PolicyKinds = { automatic: ActionKind[]; decide: ActionKind[]; mergeRisks: MergeRisk[] };
+/** Read from the repository's policy file; `path` is absent for text not yet in the file, `codeReview` is whether it turns code review on. */
+type FileCheckPack = { kind: "file"; path?: string; pack: CheckPack; codeReview: boolean } & PolicyKinds;
 /** The repository's policy file is refused, so triage runs nothing until it is fixed. */
 type InvalidPolicyFile = { kind: "invalid"; path: string; reason: string };
-export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack | FileCheckPack | InvalidPolicyFile;
+export type CheckPackArtifact = FileCheckPack | InvalidPolicyFile;
+
+function checkPackOf(raw: unknown, repo: string): CheckPackArtifact | null {
+  const read = PolicyRead.assert(raw);
+  if (read.status === "missing") return null;
+  if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
+  const kinds = { automatic: read.automatic, decide: read.decide, mergeRisks: read.mergeRisks };
+  return { kind: "file", ...(read.source.file && { path: read.source.file.path }), pack: readCheckPack(read.pack, repo), codeReview: read.codeReview, ...kinds };
+}
 
 export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string, source: RepoSource): Promise<CheckPackArtifact | null> {
   const clean = validateRepo(repo);
-  const read = PolicyRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy?repo=${enc(clean)}&source=${source}`));
-  if (read.status === "missing") return null;
-  if (read.status === "corrupt") return { kind: "corrupt", ...read.repo, reason: read.reason };
-  if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
-  const { repo: stored, file } = read.source;
-  const pack = readCheckPack(read.pack, clean);
-  const kinds = { automatic: read.automatic, decide: read.decide, mergeRisks: read.mergeRisks };
-  if (file) return { kind: "file", path: file.path, pack, codeReview: read.codeReview, ...kinds };
-  if (!stored) throw new Error(`The hub named no policy ${clean} was read from.`);
-  return { kind: "pack", ...stored, pack, ...kinds };
+  return checkPackOf(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy?repo=${enc(clean)}&source=${source}`), clean);
 }
 
-export type CheckPackLookup = (record: RepoRecord) => Promise<boolean>;
-
-async function withPackPointers(repos: RepoRecord[], hasPack: CheckPackLookup): Promise<RepoRecord[]> {
-  return Promise.all(repos.map(async function linkExistingPack(repo) {
-    if (repo.checkPack?.name?.trim()) return repo;
-    return (await hasPack(repo)) ? { ...repo, checkPack: { name: checkPackName(repo.name, repo.source) } } : repo;
-  }));
-}
-
-export async function loadRepoPolicy(transport: Transport, tenantId: string, repo: string, source: RepoSource): Promise<RepoPolicy> {
-  const tid = enc(requireTenantId(tenantId));
-  const tenant = await transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`);
-  const row = reposFromConfig(tenant.config).find((item) => item.name === repo && item.source === source);
-  return repoPolicy(row);
+/** The policy `text` would be once it is the repository's policy file. */
+export async function previewPolicy(transport: Transport, tenantId: string, repo: string, source: RepoSource, text: string): Promise<CheckPackArtifact> {
+  const clean = validateRepo(repo);
+  const read = checkPackOf(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/preview`, { repo: clean, source, text }), clean);
+  if (!read) throw new Error("The hub read no policy from the text.");
+  return read;
 }
 
 export async function saveRepoSettings(
@@ -421,13 +372,11 @@ export async function saveRepoSettings(
   repo: string,
   source: RepoSource,
   settings: Pick<RepoPolicy, "enabled">,
-  packId: string | null,
 ): Promise<void> {
   const clean = validateRepo(repo);
   const { enabled } = settings;
-  /** So triage reads the same artifact. */
   function withSettings(row: RepoRecord): RepoRecord {
-    return { ...row, enabled, ...(packId !== null && { checkPack: { name: checkPackName(clean, source), id: packId } }) };
+    return { ...row, enabled };
   }
   function isRepo(row: unknown): boolean {
     return rowName(row) === clean && repoSourceOf((row as { source?: unknown }).source) === source;
@@ -834,23 +783,29 @@ export async function startBacklogTriage(transport: Transport, tenantId: string,
   BacklogStarted.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/backlog`, { repo: clean }));
 }
 
-export async function loadPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicyFileStatus | null> {
+export async function loadPolicyFile(transport: Transport, tenantId: string, repo: string, source: RepoSource): Promise<PolicyFileStatus | null> {
   const clean = validateRepo(repo);
-  return PolicyFileRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/file?repo=${enc(clean)}`)).file;
+  return PolicyFileRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/file?repo=${enc(clean)}&source=${source}`)).file;
 }
 
-export async function exportPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicyExported> {
+/** `edit` is the edited text and the sha of the file it was edited from; without it, the pull request adds the starter policy. */
+export async function exportPolicyFile(transport: Transport, tenantId: string, repo: string, source: RepoSource, edit?: { text: string; sha: string }): Promise<PolicyExported> {
   const clean = validateRepo(repo);
-  return PolicyExported.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/export`, { repo: clean }));
+  return PolicyExported.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/export`, { repo: clean, source, ...edit }));
+}
+
+export async function loadPolicyPushAccess(transport: Transport, tenantId: string, repo: string, source: RepoSource): Promise<PolicyPushAccess> {
+  const clean = validateRepo(repo);
+  return PolicyPushAccess.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/push?repo=${enc(clean)}&source=${source}`));
+}
+
+export async function pushPolicyFile(transport: Transport, tenantId: string, repo: string, source: RepoSource, edit: { text: string; sha: string }): Promise<PolicyPushed> {
+  const clean = validateRepo(repo);
+  return PolicyPushed.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/push`, { repo: clean, source, ...edit }));
 }
 
 export async function loadPolicyUpgrades(transport: Transport, tenantId: string): Promise<PolicyUpgrades["repos"]> {
   return PolicyUpgrades.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/upgrades`)).repos;
-}
-
-/** Archiving hides an artifact and keeps it restorable. */
-export async function archiveArtifact(transport: Transport, tenantId: string, id: string): Promise<void> {
-  await transport.fetch<unknown>("POST", `/api/tenants/${enc(requireTenantId(tenantId))}/artifacts/${enc(id)}/archive`);
 }
 
 export async function triagePullRequest(transport: Transport, tenantId: string, repo: string, number: number): Promise<void> {
@@ -1191,7 +1146,7 @@ async function readCodeReviewPlace(transport: Transport, tid: string): Promise<C
 const EMPTY_CATALOG: Catalog = { providers: [], models: [], offerings: [] };
 
 /** Only what the gate needs; approvals, runs and access rules are read by the pages that show them. */
-export async function loadPortal(transport: Transport, access: MemberAccess, hasPack: CheckPackLookup): Promise<PortalSnapshot> {
+export async function loadPortal(transport: Transport, access: MemberAccess): Promise<PortalSnapshot> {
   const { workspace, workspaces, invitations } = access;
   const tenantId = requireTenantId(workspace.tenantId);
   const tid = enc(tenantId);
@@ -1208,7 +1163,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
     tenantName: tenant.value.name,
     workspaces,
     invitations,
-    repos: tenant.denied ? [] : await withPackPointers(reposFromConfig(tenant.value.config), hasPack),
+    repos: tenant.denied ? [] : reposFromConfig(tenant.value.config),
     config: appConfig(tenant.value.config),
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
