@@ -15,9 +15,9 @@ actions:
   unsure: [{ do: close }, { do: nothing }]
 `;
 
-test("a policy uses what Triage posts, what its steps and decide rules do, held kinds included, and only what the host can write", () => {
+test("a policy uses what Triage posts, what its steps and decide rules do, never a step that always waits for a person, and only what the host can write", () => {
   const pack = readCheckPack(readPolicyFile(FILE, REPO), REPO);
   const decide: DecideRule[] = [{ if: { all: "clean" }, do: ["approve", "review"] }];
-  expect(policyKinds(pack, decide, "github")).toEqual(["labels", "assign", "comment", "approve", "close"]);
-  expect(policyKinds(pack, decide, "bitbucket-datacenter")).toEqual(["comment", "approve", "close"]);
+  expect(policyKinds(pack, decide, "github")).toEqual(["labels", "assign", "comment", "approve"]);
+  expect(policyKinds(pack, decide, "bitbucket-datacenter")).toEqual(["comment", "approve"]);
 });

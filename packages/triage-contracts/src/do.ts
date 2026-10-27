@@ -47,11 +47,11 @@ export function postingKinds(source: RepoSource): ActionKind[] {
 }
 
 /**
- * Every kind a policy has Triage do on the host: what it posts, what its decide rules and verdict steps do. A kind
- * `alwaysHeld` on its verdict is still used; it waits for a person when it runs.
+ * Every kind a policy has Triage do unattended on the host: what it posts, what its decide rules and verdict steps do.
+ * A step `alwaysHeld` on its verdict waits for a person whatever the grants say, so a grant for it would allow nothing.
  */
 export function policyKinds(pack: CheckPack, decide: readonly DecideRule[], source: RepoSource): ActionKind[] {
-  const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].map((step) => step.do));
+  const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].filter((step) => step.do === "nothing" || !alwaysHeld(verdict, step.do)).map((step) => step.do));
   const used = new Set<string>([...postingKinds(source), ...decide.flatMap((rule) => kindsOf(rule.do)), ...steps]);
   return hostKinds(source).filter((kind) => used.has(kind));
 }

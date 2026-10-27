@@ -265,7 +265,7 @@ export type MergeRisk = (typeof MERGE_RISKS)[number];
 
 /**
  * `automatic` is what Triage may do on its own in the repository; `wanted` every action kind the policy has
- * Triage do on the host, a kind `alwaysHeld` on its verdict included; `mergeRisks` what Triage's automatic approve or
+ * Triage do unattended on the host, which is what the role is granted under `policy` automation; `mergeRisks` what Triage's automatic approve or
  * merge can let in; `codeReview` whether the policy file turns code review on. `invalid` is a policy file triage
  * refuses, so nothing runs until it is fixed.
  */
