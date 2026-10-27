@@ -1,23 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import type { PackState } from "./check-packs.ts";
-import { projectQueue, type OpenPulls, type PrItem } from "./hub-api.ts";
+import { projectQueue, type OpenPulls, type PrItem, type RepoRecord } from "./hub-api.ts";
 import { groupInbox, regroupInbox } from "./inbox-view.ts";
 import { findRepo, hostedRepos, mergeRepositories, packsPending, repoHealth, repoRows, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
-  return {
+  const base: PrItem = {
     key: `${repo}#${number}`, repo, number, title: null, author: null, authorKind: null, byTriage: false,
     draft: null, mergeable: null, mergeBlock: null, state: "new",
     priority: null, owner: null, nextAction: null, verdict: null, score: null, reasons: [], evidence: [], checks: [], labels: [], comment: null,
     sha: null, verdictSha: null, degraded: null, needsHuman: false, closed: false, pendingApprovalId: null, runId: null, waitingSince: null, updatedAt: null,
-    ci: null, headSha: null, activityAt: null, reviewAnswered: false, posted: false, running: false, failure: null, actions: [], href: "", ...extra,
+    ci: null, headSha: null, activityAt: null, reviewAnswered: false, posted: false, running: false, waitingForCi: false, waitingHeadSha: null,
+    failure: null, actions: [], automatic: [], href: "", source: "github", url: null,
   };
+  return Object.assign(base, extra);
+}
+
+function repoRecord(name: string, enabled?: boolean): RepoRecord {
+  return { name, connected: true, source: "github", ...(enabled !== undefined && { enabled }) };
 }
 
 const repos = [
-  { name: "acme/api", connected: true, enabled: true },
-  { name: "acme/web", connected: true },
+  repoRecord("acme/api", true),
+  repoRecord("acme/web"),
 ];
 
 function read(found: PackState["found"]): PackState {
@@ -55,7 +61,7 @@ describe("repository rows", () => {
   });
 
   test("only enabled repositories whose policy file runs count pull requests awaiting triage, and the inbox header and Settings agree", () => {
-    const all = [...repos, { name: "acme/off", connected: true, enabled: false }, { name: "acme/raw", connected: true, enabled: true }, { name: "acme/loading", connected: true, enabled: true }];
+    const all = [...repos, repoRecord("acme/off", false), repoRecord("acme/raw", true), repoRecord("acme/loading", true)];
     const states = new Map([...packs, ["acme/off", policyFile("acme/off")], ["acme/raw", read(null)], ["acme/loading", { found: null, pending: true, error: null }]]);
     const items = [
       item("acme/api", 1, {}),
@@ -91,7 +97,7 @@ describe("repository rows", () => {
       ["acme/none", read(null)],
       ["acme/loading", { found: null, pending: true, error: null }],
     ]);
-    const all = [...states.keys()].map((name) => ({ name, connected: true, enabled: true }));
+    const all = [...states.keys()].map((name) => repoRecord(name, true));
     const rows = repoRows(all, states, [], [], [], undefined, null);
     expect(rows.map((row) => [row.name, row.health.label === "Needs setup"])).toEqual([
       ["acme/file", false], ["acme/off", true], ["acme/refused", true], ["acme/none", true], ["acme/loading", false],
@@ -104,7 +110,7 @@ describe("repository rows", () => {
       degraded: null, commented: false, checks: [], detail: null,
     };
     const listing = { repos: [{ repo: "acme/api", prs: [{ number: 8, title: "PR 8", author: "ada", draft: false, sha: "abc", updatedAt: "2026-10-01T01:00:00.000Z", labels: [] }] }] };
-    const items = projectQueue([{ repo: "acme/api", number: 8, activityAt: null, verdict, run: null }], [], listing);
+    const items = projectQueue([{ repo: "acme/api", number: 8, source: "github", activityAt: null, verdict, run: null }], [], listing);
     expect(items.find((row) => row.key === "acme/api#8")).toMatchObject({ runId: "run-1", updatedAt: "2026-10-01T01:00:00.000Z" });
   });
 

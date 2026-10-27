@@ -10,7 +10,7 @@ function latest(runId: string, activityAt: string | null, ci = "success", facts:
     runId, at: "2026-10-01T01:00:00.000Z", headSha: "a", verdict: "pass" as const, settled: true, state: "ready-monitoring", actor: "author", humanGated: false,
     degraded: null, commented: false, checks: [], detail: { facts: { checks: ci, ...facts } },
   };
-  return { repo: "acme/widgets", number: 8, activityAt, verdict, run: null };
+  return { repo: "acme/widgets", number: 8, source: "github", activityAt, verdict, run: null };
 }
 
 function open(sha: string, numbers = [8]): OpenPulls {

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { PrItem } from "./hub-api.ts";
+import type { CheckResult, PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
 import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, notPostedText, postedLabel, primaryAction, readyToMerge, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
 function item(overrides: Partial<PrItem>): PrItem {
-  return {
+  const base: PrItem = {
     key: "acme/widgets#1",
     repo: "acme/widgets",
     number: 1,
@@ -43,11 +43,16 @@ function item(overrides: Partial<PrItem>): PrItem {
     reviewAnswered: false,
     posted: false,
     running: false,
+    waitingForCi: false,
+    waitingHeadSha: null,
     failure: null,
     actions: [],
+    automatic: [],
     href: "/prs/acme/widgets/1",
-    ...overrides,
+    source: "github",
+    url: null,
   };
+  return Object.assign(base, overrides);
 }
 
 describe("groupInbox", () => {
@@ -136,7 +141,7 @@ describe("waitsOn", () => {
 });
 
 describe("requested changes", () => {
-  const review = { check: "no-changes-requested", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: [], gate: false } as const;
+  const review: CheckResult = { check: "no-changes-requested", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: [], output: null, gate: false };
   const reviewed = item({ state: "needs-author-update", comment: "", checks: [review] });
 
   const entries = (pr: PrItem): OpenItem[] => [{ item: pr, handled: null }];

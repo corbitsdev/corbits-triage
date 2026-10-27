@@ -53,11 +53,20 @@ function item(repo: string, number: number): PrItem {
     runId: `run-${repo}`,
     waitingSince: null,
     updatedAt: null,
+    ci: null,
+    headSha: null,
+    activityAt: null,
+    reviewAnswered: false,
     posted: false,
     running: false,
+    waitingForCi: false,
+    waitingHeadSha: null,
     failure: null,
     actions: [],
+    automatic: [],
     href: `/triage/pr/${repo}/${number}`,
+    source: "github",
+    url: null,
   };
 }
 

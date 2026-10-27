@@ -6,7 +6,7 @@ import type { HandledMark } from "./inbox-view.ts";
 import { heldChoices, paneBar, paneProblems, paneStatus, passedChecks, rowStatus, statusText, type StatusInput } from "./pane-report.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
-  return {
+  const base: PrItem = {
     key: "acme/widgets#1",
     repo: "acme/widgets",
     number: 1,
@@ -47,10 +47,12 @@ function item(overrides: Partial<PrItem>): PrItem {
     waitingHeadSha: null,
     failure: null,
     actions: [],
+    automatic: [],
     href: "/prs/acme/widgets/1",
     source: "github",
-    ...overrides,
+    url: null,
   };
+  return Object.assign(base, overrides);
 }
 
 function check(overrides: Partial<CheckResult>): CheckResult {
@@ -60,7 +62,7 @@ function check(overrides: Partial<CheckResult>): CheckResult {
 const FAIL = check({ check: "docs", kind: "model", result: "fail", reason: "the new retry path is not documented", evidence: ["retry.rs:40-49"], output: { kind: "score", score: 20, passAt: 70, items: [{ path: "retry.rs", added: { start: 40, end: 49 } }] } });
 const UNSURE = check({ check: "focused", kind: "model", result: "unconfirmed", reason: "not sure the old job can go", output: { kind: "score", score: 50, passAt: 70, items: [] } });
 const CANT = check({ check: "no-merge-conflicts", result: "unconfirmed", reason: "mergeability not yet computed", output: { kind: "could-not-check", reason: "mergeability not yet computed" } });
-const RELEASE_NOTES = check({ check: "release-notes", kind: "text", result: "fail", reason: "the description does not contain Release notes" });
+const RELEASE_NOTES = check({ check: "release-notes", result: "fail", reason: "the description does not contain Release notes" });
 const PACK: CheckPack = {
   ...emptyPack("acme/widgets"),
   custom: [{ id: "release-notes", name: "Release notes describe the user-facing change", group: "pull-request", kind: "text", fields: ["description"], failWhen: "not-contains", phrases: ["Release notes"] }],
@@ -79,8 +81,9 @@ function statusOf(overrides: Partial<PrItem>, input: Partial<Omit<StatusInput, "
 }
 
 function detail(pr: Partial<GithubPullDetail["pr"]>): GithubPullDetail {
+  const base: GithubPullDetail["pr"] = { number: 1, title: "Fix", body: null, shownBody: "", state: "open", merged: false, draft: false, author: "ada", sha: "head-1", base: "main", mergeable: true, requestedReviewers: 0, additions: 1, deletions: 1, changedFiles: 1, labels: [], createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z" };
   return {
-    pr: { number: 1, title: "Fix", body: null, state: "open", merged: false, draft: false, author: "ada", sha: "head-1", base: "main", mergeable: true, requestedReviewers: 0, additions: 1, deletions: 1, changedFiles: 1, labels: [], createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...pr },
+    pr: Object.assign(base, pr),
     files: [], commits: [], comments: [], issues: [], checks: [], reviews: [],
   };
 }
@@ -159,9 +162,11 @@ describe("status line and row", () => {
     ["a custom rule without a pack", { state: "blocked", checks: [RELEASE_NOTES] }, "Request changes from @ada: release-notes", "Request changes: release-notes"],
   ];
 
-  test.each(CASES)("the row says what the pane says, shortened: %s", (_, overrides, pane, row, pack = null, handled = null) => {
-    expect(statusOf(overrides, { pack, handled }).text).toBe(pane);
-    expect(statusText(rowStatus(item(overrides), handled, pack))).toBe(row);
+  test.each(CASES)("the row says what the pane says, shortened: %s", (_, overrides, pane, row, pack = undefined, handled = undefined) => {
+    const saved = pack ?? null;
+    const mark = handled ?? null;
+    expect(statusOf(overrides, { pack: saved, handled: mark }).text).toBe(pane);
+    expect(statusText(rowStatus(item(overrides), mark, saved))).toBe(row);
   });
 
   test("the row keeps the count apart, so it is never cut off", () => {

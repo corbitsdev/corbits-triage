@@ -20,7 +20,7 @@ function verdict(actions: unknown[]): PrItem {
     runId: "run-8", at: NOW, headSha: "abc", verdict: "fail" as const, settled: true, state: "needs-decision", actor: "maintainer", humanGated: true,
     degraded: null, commented: false, checks: [], detail,
   };
-  const [item] = projectQueue([{ ...pull, activityAt: null, verdict: recorded, run: null }], [], undefined);
+  const [item] = projectQueue([{ ...pull, source: "github", activityAt: null, verdict: recorded, run: null }], [], undefined);
   if (item === undefined) throw new Error("no verdict projected");
   return item;
 }

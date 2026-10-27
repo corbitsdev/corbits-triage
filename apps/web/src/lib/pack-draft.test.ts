@@ -71,7 +71,7 @@ describe("pack draft", () => {
     const stored = pack({ custom });
     const saved = fromPack(stored, policy);
     const row = stored.custom[0]!;
-    const emptied = { ...saved, pack: { ...stored, custom: stored.custom.map((item) => (item.id === row.id && item.shape === "is-true" ? { ...item, claim: "" } : item)) } };
+    const emptied = { ...saved, pack: { ...stored, custom: stored.custom.map((item) => (item.id === row.id && item.kind === "model" && item.shape === "is-true" ? { ...item, claim: "" } : item)) } };
     expect(savable(emptied, saved).pack.custom).toEqual(stored.custom);
   });
 });

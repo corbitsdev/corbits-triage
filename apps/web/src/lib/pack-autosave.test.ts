@@ -150,6 +150,10 @@ function rule(id: string, claim: string, name = claim): CustomCheck {
   return { id, name, group: "pull-request", kind: "model", shape: "is-true", claim };
 }
 
+function claimOf(row: CustomCheck | undefined): string | undefined {
+  return row !== undefined && row.kind === "model" && row.shape === "is-true" ? row.claim : undefined;
+}
+
 function comment(body: string): Step {
   return { do: "comment", target: { body } };
 }
@@ -187,7 +191,7 @@ test("spacing the contract trims is not a change, so it never overwrites the oth
   writeElsewhere(hub, (pack) => ({ ...pack, custom: [rule("r", "the title names the change")], labels: { ...pack.labels, pass: "Good to go" }, actions: { ...pack.actions, pass: [{ do: "approve" }, comment("hello")] } }));
   autosave.edit((draft) => maxFiles(draft, 7));
   await autosave.flush();
-  expect(stored(hub).custom[0]!.claim).toBe("the title names the change");
+  expect(claimOf(stored(hub).custom[0])).toBe("the title names the change");
   expect(stored(hub).labels.pass).toBe("Good to go");
   expect(stored(hub).actions.pass).toEqual([{ do: "approve" }, comment("hello")]);
   expect(autosave.state().conflicts).toEqual([]);
@@ -200,7 +204,7 @@ test("a built-in rule merges key by key, and a rule both sides changed keeps our
   autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [rule("r", "ours")] } }));
   await autosave.flush();
   expect(stored(hub).checks["max-files-changed"]).toEqual({ enabled: false, maxFiles: 7, onFail: "label" });
-  expect(stored(hub).custom.map((row) => row.claim)).toEqual(["ours"]);
+  expect(stored(hub).custom.map(claimOf)).toEqual(["ours"]);
   expect(autosave.state().conflicts).toEqual(["ours"]);
 });
 
