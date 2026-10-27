@@ -17,33 +17,71 @@ function preview(body: string): string {
   return line.length > PREVIEW_MAX ? `${line.slice(0, PREVIEW_MAX).trimEnd()}…` : line;
 }
 
+function phrase(verb: string, object: string | null): string | null {
+  return object === null ? null : `${verb} ${object}`;
+}
+
+function labelsText(target: Record<string, unknown>): string | null {
+  const labels = strings(target.labels);
+  if (labels.length === 0) return null;
+  return `${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}`;
+}
+
+function listText(names: string[]): string | null {
+  return names.length ? names.join(", ") : null;
+}
+
+function reviewersText(target: Record<string, unknown>, repo: string): string | null {
+  return listText([...strings(target.teams).map((slug) => teamName(slug, repo)), ...strings(target.users)]);
+}
+
+function bodyText(target: Record<string, unknown>): string | null {
+  return typeof target.body === "string" && target.body.trim() ? `"${preview(target.body)}"` : null;
+}
+
 function label(action: SuggestedAction, repo: string): string | null {
   const { kind, target } = action;
   if ("unresolved" in target) return null;
   switch (kind) {
-    case "labels": {
-      const labels = strings(target.labels);
-      if (labels.length === 0) return null;
-      return `Add ${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}`;
-    }
-    case "assign": {
-      const assignees = strings(target.users);
-      return assignees.length ? `Assign ${assignees.join(", ")}` : null;
-    }
-    case "request-review": {
-      const reviewers = [...strings(target.teams).map((slug) => teamName(slug, repo)), ...strings(target.users)];
-      return reviewers.length ? `Request review from ${reviewers.join(", ")}` : null;
-    }
+    case "labels":
+      return phrase("Add", labelsText(target));
+    case "assign":
+      return phrase("Assign", listText(strings(target.users)));
+    case "request-review":
+      return phrase("Request review from", reviewersText(target, repo));
     case "comment":
-      return typeof target.body === "string" && target.body.trim() ? `Comment "${preview(target.body)}"` : null;
+      return phrase("Comment", bodyText(target));
     case "approve":
       return "Approve";
     case "request-changes":
-      return typeof target.body === "string" && target.body.trim() ? `Request changes "${preview(target.body)}"` : null;
+      return phrase("Request changes", bodyText(target));
     case "close":
       return "Close";
     case "merge":
       return "Merge";
+  }
+}
+
+function pastText(action: SuggestedAction, repo: string): string | null {
+  const { kind, target } = action;
+  if ("unresolved" in target) return null;
+  switch (kind) {
+    case "labels":
+      return phrase("added", labelsText(target));
+    case "assign":
+      return phrase("assigned", listText(strings(target.users)));
+    case "request-review":
+      return phrase("requested review from", reviewersText(target, repo));
+    case "comment":
+      return phrase("commented", bodyText(target));
+    case "approve":
+      return "approved this pull request";
+    case "request-changes":
+      return phrase("requested changes", bodyText(target));
+    case "close":
+      return "closed this pull request";
+    case "merge":
+      return "merged this pull request";
   }
 }
 
@@ -92,14 +130,34 @@ export function holdsActionForYou(item: PrItem): boolean {
   return item.actions.some((action) => action.held && (action.status === undefined || action.status === "failed") && label(action, item.repo) !== null);
 }
 
-export type DoGroup = { list: VerdictWord; reason: string; dos: PendingDo[] };
+/** This verdict has a merge step Triage will run without asking. */
+export function mergesOnItsOwn(item: PrItem): boolean {
+  return item.actions.some((action) => action.kind === "merge" && !awaitsApproval(action) && action.status !== "done" && action.status !== "satisfied");
+}
 
-export function doGroups(dos: PendingDo[]): DoGroup[] {
-  const groups = new Map<VerdictWord, DoGroup>();
-  for (const pending of dos) {
-    const group = groups.get(pending.list);
-    if (group === undefined) groups.set(pending.list, { list: pending.list, reason: pending.reason, dos: [pending] });
-    else group.dos.push(pending);
+function joined(phrases: string[]): string {
+  if (phrases.length < 2) return phrases.join("");
+  return `${phrases.slice(0, -1).join(", ")} and ${phrases[phrases.length - 1]}`;
+}
+
+/**
+ * What the policy has Triage do on its own here, and why: past tense only for what it posted, and the rest as not posted yet.
+ * An action already in place before Triage ran is left out, since Triage did nothing. Null when there is nothing to say.
+ */
+export function triageActed(item: PrItem): { did: string; reason: string } | null {
+  const done: string[] = [];
+  const unrun: string[] = [];
+  let reason: string | null = null;
+  for (const action of item.actions) {
+    if (!item.automatic.includes(action.kind) || awaitsApproval(action) || action.status === "satisfied") continue;
+    const posted = action.status === "done";
+    const text = posted ? pastText(action, item.repo) : label(action, item.repo);
+    if (text === null) continue;
+    if (posted) done.push(text);
+    else unrun.push(text);
+    reason ??= action.reason;
   }
-  return [...groups.values()];
+  if (reason === null) return null;
+  const sentences = [done.length ? `Triage ${joined(done)}.` : null, unrun.length ? `Not posted yet: ${unrun.join(", ")}.` : null];
+  return { did: sentences.filter((sentence) => sentence !== null).join(" "), reason };
 }

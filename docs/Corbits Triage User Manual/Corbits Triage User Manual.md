@@ -434,7 +434,7 @@ Pull requests are grouped by what you need to do: **Unblock** for ones that are 
 
 A pull request whose first triage run failed is under **Failed** and says **Couldn't triage**. Its pane says why, such as **Couldn't triage: the run failed**, and **Triage again** tries once more. On a draft, **Triage again** is under **More**, and the pane says so: **Couldn't triage: the run failed · use Triage again in More**.
 
-Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval or a held action waiting always stays, drafts and ones waiting on the author included, until you approve the action or click **Hide for me** in its pane or on its page, which hides it in this browser only. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back. When nothing needs you, the list says **Inbox zero**, with **Show 7 waiting** (or however many there are) to open Waiting.
+Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (ones waiting for CI among them), drafts (even ones Triage checked before they became drafts), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval or a held action waiting always stays, drafts and ones waiting on the author included, until you approve the action or click **Hide for me** in its pane or **Skip** on its page, which hides it in this browser only. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, grouped by what they wait on; Needs you and Waiting together are All open. Click **Waiting** again to go back. When nothing needs you, the list says **Inbox zero**, with **Show 7 waiting** (or however many there are) to open Waiting.
 
 ![The Waiting view grouped by Waits on: two drafts under Waits on author, one of them checked by Triage before it became a draft, and a pull request under Waits on CI. The pane shows the draft, Draft · waiting on @ivan-p](images/37.png)
 
@@ -481,7 +481,7 @@ Expanding **Checked and fine** shows every rule with a short note on why it pass
 
 ### The pull request page
 
-**Commits and conversation** in the reading pane opens the pull request on its own page. **Comment**, **Merge** and **More** sit at the top, the same actions as the pane, and **View on GitHub** or **View on Bitbucket** opens it on the host. On the side are **About**, **Files** and **Issue**.
+**Commits and conversation** in the reading pane opens the pull request on its own page. **Comment** sits at the top and opens a box where you write a comment and send it, and **View on GitHub** or **View on Bitbucket** opens it on the host. On the side are **About**, **Files** and **Issue**.
 
 The page reads from top to bottom:
 
@@ -491,6 +491,16 @@ The page reads from top to bottom:
 4. **Conversation.** Each comment shows who wrote it and when, then the comment. When there are none, it says **No comments yet.**
 
 **About** is that reading. **Files** lists the files that changed; choose one to read its changes. **Issue** lists the linked issues, or says **No linked issue.** Choose **About** to come back to the verdict, the evidence, the commits and the conversation.
+
+Under the header, one card follows the repository's policy:
+
+- When an action waits on your approval, the card names it, such as **Merge** or **Add label size/xl**, and says why. **Approve** lets Triage do it, and **Skip** hides it in this browser only. **Merge** and **More** sit on the card, with **Confirm** and **Dismiss** when an approval is waiting.
+- When Triage acted on its own but the next step is yours, such as a policy that adds labels and leaves merging to you, the card says what Triage did and why, with **Merge** and **More** beside it.
+- When Triage will merge it, or the next step is the author's, the card only says what Triage did and why, such as that it commented because a rule failed, and the page has no **Merge** or **More**.
+- An action Triage has not posted yet is listed under **Not posted yet** rather than as done.
+- Otherwise there is no card, and **Merge** and **More** sit at the top.
+
+**More** holds **Close pull request**, and **Approve** and **Request changes** unless Triage opened the pull request. A closed or merged pull request offers none of these, and no held action.
 
 ### Taking action
 

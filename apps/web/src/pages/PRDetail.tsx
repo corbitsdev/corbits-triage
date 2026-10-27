@@ -1,7 +1,6 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Badge, Button } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@corbits/react-ui/ui/menu";
-import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, Info, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
@@ -13,14 +12,14 @@ import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
 import type { RepoSource } from "@corbits/triage-contracts";
 import { approvedHead, canRun, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
-import { notPostedText } from "../lib/inbox-view.ts";
+import { actionMode, notPostedText, type ActionMode } from "../lib/inbox-view.ts";
 import { heldReason, isHeldBlock } from "../lib/pane-report.ts";
 import { offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import { VerdictChip } from "../components/VerdictChip.tsx";
 import { PrTimeline } from "../components/PrTimeline.tsx";
-import { SuggestedActions } from "../components/SuggestedActions.tsx";
+import { PrActionCard } from "../components/PrActionCard.tsx";
 import { DiffView } from "../components/DiffView.tsx";
 import { CitedEvidence } from "../components/CitedEvidence.tsx";
 import { Markdown } from "../components/Markdown.tsx";
@@ -143,8 +142,7 @@ export function PullHistory({ host, pending, error, commits, comments }: {
   );
 }
 
-/** `drafted`: the recommended comment is open for editing above, so the overview does not repeat it. */
-function About({ item, drafted }: { item: PrItem; drafted: boolean }) {
+function About({ item }: { item: PrItem }) {
   const pull = useGithubPull(item.repo, item.number);
   const pr = pull.data?.pr;
   const facts = paneFacts(item, pull.data);
@@ -200,7 +198,7 @@ function About({ item, drafted }: { item: PrItem; drafted: boolean }) {
         <h1>{title}</h1>
         {hasUncheckedCommits(item) ? <p className="soft">New commits since Triage checked</p> : null}
         <p className="verdict-why">{item.evidence[0] ?? item.nextAction ?? "No evidence recorded."}</p>
-        {item.comment && !drafted ? <Markdown text={item.comment} /> : null}
+        {item.comment ? <Markdown text={item.comment} /> : null}
       </header>
       <section className="brief">
         <h2>Pull request</h2>
@@ -280,54 +278,61 @@ function SliverTabButton({ id, label, current, onSelect }: { id: SliverTab; labe
   );
 }
 
-function RecommendedComment({ item, posted, onPosted, onDismiss }: {
+type PullControls = {
   item: PrItem;
-  posted: boolean;
-  onPosted: () => void;
-  onDismiss: () => void;
-}) {
-  const { writeGithub } = usePortal();
-  const queryClient = useQueryClient();
-  const [body, setBody] = useState(item.comment ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  closed: boolean;
+  approvalPending: boolean;
+  gated: boolean;
+  canMerge: boolean;
+  /** Busy or read-only. */
+  locked: boolean;
+  onDecide: (decision: "once" | "deny") => void;
+  onWrite: (kind: "merge" | "approve" | "changes" | "close") => void;
+};
 
-  async function post() {
-    if (item.number === null) return;
-    if (!body.trim()) {
-      setError("Comment must not be empty.");
-      return;
-    }
-    setBusy(true);
-    try {
-      setError("");
-      await writeGithub({ action: "reply", repo: item.repo, number: item.number, body }, "now");
-      if (item.labels.length > 0) await writeGithub({ action: "labels", repo: item.repo, number: item.number, labels: item.labels }, "now");
-      onPosted();
-      await queryClient.invalidateQueries({ queryKey: ["github-pull"] });
-    } catch (cause) {
-      setError(errorText(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (posted) return <p role="status" className="pr-composer muted">Recommended comment posted.</p>;
+function PostingControls({ item, closed, approvalPending, gated, canMerge, locked, onDecide, onWrite }: PullControls) {
   return (
-    <section className="pr-composer" aria-label="Recommended comment">
-      <h2>Recommended comment</h2>
-      <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={5} aria-label="Recommended comment" />
-      {item.labels.length > 0 ? (
-        <div className="chips" aria-label="Recommended labels">
-          {item.labels.map((label) => <Badge key={label} className="verbatim">{label}</Badge>)}
-        </div>
-      ) : null}
-      {error && <p role="alert" className="error">{error}</p>}
-      <div className="pr-actions-row">
-        <Button type="button" disabled={busy} onClick={() => void post()}>Post</Button>
-        <Button type="button" variant="outline" disabled={busy} onClick={onDismiss}>Dismiss</Button>
-      </div>
-    </section>
+    <>
+      {approvalPending && (
+        <>
+          {!closed && <Button type="button" variant={gated ? "primary" : "outline"} disabled={locked} onClick={() => onDecide("once")}>Confirm</Button>}
+          <Button type="button" variant="outline" disabled={locked} onClick={() => onDecide("deny")}>Dismiss</Button>
+        </>
+      )}
+      {!closed && (
+        <>
+          <Button type="button" variant={canMerge && !gated ? "primary" : "outline"} disabled={!canMerge} onClick={() => onWrite("merge")}>Merge</Button>
+          <Menu>
+            <MenuTrigger asChild><Button type="button" variant="outline" aria-label="More actions">More</Button></MenuTrigger>
+            <MenuContent align="end">
+              {item.byTriage ? null : (
+                <>
+                  <MenuItem disabled={!item.number || locked} onSelect={() => onWrite("approve")}>Approve</MenuItem>
+                  <MenuItem disabled={!item.number || locked} onSelect={() => onWrite("changes")}>Request changes</MenuItem>
+                </>
+              )}
+              {!offersClose(item) && <MenuItem disabled={!item.number || locked} onSelect={() => onWrite("close")}>Close pull request</MenuItem>}
+            </MenuContent>
+          </Menu>
+        </>
+      )}
+    </>
+  );
+}
+
+/** The card for the policy's mode under the header; null leaves your controls at the top. A closed pull request offers no held action. */
+export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
+  mode: ActionMode | null;
+  controls: PullControls;
+  onApproveDo: (pending: PendingDo) => void;
+  onSkipDo: (pending: PendingDo) => void;
+}) {
+  const { item, closed, locked } = controls;
+  if (mode === null) return null;
+  return (
+    <PrActionCard mode={mode} dos={closed ? [] : pendingDos(item)} disabled={closed || !item.number || item.running || locked} onApprove={onApproveDo} onSkip={onSkipDo}>
+      <PostingControls {...controls} />
+    </PrActionCard>
   );
 }
 
@@ -356,22 +361,12 @@ export default function PRDetail() {
   const pull = useGithubPull(item?.repo ?? "", item?.number ?? null);
   const pullPending = pull.isPending && pull.fetchStatus !== "idle";
   const files = pull.data?.files ?? [];
-  const comments = pull.data?.comments ?? [];
   const selected = useMemo(() => files.find((file) => file.path === filePath) ?? files[0], [files, filePath]);
   const pending = approval?.status.toLowerCase() === "pending";
   const gated = Boolean(item?.needsHuman && pending);
   const gate = item === undefined ? null : { item, facts: paneFacts(item, pull.data), readOnly, busy };
   const closed = pull.data?.pr.state === "closed";
   const canMerge = gate !== null && canRun("merge", gate);
-  const [handled, setHandled] = useState<Record<string, "posted" | "dismissed">>({});
-  const head = pull.data?.pr.sha ?? item?.sha ?? "";
-  const handledKey = `${item?.key}@${head}`;
-  const recommended = item?.comment?.trim() ?? "";
-  const showRecommended = Boolean(
-    recommended && item?.number && !closed && !readOnly && !item.automatic.includes("comment") && handled[handledKey] !== "dismissed",
-  );
-  const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
-  const dos = useMemo(() => (item === undefined ? [] : pendingDos(item)), [item]);
   const approvePackDo = useApproveDo();
   const heldDoKeys = useHeldDoKeys();
   const diffLayout = useDiffLayout();
@@ -540,12 +535,24 @@ export default function PRDetail() {
     if (tab === "issue") return <p className="sliver-empty">{sliverText("issues", `${pull.data?.issues.length ?? 0} linked issues`)}</p>;
     return <p className="sliver-empty">Overview of this pull request.</p>;
   }
-  let pane: ReactNode = <About item={item} drafted={showRecommended && !recommendedPosted} />;
+  let pane: ReactNode = <About item={item} />;
   const loadState = loadNotice(host, pullPending, pull.error);
   if (tab === "files") pane = filesPane();
   if (tab === "issue") {
     pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><IssueList item={item} issues={pull.data?.issues ?? []} pending={pullPending} error={pull.error} /></div>;
   }
+
+  const policy = actionMode(item);
+  const controls: PullControls = {
+    item,
+    closed,
+    approvalPending: pending,
+    gated,
+    canMerge,
+    locked: busy || readOnly,
+    onDecide: (decision) => void act(decision),
+    onWrite: (kind) => void requestWrite(kind),
+  };
 
   return (
     <>
@@ -567,30 +574,8 @@ export default function PRDetail() {
           </div>
           <div className="pr-actions">
             <div className="pr-actions-row">
-              {pending && (
-                <>
-                  {!closed && <Button type="button" variant={gated ? "primary" : "outline"} disabled={busy || readOnly} onClick={() => void act("once")}>Confirm</Button>}
-                  <Button type="button" variant="outline" disabled={busy || readOnly} onClick={() => void act("deny")}>Dismiss</Button>
-                </>
-              )}
-              {!closed && (
-                <>
-                  <Button type="button" variant="outline" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</Button>
-                  <Button type="button" variant={canMerge && !gated ? "primary" : "outline"} disabled={!canMerge} onClick={() => void requestWrite("merge")}>Merge</Button>
-                  <Menu>
-                    <MenuTrigger asChild><Button type="button" variant="outline" aria-label="More actions">More</Button></MenuTrigger>
-                    <MenuContent align="end">
-                      {item.byTriage ? null : (
-                        <>
-                          <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("approve")}>Approve</MenuItem>
-                          <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("changes")}>Request changes</MenuItem>
-                        </>
-                      )}
-                      {!offersClose(item) && <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("close")}>Close pull request</MenuItem>}
-                    </MenuContent>
-                  </Menu>
-                </>
-              )}
+              {closed ? null : <Button type="button" variant="outline" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</Button>}
+              {policy === null ? <PostingControls {...controls} /> : null}
             </div>
           </div>
         </header>
@@ -609,21 +594,8 @@ export default function PRDetail() {
             </div>
           </form>
         )}
-        {showRecommended ? (
-          <RecommendedComment
-            key={`${handledKey}@${item.runId}`}
-            item={item}
-            posted={recommendedPosted}
-            onPosted={() => setHandled({ ...handled, [handledKey]: "posted" })}
-            onDismiss={() => setHandled({ ...handled, [handledKey]: "dismissed" })}
-          />
-        ) : null}
+        <PullActions mode={policy} controls={controls} onApproveDo={(row) => void approveDo(row)} onSkipDo={(row) => heldDoKeys.hide(row.key)} />
         {closed || notPosted === null ? null : <p role="status" className="pr-composer muted">{notPosted}</p>}
-        {closed || dos.length === 0 ? null : (
-          <div className="pr-composer">
-            <SuggestedActions dos={dos} disabled={!item.number || item.running || busy || readOnly} onApprove={(pending) => void approveDo(pending)} onSkip={(pending) => heldDoKeys.hide(pending.key)} />
-          </div>
-        )}
         {error && <p role="alert" className="error">{error}</p>}
         <main id="main" className="content content-pr-shell">
           <div className="pr-workspace">{pane}</div>

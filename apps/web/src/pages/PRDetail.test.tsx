@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { PullHistory } from "./PRDetail.tsx";
+import { VerdictDetail } from "@corbits/triage-contracts";
+import { projectQueue, type PrItem } from "../lib/hub-api.ts";
+import { actionMode } from "../lib/inbox-view.ts";
+import { PullActions, PullHistory } from "./PRDetail.tsx";
 
 const WHEN = "2026-10-26T12:00:00.000Z";
 
@@ -35,4 +38,65 @@ test("a commit shows its short id and first line, and a comment shows its author
   expect(html).toContain("Looks good");
   expect(html).not.toContain("No commits.");
   expect(html).not.toContain("No comments yet.");
+});
+
+const FEEDBACK = "Please split this.";
+
+function triaged(verdict: "pass" | "fail", state: string, actions: unknown[], automatic: string[]): PrItem {
+  const detail = VerdictDetail.assert({ labels: [], feedback: FEEDBACK, actions, automatic });
+  const recorded = {
+    runId: "run-8", at: WHEN, headSha: "abc", verdict, settled: true, state, actor: "maintainer", humanGated: false,
+    degraded: null, commented: true, checks: [], detail,
+  };
+  const [item] = projectQueue([{ repo: "acme/widgets", number: 8, activityAt: null, verdict: recorded, run: null }], [], undefined);
+  if (item === undefined) throw new Error("no verdict projected");
+  return item;
+}
+
+function step(list: string, kind: string, target: Record<string, unknown>, rest: Record<string, unknown>): Record<string, unknown> {
+  return { list, index: 0, effectId: "effect-0", kind, held: false, reason: "Size failed.", target, ...rest };
+}
+
+function actions(item: PrItem, closed = false): string {
+  const controls = { item, closed, approvalPending: false, gated: false, canMerge: true, locked: false, onDecide: () => {}, onWrite: () => {} };
+  return renderToStaticMarkup(<PullActions mode={actionMode(item)} controls={controls} onApproveDo={() => {}} onSkipDo={() => {}} />);
+}
+
+test("a policy that acts on its own says what Triage did and why, and offers no Merge", () => {
+  const html = actions(triaged("fail", "needs-author-update", [step("fail", "comment", { body: FEEDBACK }, { status: "done" })], ["comment"]));
+  expect(html).toContain("Triage commented &quot;Please split this.&quot;. Size failed.");
+  expect(html).not.toContain("<button");
+});
+
+test("a policy that labels on its own but leaves the merge to you shows what Triage did beside your controls", () => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "labels", { labels: ["triage:ready"] }, { status: "done" })], ["labels"]));
+  expect(html).toContain("Triage added label triage:ready.");
+  expect(html).toContain(">Merge<");
+  expect(html).toContain(">More<");
+});
+
+test("a ready pull request whose policy may merge, with no merge step to run, still offers you Merge", () => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "labels", { labels: ["triage:ready"] }, { status: "done" })], ["labels", "merge"]));
+  expect(html).toContain("Triage added label triage:ready.");
+  expect(html).toContain(">Merge<");
+});
+
+test("an automatic action that has not run is described as not posted yet, not as done", () => {
+  const html = actions(triaged("fail", "needs-author-update", [step("fail", "comment", { body: FEEDBACK }, {})], ["comment"]));
+  expect(html).toContain("Not posted yet: Comment &quot;Please split this.&quot;.");
+  expect(html).not.toContain("Triage commented");
+});
+
+test("a held action waits on you with Approve and Skip beside your controls", () => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []));
+  expect(html).toContain(">Approve<");
+  expect(html).toContain(">Skip<");
+  expect(html).toContain(">Merge<");
+});
+
+test("a closed pull request offers no held action and none of your controls", () => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []), true);
+  expect(html).not.toContain(">Approve<");
+  expect(html).not.toContain(">Skip<");
+  expect(html).not.toContain(">Merge<");
 });
