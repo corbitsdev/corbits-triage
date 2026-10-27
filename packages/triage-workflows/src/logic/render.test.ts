@@ -465,20 +465,23 @@ describe("a check failed after the verdict", () => {
   const sources = { quality: [], custom: [], rules: [] };
   const asked = "**Triage: Fail**\n\n@octocat, please address the following:\n- Code review found 1 problem on this head.";
 
+  const passing = { state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks: [], needsJudgment: true, sources } as DeterministicResult;
+  const requested = { state: "needs-author-update", reason: "a reviewer requested changes", findings: [], checks: [{ check: "no-changes-requested", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: ["changes requested by @maya"], output: { kind: "values", values: {} } }], needsJudgment: false, sources } as DeterministicResult;
+
   test.each([
-    ["a Pass that posted no comment fails and posts one", { state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks: [], needsJudgment: true, sources } as DeterministicResult, "Code review found 1 problem on this head."],
-    ["a Fail whose only reason is a maintainer's requested changes posts one", { state: "needs-author-update", reason: "a reviewer requested changes", findings: [], checks: [{ check: "no-changes-requested", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: ["changes requested by @maya"], output: { kind: "values", values: {} } }], needsJudgment: false, sources } as DeterministicResult, "a reviewer requested changes; Code review found 1 problem on this head."],
-  ])("%s asking the author to fix it", (_name, det, reason) => {
+    ["a Pass that posted no comment fails and posts one", passing, "Code review found 1 problem on this head.", "Fix: Code review found 1 problem on this head."],
+    ["a Fail whose only reason is a maintainer's requested changes posts one", requested, "a reviewer requested changes; Code review found 1 problem on this head.", "Address requested changes from @maya; the author fixes: Code review found 1 problem on this head."],
+  ])("%s asking the author to fix it", (_name, det, reason, nextAction) => {
     const rendered = { ...renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det }), feedback: "" };
     const made = withFailure(rendered, failed, { author: "octocat", det, reviewers: [] });
-    expect(made).toMatchObject({ verdict: "fail", reason, feedback: asked, actor: "author" });
-    expect(made.nextAction).toContain("Fix: Code review found 1 problem on this head.");
+    expect(made).toMatchObject({ verdict: "fail", reason, feedback: asked, actor: "author", nextAction });
   });
 
-  test("a comment that already opens with the new title holds it once", () => {
-    const det = { state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks: [], needsJudgment: true, sources } as DeterministicResult;
-    const rendered = { ...renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det }), feedback: "**Triage: Fail**\n\nThe judge's own words." };
-    const made = withFailure(rendered, failed, { author: "octocat", det, reviewers: [] });
-    expect(made.feedback).toBe(`${asked}\n\nThe judge's own words.`);
+  test.each([
+    ["a next step keeps its actor and names the author for the fix", "Review", { actor: "maintainer", nextAction: "Review; the author fixes: Code review found 1 problem on this head." }],
+    ["no next step makes the fix the author's", "", { actor: "author", nextAction: "Fix: Code review found 1 problem on this head." }],
+  ])("an Unsure with %s", (_name, nextAction, next) => {
+    const rendered = { ...renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: passing }), verdict: "unsure" as const, actor: "maintainer" as const, nextAction };
+    expect(withFailure(rendered, failed, { author: "octocat", det: passing, reviewers: [] })).toMatchObject({ verdict: "unsure", ...next });
   });
 });

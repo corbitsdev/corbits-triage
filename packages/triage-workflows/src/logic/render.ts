@@ -748,18 +748,12 @@ function commentBody({ feedback, verdict }: Pick<RenderOutput, "feedback" | "ver
   return body[0] === "" ? body.slice(1) : body;
 }
 
-/** `previous`, a verdict's comment without its title, asking its author to fix `reason` too. */
-function withFinding(previous: string[], author: string, reason: string): string[] {
+/** `previous`, a verdict's comment without its title, under `title` and asking its author to fix `reason` too. */
+function withFinding(title: string, previous: string[], author: string, reason: string): string[] {
   const lead = `@${author}, please address the following:`;
   const at = previous.indexOf(lead);
-  if (at === -1) return [lead, `- ${reason}`, ...(previous.length ? ["", ...previous] : [])];
-  return [...previous.slice(0, at + 1), `- ${reason}`, ...previous.slice(at + 1)];
-}
-
-/** `previous` asking its author to fix `reason` too under `title`, which it holds once even when `previous` opens with it. */
-function titledFinding(title: string, previous: string[], author: string, reason: string): string[] {
-  const body = previous[0] === title ? previous.slice(previous[1] === "" ? 2 : 1) : previous;
-  return [title, "", ...withFinding(body, author, reason)];
+  if (at === -1) return [title, "", lead, `- ${reason}`, ...(previous.length ? ["", ...previous] : [])];
+  return [title, "", ...previous.slice(0, at + 1), `- ${reason}`, ...previous.slice(at + 1)];
 }
 
 /** A comment without the line saying it lists nothing, and the blank lines that line leaves at its top. */
@@ -771,20 +765,20 @@ function listingSomething(lines: string[]): string[] {
 
 /**
  * A decided verdict once `failed`, a check made after it such as code review, found problems, `failed` among its checks
- * and reasons. A Pass turns to Fail; an Unsure or a Fail keeps its verdict, its reason and next step going on to name
- * `failed` too. Whatever the verdict, its comment asks the author to fix `failed`, below what it said before, so a verdict that
- * posted no comment now posts one.
+ * and reasons. A Pass turns to Fail. An Unsure or a Fail keeps its verdict and its next step's actor, its reason and next
+ * step going on to name `failed` and that the author fixes it. Whatever the verdict, its comment asks the author to fix
+ * `failed`, below what it said before, so a verdict that posted no comment now posts one.
  */
 export function withFailure(rendered: RenderOutput, failed: CheckResult, { author, det, reviewers }: { author: string; det: DeterministicResult; reviewers: string[] }): RenderOutput {
   const reasons = [...rendered.reasons, failed.reason];
   const checks = [...rendered.checks, failed];
   const previous = commentBody(rendered);
   if (rendered.verdict !== "pass") {
-    const feedback = bounded(titledFinding(commentTitle(rendered.verdict), previous, author, failed.reason));
-    const { nextAction: fix } = nextStep([failed], det.sources, reviewers, rendered.verdict);
-    return { ...rendered, reason: `${rendered.reason}; ${failed.reason}`, nextAction: `${rendered.nextAction}; ${fix}`, reasons, checks, feedback };
+    const feedback = bounded(withFinding(commentTitle(rendered.verdict), previous, author, failed.reason));
+    const next = rendered.nextAction ? { nextAction: `${rendered.nextAction}; the author fixes: ${failed.reason}` } : nextStep([failed], det.sources, reviewers, rendered.verdict);
+    return { ...rendered, reason: `${rendered.reason}; ${failed.reason}`, ...next, reasons, checks, feedback };
   }
-  const feedback = bounded(titledFinding(commentTitle("fail"), listingSomething(previous), author, failed.reason));
+  const feedback = bounded(withFinding(commentTitle("fail"), listingSomething(previous), author, failed.reason));
   return { ...rendered, ...render(VERDICT_STATES.fail), verdict: "fail", reason: failed.reason, ...nextStep(checks, det.sources, reviewers, "fail"), labels: [VERDICT_LABELS.fail], reasons, checks, feedback };
 }
 

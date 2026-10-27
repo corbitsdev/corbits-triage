@@ -22,9 +22,9 @@ function severityAt({ priority = 0 }: Finding): number {
   return Math.min(Math.max(SEVERITIES.length - 1 - priority, 0), SEVERITIES.length - 1);
 }
 
-/** Why the review is not clean: none reported, or it read only part of the change; or how many findings are at or above `below`. */
 type Unclean = { held: string } | { found: number };
 
+/** Why the review is not clean: none reported, or it read only part of the change; or how many findings are at or above `below`. */
 function uncleanBy(review: CodeReviewOutput | undefined, below: (typeof SEVERITIES)[number] | undefined): Unclean | undefined {
   if (!review) return { held: "Code review did not report on this head." };
   if (review.budgetExhausted || review.cut) return { held: "Code review did not read the whole change on this head." };
@@ -65,7 +65,7 @@ function uncleared({ taken, review, reviewers, head }: TakeOutput, checks: unkno
 
 /** The verdict fields cleared reads, the rest kept as evaluate made them. */
 const ClearedVerdict = type({
-  number: "number", verdict: type.enumerated(...VERDICTS), reason: "string", reasons: "string[]", feedback: "string", checks: "object[]", actions: "object[]",
+  number: "number", headSha: "string | null", verdict: type.enumerated(...VERDICTS), reason: "string", reasons: "string[]", feedback: "string", checks: "object[]", actions: "object[]",
   degraded: "string | null", "approvable?": "boolean", "closed?": "true",
 }).as<Verdict>();
 
@@ -83,15 +83,14 @@ function reviewFailure(found: number): CheckResult {
 }
 
 /**
- * The verdict `found`, the review's problems on `head`, leave: evaluate's with the review among its checks and reasons,
- * a Pass turned to Fail with the policy's fail Dos, rebuilt from the rules item of the verdict's pull request at `head`,
- * or of its pull request alone for a degraded verdict that names no head, since its facts may name another. One that
- * cannot be made, or a degraded verdict with no such item, leaves the verdict as the rules made it.
+ * The verdict `found`, the review's problems, leave: evaluate's with the review among its checks and reasons, a Pass
+ * turned to Fail with the policy's fail Dos, rebuilt from the rules item it was made from: the one at its head, or its
+ * pull request's alone for a degraded verdict that names no head. One that cannot be made, or with no such item, such
+ * as a judge's verdict on a head the rules read past, leaves the verdict as the rules made it.
  */
-function reviewed(items: Item[], verdict: Verdict, head: string, found: number): Verdict {
-  const item = items.find(({ facts }) => facts.number === verdict.number && (verdict.headSha === null || facts.headSha === head));
-  if (!item && verdict.degraded !== null) return verdict;
-  if (!item) throw new Error(`cleared: the rules output has no item for #${verdict.number} at ${head}`);
+function reviewed(items: Item[], verdict: Verdict, found: number): Verdict {
+  const item = items.find(({ facts }) => facts.number === verdict.number && (verdict.headSha === null || facts.headSha === verdict.headSha));
+  if (!item) return verdict;
   try {
     return verdictWithFailure(item, verdict, reviewFailure(found));
   } catch {
@@ -107,10 +106,10 @@ function held(verdict: Verdict, reason: string): Verdict {
 
 /**
  * The pass's verdict once the policy's checks are in. A verdict whose code review found problems on its head names
- * them, waiting, degraded or decided, and a Pass among them fails with the policy's fail Dos; a closed pull request has
- * no verdict to name them in, and a take that names no head has no review of one to name, so either is only held. While a check is not clean, approve
- * and merge are held for a person, saying why, and the head is not approvable, so an approval Triage gave an earlier
- * head is taken back.
+ * them, waiting, degraded or decided, and a Pass among them fails with the policy's fail Dos. A closed pull request has
+ * no verdict to name them in, a take that names no head has no review of one, and a verdict on another head was not
+ * reviewed, so each is only held. While a check is not clean, approve and merge are held for a person, saying why, and
+ * the head is not approvable, so an approval Triage gave an earlier head is taken back.
  */
 export async function cleared(input: unknown): Promise<Verdict> {
   const parsed = ClearedInput(input);
@@ -121,6 +120,6 @@ export async function cleared(input: unknown): Promise<Verdict> {
   if (unclean === undefined) return verdict;
   if (!("found" in unclean)) return held(verdict, unclean.held);
   const reason = reviewFailure(unclean.found).reason;
-  if (verdict.closed || head === undefined) return held(verdict, reason);
-  return held(reviewed(parsed.rules.output.items, verdict, head, unclean.found), reason);
+  if (verdict.closed || head === undefined || (verdict.headSha !== null && verdict.headSha !== head)) return held(verdict, reason);
+  return held(reviewed(parsed.rules.output.items, verdict, unclean.found), reason);
 }

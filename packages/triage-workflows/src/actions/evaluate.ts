@@ -200,11 +200,10 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
   const wanted = actionInput && changesWanted(actionInput);
   const held = approvalHeldBy(rendered.verdict, it.facts.checks);
   const automatic = it.automatic;
-  const actions = it.pack ? suggestedDos(it, rendered, it.pack.actions[rendered.verdict]) : [];
+  const actions = suggestedDos(it, rendered, it.pack?.actions[rendered.verdict] ?? []);
   const feedback = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
   // What reading the policy left out is said on every verdict, so the policy can be fixed.
-  const dropped = it.pack?.dropped;
-  const reasons = dropped ? [...rendered.reasons, ...dropped] : rendered.reasons;
+  const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
   const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
   const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
   const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none", it.appLogin);
