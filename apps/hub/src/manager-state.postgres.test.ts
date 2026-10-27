@@ -449,14 +449,16 @@ test("PostgreSQL: a manager deployed inside the startup window, or one with a si
   });
 }, 120_000);
 
-test("PostgreSQL: a manager being cancelled holds no pull request and takes none, so the next one claims it", async () => {
+test("PostgreSQL: a manager being cancelled is mailed nothing and takes nothing, but holds the pull request until it ends", async () => {
   await withDatabase(async function cancelling(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     await startManager(db, GITHUB, "run_cancelling");
     await db.update(schema.workflowRun).set({ cancellationRequestedAt: new Date(), cancellationDeadline: new Date(), cancellationReason: "unwoken" }).where(sql`${schema.workflowRun.id} = 'run_cancelling'`);
+    await liveRun(db, "run_next");
     expect(await liveManager(db, TENANT, GITHUB)).toBeUndefined();
     expect(await take(db, TENANT, GITHUB, "run_cancelling")).toEqual({ outcome: "refused" });
-    await liveRun(db, "run_next");
+    expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
+    await db.update(schema.workflowRun).set({ status: "cancelled" }).where(sql`${schema.workflowRun.id} = 'run_cancelling'`);
     expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
     expect(await stateOf(db, CLAIM)).toMatchObject({ status: "live", runId: "run_next" });
   });

@@ -198,9 +198,11 @@ any other tenant or an unknown sender.
   new manager to publish its key. When a wake mail fails for any reason, the
   listener cancels that manager through the stock stop-run route under the
   `manage` grant stock gives a deployment's creator, and its `unwoken` step's
-  output names each run it cancelled and why the mail failed. A run whose
-  cancellation is requested is not up for the claim: the hub mails it
-  nothing and its own take is refused. The pull request's next event, or the
+  output names each run it cancelled and why the mail failed. A run stock
+  no longer lets execute, as one whose cancellation is requested or whose
+  deadline has passed, is mailed nothing and its own take is refused; one
+  that holds the claim keeps it until it ends, so no second manager writes
+  to the pull request meanwhile. The pull request's next event, or the
   reconciler re-queuing its head, which has no verdict, deploys a fresh
   manager that claims it. A mail that is not
   the hub's, that names no pull request, or that finds no manager in

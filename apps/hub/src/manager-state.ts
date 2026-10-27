@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, like, or, sql, type SQL } from "drizzle-orm";
 import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
-import { schema, type DB } from "@intx/db";
+import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, REPO_SOURCES, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
@@ -195,14 +195,15 @@ export async function recordResult(db: DB["db"], tenantId: string, pr: PullReque
  */
 const MANAGER_START_GRACE_MS = 2 * 60_000;
 
-type ManagerRun = { status: string; createdAt: Date; cancelling: Date | null; allocationStatus: string | null; sidecarId: string | null };
+type ManagerRun = { status: string; createdAt: Date; expiresAt: Date | null; cancellationRequestedAt: Date | null; allocationStatus: string | null; sidecarId: string | null };
 
 async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun | undefined> {
   const [run] = await tx
     .select({
       status: schema.workflowRun.status,
       createdAt: schema.workflowRun.createdAt,
-      cancelling: schema.workflowRun.cancellationRequestedAt,
+      expiresAt: schema.workflowRun.expiresAt,
+      cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt,
       allocationStatus: schema.sidecarAllocation.status,
       sidecarId: schema.sidecarAllocation.sidecarId,
     })
@@ -215,21 +216,16 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
 /** A just-deployed listener counts as live longer than a roll waits for it, so one a roll still waits on is never released. */
 const LISTENER_START_GRACE_MS = START_DEADLINE_MS + 60_000;
 
-/** A live run whose stop nobody has requested; one being cancelled is mailed nothing and takes no claim. */
-function runIsLive(run: ManagerRun | undefined): run is ManagerRun {
-  return run !== undefined && schema.isLiveWorkflowRunStatus(run.status) && run.cancelling === null;
-}
-
 /** A run that is running, or whose sidecar is up. */
 function runIsRunning(run: ManagerRun | undefined): boolean {
-  if (!runIsLive(run)) return false;
+  if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
   return run.status === "running" || (run.allocationStatus === "allocated" && run.sidecarId !== null);
 }
 
 /** A running run, or one deployed inside the startup window. A deploy that never got a sidecar past that window is not. */
 function runIsUp(run: ManagerRun | undefined, now: Date, graceMs = MANAGER_START_GRACE_MS): boolean {
   if (runIsRunning(run)) return true;
-  if (!runIsLive(run)) return false;
+  if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
   return now.getTime() - run.createdAt.getTime() < graceMs;
 }
 
@@ -270,26 +266,28 @@ export async function liveListener(db: DB["db"], tenantId: string, source: RepoS
   return starting;
 }
 
-/** The run id of the pull request's manager while that run is up. */
+/** The run id of the pull request's manager while that run is up and stock still lets it execute, so one being cancelled is mailed nothing. */
 export async function liveManager(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
   return db.transaction(async function findLive(tx) {
     const now = new Date();
     const claim = await lockClaim(tx, tenantId, pr);
     if (claim?.status !== "live" || claim.runId === undefined) return undefined;
-    return (await runGone(tx, claim.runId, now)) ? undefined : claim.runId;
+    const run = await managerRun(tx, claim.runId);
+    return run && canExecuteWorkflowRun(run) && runIsUp(run, now) ? claim.runId : undefined;
   });
 }
 
 /**
  * The claim `runId` holds, taken for it when no up run holds it: it is missing or ended, or the run it names has gone,
- * whose open pass the caller resumes. Undefined while another up run holds it, or while `runId` itself is being
- * cancelled. Concurrent callers queue on the claim's row lock, so exactly one takes it.
+ * whose open pass the caller resumes. Undefined while another up run holds it, a run being cancelled included until it
+ * ends, or once stock no longer lets `runId` execute. Concurrent callers queue on the claim's row lock, so exactly one
+ * takes it.
  */
 async function claimFor(tx: Tx, tenantId: string, pr: PullRequestRef, runId: string): Promise<Claim | undefined> {
   const key = claimKey(pr);
   const now = new Date();
   const own = await managerRun(tx, runId);
-  if (own && own.cancelling !== null) return undefined;
+  if (own && !canExecuteWorkflowRun(own)) return undefined;
   const fresh = { status: "live" as const, claimId: randomUUID(), claimedAt: now.toISOString(), runId };
   await tx.insert(managerState).values({ tenantId, key, kind: "claim", state: claimOf(key, { ...fresh, reviewers: [], history: [], starts: 1 }) }).onConflictDoNothing();
   const claim = await lockClaim(tx, tenantId, pr);
