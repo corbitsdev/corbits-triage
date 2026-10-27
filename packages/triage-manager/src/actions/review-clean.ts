@@ -1,5 +1,9 @@
 import { type } from "arktype";
-import { BLOCK_KINDS, blockCleanSchema, CodeReviewOutput, RULE_GATES, rulesGate, SEVERITIES, type ActionKind } from "@corbits/triage-contracts";
+import { BLOCK_KINDS, blockCleanSchema, CodeReviewOutput, RULE_GATES, rulesGate, SEVERITIES, VERDICTS, type ActionKind } from "@corbits/triage-contracts";
+import { verdictWithFailure } from "@corbits/triage-workflows/actions/evaluate";
+import type { CheckResult } from "@corbits/triage-workflows/logic/checks";
+import type { Item } from "@corbits/triage-workflows/logic/item";
+import type { Verdict } from "@corbits/triage-workflows/logic/render";
 import { storedReview, TakeOutput } from "./manager.js";
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "clean?": blockCleanSchema });
@@ -18,13 +22,15 @@ function severityAt({ priority = 0 }: Finding): number {
   return Math.min(Math.max(SEVERITIES.length - 1 - priority, 0), SEVERITIES.length - 1);
 }
 
-/** Why the review is not clean: none reported, it read only part of the change, or a finding is at or above `below`. */
-function uncleanBy(review: CodeReviewOutput | undefined, below: (typeof SEVERITIES)[number] | undefined): string | undefined {
-  if (!review) return "Code review did not report on this head.";
-  if (review.budgetExhausted || review.cut) return "Code review did not read the whole change on this head.";
+type Unclean = { held: string } | { found: number };
+
+/** Why the review is not clean: none reported, or it read only part of the change; or how many findings are at or above `below`. */
+function uncleanBy(review: CodeReviewOutput | undefined, below: (typeof SEVERITIES)[number] | undefined): Unclean | undefined {
+  if (!review) return { held: "Code review did not report on this head." };
+  if (review.budgetExhausted || review.cut) return { held: "Code review did not read the whole change on this head." };
   const floor = below === undefined ? 0 : SEVERITIES.indexOf(below);
-  if (review.comments.some((finding) => severityAt(finding) >= floor)) return "Code review found problems on this head.";
-  return undefined;
+  const found = review.comments.filter((finding) => severityAt(finding) >= floor).length;
+  return found > 0 ? { found } : undefined;
 }
 
 /** A Do already held keeps its own reason, such as waiting for CI. */
@@ -35,34 +41,85 @@ function hold<A extends object>(action: A, reason: string): A {
 }
 
 /**
- * Why approve and merge wait while the policy turns a check on. A check that can't run yet holds them until it can.
+ * Why the pass's verdict is not cleared while the policy turns a check on. Problems code review found on the head come
+ * first, so another check that can't run yet never hides them; such a check holds approve and merge until it can.
  * Code review must have run on the head and be clean as its block's `clean` says; one the policy's `for` or `when` left
  * out counts as off, and one held back by failed or unsettled rules did not run. A review that failed or ran past its
  * deadline reported nothing.
  */
-function heldBy({ taken, review, reviewers, head }: TakeOutput, checks: unknown, scope: Scope): string | undefined {
+function uncleared({ taken, review, reviewers, head }: TakeOutput, checks: unknown, scope: Scope): Unclean | undefined {
   const part = BlocksPart(taken);
   if (part instanceof type.errors) return undefined;
   const { blocks, codeReview } = part;
   const waiting = blocks.filter((kind) => kind !== "code-review");
-  if (waiting.length > 0) return `The policy's ${waiting.join(" and ")} check can't run yet.`;
   const leftOut = scope.skipped !== undefined && rulesGate(codeReview.rules, checks).open;
-  if (!codeReview.on || leftOut) return undefined;
-  if (!scope.reviewed) return "Code review did not run on this head.";
-  return uncleanBy(review ?? (head === undefined ? undefined : storedReview(reviewers, head)), codeReview.clean?.below);
+  const reviewing = codeReview.on && !leftOut;
+  const reported = review ?? (head === undefined ? undefined : storedReview(reviewers, head));
+  const unclean = reviewing && scope.reviewed ? uncleanBy(reported, codeReview.clean?.below) : undefined;
+  if (unclean && "found" in unclean) return unclean;
+  if (waiting.length > 0) return { held: `The policy's ${waiting.join(" and ")} check can't run yet.` };
+  if (!reviewing) return undefined;
+  if (!scope.reviewed) return { held: "Code review did not run on this head." };
+  return unclean;
 }
 
-const ClearedInput = type({ take: { output: TakeOutput }, evaluateRules: { output: { checks: "unknown", actions: "object[]", "approvable?": "boolean" } }, reviewScope: { output: Scope } });
+/** The verdict fields cleared reads, the rest kept as evaluate made them. */
+const ClearedVerdict = type({
+  number: "number", headSha: "string | null", verdict: type.enumerated(...VERDICTS), reason: "string", reasons: "string[]", feedback: "string", checks: "object[]", actions: "object[]",
+  degraded: "string | null", "approvable?": "boolean", "closed?": "true",
+}).as<Verdict>();
+
+const ClearedInput = type({
+  take: { output: TakeOutput },
+  rules: { output: { items: type("object[]").as<Item[]>() } },
+  evaluateRules: { output: ClearedVerdict },
+  reviewScope: { output: Scope },
+});
+
+/** A code review with findings on the head is a failed check of its own. */
+function reviewFailure(found: number): CheckResult {
+  const reason = `Code review found ${found} ${found === 1 ? "problem" : "problems"} on this head.`;
+  return { check: "code-review", kind: "machine", result: "fail", reason, evidence: [], output: { kind: "values", values: { findings: found } } };
+}
 
 /**
- * The pass's verdict with its approve and merge Dos held for a person, saying why, while the policy's checks are not
- * clean on its head. Such a head is not approvable, so an approval Triage gave an earlier head is taken back.
+ * The verdict `found`, the review's problems, leave: evaluate's with the review among its checks and reasons, a Pass
+ * turned to Fail with the policy's fail Dos, rebuilt from the rules item it was made from: the one at its head, or its
+ * pull request's alone for a degraded verdict that names no head. One that cannot be made, or with no such item, such
+ * as a judge's verdict on a head the rules read past, leaves the verdict as the rules made it.
  */
-export async function cleared(input: unknown): Promise<Record<string, unknown>> {
+function reviewed(items: Item[], verdict: Verdict, found: number): Verdict {
+  const item = items.find(({ facts }) => facts.number === verdict.number && (verdict.headSha === null || facts.headSha === verdict.headSha));
+  if (!item) return verdict;
+  try {
+    return verdictWithFailure(item, verdict, reviewFailure(found));
+  } catch {
+    // An action has no logger; the verdict's approve and merge are still held for the review's problems.
+    return verdict;
+  }
+}
+
+/** `verdict` with its approve and merge Dos held for a person, saying why, and not approvable. */
+function held(verdict: Verdict, reason: string): Verdict {
+  return { ...verdict, actions: verdict.actions.map((action) => hold(action, reason)), ...(verdict.approvable !== undefined && { approvable: false }) };
+}
+
+/**
+ * The pass's verdict once the policy's checks are in. A verdict whose code review found problems on its head names
+ * them, waiting, degraded or decided, and a Pass among them fails with the policy's fail Dos. A closed pull request has
+ * no verdict to name them in, a take that names no head has no review of one, and a verdict on another head was not
+ * reviewed, so each is only held. While a check is not clean, approve and merge are held for a person, saying why, and
+ * the head is not approvable, so an approval Triage gave an earlier head is taken back.
+ */
+export async function cleared(input: unknown): Promise<Verdict> {
   const parsed = ClearedInput(input);
   if (parsed instanceof type.errors) throw new Error(`cleared: ${parsed.summary}`);
   const verdict = parsed.evaluateRules.output;
-  const reason = heldBy(parsed.take.output, verdict.checks, parsed.reviewScope.output);
-  if (reason === undefined) return verdict;
-  return { ...verdict, actions: verdict.actions.map((action) => hold(action, reason)), ...(verdict.approvable !== undefined && { approvable: false }) };
+  const { head } = parsed.take.output;
+  const unclean = uncleared(parsed.take.output, verdict.checks, parsed.reviewScope.output);
+  if (unclean === undefined) return verdict;
+  if (!("found" in unclean)) return held(verdict, unclean.held);
+  const reason = reviewFailure(unclean.found).reason;
+  if (verdict.closed || head === undefined || (verdict.headSha !== null && verdict.headSha !== head)) return held(verdict, reason);
+  return held(reviewed(parsed.rules.output.items, verdict, unclean.found), reason);
 }

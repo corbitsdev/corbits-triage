@@ -8,7 +8,7 @@ import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation } from "../logic/quality.js";
-import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
+import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, withFailure, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
 
@@ -143,6 +143,12 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
 }
 
+/** `feedback` without the Dos `withDos` closed it with. */
+function withoutDos(feedback: string, actions: SuggestedAction[]): string {
+  const dos = withDos(" ", actions).slice(1);
+  return dos && feedback.endsWith(dos) ? feedback.slice(0, -dos.length) : feedback;
+}
+
 /**
  * A run that could not read the pull request says so where its verdict would stand: the failed label in place of any
  * verdict label on GitHub, a failed build status on Bitbucket Data Center. None without a known head, so a newer head is
@@ -188,6 +194,47 @@ export function suggestedDos(it: Item, rendered: Rendered, steps: readonly Step[
   return holdDos(heldApprovals(suggested, approvalHeldBy(rendered.verdict, it.facts.checks), it.facts.checks), it.automatic);
 }
 
+/** The verdict on a rendered item: its labels, its Dos, and the comment and labels its mirror writes. */
+function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
+  const actionInput = actionInputOf(it, rendered);
+  const wanted = actionInput && changesWanted(actionInput);
+  const held = approvalHeldBy(rendered.verdict, it.facts.checks);
+  const automatic = it.automatic;
+  const actions = suggestedDos(it, rendered, it.pack?.actions[rendered.verdict] ?? []);
+  const feedback = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
+  // What reading the policy left out is said on every verdict, so the policy can be fixed.
+  const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
+  const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
+  const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
+  const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none", it.appLogin);
+  const verdict = {
+    ...stamp(it, it.facts.headSha), ...rendered, labels, reasons, feedback, automatic, actions,
+    ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),
+    ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
+  };
+  return { ...verdict, request: toMirrorRequest(verdict, owned, it.source) };
+}
+
+/**
+ * `verdict` on `it` as evaluate makes it once `failed`, a check made after it such as code review, found problems.
+ * What the verdict made of its rendering is made again, as the policy makes it for the new verdict. A degraded verdict
+ * that names no head keeps what it marks on the pull request in its verdict's place, and is still not posted.
+ */
+export function verdictWithFailure(it: Item, verdict: Verdict, failed: CheckResult): Verdict {
+  const { author, reviewers } = it.facts;
+  if (verdict.headSha === null) {
+    const made = withFailure(verdict, failed, { author, det: it.det, reviewers });
+    return { ...verdict, ...made, request: { ...verdict.request, comment: made.feedback } };
+  }
+  // verdictFrom sets these only when the new verdict has them, so the old ones must not carry over.
+  const { actions, approvable: _approvable, changesWanted: _changesWanted, mark: _mark, closed: _closed, ...rendered } = verdict;
+  const dropped = it.pack?.dropped;
+  // verdictFrom closes the reasons with what reading the policy left out, and does so again.
+  const reasons = dropped ? rendered.reasons.slice(0, rendered.reasons.length - dropped.length) : rendered.reasons;
+  const feedback = withoutDos(rendered.feedback, actions);
+  return verdictFrom(it, withFailure({ ...rendered, feedback, reasons }, failed, { author, det: it.det, reviewers }));
+}
+
 /** Takes the item's own chunk replies off the front of `replies` and `partReplies`. */
 function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdict {
   if (it.error !== undefined) return degradedOf(it, it.error);
@@ -216,23 +263,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(it.noWait && { noWait: it.noWait }),
     });
-    const actionInput = actionInputOf(it, rendered);
-    const wanted = actionInput && changesWanted(actionInput);
-    const held = approvalHeldBy(rendered.verdict, it.facts.checks);
-    const automatic = it.automatic;
-    const actions = suggestedDos(it, rendered, it.pack?.actions[rendered.verdict] ?? []);
-    const feedback = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
-    // What reading the policy left out is said on every verdict, so the policy can be fixed.
-    const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
-    const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
-    const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
-    const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none", it.appLogin);
-    const verdict = {
-      ...stamp(it, it.facts.headSha), ...rendered, labels, reasons, feedback, automatic, actions,
-      ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),
-      ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
-    };
-    return { ...verdict, request: toMirrorRequest(verdict, owned, it.source) };
+    return verdictFrom(it, rendered);
   } catch (e) {
     return degradedOf(it, `render failed: ${errorText(e)}`);
   }

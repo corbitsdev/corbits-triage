@@ -642,6 +642,9 @@ function skippedLine(c: CheckResult, sources: NonNullable<Sources>): string[] {
 /** What a passing comment tells the author when nothing else is listed. */
 const NOTHING_TO_CHANGE = "No changes needed from you. ";
 
+/** What a comment says when it lists nothing for the author or a maintainer. */
+const MAINTAINER_REVIEWS = "A maintainer will review this pull request.";
+
 /**
  * Public: the verdict, what the author must fix and what is not yet confirmed; never a score or model reasoning. A
  * maintainer's requested changes are already in front of the author, so they are left out, and a comment holding
@@ -684,7 +687,7 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   }
   if (!lines.length) {
     if (failing.some((c) => c.check === NO_CHANGES_REQUESTED)) return "";
-    lines.push(`${verdict === "pass" ? NOTHING_TO_CHANGE : ""}A maintainer will review this pull request.`);
+    lines.push(`${verdict === "pass" ? NOTHING_TO_CHANGE : ""}${MAINTAINER_REVIEWS}`);
   }
   if (ctx.stack?.onto !== undefined && !holdsOthersChanges(ctx.stack)) lines.push("", `Stacked on #${ctx.stack.onto}: only this pull request's own changes were checked.`);
   const skipped = sources ? checks.flatMap((c) => skippedLine(c, sources)) : [];
@@ -736,6 +739,48 @@ function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number 
 }
 
 const VERDICT_STATES: Record<VerdictWord, WorkflowState> = { pass: "ready-monitoring", fail: "needs-author-update", unsure: "awaiting-review" };
+
+/** A verdict's comment lines below its title. */
+function commentBody({ feedback, verdict }: Pick<RenderOutput, "feedback" | "verdict">): string[] {
+  if (!feedback) return [];
+  const [title, ...body] = feedback.split("\n");
+  if (title !== commentTitle(verdict)) return [title!, ...body];
+  return body[0] === "" ? body.slice(1) : body;
+}
+
+/** `previous`, a verdict's comment without its title, under `title` and asking its author to fix `reason` too. */
+function withFinding(title: string, previous: string[], author: string, reason: string): string[] {
+  const lead = `@${author}, please address the following:`;
+  const at = previous.indexOf(lead);
+  if (at === -1) return [title, "", lead, `- ${reason}`, ...(previous.length ? ["", ...previous] : [])];
+  return [title, "", ...previous.slice(0, at + 1), `- ${reason}`, ...previous.slice(at + 1)];
+}
+
+/** A comment without the line saying it lists nothing, and the blank lines that line leaves at its top. */
+function listingSomething(lines: string[]): string[] {
+  const listed = lines.filter((line) => line !== MAINTAINER_REVIEWS && line !== `${NOTHING_TO_CHANGE}${MAINTAINER_REVIEWS}`);
+  const first = listed.findIndex((line) => line !== "");
+  return first === -1 ? [] : listed.slice(first);
+}
+
+/**
+ * A decided verdict once `failed`, a check made after it such as code review, found problems, `failed` among its checks
+ * and reasons. A Pass turns to Fail. An Unsure or a Fail keeps its verdict and its next step's actor, its reason and next
+ * step going on to name `failed` and that the author fixes it. Whatever the verdict, its comment asks the author to fix
+ * `failed`, below what it said before, so a verdict that posted no comment now posts one.
+ */
+export function withFailure(rendered: RenderOutput, failed: CheckResult, { author, det, reviewers }: { author: string; det: DeterministicResult; reviewers: string[] }): RenderOutput {
+  const reasons = [...rendered.reasons, failed.reason];
+  const checks = [...rendered.checks, failed];
+  const previous = commentBody(rendered);
+  if (rendered.verdict !== "pass") {
+    const feedback = bounded(withFinding(commentTitle(rendered.verdict), previous, author, failed.reason));
+    const next = rendered.nextAction ? { nextAction: `${rendered.nextAction}; the author fixes: ${failed.reason}` } : nextStep([failed], det.sources, reviewers, rendered.verdict);
+    return { ...rendered, reason: `${rendered.reason}; ${failed.reason}`, ...next, reasons, checks, feedback };
+  }
+  const feedback = bounded(withFinding(commentTitle("fail"), listingSomething(previous), author, failed.reason));
+  return { ...rendered, ...render(VERDICT_STATES.fail), verdict: "fail", reason: failed.reason, ...nextStep(checks, det.sources, reviewers, "fail"), labels: [VERDICT_LABELS.fail], reasons, checks, feedback };
+}
 
 /** Pass or fail only when that choice clears the bar; anything else is unsure. */
 function decide(choice: Record<VerdictChoice, number>): VerdictWord {

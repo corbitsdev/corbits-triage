@@ -25,7 +25,7 @@ const MAIL = { project: { from: "trigger.payload" }, fields: ["payload"] } as co
 /** The newest pull request mail take read back from the hub, which pr-triage's steps trust as the hub's. */
 const TAKEN = { project: { from: "steps.take.output" }, fields: ["taken"] } as const;
 
-/** The verdict the pass posts and runs: evaluateRules' with approve and merge held while the policy's checks are not clean. */
+/** The verdict the pass posts and runs: evaluateRules', failed by a code review that found problems, or with approve and merge held while the policy's checks are not clean. */
 const CLEARED = { from: "steps.cleared.output" } as const;
 
 function stepsOf(...ids: string[]) {
@@ -46,7 +46,7 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
   return {
     reviewScope: action({ handler: "reviewScope", input: { merge: [MAIL, stepsOf("take", "rules", "evaluateRules")] }, after: ["evaluateRules"] }),
     // After reviewScope, so a review the policy left out is told from one that is due; the verdict goes up from here.
-    cleared: action({ handler: "cleared", input: stepsOf("take", "evaluateRules", "reviewScope"), after: ["reviewScope"] }),
+    cleared: action({ handler: "cleared", input: stepsOf("take", "rules", "evaluateRules", "reviewScope"), after: ["reviewScope"] }),
     reviewing: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "deployReview", else: "posting", after: ["cleared"] }),
     deployReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["reviewing"]),
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
