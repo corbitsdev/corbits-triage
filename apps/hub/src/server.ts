@@ -814,6 +814,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     managerRuns,
     openPulls: openPullsCache,
     list: tenantOpenPrs,
+    openHeadFor: tenantOpenHead,
     triageState: triageStateStore,
     now,
   }),
