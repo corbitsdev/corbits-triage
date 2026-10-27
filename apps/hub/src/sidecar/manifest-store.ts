@@ -18,8 +18,8 @@ const LocalSidecarHold = type({ allocationId: "string > 0", generation: "number.
 export type LocalSidecarHold = typeof LocalSidecarHold.infer;
 const LocalSidecarHolds = LocalSidecarHold.array();
 
-/** A destroyed generation of an allocation, and the identities a late ensure at it may still carry. */
-const LocalSidecarFence = type({ allocationId: "string > 0", generation: "number.integer >= 0", sidecarIds: "string[]" });
+/** A destroyed generation of an allocation, and the identities a late ensure at it may still carry; absent, every one. */
+const LocalSidecarFence = type({ allocationId: "string > 0", generation: "number.integer >= 0", "sidecarIds?": "string[]" });
 export type LocalSidecarFence = typeof LocalSidecarFence.infer;
 const LocalSidecarFences = LocalSidecarFence.array();
 
@@ -33,7 +33,8 @@ export interface LocalSidecarManifestStore {
   remove(): Promise<void>;
   readHolds(): Promise<LocalSidecarHold[]>;
   writeHolds(holds: readonly LocalSidecarHold[]): Promise<void>;
-  readFences(): Promise<LocalSidecarFence[]>;
+  /** The stored fences, or null when the file could not be read and was moved aside. */
+  readFences(): Promise<LocalSidecarFence[] | null>;
   writeFences(fences: readonly LocalSidecarFence[]): Promise<void>;
   /** The sidecars a hub that ran one per allocation left manifests for. */
   legacySidecars(): Promise<LegacySidecar[]>;
@@ -126,30 +127,35 @@ export function createLocalSidecarManifestStore({
     await fs.rm(manifestFile, { force: true });
   }
 
-  // An unreadable list names nothing restore can bring back: the hub places held work again, and a fence only guards
-  // against a late ensure stock already gave up on.
-  async function readList<T>(file: string, schema: { assert(data: unknown): T[] }): Promise<T[]> {
-    const text = await readOptional(file);
+  // An unreadable holds file names nothing restore can bring back; the hub places that work again.
+  async function readHolds(): Promise<LocalSidecarHold[]> {
+    const text = await readOptional(holdsFile);
     if (text === null) return [];
     try {
-      return schema.assert(JSON.parse(text));
+      return LocalSidecarHolds.assert(JSON.parse(text));
     } catch (error) {
-      await fs.rm(file, { force: true });
-      log({ level: "warn", msg: "local_sidecar_list_unreadable_removed", file, error: errorText(error) });
+      await fs.rm(holdsFile, { force: true });
+      log({ level: "warn", msg: "local_sidecar_holds_unreadable_removed", file: holdsFile, error: errorText(error) });
       return [];
     }
-  }
-
-  function readHolds(): Promise<LocalSidecarHold[]> {
-    return readList(holdsFile, LocalSidecarHolds);
   }
 
   async function writeHolds(holds: readonly LocalSidecarHold[]): Promise<void> {
     await writeAtomically(holdsFile, JSON.stringify(holds));
   }
 
-  function readFences(): Promise<LocalSidecarFence[]> {
-    return readList(fencesFile, LocalSidecarFences);
+  // An unreadable fences file is kept aside for the operator; null tells restore to rebuild the fences instead.
+  async function readFences(): Promise<LocalSidecarFence[] | null> {
+    const text = await readOptional(fencesFile);
+    if (text === null) return [];
+    try {
+      return LocalSidecarFences.assert(JSON.parse(text));
+    } catch (error) {
+      const aside = `${fencesFile}.corrupt-${String(Date.now())}`;
+      await fs.rename(fencesFile, aside);
+      log({ level: "warn", msg: "local_sidecar_fences_unreadable_moved", file: fencesFile, aside, error: errorText(error) });
+      return null;
+    }
   }
 
   async function writeFences(fences: readonly LocalSidecarFence[]): Promise<void> {

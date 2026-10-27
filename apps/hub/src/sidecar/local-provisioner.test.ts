@@ -36,7 +36,7 @@ async function setup({ freeBytes = async () => undefined }: { freeBytes?: () => 
   roots.push(dataRoot);
   const spawned: { manifest: LocalSidecarManifest; adapterManifest: AdapterManifest }[] = [];
   const logs: Record<string, unknown>[] = [];
-  const manifests = createLocalSidecarManifestStore({ dataRoot, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)), log: () => {} });
+  const manifests = createLocalSidecarManifestStore({ dataRoot, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)), log: (entry) => logs.push(entry) });
   function create() {
     return createLocalProcessSidecarProvisioner({
       dataRoot,
@@ -57,12 +57,17 @@ async function setup({ freeBytes = async () => undefined }: { freeBytes?: () => 
       log: (entry) => logs.push(entry),
     });
   }
-  return { dataRoot, manifests, spawned, logs, create };
+  async function started(records: LocalSidecarRecords = NOTHING_HELD) {
+    const local = create();
+    await local.restore(records);
+    return local;
+  }
+  return { dataRoot, manifests, spawned, logs, create, started };
 }
 
 test("every allocation joins the one sidecar, and destroying any of them leaves it running for the hub to undeploy", async () => {
-  const { manifests, spawned, create } = await setup();
-  const local = create();
+  const { manifests, spawned, started } = await setup();
+  const local = await started();
 
   expect(await local.provisioner.ensure(request("a"))).toEqual({ kind: "accepted", externalRef: "1" });
   expect(await local.provisioner.ensure(request("b"))).toEqual({ kind: "accepted", externalRef: "1", sidecarId: "sc_a" });
@@ -80,8 +85,8 @@ test("every allocation joins the one sidecar, and destroying any of them leaves 
 
 test("a probe's start is the one start: its release keeps the sidecar, which the next deployment joins whatever memory is free", async () => {
   let free = SIDECAR_BYTES;
-  const { spawned, create } = await setup({ freeBytes: async () => free });
-  const local = create();
+  const { spawned, started } = await setup({ freeBytes: async () => free });
+  const local = await started();
 
   expect((await local.provisioner.ensure(request("probe"))).kind).toBe("accepted");
   free = 0;
@@ -106,7 +111,11 @@ function openOnly(...open: string[]): LocalSidecarRecords["stillOpen"] {
   };
 }
 
-const NOTHING_HELD: LocalSidecarRecords = { isLive: nothingElse, hasWork: nothingElse, stillOpen: noneOpen };
+async function noneEnded(): Promise<{ allocationId: string; generation: number }[]> {
+  return [];
+}
+
+const NOTHING_HELD: LocalSidecarRecords = { isLive: nothingElse, hasWork: nothingElse, stillOpen: noneOpen, pastEnsuring: noneEnded };
 
 test("restore respawns the sidecar once for the holds still live and drops the rest", async () => {
   const { dataRoot, manifests, spawned, logs, create } = await setup();
@@ -172,8 +181,8 @@ test("restore brings the sidecar back while the hub still waits for it to remove
 });
 
 test("a late ensure for a destroyed identity, or another identity at a live generation, is refused", async () => {
-  const { create } = await setup();
-  const local = create();
+  const { started } = await setup();
+  const local = await started();
 
   await local.provisioner.ensure(request("a"));
   await local.provisioner.destroy({ allocationId: "a", generation: 2, sidecarId: "sc_a" });
@@ -185,8 +194,8 @@ test("a late ensure for a destroyed identity, or another identity at a live gene
 });
 
 test("the sidecar's exit is logged with how it ended", async () => {
-  const { logs, create } = await setup();
-  const local = create();
+  const { logs, started } = await setup();
+  const local = await started();
 
   await local.provisioner.ensure(request("a"));
   await local.shutdown();
@@ -195,8 +204,8 @@ test("the sidecar's exit is logged with how it ended", async () => {
 });
 
 test("a destroy older than the allocation's hold leaves the live generation held", async () => {
-  const { manifests, create } = await setup();
-  const local = create();
+  const { manifests, started } = await setup();
+  const local = await started();
 
   await local.provisioner.ensure(request("listener"));
   await local.provisioner.ensure(request("a", 2));
@@ -262,9 +271,9 @@ test("restore retires the sidecars a hub with one per allocation left and remove
   });
 });
 
-test("a destroy with no hold is fenced across a restart, until stock has ended the allocation", async () => {
-  const { manifests, create } = await setup();
-  const before = create();
+test("a destroy with no hold is fenced across a restart, and the file drops it once stock has ended the allocation", async () => {
+  const { manifests, create, started } = await setup();
+  const before = await started({ ...NOTHING_HELD, stillOpen: openOnly("a") });
   expect(await before.provisioner.destroy({ allocationId: "a", generation: 1, sidecarId: "sc_a" })).toEqual({ kind: "destroyed", cleanup: "confirmed" });
   await before.shutdown();
 
@@ -276,8 +285,37 @@ test("a destroy with no hold is fenced across a restart, until stock has ended t
   const ended = create();
   await ended.restore(NOTHING_HELD);
   expect(await manifests.readFences()).toEqual([]);
-  expect((await ended.provisioner.ensure(request("a"))).kind).toBe("accepted");
   await ended.shutdown();
+});
+
+test("a corrupt fences file is moved aside and the fences rebuilt from what stock no longer ensures, refusing a late ensure", async () => {
+  const { dataRoot, logs, started } = await setup();
+  await fs.writeFile(path.join(dataRoot, "fences.json"), "[{\"allocationId\":");
+  const local = await started({ ...NOTHING_HELD, pastEnsuring: async () => [{ allocationId: "a", generation: 2 }] });
+
+  expect(await local.provisioner.ensure({ ...request("a", 2), sidecarId: "sc_late" })).toMatchObject({ kind: "rejected", code: "generation_destroyed" });
+  expect(await local.provisioner.ensure(request("a", 1))).toMatchObject({ kind: "rejected", code: "stale_generation" });
+  const files = await fs.readdir(dataRoot);
+  expect(files.filter((name) => name.startsWith("fences.json.corrupt-"))).toHaveLength(1);
+  expect(logs).toContainEqual(expect.objectContaining({ level: "warn", msg: "local_sidecar_fences_unreadable_moved" }));
+  await local.shutdown();
+});
+
+test("an ensure or destroy that arrives before restore waits for it and answers from the restored sidecar", async () => {
+  const { dataRoot, manifests, spawned, create } = await setup();
+  const stored: LocalSidecarManifest = { sidecarId: "sc_first", token: "token_first", hubWebSocketUrl: "ws://hub", dataDir: path.join(dataRoot, "sidecar") };
+  await manifests.write(stored);
+  await manifests.writeHolds([{ allocationId: "listener", generation: 1, offeredSidecarId: "sc_first" }]);
+  const local = create();
+
+  const ensured = local.provisioner.ensure(request("early"));
+  const destroyed = local.provisioner.destroy({ allocationId: "listener", generation: 2, sidecarId: "sc_first" });
+  await local.restore({ ...NOTHING_HELD, isLive: async () => true });
+
+  expect(await ensured).toEqual({ kind: "accepted", externalRef: "1", sidecarId: "sc_first" });
+  expect(await destroyed).toEqual({ kind: "destroyed", cleanup: "required" });
+  expect(spawned.map(({ manifest }) => manifest.sidecarId)).toEqual(["sc_first"]);
+  await local.shutdown();
 });
 
 test("each fence write drops the fences of allocations stock has ended", async () => {
