@@ -108,7 +108,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | Package | Holds |
 | --- | --- |
 | `triage-workflows` | The triage steps, `pr-triage`, the definition that runs them locally, `repo-scan`, the judge's director, the actions under `actions/`, the deterministic logic under `logic/`, and the decision-model eval. |
-| `triage-contracts` | Policy schema and parsers, the policy file, workspace policy resolution, repository settings, triage state, labels, trigger mail and shared types; see [its README](../packages/triage-contracts/README.md). |
+| `triage-contracts` | Policy schema and parsers, the policy file, resolving a file over the one it extends, repository settings, triage state, labels, trigger mail and shared types; see [its README](../packages/triage-contracts/README.md). |
 | `github-reads`, `bitbucket-datacenter-reads` | Host read helpers, both returning the GitHub shapes. |
 | `github-tool`, `bitbucket-datacenter-tool` | The sidecar tool bundles: reads, the mirror, and actions. |
 | `repo-read-tool` | `read_file`, `grep` and `list`, read-only and confined to a checkout folder under the sidecar data dir's `checkouts` (no `..`, absolute path or symlink out); the host tool packages export `checkout` and their read bundles add `*_read_file`. |

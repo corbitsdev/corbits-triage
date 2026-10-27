@@ -30,18 +30,10 @@ function versionOf(body: { version?: number } | undefined, what: string): number
   return body.version;
 }
 
-/** Editing a policy that extends a workspace policy is not built yet, so a save would replace the override with a whole pack. */
-export class ExtendedPolicyError extends Error {
-  constructor() {
-    super("This repository's policy extends a workspace policy and cannot be edited here yet.");
-  }
-}
-
 /** Versions the artifact the draft was loaded from while triage still reads it; `expectedVersion` refuses it when anyone wrote since. */
 async function versionCheckPack(transport: Transport, tenantId: string, repo: string, source: RepoSource, content: string, loaded: LoadedCheckPack): Promise<number> {
   const current = await loadRepoCheckPack(transport, tenantId, repo, source);
   if ((current?.kind !== "pack" && current?.kind !== "corrupt") || current.id !== loaded.id) throw new StaleCheckPackError();
-  if (current.kind === "pack" && current.shared) throw new ExtendedPolicyError();
   const title = checkPackName(repo, source);
   try {
     const revised = await transport.fetch<{ version?: number }>("POST", `${collection(tenantId)}/${enc(loaded.id)}/versions`, {

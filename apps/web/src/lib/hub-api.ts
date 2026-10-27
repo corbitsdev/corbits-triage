@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -372,19 +372,15 @@ export async function findArtifactByTitle(transport: Transport, tenantId: string
 }
 
 /**
- * A check pack with the artifact it was read from; `version` is what a save must match. `shared` is the workspace
- * policy the stored policy extends, which `pack` is resolved over.
- */
-/**
  * `automatic` is what Triage may do on its own in the repository; `decide` the kinds the policy file's `decide` names;
  * `mergeRisks` what its automatic approve or merge can let in.
  */
 type PolicyKinds = { automatic?: ActionKind[]; decide?: ActionKind[]; mergeRisks?: MergeRisk[] };
-export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack; shared?: ArtifactRef } & PolicyKinds;
+export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack } & PolicyKinds;
 /** The repository's artifact holds something that is not a check pack; a save replaces it in place. */
 type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
 /** Read from the repository's policy file, which only a change to the file edits. */
-type FileCheckPack = { kind: "file"; path: string; pack: CheckPack; shared?: ArtifactRef } & PolicyKinds;
+type FileCheckPack = { kind: "file"; path: string; pack: CheckPack } & PolicyKinds;
 /** The repository's policy file is refused, so triage runs nothing until it is fixed. */
 type InvalidPolicyFile = { kind: "invalid"; path: string; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack | FileCheckPack | InvalidPolicyFile;
@@ -395,12 +391,12 @@ export async function loadRepoCheckPack(transport: Transport, tenantId: string, 
   if (read.status === "missing") return null;
   if (read.status === "corrupt") return { kind: "corrupt", ...read.repo, reason: read.reason };
   if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
-  const { repo: stored, shared, file } = read.source;
+  const { repo: stored, file } = read.source;
   const pack = readCheckPack(read.pack, clean);
   const kinds = { automatic: read.automatic, decide: read.decide, mergeRisks: read.mergeRisks };
-  if (file) return { kind: "file", path: file.path, pack, ...kinds, ...(shared && { shared }) };
+  if (file) return { kind: "file", path: file.path, pack, ...kinds };
   if (!stored) throw new Error(`The hub named no policy ${clean} was read from.`);
-  return { kind: "pack", ...stored, pack, ...kinds, ...(shared && { shared }) };
+  return { kind: "pack", ...stored, pack, ...kinds };
 }
 
 export type CheckPackLookup = (record: RepoRecord) => Promise<boolean>;

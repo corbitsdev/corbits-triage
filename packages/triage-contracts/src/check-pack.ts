@@ -451,7 +451,7 @@ export const Text = type(/\S/).atMostLength(LINE_MAX);
 export const Glob = type(/^!?[^\s!](?:.*\S)?$/).atMostLength(LINE_MAX);
 export const Label = type(/\S/).atMostLength(LABEL_MAX);
 const Texts = Text.array().atLeastLength(1).atMostLength(LIST_MAX);
-const RepoName = type(/^\s*(?!.*\.\.)(?!\.\/)[^\s\\/]+\/(?!\.\s*$)[^\s\\/]+\s*$/);
+export const RepoName = type(/^\s*(?!.*\.\.)(?!\.\/)[^\s\\/]+\/(?!\.\s*$)[^\s\\/]+\s*$/);
 
 const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
   .or({ "+": "reject", to: "'teams'", teams: Texts })
@@ -577,16 +577,13 @@ export const checkPackSchema = type({
   "groups?": FileGroupsSchema,
 });
 
-/** `readSharedPolicy` stays the authority. */
-export const sharedPolicySchema = checkPackSchema.omit("repo");
-
 const OverrideChecksSchema = type(
   Object.fromEntries(CATALOG_IDS.map((id) => [`${id}?`, CatalogCheckSchema.partial()])) as Record<`${CatalogId}?`, ReturnType<typeof CatalogCheckSchema.partial>>,
 );
 
 /** `readPolicyOverride` stays the authority. */
 export const policyOverrideSchema = checkPackSchema.omit("checks", "actions").and({
-  extends: Text,
+  extends: RepoName,
   "checks?": OverrideChecksSchema,
   "actions?": PolicyActionsObject.partial(),
 });
@@ -1271,7 +1268,7 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   if (stored.schemaVersion !== LEGACY_SCHEMA_VERSION) currentVersion(stored);
   const dropped: string[] = [];
   const body = stored.schemaVersion === LEGACY_SCHEMA_VERSION ? fromVersion1(stored, dropped) : stored;
-  if (body.extends !== undefined) throw new Error("This policy extends a workspace policy and is read with it.");
+  if (body.extends !== undefined) throw new Error("Only a policy file can extend another repository's policy.");
   const repo = readRepo(body, expectedRepo);
   const checks = readChecks(body.checks);
   const custom = parseCustom(body.custom);
@@ -1280,9 +1277,6 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const groups = parseGroups(body.groups);
   return withDropped(refuseTriageLabels({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels, ...(groups && { groups }) }), dropped);
 }
-
-/** Workspace policy titles start with this, so the stock artifact list finds them with `?query=`. */
-export const WORKSPACE_POLICY_TITLE_PREFIX = "workspace-policy/";
 
 export type SharedPolicy = Omit<CheckPack, "repo">;
 
@@ -1296,7 +1290,7 @@ export type PolicyOverride = Pick<CheckPack, "repo" | "custom"> & {
 export function extendsOf(raw: unknown): string | undefined {
   const value = asRecord(parseJson(raw))?.extends;
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.trim().length === 0) throw new Error("extends must be a repository (owner/name) or a shared policy's id.");
+  if (typeof value !== "string" || value.trim().length === 0) throw new Error("extends must be a repository (owner/name).");
   return value.trim();
 }
 

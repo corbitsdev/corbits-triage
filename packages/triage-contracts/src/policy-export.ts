@@ -122,13 +122,9 @@ function fileLabels(pack: CheckPack): Record<string, string> | undefined {
   return changed.length ? Object.fromEntries(changed) : undefined;
 }
 
-/**
- * The schema 3 file for the pack a stored policy runs as, and each thing it holds that the file cannot. `extended` says
- * the stored policy extends a workspace policy, whose rules and steps the file then holds itself.
- */
-export function exportPolicyFile(pack: CheckPack, extended: boolean): PolicyFileExport {
+/** The schema 3 file for the pack a stored policy runs as, and each thing it holds that the file cannot. */
+export function exportPolicyFile(pack: CheckPack): PolicyFileExport {
   const unexpressed: string[] = [];
-  if (extended) unexpressed.push("Later changes to the workspace's shared rules stop reaching this repository.");
   const rules = [...CATALOG_IDS.flatMap((id) => catalogRule(pack, id, unexpressed)), ...pack.custom.flatMap((row) => customRule(row, unexpressed))];
   const actions = fileActions(pack);
   const labels = fileLabels(pack);

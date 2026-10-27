@@ -7,7 +7,7 @@ import { type } from "arktype";
 import { sql } from "drizzle-orm";
 import type { ArtifactRow, ArtifactTx, ResolvedPrincipal } from "@corbits/artifacts";
 import { schema, type DB } from "@intx/db";
-import { CHECK_PACK_TITLE_PREFIX, WORKSPACE_POLICY_TITLE_PREFIX } from "@corbits/triage-contracts";
+import { CHECK_PACK_TITLE_PREFIX } from "@corbits/triage-contracts";
 import { adminRoleId, allowCreator, allowRole } from "./github/admin-github-grant.js";
 
 const WRITER_ACTIONS = ["write", "archive"] as const;
@@ -36,7 +36,7 @@ export async function grantAdminsPolicyWrites(db: DB["db"], now: () => Date, log
     from artifacts.artifact a
     join ${role} r on r.tenant_id = a.tenant_id and r.name = 'admin' and r.is_system
     cross join (values ('write'), ('archive')) as w(action)
-    where (a.title like ${`${CHECK_PACK_TITLE_PREFIX}%`} or a.title like ${`${WORKSPACE_POLICY_TITLE_PREFIX}%`})
+    where a.title like ${`${CHECK_PACK_TITLE_PREFIX}%`}
       and not exists (
         select 1 from ${grant} g
         where g.role_id = r.id and g.resource = 'artifact:' || a.id and g.action = w.action and g.effect = 'allow'

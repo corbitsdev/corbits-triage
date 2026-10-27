@@ -2,14 +2,12 @@
 // which the portal writes when it saves the policy. A repository not saved since pins existed, or whose pinned policy is
 // archived, reads the newest artifact titled for it. While a repository has both and they run differently, the saved
 // rules apply until the maintainer settles it; once they run the same, the saved rules are archived and the file is the
-// policy. A policy that extends a workspace policy is resolved against that policy's current version here, and a policy
-// file that extends another repository against that repository's policy file as the hub last read it, so each mail
-// carries the pack and the versions it was built from.
+// policy. A policy file that extends another repository is resolved against that repository's policy file as the hub last
+// read it, so each mail carries the pack and the versions it was built from.
 import { eq } from "drizzle-orm";
 import { findArtifactByTitle, getArtifact, setArtifactArchived, type ArtifactDb, type ArtifactRow } from "@corbits/artifacts";
 import { schema, type DB } from "@intx/db";
-import { asRepo } from "@corbits/common";
-import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, refuseUnknownChecks, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type PolicyWorkflow, type RepoSource, type SharedFileRef } from "@corbits/triage-contracts";
+import { checkPackName, exportPolicyFile, extendedFilePack, extendsOf, policyDifferences, readCheckPack, readPolicyFile, refuseUnknownChecks, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource, type PolicyUpgrade, type PolicyWorkflow, type RepoSource, type SharedFileRef } from "@corbits/triage-contracts";
 import type { PolicyFileState } from "./policy-file.js";
 import { prWorkflowKeys } from "./pr-workflow.js";
 import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
@@ -33,7 +31,7 @@ export type CheckPackRead =
   | { status: "invalid"; reason: string; path: string; automatic: ActionKind[] };
 
 /** Saved rules as read: what `loadCheckPack` answers. */
-type SavedRead = ({ status: "ok" } & StoredPack & { source: { repo: ArtifactRef; shared?: ArtifactRef } }) | Extract<CheckPackRead, { status: "missing" | "corrupt" }>;
+type SavedRead = ({ status: "ok" } & StoredPack & { source: { repo: ArtifactRef } }) | Extract<CheckPackRead, { status: "missing" | "corrupt" }>;
 type SavedPack = Extract<SavedRead, { status: "ok" }>;
 
 /** One database, typed for Interchange and for the artifact package. */
@@ -78,18 +76,9 @@ export async function repoPolicyRow({ db, artifacts }: Pick<CheckPackStoreDeps, 
   return titled === undefined || pins.others.includes(titled) ? undefined : usablePolicy(artifacts, tenantId, titled);
 }
 
-/** `shared` is undefined when the policy extends none. An archived shared policy still applies: archiving hides, it does not revoke. */
-function resolved(tenantId: string, repo: string, content: unknown, shared: ArtifactRow | null | undefined): Pick<StoredPack, "pack"> & { shared?: ArtifactRef } {
-  if (shared && shared.tenantId !== tenantId) throw new Error("The workspace policy it extends belongs to another workspace.");
+function ownPack(repo: string, content: unknown): Pick<StoredPack, "pack"> {
   refuseUnknownChecks(content);
-  if (shared) refuseUnknownChecks(shared.content);
-  return { pack: storedPolicyPack(repo, content, shared && { title: shared.title, content: shared.content }), ...(shared && { shared: refOf(shared) }) };
-}
-
-async function sharedOf(artifacts: ArtifactDb, content: unknown): Promise<ArtifactRow | null | undefined> {
-  const id = extendsOf(content);
-  if (id !== undefined && asRepo(id) !== undefined) throw new Error("Only a policy file can extend another repository's policy.");
-  return id === undefined ? undefined : getArtifact(artifacts, id);
+  return { pack: readCheckPack(content, repo) };
 }
 
 function corrupt(row: ArtifactRow, error: unknown, automatic: ActionKind[]): SavedRead {
@@ -105,15 +94,13 @@ export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, 
   }
   const row = await repoPolicyRow(deps, tenantId, repo, source);
   if (!row) return { status: "missing" };
-  let read: ReturnType<typeof resolved>;
+  let read: ReturnType<typeof ownPack>;
   try {
-    read = resolved(tenantId, repo, row.content, await sharedOf(deps.artifacts, row.content));
+    read = ownPack(repo, row.content);
   } catch (error) {
     return corrupt(row, error, await deps.automaticKinds(tenantId, repo));
   }
-  const from = { repo: refOf(row), ...(read.shared && { shared: read.shared }) };
-  if (from.shared) deps.log({ level: "info", msg: "policy_shared_resolved", tenantId, repo, source: from });
-  return { status: "ok", pack: read.pack, source: from, automatic: await deps.automaticKinds(tenantId, repo) };
+  return { status: "ok", pack: read.pack, source: { repo: refOf(row) }, automatic: await deps.automaticKinds(tenantId, repo) };
 }
 
 type FileRead = Extract<CheckPackRead, { status: "ok" | "invalid" }>;
@@ -134,8 +121,8 @@ async function overSharedFile(policyFile: PolicyFileReader, tenantId: string, re
 
 async function fileResolved(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, source: RepoSource | undefined, content: Record<string, unknown>) {
   const shared = extendsOf(content);
-  if (shared !== undefined && asRepo(shared) !== undefined) return overSharedFile(deps.policyFile, tenantId, repo, source, content, shared);
-  return resolved(tenantId, repo, content, await sharedOf(deps.artifacts, content));
+  if (shared !== undefined) return overSharedFile(deps.policyFile, tenantId, repo, source, content, shared);
+  return ownPack(repo, content);
 }
 
 /** Why triage would refuse a policy file holding `policy`, resolved as a pushed file is; undefined when it would run it. */
@@ -171,14 +158,10 @@ async function retireSaved(deps: CheckPackStoreDeps, tenantId: string, repo: str
   }
 }
 
-function exported(saved: SavedPack) {
-  return exportPolicyFile(saved.pack, saved.source.shared !== undefined);
-}
-
 /** Whether writing the saved rules to the file would change what it does; it would not when the rest is what a file cannot hold. */
 function fileCanChange(saved: SavedPack, read: FileRead, repo: string): boolean {
   if (read.status !== "ok") return true;
-  return policyDifferences(readCheckPack(readPolicyFile(exported(saved).text, repo), repo), read.pack).length > 0;
+  return policyDifferences(readCheckPack(readPolicyFile(exportPolicyFile(saved.pack).text, repo), repo), read.pack).length > 0;
 }
 
 export type PolicySettled = { read: CheckPackRead; upgrade: PolicyUpgrade; saved?: SavedPack };
@@ -192,13 +175,13 @@ export async function settlePolicy(deps: CheckPackStoreDeps & { policyFile: Poli
   const file = await deps.policyFile(tenantId, repo, source);
   const stored = await loadCheckPack(deps, tenantId, repo, source);
   const saved = stored.status === "ok" ? stored : undefined;
-  if (file.status === "absent" && saved) return { read: stored, upgrade: { state: "upgrade", saved: saved.source.repo, unexpressed: exported(saved).unexpressed }, saved };
+  if (file.status === "absent" && saved) return { read: stored, upgrade: { state: "upgrade", saved: saved.source.repo, unexpressed: exportPolicyFile(saved.pack).unexpressed }, saved };
   if (file.status === "absent") return { read: stored, upgrade: { state: stored.status === "missing" ? "start" : "ok" } };
   const read = await fileRead(deps, tenantId, repo, source, file);
   if (!saved) return { read, upgrade: { state: "ok" } };
   const differences = read.status === "ok" ? policyDifferences(saved.pack, read.pack) : [];
   const problem = read.status === "ok" ? undefined : read.reason;
-  if (differences.length > 0 || problem) return { read: saved, upgrade: { state: "differs", path: file.status === "ok" ? file.file.path : file.path, saved: saved.source.repo, differences, ...(problem && { problem }), fixable: fileCanChange(saved, read, repo), unexpressed: exported(saved).unexpressed }, saved };
+  if (differences.length > 0 || problem) return { read: saved, upgrade: { state: "differs", path: file.status === "ok" ? file.file.path : file.path, saved: saved.source.repo, differences, ...(problem && { problem }), fixable: fileCanChange(saved, read, repo), unexpressed: exportPolicyFile(saved.pack).unexpressed }, saved };
   await retireSaved(deps, tenantId, repo, source);
   return { read, upgrade: { state: "ok" } };
 }

@@ -31,7 +31,7 @@ test("PostgreSQL: an artifact is writable and archivable by its creator and admi
     const now = () => new Date();
     const grantWriters = createArtifactGrants(now);
     const created = await db.transaction(async function createWithGrants(tx) {
-      const row = await createArtifact(tx, { scope, ownerPrincipalId: "prn_creator", kind: "document", title: "workspace-policy/base", content: "{}", source: { origin: "manual" } });
+      const row = await createArtifact(tx, { scope, ownerPrincipalId: "prn_creator", kind: "document", title: checkPackName("acme/base", "github"), content: "{}", source: { origin: "manual" } });
       await grantWriters(tx, row, scope);
       return row;
     });

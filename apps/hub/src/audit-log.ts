@@ -3,8 +3,8 @@
 // grants and workflow deployments. Nothing is written for the log.
 import { and, desc, eq, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import { type } from "arktype";
-import { getArtifact, listArtifactVersions, type ArtifactDb } from "@corbits/artifacts";
-import { WORKSPACE_POLICY_TITLE_PREFIX, type AuditEntry, type AuditLog, type PolicySource, type RepoSource } from "@corbits/triage-contracts";
+import { listArtifactVersions, type ArtifactDb } from "@corbits/artifacts";
+import { type AuditEntry, type AuditLog, type PolicySource, type RepoSource } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -132,21 +132,15 @@ export function createAuditLog(deps: AuditLogDeps) {
     return entries;
   }
 
-  async function versionsOf(artifactId: string, what: string, target: string, limit: number): Promise<Entry[]> {
+  async function versionsOf(artifactId: string, target: string, limit: number): Promise<Entry[]> {
     const { versions } = await listArtifactVersions(deps.artifacts, artifactId, { limit: Math.min(limit, 100) });
     return versions.map((version) => ({
       at: new Date(version.createdAt),
       actor: version.authorId,
-      action: `${version.version === 1 ? "Created" : "Changed"} ${what}`,
+      action: `${version.version === 1 ? "Created" : "Changed"} checks`,
       target,
       detail: `version ${version.version}`,
     }));
-  }
-
-  async function workspacePolicyName(id: string): Promise<string> {
-    const row = await getArtifact(deps.artifacts, id);
-    if (!row) throw new Error(`workspace policy ${id} disappeared while the audit log was read`);
-    return row.title.slice(WORKSPACE_POLICY_TITLE_PREFIX.length);
   }
 
   async function policyVersions({ tenantId, repo, limit }: Window): Promise<Entry[]> {
@@ -154,16 +148,13 @@ export function createAuditLog(deps: AuditLogDeps) {
     const records = repoRecords(triageNs(row?.config)).filter((record) => repo === undefined || record.name === repo);
     const repos = repo !== undefined && records.length === 0 ? [{ name: repo, source: "github" as const }] : records;
     const entries: Entry[] = [];
-    const shared = new Set<string>();
     for (const record of repos) {
       const { name } = record;
       const read = await deps.readCheckPack(tenantId, name, sourceOf(record));
       if (read.status === "missing" || read.status === "invalid") continue;
       const source: PolicySource = read.status === "ok" ? read.source : { repo: read.repo };
-      if (source.repo) entries.push(...(await versionsOf(source.repo.id, "checks", name, limit)));
-      if (source.shared) shared.add(source.shared.id);
+      if (source.repo) entries.push(...(await versionsOf(source.repo.id, name, limit)));
     }
-    for (const id of shared) entries.push(...(await versionsOf(id, "workspace policy", await workspacePolicyName(id), limit)));
     return entries;
   }
 

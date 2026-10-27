@@ -46,7 +46,7 @@ async function policyFile(api: GithubApi, repo: string, fresh: boolean): Promise
 }
 
 function fromFile({ policy, workflow, path, url }: Extract<FileOutcome, { kind: "policy" }>, repo: string): PolicyRead {
-  if (policy.extends !== undefined) throw new Error("The policy file extends a shared policy only the hub holds, so it is not checked here.");
+  if (policy.extends !== undefined) throw new Error("The policy file extends another repository's policy, which only the hub reads, so it is not checked here.");
   return { pack: readCheckPack(policy, repo), workflow, path, url };
 }
 

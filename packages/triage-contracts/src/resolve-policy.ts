@@ -2,11 +2,9 @@ import {
   CHECK_PACK_KIND,
   CHECK_PACK_SCHEMA_VERSION,
   CUSTOM_CHECK_CAP,
-  readCheckPack,
   readPolicyOverride,
   readSharedPolicy,
   refuseTriageLabels,
-  WORKSPACE_POLICY_TITLE_PREFIX,
   type CatalogCheck,
   type CatalogId,
   type CheckPack,
@@ -22,11 +20,8 @@ export type PolicyFileRef = { path: string; sha: string };
 /** The policy file of the repository a policy file extends. */
 export type SharedFileRef = PolicyFileRef & { repo: string };
 
-/**
- * What a policy was read from: the repository's policy file, or else its stored policy; either may extend a workspace
- * policy, and the file may instead extend another repository's file.
- */
-export type PolicySource = { repo?: ArtifactRef; shared?: ArtifactRef; file?: PolicyFileRef; sharedFile?: SharedFileRef };
+/** What a policy was read from: the repository's policy file, which may extend another repository's file, or else its stored policy. */
+export type PolicySource = { repo?: ArtifactRef; file?: PolicyFileRef; sharedFile?: SharedFileRef };
 
 /**
  * A repository's policy over the shared policy it extends. The shared policy holds wherever the repository is silent:
@@ -74,17 +69,6 @@ export function resolvePolicy(shared: SharedPolicy, repo: PolicyOverride): Check
       unsure: repo.labels.unsure ?? shared.labels.unsure,
     },
   });
-}
-
-/**
- * The pack a stored repository policy runs as: the policy itself, or resolved over the workspace policy it extends.
- * `shared` is that workspace policy's artifact when the policy extends one, and null when it no longer exists.
- */
-export function storedPolicyPack(repo: string, content: unknown, shared?: { title: string; content: unknown } | null): CheckPack {
-  if (shared === undefined) return readCheckPack(content, repo);
-  if (shared === null) throw new Error("The workspace policy it extends no longer exists.");
-  if (!shared.title.startsWith(WORKSPACE_POLICY_TITLE_PREFIX)) throw new Error("It extends an artifact that is not a workspace policy.");
-  return resolvePolicy(readSharedPolicy(shared.content), readPolicyOverride(content, repo));
 }
 
 /** A policy file's pack over the policy file of the repository its `extends` names, which must extend nothing itself. */

@@ -237,7 +237,7 @@ export type PolicyFileStatus = typeof PolicyFileStatus.infer;
 
 const FileRefShape = type({ path: "string", sha: "string" });
 
-export const PolicySourceShape = type({ "repo?": ArtifactRefShape, "shared?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) });
+export const PolicySourceShape = type({ "repo?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) });
 
 const ActionKinds = type.enumerated(...ACTION_KINDS).array();
 

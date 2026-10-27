@@ -2,8 +2,10 @@
 // (policy-workflow.ts), or the stored policy's shape less what the repository already says (`kind`, `schemaVersion` and
 // `repo`). Only YAML is read; another format is another path.
 import { isAlias, isMap, isNode, isPair, isScalar, isSeq, LineCounter, parseDocument, type Document, type Node } from "yaml";
+import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, readCheckPack, refusalNames, readPolicyOverride } from "./check-pack.js";
+import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, policyOverrideSchema, readCheckPack, refusalNames, readPolicyOverride, withAuthorKinds, type PolicyOverride } from "./check-pack.js";
+import { fileProblems } from "./policy-file-problems.js";
 import { isPolicyRulesFile, PolicyFileError, policyRulesSchema, readRulesFile } from "./policy-rules.js";
 import { BLOCK_KINDS, decideOf, type PolicyWorkflow } from "./policy-workflow.js";
 
@@ -99,10 +101,17 @@ function readFile(file: Record<string, unknown>): { policy: Record<string, unkno
   return { policy: file, workflow: {} };
 }
 
+/** A file that extends another says its schema errors in its own terms, as a schema 3 file does. */
+function overrideOf(body: Record<string, unknown>, repo: string): PolicyOverride {
+  const checked = policyOverrideSchema(withAuthorKinds(body));
+  if (checked instanceof type.errors) throw new PolicyFileError(fileProblems(checked, body));
+  return readPolicyOverride(body, repo);
+}
+
 function policyOf(file: Record<string, unknown>, repo: string): { policy: Record<string, unknown>; workflow: PolicyWorkflow } {
   const header = { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION } as const;
   const { policy: body, workflow } = readFile(file);
-  if (body.extends !== undefined) return { policy: { ...header, ...readPolicyOverride({ ...body, ...header, repo }, repo) }, workflow };
+  if (body.extends !== undefined) return { policy: { ...header, ...overrideOf({ ...body, ...header, repo }, repo) }, workflow };
   const { dropped, ...pack } = readCheckPack({ ...body, ...header, repo }, repo);
   if (dropped) throw new Error(`The policy file holds what no longer runs: ${refusalNames(dropped)}.`);
   return { policy: pack, workflow: { ...workflow, decide: workflow.decide ?? decideOf(pack.actions, BLOCK_KINDS.some((kind) => workflow[kind]?.on === true)) } };

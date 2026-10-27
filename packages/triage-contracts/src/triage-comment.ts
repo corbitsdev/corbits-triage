@@ -26,7 +26,7 @@ const ArtifactRefShape = type({ id: "string", version: "number" });
 const FileRefShape = type({ path: "string", sha: "string" });
 const TriageHeaderShape = type({
   head: "string",
-  policy: type({ "repo?": ArtifactRefShape, "shared?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) }).or("null"),
+  policy: type({ "repo?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) }).or("null"),
   verdict: "string",
 });
 
@@ -81,7 +81,7 @@ function sameRef(a: ArtifactRef | undefined, b: ArtifactRef | undefined): boolea
 }
 
 function samePolicy(a: PolicySource | null, b: PolicySource | null): boolean {
-  return sameRef(a?.repo, b?.repo) && sameRef(a?.shared, b?.shared) && a?.file?.sha === b?.file?.sha && a?.sharedFile?.sha === b?.sharedFile?.sha;
+  return sameRef(a?.repo, b?.repo) && a?.file?.sha === b?.file?.sha && a?.sharedFile?.sha === b?.sharedFile?.sha;
 }
 
 /** The rules changed under an unchanged head and changed its verdict, so the earlier comment is history rather than stale. */
@@ -103,7 +103,6 @@ function supersedesNote(before: TriageHeader, after: TriageHeader): string {
   const shared = after.policy?.sharedFile ?? before.policy?.sharedFile;
   const changes = [
     ...versionChange("repository policy", before.policy?.repo, after.policy?.repo),
-    ...versionChange("workspace policy", before.policy?.shared, after.policy?.shared),
     ...fileChange("policy file", before.policy?.file, after.policy?.file),
     ...fileChange(`${shared?.repo} policy file`, before.policy?.sharedFile, after.policy?.sharedFile),
   ];

@@ -466,7 +466,7 @@ trusts them only from the hub's sender. The kinds are acted on later than they
 are read, so a condition checked at read time would not hold at action time:
 a conditioned allow does not count and a conditioned deny always applies. Close on Unsure, and merge on anything but Pass, are
 always held. The hub mails the policy twice: `pack` as resolved
-from the repository policy and any workspace policy it extends, and `checkPack`
+from the repository policy and any policy file it extends, and `checkPack`
 in the shape a deployment built before steps reads.
 
 A person holding the same grant approves a held action, or one the run failed
@@ -719,19 +719,17 @@ read it, and passes the rest of the request to stock.
   state holds each open head's status (`new`, `queued`, `waiting`, `running`,
   `triaged`, `failed`, `stale`) and attempts. Each new artifact is writable
   and archivable by its creator and the admin role.
-- Workspace policies (`workspace-policy/{name}`) have a policy's shape without
-  a repository. A repository policy whose `extends` names one is resolved over
-  it whenever it is read (`resolvePolicy`): built-in rules merge field by
-  field, custom rules by id (at most eight together), and `when`, each
-  verdict's steps and each verdict's label come from the repository only when
-  it sets them. An archived workspace policy still applies. Each trigger mail
-  names the versions its pack was resolved from under `policy.source`.
-- A policy file whose `extends` is a repository name is resolved the same way
-  over that repository's policy file, read through the same per-repository
-  cache, at the time the policy is read; `policy.source.sharedFile` names the
-  file and its blob. A push or merge to the shared repository refreshes its
-  cache entry, so no dependent is tracked. A Bitbucket repository that is not
-  enabled has no triage webhook, so its file is kept for a minute instead.
+- A policy file whose `extends` is a repository name is resolved over that
+  repository's policy file (`resolvePolicy`), read through the same
+  per-repository cache, at the time the policy is read: built-in rules merge
+  field by field, custom rules by id (at most eight together), and `when`, each
+  verdict's steps and each verdict's label come from the extending file only
+  when it sets them. A stored policy can't extend. Each trigger mail names the
+  versions its pack was resolved from under `policy.source`;
+  `policy.source.sharedFile` names the extended file and its blob. A push or
+  merge to the shared repository refreshes its cache entry, so no dependent is
+  tracked. A Bitbucket repository that is not enabled has no triage webhook, so
+  its file is kept for a minute instead.
 - Every migration runs in `bun run db:migrate` (`apps/hub/src/migrate.ts`) as
   its own step before the hub starts: `bun run dev`, Compose's `migrate`
   service, or whatever the operator runs as a pre-deploy step. It applies
