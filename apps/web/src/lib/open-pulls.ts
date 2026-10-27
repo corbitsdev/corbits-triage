@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { useIsRestoring, useQuery, useQueryClient, type Query, type UseQueryResult } from "@tanstack/react-query";
+import { skipToken, useIsRestoring, useQuery, useQueryClient, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { projectQueue, type PrItem, type PullTriage } from "./hub-api.ts";
 import { repoOf, type HandledKind, type HandledMark, type OpenItem } from "./inbox-view.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
@@ -25,10 +25,9 @@ export function useOpenPulls() {
   const tenantId = snapshot?.workspace.tenantId;
   return useQuery({
     queryKey: [OPEN_PULLS_QUERY_KEY, tenantId],
-    queryFn: async function fetchOpenPulls() {
-      return loadOpenPulls(tenantId ?? "");
+    queryFn: tenantId === undefined ? skipToken : async function fetchOpenPulls() {
+      return loadOpenPulls(tenantId);
     },
-    enabled: tenantId !== undefined,
     refetchInterval: 30_000,
   });
 }

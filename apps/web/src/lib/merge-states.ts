@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { queryOptions, useQueries, type UseQueryResult } from "@tanstack/react-query";
+import { queryOptions, skipToken, useQueries, type UseQueryResult } from "@tanstack/react-query";
 import { MAX_MERGE_STATES } from "@corbits/triage-contracts";
 import { createHubTransport } from "./hub-transport.ts";
 import { loadMergeStates, type MergeState, type PrItem } from "./hub-api.ts";
@@ -32,10 +32,9 @@ export function mergeStateReads(items: PrItem[]): Array<{ repo: string; batch: n
 function mergeStatesQuery(tenantId: string | undefined, repo: string, batch: number, numbers: number[]) {
   return queryOptions({
     queryKey: [MERGE_STATES_QUERY_KEY, tenantId, repo, batch],
-    queryFn: function fetchMergeStates() {
-      return loadMergeStates(createHubTransport(), tenantId ?? "", repo, numbers);
+    queryFn: tenantId === undefined ? skipToken : async function fetchMergeStates() {
+      return loadMergeStates(createHubTransport(), tenantId, repo, numbers);
     },
-    enabled: tenantId !== undefined,
     refetchInterval: 30_000,
   });
 }
