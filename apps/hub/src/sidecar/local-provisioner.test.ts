@@ -36,6 +36,8 @@ async function setup({ freeBytes = async () => undefined }: { freeBytes?: () => 
   roots.push(dataRoot);
   const spawned: { manifest: LocalSidecarManifest; adapterManifest: AdapterManifest }[] = [];
   const logs: Record<string, unknown>[] = [];
+  const accepted: { allocationId: string; generation: number }[] = [];
+  const faults = { holdsWrite: false };
   const manifests = createLocalSidecarManifestStore({ dataRoot, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)), log: (entry) => logs.push(entry) });
   function create() {
     return createLocalProcessSidecarProvisioner({
@@ -53,7 +55,14 @@ async function setup({ freeBytes = async () => undefined }: { freeBytes?: () => 
           },
         };
       },
-      manifests,
+      manifests: {
+        ...manifests,
+        async writeHolds(holds) {
+          if (faults.holdsWrite) throw new Error("disk full");
+          await manifests.writeHolds(holds);
+        },
+      },
+      onAccepted: (placement) => accepted.push({ ...placement }),
       log: (entry) => logs.push(entry),
     });
   }
@@ -62,7 +71,7 @@ async function setup({ freeBytes = async () => undefined }: { freeBytes?: () => 
     await local.restore(records);
     return local;
   }
-  return { dataRoot, manifests, spawned, logs, create, started };
+  return { dataRoot, manifests, spawned, logs, accepted, faults, create, started };
 }
 
 test("every allocation joins the one sidecar, and destroying any of them leaves it running for the hub to undeploy", async () => {
@@ -111,11 +120,11 @@ function openOnly(...open: string[]): LocalSidecarRecords["stillOpen"] {
   };
 }
 
-async function noneEnded(): Promise<{ allocationId: string; generation: number }[]> {
-  return [];
+async function allOpen(allocationIds: readonly string[]): Promise<ReadonlySet<string>> {
+  return new Set(allocationIds);
 }
 
-const NOTHING_HELD: LocalSidecarRecords = { isLive: nothingElse, hasWork: nothingElse, stillOpen: noneOpen, pastEnsuring: noneEnded };
+const NOTHING_HELD: LocalSidecarRecords = { isLive: nothingElse, hasWork: nothingElse, stillOpen: allOpen };
 
 test("restore respawns the sidecar once for the holds still live and drops the rest", async () => {
   const { dataRoot, manifests, spawned, logs, create } = await setup();
@@ -283,21 +292,82 @@ test("a destroy with no hold is fenced across a restart, and the file drops it o
   await after.shutdown();
 
   const ended = create();
-  await ended.restore(NOTHING_HELD);
+  await ended.restore({ ...NOTHING_HELD, stillOpen: noneOpen });
   expect(await manifests.readFences()).toEqual([]);
   await ended.shutdown();
 });
 
-test("a corrupt fences file is moved aside and the fences rebuilt from what stock no longer ensures, refusing a late ensure", async () => {
+test("a corrupt fences file is moved aside, and a late ensure for an allocation stock ended is refused from its record", async () => {
   const { dataRoot, logs, started } = await setup();
   await fs.writeFile(path.join(dataRoot, "fences.json"), "[{\"allocationId\":");
-  const local = await started({ ...NOTHING_HELD, pastEnsuring: async () => [{ allocationId: "a", generation: 2 }] });
+  const local = await started({ ...NOTHING_HELD, stillOpen: openOnly("b") });
 
-  expect(await local.provisioner.ensure({ ...request("a", 2), sidecarId: "sc_late" })).toMatchObject({ kind: "rejected", code: "generation_destroyed" });
-  expect(await local.provisioner.ensure(request("a", 1))).toMatchObject({ kind: "rejected", code: "stale_generation" });
+  expect(await local.provisioner.ensure({ ...request("a", 2), sidecarId: "sc_late" })).toMatchObject({ kind: "rejected", code: "allocation_ended" });
+  expect((await local.provisioner.ensure(request("b"))).kind).toBe("accepted");
   const files = await fs.readdir(dataRoot);
   expect(files.filter((name) => name.startsWith("fences.json.corrupt-"))).toHaveLength(1);
   expect(logs).toContainEqual(expect.objectContaining({ level: "warn", msg: "local_sidecar_fences_unreadable_moved" }));
+  await local.shutdown();
+});
+
+test("a joined allocation's destroy is required whatever identity it names, and a repeat of it too", async () => {
+  const { started } = await setup();
+  const local = await started();
+  await local.provisioner.ensure(request("a"));
+  await local.provisioner.ensure(request("b"));
+
+  // Stock kept the identity it offered `b`, though `b` joined `sc_a`.
+  expect(await local.provisioner.destroy({ allocationId: "b", generation: 2, sidecarId: "sc_b" })).toEqual({ kind: "destroyed", cleanup: "required" });
+  expect(await local.provisioner.destroy({ allocationId: "b", generation: 2, sidecarId: "sc_b" })).toEqual({ kind: "destroyed", cleanup: "required" });
+  expect(await local.provisioner.destroy({ allocationId: "b", generation: 1, sidecarId: "sc_b" })).toEqual({ kind: "destroyed", cleanup: "confirmed" });
+  await local.shutdown();
+});
+
+test("a destroy forgets the fences of allocations stock has ended, so later destroys never ask about them", async () => {
+  const { started } = await setup();
+  const open = new Set(["a", "b", "c"]);
+  const asked: string[][] = [];
+  const local = await started({
+    ...NOTHING_HELD,
+    stillOpen: async (allocationIds) => {
+      asked.push([...allocationIds]);
+      return new Set(allocationIds.filter((allocationId) => open.has(allocationId)));
+    },
+  });
+
+  await local.provisioner.destroy({ allocationId: "a", generation: 1, sidecarId: "sc_a" });
+  open.delete("a");
+  await local.provisioner.destroy({ allocationId: "b", generation: 1, sidecarId: "sc_b" });
+  await local.provisioner.destroy({ allocationId: "c", generation: 1, sidecarId: "sc_c" });
+
+  expect(asked.at(-1)).toEqual(["b", "c"]);
+  await local.shutdown();
+});
+
+test("an ensure that fails after starting the sidecar leaves the hold as it was and its identity unused, so the next ensure mints another", async () => {
+  const { manifests, spawned, accepted, faults, started } = await setup();
+  const local = await started();
+  faults.holdsWrite = true;
+
+  await expect(local.provisioner.ensure(request("a"))).rejects.toThrow("disk full");
+  faults.holdsWrite = false;
+  expect(await manifests.read()).toBeNull();
+  expect(await local.provisioner.ensure(request("b"))).toEqual({ kind: "accepted", externalRef: "2" });
+
+  expect(spawned.map(({ manifest }) => manifest.sidecarId)).toEqual(["sc_a", "sc_b"]);
+  expect(await manifests.readHolds()).toEqual([{ allocationId: "b", generation: 1, offeredSidecarId: "sc_b" }]);
+  expect(accepted).toEqual([{ allocationId: "b", generation: 1 }]);
+  await local.shutdown();
+});
+
+test("each allocation that joins the sidecar is reported placed, with no connection of its own", async () => {
+  const { accepted, started } = await setup();
+  const local = await started();
+
+  await local.provisioner.ensure(request("listener"));
+  await local.provisioner.ensure(request("manager", 3));
+
+  expect(accepted).toEqual([{ allocationId: "listener", generation: 1 }, { allocationId: "manager", generation: 3 }]);
   await local.shutdown();
 });
 

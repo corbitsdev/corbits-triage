@@ -18,8 +18,14 @@ const LocalSidecarHold = type({ allocationId: "string > 0", generation: "number.
 export type LocalSidecarHold = typeof LocalSidecarHold.infer;
 const LocalSidecarHolds = LocalSidecarHold.array();
 
-/** A destroyed generation of an allocation, and the identities a late ensure at it may still carry; absent, every one. */
-const LocalSidecarFence = type({ allocationId: "string > 0", generation: "number.integer >= 0", "sidecarIds?": "string[]" });
+/** A destroyed generation of an allocation, and the identities a late ensure at it may still carry. */
+const LocalSidecarFence = type({
+  allocationId: "string > 0",
+  generation: "number.integer >= 0",
+  sidecarIds: "string[]",
+  /** The sidecar still hosted the allocation's copy when it was destroyed. */
+  "hosted?": "true",
+});
 export type LocalSidecarFence = typeof LocalSidecarFence.infer;
 const LocalSidecarFences = LocalSidecarFence.array();
 
@@ -144,7 +150,7 @@ export function createLocalSidecarManifestStore({
     await writeAtomically(holdsFile, JSON.stringify(holds));
   }
 
-  // An unreadable fences file is kept aside for the operator; null tells restore to rebuild the fences instead.
+  // An unreadable fences file is kept aside for the operator; null tells restore its fences are lost.
   async function readFences(): Promise<LocalSidecarFence[] | null> {
     const text = await readOptional(fencesFile);
     if (text === null) return [];

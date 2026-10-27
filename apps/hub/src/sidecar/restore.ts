@@ -39,16 +39,5 @@ export async function restoreLocalSidecars(
       .where(and(inArray(schema.workflowProbe.id, ids), notInArray(schema.workflowProbe.status, ["succeeded", "failed"])));
     return new Set([...allocations, ...probes].map((row) => row.id));
   }
-  async function pastEnsuring(): Promise<{ allocationId: string; generation: number }[]> {
-    const allocations = await db
-      .select({ allocationId: schema.sidecarAllocation.id, generation: schema.sidecarAllocation.generation })
-      .from(schema.sidecarAllocation)
-      .where(and(eq(schema.sidecarAllocation.provisionerId, local.provisioner.id), inArray(schema.sidecarAllocation.status, ["released", "failed"])));
-    const probes = await db
-      .select({ allocationId: schema.workflowProbe.id, generation: schema.workflowProbe.generation })
-      .from(schema.workflowProbe)
-      .where(and(eq(schema.workflowProbe.provisionerId, local.provisioner.id), inArray(schema.workflowProbe.status, ["succeeded", "failed"])));
-    return [...allocations, ...probes];
-  }
-  await local.restore({ isLive, hasWork, stillOpen, pastEnsuring });
+  await local.restore({ isLive, hasWork, stillOpen });
 }

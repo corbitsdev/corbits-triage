@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { SidecarProvisioner } from "@intx/hub-sessions";
-import { createPlacementChooser, localSidecarUsage, WAITING_FOR_SLOT } from "./placement.js";
+import { createPlacementChooser, createSidecarRegistries, localSidecarUsage, WAITING_FOR_SLOT } from "./placement.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_placement";
@@ -147,5 +147,14 @@ test("probes on the local sidecar take its slots, and placements waiting there f
     await deployed(db, local, "failed", { failureCode: WAITING_FOR_SLOT });
     expect(await localSidecarUsage(db, local, 3)).toEqual({ active: 2, waiting: 1, cap: 3, overflow: 0 });
     expect(await choose([local, sandbox])).toBe(sandbox);
+  });
+}, 120_000);
+
+test("a probe placed while the local sidecar is full goes to the sandbox, as a deployment does", async () => {
+  await withDatabase(async function probeOverflow(db) {
+    const registries = createSidecarRegistries({ deployments: [local, sandbox], probes: [local, sandbox], chooser: createPlacementChooser({ db, local, maxDeployments: 1 }) });
+    await deployed(db, local, "allocated");
+
+    expect(await registries.probes.selectProvisioner({ tenantPolicies: [], probeRules: [], workflowRules: [] })).toEqual({ ok: true, provisioner: sandbox });
   });
 }, 120_000);

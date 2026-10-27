@@ -164,7 +164,7 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
   `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` (default 16) active deployments in its hello,
   and stock refuses to place more there. The hub's placement chooser
   (`apps/hub/src/sidecar/placement.ts`) counts the local sidecar's active
-  allocations and probes, and the placements waiting there for a slot, and sends a deployment to the first matching sandbox
+  allocations and probes, and the placements waiting there for a slot, and places probes as well as deployments: it sends either to the first matching sandbox
   provisioner once the cap is reached; with no sandbox it stays local and
   waits in stock's placement retry until a slot frees. The Docker provisioner (`packages/provisioner-docker`),
   registered after it when a daemon with the sidecar image answers, runs each

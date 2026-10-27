@@ -173,6 +173,9 @@ const local = createLocalProcessSidecarProvisioner({
   }),
   capacity: createHostCapacity({ cgroupRoot: "/sys/fs/cgroup", meminfo: "/proc/meminfo" }),
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
+  onAccepted: function placedLocally(placement) {
+    notePlaced(placement);
+  },
   log: logJson,
 });
 const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
