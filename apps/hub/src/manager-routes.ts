@@ -18,7 +18,7 @@ import { body, Failure, json } from "./route-schema.js";
 import type { Tx } from "./github/admin-github-grant.js";
 import { recordApproved, replaceVerdict } from "./github/verdict-record-store.js";
 import { doResultsOf, eventOf, mirrorOutcomesOf, ruledOf, summaryOf, withResults } from "./github/verdict-row.js";
-import { done, EventState, newestHead, PassState, recordEvent, ReviewerState, take, type Closing, type PassReport, type PullRequestRef } from "./manager-state.js";
+import { done, EventState, PassState, recordResult, ReviewerState, take, type Closing, type PassReport, type PullRequestRef } from "./manager-state.js";
 
 const TAKE_PATH = "/manager/take";
 const DONE_PATH = "/manager/done";
@@ -170,9 +170,14 @@ export function createManagerRoutes({ db, requireGrant, log, wake }: ManagerRout
     REVIEWER_RESULT_PATH,
     describeRoute({
       summary: "Record a reviewer's result for the pull request's manager",
-      description: "Run token only, for a reviewer granted `create` on `triage-manager:result`, which reaches no other manager route. The body is a `StageResult`. A result for a head the pull request has moved past is dropped and logged, and `recorded` is false. Otherwise the event is recorded under the calling run's id, so `recorded` is false when that run reported before, and the pull request's manager is woken as a host event wakes it: its live manager is mailed, or the host's listener deploys one, whose take collects the result.",
+      description: "Run token only, for a reviewer granted `create` on `triage-manager:result`, which reaches no other manager route. The body is a `StageResult`. A result for a head the pull request has moved past is dropped and logged, and `recorded` is false. Otherwise the event is recorded under the calling run's id, so `recorded` is false when that run reported before, and the pull request's manager is woken as a host event wakes it: its live manager is mailed, or the host's listener deploys one, whose take collects the result. When that wake fails the result stays recorded, the route answers `wake_failed`, and the hub's next reconcile pass wakes a manager for it.",
       tags: TAGS,
-      responses: { 200: json("Whether the result was recorded now", Recorded), ...refusals, 403: json("Not a workflow run, or the run lacks `create` on `triage-manager:result`", Failure) },
+      responses: {
+        200: json("Whether the result was recorded now", Recorded),
+        ...refusals,
+        403: json("Not a workflow run, or the run lacks `create` on `triage-manager:result`", Failure),
+        502: json("`wake_failed`: the result is recorded, but the pull request's manager could not be woken", Failure),
+      },
     }),
     limited,
     asRun,
@@ -183,13 +188,18 @@ export function createManagerRoutes({ db, requireGrant, log, wake }: ManagerRout
       const tenantId = c.get("tenant").id;
       const runId = c.get("runId");
       const pr = { source, repo, number };
-      const current = await newestHead(db, tenantId, pr);
-      if (current !== undefined && current !== head) {
-        log({ level: "info", msg: "reviewer_result_stale", tenantId, source, repo, number, kind: reported.kind, head, current, runId });
+      const { recorded, current } = await recordResult(db, tenantId, pr, runId, head, reported);
+      const entry = { tenantId, source, repo, number, kind: reported.kind, head, runId };
+      if (!recorded && current !== undefined && current !== head) {
+        log({ level: "info", msg: "reviewer_result_stale", ...entry, current });
         return c.json({ recorded: false });
       }
-      const recorded = await recordEvent(db, tenantId, pr, runId, { type: "reviewer-result", head, payload: reported });
-      if (!(await wake(tenantId, pr, head))) log({ level: "warn", msg: "reviewer_result_unrouted", tenantId, source, repo, number, kind: reported.kind, head, runId, reason: "the workspace has no listener for the host" });
+      try {
+        if (!(await wake(tenantId, pr, head))) log({ level: "warn", msg: "reviewer_result_unrouted", ...entry, reason: "the workspace has no listener for the host" });
+      } catch (err) {
+        log({ level: "error", msg: "reviewer_result_wake_failed", ...entry, error: String(err) });
+        return failure(502, "wake_failed", "The result is recorded, but the pull request's manager could not be woken.");
+      }
       return c.json({ recorded });
     },
   );

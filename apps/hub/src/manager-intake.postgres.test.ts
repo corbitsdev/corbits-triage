@@ -194,6 +194,7 @@ test("PostgreSQL: the reconcile pass wakes a manager for a pull request whose re
     await claimManager(db, "run_reported", 9, "completed", undefined, [{ ...late, runId: "run_judge_9" }]);
     for (const number of [7, 8, 9]) await recordEvent(db, TENANT, { source: "github", repo: RECORD.name, number }, `d${number}`, { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1" } });
     await recordEvent(db, TENANT, { source: "github", repo: RECORD.name, number: 9 }, "run_judge_9", { type: "reviewer-result", head: "h1", payload: { kind: "judge", failed: "the judge did not finish" } });
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || '{"consumedBy":"pass_9"}' WHERE kind = 'event' AND key LIKE '%:run_judge_9'`);
     const mailed: { address: string; payload: unknown }[] = [];
     const logged: Record<string, unknown>[] = [];
     const wake = createManagerWake({
@@ -215,6 +216,47 @@ test("PostgreSQL: the reconcile pass wakes a manager for a pull request whose re
     await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || ${JSON.stringify({ overdueWokenAt: earlier.toISOString(), claimedAt: new Date(earlier.getTime() + 1_000).toISOString() })}::jsonb WHERE key = ${`mgr:github:${RECORD.name}#7`}`);
     await wakeOverdue(TENANT);
     expect(mailed).toEqual([woken, woken]);
+  });
+}, 60_000);
+
+async function overdueWokenAt(db: Db, number: number): Promise<unknown> {
+  const [claim] = await db.execute<{ state: Record<string, unknown> }>(sql`SELECT state FROM corbits_triage.manager_state WHERE key = ${`mgr:github:${RECORD.name}#${number}`}`);
+  return claim!.state["overdueWokenAt"];
+}
+
+test("PostgreSQL: an overdue wake is recorded only once it succeeded, and one pull request whose wake fails is logged while the next is still woken", async () => {
+  await withDatabase(async function partly(db) {
+    const late = { kind: "judge", head: "h1", runId: "run_judge_7", deployedBy: "run_gone_7", deadline: new Date(Date.now() - 60_000).toISOString() };
+    await claimManager(db, "run_gone_7", 7, "completed", undefined, [late]);
+    await claimManager(db, "run_gone_8", 8, "completed", undefined, [{ ...late, runId: "run_judge_8" }]);
+    for (const number of [7, 8]) await recordEvent(db, TENANT, { source: "github", repo: RECORD.name, number }, `d${number}`, { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1" } });
+    const woken: number[] = [];
+    const logged: Record<string, unknown>[] = [];
+    let failing = true;
+    async function wake(_tenantId: string, pr: { number: number }): Promise<boolean> {
+      if (pr.number === 7 && failing) throw new Error("delivery failed");
+      woken.push(pr.number);
+      return true;
+    }
+    const wakeOverdue = createOverdueWake({ db, wake, log: (entry) => logged.push(entry) });
+    await wakeOverdue(TENANT);
+    expect(woken).toEqual([8]);
+    expect(logged).toEqual([
+      { level: "error", msg: "manager_overdue_wake_failed", tenantId: TENANT, source: "github", repo: RECORD.name, number: 7, head: "h1", error: "Error: delivery failed" },
+      { level: "info", msg: "manager_woken_overdue", tenantId: TENANT, source: "github", repo: RECORD.name, number: 8, head: "h1" },
+    ]);
+    expect(await overdueWokenAt(db, 7)).toBeUndefined();
+    expect(await overdueWokenAt(db, 8)).toBeString();
+
+    failing = false;
+    await wakeOverdue(TENANT);
+    expect(woken).toEqual([8, 7]);
+
+    const unrouted = createOverdueWake({ db, wake: async () => false, log: (entry) => logged.push(entry) });
+    await claimManager(db, "run_gone_9", 9, "completed", undefined, [{ ...late, runId: "run_judge_9" }]);
+    await recordEvent(db, TENANT, { source: "github", repo: RECORD.name, number: 9 }, "d9", { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1" } });
+    await unrouted(TENANT);
+    expect(await overdueWokenAt(db, 9)).toBeUndefined();
   });
 }, 60_000);
 

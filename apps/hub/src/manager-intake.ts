@@ -91,17 +91,26 @@ export function createManagerWake(deps: Delivery & Pick<ManagerIntakeDeps, "list
 type Wake = ReturnType<typeof createManagerWake>;
 
 /**
- * Wakes a manager for each of the tenant's pull requests whose manager has gone while a reviewer of its newest head is
- * past its deadline with no result, so that manager posts the verdict without it. A failure is logged, and the next
- * reconcile pass tries again.
+ * Wakes a manager for each of the tenant's pull requests whose manager has gone while a reviewer result waits for it,
+ * or a reviewer of its newest head is past its deadline with no result, so that manager posts the verdict. A wake is
+ * recorded once it succeeded; a pull request whose wake fails is logged, the rest are still woken, and the next
+ * reconcile pass tries it again.
  */
 export function createOverdueWake(deps: Pick<ManagerIntakeDeps, "db" | "log"> & { wake: Wake }) {
+  async function wakeOne(tenantId: string, pr: PullRequestRef, head: string): Promise<void> {
+    const entry = { tenantId, source: pr.source, repo: pr.repo, number: pr.number, head };
+    try {
+      if (!(await deps.wake(tenantId, pr, head))) return;
+      await recordOverdueWake(deps.db, tenantId, pr);
+      deps.log({ level: "info", msg: "manager_woken_overdue", ...entry });
+    } catch (err) {
+      deps.log({ level: "error", msg: "manager_overdue_wake_failed", ...entry, error: String(err) });
+    }
+  }
+
   return async function wakeOverdue(tenantId: string): Promise<void> {
     try {
-      for (const { pr, head } of await overduePulls(deps.db, tenantId)) {
-        await recordOverdueWake(deps.db, tenantId, pr);
-        if (await deps.wake(tenantId, pr, head)) deps.log({ level: "info", msg: "manager_woken_overdue", tenantId, source: pr.source, repo: pr.repo, number: pr.number, head });
-      }
+      for (const { pr, head } of await overduePulls(deps.db, tenantId)) await wakeOne(tenantId, pr, head);
     } catch (err) {
       deps.log({ level: "error", msg: "manager_overdue_wake_failed", tenantId, error: String(err) });
     }

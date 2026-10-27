@@ -10,6 +10,7 @@ import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession 
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
 import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
+import { createOverdueWake } from "./manager-intake.js";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { passRequest, recordEvent, type PullRequestRef } from "./manager-state.js";
@@ -201,6 +202,38 @@ test("PostgreSQL: a reviewer's result wakes the pull request's manager as a host
     const quiet = bearer(await runWithToken(db, "run_quiet", [RESULT]));
     expect(await (await post(unrouted, "reviewer-result", { ...result, head: "h2" }, quiet)).json()).toEqual({ recorded: true });
     expect(logged.at(-1)).toMatchObject({ level: "warn", msg: "reviewer_result_unrouted", runId: "run_quiet" });
+  });
+}, 60_000);
+
+test("PostgreSQL: a result whose wake fails stays recorded with nothing else, the route answers 502, and the next reconcile pass wakes a manager for it at once", async () => {
+  await withDatabase(async function unwoken(db) {
+    const logged: Record<string, unknown>[] = [];
+    function log(entry: Record<string, unknown>): void {
+      logged.push(entry);
+    }
+    async function failingWake(): Promise<boolean> {
+      throw new Error("delivery failed");
+    }
+    const app = buildHub(db, { log, wake: failingWake });
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
+    await webhook(db, GITHUB);
+    await post(app, "take", GITHUB, manager);
+    expect(await (await post(app, "done", { ...GITHUB, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });
+    await db.execute(sql`UPDATE workflow_run SET status = 'completed' WHERE id = 'run_manager'`);
+    const before = await db.execute(sql`SELECT key, state FROM corbits_triage.manager_state WHERE kind = 'claim'`);
+
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
+    const failed = await post(app, "reviewer-result", { ...GITHUB, kind: "judge", head: "h1", failed: "the judge did not finish" }, reviewer);
+    expect(failed.status).toBe(502);
+    expect(await errorCode(failed)).toBe("wake_failed");
+    expect(logged).toEqual([{ level: "error", msg: "reviewer_result_wake_failed", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", runId: "run_reviewer", error: "Error: delivery failed" }]);
+    const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE key LIKE '%:run_reviewer' AND state->>'consumedBy' IS NULL`);
+    expect(stored!.events).toBe(1);
+    expect(await db.execute(sql`SELECT key, state FROM corbits_triage.manager_state WHERE kind = 'claim'`)).toEqual(before);
+
+    const woken: Woken[] = [];
+    await createOverdueWake({ db, wake: waker(woken), log })(TENANT);
+    expect(woken).toEqual([{ tenantId: TENANT, pr: GITHUB, head: "h1" }]);
   });
 }, 60_000);
 

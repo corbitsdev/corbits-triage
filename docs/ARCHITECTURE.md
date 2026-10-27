@@ -343,11 +343,16 @@ any other tenant or an unknown sender.
   minutes, wakes a manager through `createManagerWake` for each pull request
   whose manager is not up while a reviewer of its newest head is past its
   deadline with no result recorded (`createOverdueWake`,
-  `apps/hub/src/manager-intake.ts`), and logs `manager_woken_overdue`. The
-  wake is recorded on the claim (`overdueWokenAt`), and the next pass wakes
-  again only once the manager start grace has passed: two minutes when a
-  manager has taken the claim since, thirty while none has, so a manager slow
-  to reach a sidecar is never deployed twice. So
+  `apps/hub/src/manager-intake.ts`), and logs `manager_woken_overdue`. A
+  wake that succeeded is recorded on the claim (`overdueWokenAt`), and the
+  next pass wakes again only once the manager start grace has passed: two
+  minutes when a manager has taken the claim since, thirty while none has, so
+  a manager slow to reach a sidecar is never deployed twice. Each pull request
+  is woken on its own: one whose wake fails is logged as
+  `manager_overdue_wake_failed`, the rest are still woken, and the next pass
+  tries it again. The same pass wakes at once, with no grace, a pull request
+  whose manager is not up while a reviewer result no pass has taken waits for
+  it, as after the reviewer-result route could not wake one. So
   within one pass of the deadline that manager posts the verdict without the
   reviewer and the pull request needs a person. Each reviewer the manager
   records names the manager run that deployed it (`deployedBy`). Done stops a
@@ -857,13 +862,21 @@ read it, and passes the rest of the request to stock.
   Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's
   kind (`code-review` or `judge`), the head it reviewed and its result, a
   code review's output or a judge's whole verdict, or `failed` with why it
-  has none. A result for a head other than the newest one a pull request mail
-  named is dropped and logged as `reviewer_result_stale`. Otherwise, once
-  recorded, the route wakes the pull request's manager as intake does for a
-  host event (`createManagerWake`, `apps/hub/src/manager-intake.ts`): the
-  live manager the claim names is mailed, or the host's listener is mailed
-  the head to deploy one; a workspace with no listener logs
-  `reviewer_result_unrouted`.
+  has none. The result is recorded by one statement only while its head is
+  the newest one a pull request mail named, so no push slips between the
+  check and the record; one for another head is dropped and logged as
+  `reviewer_result_stale`. Otherwise, once recorded, the route wakes the pull
+  request's manager as intake does for a host event (`createManagerWake`,
+  `apps/hub/src/manager-intake.ts`): the live manager the claim names is
+  mailed, or the host's listener is mailed the head to deploy one; a
+  workspace with no listener logs `reviewer_result_unrouted`. A wake that
+  fails leaves the result recorded and nothing else, is logged as
+  `reviewer_result_wake_failed`, and answers 502 `wake_failed`; the next
+  reconcile pass wakes a manager for it. Done merges the reviewers the
+  manager reports into the claim's by kind, head and run id instead of
+  writing back the list its take read: one the manager no longer reports is
+  dropped, and one the claim does not hold is added only on the newest head,
+  so a reviewer superseded mid-pass stays off the claim.
 - Pull request, waiting, held-Do approval and backlog mail goes to the
   host's listener (`apps/hub/src/manager-intake.ts`), on both hosts. Each
   pull request the mail names (a reconciler's `items`, a backlog's open pull
