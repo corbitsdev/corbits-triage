@@ -53,7 +53,10 @@ const START_POLL_MS = 2_000;
 /** Stock's `unreachableStopGraceMs`, which the hub leaves at its default: how long past its deadline stock tries a stop. */
 const STOP_GRACE_MS = 60_000;
 
-/** Whether a deployment whose stop was requested is still live after stock stopped trying to stop it. */
+/**
+ * Whether a deployment whose stop was requested is still live after stock stopped trying to stop it, counted from the
+ * cancellation deadline stock set rather than from when the hub asked.
+ */
 export function stopOverdue(run: RunStop, now: Date): boolean {
   if (!schema.isLiveWorkflowRunStatus(run.status) || run.cancellationDeadline === null) return false;
   return now.getTime() >= Date.parse(run.cancellationDeadline) + STOP_GRACE_MS;
@@ -100,16 +103,16 @@ export function createWorkflowRollout(deps: RolloutDeps) {
   }
 
   /**
-   * Waits until a deployment whose stop was requested ends. One stock gave up stopping stays live, and is only logged:
-   * nothing the hub may do stops it.
+   * Waits until a deployment whose stop was requested ends; one whose deadline stock has not set yet is still being
+   * stopped. One stock gave up stopping stays live, and is only logged: nothing the hub may do stops it.
    */
-  async function waitUntilStopped(tenantId: string, source: RepoSource, runId: string): Promise<void> {
+  async function waitUntilStopped(tenantId: string, source: RepoSource, workflow: string, runId: string): Promise<void> {
     for (;;) {
       const run = await deps.stop(tenantId, runId);
       if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return;
-      if (run.cancellationDeadline === null) throw new Error(`Deployment ${runId} is live with no stop requested.`);
       if (stopOverdue(run, deps.now())) {
-        deps.log({ level: "warn", msg: "listener_cancel_stuck", tenantId, source, deployment: runId });
+        if (workflow === TRIAGE_LISTENERS[source]) deps.log({ level: "warn", msg: "listener_cancel_stuck", tenantId, source, deployment: runId });
+        else deps.log({ level: "warn", msg: "rollout_cancel_stuck", tenantId, source, workflow, deployment: runId });
         return;
       }
       await deps.sleep(START_POLL_MS);
@@ -118,15 +121,15 @@ export function createWorkflowRollout(deps: RolloutDeps) {
 
   /** The host's other listeners and the workflows they replaced stop, and the host is recorded as on the release. */
   async function settle(tenantId: string, source: RepoSource, kept: string, msg: string): Promise<void> {
-    const stopped: string[] = [];
+    const stopped: Array<{ workflow: string; runId: string }> = [];
     for (const workflow of [TRIAGE_LISTENERS[source], ...REPLACED[source]]) {
       for (const live of await liveOf(tenantId, workflow)) {
         if (live.runId === kept) continue;
         await deps.cancel(tenantId, live.runId);
-        stopped.push(live.runId);
+        stopped.push({ workflow, runId: live.runId });
       }
     }
-    await Promise.all(stopped.map((runId) => waitUntilStopped(tenantId, source, runId)));
+    await Promise.all(stopped.map((run) => waitUntilStopped(tenantId, source, run.workflow, run.runId)));
     record(tenantId, { source, at: deps.now().toISOString() });
     deps.log({ level: "info", msg, tenantId, source, deployment: kept });
   }

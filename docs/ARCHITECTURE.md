@@ -307,7 +307,8 @@ any other tenant or an unknown sender.
   router, through `isAllocatedWorkflowActive`, stock's deploy-readiness check,
   which reads the same per-connection route table mail is routed by, whether
   it routes the generation of each host's live listener whose first deploy
-  completed. When the listener's sidecar is connected but the
+  completed. Like stock's own reconciler calling it, the check undeploys a
+  sidecar whose identity is no longer current. When the listener's sidecar is connected but the
   router holds no route to it, the hub starts that host's listener again
   exactly as a credential write does and logs `listener_unroutable` with the
   workspace, host, run, allocation, generation and reason. A host whose roll
@@ -316,11 +317,13 @@ any other tenant or an unknown sender.
   connected is left to stock, which fails it once it stays away past
   `maxDisconnected`; each pass logs `listener_disconnected` at debug level
   for it, or `listener_identity_unknown` when the router could not validate
-  the sidecar's identity. After asking stock to stop the listeners a roll
-  replaces, the roll waits for each to end, until the stop's deadline plus
-  the minute stock keeps trying an unreachable stop; one still live then is
-  logged as `listener_cancel_stuck`, and every reconcile pass logs it again
-  while it stays live.
+  the sidecar's identity. After asking stock to stop the listeners and
+  workflows a roll replaces, the roll waits for each to end, until the
+  deadline stock sets for the stop plus the minute stock keeps trying an
+  unreachable stop, and keeps waiting while that deadline is not set yet. A
+  listener still live then is logged as `listener_cancel_stuck`, and every
+  reconcile pass logs it again while it stays live; a replaced workflow is
+  logged once as `rollout_cancel_stuck` with its name.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes

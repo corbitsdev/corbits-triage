@@ -570,7 +570,7 @@ const workflowRollout = createWorkflowRollout({
   async cancel(tenantId, runId) {
     await composition.workflowLifecycleService.requestCancellation(tenantId, runId, "replaced");
   },
-  stop: composition.workflowLifecycleService.getStatus,
+  stop: (tenantId, runId) => composition.workflowLifecycleService.getStatus(tenantId, runId),
   lock: createWorkspaceLock(composition.db.$client),
   sleep: Bun.sleep,
   now,
@@ -603,7 +603,7 @@ const watchListeners = createListenerWatch({
   allocation: function allocationOf(runId) {
     return deployedAllocation(composition.db, runId);
   },
-  routable: composition.sidecarRouter.isAllocatedWorkflowActive,
+  routable: (target) => composition.sidecarRouter.isAllocatedWorkflowActive(target),
   ensure: function rollWorkspace(tenantId) {
     if (workflowsBundled) workflowReleases.ensure(tenantId);
   },

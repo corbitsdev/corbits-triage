@@ -78,6 +78,7 @@ async function workspace(name: string) {
     starts: "live" as DeployState,
     deployFails: false,
     stopHangs: false,
+    deadlineAfterPolls: 0,
     clock: Date.now(),
     runs: [] as Run[],
     requests: [] as DeployRequest[],
@@ -112,11 +113,12 @@ async function workspace(name: string) {
       const run = fake.runs.find((row) => row.runId === runId);
       if (!run) return;
       run.cancelling = true;
-      run.deadline = new Date(fake.clock + 30_000).toISOString();
+      if (fake.deadlineAfterPolls === 0) run.deadline = new Date(fake.clock + 30_000).toISOString();
     },
     async stop(_tenant, runId) {
       const run = fake.runs.find((row) => row.runId === runId);
       if (!run) return null;
+      if (run.cancelling && !run.deadline && --fake.deadlineAfterPolls === 0) run.deadline = new Date(fake.clock + 30_000).toISOString();
       return { status: run.cancelling && !fake.stopHangs ? "cancelled" : "running", cancellationDeadline: run.deadline ?? null };
     },
     lock: createWorkspaceLock(handle.db.$client),
@@ -237,13 +239,34 @@ test("PostgreSQL: once the newest listener runs the release, the listeners befor
   expect(live("pr-triage-github")).toEqual([]);
 }, 120_000);
 
-test("PostgreSQL: a replaced listener that stock never stops is waited on until its stop is overdue, then logged as stuck", async () => {
+test("PostgreSQL: a replaced listener or workflow that stock never stops is waited on until its stop is overdue, then logged as stuck", async () => {
   const { tenantId, fake, rollout, live } = await workspace("stuck");
   await rollout.roll(tenantId, NO_REDEPLOY);
+  fake.runs.push({ runId: "run_historical", workflow: "pr-triage-historical", state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, source: null });
   fake.stopHangs = true;
   const before = fake.clock;
   expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
   expect(fake.clock - before).toBeGreaterThanOrEqual(90_000);
+  expect(live()).toEqual(["run_2"]);
+  const stuck = fake.logs.filter((entry) => String(entry["msg"]).endsWith("_cancel_stuck"));
+  expect(stuck).toHaveLength(2);
+  expect(stuck).toEqual(expect.arrayContaining([
+    { level: "warn", msg: "listener_cancel_stuck", tenantId, source: "github", deployment: "run_1" },
+    { level: "warn", msg: "rollout_cancel_stuck", tenantId, source: "github", workflow: "pr-triage-historical", deployment: "run_historical" },
+  ]));
+}, 120_000);
+
+test("PostgreSQL: a replaced listener whose stop deadline stock sets late is waited on until 60 s past that deadline, and the roll succeeds", async () => {
+  const { tenantId, fake, rollout, live } = await workspace("late");
+  await rollout.roll(tenantId, NO_REDEPLOY);
+  fake.stopHangs = true;
+  fake.deadlineAfterPolls = 3;
+  const before = fake.clock;
+  expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
+  const deadline = Date.parse(fake.runs.find((run) => run.runId === "run_1")!.deadline!);
+  expect(deadline).toBe(before + 4_000 + 30_000);
+  expect(fake.clock).toBeGreaterThanOrEqual(deadline + 60_000);
+  expect(fake.clock).toBeLessThan(deadline + 60_000 + 2_000);
   expect(live()).toEqual(["run_2"]);
   expect(fake.logs.filter((entry) => entry["msg"] === "listener_cancel_stuck")).toEqual([{ level: "warn", msg: "listener_cancel_stuck", tenantId, source: "github", deployment: "run_1" }]);
 }, 120_000);
