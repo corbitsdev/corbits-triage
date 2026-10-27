@@ -486,16 +486,17 @@ describe("pr-triage body", () => {
     expect((verdict as Verdict).checks.find((c) => c.check === "docs")).toMatchObject({ result: "fail", evidence: ["src/flag.ts"] });
   });
 
-  test("a pull request past the decision model budget is judged in several calls on every model check", async () => {
+  test("a pull request past the decision model budget is read whole and judged in several calls on every model check", async () => {
     const sources = Array.from({ length: 45 }, (_, index) => ({
       ...FLAG,
       filename: `src/feature-${index}.ts`,
-      patch: ["@@ -0,0 +1,41 @@", `+export const feature${index} = true;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(6)}${line}`)].join("\n"),
+      patch: ["@@ -0,0 +1,41 @@", `+export const feature${index} = true;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(20)}${line}`)].join("\n"),
     }));
-    expect(sources.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(MAX_SYSTEM_ONE_STATE_BYTES);
+    expect(sources.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(3 * MAX_SYSTEM_ONE_STATE_BYTES);
     const files = [...sources, { ...FLAG, filename: "docs/flag.md" }];
-    const { path, verdict } = await triage(recommendedPack(REPO), { files });
-    expect(path.judgeCalls).toBeGreaterThanOrEqual(2);
+    const { judged, path, verdict } = await triage(recommendedPack(REPO), { files });
+    expect(path.judgeCalls).toBeGreaterThanOrEqual(4);
+    expect(new Set(judged.flatMap((call) => call.state.pullRequest.files.map((file) => file.path)))).toEqual(new Set(files.map((file) => file.filename)));
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toHaveLength(3);
   });

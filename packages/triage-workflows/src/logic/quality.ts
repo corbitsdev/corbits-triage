@@ -178,8 +178,8 @@ export const MAX_SYSTEM_ONE_STATE_BYTES = 90_000;
 export const MAX_SYSTEM_ONE_QUESTIONS = 256;
 // Below this much room for files a hunk is cut into so many pieces that each costs a request of mostly metadata.
 const MIN_FILE_ROOM = 8 * 1024;
-// About 5.8 MB of state; the 270,000-char patch budget fills about five requests, 3,000 small files 24.
-const MAX_JUDGE_REQUESTS = 64;
+// About 5.8 MB of state, as much patch as facts read; 3,000 small files take 24.
+export const MAX_JUDGE_REQUESTS = 64;
 export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the decision model";
 
 /** Lockfiles say nothing the judge decides on, so it never reads them. */

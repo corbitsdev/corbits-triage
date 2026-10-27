@@ -4,7 +4,7 @@ import { hiddenIn, hiddenMarkup, nothingRemoved, writtenDescription } from "./hi
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "@corbits/common";
-import { MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";
+import { MAX_JUDGE_REQUESTS, MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";
 
 export type RepoDocs = Pick<PrFacts, "docs" | "rules">;
 
@@ -95,8 +95,8 @@ export function buildFacts(
   };
 }
 
-// Patch text past three judge requests' worth is not read, so later pages leave patches out.
-const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
+// Patch text past what a pull request's judge requests can hold is not read, so later pages leave patches out.
+const MAX_PATCH_CHARS = MAX_JUDGE_REQUESTS * MAX_SYSTEM_ONE_STATE_BYTES;
 
 export type FilesPage = { files: PrFileFacts[]; next?: number; patchNext?: number };
 
