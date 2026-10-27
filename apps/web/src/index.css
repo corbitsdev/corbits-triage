@@ -618,8 +618,12 @@ input, textarea { caret-color: var(--heat); }
   overflow-wrap: anywhere;
 }
 .facts dd.soft { font-weight: 520; color: var(--ink-soft); }
-.facts .add { color: var(--ok); }
-.facts .del { color: var(--bad); }
+.facts .add,
+.byline .add,
+.tbl .add { color: var(--ok); }
+.facts .del,
+.byline .del,
+.tbl .del { color: var(--bad); }
 .brief-chips {
   display: flex;
   flex-wrap: wrap;
