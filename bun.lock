@@ -53,7 +53,7 @@
       "name": "@corbits/hub",
       "version": "0.1.0",
       "dependencies": {
-        "@corbits/artifacts": "0.2.0",
+        "@corbits/artifacts": "0.3.0",
         "@corbits/bitbucket-datacenter-reads": "workspace:*",
         "@corbits/bitbucket-datacenter-tool": "workspace:*",
         "@corbits/common": "workspace:*",
@@ -956,7 +956,7 @@
 
     "@connectrpc/connect-web": ["@connectrpc/connect-web@2.2.0", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0", "@connectrpc/connect": "2.2.0" } }, "sha512-uuBUcBTYfb/r1o98LzCCZk1H90yx0vmZ5m21dpw/q4EUwsKwkCDGI8H0aEdjcZld+Q2jJ5A5ADvPqfb6lzQ/sg=="],
 
-    "@corbits/artifacts": ["@corbits/artifacts@0.2.0", "", { "dependencies": { "@hono/standard-validator": "^0.2.3", "arktype": "^2.2.3" }, "peerDependencies": { "@intx/agent": "^0.4.0", "@intx/db": "^0.4.0", "@intx/hub-api": "^0.4.0", "@intx/types": "^0.4.0", "drizzle-orm": "^0.45.2", "hono": "^4.12.32", "hono-openapi": "^1.2.0", "postgres": "^3.4.9" }, "optionalPeers": ["@intx/agent"] }, "sha512-6NBlzckZYLCQgC/5CSU4eb72FL04IUsc5XjWwlGjo6E2OuqbMbG573AVJamwcwOv++c+chKqD8EuV7NjqaRApA=="],
+    "@corbits/artifacts": ["@corbits/artifacts@0.3.0", "", { "dependencies": { "@hono/standard-validator": "^0.2.3", "arktype": "^2.2.3" }, "peerDependencies": { "@intx/agent": "^0.5.0", "@intx/db": "^0.5.0", "@intx/hub-api": "^0.5.0", "@intx/hub-common": "0.5.0", "@intx/types": "^0.5.0", "drizzle-orm": "^0.45.2", "hono": "^4.12.32", "hono-openapi": "^1.2.0", "postgres": "^3.4.9" }, "optionalPeers": ["@intx/agent"] }, "sha512-RMAE0B3iuQDEDc1Fn+3arf9GaTmwosLXEkcjf+EFF1DyjL7flG1BmvGfkoUSdVSN3BOF8/iIvt4GSnFLYP2fMw=="],
 
     "@corbits/bitbucket-datacenter-reads": ["@corbits/bitbucket-datacenter-reads@workspace:packages/bitbucket-datacenter-reads"],
 

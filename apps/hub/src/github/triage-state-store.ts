@@ -4,7 +4,7 @@
 // other unseen. The first write is refused the same way when the artifact
 // appeared since the load.
 import { sql } from "drizzle-orm";
-import { createArtifact, findArtifactByTitle, getArtifact, writeArtifactVersion, type ArtifactDb } from "@corbits/artifacts";
+import { createArtifact, findArtifactByTitle, getArtifact, VersionConflictError, writeArtifactVersion, type ArtifactDb } from "@corbits/artifacts";
 import {
   parseTriageState,
   TRIAGE_STATE_KIND,
@@ -42,9 +42,9 @@ export class TriageStateConflictError extends Error {
   }
 }
 
-/** The package throws its `VersionConflictError` on a stale `expectedVersion` but does not export the class. */
+/** The package throws `VersionConflictError` when `expectedVersion` is stale. */
 function isVersionConflict(err: unknown): boolean {
-  return err instanceof Error && err.name === "VersionConflictError";
+  return err instanceof VersionConflictError;
 }
 
 export function createTriageStateStore(deps: TriageStateStoreDeps): TriageStateStore {
