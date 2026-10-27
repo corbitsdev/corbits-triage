@@ -5,7 +5,7 @@ import { errorText } from "@corbits/common";
 import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "@corbits/triage-contracts";
 import { usePortal } from "../lib/portal.tsx";
 
-export const DECISION_MODEL_SAVE = ["save-key", "decision-model"];
+const DECISION_MODEL_SAVE = ["save-key", "decision-model"];
 
 type Draft = { custom: boolean; endpoint: string; model: string; apiKey: string };
 
@@ -21,9 +21,7 @@ function keyHelp(stored: boolean): string {
   return "Stored in the hub's credential vault. You won't see it again.";
 }
 
-type DecisionModelFormProps = { onSaved?: () => void; onCancel?: () => void; submitLabel?: string };
-
-export function DecisionModelForm({ onSaved, onCancel, submitLabel = "Save decision model" }: DecisionModelFormProps) {
+export function DecisionModelForm({ onSaved }: { onSaved: () => void }) {
   const { snapshot, saveInferenceSecret, readOnly } = usePortal();
   const saved = snapshot?.decisionModel;
   const [preset, setPreset] = useState<DecisionModelPreset>(presetFor(saved));
@@ -66,8 +64,7 @@ export function DecisionModelForm({ onSaved, onCancel, submitLabel = "Save decis
     <label>{preset.keyLabel}<Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} disabled={disabled} autoComplete="off" /><small>{keyHelp(stored)}</small></label>
     {save.error && <p role="alert" className="error">Could not save the decision model. {errorText(save.error)}</p>}
     <div className="task-actions">
-      <Button type="submit" aria-describedby={blockerId} disabled={disabled || blocker !== null}>{save.isPending ? "Saving…" : submitLabel}</Button>
-      {onCancel && <Button type="button" variant="ghost" disabled={save.isPending} onClick={onCancel}>Cancel</Button>}
+      <Button type="submit" aria-describedby={blockerId} disabled={disabled || blocker !== null}>{save.isPending ? "Saving…" : "Save decision model"}</Button>
       <small id={blockerId} className="muted" aria-live="polite">{blocker}</small>
     </div>
   </form>;

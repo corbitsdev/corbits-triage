@@ -8,7 +8,7 @@ import type { RepoPackStore } from "../../lib/repo-pack-store.ts";
 import { useRepoStats } from "../../lib/repo-stats.ts";
 import type { RepoRow } from "../../lib/repo-rows.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
-import { hasRuleOn } from "../../lib/pack-draft.ts";
+import { hasRuleOn, policyNeedsModel } from "../../lib/pack-draft.ts";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import CodeReviewCard from "./CodeReviewCard.tsx";
 import OutcomesCard from "./OutcomesCard.tsx";
@@ -65,7 +65,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     if (settings.status === "failed") return <div className="rs"><Button type="button" variant="outline" size="sm" onClick={settings.reload}>Retry</Button></div>;
     return (
       <>
-        <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} rerunnable={repo.source === "github"} />
+        <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} needsModel={policyNeedsModel(draft.pack)} rerunnable={repo.source === "github"} />
         {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
         <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><PolicyGrants repo={repo.name} source={repo.source} disabled={disabled} /></div>
         <PolicySection repo={repo.name} source={repo.source} pack={settings.saved.pack} disabled={readOnly || snapshot?.denied.repos === true} onSettled={settings.reload} />

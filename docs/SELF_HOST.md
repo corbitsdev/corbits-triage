@@ -201,20 +201,20 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
 
    Bitbucket Data Center connects with an access token instead; see
    [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md).
-3. **Choose repositories on GitHub.** They arrive with triage off; nothing
-   runs yet.
-4. **Add the decision model** (during onboarding, or Settings → Triage).
-   Pick TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API key, or
-   **Add my own provider** with a System One–compatible base URL (requests go to it + `/systemone`), model and key.
-   Saving it, like connecting a host, makes the hub publish and start the
-   triage workflows; triage is live once that finishes.
-5. **Add a policy file.** A repository's rules and actions come only from
+3. **Choose repositories on GitHub.** They arrive with triage off. Press **Open Repositories** to leave setup. Nothing runs yet.
+4. **Add a policy file.** A repository's rules and actions come only from
    `.corbits-triage.yml` on its default branch ([Policy file](PRODUCT.md#policy-file)).
    A repository without one offers **Start a policy file**: **Open the pull
    request** and merge it.
-6. **Turn on triage.** Open the repository under Repositories and turn on
-   **Triage pull requests in this repository**. Its open pull requests are
-   triaged, then every new pull request event. Verdicts appear in the Inbox.
+5. **Turn on triage.** Open the repository under Repositories and turn on
+   **Triage pull requests in this repository**. When the policy has judgement rules and no model is saved,
+   the repository says it needs a model. Add the model under Settings →
+   Triage: pick TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API
+   key, or **Add my own provider** with a System One–compatible base URL
+   (requests go to it + `/systemone`), model and key. Saving it makes the hub
+   publish and start the triage workflows; triage is live once that
+   finishes. Open pull requests are triaged, then every new pull request
+   event. Verdicts appear in the Inbox.
 
 ## Configuration
 

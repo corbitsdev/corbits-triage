@@ -1,11 +1,9 @@
 import { useId, useState } from "react";
+import { Link } from "react-router-dom";
 import { Switch } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { useFocusWhenEnabled } from "../../lib/focus-when-enabled.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import type { RepoPack } from "../../lib/repo-pack.ts";
-import { DECISION_MODEL_SAVE, DecisionModelForm } from "../DecisionModelForm.tsx";
-import { KeyPopup } from "../KeyPopup.tsx";
 
 type TriageSwitchProps = {
   repo: string;
@@ -15,16 +13,25 @@ type TriageSwitchProps = {
   edit: RepoPack["edit"];
   /** Whether a rule is switched on; triage runs without one, but triggers nothing. */
   ruleOn: boolean;
+  /** Whether the policy has a judgement rule. With no saved model, the switch says so. */
+  needsModel: boolean;
   /** Whether open pull requests can be triaged again; the backlog route takes GitHub repositories only. */
   rerunnable: boolean;
 };
 
-export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, ruleOn, rerunnable }: TriageSwitchProps) {
+function ModelGap({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <p className="help" role="status">
+      This policy needs a model before its judgement rules can run. <Link to="/settings/triage">Add one in Settings</Link>.
+    </p>
+  );
+}
+
+export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, ruleOn, needsModel, rerunnable }: TriageSwitchProps) {
   const { snapshot, runBacklog } = usePortal();
   const [rerunError, setRerunError] = useState("");
-  const [askingForModel, setAskingForModel] = useState(false);
   const switchId = useId();
-  const { focusSoon, afterRender } = useFocusWhenEnabled(switchId);
 
   async function triageAgain() {
     setRerunError("");
@@ -39,20 +46,6 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
     edit((current) => ({ ...current, policy: { ...current.policy, enabled: next } }));
   }
 
-  function flip(next: boolean) {
-    if (next && snapshot?.decisionModel === undefined) setAskingForModel(true);
-    else setEnabled(next);
-  }
-
-  function stopAsking() {
-    setAskingForModel(false);
-  }
-
-  function turnOnWithModel() {
-    setAskingForModel(false);
-    setEnabled(true);
-  }
-
   function hint() {
     if (!enabled) return <span className="gate-note">Turn on triage to run this repository's policy</span>;
     if (!triaging || !rerunnable || !ruleOn) return null;
@@ -61,23 +54,14 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
 
   return (
     <>
-      <div className="switch-card" id="rp-triage" ref={afterRender}>
+      <div className="switch-card" id="rp-triage">
         <div className="sc-t">
           <label htmlFor={switchId}>Triage pull requests in this repository</label>
           {hint()}
         </div>
-        <Switch id={switchId} className="sw lg" checked={enabled} onCheckedChange={flip} label="Triage pull requests in this repository" disabled={disabled} />
+        <Switch id={switchId} className="sw lg" checked={enabled} onCheckedChange={setEnabled} label="Triage pull requests in this repository" disabled={disabled} />
       </div>
-      <KeyPopup
-        open={askingForModel}
-        title="Triage needs a decision model"
-        description="It judges each pull request against your policy. It is saved for the whole workspace, so other repositories can use it too."
-        mutationKey={DECISION_MODEL_SAVE}
-        onCancel={stopAsking}
-        returnFocus={focusSoon}
-      >
-        <DecisionModelForm submitLabel="Save and turn on" onCancel={stopAsking} onSaved={turnOnWithModel} />
-      </KeyPopup>
+      <ModelGap show={needsModel && snapshot?.decisionModel === undefined} />
       {triaging && !ruleOn ? <p className="help" role="status">Triage is on. It starts once the policy has a rule.</p> : null}
       {rerunError ? <p role="alert" className="error">{rerunError}</p> : null}
     </>

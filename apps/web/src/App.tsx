@@ -146,7 +146,7 @@ function Gate() {
     return <DeniedGate snapshot={snapshot} />;
   }
   const entry = path === "/" || path === "/login";
-  if (!connected || path === "/connect" || (entry && !snapshot.decisionModel)) return <Connect />;
+  if (!connected || path === "/connect") return <Connect />;
 
   if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;
   if (entry) {

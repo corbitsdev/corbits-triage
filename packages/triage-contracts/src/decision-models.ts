@@ -21,5 +21,3 @@ export function presetFor(saved: { endpoint: string; model: string } | undefined
   const match = DECISION_MODEL_PRESETS.find((preset) => preset.endpoint === saved.endpoint && preset.model === saved.model);
   return match ?? CUSTOM_PRESET;
 }
-
-export const DECISION_MODEL_INTRO = "Corbits Triage uses decision models to make triage fast and cost-effective. Add your preferred System One–compatible model and provider.";

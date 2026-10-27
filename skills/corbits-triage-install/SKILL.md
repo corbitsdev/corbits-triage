@@ -62,7 +62,7 @@ If the hub or its database setup stops, its logs (`docker compose logs`, or the 
 
 ## 4. Connect GitHub
 
-At the portal address, the person does `docs/SELF_HOST.md` "Set up in the portal" steps 1 to 4: sign up (the first account creates the workspace), press **Create GitHub App** and confirm it on GitHub, choose repositories, and save the decision model key. After signing up the portal shows **Set up Triage** with three steps: Connect a source, Repositories, Decision model. Bitbucket Data Center instead: `docs/BITBUCKET_DATACENTER.md`.
+At the portal address, the person does `docs/SELF_HOST.md` "Set up in the portal": sign up (the first account creates the workspace), press **Create GitHub App** and confirm it on GitHub, choose repositories, then open Repositories. After signing up the portal shows **Set up Triage** with two steps: Connect a source, then Repositories. Setup does not ask for a decision model. Triage does not start until one is saved under Settings → Triage. Bitbucket Data Center instead: `docs/BITBUCKET_DATACENTER.md`.
 
 To try it without a GitHub account, use the GitHub emulator on the own-Postgres path instead (`docs/DEV.md`, "GitHub emulator (no GitHub account)"); it still needs a decision model endpoint.
 

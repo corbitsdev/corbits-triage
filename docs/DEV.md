@@ -47,7 +47,7 @@ When no isolated place is registered, the hub prints one warning, `code_review_n
 
 ## 5. Set up in the portal
 
-Sign up at http://localhost:5173; the portal shows **Set up Triage** with three steps: Connect a source, Repositories, Decision model. Follow [Set up in the portal](SELF_HOST.md#set-up-in-the-portal), using a sandbox repository. GitHub App credentials and the model key go to the hub vault, not `.env`.
+Sign up at http://localhost:5173; the portal shows **Set up Triage** with two steps: Connect a source, then Repositories. A decision model is not part of setup and is not a variable in `.env`. Triage does not start until one is saved under Settings → Triage. Follow [Set up in the portal](SELF_HOST.md#set-up-in-the-portal), using a sandbox repository. GitHub App credentials, and a model key if you save one, go to the hub vault, not `.env`.
 
 ### Webhooks on localhost (unverified)
 
@@ -60,7 +60,7 @@ The App's webhook URL is built from `BETTER_AUTH_BASE_URL`, and GitHub refuses a
 1. Start the stack against it: `GITHUB_API_ORIGIN=http://localhost:4000 VITE_GITHUB_API_ORIGIN=http://localhost:4000 bun run dev`.
 2. Create an account and copy the webhook URL shown under Connect → **Connect an existing GitHub App instead**.
 3. Uncomment `webhook_url` in `emulate.config.yaml` with that URL, then start the emulator: `npx emulate start --service github --generated-secrets-file .emulate-secrets.json`.
-4. In Connect, enter App ID `12345`, the PEM from `.emulate-secrets.json`, and webhook secret `emulate-webhook-secret`. Then add a decision model (**Add my own provider**, any HTTPS endpoint).
+4. In Connect, enter App ID `12345`, the PEM from `.emulate-secrets.json`, and webhook secret `emulate-webhook-secret`, then open Repositories. Save a decision model under Settings → Triage (**Add my own provider**, any HTTPS endpoint).
 5. Register the repository by sending the installation event GitHub would send:
 
    ```sh
@@ -98,7 +98,7 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 ## Troubleshooting
 
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
-- **"The workspace has no decision model"**: store a decision model key in the **Triage** section of Settings.
+- **"The workspace has no decision model"**: triage has not started. Save a decision model in the **Triage** section of Settings.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
 - **New PRs never reach triage**: the host has no live listener (`triage-listener-github` or `triage-listener-bitbucket-datacenter`). Settings → Triage says why; the hub's `workflow_release_*` log lines say what the last roll did. A failed roll is tried again ten minutes later; restart the hub, or save the decision model again, to roll at once.
 - **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.
