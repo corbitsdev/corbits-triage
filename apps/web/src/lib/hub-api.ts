@@ -463,8 +463,12 @@ function chooseWorkspace(memberships: Membership[], user: HubMe, chosen: string 
   const triage = memberships.filter((entry) => entry.kind === "user" && isTriageSlug(entry.tenantSlug));
   const active = triage.filter((entry) => entry.status === "active");
   const invitations = triage.filter((entry) => entry.status === "invited").map(optionOf);
-  const isOwn = (entry: Membership) => entry.tenantSlug === own;
-  const isExtra = (entry: Membership) => Boolean(entry.tenantSlug?.startsWith(`${own}-`));
+  function isOwn(entry: Membership): boolean {
+    return entry.tenantSlug === own;
+  }
+  function isExtra(entry: Membership): boolean {
+    return Boolean(entry.tenantSlug?.startsWith(`${own}-`));
+  }
   const open = active.find((entry) => entry.tenantId === chosen) ?? active.find((entry) => !isOwn(entry) && !isExtra(entry)) ?? active.find(isOwn) ?? active[0];
   if (open) {
     const workspace = { tenantId: open.tenantId, principalId: open.principalId, userId: user.id };
