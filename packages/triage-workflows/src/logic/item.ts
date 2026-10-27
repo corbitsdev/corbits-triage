@@ -13,7 +13,7 @@ export interface Item {
    * answer wait on it, and the head waits for those checks or a human decides.
    */
   judgeSkipped?: true;
-  automatic?: ActionKind[];
+  automatic: ActionKind[];
   pack?: CheckPack;
   source?: PolicySource;
   /** Where the pull request lives; absent on GitHub. */
@@ -37,13 +37,13 @@ export const NO_FACTS: PrFacts = {
 /** The head of a pull request that could not be read, when the host or the mail named one. */
 export type UnreadPull = Pick<PrFacts, "repo" | "number" | "headSha">;
 
-export function degradedItem({ error, pull, pack, automatic, repoSource, appLogin }: { error: string; pull?: UnreadPull; pack?: CheckPack; automatic?: ActionKind[]; repoSource?: RepoSource; appLogin?: string }): Item {
+export function degradedItem({ error, pull, pack, automatic, repoSource, appLogin }: { error: string; pull?: UnreadPull; pack?: CheckPack; automatic: ActionKind[]; repoSource?: RepoSource; appLogin?: string }): Item {
   return {
     facts: { ...NO_FACTS, ...pull },
     det: { state: "stale-unknown", reason: error, findings: [], checks: [], needsJudgment: false },
     error,
+    automatic,
     ...(pack && { pack }),
-    ...(automatic && { automatic }),
     ...(repoSource && { repoSource }),
     ...(appLogin && { appLogin }),
   };

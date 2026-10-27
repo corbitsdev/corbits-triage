@@ -64,8 +64,8 @@ function policySource(request: Record<string, unknown>): PolicySource | undefine
 }
 
 /** The Do kinds the hub's mail says the pr-triage role is granted; only the hub's mail is trusted to grant any. */
-function automaticKinds(trusted: boolean, request: Record<string, unknown>): ActionKind[] {
-  const kinds = request.automatic;
+function automaticKinds(trusted: boolean, request: Record<string, unknown> | undefined): ActionKind[] {
+  const kinds = request?.automatic;
   if (!trusted || !Array.isArray(kinds)) return [];
   return ACTION_KINDS.filter((kind) => kinds.includes(kind));
 }
@@ -217,15 +217,15 @@ async function readOpenPulls(host: HostCall, tool: (name: string) => string, rep
   return new Map(own.map(openPullsOf));
 }
 
-function fail(reason: string): FactsOutput {
-  return { items: [{ error: reason }], batch: false };
+function fail(reason: string, automatic: ActionKind[]): FactsOutput {
+  return { items: [{ error: reason, automatic }], batch: false };
 }
 
 /** The hub could not read the policy, so nothing is triaged and each head the mail names is marked failed with why. */
 function unreadablePolicy(request: Record<string, unknown>, repo: string, reason: string, appLogin: { appLogin?: string }): FactsOutput {
   const error = `${POLICY_UNREADABLE}${reason}`;
   const heads = [...mailHeads(request)];
-  if (heads.length === 0) return fail(error);
+  if (heads.length === 0) return fail(error, automaticKinds(true, request));
   const repoSource = repoSourceOf(request.repoSource);
   const marked = { automatic: automaticKinds(true, request), ...(repoSource !== "github" && { repoSource }), ...appLogin };
   return { items: heads.map(([number, headSha]) => ({ error, pull: { repo, number, headSha }, ...marked })), batch: Array.isArray(request.items) };
@@ -340,7 +340,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   /** Names the head the host or else the mail gave, so a write for it never lands on a newer one. */
   function degraded(n: number, error: string): RulesItem {
     const headSha = prs.get(n)?.sha ?? stamp.heads.get(n);
-    if (headSha === undefined) return { error };
+    if (headSha === undefined) return { error, automatic: stamp.automatic };
     return { error, pull: { repo, number: n, headSha }, pack, automatic: stamp.automatic, ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
   }
 
@@ -402,7 +402,7 @@ async function fetchListed(read: Host, repo: string, targets: number[] | undefin
   const templatesTool = toolName(read.stamp.repoSource, "read_pr_templates");
   const r = await runAll(read.host, [call(listTool, { repo }), ...(judged ? [docsCall(read.stamp.repoSource, repo, 0)] : []), ...(templated ? [call(templatesTool, { repo }, "templates")] : [])]);
   const list = data<{ prs: Array<{ number: number; draft?: boolean }> }>(r.get(listTool));
-  if (!list && targets === undefined) return fail(`${listTool} failed`);
+  if (!list && targets === undefined) return fail(`${listTool} failed`, read.stamp.automatic);
   const triageable = (list?.prs ?? []).filter((p) => p.draft !== true).map((p) => p.number);
   const docs = judged ? await readDocs(read, repo, r.get("docs:0")) : NO_DOCS;
   const templates = templated ? templatesRead(templatesTool, r.get("templates")) : [];
@@ -419,7 +419,7 @@ async function fetchHistory(read: Host, repo: string, limit: number): Promise<Fa
   for (let page: number | undefined = 1; page !== undefined && closed.length < limit;) {
     const results = await runAll(read.host, [call(listTool, { repo, page })]);
     const listed = data<{ prs: ClosedPr[]; next?: number }>(results.get(listTool));
-    if (!listed) return fail(`${listTool} failed on page ${page}`);
+    if (!listed) return fail(`${listTool} failed on page ${page}`, read.stamp.automatic);
     closed.push(...listed.prs.slice(0, limit - closed.length));
     page = listed.next;
   }
@@ -438,36 +438,38 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
   const appLogin = trusted && typeof request?.appLogin === "string" ? { appLogin: request.appLogin } : {};
   if (request?.kind === "history") {
     const limit = request.limit ?? HISTORY_LIMIT;
-    if (typeof repo !== "string") return fail("facts: input has no repo");
-    if (!Number.isSafeInteger(limit) || (limit as number) < 1) return fail("facts: history limit must be a positive integer");
-    return fetchHistory({ host: hostFor("github"), stamp: { automatic: [], repoSource: "github", noWait: false, blocksOn: false, heads: new Map(), ...appLogin } }, repo, limit as number);
+    const stamp: Stamp = { automatic: [], repoSource: "github", noWait: false, blocksOn: false, heads: new Map(), ...appLogin };
+    if (typeof repo !== "string") return fail("facts: input has no repo", stamp.automatic);
+    if (!Number.isSafeInteger(limit) || (limit as number) < 1) return fail("facts: history limit must be a positive integer", stamp.automatic);
+    return fetchHistory({ host: hostFor("github"), stamp }, repo, limit as number);
   }
+  const granted = automaticKinds(trusted, request);
   const policy = repoPolicy(request?.policy);
-  if (!request || typeof repo !== "string") return fail("facts: input has no repo");
-  if (!policy.enabled) return fail("Triage is disabled for this repository.");
+  if (!request || typeof repo !== "string") return fail("facts: input has no repo", granted);
+  if (!policy.enabled) return fail("Triage is disabled for this repository.", granted);
   if (trusted && typeof request.policyUnreadable === "string") return unreadablePolicy(request, repo, request.policyUnreadable, appLogin);
   const rawPack = request.pack ?? request.checkPack;
-  if (rawPack === undefined || rawPack === null) return fail(NEEDS_SETUP_REASON);
+  if (rawPack === undefined || rawPack === null) return fail(NEEDS_SETUP_REASON, granted);
   let pack: CheckPack;
   try {
     pack = packFromInput(rawPack);
   } catch (error) {
-    return fail(`${DEPLOYMENT_UNREADABLE}${error instanceof Error ? error.message : String(error)}`);
+    return fail(`${DEPLOYMENT_UNREADABLE}${error instanceof Error ? error.message : String(error)}`, granted);
   }
   const repoSource = repoSourceOf(request.repoSource);
   const source = policySource(request);
   const items = request.kind === "pr" && Array.isArray(request.items) ? request.items : undefined;
-  const read = { host: hostFor(repoSource), stamp: { automatic: automaticKinds(trusted, request), repoSource, noWait: request.noWait === true, blocksOn: Array.isArray(request.blocks) && request.blocks.length > 0, heads: mailHeads(request), ...(source && { source }), ...appLogin } };
+  const read = { host: hostFor(repoSource), stamp: { automatic: granted, repoSource, noWait: request.noWait === true, blocksOn: Array.isArray(request.blocks) && request.blocks.length > 0, heads: mailHeads(request), ...(source && { source }), ...appLogin } };
   if (request.kind === "backlog") return fetchListed(read, repo, undefined, true, policy, pack, ["catch-up"]);
-  if (request.kind !== "pr") return fail("facts: input is neither pr nor backlog");
+  if (request.kind !== "pr") return fail("facts: input is neither pr nor backlog", granted);
   // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.
   if (items) {
     const numbers = items.flatMap((item) => (isRecord(item) && typeof item.prNumber === "number" ? [item.prNumber] : []));
-    if (numbers.length === 0) return fail("facts: batch names no pull request");
+    if (numbers.length === 0) return fail("facts: batch names no pull request", granted);
     return fetchListed(read, repo, numbers, true, policy, pack, ["catch-up"]);
   }
   const number = request.prNumber;
-  if (typeof number !== "number") return fail("facts: pr input has no prNumber");
+  if (typeof number !== "number") return fail("facts: pr input has no prNumber", granted);
   const events = triageEventsOf({ event: request.event, action: request.action, review: request.review, events: request.events });
   return fetchListed(read, repo, [number], false, policy, pack, events);
 }
