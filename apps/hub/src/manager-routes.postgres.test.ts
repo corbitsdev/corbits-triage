@@ -205,7 +205,7 @@ test("PostgreSQL: a reviewer's result wakes the pull request's manager as a host
   });
 }, 60_000);
 
-test("PostgreSQL: a result whose wake fails stays recorded with nothing else, the route answers 502, and the next reconcile pass wakes a manager for it at once", async () => {
+test("PostgreSQL: a result whose wake fails stays recorded with nothing else, the route answers 502, and a reconcile pass wakes a manager for it once the start grace has passed since it was recorded", async () => {
   await withDatabase(async function unwoken(db) {
     const logged: Record<string, unknown>[] = [];
     function log(entry: Record<string, unknown>): void {
@@ -232,7 +232,12 @@ test("PostgreSQL: a result whose wake fails stays recorded with nothing else, th
     expect(await db.execute(sql`SELECT key, state FROM corbits_triage.manager_state WHERE kind = 'claim'`)).toEqual(before);
 
     const woken: Woken[] = [];
-    await createOverdueWake({ db, wake: waker(woken), log })(TENANT);
+    const wakeOverdue = createOverdueWake({ db, wake: waker(woken), log });
+    await wakeOverdue(TENANT);
+    expect(woken).toEqual([]);
+    const earlier = new Date(Date.now() - 2 * 60_000 - 1_000).toISOString();
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = jsonb_set(state, '{receivedAt}', to_jsonb(${earlier}::text)) WHERE key LIKE '%:run_reviewer'`);
+    await wakeOverdue(TENANT);
     expect(woken).toEqual([{ tenantId: TENANT, pr: GITHUB, head: "h1" }]);
   });
 }, 60_000);

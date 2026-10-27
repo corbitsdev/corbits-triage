@@ -350,9 +350,11 @@ any other tenant or an unknown sender.
   a manager slow to reach a sidecar is never deployed twice. Each pull request
   is woken on its own: one whose wake fails is logged as
   `manager_overdue_wake_failed`, the rest are still woken, and the next pass
-  tries it again. The same pass wakes at once, with no grace, a pull request
-  whose manager is not up while a reviewer result no pass has taken waits for
-  it, as after the reviewer-result route could not wake one. So
+  tries it again. The same pass wakes a pull request whose manager is not up
+  while a reviewer result no pass has taken waits for it, as after the
+  reviewer-result route could not wake one, once two minutes have passed
+  since that result was recorded, so a manager the route's own wake deployed
+  is not deployed again while it starts. So
   within one pass of the deadline that manager posts the verdict without the
   reviewer and the pull request needs a person. Each reviewer the manager
   records names the manager run that deployed it (`deployedBy`). Done stops a

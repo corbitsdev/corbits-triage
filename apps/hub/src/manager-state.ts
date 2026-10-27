@@ -539,17 +539,18 @@ export async function recordOverdueWake(db: DB["db"], tenantId: string, pr: Pull
   });
 }
 
-/** Each claim with a reviewer result recorded that no pass has taken, with that result's head. */
-async function unreadResults(db: DB["db"], tenantId: string): Promise<Map<string, string>> {
+/** Each claim with a reviewer result recorded that no pass has taken, with its newest such result. */
+async function unreadResults(db: DB["db"], tenantId: string): Promise<Map<string, ManagerEvent>> {
   const rows = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'reviewer-result'`));
   // A result's key is its pull request's event prefix and the reporting run's id, which has no colon.
-  return new Map(rows.map((row) => [`mgr:${row.key.slice("evt:".length, row.key.lastIndexOf(":"))}`, eventOf(row.key, row.state).head]));
+  return new Map(eventsOf(rows).map((row) => [`mgr:${row.key.slice("evt:".length, row.key.lastIndexOf(":"))}`, row.event]));
 }
 
 /**
  * The tenant's pull requests whose manager has gone, with the head to wake one on: each with a reviewer result no pass
- * has taken, at once, as when waking a manager for it failed; and each whose reviewer of its newest head is past its
+ * has taken, as when waking a manager for it failed, once the manager start grace has passed since that result, so a
+ * manager its own wake deployed is not deployed again while it starts; and each whose reviewer of its newest head is past its
  * deadline with no result recorded, so a manager posts its verdict without the reviewer, unless one woken for that is
  * within its grace.
  */
@@ -567,7 +568,7 @@ export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr
     const head = await newestHead(db, tenantId, pr);
     const result = unread.get(key);
     if (result !== undefined) {
-      overdue.push({ pr, head: head ?? result });
+      if (now.getTime() - Date.parse(result.receivedAt) >= MANAGER_START_GRACE_MS) overdue.push({ pr, head: head ?? result.head });
       continue;
     }
     if (recentlyWoken(claim, now) || head === undefined) continue;
