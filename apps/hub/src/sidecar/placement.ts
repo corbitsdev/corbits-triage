@@ -1,5 +1,5 @@
 import { schema, type DB } from "@intx/db";
-import { createSidecarPluginRegistry, type SidecarPluginRegistry, type SidecarProvisioner, type SidecarProvisionerChooser } from "@intx/hub-sessions";
+import type { SidecarProvisioner, SidecarProvisionerChooser } from "@intx/hub-sessions";
 import type { DeployedVersions } from "@corbits/triage-contracts";
 import { and, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 
@@ -130,21 +130,5 @@ export function createPlacementChooser({ db, local, maxDeployments, now = Date.n
     const decision = after(queue, candidates);
     queue = settle(decision);
     return decision;
-  };
-}
-
-/** The deployment and probe registries, sharing one chooser so both draw from one count of each sidecar's slots. */
-export function createSidecarRegistries({
-  deployments,
-  probes,
-  chooser,
-}: {
-  readonly deployments: readonly SidecarProvisioner[];
-  readonly probes: readonly SidecarProvisioner[];
-  readonly chooser: SidecarProvisionerChooser | undefined;
-}): { readonly deployments: SidecarPluginRegistry; readonly probes: SidecarPluginRegistry } {
-  return {
-    deployments: createSidecarPluginRegistry({ provisioners: deployments, ...(chooser !== undefined && { chooser }) }),
-    probes: createSidecarPluginRegistry({ provisioners: probes, ...(chooser !== undefined && { chooser }) }),
   };
 }

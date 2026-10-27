@@ -164,9 +164,13 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
   `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` (default 16) active deployments in its hello,
   and stock refuses to place more there. The hub's placement chooser
   (`apps/hub/src/sidecar/placement.ts`) counts the local sidecar's active
-  allocations and probes, and the placements waiting there for a slot, and places probes as well as deployments: it sends either to the first matching sandbox
-  provisioner once the cap is reached; with no sandbox it stays local and
-  waits in stock's placement retry until a slot frees. The Docker provisioner (`packages/provisioner-docker`),
+  allocations and probes, and the placements waiting there for a slot, and
+  sends a deployment to the first matching sandbox provisioner once the cap is
+  reached. With no sandbox it stays local, where stock retries its placement
+  for up to 10 ensure attempts (about two and a half minutes) and then fails
+  it; the pull request is tried again on its next event. Probes run on the local
+  sidecar only when no sandbox is registered, since with one they require
+  `isolation:workload`. The Docker provisioner (`packages/provisioner-docker`),
   registered after it when a daemon with the sidecar image answers, runs each
   sidecar in a container of its own. A published hub image carries the digest
   of the sidecar image CI pushed just before it, and the provisioner pulls that
@@ -329,9 +333,7 @@ any other tenant or an unknown sender.
   the claim: the next manager's take finds the run gone and claims.
   A run left deployed with no sidecar for two minutes is gone too, and its
   cancellation is requested so it does not start after the claim has moved on.
-  A run whose allocation has not reached a sidecar yet (`provisioning` or
-  `replacing`), as when it waits for a free slot on a full sidecar, is not
-  gone for half an hour from the allocation's creation. A manager or judge is deployed with the mail that starts
+  A manager or judge is deployed with the mail that starts
   it, so one still `deployed` five minutes after it reached its sidecar never
   ran: it is gone for the claim, and each reconcile pass ends it and logs
   `triage_deployment_never_ran` with its run id and workflow. The hub times

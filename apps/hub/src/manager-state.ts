@@ -201,9 +201,6 @@ const MANAGER_START_GRACE_MS = 2 * 60_000;
  */
 const NEVER_RAN_MS = 5 * 60_000;
 
-/** How long a run whose placement waits for a free slot on a full sidecar still counts as up. */
-const SLOT_WAIT_MS = 30 * 60_000;
-
 /** The workflows deployed with the mail that starts them. */
 const MAILED_WORKFLOWS = [...Object.values(TRIAGE_MANAGERS), ...Object.values(TRIAGE_JUDGES)];
 
@@ -230,7 +227,6 @@ type ManagerRun = {
   generation: number | null;
   allocationStatus: string | null;
   sidecarId: string | null;
-  allocationCreatedAt: Date | null;
 };
 
 /** How long the run has sat on its sidecar: from its deploy, or its placement there when that came later. */
@@ -251,7 +247,6 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
       generation: schema.sidecarAllocation.generation,
       allocationStatus: schema.sidecarAllocation.status,
       sidecarId: schema.sidecarAllocation.sidecarId,
-      allocationCreatedAt: schema.sidecarAllocation.createdAt,
     })
     .from(schema.workflowRun)
     .leftJoin(schema.sidecarAllocation, eq(schema.sidecarAllocation.anchorRunId, schema.workflowRun.id))
@@ -271,28 +266,21 @@ function runIsRunning(run: ManagerRun | undefined): boolean {
 type UpRule = { readonly graceMs?: number; readonly startedByMail: boolean };
 
 /**
- * A running run; one on its sidecar, unless it is started by its mail and sat there past `NEVER_RAN_MS`; one whose
- * allocation has not reached a sidecar yet, which it may wait for while the sidecar is full, for up to `SLOT_WAIT_MS`
- * from the allocation's creation; or one deployed inside the startup window.
+ * A running run; one on its sidecar, unless it is started by its mail and sat there past `NEVER_RAN_MS`; or one
+ * deployed inside the startup window.
  */
 function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = MANAGER_START_GRACE_MS, startedByMail }: UpRule): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
   if (run.status === "running") return true;
-  const age = now.getTime() - run.createdAt.getTime();
   if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < NEVER_RAN_MS;
-  // Stock moves a placement refused for room between `replacing` and `provisioning` on each retry, recording why only
-  // in the first, so any placement not yet on its sidecar may be waiting for a slot.
-  if ((run.allocationStatus === "provisioning" || run.allocationStatus === "replacing") && run.allocationCreatedAt !== null) {
-    return now.getTime() - run.allocationCreatedAt.getTime() < SLOT_WAIT_MS;
-  }
-  return age < graceMs;
+  return now.getTime() - run.createdAt.getTime() < graceMs;
 }
 
 async function runGone(tx: Tx | DB["db"], runId: string, now: Date): Promise<boolean> {
   return !runIsUp(await managerRun(tx, runId), now, { startedByMail: true });
 }
 
-/** Whether a deployment is up as the hub counts a listener: running, on its sidecar, waiting for a slot, or just deployed. */
+/** Whether a deployment is up as the hub counts a listener: running, on its sidecar, or just deployed. */
 export async function deploymentUp(db: DB["db"], runId: string): Promise<boolean> {
   return runIsUp(await managerRun(db, runId), new Date(), { startedByMail: false });
 }
@@ -309,10 +297,15 @@ async function releaseStuck(tx: Tx | DB["db"], runId: string, now: Date, reason:
 }
 
 /** Ends every manager and judge that sat on its sidecar past `NEVER_RAN_MS` without its mail starting it. */
-export async function endNeverRan(db: DB["db"], now: Date, log: (entry: Record<string, unknown>) => void): Promise<void> {
+export async function endNeverRan(
+  db: DB["db"],
+  now: Date,
+  cancel: (tenantId: string, runId: string, reason: string) => Promise<unknown>,
+  log: (entry: Record<string, unknown>) => void,
+): Promise<void> {
   const { workflowRun, workflowDefinition, workflowRunLaunchSpec, sidecarAllocation } = schema;
   const candidates = await db
-    .select({ runId: workflowRun.id, workflow: workflowName, createdAt: workflowRun.createdAt, allocationId: sidecarAllocation.id, generation: sidecarAllocation.generation })
+    .select({ tenantId: workflowRun.tenantId, runId: workflowRun.id, workflow: workflowName, createdAt: workflowRun.createdAt, allocationId: sidecarAllocation.id, generation: sidecarAllocation.generation })
     .from(workflowRun)
     .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
     .leftJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
@@ -328,7 +321,7 @@ export async function endNeverRan(db: DB["db"], now: Date, log: (entry: Record<s
     ));
   for (const run of candidates) {
     if (onSidecarMs(run, now) < NEVER_RAN_MS) continue;
-    await releaseStuck(db, run.runId, now, `${run.workflow} deployed but never ran`);
+    await cancel(run.tenantId, run.runId, `${run.workflow} deployed but never ran`);
     log({ level: "warn", msg: "triage_deployment_never_ran", runId: run.runId, workflow: run.workflow });
   }
 }

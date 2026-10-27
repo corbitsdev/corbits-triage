@@ -38,7 +38,7 @@ function sidecarText({ active, waiting, cap, overflow }: DeployedVersions["sidec
   const runs = `This server runs ${active} of up to ${cap} Triage workflows at once`;
   const elsewhere = overflow > 0 ? `; ${overflow} more ${overflow === 1 ? "runs" : "run"} in a sandbox because it is full` : "";
   const queued = waiting > 0 ? `; ${waiting} more ${waiting === 1 ? "waits" : "wait"} for one to finish` : "";
-  if (active >= cap && overflow === 0 && waiting === 0) return `${runs}: it is full, so new pull requests wait for one to finish.`;
+  if (active >= cap && overflow === 0 && waiting === 0) return `${runs}: it is full, so a new pull request waits a few minutes for a place, then is tried again on its next update.`;
   return `${runs}${elsewhere}${queued}.`;
 }
 

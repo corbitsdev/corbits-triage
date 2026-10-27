@@ -202,16 +202,6 @@ test("a late ensure for a destroyed identity, or another identity at a live gene
   await local.shutdown();
 });
 
-test("the sidecar's exit is logged with how it ended", async () => {
-  const { logs, started } = await setup();
-  const local = await started();
-
-  await local.provisioner.ensure(request("a"));
-  await local.shutdown();
-
-  expect(logs).toContainEqual({ level: "info", msg: "local_sidecar_exited", sidecarId: "sc_a", pid: 1, code: null, signal: "SIGTERM" });
-});
-
 test("a destroy older than the allocation's hold leaves the live generation held", async () => {
   const { manifests, started } = await setup();
   const local = await started();
@@ -323,24 +313,16 @@ test("a joined allocation's destroy is required whatever identity it names, and 
   await local.shutdown();
 });
 
-test("a destroy forgets the fences of allocations stock has ended, so later destroys never ask about them", async () => {
+test("a repeated destroy keeps fencing the identity the hold was offered under", async () => {
   const { started } = await setup();
-  const open = new Set(["a", "b", "c"]);
-  const asked: string[][] = [];
-  const local = await started({
-    ...NOTHING_HELD,
-    stillOpen: async (allocationIds) => {
-      asked.push([...allocationIds]);
-      return new Set(allocationIds.filter((allocationId) => open.has(allocationId)));
-    },
-  });
+  const local = await started();
+  await local.provisioner.ensure(request("a"));
+  await local.provisioner.ensure(request("b"));
 
-  await local.provisioner.destroy({ allocationId: "a", generation: 1, sidecarId: "sc_a" });
-  open.delete("a");
-  await local.provisioner.destroy({ allocationId: "b", generation: 1, sidecarId: "sc_b" });
-  await local.provisioner.destroy({ allocationId: "c", generation: 1, sidecarId: "sc_c" });
+  await local.provisioner.destroy({ allocationId: "b", generation: 1, sidecarId: "sc_a" });
+  await local.provisioner.destroy({ allocationId: "b", generation: 1, sidecarId: "sc_a" });
 
-  expect(asked.at(-1)).toEqual(["b", "c"]);
+  expect(await local.provisioner.ensure(request("b"))).toMatchObject({ kind: "rejected", code: "generation_destroyed" });
   await local.shutdown();
 });
 

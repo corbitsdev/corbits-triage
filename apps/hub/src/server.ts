@@ -173,9 +173,7 @@ const local = createLocalProcessSidecarProvisioner({
   }),
   capacity: createHostCapacity({ cgroupRoot: "/sys/fs/cgroup", meminfo: "/proc/meminfo" }),
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
-  onAccepted: function placedLocally(placement) {
-    notePlaced(placement);
-  },
+  onAccepted: notePlaced,
   log: logJson,
 });
 const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
@@ -248,9 +246,7 @@ const composition = await createInterchangeHub({
   extraRunTokenRoutes: MANAGER_RUN_TOKEN_ROUTES,
 });
 const stock = composition.server;
-composition.sidecarRouter.events.on("sidecar.allocated.connected", function placed(allocation) {
-  notePlaced(allocation);
-});
+composition.sidecarRouter.events.on("sidecar.allocated.connected", notePlaced);
 
 /** The hub's credentials, and the push that takes back from sidecars an App key a read moved to the hub. */
 const credentialDeps = {
@@ -638,7 +634,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
     await supersedeAll(tenant.id);
     await wakeOverdue(tenant.id);
   }
-  await endNeverRan(composition.db, new Date(), logJson);
+  await endNeverRan(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
   const outcomes: ReconcileOutcome[] = [];
   for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);

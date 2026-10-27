@@ -72,6 +72,7 @@ import {
   createHubSessionOrchestrator,
   createSessionService,
   createSidecarAllocationReconciler,
+  createSidecarPluginRegistry,
   createSidecarRouter,
   createSidecarCredentialResolver,
   createWorkflowAllocationService,
@@ -102,7 +103,6 @@ import { errorText } from "@corbits/common";
 import type { DatabaseConfig, InterchangeSettings } from "./env.js";
 import { createHubAuth, type HubAuthConfig } from "./auth.js";
 import { withBlobOutputs } from "./run-outputs.js";
-import { createSidecarRegistries } from "./sidecar/placement.js";
 import { resolveHubApiOrigin } from "../../../vendor/interchange/apps/hub/src/hub-api-origin.js";
 
 export type CreateHubServerOpts = {
@@ -113,7 +113,7 @@ export type CreateHubServerOpts = {
   readonly credentialCipher: CredentialCipher;
   /** Provisioners eligible to host frozen workflow deployments. */
   readonly sidecarProvisioners?: readonly SidecarProvisioner[];
-  /** Selects among matching deployment and probe provisioners, reading the hub's database. Defaults to the first. */
+  /** Selects among matching deployment provisioners, reading the hub's database. Defaults to the first. */
   readonly sidecarProvisionerChooser?: (db: DB["db"]) => SidecarProvisionerChooser;
   /** Provisioners eligible to evaluate workflow source code. */
   readonly probeSidecarProvisioners?: readonly SidecarProvisioner[];
@@ -350,10 +350,14 @@ export async function createInterchangeHub({
     },
   });
 
-  const { deployments: sidecarPlugins, probes: probeSidecarPlugins } = createSidecarRegistries({
-    deployments: sidecarProvisioners,
-    probes: probeSidecarProvisioners,
-    chooser: sidecarProvisionerChooser?.(db),
+  const sidecarPlugins = createSidecarPluginRegistry({
+    provisioners: sidecarProvisioners,
+    ...(sidecarProvisionerChooser !== undefined
+      ? { chooser: sidecarProvisionerChooser(db) }
+      : {}),
+  });
+  const probeSidecarPlugins = createSidecarPluginRegistry({
+    provisioners: probeSidecarProvisioners,
   });
   const workflowAllocationService = createWorkflowAllocationService({
     db,

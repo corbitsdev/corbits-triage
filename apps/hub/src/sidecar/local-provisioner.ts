@@ -298,7 +298,8 @@ export function createLocalProcessSidecarProvisioner({
     const stale = newest !== undefined && newest > request.generation;
     const hosted = manifest !== null && !stale && (live !== undefined || (fence?.hosted === true && fence.generation === request.generation));
     if (!stale) {
-      const sidecarIds = live === undefined ? [request.sidecarId] : [request.sidecarId, live.offeredSidecarId];
+      const earlier = fence?.generation === request.generation ? fence.sidecarIds : [];
+      const sidecarIds = [...new Set([...earlier, request.sidecarId, ...(live === undefined ? [] : [live.offeredSidecarId])])];
       fences.set(request.allocationId, { generation: request.generation, sidecarIds, ...(hosted && { hosted }) });
       holds.delete(request.allocationId);
       await pruneFences();

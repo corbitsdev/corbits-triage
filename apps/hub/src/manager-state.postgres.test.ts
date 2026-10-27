@@ -464,10 +464,8 @@ test("PostgreSQL: a manager being cancelled is mailed nothing and takes nothing,
   });
 }, 120_000);
 
-async function allocate(db: Db, runId: string, fields: { status: "allocated" | "provisioning" | "replacing"; sidecarId?: string; failureCode?: string | null; generation?: number; deploymentCleanupConfirmed?: boolean; createdAt?: Date }): Promise<void> {
-  if (fields.sidecarId !== undefined) {
-    await db.insert(schema.sidecar).values({ id: fields.sidecarId, tokenHashSha256: new Uint8Array(32).fill(runId.length), provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest" }).onConflictDoNothing();
-  }
+async function allocate(db: Db, runId: string, fields: { status: "allocated"; sidecarId: string }): Promise<void> {
+  await db.insert(schema.sidecar).values({ id: fields.sidecarId, tokenHashSha256: new Uint8Array(32).fill(runId.length), provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest" }).onConflictDoNothing();
   await db.insert(schema.sidecarAllocation).values({ id: `alc_${runId}`, anchorRunId: runId, tenantId: TENANT, provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest", maxDisconnectedMs: 60_000, ...fields });
 }
 
@@ -480,13 +478,13 @@ test("PostgreSQL: a manager on its sidecar five minutes without running gives up
     await allocate(db, "run_quiet", { status: "allocated", sidecarId: "sdc_local" });
     notePlaced({ allocationId: "alc_run_quiet", generation: 0 }, new Date(Date.now() - 6 * MINUTE));
     await claimRun(db, "run_quiet");
+    const cancelled: string[][] = [];
     const logs: Record<string, unknown>[] = [];
 
-    await endNeverRan(db, new Date(), (entry) => logs.push(entry));
+    await endNeverRan(db, new Date(), async (...args) => cancelled.push(args), (entry) => logs.push(entry));
 
+    expect(cancelled).toEqual([[TENANT, "run_quiet", "triage-manager-github deployed but never ran"]]);
     expect(logs).toEqual([{ level: "warn", msg: "triage_deployment_never_ran", runId: "run_quiet", workflow: "triage-manager-github" }]);
-    const reasons = await db.select({ id: schema.workflowRun.id, reason: schema.workflowRun.cancellationReason }).from(schema.workflowRun).orderBy(schema.workflowRun.id);
-    expect(reasons).toEqual([{ id: "run_listener", reason: null }, { id: "run_quiet", reason: "triage-manager-github deployed but never ran" }]);
     expect(await liveListener(db, TENANT, "github")).toMatchObject({ runId: "run_listener" });
     await liveRun(db, "run_next");
     expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "idle" });
@@ -499,51 +497,13 @@ test("PostgreSQL: a manager that waited past five minutes for a slot is timed fr
     await allocate(db, "run_late", { status: "allocated", sidecarId: "sdc_local" });
     notePlaced({ allocationId: "alc_run_late", generation: 0 }, new Date(Date.now() - MINUTE));
     await claimRun(db, "run_late");
-    const logs: Record<string, unknown>[] = [];
+    const cancelled: string[][] = [];
 
-    await endNeverRan(db, new Date(), (entry) => logs.push(entry));
+    await endNeverRan(db, new Date(), async (...args) => cancelled.push(args), () => undefined);
 
-    expect(logs).toEqual([]);
+    expect(cancelled).toEqual([]);
     await liveRun(db, "run_next");
     expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
-  });
-}, 120_000);
-
-type Unplaced = Parameters<typeof allocate>[2];
-
-async function keepsClaimWhileUnplaced(db: Db, row: Unplaced): Promise<void> {
-  await deployedRun(db, "run_waiting", new Date(Date.now() - 10 * MINUTE));
-  await allocate(db, "run_waiting", { ...row, createdAt: new Date(Date.now() - 10 * MINUTE) });
-  await claimRun(db, "run_waiting");
-  await liveRun(db, "run_next");
-  expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
-
-  await db.update(schema.sidecarAllocation).set({ createdAt: new Date(Date.now() - 31 * MINUTE) }).where(sql`${schema.sidecarAllocation.id} = 'alc_run_waiting'`);
-  expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "idle" });
-}
-
-test("PostgreSQL: a manager whose placement was refused for room keeps the pull request for half an hour from its allocation", async () => {
-  await withDatabase(async function refused(db) {
-    // What stock writes for a placement refused for room while it waits to try again.
-    await keepsClaimWhileUnplaced(db, { status: "replacing", failureCode: "sidecar_reuse_rejected", generation: 1, deploymentCleanupConfirmed: true });
-  });
-}, 120_000);
-
-test("PostgreSQL: a manager between retries of its placement, its refusal cleared, still keeps the pull request for half an hour", async () => {
-  await withDatabase(async function retrying(db) {
-    // What stock writes when it tries the placement again: the refusal's code is cleared.
-    await keepsClaimWhileUnplaced(db, { status: "provisioning", failureCode: null, generation: 1 });
-  });
-}, 120_000);
-
-test("PostgreSQL: a placement that stopped waiting for a slot no longer keeps the pull request, whatever failure it last recorded", async () => {
-  await withDatabase(async function stoppedWaiting(db) {
-    await deployedRun(db, "run_failed", new Date(Date.now() - 10 * MINUTE));
-    await db.insert(schema.sidecarAllocation).values({ id: "alc_run_failed", anchorRunId: "run_failed", tenantId: TENANT, provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest", maxDisconnectedMs: 60_000, status: "failed", failureCode: "sidecar_reuse_rejected" });
-    await claimRun(db, "run_failed");
-    await liveRun(db, "run_next");
-
-    expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "idle" });
   });
 }, 120_000);
 
