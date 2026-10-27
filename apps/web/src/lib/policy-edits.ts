@@ -1,6 +1,6 @@
 // Edits stay in the page until one patch opens a pull request. The policy-file read names the file and not its text, so the
 // text comes from a preview, which writes nothing.
-import { CATALOG_IDS, CUSTOM_CHECK_CAP, QUALITY_CHECK_IDS, catalogSentence, checkPolicyFile, customSentence, fileRuleId, isCatalogId, isModelCheck, readCheckPack, type CatalogId, type CheckPack, type CustomCheck, type PolicyPatchChange } from "@corbits/triage-contracts";
+import { CATALOG_IDS, CUSTOM_CHECK_CAP, QUALITY_CHECK_IDS, catalogSentence, checkPolicyFile, customSentence, fileRuleId, isCatalogId, isModelCheck, isSizeRule, readCheckPack, type CatalogId, type CheckPack, type CustomCheck, type PolicyPatchChange } from "@corbits/triage-contracts";
 
 export type RuleLane = "checks" | "judging";
 
@@ -44,9 +44,16 @@ function baselineOn(pack: CheckPack, id: string): boolean {
   return row !== undefined && row.enabled !== false;
 }
 
-function sameRule(change: PolicyPatchChange, id: string): boolean {
-  if (change.kind === "rule" || change.kind === "remove-rule") return change.id === id;
+function editsRule(change: PolicyPatchChange, id: string): boolean {
+  if (change.kind === "rule" || change.kind === "remove-rule" || change.kind === "rule-options") return change.id === id;
   return change.kind === "add-rule" && fileRuleId(change.rule) === id;
+}
+
+/** A size rule needs `max` and forbidden paths need `paths`, and only when the file does not already list the rule. */
+export function absentValue(pack: CheckPack, id: string): "max" | "paths" | undefined {
+  if (present(pack, id)) return undefined;
+  if (isSizeRule(id)) return "max";
+  return id === "no-forbidden-paths" ? "paths" : undefined;
 }
 
 export function ruleOn(pack: CheckPack, id: string, changes: readonly PolicyPatchChange[]): boolean {
@@ -61,14 +68,35 @@ export function codeReviewOn(baseline: boolean, changes: readonly PolicyPatchCha
   return last?.kind === "code-review" ? last.on : baseline;
 }
 
-/** A switch that returns to the file drops its change. A rule the file does not list cannot be turned off. */
+/** A switch that returns to the file drops its change. A new size or path rule is not enabled until its value is set beside it. */
 export function toggleRule(pack: CheckPack, changes: readonly PolicyPatchChange[], id: string, next: boolean): PolicyPatchChange[] {
-  const rest = changes.filter((change) => !sameRule(change, id));
+  const rest = changes.filter((change) => !editsRule(change, id));
   const added = changes.some((change) => change.kind === "add-rule" && fileRuleId(change.rule) === id);
   if (added) return next ? [...changes] : rest;
   if (next === baselineOn(pack, id)) return rest;
   if (!next && !present(pack, id)) return rest;
+  if (next && absentValue(pack, id) !== undefined) return rest;
   return [...rest, { kind: "rule", id, enabled: next }];
+}
+
+/** Enable a rule the file does not list, then set the limit or paths the person entered. The enable comes first so the option applies to it. */
+export function withRequiredValue(changes: readonly PolicyPatchChange[], id: string, options: { max: number } | { paths: string[] }): PolicyPatchChange[] {
+  const rest = changes.filter((change) => !editsRule(change, id));
+  return [...rest, { kind: "rule", id, enabled: true }, { kind: "rule-options", id, options }];
+}
+
+/** False while a new size or path rule is enabled without the value the route requires. */
+export function batchReady(pack: CheckPack, changes: readonly PolicyPatchChange[]): boolean {
+  return changes.every(function ready(change) {
+    if (change.kind !== "rule" || !change.enabled) return true;
+    const field = absentValue(pack, change.id);
+    if (field === undefined) return true;
+    const options = changes.find((item) => item.kind === "rule-options" && item.id === change.id);
+    if (options?.kind !== "rule-options") return false;
+    if (field === "max") return typeof options.options.max === "number" && Number.isInteger(options.options.max) && options.options.max >= 1;
+    const paths = options.options.paths;
+    return Array.isArray(paths) && paths.length > 0 && paths.every((path) => typeof path === "string" && path.trim().length > 0);
+  });
 }
 
 export function toggleCodeReview(baseline: boolean, changes: readonly PolicyPatchChange[], next: boolean): PolicyPatchChange[] {
@@ -135,6 +163,8 @@ export function changeSentences(pack: CheckPack, changes: readonly PolicyPatchCh
       case "remove-rule":
         return `Remove ${sentenceOf(pack, change.id, changes)}.`;
       case "rule-options":
+        if (typeof change.options.max === "number") return `Set the limit to ${change.options.max.toLocaleString()}.`;
+        if (Array.isArray(change.options.paths)) return `Set the paths to ${change.options.paths.join(", ")}.`;
         return `Change ${sentenceOf(pack, change.id, changes)}.`;
     }
   });

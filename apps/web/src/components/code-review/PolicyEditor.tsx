@@ -4,7 +4,7 @@ import { Button, Input, Switch } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { CUSTOM_CHECK_CAP, type CheckPack, type PolicyPatchChange } from "@corbits/triage-contracts";
 import { counted } from "../../lib/plural.ts";
-import { FAIL_SENTENCES, changeSentences, codeReviewOn, judgeRuleChange, judgingOn, ruleRows, toggleCodeReview, toggleRule, type FailWord, type RuleLane, type RuleRow } from "../../lib/policy-edits.ts";
+import { FAIL_SENTENCES, absentValue, batchReady, changeSentences, codeReviewOn, judgeRuleChange, judgingOn, ruleRows, toggleCodeReview, toggleRule, withRequiredValue, type FailWord, type RuleLane, type RuleRow } from "../../lib/policy-edits.ts";
 
 export type FilePreview = { before: string; after: string };
 
@@ -76,24 +76,71 @@ function JudgeRuleForm({ pack, changes, disabled, onAdd }: { pack: CheckPack; ch
   );
 }
 
-function RuleSwitch({ row, pending, expanded, disabled, onFlip }: { row: RuleRow; pending: boolean; expanded: boolean; disabled: boolean; onFlip: (next: boolean) => void }) {
+const VALUE_ASK: Record<string, string> = {
+  "max-files-changed": "How many files?",
+  "max-lines-changed": "How many lines?",
+  "max-lines-changed-per-file": "How many lines in one file?",
+  "max-additions": "How many lines added?",
+  "max-deletions": "How many lines deleted?",
+  "no-forbidden-paths": "Which paths?",
+};
+
+function maxOf(draft: string): number | undefined {
+  const text = draft.trim();
+  if (!/^[1-9]\d*$/.test(text)) return undefined;
+  return Number(text);
+}
+
+function pathsOf(draft: string): string[] {
+  return draft.split(/[,\n]/).map((path) => path.trim()).filter((path) => path.length > 0);
+}
+
+function ValueAsk({ id, draft, onDraft, onUse }: { id: string; draft: string; onDraft: (draft: string) => void; onUse: () => void }) {
+  const kind = id === "no-forbidden-paths" ? "paths" : "max";
+  const label = VALUE_ASK[id] ?? "";
+  const ready = kind === "max" ? maxOf(draft) !== undefined : pathsOf(draft).length > 0;
   return (
-    <div className={row.on ? "rule" : "rule off"}>
+    <div className="ask">
+      <label>{label}
+        <Input value={draft} aria-label={label} onChange={(event) => onDraft(event.target.value)} />
+      </label>
+      <Button type="button" size="sm" disabled={!ready || !label} onClick={onUse}>Use this</Button>
+    </div>
+  );
+}
+function RuleSwitch({ row, pending, expanded, asking, draft, disabled, onFlip, onDraft, onUse }: { row: RuleRow; pending: boolean; expanded: boolean; asking: boolean; draft: string; disabled: boolean; onFlip: (next: boolean) => void; onDraft: (draft: string) => void; onUse: () => void }) {
+  const shown = row.on || asking;
+  return (
+    <div className={shown ? "rule" : "rule off"}>
       <div className="sentence">
         <span className="txt">{row.sentence}{pending ? <span className="pending-dot" title="In the open pull request" /> : null}</span>
-        <Switch className="sw" checked={row.on} onCheckedChange={onFlip} label={row.sentence} disabled={disabled} />
+        <Switch className="sw" checked={shown} onCheckedChange={onFlip} label={row.sentence} disabled={disabled} />
       </div>
-      {expanded ? <p className="help">{row.needsModel ? "Needs a model" : `${row.sentence}.`}{row.needsModel ? <> <a className="linkish" href="#judging-model">Add a model</a></> : null}</p> : null}
+      {expanded && asking ? <ValueAsk id={row.id} draft={draft} onDraft={onDraft} onUse={onUse} /> : null}
+      {expanded && !asking ? <p className="help">{row.needsModel ? "Needs a model" : `${row.sentence}.`}{row.needsModel ? <> <a className="linkish" href="#judging-model">Add a model</a></> : null}</p> : null}
     </div>
   );
 }
 
-function Lane({ title, rows, touched, expanded, disabled, onFlip }: { title: string; rows: RuleRow[]; touched: readonly string[]; expanded: string | null; disabled: boolean; onFlip: (id: string, next: boolean) => void }) {
+function Lane({ title, rows, touched, expanded, askId, draft, disabled, onFlip, onDraft, onUse }: { title: string; rows: RuleRow[]; touched: readonly string[]; expanded: string | null; askId: string | null; draft: string; disabled: boolean; onFlip: (id: string, next: boolean) => void; onDraft: (draft: string) => void; onUse: () => void }) {
   return (
     <section className="rs" aria-labelledby={`lane-${title}`}>
       <h3 id={`lane-${title}`}>{title}</h3>
       <div className="sentences">
-        {rows.map((row) => <RuleSwitch key={row.id} row={row} pending={touched.includes(row.id)} expanded={expanded === row.id} disabled={disabled} onFlip={(next) => onFlip(row.id, next)} />)}
+        {rows.map((row) => (
+          <RuleSwitch
+            key={row.id}
+            row={row}
+            pending={touched.includes(row.id)}
+            expanded={expanded === row.id}
+            asking={askId === row.id}
+            draft={draft}
+            disabled={disabled}
+            onFlip={(next) => onFlip(row.id, next)}
+            onDraft={onDraft}
+            onUse={onUse}
+          />
+        ))}
       </div>
     </section>
   );
@@ -103,21 +150,49 @@ function Lane({ title, rows, touched, expanded, disabled, onFlip }: { title: str
 export function PolicyEditor({ repo, pack, reviewOn, hasModel, hasPlace, readOnly, touched, applying, applyError, preview, onApply }: PolicyEditorProps) {
   const [changes, setChanges] = useState<PolicyPatchChange[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [askId, setAskId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
   const rows = ruleRows(pack, changes, hasModel);
   const review = codeReviewOn(reviewOn, changes);
   const on = rows.checks.filter((row) => row.on).length + rows.judging.filter((row) => row.on).length;
+  const ready = batchReady(pack, changes);
   const shown = useQuery({
     queryKey: ["policy-patch-preview", repo, changes],
     queryFn: function loadPreview() {
       return preview(changes);
     },
-    enabled: changes.length > 0,
+    enabled: changes.length > 0 && ready,
     retry: false,
   });
 
   function flipRule(id: string, next: boolean) {
     setExpanded(id);
+    if (next && absentValue(pack, id) !== undefined) {
+      setAskId(id);
+      setDraft("");
+      setChanges((current) => toggleRule(pack, current, id, false));
+      return;
+    }
+    setAskId(null);
     setChanges((current) => toggleRule(pack, current, id, next));
+  }
+
+  function useValue() {
+    if (askId === null) return;
+    const field = absentValue(pack, askId);
+    if (field === "max") {
+      const max = maxOf(draft);
+      if (max === undefined) return;
+      setChanges((current) => withRequiredValue(current, askId, { max }));
+    } else if (field === "paths") {
+      const paths = pathsOf(draft);
+      if (paths.length === 0) return;
+      setChanges((current) => withRequiredValue(current, askId, { paths }));
+    } else {
+      return;
+    }
+    setAskId(null);
+    setDraft("");
   }
 
   function flipReview(next: boolean) {
@@ -139,7 +214,7 @@ export function PolicyEditor({ repo, pack, reviewOn, hasModel, hasPlace, readOnl
   return (
     <div>
       <p className="lede">{counted(on, "rule", "rules")} on. Judging is {judgingOn(rows.judging) ? "on" : "off"}. Code review is {review ? "on" : "off"}.</p>
-      {(Object.keys(LANES) as RuleLane[]).map((lane) => <Lane key={lane} title={LANES[lane]} rows={rows[lane]} touched={touched} expanded={expanded} disabled={readOnly} onFlip={flipRule} />)}
+      {(Object.keys(LANES) as RuleLane[]).map((lane) => <Lane key={lane} title={LANES[lane]} rows={rows[lane]} touched={touched} expanded={expanded} askId={askId} draft={draft} disabled={readOnly} onFlip={flipRule} onDraft={setDraft} onUse={useValue} />)}
       <section className="rs" aria-labelledby="lane-code-review">
         <h3 id="lane-code-review">Code review</h3>
         <div className={review ? "rule" : "rule off"}>
@@ -156,7 +231,7 @@ export function PolicyEditor({ repo, pack, reviewOn, hasModel, hasPlace, readOnl
         <h3 id="lane-new-rule">New judge rule</h3>
         <JudgeRuleForm pack={pack} changes={changes} disabled={readOnly} onAdd={addRule} />
       </section>
-      {changes.length > 0 ? (
+      {changes.length > 0 && ready ? (
         <aside className="tray" aria-live="polite">
           <p><b>{counted(changes.length, "change", "changes")}.</b> Open a pull request to apply them.</p>
           <ul>{sentences.map((sentence) => <li key={sentence}>{sentence}</li>)}</ul>
