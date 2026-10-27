@@ -67,11 +67,17 @@ const MANAGED = observed([
 ]);
 
 const OPEN: RepoPulls[] = [
-  { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
+  { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10, 11, 12].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
   { repo: UNREAD, source: "github", prs: [], error: "rate limited" },
 ];
 
-const waitingRows: PrTriageRow[] = [{ number: 7, headSha: "sha_waiting", status: "waiting", attempts: 0, firstSeenAt: minutes(-3).toISOString(), updatedAt: minutes(-3).toISOString() }];
+/** #7 waits for CI; #8's degraded run kept its verdict, #11's run never started and #12's mail failed to send. */
+const waitingRows: PrTriageRow[] = [
+  { number: 7, headSha: "sha_waiting", status: "waiting", attempts: 0, firstSeenAt: minutes(-3).toISOString(), updatedAt: minutes(-3).toISOString() },
+  { number: 8, headSha: "sha_run_3", status: "failed", attempts: 1, error: "degraded: the policy could not be read", firstSeenAt: minutes(9).toISOString(), updatedAt: minutes(10).toISOString() },
+  { number: 11, headSha: "sha11", status: "failed", attempts: 3, error: "run never started", firstSeenAt: minutes(-4).toISOString(), updatedAt: minutes(-4).toISOString() },
+  { number: 12, headSha: "sha12", status: "failed", attempts: 1, error: "delivery failed: connection refused", firstSeenAt: minutes(-4).toISOString(), updatedAt: minutes(-4).toISOString() },
+];
 
 type DB = ReturnType<typeof createDB>["db"];
 
@@ -152,8 +158,8 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     expect(res.status).toBe(200);
     const body = TriageVerdicts.assert(await res.json());
     const byPull = new Map(body.pulls.map((pull) => [`${pull.repo}#${pull.number}`, pull]));
-    // #5 is closed, #4 is in a repository no longer connected; where GitHub could not answer, only a recent verdict is listed.
-    expect([...byPull.keys()]).toEqual([`${UNREAD}#2`, `${REPO}#6`, `${REPO}#7`, `${REPO}#8`, `${REPO}#9`, `${REPO}#10`]);
+    // #5 is closed, #4 is in a repository no longer connected, #12 has nothing a person can read; where GitHub could not answer, only a recent verdict is listed.
+    expect([...byPull.keys()]).toEqual([`${UNREAD}#2`, `${REPO}#6`, `${REPO}#7`, `${REPO}#8`, `${REPO}#9`, `${REPO}#10`, `${REPO}#11`]);
     expect(body.triaged).toEqual([{ repo: REPO, source: "github" }, { repo: UNREAD, source: "github" }]);
     expect(body.active).toEqual([{ repo: REPO, source: "github" }, { repo: UNREAD, source: "github" }]);
     expect(body.scored).toBe(false);
@@ -170,6 +176,9 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     });
     expect(byPull.get(`${REPO}#7`)?.verdict?.detail).toBeNull();
     expect(byPull.get(`${REPO}#7`)?.run).toEqual({ status: "waiting-ci", since: minutes(-3).toISOString(), headSha: "sha_waiting" });
+    expect(byPull.get(`${REPO}#11`)).toEqual({
+      repo: REPO, number: 11, source: "github", activityAt: null, verdict: null, run: null, untriaged: "Couldn't triage: the run never started",
+    });
     expect(byPull.get(`${REPO}#9`)).toEqual({
       repo: REPO, number: 9, source: "github", activityAt: minutes(-5).toISOString(), verdict: null, run: { runId: "run_9", startedAt: minutes(-5).toISOString(), status: "running" },
     });

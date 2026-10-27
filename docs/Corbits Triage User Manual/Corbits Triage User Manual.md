@@ -449,7 +449,7 @@ The **Ready** view lists open pull requests you can merge now, oldest first, wit
 
 The **All open** view groups pull requests by repository, with the same rows. Group by **Waits on** to see whose move it is: you, the author, CI, Triage or nobody. **Needs setup** collects pull requests Triage cannot check until their repository is set up: its policy is refused, missing, unreadable or has no rule on. Once you act on a pull request, its status says what you did, such as **Approved** or **Requested changes**.
 
-A pull request that has not been checked yet shows **Not triaged** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. A draft shows **Draft**, since Triage waits until it is marked ready for review.
+A pull request that has not been checked yet shows **Not triaged** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. When Triage recorded why it could not check the pull request, that reason appears in the same place, on the row and in the pane, instead of **Not triaged**. A draft shows **Draft**, since Triage waits until it is marked ready for review.
 
 ### The reading pane
 

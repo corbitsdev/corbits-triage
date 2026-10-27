@@ -142,6 +142,13 @@ describe("projectQueue from the hub's verdicts", () => {
     ]);
   });
 
+  test("a pull request with no verdict keeps why the hub says it was not triaged", () => {
+    const untriaged = "Couldn't triage: the run never started";
+    const items = projectQueue([pull(8, { untriaged }), pull(10)], [], openPulls);
+    expect(items.find((item) => item.number === 8)?.untriaged).toBe(untriaged);
+    expect(items.find((item) => item.number === 10)?.untriaged).toBeUndefined();
+  });
+
   test("a pull request is a draft when GitHub says so now, whatever its verdict read", () => {
     const drafted = { repos: [{ repo: "acme/widgets", prs: [{ ...pr(8), draft: true }] }] };
     const items = projectQueue([pull(8, { verdict: verdict("run-8", "awaiting-review", { facts: { draft: false } }) })], [], drafted);

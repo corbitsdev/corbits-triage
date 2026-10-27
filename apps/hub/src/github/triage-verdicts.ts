@@ -9,7 +9,7 @@ import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
 import { schema } from "@intx/db";
-import { PR_TRIAGE_STUCK_RUN_MS, REPO_SOURCES, repoPolicy, TriageVerdicts, type PrTriageRow, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, REPO_SOURCES, repoPolicy, triageStopped, TriageVerdicts, type PrTriageRow, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import { bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
 import { listConnectedPulls, listingRefusal, refusedSources, type OpenPrsLister, type OpenPullsCache, type OpenPullsRead, type RepoPulls } from "./open-pulls.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
@@ -67,6 +67,24 @@ type LivePull = HostedPull & { runs: ObservedRun[] };
 
 /** A pull request whose newest head waits for CI, first seen `since`. */
 type WaitingPull = HostedPull & { since: string; headSha: string };
+
+/** Why the newest head has no verdict, in words for the portal, with the pull request it belongs to. */
+type Untriaged = HostedPull & { untriaged: string };
+
+type PullNotes = { waiting: Map<string, WaitingPull>; untriaged: Map<string, Untriaged> };
+
+/** What a person sees for a head's stored note. The stopped-triage note is already written for them; any other note stays internal. */
+const UNTRIAGED_TEXT: ReadonlyMap<string, string> = new Map([
+  ["run never started", "Couldn't triage: the run never started"],
+  ["run lost", "Couldn't triage: the run was lost"],
+  ["run stuck", "Couldn't triage: the run stopped responding"],
+  ["run failed", "Couldn't triage: the run failed"],
+  ["run cancelled", "Couldn't triage: the run was cancelled"],
+]);
+
+function untriagedText(error: string, source: RepoSource): string | undefined {
+  return error === triageStopped(source) ? error : UNTRIAGED_TEXT.get(error);
+}
 
 function hostKey({ repo, source }: HostedRepo): string {
   return triageStateKey({ name: repo, source });
@@ -202,25 +220,29 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     return connected.map((record) => ({ repo: record.name, source: sourceOf(record) })).filter((repo) => seen.has(hostKey(repo)));
   }
 
-  async function waitingOf(tenantId: string, records: readonly RepoRecord[]): Promise<Map<string, WaitingPull>> {
+  /** The newest stored head of each pull request: one waiting for CI, and why triage produced no verdict when a person can read it. */
+  async function notesOf(tenantId: string, records: readonly RepoRecord[]): Promise<PullNotes> {
     const states = await Promise.all(records.map((record) => deps.triageState.load(tenantId, triageStateKey(record))));
     const waiting = new Map<string, WaitingPull>();
+    const untriaged = new Map<string, Untriaged>();
     for (const [index, { rows }] of states.entries()) {
       const newest = new Map<number, PrTriageRow>();
       for (const row of [...rows].sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt))) newest.set(row.number, row);
       for (const row of newest.values()) {
         const pull = { repo: records[index]!.name, source: sourceOf(records[index]!), number: row.number };
         if (row.status === "waiting") waiting.set(pullKey(pull), { ...pull, since: row.firstSeenAt, headSha: row.headSha });
+        const text = row.error === undefined ? undefined : untriagedText(row.error, pull.source);
+        if (text !== undefined) untriaged.set(pullKey(pull), { ...pull, untriaged: text });
       }
     }
-    return waiting;
+    return { waiting, untriaged };
   }
 
-  async function build(tenantId: string, latest: readonly HostedVerdict[], live: Map<string, LivePull>, waiting: Map<string, WaitingPull>, wanted: (pull: HostedPull) => boolean, connected: readonly RepoRecord[]): Promise<TriageVerdicts> {
+  async function build(tenantId: string, latest: readonly HostedVerdict[], live: Map<string, LivePull>, notes: PullNotes, wanted: (pull: HostedPull) => boolean, connected: readonly RepoRecord[]): Promise<TriageVerdicts> {
     const now = deps.now();
     const byPull = new Map(latest.map((verdict) => [pullKey(verdict), verdict]));
     const refs = new Map<string, HostedPull>();
-    for (const ref of [...latest, ...live.values(), ...waiting.values()]) {
+    for (const ref of [...latest, ...live.values(), ...notes.waiting.values(), ...notes.untriaged.values()]) {
       if (wanted(ref)) refs.set(pullKey(ref), { repo: ref.repo, number: ref.number, source: ref.source });
     }
     const pulls = [...refs.values()].sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number || a.source.localeCompare(b.source));
@@ -231,12 +253,18 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       deps.verdicts.anyScored(tenantId),
     ]);
     return {
-      pulls: pulls.map((ref) => ({
-        ...ref,
-        activityAt: activity.get(pullKey(ref)) ?? null,
-        verdict: verdictOf(byPull.get(pullKey(ref))),
-        run: runFor(waiting.get(pullKey(ref)), live.get(pullKey(ref))?.runs[0], now),
-      })),
+      pulls: pulls.map((ref) => {
+        const verdict = verdictOf(byPull.get(pullKey(ref)));
+        // A verdict replaces the note: it only explains a pull request that still has none.
+        const untriaged = verdict === null ? notes.untriaged.get(pullKey(ref))?.untriaged : undefined;
+        return {
+          ...ref,
+          activityAt: activity.get(pullKey(ref)) ?? null,
+          verdict,
+          run: runFor(notes.waiting.get(pullKey(ref)), live.get(pullKey(ref))?.runs[0], now),
+          ...(untriaged !== undefined && { untriaged }),
+        };
+      }),
       triaged,
       active,
       scored,
@@ -260,12 +288,12 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     const unlisted = new Set(unknown.map(triageStateKey));
     const pairs = [...open.values()].flatMap(({ repo, numbers }) => [...numbers].map((number) => ({ repo, number })));
     const since = new Date(deps.now().getTime() - RECENT_MS);
-    const [known, recent, waiting] = await Promise.all([deps.verdicts.latest(tenantId, pairs), deps.verdicts.latestSince(tenantId, unknown.map((record) => record.name), since), waitingOf(tenantId, enabled)]);
+    const [known, recent, notes] = await Promise.all([deps.verdicts.latest(tenantId, pairs), deps.verdicts.latestSince(tenantId, unknown.map((record) => record.name), since), notesOf(tenantId, enabled)]);
     function wanted(pull: HostedPull): boolean {
       const listing = open.get(hostKey(pull));
       return listing === undefined ? unlisted.has(hostKey(pull)) : listing.numbers.has(pull.number);
     }
-    return build(tenantId, [...known.filter((verdict) => open.has(hostKey(verdict))), ...recent], live, waiting, wanted, connected);
+    return build(tenantId, [...known.filter((verdict) => open.has(hostKey(verdict))), ...recent], live, notes, wanted, connected);
   }
 
   return async function handle(req: Request, member: Member): Promise<Response> {
@@ -281,8 +309,12 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       const record = connectedRecord(connected, query.repo, query.source);
       if (!record) return failure(404, "not_found", "That repository is not connected.");
       const pull = { repo: query.repo, number: query.number, source: sourceOf(record) };
-      const [latest, waiting, runs] = await Promise.all([deps.verdicts.latestFor(tenantId, pull), waitingOf(tenantId, [record]), deps.managerRuns(tenantId, [pull])]);
-      const one = await build(tenantId, latest ? [latest] : [], new Map([...livePulls(runs)].filter(([key]) => key === pullKey(pull))), new Map([...waiting].filter(([key]) => key === pullKey(pull))), () => true, connected);
+      const [latest, notes, runs] = await Promise.all([deps.verdicts.latestFor(tenantId, pull), notesOf(tenantId, [record]), deps.managerRuns(tenantId, [pull])]);
+      const key = pullKey(pull);
+      const one = await build(tenantId, latest ? [latest] : [], new Map([...livePulls(runs)].filter(([id]) => id === key)), {
+        waiting: new Map([...notes.waiting].filter(([id]) => id === key)),
+        untriaged: new Map([...notes.untriaged].filter(([id]) => id === key)),
+      }, () => true, connected);
       return respond(req, bodyOf(one.pulls.length > 0 ? one : { ...one, pulls: [{ ...pull, activityAt: null, verdict: null, run: null }] }));
     }
 

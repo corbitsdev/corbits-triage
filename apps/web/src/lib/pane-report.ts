@@ -243,7 +243,7 @@ function approvedLine({ item, author, problems: { fail, unsure, cant }, pack, fa
 
 /**
  * Where the pull request stands, for the pane's status line and, shortened, its row in a list, read in one order: ended,
- * running, CI, a failed run, a draft, not triaged or rechecking, commits Triage has not checked, what you did, a re-review,
+ * running, CI, a failed run, a draft, why Triage could not check it, not triaged or rechecking, commits Triage has not checked, what you did, a re-review,
  * rules to decide, what the main button does, rules that could not be checked. The row's main button is read from the
  * list, the pane's from the host's detail once it has loaded; that is the only way the two can differ.
  */
@@ -260,6 +260,7 @@ function standing({ item, detail, handled, pack }: StatusInput): Standing {
   const facts = paneFacts(item, detail);
   const author = facts.author === null ? "the author" : `@${facts.author}`;
   if (item.draft === true) return line("author", `Draft · waiting on ${author}`, "Draft");
+  if (item.untriaged !== undefined) return line("quiet", item.untriaged, item.untriaged);
   if (item.state === "new" || item.state === "stale") return line("quiet", inboxStatus(item), inboxStatus(item));
   if (hasUncheckedCommits(item)) return line("quiet", "New commits since Triage checked · rechecking", "Rechecking");
   const problems = bySeverity(item, pack);
