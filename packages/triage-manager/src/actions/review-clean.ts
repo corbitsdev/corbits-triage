@@ -66,7 +66,7 @@ function uncleared({ taken, review, reviewers, head }: TakeOutput, checks: unkno
 /** The verdict fields cleared reads, the rest kept as evaluate made them. */
 const ClearedVerdict = type({
   number: "number", verdict: type.enumerated(...VERDICTS), reason: "string", reasons: "string[]", feedback: "string", checks: "object[]", actions: "object[]",
-  "approvable?": "boolean", "closed?": "true",
+  degraded: "string | null", "approvable?": "boolean", "closed?": "true",
 }).as<Verdict>();
 
 const ClearedInput = type({
@@ -84,11 +84,13 @@ function reviewFailure(found: number): CheckResult {
 
 /**
  * The verdict `found`, the review's problems on `head`, leave: evaluate's with the review among its checks and reasons,
- * a Pass turned to Fail with the policy's fail Dos, rebuilt from the rules item of the verdict's pull request at `head`.
- * One that cannot be made leaves the verdict as the rules made it.
+ * a Pass turned to Fail with the policy's fail Dos, rebuilt from the rules item of the verdict's pull request at `head`,
+ * or of its pull request alone for a degraded verdict that names no head, since its facts may name another. One that
+ * cannot be made, or a degraded verdict with no such item, leaves the verdict as the rules made it.
  */
 function reviewed(items: Item[], verdict: Verdict, head: string, found: number): Verdict {
-  const item = items.find(({ facts }) => facts.number === verdict.number && facts.headSha === head);
+  const item = items.find(({ facts }) => facts.number === verdict.number && (verdict.headSha === null || facts.headSha === head));
+  if (!item && verdict.degraded !== null) return verdict;
   if (!item) throw new Error(`cleared: the rules output has no item for #${verdict.number} at ${head}`);
   try {
     return verdictWithFailure(item, verdict, reviewFailure(found));
@@ -106,7 +108,7 @@ function held(verdict: Verdict, reason: string): Verdict {
 /**
  * The pass's verdict once the policy's checks are in. A verdict whose code review found problems on its head names
  * them, waiting, degraded or decided, and a Pass among them fails with the policy's fail Dos; a closed pull request has
- * no verdict to name them in, and a take that names no head has no review of one. While a check is not clean, approve
+ * no verdict to name them in, and a take that names no head has no review of one to name, so either is only held. While a check is not clean, approve
  * and merge are held for a person, saying why, and the head is not approvable, so an approval Triage gave an earlier
  * head is taken back.
  */
@@ -118,8 +120,7 @@ export async function cleared(input: unknown): Promise<Verdict> {
   const unclean = uncleared(parsed.take.output, verdict.checks, parsed.reviewScope.output);
   if (unclean === undefined) return verdict;
   if (!("found" in unclean)) return held(verdict, unclean.held);
-  if (head === undefined) return verdict;
   const reason = reviewFailure(unclean.found).reason;
-  if (verdict.closed) return held(verdict, reason);
+  if (verdict.closed || head === undefined) return held(verdict, reason);
   return held(reviewed(parsed.rules.output.items, verdict, head, unclean.found), reason);
 }

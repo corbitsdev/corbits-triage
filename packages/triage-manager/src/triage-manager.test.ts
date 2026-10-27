@@ -573,12 +573,12 @@ describe("triage-manager with code review", () => {
   }
 
   test.each([
-    ["an Unsure waiting on CI", { verdict: "unsure", waiting: true, reason: "CI is still running", feedback: "" }],
-    ["an Unsure the decision model could not make", { verdict: "unsure", degraded: "inference-outage", reason: "decision model unavailable", feedback: "" }],
+    ["an Unsure waiting on CI", { verdict: "unsure", waiting: true, reason: "CI is still running", feedback: "", actor: "system", nextAction: "Wait for checks to finish" }],
+    ["an Unsure the decision model could not make", { verdict: "unsure", degraded: "inference-outage", reason: "decision model unavailable", feedback: "", actor: "maintainer", nextAction: "Review" }],
   ])("%s keeps its state and gains the review's check, reason, next step and comment, approve and merge held", async (_name, unsure) => {
     const { rules, verdict } = await cleanPass();
     const made = await actions.cleared({ take: { output: takenWith(["code-review"]) }, rules: { output: rules }, evaluateRules: { output: { ...verdict, ...unsure } }, reviewScope: { output: { reviewed: true } } }) as Record<string, unknown> & { reasons: string[]; checks: Record<string, unknown>[] };
-    expect(made).toMatchObject({ ...unsure, reason: `${unsure.reason}; ${REVIEW_REASON}`, actor: "author", nextAction: `Fix: ${REVIEW_REASON}`, approvable: false, feedback: `**Triage: Unsure**\n\n@octocat, please address the following:\n- ${REVIEW_REASON}` });
+    expect(made).toMatchObject({ ...unsure, reason: `${unsure.reason}; ${REVIEW_REASON}`, nextAction: `${unsure.nextAction}; Fix: ${REVIEW_REASON}`, approvable: false, feedback: `**Triage: Unsure**\n\n@octocat, please address the following:\n- ${REVIEW_REASON}` });
     expect(made.reasons.at(-1)).toBe(REVIEW_REASON);
     expect(made.checks.at(-1)).toMatchObject({ check: "code-review", result: "fail", output: { kind: "values", values: { findings: 1 } } });
     expect(made).toMatchObject({ mirror: true, request: { comment: expect.stringContaining(`- ${REVIEW_REASON}`) } });
@@ -600,11 +600,19 @@ describe("triage-manager with code review", () => {
     expect(made).not.toHaveProperty("approvable");
   });
 
-  test("a review's problems on a take that names no head leave the verdict as the rules made it", async () => {
+  test("a review's problems on a take that names no head hold approve and merge on the verdict as the rules made it", async () => {
     const { rules, verdict } = await cleanPass();
     const { head: _head, ...headless } = takenWith(["code-review"]);
     const made = await actions.cleared({ take: { output: headless }, rules: { output: rules }, evaluateRules: { output: verdict }, reviewScope: { output: { reviewed: true } } });
-    expect(made).toEqual(verdict);
+    expect(made).toEqual({ ...verdict, approvable: false, actions: [{ ...(verdict["actions"] as object[])[0], held: true, reason: REVIEW_REASON }] });
+  });
+
+  test("a degraded verdict that names no head, with no rules item at the take's head, is held rather than failing the step", async () => {
+    const { verdict } = await cleanPass();
+    const degraded = { ...verdict, verdict: "unsure", headSha: null, degraded: "error", mirror: false, reason: "render failed", feedback: "" };
+    const elsewhere = { items: [{ facts: { number: PR.number + 1, headSha: HEAD } }] };
+    const made = await actions.cleared({ take: { output: takenWith(["code-review"]) }, rules: { output: elsewhere }, evaluateRules: { output: degraded }, reviewScope: { output: { reviewed: true } } });
+    expect(made).toMatchObject({ verdict: "unsure", headSha: null, reason: "render failed", approvable: false });
   });
 
   test("a review's problems fail a Pass while another check the policy turns on can't run yet", async () => {
@@ -614,7 +622,7 @@ describe("triage-manager with code review", () => {
   });
 
   test("a review's problems the verdict cannot be made with leave it as the rules made it, approve held", async () => {
-    const verdict = { number: PR.number, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", checks: [], actions: [APPROVE_DO] };
+    const verdict = { number: PR.number, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", degraded: null, checks: [], actions: [APPROVE_DO] };
     const unrenderable = { facts: { number: PR.number, headSha: HEAD } };
     const made = await actions.cleared({ take: { output: takenWith(["code-review"]) }, rules: { output: { items: [unrenderable] } }, evaluateRules: { output: verdict }, reviewScope: { output: { reviewed: true } } });
     expect(made).toEqual({ ...verdict, actions: [{ ...APPROVE_DO, held: true, reason: REVIEW_REASON }] });
@@ -624,7 +632,7 @@ describe("triage-manager with code review", () => {
     ["no rules item", []],
     ["only another head's", [{ facts: { number: PR.number, headSha: "0e0e".repeat(10) } }]],
   ])("a review's problems with %s for the verdict's pull request and head fail the step, naming them", async (_name, items) => {
-    const verdict = { number: PR.number, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", checks: [], actions: [APPROVE_DO] };
+    const verdict = { number: PR.number, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", degraded: null, checks: [], actions: [APPROVE_DO] };
     const clearing = actions.cleared({ take: { output: takenWith(["code-review"]) }, rules: { output: { items } }, evaluateRules: { output: verdict }, reviewScope: { output: { reviewed: true } } });
     await expect(clearing).rejects.toThrow(`cleared: the rules output has no item for #${PR.number} at ${HEAD}`);
   });
@@ -638,14 +646,14 @@ describe("triage-manager with code review", () => {
   ])("cleared: %s", async (_name, review, codeReview, scope, reason) => {
     const checks = scope.skipped?.startsWith("rules failed") ? CI_FAILED : [];
     const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, ...(review && { review }), taken: { blocks: ["code-review"], codeReview: { ...CODE_REVIEW.codeReview, ...codeReview } } };
-    const { actions: [approve] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { number: PR.number, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", checks, actions: [APPROVE_DO] } }, reviewScope: { output: scope } }) as { actions: Record<string, unknown>[] };
+    const { actions: [approve] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { number: PR.number, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", degraded: null, checks, actions: [APPROVE_DO] } }, reviewScope: { output: scope } }) as { actions: Record<string, unknown>[] };
     expect(approve).toEqual(reason === undefined ? APPROVE_DO : { ...APPROVE_DO, held: true, reason });
   });
 
   test("cleared keeps the reason of a Do already held, such as for CI", async () => {
     const waiting = { ...APPROVE_DO, kind: "merge", held: true, reason: "Waiting for checks to finish." };
     const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: { ...REVIEW, cut: { lines: 1, of: 2 } }, taken: { blocks: ["code-review"], ...CODE_REVIEW } };
-    const { actions: [merge] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { number: PR.number, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", checks: [], actions: [waiting] } }, reviewScope: { output: { reviewed: true } } }) as { actions: Record<string, unknown>[] };
+    const { actions: [merge] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { number: PR.number, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", degraded: null, checks: [], actions: [waiting] } }, reviewScope: { output: { reviewed: true } } }) as { actions: Record<string, unknown>[] };
     expect(merge).toEqual(waiting);
   });
 

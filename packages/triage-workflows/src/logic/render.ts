@@ -771,8 +771,8 @@ function listingSomething(lines: string[]): string[] {
 
 /**
  * A decided verdict once `failed`, a check made after it such as code review, found problems, `failed` among its checks
- * and reasons. A Pass turns to Fail; an Unsure or a Fail keeps its verdict, its reason and next step naming `failed`
- * too. Whatever the verdict, its comment asks the author to fix `failed`, below what it said before, so a verdict that
+ * and reasons. A Pass turns to Fail; an Unsure or a Fail keeps its verdict, its reason and next step going on to name
+ * `failed` too. Whatever the verdict, its comment asks the author to fix `failed`, below what it said before, so a verdict that
  * posted no comment now posts one.
  */
 export function withFailure(rendered: RenderOutput, failed: CheckResult, { author, det, reviewers }: { author: string; det: DeterministicResult; reviewers: string[] }): RenderOutput {
@@ -781,7 +781,8 @@ export function withFailure(rendered: RenderOutput, failed: CheckResult, { autho
   const previous = commentBody(rendered);
   if (rendered.verdict !== "pass") {
     const feedback = bounded(titledFinding(commentTitle(rendered.verdict), previous, author, failed.reason));
-    return { ...rendered, reason: `${rendered.reason}; ${failed.reason}`, ...nextStep(checks, det.sources, reviewers, rendered.verdict), reasons, checks, feedback };
+    const { nextAction: fix } = nextStep([failed], det.sources, reviewers, rendered.verdict);
+    return { ...rendered, reason: `${rendered.reason}; ${failed.reason}`, nextAction: `${rendered.nextAction}; ${fix}`, reasons, checks, feedback };
   }
   const feedback = bounded(titledFinding(commentTitle("fail"), listingSomething(previous), author, failed.reason));
   return { ...rendered, ...render(VERDICT_STATES.fail), verdict: "fail", reason: failed.reason, ...nextStep(checks, det.sources, reviewers, "fail"), labels: [VERDICT_LABELS.fail], reasons, checks, feedback };
