@@ -2,6 +2,7 @@ import { checkCancelled, checkFailed, checkPending, latestDecisive, listPrFilesP
 import { authorAssociation, authorKindOf, catalogCheckEnabled, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { hiddenIn, hiddenMarkup, nothingRemoved, writtenDescription } from "./hidden-content.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
+import { MAX_CODE_RULES_PATCH_CHARS } from "./quality.js";
 import { isRecord } from "@corbits/common";
 
 export type RepoDocs = Pick<PrFacts, "docs" | "rules">;
@@ -95,35 +96,47 @@ export function buildFacts(
 
 export type FilesPage = { files: PrFileFacts[]; next?: number; patchNext?: number };
 
-export type FilesCursor = { offset: number; patchOffset?: number };
+export type FilesCursor = { offset: number; patchOffset?: number; patches: boolean };
 
-export const FIRST_FILES_PAGE: FilesCursor = { offset: 0 };
+export type ListedFiles = { files: PrFileFacts[]; patchChars: number };
+
+export const FIRST_FILES_PAGE: FilesCursor = { offset: 0, patches: true };
+
+function unreadPatch({ patch: _patch, ...file }: PrFileFacts): PrFileFacts {
+  return { ...file, patchUnread: true };
+}
 
 /**
  * Adds one page to `listed`, joining a patch continued from the previous page, and returns the next page's cursor,
- * none when every file is read, or why the pages cannot be read. Every patch the host sends is read whole.
+ * none when every file is read, or why the pages cannot be read. Every patch is read whole until the code rules' ceiling;
+ * the file it falls in and every later one are listed without their patch and marked so.
  */
-export function addFilesPage(listed: PrFileFacts[], cursor: FilesCursor, page: FilesPage): FilesCursor | undefined | string {
-  let files = page.files;
+export function addFilesPage(listed: ListedFiles, cursor: FilesCursor, page: FilesPage): FilesCursor | undefined | string {
+  let files = cursor.patches ? page.files : page.files.map(unreadPatch);
   if (cursor.patchOffset !== undefined) {
-    const continued = listed.at(-1);
+    const continued = listed.files.at(-1);
     if (!continued || files[0]?.path !== continued.path) return `github_list_pr_files did not continue the patch at offset ${cursor.offset}`;
     continued.patch = (continued.patch ?? "") + (files[0].patch ?? "");
+    listed.patchChars += files[0].patch?.length ?? 0;
     files = files.slice(1);
   }
-  listed.push(...files);
+  listed.files.push(...files);
+  listed.patchChars += files.reduce((chars, file) => chars + (file.patch?.length ?? 0), 0);
+  const patches = cursor.patches && listed.patchChars < MAX_CODE_RULES_PATCH_CHARS;
   if (page.next === undefined) return undefined;
   if (page.patchNext !== undefined) {
     if (page.next < cursor.offset || (page.next === cursor.offset && page.patchNext <= (cursor.patchOffset ?? 0))) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
-    return { offset: page.next, patchOffset: page.patchNext };
+    if (patches) return { offset: page.next, patchOffset: page.patchNext, patches };
+    listed.files.push(unreadPatch(listed.files.pop()!));
+    return { offset: page.next + 1, patches };
   }
   if (page.next <= cursor.offset) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
-  return { offset: page.next };
+  return { offset: page.next, patches };
 }
 
 /** Every changed file of a pull request, read page by page as the facts director reads them. */
 export async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
-  const listed: PrFileFacts[] = [];
+  const listed: ListedFiles = { files: [], patchChars: 0 };
   let cursor: FilesCursor | undefined = FIRST_FILES_PAGE;
   while (cursor !== undefined) {
     const page = await listPrFilesPage(gh, repo, number, cursor);
@@ -131,7 +144,7 @@ export async function listFiles(gh: GithubFetch, repo: string, number: number): 
     if (typeof next === "string") throw new Error(`${next} for #${number}`);
     cursor = next;
   }
-  return listed;
+  return listed.files;
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -158,6 +171,7 @@ export function fileFacts(value: unknown): PrFileFacts[] {
     ...(additions === undefined ? {} : { additions }),
     ...(deletions === undefined ? {} : { deletions }),
     ...(patch === undefined ? {} : { patch }),
+    ...(value.patchUnread === true ? { patchUnread: true as const } : {}),
   }];
 }
 

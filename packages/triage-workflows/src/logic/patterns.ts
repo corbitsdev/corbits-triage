@@ -18,7 +18,7 @@ const GRAMMARS: Record<PatternExtension, Grammar> = {
   jsx: JAVASCRIPT,
 };
 
-/** `unpatched` counts the files in scope left out because they came without a patch. */
+/** `unpatched` counts the files in scope left out because they have no patch. */
 export type PatternsResult = { matches: string[]; skipped: string[]; checked: number; unpatched?: number } | { unread: string };
 
 function presetRules(id: string): readonly PatternRule[] {
@@ -47,14 +47,21 @@ function inScope(file: PrFileFacts): boolean {
   return checkable(file) && !isForeignPath(file.path);
 }
 
-/** A file in scope that came without a patch: GitHub sends none for a very large or binary file, Bitbucket Data Center for any. */
+/**
+ * A file in scope without a patch: GitHub sends none for a very large or binary file, Bitbucket Data Center for any,
+ * and none is read past the code rules' ceiling.
+ */
 function unpatched(file: PrFileFacts): boolean {
   return inScope(file) && file.patch === undefined;
 }
 
+function whyUnpatched(file: PrFileFacts): string {
+  return file.patchUnread ? "the pull request's diff is larger than Triage reads" : "the host sent no diff";
+}
+
 function namedUnpatched(files: readonly PrFileFacts[]): string {
   const more = files.length > 1 ? ` and ${files.length - 1} more` : "";
-  return `the host sent no diff for ${files[0]!.path}${more}`;
+  return `${files[0]!.path}${more}: ${whyUnpatched(files[0]!)}`;
 }
 
 function readPath(file: PrFileFacts): string {
@@ -95,7 +102,7 @@ function fileMatches(file: PrFileFacts, patch: string, content: string, grammar:
 
 /**
  * Matches on the lines a pull request adds; a file in scope whose content was not read leaves the rule unchecked, and
- * one that came without a patch is named as not checked.
+ * one without a patch is named as not checked.
  */
 export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>>): PatternsResult {
   const toRead = filesToRead(files);
@@ -113,7 +120,7 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
   }
   const missing = files.filter(unpatched);
   const skipped = [
-    ...missing.map((file) => `${file.path}: not checked, the host sent no diff for it`),
+    ...missing.map((file) => `${file.path}: not checked, ${whyUnpatched(file)}`),
     ...files.filter((file) => checkable(file) && isForeignPath(file.path)).map((file) => `${file.path}: skipped as vendored, built or installed code`),
   ];
   return { matches, skipped, checked: files.filter(inScope).length - missing.length, ...(missing.length > 0 && { unpatched: missing.length }) };

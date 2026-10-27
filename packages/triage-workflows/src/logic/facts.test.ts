@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPO_POLICY, emptyPack, isPatternsCheck, readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
 import type { IssueComment, Review } from "@corbits/github-reads";
 import type { PrFileFacts } from "./checks.ts";
-import { addFilesPage, assembleItem, buildFacts, FIRST_FILES_PAGE, type FilesCursor, type FilesPage } from "./facts.ts";
+import { addFilesPage, assembleItem, buildFacts, FIRST_FILES_PAGE, type FilesCursor, type FilesPage, type ListedFiles } from "./facts.ts";
 import { NO_FACTS } from "./item.ts";
 import { patternsResult } from "./patterns.ts";
-import { MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation } from "./quality.ts";
+import { MAX_CODE_RULES_PATCH_CHARS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation } from "./quality.ts";
 
 test("buildFacts carries the author's trust tier", () => {
   const facts = buildFacts("acme/widgets", 1, { author: "alice", authorAssociation: "MEMBER", branch: "a" }, [], [], [], DEFAULT_REPO_POLICY);
@@ -86,6 +86,23 @@ describe("an answered review", () => {
   });
 });
 
+/** Reads `hostFiles` as the host pages them: one file a page, each patch split across two pages, none when the cursor asks for none. */
+function readPages(hostFiles: PrFileFacts[]): PrFileFacts[] {
+  const listed: ListedFiles = { files: [], patchChars: 0 };
+  let cursor: FilesCursor | undefined | string = FIRST_FILES_PAGE;
+  while (cursor !== undefined) {
+    if (typeof cursor === "string") throw new Error(cursor);
+    const { patch, ...meta } = hostFiles[cursor.offset]!;
+    const next = cursor.offset + 1 < hostFiles.length ? { next: cursor.offset + 1 } : {};
+    const half = Math.floor(patch!.length / 2);
+    let page: FilesPage = { files: [meta], ...next };
+    if (cursor.patches && cursor.patchOffset === undefined) page = { files: [{ ...meta, patch: patch!.slice(0, half) }], next: cursor.offset, patchNext: half };
+    else if (cursor.patches) page = { files: [{ ...meta, patch: patch!.slice(cursor.patchOffset) }], ...next };
+    cursor = addFilesPage(listed, cursor, page);
+  }
+  return listed.files;
+}
+
 test("a diff past the judge's budget is read whole for the pattern rules while the judge reads a bounded part", () => {
   const filler = Array.from({ length: 200 }, (_, line) => `const filler${line} = "${"x".repeat(30)}";`);
   const fallback = "const late = value ?? 0;";
@@ -93,18 +110,7 @@ test("a diff past the judge's budget is read whole for the pattern rules while t
   const lines = (index: number) => (index === paths.length - 1 ? [...filler, fallback] : filler);
   const patch = (index: number) => [`@@ -0,0 +1,${lines(index).length} @@`, ...lines(index).map((line) => `+${line}`)].join("\n");
   const hostFiles: PrFileFacts[] = paths.map((path, index) => ({ path, status: "added", additions: lines(index).length, deletions: 0, patch: patch(index) }));
-  const pages: FilesPage[] = hostFiles.flatMap((file, index): FilesPage[] => {
-    const half = Math.floor(file.patch!.length / 2);
-    const next = index + 1 < hostFiles.length ? { next: index + 1 } : {};
-    return [{ files: [{ ...file, patch: file.patch!.slice(0, half) }], next: index, patchNext: half }, { files: [{ ...file, patch: file.patch!.slice(half) }], ...next }];
-  });
-  const listed: PrFileFacts[] = [];
-  let cursor: FilesCursor | undefined | string = FIRST_FILES_PAGE;
-  for (const page of pages) {
-    if (cursor === undefined || typeof cursor === "string") throw new Error(`stopped early: ${cursor}`);
-    cursor = addFilesPage(listed, cursor, page);
-  }
-  expect(cursor).toBeUndefined();
+  const listed = readPages(hostFiles);
   expect(listed).toEqual(hostFiles);
   expect(hostFiles.reduce((chars, file) => chars + file.patch!.length, 0)).toBeGreaterThan(3 * MAX_SYSTEM_ONE_STATE_BYTES);
 
@@ -117,4 +123,38 @@ test("a diff past the judge's budget is read whole for the pattern rules while t
   const judged = requests.flatMap((request) => request.state.pullRequest.files.flatMap((file) => file.hunks)).join("").length;
   expect(judged).toBeLessThanOrEqual(3 * MAX_SYSTEM_ONE_STATE_BYTES + 65_536);
   expect(plan!.unread).toContain(paths.at(-1)!);
+});
+
+describe("a diff past the code rules' ceiling", () => {
+  const pack = readCheckPack(readPolicyFile("rules:\n  - id: conventions\n    check: code-patterns\n    text: Conventions.\n    reason: Review time.\n    evidence: [maintainer-stated]\n    presets: [convention]\n", "acme/widgets"));
+
+  function ceilingCase(filler: number, whole: number) {
+    const line = `const filler = "${"x".repeat(filler)}";`;
+    const patch = ["@@ -0,0 +1,200 @@", ...Array.from({ length: 200 }, () => `+${line}`)].join("\n");
+    const hostFiles: PrFileFacts[] = Array.from({ length: 12 }, (_, index) => ({ path: `src/big${String(index).padStart(2, "0")}.ts`, status: "added", additions: 200, deletions: 0, patch }));
+    const listed = readPages(hostFiles);
+    expect(listed.slice(0, whole)).toEqual(hostFiles.slice(0, whole));
+    const unread = listed.slice(whole);
+    expect(unread).toEqual(hostFiles.slice(whole).map(({ patch: _patch, ...meta }) => ({ ...meta, patchUnread: true })));
+    const contents = Object.fromEntries(listed.slice(0, whole).map((file) => [file.path, `${Array.from({ length: 200 }, () => line).join("\n")}\n`]));
+    expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents)).toEqual({
+      matches: [],
+      skipped: unread.map((file) => `${file.path}: not checked, the pull request's diff is larger than Triage reads`),
+      checked: whole,
+      unpatched: hostFiles.length - whole,
+    });
+    return patch.length;
+  }
+
+  test("keeps the file whose last page passes it, and lists the later files without patches for the pattern rules to name", () => {
+    const chars = ceilingCase(1_000, 10);
+    expect(chars * 9.5).toBeLessThan(MAX_CODE_RULES_PATCH_CHARS);
+    expect(chars * 10).toBeGreaterThan(MAX_CODE_RULES_PATCH_CHARS);
+  });
+
+  test("drops the patch of a file it passes partway through", () => {
+    const chars = ceilingCase(1_040, 9);
+    expect(chars * 9).toBeLessThan(MAX_CODE_RULES_PATCH_CHARS);
+    expect(chars * 9.5).toBeGreaterThan(MAX_CODE_RULES_PATCH_CHARS);
+  });
 });

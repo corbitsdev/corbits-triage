@@ -447,7 +447,7 @@ rules:
 
   test("a file without its patch, as on Bitbucket Data Center, an unread content or a broken rule never passes", () => {
     const unpatched = { path: "src/a.ts", status: "modified", additions: 0, deletions: 0 };
-    expect(filesToRead([unpatched])).toEqual({ unread: "the host sent no diff for src/a.ts" });
+    expect(filesToRead([unpatched])).toEqual({ unread: "src/a.ts: the host sent no diff" });
     expect(patterns([unpatched], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check" } });
     expect(patterns([file], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
     const nested = patterns([{ ...file, path: "src/build/a.ts" }], {});
@@ -460,12 +460,12 @@ rules:
   test("a file the host sent no diff for is named as not checked, and every other file is checked", () => {
     const large = { path: "src/large.ts", status: "modified", additions: 9_000, deletions: 0 };
     const clean = { path: "src/b.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const b = 1;" };
-    const left = "src/large.ts: not checked, the host sent no diff for it";
+    const left = "src/large.ts: not checked, the host sent no diff";
     expect(filesToRead([file, large, clean])).toEqual(["src/a.ts", "src/b.ts"]);
     const failed = patterns([file, large], { "src/a.ts": content });
     expect(failed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: expect.arrayContaining([left]), skipped: [left] });
     const passed = patterns([clean, large], { "src/b.ts": "const b = 1;\n" });
-    expect(passed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass", reason: "no code pattern matched; 1 file was not checked because the host sent no diff for it", evidence: [left] });
+    expect(passed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass", reason: "no code pattern matched; 1 file was not checked", evidence: [left] });
   });
 
   test("an unknown preset is refused", () => {

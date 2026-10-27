@@ -549,10 +549,14 @@ label off that head, so it never stands on a head not yet triaged.
    (ast-grep's glob rules, checked when the policy is read), and keeps
    matches on lines the patch adds.
    The facts step reads every changed file's patch whole, across as many
-   tool pages as it takes; only the judge's view of the diff is bounded
-   (`judgedFiles` in `logic/quality.ts`). A file the host sent no patch for
-   (GitHub omits it for a very large or binary file) is listed in the
-   evidence as not checked and the rule runs on the rest; with nothing else
+   tool pages as it takes, up to 2,000,000 characters per pull request
+   (`MAX_CODE_RULES_PATCH_CHARS`), since one sidecar holds every
+   deployment's step outputs; the file that passes it partway and every
+   later one are listed without patches. The judge's view of the diff has
+   its own, smaller budget (`judgedFiles` in `logic/quality.ts`). A file
+   without a patch, because the host sent none (GitHub omits it for a very
+   large or binary file) or the diff passed that ceiling, is listed in the
+   evidence as not checked, saying which, and the rule runs on the rest; with nothing else
    to check, or a file whose content was not read, or a rule ast-grep
    refuses, the rule is unconfirmed; `vendor/`, `dist/`, `build/` and
    `generated/` at the repository root and `node_modules/` anywhere are
