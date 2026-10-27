@@ -339,15 +339,24 @@ any other tenant or an unknown sender.
   takes the next pass on that head sees a deadline that passed with no
   report; it posts the verdict without that reviewer, which for a judge is
   Needs Human Review and for code review holds approve and merge for a person,
-  and done logs `reviewer_overdue`. Nothing wakes a manager at the deadline
-  itself: the next host event, or the reconciler retrying a head with no
-  verdict, does. Each reviewer the manager records names
-  the manager run that deployed it (`deployedBy`). Done stops each judge or
-  code review this run deployed and no longer waits for, one on an older head
-  or past its deadline, through the same stop-run route;
-  one an earlier manager deployed runs out its own deadline. Stock grants the
+  and done logs `reviewer_overdue`. The triage reconcile pass, every 5
+  minutes, wakes a manager through `createManagerWake` for each pull request
+  whose manager is not up while a reviewer of its newest head is past its
+  deadline with no result recorded (`createOverdueWake`,
+  `apps/hub/src/manager-intake.ts`), and logs `manager_woken_overdue`. The
+  wake is recorded on the claim (`overdueWokenAt`), and the next pass wakes
+  again only once the manager start grace has passed: two minutes when a
+  manager has taken the claim since, thirty while none has, so a manager slow
+  to reach a sidecar is never deployed twice. So
+  within one pass of the deadline that manager posts the verdict without the
+  reviewer and the pull request needs a person. Each reviewer the manager
+  records names the manager run that deployed it (`deployedBy`). Done stops a
+  judge or code review this run deployed that ran past its deadline on the
+  pass's head, through the same stop-run route. Stock grants the
   deployer `read` on a run it deployed, and the vendored Interchange carries
-  `manage` instead (`vendor/interchange/VENDORED.md`).
+  `manage` instead (`vendor/interchange/VENDORED.md`). A reviewer on an older
+  head is stopped by the hub, which a later manager could not do: see intake
+  below.
   The hub records the verdict done reports as the manager run's, in done's
   transaction (`apps/hub/src/manager-routes.ts`), with the row-building code
   pr-triage's run logs use (`apps/hub/src/github/verdict-row.ts`). The
@@ -607,7 +616,8 @@ only what is missing, and none once the summary stands on either head.
 
 A pull request's latest review (`GET …/code-review`, `code-review-runs.ts`)
 is read from `manager_state`: the newest of the code reviews its claim still
-waits on, shown as running, those the manager gave up on, such as one past its
+waits on, shown as running from the reviewer's own record until it reports or
+its deadline passes, whether or not a manager is up, those the manager gave up on, such as one past its
 deadline, and the results its code reviews reported through the
 reviewer-result route that a pass took or that name a reviewer of the claim. A
 review that did not finish shows as failed; its run log keeps the error.
@@ -863,7 +873,11 @@ read it, and passes the rest of the request to stock.
   workflow carries it out. The hub records one webhook event per pull request
   that passed, with the head's code review request when the policy turns
   code review on and the App's login on GitHub, then mails the listener the
-  heads. When the host's head moved past the mail's, the event goes without
+  heads. Once it records a head, every judge or code review the claim still
+  waits on for an older head of that pull request is taken off the claim and
+  stopped through the stock run lifecycle with the hub's own authority, each
+  logged once as `reviewer_superseded`; a stop that fails is logged as
+  `reviewer_supersede_failed`. When the host's head moved past the mail's, the event goes without
   a review request and the hub logs `code_review_head_moved`; the new head's
   own mail carries one. An event's id is the webhook's delivery id, which
   the coalescer's mail carries, so a redelivery records nothing new; any

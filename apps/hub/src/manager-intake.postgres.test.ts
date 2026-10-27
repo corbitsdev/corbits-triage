@@ -7,7 +7,8 @@ import { APPROVE_DO_KIND, emptyPack, repoPolicy } from "@corbits/triage-contract
 import type { PullRequestToReview } from "./pull-request-reader.js";
 import { mailPayload, waitingPayload } from "./github/bridge.js";
 import { createPauseGate } from "./github/pr-workflow.js";
-import { createManagerIntake, createManagerWake } from "./manager-intake.js";
+import { createManagerIntake, createManagerWake, createOverdueWake } from "./manager-intake.js";
+import { recordEvent } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -50,6 +51,7 @@ const OPEN = [{ number: 7, headSha: "h1", draft: false }, { number: 9, headSha: 
 function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = passed, open = OPEN) {
   const mailed: { address: string; payload: unknown }[] = [];
   const logged: Record<string, unknown>[] = [];
+  const cancelled: { runId: string; reason: string }[] = [];
   const toListener = createManagerIntake({
     db,
     listener: async () => listener,
@@ -59,10 +61,13 @@ function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = p
     async deliver(_tenantId, address, payload) {
       mailed.push({ address, payload });
     },
+    async cancel(_tenantId, runId, reason) {
+      cancelled.push({ runId, reason });
+    },
     gate,
     log: (entry) => logged.push(entry),
   });
-  return { toListener, mailed, logged };
+  return { toListener, mailed, logged, cancelled };
 }
 
 async function events(db: Db): Promise<{ key: string; state: { head: string; payload: Record<string, unknown> } }[]> {
@@ -114,10 +119,10 @@ test("PostgreSQL: each pull request a mail names is recorded as its own event, a
   });
 }, 60_000);
 
-async function claimManager(db: Db, runId: string, number: number, status: "running" | "deployed", createdAt?: Date): Promise<void> {
+async function claimManager(db: Db, runId: string, number: number, status: "running" | "deployed" | "completed", createdAt?: Date, reviewers: object[] = []): Promise<void> {
   await db.insert(schema.workflowDefinition).values({ id: "wfd_intake", tenantId: TENANT, name: "triage-manager-github" }).onConflictDoNothing();
   await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wfd_intake", tenantId: TENANT, status, ...(createdAt && { createdAt }) });
-  const claim = { status: "live", claimId: `claim-${runId}`, claimedAt: new Date().toISOString(), runId, reviewers: [], history: [], starts: 1 };
+  const claim = { status: "live", claimId: `claim-${runId}`, claimedAt: new Date().toISOString(), runId, reviewers, history: [], starts: 1 };
   await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${`mgr:github:${RECORD.name}#${number}`}, 'claim', ${JSON.stringify(claim)}::jsonb)`);
 }
 
@@ -157,6 +162,59 @@ test("PostgreSQL: a reviewer's result wakes the pull request's live manager, or 
       { address: "run_mgr@intake.test", payload: { kind: "manage", tenantId: TENANT, repo: RECORD.name, repoSource: "github", prNumber: 7 } },
       { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] } },
     ]);
+  });
+}, 60_000);
+
+test("PostgreSQL: a push stops the judge and the code review still out on the older head, once each", async () => {
+  await withDatabase(async function superseded(db) {
+    const deadline = new Date(Date.now() + 60 * 60_000).toISOString();
+    const judge = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_old", deadline };
+    const review = { ...judge, kind: "code-review", runId: "run_review" };
+    const current = { ...judge, head: "h2", runId: "run_current" };
+    await claimManager(db, "run_old", 7, "completed", undefined, [judge, review, current]);
+    const { toListener, cancelled, logged } = stack(db, LISTENER);
+    expect(await toListener(TENANT, mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h2", deliveryId: "push-1" }))).toBe(true);
+    expect(await toListener(TENANT, mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h2", deliveryId: "push-2" }))).toBe(true);
+    expect(cancelled).toEqual([{ runId: "run_judge", reason: "superseded by a newer head" }, { runId: "run_review", reason: "superseded by a newer head" }]);
+    expect(logged.filter((entry) => entry["msg"] === "reviewer_superseded")).toEqual([
+      { level: "info", msg: "reviewer_superseded", tenantId: TENANT, source: "github", repo: RECORD.name, number: 7, kind: "judge", head: "h1", runId: "run_judge" },
+      { level: "info", msg: "reviewer_superseded", tenantId: TENANT, source: "github", repo: RECORD.name, number: 7, kind: "code-review", head: "h1", runId: "run_review" },
+    ]);
+    const [claim] = await db.execute<{ state: { reviewers: unknown[] } }>(sql`SELECT state FROM corbits_triage.manager_state WHERE kind = 'claim'`);
+    expect(claim!.state.reviewers).toEqual([current]);
+  });
+}, 60_000);
+
+test("PostgreSQL: the reconcile pass wakes a manager for a pull request whose reviewer of its newest head is past its deadline with no result and no manager up", async () => {
+  await withDatabase(async function overdue(db) {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const late = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_gone", deadline: past };
+    await claimManager(db, "run_gone", 7, "completed", undefined, [late]);
+    await claimManager(db, "run_up", 8, "running", undefined, [{ ...late, runId: "run_judge_8" }]);
+    await claimManager(db, "run_reported", 9, "completed", undefined, [{ ...late, runId: "run_judge_9" }]);
+    for (const number of [7, 8, 9]) await recordEvent(db, TENANT, { source: "github", repo: RECORD.name, number }, `d${number}`, { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1" } });
+    await recordEvent(db, TENANT, { source: "github", repo: RECORD.name, number: 9 }, "run_judge_9", { type: "reviewer-result", head: "h1", payload: { kind: "judge", failed: "the judge did not finish" } });
+    const mailed: { address: string; payload: unknown }[] = [];
+    const logged: Record<string, unknown>[] = [];
+    const wake = createManagerWake({
+      db,
+      listener: async () => LISTENER,
+      async deliver(_tenantId, address, payload) {
+        mailed.push({ address, payload });
+      },
+    });
+    const wakeOverdue = createOverdueWake({ db, wake, log: (entry) => logged.push(entry) });
+    await wakeOverdue(TENANT);
+    await wakeOverdue(TENANT);
+    const woken = { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] } };
+    expect(mailed).toEqual([woken]);
+    expect(logged).toEqual([{ level: "info", msg: "manager_woken_overdue", tenantId: TENANT, source: "github", repo: RECORD.name, number: 7, head: "h1" }]);
+
+    // A manager the wake started took the claim and went away before done; past the start grace the next pass wakes again.
+    const earlier = new Date(Date.now() - 3 * 60_000);
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || ${JSON.stringify({ overdueWokenAt: earlier.toISOString(), claimedAt: new Date(earlier.getTime() + 1_000).toISOString() })}::jsonb WHERE key = ${`mgr:github:${RECORD.name}#7`}`);
+    await wakeOverdue(TENANT);
+    expect(mailed).toEqual([woken, woken]);
   });
 }, 60_000);
 

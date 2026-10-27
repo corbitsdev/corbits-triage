@@ -7,7 +7,7 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, REPO_SOURCES, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, type LiveDeployment } from "./github/deployment.js";
 import { triageSchema } from "./triage-db.js";
@@ -31,6 +31,7 @@ const ClaimState = type({
   reviewers: ReviewerState.array(),
   history: PassState.and({ runId: "string > 0", doneAt: "string.date.iso", "waiting?": "true", "request?": "Record<string, unknown>" }).array(),
   starts: "number.integer >= 0",
+  "overdueWokenAt?": "string.date.iso",
 });
 const EventPayload = type("Record<string, unknown>").narrow(function plainObject(value) {
   return !Array.isArray(value);
@@ -318,7 +319,7 @@ export async function codeReviews(db: DB["db"], tenantId: string, pr: PullReques
       const failed = asRecord(reviewer.result)?.["failed"];
       const base = { runId: reviewer.runId, head: reviewer.head, at: run.createdAt.toISOString() };
       if (typeof failed === "string") records.push({ ...base, state: "failed", failed });
-      else if (reviewer.result === undefined && claim.status === "live" && Date.parse(reviewer.deadline) > Date.now()) records.push({ ...base, state: "running" });
+      else if (reviewer.result === undefined && Date.parse(reviewer.deadline) > Date.now()) records.push({ ...base, state: "running" });
     }
   }
   return records.sort((a, b) => b.at.localeCompare(a.at));
@@ -444,6 +445,76 @@ export async function newestHead(tx: Tx | DB["db"], tenantId: string, pr: PullRe
     .orderBy(desc(sql`${managerState.state}->>'receivedAt'`), desc(managerState.key))
     .limit(1);
   return row && eventOf(row.key, row.state).head;
+}
+
+/**
+ * Takes off the claim each reviewer still out on a head older than the newest one a pull request mail named, which no
+ * manager waits for any more, and answers them for the caller to stop.
+ */
+export async function supersede(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<Reviewer[]> {
+  return db.transaction(async function superseded(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    const head = await newestHead(tx, tenantId, pr);
+    if (!claim || head === undefined) return [];
+    const older = claim.reviewers.filter((reviewer) => reviewer.head !== head && reviewer.result === undefined);
+    if (older.length === 0) return [];
+    await writeClaim(tx, tenantId, pr, { ...claim, reviewers: claim.reviewers.filter((reviewer) => !older.includes(reviewer)) });
+    return older;
+  });
+}
+
+const CLAIM_KEY = /^mgr:([^:]+):(.+)#(\d+)$/;
+
+function pullOf(key: string): PullRequestRef {
+  const [, source, repo, number] = CLAIM_KEY.exec(key) ?? [];
+  const known = REPO_SOURCES.find((each) => each === source);
+  if (!known || repo === undefined || number === undefined) throw new Error(`manager_state ${key} is not a claim key`);
+  return { source: known, repo, number: Number(number) };
+}
+
+/** How long an overdue wake no manager has taken the claim since holds off the next, while its manager may still be reaching a sidecar. */
+const OVERDUE_UNSTARTED_GRACE_MS = 30 * 60_000;
+
+/** Whether the claim's last overdue wake is still within its grace: a manager took the claim since, or none has yet. */
+function recentlyWoken(claim: Claim, now: Date): boolean {
+  if (claim.overdueWokenAt === undefined) return false;
+  const woken = Date.parse(claim.overdueWokenAt);
+  const grace = Date.parse(claim.claimedAt) >= woken ? MANAGER_START_GRACE_MS : OVERDUE_UNSTARTED_GRACE_MS;
+  return now.getTime() - woken < grace;
+}
+
+/** Records on the claim that the hub woke a manager for an overdue reviewer, so the next reconcile pass holds off. */
+export async function recordOverdueWake(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<void> {
+  await db.transaction(async function wokenAt(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) throw new Error(`${claimKey(pr)} has no claim to wake`);
+    await writeClaim(tx, tenantId, pr, { ...claim, overdueWokenAt: new Date().toISOString() });
+  });
+}
+
+/**
+ * The tenant's pull requests whose manager has gone while a reviewer of their newest head is past its deadline with no
+ * result recorded, with that head: each needs a manager to post its verdict without the reviewer. One woken for that
+ * within its grace is left to the manager that wake started.
+ */
+export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr: PullRequestRef; head: string }[]> {
+  const now = new Date();
+  const rows = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), eq(managerState.kind, "claim"), sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)) && @.deadline <= $now)', jsonb_build_object('now', ${now.toISOString()}::text))`));
+  const overdue: { pr: PullRequestRef; head: string }[] = [];
+  for (const { key, state } of rows) {
+    const claim = claimOf(key, state);
+    const pr = pullOf(key);
+    if (recentlyWoken(claim, now)) continue;
+    if (claim.status === "live" && claim.runId !== undefined && !(await runGone(db, claim.runId, now))) continue;
+    const head = await newestHead(db, tenantId, pr);
+    const late = claim.reviewers.filter((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime());
+    if (head === undefined || late.length === 0) continue;
+    const reported = await db.select({ key: managerState.key }).from(managerState)
+      .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, inArray(managerState.key, late.map((reviewer) => eventKey(pr, reviewer.runId)))));
+    if (reported.length < late.length) overdue.push({ pr, head });
+  }
+  return overdue;
 }
 
 /** The claims of `pulls` a manager made. */

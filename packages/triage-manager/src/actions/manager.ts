@@ -203,16 +203,12 @@ function reviewersAfter(take: TakeOutput, mailed: Reviewer | undefined): Reviewe
 }
 
 /**
- * The reviewers this run deployed that the pass stops waiting for without a report: one on an older head, or past its
- * deadline. One an earlier manager deployed runs out its own deadline, since only its deployer may stop it.
+ * The reviewers of the pass's head this run deployed that ran past their deadline with no report. The hub stops one on
+ * an older head when it records the newer one; one an earlier manager deployed runs out on its own, since only its
+ * deployer may stop it.
  */
 function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
-  if (head === undefined) return [];
-  return reviewers.filter(function abandon(reviewer) {
-    if ((reviewer.kind !== "code-review" && reviewer.kind !== "judge") || reviewer.deployedBy !== runId) return false;
-    if (reviewer.head !== head) return true;
-    return reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now();
-  });
+  return reviewers.filter((reviewer) => reviewer.deployedBy === runId && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
 }
 
 /**

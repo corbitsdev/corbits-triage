@@ -28,8 +28,6 @@ const END = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${RUN}` };
 const DEPLOY = { method: "POST", path: `${TENANT_PATH}/workflows/deployments` };
 const DEPLOYED = "run_deployed";
 const STOP_REVIEW = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` };
-/** A code review an earlier manager deployed, which only that manager may stop. */
-const INHERITED = "run_inherited";
 /** The eval fixture's head. */
 const HEAD = "e0a1".repeat(10);
 
@@ -82,7 +80,7 @@ const allow: WorkflowAuthorizeFn = async function allow() {
 type HubCall = { method: string; path: string; body?: unknown };
 type HubAnswer = Record<string, unknown> | typeof REFUSED;
 
-/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route, which refuses to stop an inherited review. */
+/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route. */
 function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[] }) {
   const calls: HubCall[] = [];
   function answer(next: HubAnswer | undefined): Response {
@@ -94,7 +92,6 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
     calls.push({ method, path: url.pathname, ...(init?.body !== undefined && { body: JSON.parse(String(init.body)) }) });
     if (url.pathname === `${TENANT_PATH}/manager/take`) return answer(takes.shift());
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
-    if (method === "DELETE" && url.pathname === `${TENANT_PATH}/workflows/runs/${INHERITED}`) return Response.json({ error: { code: "forbidden" } }, { status: 403 });
     if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
     if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: DEPLOYED }, { status: 201 });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });
@@ -289,21 +286,13 @@ describe("triage-manager", () => {
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
   });
 
-  test("an old review's reply finds nothing for its head, runs no stage 1 and stops the superseded review", async () => {
+  test("an old review's reply finds nothing for its head, runs no stage 1 and leaves the superseded review for the hub to stop", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [{ ...reviewer(), head: "older" }] }], dones: [ENDED] });
     expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["approvals", "done", "paused", "ran", "take"]);
     expect(writes).toEqual([]);
-    expect(hub.calls).toEqual([TAKE, DONE, STOP_REVIEW, END]);
-    expect(doneBody(hub.calls)["wait"]).toBe(false);
-  });
-
-  test("a review an earlier manager deployed is left to run out its own deadline", async () => {
-    const { host } = githubHost();
-    const inherited = { ...reviewer(), head: "older", runId: INHERITED, deployedBy: "run_earlier" };
-    const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [inherited] }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).terminalStatus).toBe("completed");
     expect(hub.calls).toEqual([TAKE, DONE, END]);
+    expect(doneBody(hub.calls)["wait"]).toBe(false);
   });
 
   test("a pass of an approval alone, before any pull request mail was recorded, runs it and triages nothing", async () => {
