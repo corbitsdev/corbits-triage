@@ -69,7 +69,7 @@ import { bundleAt, bundled, type Publisher } from "./workflow-release/publish.js
 import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers.js";
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
-import { createRolloutQueue, createWorkflowRollout, type DeployRequest } from "./workflow-release/rollout.js";
+import { createRolloutQueue, createWorkflowRollout, stopOverdue, type DeployRequest } from "./workflow-release/rollout.js";
 import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, localSidecarMaxDeployments, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
@@ -570,6 +570,7 @@ const workflowRollout = createWorkflowRollout({
   async cancel(tenantId, runId) {
     await composition.workflowLifecycleService.requestCancellation(tenantId, runId, "replaced");
   },
+  stop: composition.workflowLifecycleService.getStatus,
   lock: createWorkspaceLock(composition.db.$client),
   sleep: Bun.sleep,
   now,
@@ -583,11 +584,22 @@ function rollHost(source: RepoSource) {
     if (workflowsBundled) workflowReleases.request(tenantId, [source]);
   };
 }
+/** The host's listeners still live after stock gave up stopping them. */
+async function stuckListeners(tenantId: string, source: RepoSource): Promise<string[]> {
+  const stuck: string[] = [];
+  for (const listener of await resolveLiveDeployments(composition.db, tenantId, TRIAGE_LISTENERS[source])) {
+    if (!listener.cancelling) continue;
+    const run = await composition.workflowLifecycleService.getStatus(tenantId, listener.runId);
+    if (run && stopOverdue(run, now())) stuck.push(listener.runId);
+  }
+  return stuck;
+}
 const watchListeners = createListenerWatch({
   connectedSources: function sourcesOf(tenantId) {
     return connectedSources(composition.db, tenantId);
   },
   listener: liveListenerOf,
+  stuck: stuckListeners,
   allocation: function allocationOf(runId) {
     return deployedAllocation(composition.db, runId);
   },

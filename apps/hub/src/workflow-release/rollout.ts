@@ -1,5 +1,6 @@
 // Rolls a workspace onto the hub build's release: publishes it as the workspace's system principal, deploys each
 // connected host's listener from it once the running one differs, waits for it to start and stops what it replaces.
+import { schema } from "@intx/db";
 import { errorText } from "@corbits/common";
 import { chainOf, offeringsIn, publishable, TRIAGE_LISTENERS, type DeployedVersions, type ModelInfo, type PublishedSource, type RepoSource } from "@corbits/triage-contracts";
 import { revokeHumanDeployers } from "../deployer-role.js";
@@ -12,6 +13,9 @@ export type DeployRequest = { tenantId: string; principalId: string; assetId: st
 
 /** `live` once the deployment runs, `ended` once it stopped or failed without running. */
 export type DeployState = "starting" | "live" | "ended";
+
+/** A deployment as stock's lifecycle status reports it; `cancellationDeadline` is set once its stop was requested. */
+export type RunStop = { status: string; cancellationDeadline: string | null };
 
 /** Releases a held workspace lock. */
 export type Unlock = () => Promise<void>;
@@ -31,6 +35,8 @@ type RolloutDeps = PublishDeps & {
   deploy: (request: DeployRequest) => Promise<string>;
   state: (runId: string) => Promise<DeployState>;
   cancel: (tenantId: string, runId: string) => Promise<void>;
+  /** Stock's lifecycle status of the deployment; null once it is gone. */
+  stop: (tenantId: string, runId: string) => Promise<RunStop | null>;
   /** Takes the workspace's lock across hub processes; undefined while another holds it. */
   lock: (tenantId: string) => Promise<Unlock | undefined>;
   sleep: (ms: number) => Promise<void>;
@@ -43,6 +49,15 @@ const ROLL_FAILED = "Updating Triage failed; see the hub log.";
 /** A new listener that is not live by then is stopped, and the one before it keeps running. */
 export const START_DEADLINE_MS = 5 * 60_000;
 const START_POLL_MS = 2_000;
+
+/** Stock's `unreachableStopGraceMs`, which the hub leaves at its default: how long past its deadline stock tries a stop. */
+const STOP_GRACE_MS = 60_000;
+
+/** Whether a deployment whose stop was requested is still live after stock stopped trying to stop it. */
+export function stopOverdue(run: RunStop, now: Date): boolean {
+  if (!schema.isLiveWorkflowRunStatus(run.status) || run.cancellationDeadline === null) return false;
+  return now.getTime() >= Date.parse(run.cancellationDeadline) + STOP_GRACE_MS;
+}
 
 /** Each host's workflows from before the listener, which nothing mails any more. */
 const REPLACED: Record<RepoSource, readonly string[]> = {
@@ -84,13 +99,34 @@ export function createWorkflowRollout(deps: RolloutDeps) {
     throw new Error(`Listener ${runId} did not start within five minutes and was stopped.`);
   }
 
+  /**
+   * Waits until a deployment whose stop was requested ends. One stock gave up stopping stays live, and is only logged:
+   * nothing the hub may do stops it.
+   */
+  async function waitUntilStopped(tenantId: string, source: RepoSource, runId: string): Promise<void> {
+    for (;;) {
+      const run = await deps.stop(tenantId, runId);
+      if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return;
+      if (run.cancellationDeadline === null) throw new Error(`Deployment ${runId} is live with no stop requested.`);
+      if (stopOverdue(run, deps.now())) {
+        deps.log({ level: "warn", msg: "listener_cancel_stuck", tenantId, source, deployment: runId });
+        return;
+      }
+      await deps.sleep(START_POLL_MS);
+    }
+  }
+
   /** The host's other listeners and the workflows they replaced stop, and the host is recorded as on the release. */
   async function settle(tenantId: string, source: RepoSource, kept: string, msg: string): Promise<void> {
+    const stopped: string[] = [];
     for (const workflow of [TRIAGE_LISTENERS[source], ...REPLACED[source]]) {
       for (const live of await liveOf(tenantId, workflow)) {
-        if (live.runId !== kept) await deps.cancel(tenantId, live.runId);
+        if (live.runId === kept) continue;
+        await deps.cancel(tenantId, live.runId);
+        stopped.push(live.runId);
       }
     }
+    await Promise.all(stopped.map((runId) => waitUntilStopped(tenantId, source, runId)));
     record(tenantId, { source, at: deps.now().toISOString() });
     deps.log({ level: "info", msg, tenantId, source, deployment: kept });
   }

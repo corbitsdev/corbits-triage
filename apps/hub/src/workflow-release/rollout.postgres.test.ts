@@ -64,7 +64,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-type Run = Deployment & { workflow: string; state: DeployState };
+type Run = Deployment & { workflow: string; state: DeployState; deadline?: string };
 
 /** A workspace with its publisher, rolled against fake deployments. */
 async function workspace(name: string) {
@@ -77,6 +77,7 @@ async function workspace(name: string) {
     models: [DECISION] as ModelInfo[],
     starts: "live" as DeployState,
     deployFails: false,
+    stopHangs: false,
     clock: Date.now(),
     runs: [] as Run[],
     requests: [] as DeployRequest[],
@@ -109,7 +110,14 @@ async function workspace(name: string) {
     },
     async cancel(_tenant, runId) {
       const run = fake.runs.find((row) => row.runId === runId);
-      if (run) run.cancelling = true;
+      if (!run) return;
+      run.cancelling = true;
+      run.deadline = new Date(fake.clock + 30_000).toISOString();
+    },
+    async stop(_tenant, runId) {
+      const run = fake.runs.find((row) => row.runId === runId);
+      if (!run) return null;
+      return { status: run.cancelling && !fake.stopHangs ? "cancelled" : "running", cancellationDeadline: run.deadline ?? null };
     },
     lock: createWorkspaceLock(handle.db.$client),
     async sleep(ms) {
@@ -227,6 +235,17 @@ test("PostgreSQL: once the newest listener runs the release, the listeners befor
   expect(fake.requests).toHaveLength(1);
   expect(live()).toEqual(["run_cut_short"]);
   expect(live("pr-triage-github")).toEqual([]);
+}, 120_000);
+
+test("PostgreSQL: a replaced listener that stock never stops is waited on until its stop is overdue, then logged as stuck", async () => {
+  const { tenantId, fake, rollout, live } = await workspace("stuck");
+  await rollout.roll(tenantId, NO_REDEPLOY);
+  fake.stopHangs = true;
+  const before = fake.clock;
+  expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
+  expect(fake.clock - before).toBeGreaterThanOrEqual(90_000);
+  expect(live()).toEqual(["run_2"]);
+  expect(fake.logs.filter((entry) => entry["msg"] === "listener_cancel_stuck")).toEqual([{ level: "warn", msg: "listener_cancel_stuck", tenantId, source: "github", deployment: "run_1" }]);
 }, 120_000);
 
 test("PostgreSQL: a roll neither waits on nor stops a listener it did not deploy that runs the release, however long it takes to start", async () => {
@@ -365,8 +384,9 @@ test("a roll that fails while a request waits out its quiet window rolls again w
   expect(rolls).toBe(2);
 });
 
-test("a connected host found with no live listener rolls its workspace", async () => {
+test("a connected host found with no live listener rolls its workspace, and a listener stock gave up stopping is reported on every pass", async () => {
   const ensured: string[] = [];
+  const logged: Record<string, unknown>[] = [];
   const listeners: Partial<Record<RepoSource, { runId: string }>> = { github: { runId: "run_listener" } };
   const watch = createListenerWatch({
     async connectedSources() {
@@ -374,6 +394,9 @@ test("a connected host found with no live listener rolls its workspace", async (
     },
     async listener(_tenantId, source) {
       return listeners[source];
+    },
+    async stuck(_tenantId, source) {
+      return source === "github" ? ["run_stuck"] : [];
     },
     async allocation() {
       return undefined;
@@ -387,13 +410,17 @@ test("a connected host found with no live listener rolls its workspace", async (
     replace() {
       return true;
     },
-    log() {},
+    log(entry) {
+      logged.push(entry);
+    },
   });
   await watch("tnt_watch");
   expect(ensured).toEqual(["tnt_watch"]);
   listeners["bitbucket-datacenter"] = { runId: "run_bitbucket" };
   await watch("tnt_watch");
   expect(ensured).toEqual(["tnt_watch"]);
+  const stuck = { level: "warn", msg: "listener_cancel_stuck", tenantId: "tnt_watch", source: "github", deployment: "run_stuck" };
+  expect(logged).toEqual([stuck, stuck]);
 });
 
 test("a listener whose connected sidecar the router holds no route to is started again once, and one whose sidecar is not connected is left to stock", async () => {
@@ -426,6 +453,9 @@ test("a listener whose connected sidecar the router holds no route to is started
     },
     async listener(_tenantId, source) {
       return listeners[source];
+    },
+    async stuck() {
+      return [];
     },
     async allocation(runId) {
       return runId.endsWith("_next") ? { allocationId: "alc_next", generation: 1 } : { allocationId: `alc_${runId.slice(4)}`, generation: 1 };
