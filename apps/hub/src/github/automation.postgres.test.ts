@@ -86,12 +86,14 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
   await inFreshDatabase(async function grantsFollowThePolicy(db) {
     await db.transaction((tx) => connectTriage(tx, TENANT, [], new Date()));
     const automation = createAutomation({ db });
+    let newest = "v1";
     const grants = createPolicyGrants({
       db,
       automaticKinds: automation.automaticKinds,
       preview(tenantId, repo, source, text) {
         return previewRepoPolicy({ policyFile: noSharedFile, automaticKinds: automation.automaticKinds }, tenantId, repo, source, text);
       },
+      isNewest: (_tenantId, _repo, _source, sha) => sha === newest,
       now: () => new Date(),
     });
     const BITBUCKET = "PROJ/api";
@@ -104,7 +106,7 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
     async function setMode(automation: AutomationMode | undefined): Promise<void> {
       await patchCorbitsTriage(db, TENANT, (ns) => ({ ...ns, automation }));
     }
-    function read(repo: string, pass: Step[]): CheckPackRead {
+    function read(repo: string, pass: Step[]): Extract<CheckPackRead, { status: "ok" }> {
       return { status: "ok", pack: readCheckPack({ ...emptyPack(repo), actions: { when: ["opened"], pass, fail: [], unsure: [] } }, repo), automatic: [], source: {} };
     }
     async function rows(): Promise<string[]> {
@@ -129,6 +131,10 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
     // A refused or missing policy changes nothing; one that drops a step takes its grant back and keeps posting.
     await grants.followPolicy(TENANT, REPO, "github", { status: "invalid", reason: "broken", path: ".corbits-triage.yml", automatic: [] });
     await grants.followPolicy(TENANT, REPO, "github", { status: "missing" });
+    expect(await rows()).toEqual(granted);
+    // A read a newer read of the file overtook grants nothing, so it cannot undo what the newer one granted.
+    newest = "v2";
+    await grants.followPolicy(TENANT, REPO, "github", { ...read(REPO, []), source: { file: { path: ".corbits-triage.yml", sha: "v1" } } });
     expect(await rows()).toEqual(granted);
     await grants.followPolicy(TENANT, REPO, "github", read(REPO, [{ do: "merge" }]));
     expect(await automation.automaticKinds(TENANT, REPO)).toEqual(["labels", "comment", "merge"]);

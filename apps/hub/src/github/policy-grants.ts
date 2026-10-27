@@ -13,6 +13,8 @@ export type PolicyGrantsDeps = {
   automaticKinds: (tenantId: string, repo: string) => Promise<ActionKind[]>;
   /** Edited policy file text read as triage would read it once merged. */
   preview: (tenantId: string, repo: string, source: RepoSource, text: string) => Promise<CheckPackRead>;
+  /** Whether a read of the file at `sha` is still the repository's newest, so an overtaken read grants nothing. */
+  isNewest: (tenantId: string, repo: string, source: RepoSource, sha: string) => boolean;
   now: () => Date;
 };
 
@@ -27,7 +29,10 @@ export function createPolicyGrants(deps: PolicyGrantsDeps) {
       const ns = triageNs(tenant?.config);
       const enabled = repoRecords(ns).some((record) => record.name === repo && sourceOf(record) === source && record.enabled === true);
       if (!enabled || automationMode(ns) === "ask") return false;
-      await grantWanted(tx, tenantId, repo, source, wanted, deps.now());
+      const sha = read.source.file?.sha;
+      await grantWanted(tx, tenantId, repo, source, wanted, deps.now(), function newest() {
+        return sha === undefined || deps.isNewest(tenantId, repo, source, sha);
+      });
       return true;
     });
     return granted ? { ...read, automatic: await deps.automaticKinds(tenantId, repo) } : read;

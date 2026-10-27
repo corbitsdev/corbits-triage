@@ -37,6 +37,10 @@ async function requireTriageRole(tx: Tx, tenantId: string): Promise<string> {
   return roleId;
 }
 
+function isAlways(): boolean {
+  return true;
+}
+
 async function deleteKinds(tx: Tx, tenantId: string, roleId: string, repo: string, kinds: readonly ActionKind[]): Promise<void> {
   if (kinds.length === 0) return;
   const { grant } = schema;
@@ -52,9 +56,11 @@ async function deleteKinds(tx: Tx, tenantId: string, roleId: string, repo: strin
  * The pr-triage role holds exactly `wanted` on the enabled repository, posting included: only missing kinds are
  * inserted and only the others deleted, so the same policy read again touches no row.
  */
-export async function grantWanted(tx: Tx, tenantId: string, repo: string, source: RepoSource, wanted: readonly ActionKind[], stamp: Date): Promise<void> {
+export async function grantWanted(tx: Tx, tenantId: string, repo: string, source: RepoSource, wanted: readonly ActionKind[], stamp: Date, stillWanted: () => boolean = isAlways): Promise<void> {
   const roleId = await requireTriageRole(tx, tenantId);
   await lockHolder(tx, tenantId, roleId);
+  // Checked under the role's lock, which every grant writer takes, so a read overtaken meanwhile writes nothing.
+  if (!stillWanted()) return;
   const kinds = hostKinds(source).filter((kind) => wanted.includes(kind) || postingKinds(source).includes(kind));
   await deleteKinds(tx, tenantId, roleId, repo, ACTION_KINDS.filter((kind) => !kinds.includes(kind)));
   for (const kind of kinds) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);

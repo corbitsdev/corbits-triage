@@ -889,7 +889,10 @@ workspace's `corbitsTriage.automation`, `policy` (the default when absent) or
   `triage-do:<kind>:<repo>` and deletes the role's allows there for every
   other kind, so the same policy read again touches no row, and a kind taken
   out of the file, or one the host lacks (Labels and Assign on Bitbucket),
-  is taken back. The read carries the kinds as granted. A `missing` or
+  is taken back. Under that lock it first checks the read is still the
+  newest of the file (`isNewest` in `policy-file.ts`); one a newer read
+  overtook writes nothing, so it cannot undo the newer grants. The read
+  carries the kinds as granted. A `missing` or
   `invalid` read changes nothing. Switching the workspace from `ask` to
   `policy` writes nothing itself; the next reconcile pass reads every enabled
   repository's policy and grants.

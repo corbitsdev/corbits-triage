@@ -500,7 +500,7 @@ const policyFile = createPolicyFile({
   waitingKinds: policyWaitingKinds,
 });
 const repoPolicyDeps = { policyFile: policyFile.current, automaticKinds: automation.automaticKinds };
-const policyGrants = createPolicyGrants({ db: composition.db, automaticKinds: automation.automaticKinds, preview: previewPolicy, now });
+const policyGrants = createPolicyGrants({ db: composition.db, automaticKinds: automation.automaticKinds, preview: previewPolicy, isNewest: policyFile.isNewest, now });
 function chosenFileRefusal(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
   return fileRefusal(repoPolicyDeps, tenantId, repo, source, policy);
 }

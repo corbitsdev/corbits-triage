@@ -122,6 +122,7 @@ export type PolicyFileState =
   | { status: "ok"; file: PolicyFileStatus; policy: Record<string, unknown>; workflow: PolicyWorkflow };
 
 type FoundFile = { path: string; read: RepoFileRead };
+type CachedFile = { read: Promise<PolicyFileState>; at: number; settled?: PolicyFileState };
 
 function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
   if (read.kind === "not-a-file") return { status: "invalid", path, reason: notAFileReason(path) };
@@ -136,7 +137,8 @@ function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
 const UNHEARD_MAX_AGE_MS = 60_000;
 
 export function createPolicyFile(deps: PolicyFileDeps) {
-  const cache = new Map<string, { read: Promise<PolicyFileState>; at: number }>();
+  /** `settled` is the read once it is answered, so a grant can tell whether a newer read overtook its own. */
+  const cache = new Map<string, CachedFile>();
   /** One repository's policy pull request writes, so each one's read, commit and body edit finish before the next reads. */
   const serialized = createKeyedSerial();
 
@@ -210,10 +212,11 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     const key = repoKey(tenantId, record);
     const kept = cache.get(key);
     if (kept && Date.now() - kept.at < maxAgeMs) return kept.read;
-    const entry = { read: load(tenantId, record), at: Date.now() };
+    const entry: CachedFile = { read: load(tenantId, record), at: Date.now() };
     cache.set(key, entry);
     try {
-      return await entry.read;
+      entry.settled = await entry.read;
+      return entry.settled;
     } catch (err) {
       if (cache.get(key) === entry) cache.delete(key);
       throw err;
@@ -224,6 +227,16 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function current(tenantId: string, repo: string, source: RepoSource | undefined): Promise<PolicyFileState> {
     const record = await connectedRecord(tenantId, repo, source);
     return record ? cached(tenantId, record, maxAgeOf(tenantId, record)) : { status: "absent" };
+  }
+
+  /**
+   * Whether the file at `sha` is still the newest read of the repository's policy file: false while a newer read is
+   * under way or once one found another file, which grants in its turn.
+   */
+  function isNewest(tenantId: string, repo: string, source: RepoSource, sha: string): boolean {
+    const kept = cache.get(repoKey(tenantId, { name: repo, source, connected: true }));
+    if (!kept) return true;
+    return kept.settled?.status === "ok" && kept.settled.file.sha === sha;
   }
 
   /** A push to the default branch that touched the file reads it again; undefined when the repository is not connected. */
@@ -510,5 +523,5 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return Response.json({ repos: rows.filter((row) => row !== undefined) });
   }
 
-  return { current, onPush, fileRoute, exportRoute, patchRoute, pushAccessRoute, pushRoute, upgradesRoute };
+  return { current, isNewest, onPush, fileRoute, exportRoute, patchRoute, pushAccessRoute, pushRoute, upgradesRoute };
 }
