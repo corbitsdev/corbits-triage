@@ -122,6 +122,8 @@ describe("status line and row", () => {
     ["a draft with a failed rule", { state: "awaiting-review", draft: true, checks: [FAIL] }, "Draft · waiting on @ada", "Draft"],
     ["stale", { state: "stale", checks: [FAIL], comment: feedback }, "Rechecking", "Rechecking"],
     ["new", { state: "new", runId: null }, "Not triaged yet", "Not triaged yet"],
+    ["why Triage could not check it", { state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }, "Couldn't triage: the run never started", "Couldn't triage: the run never started"],
+    ["a draft Triage could not check", { state: "new", runId: null, verdict: null, draft: true, untriaged: "Couldn't triage: the run never started" }, "Draft · waiting on @ada", "Draft"],
     ["commits Triage has not checked", { state: "blocked", checks: [FAIL], headSha: "head-2" }, "New commits since Triage checked · rechecking", "Rechecking"],
     ["a re-review with a rule to decide", { state: "awaiting-review", reviewAnswered: true, checks: [requested, UNSURE] }, "Re-review: @ada updated it · still to decide: Focused", "Re-review"],
     ["a re-review with nothing open", { state: "awaiting-review", reviewAnswered: true, checks: [requested] }, "Re-review: @ada updated it · all rules met", "Re-review"],

@@ -105,6 +105,8 @@ const Pull = type({
   activityAt: "string | null",
   verdict: Verdict.or("null"),
   run: Run.or("null"),
+  /** Why this pull request has no verdict, in words for a person. Absent once a verdict exists, or when the hub has nothing to say. */
+  "untriaged?": "string",
 });
 
 export const TriageVerdicts = type({

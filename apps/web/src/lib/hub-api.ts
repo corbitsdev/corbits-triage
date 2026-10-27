@@ -1321,6 +1321,8 @@ export type PrItem = {
   waitingHeadSha: string | null;
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
   failure: RunFailure | null;
+  /** Why this pull request has no verdict, as the hub words it. Absent once there is a verdict, or when the hub has nothing to say. */
+  untriaged?: string;
   actions: SuggestedAction[];
   automatic: ActionKind[];
   href: string;
@@ -1574,6 +1576,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         running: isRunning(pull?.run ?? null),
         ...waitingFields(pull?.run),
         failure: failureOf(pull?.run ?? null),
+        ...(pull?.untriaged !== undefined && { untriaged: pull.untriaged }),
         actions: [],
         automatic: [],
         href: canonicalPrHref(repo, pr.number),
