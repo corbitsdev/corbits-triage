@@ -66,11 +66,12 @@ only code review does ([Where sidecars run](#where-sidecars-run)).
 
 ### Railway
 
-Deploy the hub from GitHub, not with `railway up`: Railway sets the
-`RAILWAY_GIT_*` variables only on a service deployed from GitHub, and
 [Railway Sandboxes](provisioners/railway-sandboxes.md) for code review need
-them from a public repository: this one or your public fork. With the
-[Railway CLI](https://docs.railway.com/cli) logged in:
+the `RAILWAY_GIT_*` variables to name a public repository, this one or your
+public fork, at the commit the hub runs. Railway sets them on a service it
+deploys from GitHub; on a hub deployed with `railway up`, set them yourself
+with each deploy. With the [Railway CLI](https://docs.railway.com/cli) logged
+in:
 
 1. Create the project. With more than one Railway workspace, `railway init`
    needs `--workspace`; `railway whoami --json` lists yours:
@@ -85,13 +86,11 @@ them from a public repository: this one or your public fork. With the
    railway add --database postgres
    ```
 
-3. Add the hub service from GitHub. It builds the root `Dockerfile` and
-   deploys at once; that first deploy fails until step 5 sets the variables.
-   Run the [migrations](#migrations) as its Pre-deploy Command
-   (Settings → Deploy): `bun run db:migrate`.
+3. Add an empty hub service. Run the [migrations](#migrations) as its
+   Pre-deploy Command (Settings → Deploy): `bun run db:migrate`.
 
    ```sh
-   railway add --service hub --repo <owner>/corbits-triage --branch main
+   railway add --service hub
    ```
 
 4. Generate its domain on port 3000. It prints the `https://…up.railway.app`
@@ -120,8 +119,19 @@ them from a public repository: this one or your public fork. With the
    railway volume add --mount-path /data
    ```
 
-7. Set the [database role](#database-role) setting. Once the deploys started
-   by steps 5 and 6 have finished, redeploy the hub
+7. Deploy from a clean checkout of the commit you want to run. The commit must
+   already be pushed to the public repository, this one or your public fork,
+   because the Railway sidecar template fetches it from GitHub. Set the three
+   commit variables and deploy; repeat both with each deploy.
+
+   ```sh
+   railway variable set --service hub --skip-deploys \
+     RAILWAY_GIT_COMMIT_SHA=$(git rev-parse HEAD) \
+     RAILWAY_GIT_REPO_OWNER=<owner> RAILWAY_GIT_REPO_NAME=<name>
+   railway up --service hub
+   ```
+
+8. Set the [database role](#database-role) setting, then redeploy the hub
    (`railway redeploy --service hub --yes`).
 
 The hub is ready when its deploy logs show `Started server`.
@@ -295,7 +305,7 @@ All optional; the defaults suit most installs.
 | `DOCKER_TLS_KEY` | unset | `key.pem`, the client certificate's key, as one line of base64. |
 | `E2B_API_KEY` | unset | Registers the [E2B provisioner](provisioners/e2b.md), which runs each isolated sidecar in an E2B sandbox. |
 | `RAILWAY_SANDBOX_TOKEN`, `RAILWAY_SANDBOX_ENVIRONMENT_ID` | unset | A Railway workspace token and the environment the [Railway Sandboxes provisioner](provisioners/railway-sandboxes.md) creates sandboxes in. Set both or neither. |
-| `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | set by Railway on a service deployed from GitHub | The public repository and commit the Railway sidecar template checks out. Required with `RAILWAY_SANDBOX_TOKEN`. |
+| `RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_REPO_OWNER`, `RAILWAY_GIT_REPO_NAME` | unset | The public repository and full commit hash the Railway sidecar template checks out, set with each deploy ([Railway](#railway)). Required with `RAILWAY_SANDBOX_TOKEN`. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `BITBUCKET_EGRESS_ALLOWLIST` | unset | Comma-separated hostnames or IPs of Bitbucket Data Center instances on a private network. The hub sends a Bitbucket token only to public addresses, plus private or loopback addresses of a host listed here. Set it before upgrading when a workspace is already connected to a private-network instance: until then that workspace's Bitbucket requests and runs are refused. Workflow runs resolve the instance in their sidecar, so on cloud hosts also deny sidecar egress to metadata addresses (`169.254.0.0/16`, `fd00:ec2::254`, `100.100.100.200`) at the network layer. See [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md). |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |
@@ -381,7 +391,8 @@ then shows **Docker on this machine** ready. Or set `DOCKER_HOST` in `.env` to
 ## Upgrading
 
 Pull the new version, rebuild the image, run the [migrations](#migrations)
-and redeploy; the hub does not start until they have run.
+and redeploy; the hub does not start until they have run. On Railway, repeat
+[step 7](#railway) so the commit variables name the version you deploy.
 
 - **Open the portal as an owner right after upgrading to the build that keeps
   the GitHub App key on the server.** Opening it deploys the new workflows.
