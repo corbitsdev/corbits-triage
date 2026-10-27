@@ -264,11 +264,12 @@ export const MERGE_RISKS = ["first-timers", "ci-config"] as const;
 export type MergeRisk = (typeof MERGE_RISKS)[number];
 
 /**
- * `automatic` is what Triage may do on its own in the repository; `decide` the action kinds the policy file's own
- * `decide` names; `mergeRisks` what Triage's automatic approve or merge can let in; `codeReview` whether the policy file
- * turns code review on. `invalid` is a policy file triage refuses, so nothing runs until it is fixed.
+ * `automatic` is what Triage may do on its own in the repository; `wanted` every action kind the policy has
+ * Triage do on the host, a kind `alwaysHeld` on its verdict included; `mergeRisks` what Triage's automatic approve or
+ * merge can let in; `codeReview` whether the policy file turns code review on. `invalid` is a policy file triage
+ * refuses, so nothing runs until it is fixed.
  */
-export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, decide: ActionKinds, mergeRisks: type.enumerated(...MERGE_RISKS).array(), codeReview: "boolean" })
+export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, wanted: ActionKinds, mergeRisks: type.enumerated(...MERGE_RISKS).array(), codeReview: "boolean" })
   .or({ status: "'missing'" })
   .or({ status: "'invalid'", reason: "string", path: "string" });
 

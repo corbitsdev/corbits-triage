@@ -335,10 +335,10 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
 }
 
 /**
- * `automatic` is what Triage may do on its own in the repository; `decide` the kinds the policy file's `decide` names;
+ * `automatic` is what Triage may do on its own in the repository; `wanted` every kind the policy has Triage do there;
  * `mergeRisks` what its automatic approve or merge can let in.
  */
-type PolicyKinds = { automatic: ActionKind[]; decide: ActionKind[]; mergeRisks: MergeRisk[] };
+type PolicyKinds = { automatic: ActionKind[]; wanted: ActionKind[]; mergeRisks: MergeRisk[] };
 /** Read from the repository's policy file; `path` is absent for text not yet in the file, `codeReview` is whether it turns code review on. */
 type FileCheckPack = { kind: "file"; path?: string; pack: CheckPack; codeReview: boolean } & PolicyKinds;
 /** The repository's policy file is refused, so triage runs nothing until it is fixed. */
@@ -349,7 +349,7 @@ function checkPackOf(raw: unknown, repo: string): CheckPackArtifact | null {
   const read = PolicyRead.assert(raw);
   if (read.status === "missing") return null;
   if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
-  const kinds = { automatic: read.automatic, decide: read.decide, mergeRisks: read.mergeRisks };
+  const kinds = { automatic: read.automatic, wanted: read.wanted, mergeRisks: read.mergeRisks };
   return { kind: "file", ...(read.source.file && { path: read.source.file.path }), pack: readCheckPack(read.pack, repo), codeReview: read.codeReview, ...kinds };
 }
 

@@ -128,8 +128,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     Bitbucket Data Center, and code review.
     `GET …/github-triage/{tenantId}/policy?repo=&source=` answers a
     repository's policy as triage reads it on that host (GitHub without
-    `source`), with the merge risks of its automatic approve or merge
-    computed there, which the portal shows for GitHub repositories, and
+    `source`), with the action kinds it uses (`wanted`) and the merge risks
+    of its automatic approve or merge computed there, so the portal offers
+    the grants and shows the risks for GitHub repositories without reading
+    the policy itself, and
     `POST …/github-triage/{tenantId}/backlog` starts backlog triage, so only the hub resolves policies and builds
     trigger mail. `GET …/merge-states/{tenantId}?repo=&numbers=` (at most
     100) says whether the host would merge those pull requests now: one

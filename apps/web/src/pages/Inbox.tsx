@@ -582,7 +582,7 @@ function MissingGrants({ snapshot, disabled }: { snapshot: PortalSnapshot; disab
   const repos = allowable ? snapshot.repos.filter((repo) => enabled.has(repo.name)) : [];
   const policies = useQueries({ queries: repos.map((repo) => checkPackQuery(snapshot.workspace.tenantId, repo.name, repo.source)) });
   const shown = repos
-    .map((repo, i) => ({ repo, reading: readGrants(policies[i]!, roles, repo.source) }))
+    .map((repo, i) => ({ repo, reading: readGrants(policies[i]!, roles) }))
     .filter((card) => missesGrants(card.reading));
   if (shown.length === 0) return null;
   return (

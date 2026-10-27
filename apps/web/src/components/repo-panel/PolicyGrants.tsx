@@ -2,19 +2,13 @@ import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, postingKinds, VERDICTS, type ActionKind, type CheckPack, type MergeRisk, type RepoSource } from "@corbits/triage-contracts";
+import { DO_GRANT_ACTION, doResource, type ActionKind, type MergeRisk, type RepoSource } from "@corbits/triage-contracts";
 import { findTriageRole } from "../../lib/automation-grid.ts";
 import { checkPackQuery } from "../../lib/check-packs.ts";
 import type { CheckPackArtifact, HubRole } from "../../lib/hub-api.ts";
 import { doName } from "../../lib/policy-view.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { useAllowed, useRoles, type TenantSection } from "../../lib/tenant-entities.ts";
-
-function policyKinds(pack: CheckPack, decide: readonly ActionKind[], source: RepoSource): ActionKind[] {
-  const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].flatMap((step) => (step.do === "nothing" || alwaysHeld(verdict, step.do) ? [] : [step.do])));
-  const used = new Set<string>([...postingKinds(source), ...decide, ...steps]);
-  return hostKinds(source).filter((kind) => used.has(kind));
-}
 
 const RISK_NAMES: Record<MergeRisk, string> = { "first-timers": "pull requests from first-time contributors", "ci-config": "changes to CI workflows" };
 
@@ -28,7 +22,7 @@ export function MergeCaution({ source, risks }: { source: RepoSource; risks: rea
 
 type PolicyResult = Pick<UseQueryResult<CheckPackArtifact | null>, "isPending" | "isError" | "data">;
 
-export function readGrants(policy: PolicyResult, roles: TenantSection<HubRole>, source: RepoSource): GrantsReading {
+export function readGrants(policy: PolicyResult, roles: TenantSection<HubRole>): GrantsReading {
   if (policy.isPending || roles.loading) return { text: "Checking what Triage may do here…" };
   if (policy.isError) return { text: "Could not read what Triage may do here, so it asks before every action." };
   const found = policy.data;
@@ -36,8 +30,7 @@ export function readGrants(policy: PolicyResult, roles: TenantSection<HubRole>, 
   if (roles.unavailable || roles.denied) return { text: "Could not read what Triage may do here, so it asks before every action." };
   const triage = findTriageRole(roles.rows);
   if (!triage) return { text: "This workspace has no Triage role, so Triage asks before every action." };
-  const kinds = policyKinds(found.pack, found.decide, source);
-  return { roleId: triage.id, kinds, missing: kinds.filter((kind) => !found.automatic.includes(kind)), risks: found.mergeRisks };
+  return { roleId: triage.id, kinds: found.wanted, missing: found.wanted.filter((kind) => !found.automatic.includes(kind)), risks: found.mergeRisks };
 }
 
 export function missesGrants(reading: GrantsReading): boolean {
@@ -50,7 +43,7 @@ export default function PolicyGrants({ repo, source, disabled }: PolicyGrantsPro
   const { snapshot } = usePortal();
   const policy = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, source));
   const roles = useRoles();
-  return <GrantsCard repo={repo} source={source} disabled={disabled} reading={readGrants(policy, roles, source)} />;
+  return <GrantsCard repo={repo} source={source} disabled={disabled} reading={readGrants(policy, roles)} />;
 }
 
 /** `listIndex` places the card in a list of repositories, which names the repository and keeps its heading id unique. */
