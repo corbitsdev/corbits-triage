@@ -833,9 +833,28 @@ again on each reconnect; owners hold every grant. Reading the kinds never
 creates the role: a workspace without it has no automatic kinds. Grants are
 written under an advisory lock on their holder, as stock's grant table has no
 unique index to insert against. Enabling a repository grants the role its
-enabled kinds; every write of the `corbitsTriage` namespace that switches a
-repository off or removes it deletes the role's `triage-do:<kind>:<repo>`
-grants in the same transaction, on both hosts. A member given the `pr-triage`
+posting kinds (comment, and labels where the host has them); every write of
+the `corbitsTriage` namespace that switches a repository off or removes it
+deletes the role's `triage-do:<kind>:<repo>` grants in the same transaction,
+on both hosts.
+
+The workspace's `corbitsTriage.automation` decides what else the role holds.
+Under `policy`, the default when it is absent, every successful policy read
+of an enabled repository (`readCheckPack` in `apps/hub/src/server.ts`, through
+`followPolicy` in `apps/hub/src/github/policy-grants.ts`) runs `grantWanted`
+(`automation.ts`) with `policyKinds` of the pack and its `decide` rules: under
+the role's advisory lock it inserts the missing allows and deletes the role's
+allows on `triage-do:<kind>:<repo>` for every other kind, so the same policy
+read again touches no row, and the read carries the kinds as granted. The read
+shares the tenant row's lock, so a repository switched off meanwhile is not
+granted again. A read that is invalid, corrupt or missing changes nothing.
+Switching a GitHub repository on wakes the reconcile pass, whose read grants
+the rest; switching the workspace from `ask` to `policy` takes effect on the
+next pass, which reads every enabled repository's policy. Under `ask` the hub
+writes no grant but posting, on enable, and switching from `policy` to `ask`
+writes and removes nothing; a policy pull request the hub opens lists the
+kinds its file uses that the role does not hold, which will wait for a
+person. A member given the `pr-triage`
 role is refused every action until it is removed, so what triage does
 unattended never becomes what a person may do, and an invite into the
 `pr-triage` or `Deployer` role is refused. Approving a held action checks only
@@ -861,8 +880,8 @@ dismissed; an approve action a person lets through from Triage is.
 
 The portal saves repository settings through the stock tenant update (`PATCH
 /api/tenants/:id`), which the hub checks first. Besides tenant `manage`, it
-takes only a repository's `enabled` and `checkPack`, and dropping a
-repository. Switching a GitHub repository on needs `use` on the App
+takes only the workspace's `automation` (`policy` or `ask`), a repository's
+`enabled` and `checkPack`, and dropping a repository. Switching a GitHub repository on needs `use` on the App
 credential; switching a Bitbucket one, or dropping it while on, is refused
 (409 `use_bitbucket_route`), since its own route also manages the webhook;
 changing the pinned policy needs `write` on the policy pinned before and

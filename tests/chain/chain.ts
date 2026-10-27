@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
 import { listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents } from "@intx/hub-client";
+import { saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
 import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
@@ -85,6 +86,8 @@ export function chainStack() {
     database = created;
     hub = await startHub(database, github, portalDir);
     workspace = await signUp(hub, database);
+    // Until a scenario switches it to policy, only posting runs on its own, so a Do in a policy is held.
+    await saveAutomationMode(workspace.transport, workspace.tenantId, "ask");
     await setUpWorkspace(workspace, github, model.origin);
     await listenerStarted(workspace);
   });

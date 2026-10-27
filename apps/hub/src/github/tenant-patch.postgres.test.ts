@@ -120,6 +120,13 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq(null)))).toEqual([400, "invalid_request"]);
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq([])))).toEqual([400, "invalid_request"]);
 
+    // The workspace's automation is set by name, and a patch that leaves it out keeps it.
+    expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq({ ...current, automation: "always" })))).toEqual([400, "invalid_request"]);
+    current = await patched({ ...current, automation: "ask" });
+    const { automation: _automation, ...withoutAutomation } = current;
+    current = await patched(withoutAutomation);
+    expect(current["automation"]).toBe("ask");
+
     // A write landing between the hub's read and its locked write is refused, not overwritten.
     const interleaved = {
       ...deps,

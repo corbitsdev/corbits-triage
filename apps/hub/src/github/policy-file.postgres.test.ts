@@ -212,6 +212,7 @@ beforeAll(async () => {
     tenantGithub: createTenantGithub({ db, cipher, onKeyMoved: noKeyPush, githubApiOrigin }),
     log() {},
     quiet: activity.quiet,
+    async waitingKinds() { return []; },
   });
 }, 120_000);
 

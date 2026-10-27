@@ -11,6 +11,7 @@ import { hostFullName } from "../../lib/pull-link.ts";
 import { packsPending, triageEnabledRepos, triageReadyRepos } from "../../lib/repo-rows.ts";
 import type { DeployedSection } from "../../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../DecisionModelForm.tsx";
+import { AutomationModeCard } from "./AutomationModeCard.tsx";
 import { BitbucketDatacenterSource } from "./BitbucketDatacenterSource.tsx";
 import { GithubSource } from "./GithubSource.tsx";
 import { KeyRow } from "./KeyRow.tsx";
@@ -117,6 +118,7 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
         <BitbucketDatacenterSource />
         <PolicyFiles snapshot={snapshot} />
         <DecisionModel snapshot={snapshot} />
+        <AutomationModeCard snapshot={snapshot} />
       </div>
     </section>
   );

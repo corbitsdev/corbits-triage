@@ -16,6 +16,13 @@ export const DO_GRANT_PREFIX = "triage-do";
 
 export const ANY_DO_RESOURCE = `${DO_GRANT_PREFIX}:*`;
 
+/**
+ * A workspace's `corbitsTriage.automation`: under `policy` the hub grants the pr-triage role what each enabled
+ * repository's policy uses; under `ask` it grants only posting, and the rest waits for a person. Absent is `policy`.
+ */
+export const AUTOMATION_MODES = ["policy", "ask"] as const;
+export type AutomationMode = (typeof AUTOMATION_MODES)[number];
+
 /** Holding `invoke` on it lets a person approve a held Do of `kind` in `repo`, and the pr-triage role run it unattended. */
 export function doResource(kind: ActionKind, repo: string): string {
   return `${DO_GRANT_PREFIX}:${kind}:${repo.toLowerCase()}`;

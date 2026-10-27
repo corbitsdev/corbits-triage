@@ -5,8 +5,8 @@ import { evaluateGrants } from "@intx/authz";
 import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { GrantRule } from "@intx/types/authz";
-import { ACTION_KINDS, DO_GRANT_ACTION, doResource, postingKinds, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
-import { allowRole, grantAdminHost, type Tx } from "./admin-github-grant.js";
+import { ACTION_KINDS, DO_GRANT_ACTION, doResource, hostKinds, postingKinds, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
+import { allowRole, grantAdminHost, lockHolder, type Tx } from "./admin-github-grant.js";
 
 export type AutomationDeps = { db: DB["db"] };
 
@@ -31,24 +31,45 @@ export async function connectTriage(tx: Tx, tenantId: string, credentialIds: rea
   await grantAdminHost(tx, tenantId, credentialIds, stamp);
 }
 
-/** Triage posts its verdict unattended on a repository from the moment it is enabled. */
-export async function grantEnabledKinds(tx: Tx, tenantId: string, repo: string, source: RepoSource, stamp: Date): Promise<void> {
+async function requireTriageRole(tx: Tx, tenantId: string): Promise<string> {
   const roleId = await triageRoleId(tx, tenantId);
   if (!roleId) throw new Error(`Workspace ${tenantId} has no ${TRIAGE_ROLE} role; connecting a host creates it.`);
-  for (const kind of postingKinds(source)) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);
+  return roleId;
 }
 
-/** Every kind the pr-triage role holds on the repository, so enabling it again starts from the enabled kinds. */
-export async function revokeRepoKinds(tx: Tx, tenantId: string, repo: string): Promise<void> {
-  const roleId = await triageRoleId(tx, tenantId);
-  if (!roleId) return;
+async function deleteKinds(tx: Tx, tenantId: string, roleId: string, repo: string, kinds: readonly ActionKind[]): Promise<void> {
+  if (kinds.length === 0) return;
   const { grant } = schema;
   await tx.delete(grant).where(and(
     eq(grant.tenantId, tenantId),
     eq(grant.roleId, roleId),
     eq(grant.effect, "allow"),
-    inArray(grant.resource, ACTION_KINDS.map((kind) => doResource(kind, repo))),
+    inArray(grant.resource, kinds.map((kind) => doResource(kind, repo))),
   ));
+}
+
+/** Triage posts its verdict unattended on a repository from the moment it is enabled. */
+export async function grantEnabledKinds(tx: Tx, tenantId: string, repo: string, source: RepoSource, stamp: Date): Promise<void> {
+  const roleId = await requireTriageRole(tx, tenantId);
+  for (const kind of postingKinds(source)) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);
+}
+
+/**
+ * The pr-triage role holds exactly `wanted` on the enabled repository, posting included: only missing kinds are
+ * inserted and only the others deleted, so the same policy read again touches no row.
+ */
+export async function grantWanted(tx: Tx, tenantId: string, repo: string, source: RepoSource, wanted: readonly ActionKind[], stamp: Date): Promise<void> {
+  const roleId = await requireTriageRole(tx, tenantId);
+  await lockHolder(tx, tenantId, roleId);
+  const kinds = hostKinds(source).filter((kind) => wanted.includes(kind) || postingKinds(source).includes(kind));
+  await deleteKinds(tx, tenantId, roleId, repo, ACTION_KINDS.filter((kind) => !kinds.includes(kind)));
+  for (const kind of kinds) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);
+}
+
+/** Every kind the pr-triage role holds on the repository, so enabling it again starts from the enabled kinds. */
+export async function revokeRepoKinds(tx: Tx, tenantId: string, repo: string): Promise<void> {
+  const roleId = await triageRoleId(tx, tenantId);
+  if (roleId) await deleteKinds(tx, tenantId, roleId, repo, ACTION_KINDS);
 }
 
 export function createAutomation(deps: AutomationDeps) {

@@ -14,7 +14,7 @@ import { defaultBranch, readRepo } from "../bitbucket-datacenter/client.js";
 import * as bitbucketPull from "../bitbucket-datacenter/policy-pull.js";
 import { splitName } from "../bitbucket-datacenter/records.js";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { checkPolicyFile, exportPolicyFile, fileRuleId, patchPolicyFile, POLICY_FILE_PATH, PolicyPatchChanges, notAFileReason, POLICY_FILE_PATHS, policyFileReason, REPO_SOURCES, starterPack, type PolicyFileStatus, type PolicyPatchChange, type PolicyUpgrades, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
+import { checkPolicyFile, exportPolicyFile, fileRuleId, patchPolicyFile, POLICY_FILE_PATH, PolicyPatchChanges, notAFileReason, POLICY_FILE_PATHS, policyFileReason, REPO_SOURCES, starterPack, type ActionKind, type PolicyFileStatus, type PolicyPatchChange, type PolicyUpgrades, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
 import type { PolicySettled } from "./check-pack-store.js";
 import { forInstallation, type MemberOpenPulls, type OpenPullsRead } from "./open-pulls.js";
 import * as github from "./policy-pull.js";
@@ -67,6 +67,11 @@ function patchPullBody(path: string, changes: readonly PolicyPatchChange[]): str
   return [`Updates the rules in \`${path}\`:`, "", ...changes.map((change) => `- ${changeSentence(change)}`)].join("\n");
 }
 
+/** Kept short: the kinds by the names the file writes them in. */
+function waitingNote(kinds: readonly ActionKind[]): string {
+  return `Once merged, these wait for approval on Corbits Triage each time they run: ${kinds.map((kind) => `\`${kind}\``).join(", ")}.`;
+}
+
 const ADD_TITLE = `chore: add a Corbits Triage policy in ${POLICY_FILE_PATH}`;
 
 function addBody(lead: string): string {
@@ -103,6 +108,8 @@ export type PolicyFileDeps = PortalCredentialDeps & {
   log: (entry: Record<string, unknown>) => void;
   /** Whether the repository's webhook (the App's, on GitHub) has been silent long enough that a push may go unheard. */
   quiet: RepoActivity["quiet"];
+  /** The kinds a policy file holding `text` uses that will wait for a person once it is merged. */
+  waitingKinds: (tenantId: string, repo: string, source: RepoSource, text: string) => Promise<ActionKind[]>;
 };
 
 /** The policy file on the default branch as triage takes it: none, refused with why, or the policy it holds. */
@@ -266,7 +273,9 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   }
 
   async function opened(tenantId: string, record: RepoRecord, change: github.PolicyChange, msg = "policy_file_exported"): Promise<Response> {
-    const pull = await propose(tenantId, record, change);
+    const waiting = await deps.waitingKinds(tenantId, record.name, sourceOf(record), change.text);
+    const body = waiting.length === 0 ? change.body : [change.body, "", waitingNote(waiting)].join("\n");
+    const pull = await propose(tenantId, record, { ...change, body });
     deps.log({ level: "info", msg, tenantId, repo: record.name, number: pull.number });
     return Response.json({ status: "opened", ...pull });
   }

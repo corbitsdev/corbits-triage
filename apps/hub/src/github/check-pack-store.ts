@@ -119,7 +119,8 @@ async function overSharedFile(policyFile: PolicyFileReader, tenantId: string, re
   return { pack: extendedFilePack(repo, content, { repo: shared, policy: state.policy }), sharedFile: { repo: shared, path: state.file.path, sha: state.file.sha } };
 }
 
-async function fileResolved(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, source: RepoSource | undefined, content: Record<string, unknown>) {
+/** The pack a policy file holding `content` runs, its `extends` resolved; throws why triage would refuse it. */
+export async function fileResolved(deps: CheckPackStoreDeps & { policyFile: PolicyFileReader }, tenantId: string, repo: string, source: RepoSource | undefined, content: Record<string, unknown>) {
   const shared = extendsOf(content);
   if (shared !== undefined) return overSharedFile(deps.policyFile, tenantId, repo, source, content, shared);
   return ownPack(repo, content);

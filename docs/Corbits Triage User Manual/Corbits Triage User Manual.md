@@ -587,6 +587,15 @@ Lists each connected repository and whether its default branch has a `.corbits-t
 
 The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Rotate** opens a blank form to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again. When Triage cannot read the saved keys, the row says **Triage could not read the saved keys** with the reason, and shows no form.
 
+#### Actions Triage takes on its own
+
+This card decides, for the whole workspace, whether a repository's policy file is enough for Triage to act. Owners and admins see the switch **Take the actions each policy file names without asking**; everyone else sees only which way it is set. It is on in a new workspace.
+
+- **On.** Triage takes every action an enabled repository's policy file names, such as Assign or Merge, on its own, on GitHub and Bitbucket Data Center alike. Once a change to the file is merged, Triage reads it within a few minutes and from then on does what it now names; an action taken out of the file goes back to waiting for you. Closing on Unsure, and merging on anything but Pass, still wait for you. A file Triage refuses changes nothing until it is fixed.
+- **Off.** Triage posts its verdict on its own, the comment and on GitHub its label, and every other action waits for you on Triage. A pull request that changes a policy file from Triage lists the actions that will wait, such as `assign` and `merge`.
+
+Turning the switch on takes effect for every enabled repository within a few minutes. Turning it off leaves what Triage already does on its own as it is.
+
 #### Rolling credentials
 
 Every secret Triage holds can be replaced from Settings without disconnecting anything. After you replace a credential, Triage starts again with the new value a few seconds later; pull requests in progress finish with the old one. If it cannot start again, the new secret is still saved, the version before keeps running, and the line under the version says why (see [Which version runs](#which-version-runs)).

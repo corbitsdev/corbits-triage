@@ -103,7 +103,8 @@ import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
 import { createGithubPolicyRead } from "./github/policy-read.js";
 import { createBacklogStart, createGithubBacklog } from "./github/backlog-triage.js";
-import { fileRefusal, loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
+import { fileRefusal, fileResolved, loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
+import { createPolicyGrants } from "./github/policy-grants.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { githubUsage } from "./github/github-usage.js";
@@ -495,8 +496,10 @@ const policyFile = createPolicyFile({
   changed: repoReads.changed,
   log: logJson,
   quiet: repoActivity.quiet,
+  waitingKinds: policyWaitingKinds,
 });
 const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
+const policyGrants = createPolicyGrants({ db: composition.db, automaticKinds: automation.automaticKinds, filePack: resolvedFilePack, now });
 function readStoredCheckPack(tenantId: string, repo: string, source: RepoSource) {
   return loadCheckPack(checkPackStore, tenantId, repo, source);
 }
@@ -506,8 +509,14 @@ function settleRepoPolicy(tenantId: string, repo: string, source: RepoSource) {
 function chosenFileRefusal(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
   return fileRefusal({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source, policy);
 }
+async function resolvedFilePack(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
+  return (await fileResolved({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source, policy)).pack;
+}
+function policyWaitingKinds(tenantId: string, repo: string, source: RepoSource, text: string) {
+  return policyGrants.waitingKinds(tenantId, repo, source, text);
+}
 async function readCheckPack(tenantId: string, repo: string, source: RepoSource) {
-  return (await settleRepoPolicy(tenantId, repo, source)).read;
+  return policyGrants.followPolicy(tenantId, repo, source, (await settleRepoPolicy(tenantId, repo, source)).read);
 }
 /** A push that lands a file matching the saved rules retires them now, so an edit after it is not taken for a difference. */
 async function refreshPolicyFile(tenantId: string, repo: string, source: RepoSource) {
@@ -997,14 +1006,18 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       }
       const principalId = await tenantManager({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
       if (principalId instanceof Response) return principalId;
+      let switchedOn = false;
       const prepared = await prepareCorbitsTriagePatch({
         db: composition.db,
         authorize: authorizePortal,
         grantEnabled(tx, repo) {
+          switchedOn = true;
           return grantEnabledKinds(tx, tenantId, repo, "github", now());
         },
       }, tenantId, principalId, req);
       if (prepared instanceof Response) return prepared;
+      // The pass reads the policy of the repository switched on, which grants what it uses under `policy` automation.
+      if (switchedOn) kickTriage();
       return stock.fetch(prepared, server);
     }
   }

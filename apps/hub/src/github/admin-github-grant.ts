@@ -10,10 +10,13 @@ export type Tx = Parameters<Parameters<DB["db"]["transaction"]>[0]>[0];
 
 type Holder = { roleId: string; principalId: null; origin: "role" } | { roleId: null; principalId: string; origin: "creator" };
 
-async function allow(tx: Tx, tenantId: string, holder: Holder, resource: string, action: string, stamp: Date): Promise<void> {
-  const holderId = holder.roleId === null ? holder.principalId : holder.roleId;
-  // Stock's grant table has no unique index to insert against, so two writers of one holder take turns to look.
+/** Stock's grant table has no unique index to insert against, so two writers of one holder take turns to look. */
+export async function lockHolder(tx: Tx, tenantId: string, holderId: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${tenantId}:${holderId}`}))`);
+}
+
+async function allow(tx: Tx, tenantId: string, holder: Holder, resource: string, action: string, stamp: Date): Promise<void> {
+  await lockHolder(tx, tenantId, holder.roleId === null ? holder.principalId : holder.roleId);
   const target = holder.roleId === null ? eq(grant.principalId, holder.principalId) : eq(grant.roleId, holder.roleId);
   const [held] = await tx.select({ id: grant.id }).from(grant).where(and(
     eq(grant.tenantId, tenantId),

@@ -2,7 +2,7 @@ import { type } from "arktype";
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { UpdateTenant } from "@intx/types";
-import { REPO_SOURCES, repoPolicy, repoSourceOf, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { AUTOMATION_MODES, REPO_SOURCES, repoPolicy, repoSourceOf, type AutomationMode, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, isRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
 import type { Tx } from "./admin-github-grant.js";
@@ -67,6 +67,11 @@ export function triageStateKey(record: Pick<RepoRecord, "name" | "source">): str
 export function triageNs(config: unknown): CorbitsTriageNs {
   const ns = asRecord(config)?.[CONFIG_KEY];
   return asRecord(ns) ?? {};
+}
+
+/** Absent means `policy`; the namespace is config a manager may write, so anything but `ask` is too. */
+export function automationMode(ns: CorbitsTriageNs): AutomationMode {
+  return ns["automation"] === "ask" ? "ask" : "policy";
 }
 
 function nsRev(ns: CorbitsTriageNs): number {
@@ -163,6 +168,7 @@ export async function tenantManager(
 const TriagePatch = type({
   "+": "delete",
   "rev?": "number",
+  "automation?": type.enumerated(...AUTOMATION_MODES),
   "repos?": type({
     "+": "delete",
     name: "string > 0",
@@ -273,7 +279,9 @@ export async function prepareCorbitsTriagePatch(
     for (const { before, after } of changes) {
       if (after?.enabled === true && before.enabled !== true) await d.grantEnabled(tx, after.name);
     }
-    return patch.repos === undefined ? current : { ...current, repos: changes.flatMap((change) => change.after ?? []) };
+    const repos = patch.repos === undefined ? {} : { repos: changes.flatMap((change) => change.after ?? []) };
+    // Switching to `policy` writes no grant here: the next policy read of each enabled repository does.
+    return { ...current, ...repos, ...(patch.automation && { automation: patch.automation }) };
   });
   if (conflicted) return conflict();
   return cloneWithBody(req, JSON.stringify(forwarded));
