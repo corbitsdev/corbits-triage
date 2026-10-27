@@ -48,7 +48,7 @@ function triaged(verdict: "pass" | "fail", state: string, actions: unknown[], au
     runId: "run-8", at: WHEN, headSha: "abc", verdict, settled: true, state, actor: "maintainer", humanGated: false,
     degraded: null, commented: true, checks: [], detail,
   };
-  const [item] = projectQueue([{ repo: "acme/widgets", number: 8, activityAt: null, verdict: recorded, run: null }], [], undefined);
+  const [item] = projectQueue([{ source: "github", repo: "acme/widgets", number: 8, activityAt: null, verdict: recorded, run: null }], [], undefined);
   if (item === undefined) throw new Error("no verdict projected");
   return item;
 }
