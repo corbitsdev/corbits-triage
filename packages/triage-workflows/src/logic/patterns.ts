@@ -1,7 +1,7 @@
 import { parse } from "@ast-grep/napi";
 import { isForeignPath, PATTERN_EXTENSIONS, PATTERN_PRESETS, type PatternExtension, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
 import type { PrFileFacts } from "./checks.js";
-import { addedLines, MAX_PATCH_INPUT_CHARS } from "./hunks.js";
+import { addedLines } from "./hunks.js";
 
 type Grammar = { language: PatternLanguage; lang: "TypeScript" | "Tsx" | "JavaScript" };
 
@@ -18,7 +18,8 @@ const GRAMMARS: Record<PatternExtension, Grammar> = {
   jsx: JAVASCRIPT,
 };
 
-export type PatternsResult = { matches: string[]; skipped: string[]; checked: number } | { unread: string };
+/** `unpatched` counts the files in scope left out because they came without a patch. */
+export type PatternsResult = { matches: string[]; skipped: string[]; checked: number; unpatched?: number } | { unread: string };
 
 function presetRules(id: string): readonly PatternRule[] {
   const rules = PATTERN_PRESETS[id];
@@ -46,8 +47,14 @@ function inScope(file: PrFileFacts): boolean {
   return checkable(file) && !isForeignPath(file.path);
 }
 
-function wholePatch(file: PrFileFacts): string | undefined {
-  return file.patch === undefined || file.patchTruncated || file.patch.length > MAX_PATCH_INPUT_CHARS ? undefined : file.patch;
+/** A file in scope that came without a patch: GitHub sends none for a very large or binary file, Bitbucket Data Center for any. */
+function unpatched(file: PrFileFacts): boolean {
+  return inScope(file) && file.patch === undefined;
+}
+
+function namedUnpatched(files: readonly PrFileFacts[]): string {
+  const more = files.length > 1 ? ` and ${files.length - 1} more` : "";
+  return `the host sent no diff for ${files[0]!.path}${more}`;
 }
 
 function readPath(file: PrFileFacts): string {
@@ -57,12 +64,14 @@ function readPath(file: PrFileFacts): string {
 /** The files one pull request reads the content of, GitHub's own diff limit, so one pull request's reads stay bounded. */
 export const MAX_CONTENT_READS = 300;
 
-/** The files whose content the rules need, or why they cannot be checked: a file in scope without its whole patch, or more files than are read. */
+/**
+ * The files whose content the rules need, or why they cannot be checked: files in scope came without a patch and none
+ * other adds code, or more files than are read.
+ */
 export function filesToRead(files: readonly PrFileFacts[]): string[] | { unread: string } {
-  const scoped = files.filter(inScope);
-  const unpatched = scoped.find((file) => wholePatch(file) === undefined);
-  if (unpatched) return { unread: `${unpatched.path}: its patch was not read in full` };
-  const toRead = scoped.filter((file) => addedLines(wholePatch(file)!).size > 0).map(readPath);
+  const toRead = files.filter((file) => inScope(file) && file.patch !== undefined && addedLines(file.patch).size > 0).map(readPath);
+  const missing = files.filter(unpatched);
+  if (toRead.length === 0 && missing.length > 0) return { unread: namedUnpatched(missing) };
   if (toRead.length > MAX_CONTENT_READS) return { unread: `${toRead.length} files with added code, more than the ${MAX_CONTENT_READS} read per pull request` };
   return toRead;
 }
@@ -84,7 +93,10 @@ function fileMatches(file: PrFileFacts, patch: string, content: string, grammar:
   return [...out];
 }
 
-/** Matches on the lines a pull request adds; a file in scope whose patch or content was not read leaves the rule unchecked. */
+/**
+ * Matches on the lines a pull request adds; a file in scope whose content was not read leaves the rule unchecked, and
+ * one that came without a patch is named as not checked.
+ */
 export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>>): PatternsResult {
   const toRead = filesToRead(files);
   if (!Array.isArray(toRead)) return toRead;
@@ -99,8 +111,10 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
   } catch (error) {
     return { unread: error instanceof Error ? error.message : String(error) };
   }
-  const skipped = files
-    .filter((file) => checkable(file) && isForeignPath(file.path))
-    .map((file) => `${file.path}: skipped as vendored, built or installed code`);
-  return { matches, skipped, checked: files.filter(inScope).length };
+  const missing = files.filter(unpatched);
+  const skipped = [
+    ...missing.map((file) => `${file.path}: not checked, the host sent no diff for it`),
+    ...files.filter((file) => checkable(file) && isForeignPath(file.path)).map((file) => `${file.path}: skipped as vendored, built or installed code`),
+  ];
+  return { matches, skipped, checked: files.filter(inScope).length - missing.length, ...(missing.length > 0 && { unpatched: missing.length }) };
 }

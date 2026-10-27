@@ -548,8 +548,13 @@ label off that head, so it never stands on a head not yet triaged.
    JavaScript file's head content its `files` and `ignores` globs admit
    (ast-grep's glob rules, checked when the policy is read), and keeps
    matches on lines the patch adds.
-   A file whose patch or content was not read, or a rule ast-grep refuses,
-   leaves the rule unconfirmed; `vendor/`, `dist/`, `build/` and
+   The facts step reads every changed file's patch whole, across as many
+   tool pages as it takes; only the judge's view of the diff is bounded
+   (`judgedFiles` in `logic/quality.ts`). A file the host sent no patch for
+   (GitHub omits it for a very large or binary file) is listed in the
+   evidence as not checked and the rule runs on the rest; with nothing else
+   to check, or a file whose content was not read, or a rule ast-grep
+   refuses, the rule is unconfirmed; `vendor/`, `dist/`, `build/` and
    `generated/` at the repository root and `node_modules/` anywhere are
    skipped and listed as skipped in the evidence, and a `?? 0` inside
    arithmetic is a counter's real default. With such a rule on, the facts

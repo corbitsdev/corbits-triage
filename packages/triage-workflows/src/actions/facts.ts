@@ -4,9 +4,9 @@ import { type } from "arktype";
 import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, trustedRequestOf, visibleText, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
-import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
+import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "../logic/checks.js";
 import { asText } from "../logic/extract.js";
-import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "../logic/facts.js";
+import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type PrData, type PullData, type RepoDocs } from "../logic/facts.js";
 import { couldRepeat, MAX_OPEN_PULLS, overlapping, type OpenPull, type OpenPulls, type PullPrint } from "../logic/duplicates.js";
 import type { History } from "../logic/history.js";
 import { filesToRead, patternsResult, type PatternsResult } from "../logic/patterns.js";
@@ -239,7 +239,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   const teams = namedTeams(pack, repo);
   const focused = catalogCheckEnabled(pack, "focused");
   const risk = catalogCheckEnabled(pack, "regression-risk") || catalogCheckEnabled(pack, "risk");
-  const listed = new Map<number, ListedFiles>();
+  const listed = new Map<number, PrFileFacts[]>();
   const filesErrors = new Map<number, string>();
 
   function filesId(n: number, { offset, patchOffset }: FilesCursor): string {
@@ -247,8 +247,8 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   }
 
   function filesCall([n, cursor]: [number, FilesCursor]): ToolCall {
-    const { offset, patchOffset, patches } = cursor;
-    return call(tool("list_pr_files"), { repo, number: n, offset, ...(patchOffset === undefined ? {} : { patchOffset }), ...(patches ? {} : { patches: false }) }, filesId(n, cursor));
+    const { offset, patchOffset } = cursor;
+    return call(tool("list_pr_files"), { repo, number: n, offset, ...(patchOffset === undefined ? {} : { patchOffset }) }, filesId(n, cursor));
   }
 
   function prCalls(n: number): ToolCall[] {
@@ -264,7 +264,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
 
   function addFiles(n: number, cursor: FilesCursor, result: ToolResult | undefined): FilesCursor | undefined {
     const page = filesPage(tool("list_pr_files"), result);
-    const read = listed.get(n) ?? { files: [], patchChars: 0 };
+    const read = listed.get(n) ?? [];
     listed.set(n, read);
     const next = typeof page === "string" ? page : addFilesPage(read, cursor, page);
     if (typeof next !== "string") return next;
@@ -297,7 +297,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   }
 
   function historyPathsOf(n: number): string[] {
-    return historyPaths(listed.get(n)?.files.map((file) => file.path) ?? []);
+    return historyPaths(listed.get(n)?.map((file) => file.path) ?? []);
   }
 
   function historyCalls(): ToolCall[] {
@@ -309,7 +309,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   /** A pull request the host read whole, as the duplicate rules compare it. */
   function ownPull(n: number): OwnPull[] {
     const pr = prs.get(n);
-    const files = listed.get(n)?.files;
+    const files = listed.get(n);
     if (!pr?.sha || !pr.base || pr.title === undefined || !files || filesErrors.has(n)) return [];
     return [{ number: n, title: visibleText(pr.title), headSha: pr.sha, base: pr.base, paths: files.map((file) => file.path) }];
   }
@@ -355,7 +355,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
       comments: data<{ comments: IssueComment[] }>(r1.get(`comments:${n}`))?.comments ?? [],
       commits: data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits ?? [],
       stack: data<NonNullable<PullData["stack"]>>(r1.get(`stack:${n}`)),
-      files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
+      files: filesErrors.get(n) ?? listed.get(n) ?? [],
       authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
       fixes: fixesOf(n),
     }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });

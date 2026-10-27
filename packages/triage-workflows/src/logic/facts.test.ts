@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REPO_POLICY, emptyPack } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, emptyPack, isPatternsCheck, readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
 import type { IssueComment, Review } from "@corbits/github-reads";
-import { assembleItem, buildFacts } from "./facts.ts";
+import type { PrFileFacts } from "./checks.ts";
+import { addFilesPage, assembleItem, buildFacts, FIRST_FILES_PAGE, type FilesCursor, type FilesPage } from "./facts.ts";
+import { NO_FACTS } from "./item.ts";
+import { patternsResult } from "./patterns.ts";
+import { MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation } from "./quality.ts";
 
 test("buildFacts carries the author's trust tier", () => {
   const facts = buildFacts("acme/widgets", 1, { author: "alice", authorAssociation: "MEMBER", branch: "a" }, [], [], [], DEFAULT_REPO_POLICY);
@@ -80,4 +84,37 @@ describe("an answered review", () => {
   test("is not a bot's or a maintainer's comment, or one from before the request", () => {
     expect(answered([requested], [{ author: "ci[bot]", bot: true }, { author: "maya" }, { createdAt: "2026-10-01T09:00:00Z" }])).toBe(false);
   });
+});
+
+test("a diff past the judge's budget is read whole for the pattern rules while the judge reads a bounded part", () => {
+  const filler = Array.from({ length: 200 }, (_, line) => `const filler${line} = "${"x".repeat(30)}";`);
+  const fallback = "const late = value ?? 0;";
+  const paths = Array.from({ length: 40 }, (_, index) => `src/file${String(index).padStart(2, "0")}.ts`);
+  const lines = (index: number) => (index === paths.length - 1 ? [...filler, fallback] : filler);
+  const patch = (index: number) => [`@@ -0,0 +1,${lines(index).length} @@`, ...lines(index).map((line) => `+${line}`)].join("\n");
+  const hostFiles: PrFileFacts[] = paths.map((path, index) => ({ path, status: "added", additions: lines(index).length, deletions: 0, patch: patch(index) }));
+  const pages: FilesPage[] = hostFiles.flatMap((file, index): FilesPage[] => {
+    const half = Math.floor(file.patch!.length / 2);
+    const next = index + 1 < hostFiles.length ? { next: index + 1 } : {};
+    return [{ files: [{ ...file, patch: file.patch!.slice(0, half) }], next: index, patchNext: half }, { files: [{ ...file, patch: file.patch!.slice(half) }], ...next }];
+  });
+  const listed: PrFileFacts[] = [];
+  let cursor: FilesCursor | undefined | string = FIRST_FILES_PAGE;
+  for (const page of pages) {
+    if (cursor === undefined || typeof cursor === "string") throw new Error(`stopped early: ${cursor}`);
+    cursor = addFilesPage(listed, cursor, page);
+  }
+  expect(cursor).toBeUndefined();
+  expect(listed).toEqual(hostFiles);
+  expect(hostFiles.reduce((chars, file) => chars + file.patch!.length, 0)).toBeGreaterThan(3 * MAX_SYSTEM_ONE_STATE_BYTES);
+
+  const pack = readCheckPack(readPolicyFile("rules:\n  - id: conventions\n    check: code-patterns\n    text: Conventions.\n    reason: Review time.\n    evidence: [maintainer-stated]\n    presets: [convention]\n", "acme/widgets"));
+  const contents = Object.fromEntries(paths.map((path, index) => [path, `${lines(index).join("\n")}\n`]));
+  expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents)).toEqual({ matches: [`${paths.at(-1)}:201 Invented fallback \`?? 0\`; handle the missing value instead.`], skipped: [], checked: paths.length });
+
+  const focused = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
+  const { requests, focused: plan } = prepareQualityEvaluation({ ...NO_FACTS, repo: "acme/widgets", number: 8, title: "Add files", files: listed, paths }, focused);
+  const judged = requests.flatMap((request) => request.state.pullRequest.files.flatMap((file) => file.hunks)).join("").length;
+  expect(judged).toBeLessThanOrEqual(3 * MAX_SYSTEM_ONE_STATE_BYTES + 65_536);
+  expect(plan!.unread).toContain(paths.at(-1)!);
 });

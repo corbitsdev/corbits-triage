@@ -55,8 +55,6 @@ export interface PrFileFacts {
   additions?: number;
   deletions?: number;
   patch?: string;
-  /** Past the patch budget. */
-  patchTruncated?: true;
 }
 
 export interface PrFacts {
@@ -642,8 +640,10 @@ function riskResult(facts: PrFacts, rules: CheckRules): CheckResult {
   return { ...base, result: "pass", ...(outcome === "label" && level !== "low" && { label: levelLabel("risk", level) }) };
 }
 
-function patternsReason(failed: boolean, found: { skipped: string[]; checked: number }): string {
+function patternsReason(failed: boolean, found: { skipped: string[]; checked: number; unpatched?: number }): string {
   if (failed) return "added code matches a code pattern";
+  if (found.unpatched === 1) return "no code pattern matched; 1 file was not checked because the host sent no diff for it";
+  if (found.unpatched) return `no code pattern matched; ${found.unpatched} files were not checked because the host sent no diff for them`;
   if (found.checked === 0 && found.skipped.length > 0) return "nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code";
   if (found.checked === 0) return "nothing checked: no TypeScript or JavaScript code added";
   return "no code pattern matched";
