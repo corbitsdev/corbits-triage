@@ -12,12 +12,11 @@ type KeyRowProps = {
   denied: boolean;
   remove: (credentialId: string) => Promise<void>;
   editor: (onSaved: () => void) => ReactNode;
-  /** Opens the form again to replace a stored key. The form starts empty; the stored key is not shown. */
-  replaceLabel?: string;
+  error: string | undefined;
 };
 
-/** One model and its key: a stored key can be replaced or removed; without one, its form is open. Without access to credentials, only the sentence shows. */
-export function KeyRow({ words, name, keys, denied, remove, editor, replaceLabel = "Change" }: KeyRowProps) {
+/** One model and its key: a stored key can be rotated or removed; without one, its form is open. Without access to credentials, only the sentence shows. */
+export function KeyRow({ words, name, keys, denied, remove, editor, error }: KeyRowProps) {
   const { readOnly } = usePortal();
   const [editing, setEditing] = useState(false);
   const removal = useMutation({
@@ -29,6 +28,7 @@ export function KeyRow({ words, name, keys, denied, remove, editor, replaceLabel
   const stored = keys.length > 0;
 
   if (denied) return <div className="sentence"><span className="txt">{words}</span></div>;
+  if (error) return <p role="alert" className="field-error">Triage could not read the saved keys: {error}</p>;
 
   return (
     <>
@@ -36,7 +36,7 @@ export function KeyRow({ words, name, keys, denied, remove, editor, replaceLabel
         <span className="txt">{words}</span>
         <span className="key-acts">
           <span className="model">{stored ? "Key stored" : "No key"}</span>
-          {stored && <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={() => setEditing(!editing)}>{editing ? "Cancel" : replaceLabel}</Button>}
+          {stored && <Button type="button" variant="outline" size="sm" disabled={readOnly} onClick={() => setEditing(!editing)}>{editing ? "Cancel" : "Rotate"}</Button>}
           {stored && <Button type="button" variant="ghost" size="sm" disabled={readOnly || removal.isPending} onClick={() => removal.mutate()}>Remove</Button>}
         </span>
       </div>

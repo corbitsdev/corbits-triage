@@ -60,6 +60,7 @@ function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
             keys={modelSecrets(snapshot.credentials).filter(isActiveCredential)}
             denied={snapshot.denied.credentials}
             remove={removeDecisionModel}
+            error={snapshot.credentialsError}
             editor={(onSaved) => <DecisionModelForm onSaved={onSaved} />}
           />
         </div>

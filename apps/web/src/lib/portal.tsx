@@ -353,10 +353,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const current = requireSnapshot();
       await saveInference(createHubTransport(), current.workspace.tenantId, input);
       await reconcileModelCatalog(createHubTransport(), current.workspace.tenantId);
+      await invalidateChangeable(queryClient, REFRESH_QUERY_KEYS);
       notify("Decision model saved.");
-      refresh();
     },
-    [notify, refresh, requireSnapshot],
+    [notify, queryClient, requireSnapshot],
   );
 
   const saveAnthropic = useCallback(
@@ -365,10 +365,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const transport = createHubTransport();
       await saveAnthropicKey(transport, current.workspace.tenantId, secret);
       await reconcileModelCatalog(transport, current.workspace.tenantId);
+      await invalidateChangeable(queryClient, REFRESH_QUERY_KEYS);
       notify("Anthropic key saved.");
-      refresh();
     },
-    [notify, refresh, requireSnapshot],
+    [notify, queryClient, requireSnapshot],
   );
 
   const removeAnthropic = useCallback(

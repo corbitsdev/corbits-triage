@@ -557,11 +557,11 @@ Lists each connected repository and whether its default branch has a `.corbits-t
 
 #### Decision model
 
-![The Decision model card: Answers your policies' Judgement rules and chooses the verdict, and Judge pull requests with TypeSafe (Jev), Key stored, with Change and Remove](images/41.png)
+![The Decision model card: Answers your policies' Judgement rules and chooses the verdict, and Judge pull requests with TypeSafe (Jev), Key stored, with Rotate and Remove](images/41.png)
 
 **Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider. It answers your policies' Judgement rules and chooses the verdict.
 
-The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Change** opens the form again to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again.
+The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Rotate** opens a blank form to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again. When Triage cannot read the saved keys, the row says **Triage could not read the saved keys** with the reason, and shows no form.
 
 #### Rolling credentials
 
@@ -575,13 +575,13 @@ Every secret Triage holds can be replaced from Settings without disconnecting an
 
 **Bitbucket Data Center webhook secret.** Press **Rotate secret** on the webhook secret row. Triage saves a new secret and updates every webhook it created to use it. Repositories whose webhook was set up by hand, or whose webhook Triage could not update, are named afterwards: each one's repository page shows the new secret, so update its webhook in Bitbucket from there. Pull requests that change in the meantime are picked up automatically.
 
-**Model keys.** Press **Change** on the [decision model](#decision-model), or **Rotate** on the Anthropic key under [Code review](#code-review-2), and paste the new key. The key already stored is not shown.
+**Model keys.** Press **Rotate** on the [decision model](#decision-model) or on the Anthropic key under [Code review](#code-review-2), and paste the new key. The key already stored is not shown.
 
 ### Code review
 
 ![The Code review section: Review code with Anthropic, No key, with the Anthropic key field and Save key, then Where it runs: Docker on this machine, In use; Docker on another machine (TLS), Not set up, with its .env lines, Copy and Setup guide](images/43.png)
 
-[Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**. With no key, the Anthropic key field is open: paste the key and press **Save key**. When a key is stored, that field is hidden and the key itself is not shown. **Rotate** opens a blank field for a new key; press **Save key** to replace the stored one. **Remove** deletes it after you confirm.
+[Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**. With no key, the Anthropic key field is open: paste the key and press **Save key**. When a key is stored, that field is hidden and the key itself is not shown. **Rotate** opens a blank field for a new key; press **Save key** to replace the stored one. **Remove** deletes it after you confirm. As for the decision model, when Triage cannot read the saved keys, the row says so and shows no field.
 
 Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine**, **Docker on another machine (TLS)** **E2B sandboxes** and **Railway Sandboxes**, each with a line on why you would choose it. Code review never runs inside Triage itself. It runs in the first place in the list, in the order shown, that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
 
