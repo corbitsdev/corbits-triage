@@ -1,5 +1,5 @@
 // Policies were once kept as tenant artifacts titled `check-pack/…`; the policy file is now the only policy. They are
-// archived, not migrated, so they stay restorable through the artifact package and are never read again.
+// archived, not migrated or deleted, so an operator can still find one in the database; nothing reads them again.
 import { type } from "arktype";
 import { sql } from "drizzle-orm";
 import { getArtifact, setArtifactArchived, type ArtifactDb } from "@corbits/artifacts";
