@@ -48,6 +48,18 @@ function isOwn(reviewer: Reviewer, kind: string, head: string): boolean {
   return reviewer.kind === kind && reviewer.head === head;
 }
 
+/** The newest review a code review of `head` reported on an earlier pass, stored on its reviewer: after a Review again, its own. */
+export function storedReview(reviewers: readonly Reviewer[], head: string): CodeReviewOutput | undefined {
+  let newest: { review: CodeReviewOutput; deadline: number } | undefined;
+  for (const reviewer of reviewers) {
+    if (!isOwn(reviewer, "code-review", head)) continue;
+    const review = CodeReviewOutput(reviewer.result);
+    const deadline = Date.parse(reviewer.deadline);
+    if (!(review instanceof type.errors) && (newest === undefined || deadline >= newest.deadline)) newest = { review, deadline };
+  }
+  return newest?.review;
+}
+
 /** A judge whose evaluate could not read the pull request reports a verdict that names no head, which decides nothing. */
 const NO_HEAD = "the judge's verdict names no head";
 
@@ -115,7 +127,7 @@ const DoneInput = type({
   "approvals?": { output: { results: "Record<string, unknown>[]" } },
   "waiting?": { output: { waiting: "boolean" } },
   "rules?": { output: { items: type({ facts: "Record<string, unknown>", "det?": "unknown" }).array() } },
-  "evaluateRules?": Output,
+  "cleared?": Output,
   "reviewScope?": { output: { "skipped?": "string" } },
   "mirrorRules?": Output,
   "executeRules?": Output,
@@ -132,14 +144,14 @@ const RuledReasons = type({ "+": "delete", "reason?": "string", "findings?": typ
  * What the pass did on its head, for the hub to record: held it for CI, or posted the verdict its mirror ran on, with
  * why the policy left code review out, and only the facts and reasons the verdict keeps, never the diff.
  */
-function doneReport({ take, waiting, rules, evaluateRules, reviewScope, mirrorRules, executeRules }: DoneInput): Record<string, unknown> | undefined {
+function doneReport({ take, waiting, rules, cleared, reviewScope, mirrorRules, executeRules }: DoneInput): Record<string, unknown> | undefined {
   const { head } = take.output;
   if (head === undefined) return undefined;
   if (waiting?.output.waiting) return { head, waiting: true };
-  if (!rules || !evaluateRules || !mirrorRules) return undefined;
+  if (!rules || !cleared || !mirrorRules) return undefined;
   const items = rules.output.items.map(({ facts, det }) => ({ facts: { ...VerdictFacts.assert(facts), repo: facts["repo"], number: facts["number"] }, ...(det !== undefined && { det: RuledReasons.assert(det) }) }));
   const skipped = reviewScope?.output.skipped;
-  const verdict = skipped === undefined ? evaluateRules.output : { ...evaluateRules.output, codeReviewSkipped: skipped };
+  const verdict = skipped === undefined ? cleared.output : { ...cleared.output, codeReviewSkipped: skipped };
   return { head, verdict, mirror: mirrorRules.output, ...(executeRules && { executed: executeRules.output }), rules: { items } };
 }
 

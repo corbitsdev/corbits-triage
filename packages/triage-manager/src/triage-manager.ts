@@ -25,6 +25,9 @@ const MAIL = { project: { from: "trigger.payload" }, fields: ["payload"] } as co
 /** The newest pull request mail take read back from the hub, which pr-triage's steps trust as the hub's. */
 const TAKEN = { project: { from: "steps.take.output" }, fields: ["taken"] } as const;
 
+/** The verdict the pass posts and runs: evaluateRules' with approve and merge held while the policy's checks are not clean. */
+const CLEARED = { from: "steps.cleared.output" } as const;
+
 function stepsOf(...ids: string[]) {
   return { project: { from: "steps" }, fields: ids } as const;
 }
@@ -42,7 +45,9 @@ function hubAction(handler: string, input: Selector, after: readonly string[]) {
 function reviewSteps(sources: Sources): Record<string, Primitive> {
   return {
     reviewScope: action({ handler: "reviewScope", input: { merge: [MAIL, stepsOf("take", "rules", "evaluateRules")] }, after: ["evaluateRules"] }),
-    reviewing: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "deployReview", else: "posting", after: ["reviewScope"] }),
+    // After reviewScope, so a review the policy left out is told from one that is due; the verdict goes up from here.
+    cleared: action({ handler: "cleared", input: stepsOf("take", "evaluateRules", "reviewScope"), after: ["reviewScope"] }),
+    reviewing: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "deployReview", else: "posting", after: ["cleared"] }),
     deployReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["reviewing"]),
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
     reviewMailed: action({ handler: "reviewMailed", input: stepsOf("deployReview", "mailReview"), after: ["mailReview"] }),
@@ -105,12 +110,12 @@ function passOf(id: string, sources: Sources) {
       ...judgeSteps(),
       evaluateRules: action({ handler: "verdict", input: { merge: [MAIL, stepsOf("take", "rules")] }, after: ["route", "judgeWait", "judgeSent"] }),
       ...reviewSteps(sources),
-      mirrorRules: { ...mirrorRules, after: ["posting", "reviewSent"] },
+      mirrorRules: { ...mirrorRules, input: CLEARED, after: ["posting", "reviewSent"] },
       // The verdict's automatic Dos run as pr-triage runs them, after the verdict and any code review are up.
-      executeRules: { ...executeRules, after: ["postReview"] },
+      executeRules: { ...executeRules, input: CLEARED, after: ["postReview"] },
       // A skipped step is missing from every selector, so the branches that report a held head or a posted verdict have their own done.
       doneWaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "waiting")] }, ["markWaiting"]),
-      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "evaluateRules", "reviewScope", "mirrorRules", "executeRules")] }, ["executeRules"]),
+      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "cleared", "reviewScope", "mirrorRules", "executeRules")] }, ["executeRules"]),
       done: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals")] }, ["ran", "triaged", "judgeWait", "posting"]),
     },
   });
