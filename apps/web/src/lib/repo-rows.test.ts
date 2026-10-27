@@ -128,7 +128,7 @@ describe("repository rows", () => {
 
 describe("merged repositories", () => {
   test("a stored record wins over the Bitbucket Data Center listing, which only adds what is not recorded", () => {
-    const stored = [{ name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: true, checkPack: { name: "check-pack/TRI/widgets" } }];
+    const stored = [{ name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: true }];
     const listed = [
       { name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
       { name: "TRI/gadgets", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
