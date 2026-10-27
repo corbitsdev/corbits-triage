@@ -5,8 +5,8 @@ import { DEFAULT_RAILWAY_GRAPHQL_ENDPOINT, Sandbox, type ConnectOptions, type Sa
 const SIDECAR_ROOT = "/app";
 /** Bun's official Linux x64 release, checked against its published SHA-256. */
 const BUN = {
-  url: "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64.zip",
-  sha256: "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913",
+  url: "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64.zip",
+  sha256: "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c",
 } as const;
 /** Derived by the SDK from the default endpoint; passed explicitly so no environment variable can move it. */
 const EXEC_ENDPOINT = "wss://ssh.railway.com:2226/ws/exec";
