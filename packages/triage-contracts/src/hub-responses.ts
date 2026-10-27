@@ -212,6 +212,11 @@ export const DeployedVersions = type({
   }).array(),
   /** Each host the hub rolled since it started: when the roll ended, and why it failed if it did; the listener before it keeps running. */
   rollouts: type({ source: type.enumerated(...REPO_SOURCES), at: "string", "error?": "string" }).array(),
+  /**
+   * The hub's local sidecar, across workspaces: deployments it runs (`active`) out of `cap`, and deployments that could
+   * have run there but run on a sandbox because it was full (`overflow`).
+   */
+  sidecar: type({ active: "number", cap: "number", overflow: "number" }),
 });
 export type DeployedVersions = typeof DeployedVersions.infer;
 

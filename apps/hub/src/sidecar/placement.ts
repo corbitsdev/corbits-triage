@@ -1,36 +1,75 @@
 import { schema, type DB } from "@intx/db";
 import type { SidecarProvisioner, SidecarProvisionerChooser } from "@intx/hub-sessions";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import type { DeployedVersions } from "@corbits/triage-contracts";
+import { and, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 
 export type CreatePlacementChooserOpts = {
   readonly db: DB["db"];
   readonly local: SidecarProvisioner;
   /** The active deployments the local sidecar advertises. */
   readonly maxDeployments: number;
+  readonly now?: () => number;
 };
 
-/** Allocations holding one of a provisioner's active slots, counted as stock counts a sidecar's room at placement. */
-export async function activeDeployments(db: DB["db"], provisionerId: string): Promise<number> {
-  const allocation = schema.sidecarAllocation;
+/**
+ * How long a local pick counts before its allocation row does. Stock writes that row right after the chooser answers,
+ * so once it lands the pick counts twice until this passes, which sends a deployment to a sandbox early, never late.
+ */
+const RESERVATION_MS = 30_000;
+
+async function settle(decision: Promise<unknown>): Promise<void> {
+  try {
+    await decision;
+  } catch {
+    // The caller observes the failure; the queue only needs ordering.
+  }
+}
+
+const allocation = schema.sidecarAllocation;
+
+/** An allocation holding an active slot, as stock counts a sidecar's room at placement. */
+function holdsSlot(): SQL | undefined {
+  return or(
+    inArray(allocation.status, ["provisioning", "allocated"]),
+    and(inArray(allocation.status, ["replacing", "releasing", "destroy_failed"]), eq(allocation.deploymentCleanupConfirmed, false)),
+  );
+}
+
+async function activeDeployments(db: DB["db"], provisionerId: string): Promise<number> {
   const [row] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(allocation)
-    .where(
-      and(
-        eq(allocation.provisionerId, provisionerId),
-        or(
-          inArray(allocation.status, ["provisioning", "allocated"]),
-          and(inArray(allocation.status, ["replacing", "releasing", "destroy_failed"]), eq(allocation.deploymentCleanupConfirmed, false)),
-        ),
-      ),
-    );
+    .where(and(eq(allocation.provisionerId, provisionerId), holdsSlot()));
   if (row === undefined) throw new Error("placement: count query returned no row");
   return row.count;
 }
 
-/** The local sidecar until it is full, then the first sandbox that matches. */
-export function createPlacementChooser({ db, local, maxDeployments }: CreatePlacementChooserOpts): SidecarProvisionerChooser {
-  return async function choosePlacement(candidates) {
+/** Deployments elsewhere whose workflow requires no capability, so the local sidecar was a candidate for them. */
+async function overflowDeployments(db: DB["db"], localId: string): Promise<number> {
+  const launchSpec = schema.workflowRunLaunchSpec;
+  const requires = sql`exists (select 1 from jsonb_array_elements(coalesce(${launchSpec.frozenApprovalBundle} -> 'projection' -> 'sidecarPlacement' -> 'capabilities', '[]'::jsonb)) as rule where rule ->> 'effect' = 'require')`;
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(allocation)
+    .innerJoin(launchSpec, eq(launchSpec.anchorRunId, allocation.anchorRunId))
+    .where(and(ne(allocation.provisionerId, localId), holdsSlot(), sql`not ${requires}`));
+  if (row === undefined) throw new Error("placement: count query returned no row");
+  return row.count;
+}
+
+export async function localSidecarUsage(db: DB["db"], local: SidecarProvisioner, cap: number): Promise<DeployedVersions["sidecar"]> {
+  return { active: await activeDeployments(db, local.id), cap, overflow: await overflowDeployments(db, local.id) };
+}
+
+/**
+ * The local sidecar until it is full, then the first sandbox that matches. Decisions run one at a time, and each local
+ * pick holds a slot until its allocation is counted, so placements side by side cannot both take the last one.
+ */
+export function createPlacementChooser({ db, local, maxDeployments, now = Date.now }: CreatePlacementChooserOpts): SidecarProvisionerChooser {
+  let reservations: number[] = [];
+  let queue: Promise<void> = Promise.resolve();
+
+  async function decide(candidates: readonly SidecarProvisioner[]): Promise<SidecarProvisioner> {
     const [first] = candidates;
     if (first === undefined) throw new Error("No matching sidecar provisioners are available");
     if (!candidates.includes(local)) return first;
@@ -38,6 +77,21 @@ export function createPlacementChooser({ db, local, maxDeployments }: CreatePlac
     // With nowhere else to go the deployment still goes local: stock retries a full sidecar's placement with backoff,
     // so it waits there until a deployment ends.
     if (sandbox === undefined) return local;
-    return (await activeDeployments(db, local.id)) >= maxDeployments ? sandbox : local;
+    const at = now();
+    reservations = reservations.filter((until) => until > at);
+    if ((await activeDeployments(db, local.id)) + reservations.length >= maxDeployments) return sandbox;
+    reservations.push(at + RESERVATION_MS);
+    return local;
+  }
+
+  async function after(previous: Promise<void>, candidates: readonly SidecarProvisioner[]): Promise<SidecarProvisioner> {
+    await previous;
+    return decide(candidates);
+  }
+
+  return function choosePlacement(candidates) {
+    const decision = after(queue, candidates);
+    queue = settle(decision);
+    return decision;
   };
 }

@@ -45,7 +45,7 @@ import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisione
 import { connectRailwaySidecars, sweepRailwaySidecarsOf, type RailwaySidecarProvisioner } from "./sidecar/railway.js";
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
-import { createPlacementChooser } from "./sidecar/placement.js";
+import { createPlacementChooser, localSidecarUsage } from "./sidecar/placement.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
@@ -857,6 +857,9 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
       return deploymentUp(composition.db, anchorRunId);
     },
     rollouts: workflowRollout.rollouts,
+    sidecar: function sidecarUsage() {
+      return localSidecarUsage(composition.db, local.provisioner, localSidecarCap);
+    },
   }),
   codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: codeReviewProbes }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, place: placeCodeReview, readCheckPack, readHead: pullRequests.head, send: sendToListener }),

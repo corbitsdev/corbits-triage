@@ -147,10 +147,23 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     is never logged: the manifest callback's carries GitHub's one-time code.
     A refused workflow deploy also logs `workflow_deploy_refused` with its
     code and reason.
-- **Sidecars**: one per live deployment, started by the hub's
-  `SidecarProvisioner`s. The local-process provisioner runs child processes
-  on the hub's machine, restores them on boot and declines a placement while
-  free memory is short. The Docker provisioner (`packages/provisioner-docker`),
+- **Sidecars**: started by the hub's `SidecarProvisioner`s. The local-process
+  provisioner runs one sidecar, a child process on the hub's machine, that
+  hosts every deployment placed there, each in a workflow child process of
+  its own: the first ensure starts it under the
+  identity Interchange offered, and every later ensure answers with that
+  sidecar, which stock deploys into over the same connection. It keeps a hold
+  per allocation beside one process manifest; a destroy releases the hold and
+  leaves the copy for the hub to undeploy, so the process lives as long as the
+  hub. On boot it respawns the sidecar once if any hold is still allocated or
+  the hub still waits for it to remove a copy.
+  It starts the sidecar only with 1 GiB free. The sidecar advertises
+  `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` (default 16) active deployments in its hello,
+  and stock refuses to place more there. The hub's placement chooser
+  (`apps/hub/src/sidecar/placement.ts`) counts the local sidecar's active
+  allocations and sends a deployment to the first matching sandbox
+  provisioner once the cap is reached; with no sandbox it stays local and
+  waits in stock's placement retry until a slot frees. The Docker provisioner (`packages/provisioner-docker`),
   registered after it when a daemon with the sidecar image answers, runs each
   sidecar in a container of its own. A published hub image carries the digest
   of the sidecar image CI pushed just before it, and the provisioner pulls that

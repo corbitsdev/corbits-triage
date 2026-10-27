@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { presetFor, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
+import { presetFor, TRIAGE_LISTENERS, type DeployedVersions, type RepoSource } from "@corbits/triage-contracts";
 import { useCheckPacks } from "../../lib/check-packs.ts";
 import { modelSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
@@ -31,6 +31,14 @@ function statusText({ sources, undeployed, model, triaging, total }: Status): st
   if (undeployed.length > 0) return `Triage is not running on ${undeployed.map(hostFullName).join(" or ")}: its workflow is not deployed.`;
   if (total === 0) return "Triage is running, but no repository is connected yet.";
   return `Triage is running on ${triaging} of ${counted(total, "repository", "repositories")}.`;
+}
+
+/** How full this server is, and where pull requests go once it is. */
+function sidecarText({ active, cap, overflow }: DeployedVersions["sidecar"]): string {
+  const runs = `This server runs ${active} of up to ${cap} Triage workflows at once`;
+  const elsewhere = overflow > 0 ? `; ${overflow} more ${overflow === 1 ? "runs" : "run"} in a sandbox because it is full` : "";
+  if (active >= cap && overflow === 0) return `${runs}: it is full, so new pull requests wait for one to finish.`;
+  return `${runs}${elsewhere}.`;
 }
 
 /** A preset by its name; your own provider by its endpoint and model. */
@@ -96,6 +104,11 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
               <span className="txt">{statusText(status)}</span>
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
+            {deployed.sidecar && (
+              <div className="sentence">
+                <span className="txt">{sidecarText(deployed.sidecar)}</span>
+              </div>
+            )}
             {sources.length > 0 && status.model && <TriageVersions deployed={deployed} sources={sources} />}
           </div>
         )}
