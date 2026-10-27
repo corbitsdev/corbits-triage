@@ -182,7 +182,7 @@ any other tenant or an unknown sender.
 
 - `repo-scan`: one run that reads a repository's most recently updated closed
   pull requests (200 by default) and measures what maintainers merged and
-  closed. Not deployed by the hub yet.
+  closed. The hub does not deploy it.
 - `triage-listener-github` and `triage-listener-bitbucket-datacenter`
   (`triageListener` in `@corbits/triage-manager`): a workspace's listener for
   one host. The hub mails it the pull requests it recorded that have no
@@ -336,8 +336,11 @@ any other tenant or an unknown sender.
 
 ## Triage pipeline
 
-Every run is the same steps; the repository's policy decides what each one
-does. Before facts, a pull request mail from the hub naming a GitHub head
+The manager's pass runs facts, rules, and, when the rules need no judge, the
+verdict. When they do, the judge it deploys runs the model checks and
+evaluate, which decides the verdict; the manager posts that verdict. The
+repository's policy decides what each step does. The steps below are those
+shared ones. Before facts, a pull request mail from the hub naming a GitHub head
 mirrors `unready:<owner>--<name>:<number>:<head sha>`, which takes the pass
 label off that head, so it never stands on a head not yet triaged.
 
@@ -516,7 +519,7 @@ GitHub show as "Not checked against the file".
 
 Beside the model steps, one step runs a tool and keeps what it says, as structured
 findings (source, rule, path, line, message, severity, fix when the tool gives
-one) for a fix workflow to take later; nothing is sent on yet. `lint` runs the
+one) and are not posted. `lint` runs the
 native oxlint binary every image that runs sidecars pins (never through bun or node) over the changed files with the repository's own
 `.oxlintrc.json`, nested configs off, and keeps hits on added lines. Only data
 keys pass (rules, categories, built-in plugins, env, globals, settings,

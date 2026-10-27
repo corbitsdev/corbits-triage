@@ -71,7 +71,7 @@ A rule answers one question about a pull request: pass, fail, or unconfirmed.
 The same pull request and policy give the same result. A rule is unconfirmed
 only while the host has not computed what it needs, such as mergeability or CI.
 
-Built in: Max files changed, Max lines changed, Linked issue (GitHub, Linear or
+Built in: Max files changed, Max lines changed, Max lines changed per file, Max additions, Max deletions (lockfiles left out of the GitHub counts; on Bitbucket Data Center the per-file rule always passes, and lockfile lines stay in the line, addition, and deletion totals), Linked issue (GitHub, Linear or
 either), Merge conflicts, CI green, Forbidden paths, Conventional commits
 (the title and each of the first 100 commits' first line start
 `type(scope)!: `, in any case; merges and reverts skipped), Hidden content
@@ -89,7 +89,12 @@ Regression risk (a changed file with four or more commits titled as a fix or rev
 default branch in the last 30 days, or a migration; labels by default), No duplicate
 (an open pull request opened earlier on the same base branch, not a draft, has
 the same latest commit, diff or commits, the commits alone where the host gives
-no diff to compare; unconfirmed past 100 of them). Two always run:
+no diff to compare; unconfirmed past 100 of them), Sensitive paths (named groups
+of globs, high or medium. Its default `onFail` is `ask`, so a high group asks a
+maintainer and adds no level label. A level label is written only when `onFail`
+is `label`.) and Risk (low,
+medium or high from sensitive, size, no-tests, hot-files and first-time; high
+asks a maintainer by default, medium labels `risk: medium`). Two always run:
 Draft, and Requested changes (a requested change fails and waits on
 the author, then on the reviewer once the author pushes or replies). The
 recommended forbidden paths are `vendor/**`, `node_modules/**` and
@@ -276,14 +281,17 @@ branch (`.corbits-triage.yaml` when there is no `.yml`), so policy changes are
 reviewed like code. It lists `rules`, `actions` and `labels`, and may
 `extends` another repository's policy file or a workspace policy. It may also
 hold the v4 keys `groups`, `code-review`, `security`, `deslop`, `pace`,
-`pauseLabel` and `decide`, which are checked but not acted on yet, except a
-step's `when.author` naming a group and, on GitHub, `pauseLabel`, whose label
-on a pull request stops new runs, and while the pull request cannot be read
-it is not triaged but retried, never run unpaused; through a long GitHub
-outage it waits out a bounded number of retries and is triaged on its next
-event; `decide` replaces `actions`, so a file holds one or the other, and a
-file that uses `extends` holds none of them. Any other key is refused, naming
-the key it was likely meant to be.
+`pauseLabel` and `decide`. Any other key is refused, naming
+the key it was likely meant to be. A step's `when.author` may name a group.
+On GitHub, a pull request carrying `pauseLabel` starts no run, and while the
+pull request cannot be read it is not triaged but retried, never run unpaused;
+through a long GitHub outage it waits out a bounded number of retries and is
+triaged on its next event. The `code-review` block runs a review whatever
+`provider` it names. `security`, `deslop` and `pace` are accepted and run nothing. `decide`
+is not carried out. A file that turns a block on, or writes its own `decide`,
+holds approve and merge for a person in the Inbox. `decide` replaces `actions`,
+so a file holds one or the other, and a file that uses `extends` holds none of
+these keys.
 
 Each rule is one sentence (`text`), how it is checked (`check`: a built-in
 rule's id, `model` for a yes/no question about the whole pull request, or
@@ -303,14 +311,16 @@ a negated class is `[^a]`, and `[!a]` or an invalid glob refuses the policy),
 and the preset's fallback patterns ignore test files. `enabled: false` keeps it
 written down but off.
 `onFail` says what a failing rule does: `fail` (the default, except `label`
-for the size rules, which features and refactors cross) fails the pull
+for the size rules and regression risk, and `ask` for sensitive paths, risk
+and the judged duplicate rule) fails the pull
 request for its author, `ask` makes it Unsure and lists the rule for a
 maintainer instead of the author, and `label` makes the rule label the pull
 request instead of deciding its verdict. A top-level `onFail` is the default
 for the file's rules. With `label`, when the rule fails or stays unsure, the
 verdict is unchanged, the comment notes it, and an Add labels action adds its label (`size: large`,
 `docs: check`, `<id>: check`, or the rule's own `label`), which stays until a
-person removes it. A label starting `Triage:` or `rule: `, or a verdict label,
+person removes it, except the level labels of sensitive paths and risk, which
+Triage takes back when the level changes. A label starting `Triage:` or `rule: `, or a verdict label,
 is refused. On Bitbucket Data Center it is only noted.
 
 ```yaml
@@ -367,7 +377,7 @@ without `rules` is read in; see
 
 A repository without the file offers **Start a policy file**: a pull request
 adding the starter rules (at most 30 files and 3,000 lines changed, no merge
-conflicts, CI green; no actions). Rules saved in the portal by earlier builds
+conflicts, CI green, sensitive paths and risk; no actions). Rules saved in the portal by earlier builds
 keep running until they move into the file through a pull request the portal
 opens; [the manual](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#moving-saved-rules-into-the-file)
 walks through it. Wording, reasons and evidence never count as a difference
@@ -425,10 +435,8 @@ default branch makes the repository's other open pull requests due again, each
 at most once per 15 minutes. A re-check reuses the decision model's earlier
 answers for anything unchanged.
 
-## Not finished
+## Limits
 
-- The repository scan measures a repository's closed pull requests but does
-  not propose a policy yet, and the hub does not run it.
+- The hub does not run the repository scan, which measures closed pull requests.
 - The Railway Sandboxes provisioner uses the operator's Railway token only;
   a workspace cannot bring its own.
-- Code review findings are not sent to Bitbucket Data Center pull requests.

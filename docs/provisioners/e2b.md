@@ -24,7 +24,7 @@
 
 ## Lifetime
 
-A sandbox times out an hour after it was created or last extended. Every 10 minutes, and at boot, the hub extends the sandboxes an allocation or probe still holds and kills the rest, so one a hub crash left behind is gone within the hour. Extending never runs a sandbox past [E2B's limit on continuous runtime](https://docs.e2b.dev/sandbox): one hour on the Hobby plan, 24 hours on Pro. A review ends well inside that. Code review's listener, which waits for new commits, keeps its sandbox for as long as code review is on, so E2B ends that sandbox at the limit: after an hour on Hobby, a day on Pro. Moving the listener onto the Triage server is planned. Sandboxes count against your E2B team's concurrency limit; when E2B refuses one for that, the hub retries it with backoff like a full Docker host.
+A sandbox times out an hour after it was created or last extended. Every 10 minutes, and at boot, the hub extends the sandboxes an allocation or probe still holds and kills the rest, so one a hub crash left behind is gone within the hour. Extending never runs a sandbox past [E2B's limit on continuous runtime](https://docs.e2b.dev/sandbox): one hour on the Hobby plan, 24 hours on Pro. A review runs alone on a sidecar the manager deploys for that review, reports its result, and stops, well inside that limit. Sandboxes count against your E2B team's concurrency limit; when E2B refuses one for that, the hub retries it with backoff like a full Docker host.
 
 ## What is isolated
 
