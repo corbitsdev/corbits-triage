@@ -4,7 +4,7 @@
 
 For each sidecar the provisioner creates one sandbox from the sidecar template, then starts the stock sidecar in it as a background command. The sidecar dials the hub's public `wss://` address; the sandbox has outbound internet and no access to the environment's private network.
 
-Two limits for now:
+Two limits:
 
 - **One Railway token, the operator's.** Every workspace's sidecars run on the token set on the hub; a workspace cannot bring its own Railway account.
 - **It declares only `isolation:workload`.** It does not declare `isolation:microvm` or `network:outbound`, so a rule requiring either never places a sidecar here.
@@ -72,7 +72,7 @@ Pointing the hub at another environment or database changes the provisioner's bi
 
 ## Cost and limits
 
-Railway bills a sandbox per second for the memory and CPU it uses, until it is destroyed. A code review deployment keeps one sidecar running per workspace and host. Railway caps the sandboxes running in one environment by plan. When Railway is rate limiting or failing (HTTP 429 or 5xx), the hub tries the sidecar again later. Any other refusal, such as for the token, the plan or the request, is answered `railway_refused` with Railway's message and is not retried. Railway does not document how it words a refusal at the sandbox limit, so until a live run shows it, that refusal is treated like any other.
+Railway bills a sandbox per second for the memory and CPU it uses, until it is destroyed. A review runs alone on a sidecar the manager deploys for that review, reports its result, and stops. Railway caps the sandboxes running in one environment by plan. When Railway is rate limiting or failing (HTTP 429 or 5xx), the hub tries the sidecar again later. Any other refusal, such as for the token, the plan or the request, is answered `railway_refused` with Railway's message and is not retried. Railway does not document how it words a refusal at the sandbox limit, so that refusal is treated like any other.
 
 ## Not registered
 
