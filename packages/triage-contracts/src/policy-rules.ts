@@ -37,6 +37,8 @@ const RuleSchema = type({ ...RULE_BASE, check: type.enumerated(...SIZE_RULE_IDS)
   .or({ ...OWN_RULE, check: "'code-patterns'", "presets?": type.enumerated(...Object.keys(PATTERN_PRESETS)).array().atLeastLength(1), "patterns?": PatternRuleSchema.array().atLeastLength(1) })
   .or({ ...OWN_RULE, check: "'text'", fields: type.enumerated(...TEXT_FIELDS).array().atLeastLength(1), failWhen: type.enumerated(...TEXT_MATCHES), phrases: Lines });
 
+export const policyRuleSchema = RuleSchema;
+
 type PolicyRule = typeof RuleSchema.infer;
 type OnFailWord = typeof OnFailWord.infer;
 

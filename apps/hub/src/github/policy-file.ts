@@ -9,12 +9,12 @@ import { type } from "arktype";
 import { schema } from "@intx/db";
 import { errorText } from "@corbits/common";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
-import { readRepoFile, type GithubFetch, type RepoFileRead } from "@corbits/github-reads";
+import { readRepoFile, readRepoFileResponse, type GithubFetch, type RepoFileRead } from "@corbits/github-reads";
 import { defaultBranch, readRepo } from "../bitbucket-datacenter/client.js";
 import * as bitbucketPull from "../bitbucket-datacenter/policy-pull.js";
 import { splitName } from "../bitbucket-datacenter/records.js";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { checkPolicyFile, exportPolicyFile, POLICY_FILE_PATH, notAFileReason, POLICY_FILE_PATHS, policyFileReason, REPO_SOURCES, starterPack, type PolicyFileStatus, type PolicyUpgrades, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
+import { checkPolicyFile, exportPolicyFile, fileRuleId, patchPolicyFile, POLICY_FILE_PATH, PolicyPatchChanges, notAFileReason, POLICY_FILE_PATHS, policyFileReason, REPO_SOURCES, starterPack, type PolicyFileStatus, type PolicyPatchChange, type PolicyUpgrades, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
 import type { PolicySettled } from "./check-pack-store.js";
 import { forInstallation, type MemberOpenPulls, type OpenPullsRead } from "./open-pulls.js";
 import * as github from "./policy-pull.js";
@@ -27,6 +27,7 @@ import type { Member } from "../integrations/app.js";
 
 export const PolicyFileBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, "source?": type.enumerated(...REPO_SOURCES) });
 export const PolicyExportBody = PolicyFileBody.and({ "text?": "string" });
+export const PolicyPatchBody = PolicyFileBody.and({ changes: PolicyPatchChanges, "preview?": "boolean" });
 
 const HOST_NAMES: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket" };
 
@@ -39,6 +40,30 @@ function pullBody(state: "upgrade" | "differs", path: string, unexpressed: reado
     : [`Makes \`${path}\` match the rules saved in Corbits Triage, which apply until the two agree.`];
   const left = unexpressed.length ? ["", "A policy file can't hold everything the saved rules do:", ...unexpressed.map((line) => `- ${line}`)] : [];
   return [...lead, "", "Once merged, triage reads its rules from this file, and you change them by editing it.", ...left].join("\n");
+}
+
+function optionValue(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function changeSentence(change: PolicyPatchChange): string {
+  switch (change.kind) {
+    case "rule":
+      return `${change.enabled ? "Turns on" : "Turns off"} \`${change.id}\`.`;
+    case "rule-options":
+      return `Sets ${Object.entries(change.options).map(([key, value]) => `\`${change.id}\` ${key} to ${optionValue(value)}`).join(", ")}.`;
+    case "add-rule":
+      return `Adds the rule \`${fileRuleId(change.rule)}\`.`;
+    case "remove-rule":
+      return `Removes the rule \`${change.id}\`.`;
+    case "code-review":
+      return `${change.on ? "Turns on" : "Turns off"} code review.`;
+  }
+}
+
+/** What the pull request changes, in the words a maintainer reviewing it reads. */
+function patchPullBody(path: string, changes: readonly PolicyPatchChange[]): string {
+  return [`Updates the rules in \`${path}\`.`, "", ...changes.map((change) => `- ${changeSentence(change)}`), "", "Once merged, triage reads its rules from this file, and you change them by editing it."].join("\n");
 }
 
 const ADD_TITLE = `chore: add a Corbits Triage policy in ${POLICY_FILE_PATH}`;
@@ -295,6 +320,67 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     }
   }
 
+  /** The file on an open policy pull request's branch, else on the default branch. The branch wins so edits there survive. */
+  async function readOnBranch(tenantId: string, record: RepoRecord, path: string, branch: string): Promise<RepoFileRead | undefined> {
+    if (sourceOf(record) !== "bitbucket-datacenter") {
+      const gh = await repoGithub(tenantId, record);
+      const url = `/repos/${record.name}/contents/${path}?ref=${encodeURIComponent(branch)}`;
+      return readRepoFileResponse(await gh(url, { headers: { accept: "application/vnd.github+json" } }), url);
+    }
+    return bitbucket.readRepoFile(await repoBitbucket(tenantId), record.name, path, branch);
+  }
+
+  async function firstOnBranch(tenantId: string, record: RepoRecord): Promise<FoundFile | undefined> {
+    for (const path of POLICY_FILE_PATHS) {
+      const read = await readOnBranch(tenantId, record, path, github.POLICY_BRANCH);
+      if (read) return { path, read };
+    }
+    return undefined;
+  }
+
+  function textOfFound(found: FoundFile): string | Response {
+    if (found.read.kind === "not-a-file") return failure(422, "policy_file_invalid", notAFileReason(found.path));
+    if (found.read.text === null) return failure(422, "policy_file_invalid", `${found.path} is too large or uses aliases.`);
+    return found.read.text;
+  }
+
+  async function policySource(tenantId: string, record: RepoRecord): Promise<{ path: string; text: string } | Response> {
+    const pull = await openPull(tenantId, record);
+    const found = (pull ? await firstOnBranch(tenantId, record) : undefined) ?? await findFile(tenantId, record);
+    if (!found) return failure(409, "policy_file_absent", `${record.name} has no policy file. Open one with the export route before changing it.`);
+    const text = textOfFound(found);
+    if (text instanceof Response) return text;
+    return { path: found.path, text };
+  }
+
+  /**
+   * Patches the existing policy file in place and opens or updates the one policy pull request. `preview` returns the
+   * file before and after and writes nothing. Refused when there is no file, or the batch or the file is refused.
+   */
+  async function patchRoute({ repo, source, changes, preview }: typeof PolicyPatchBody.infer, member: Member): Promise<Response> {
+    const record = await grantedRecord(member, repo, source, "use");
+    if (record instanceof Response) return record;
+    try {
+      const found = await policySource(member.tenantId, record);
+      if (found instanceof Response) return found;
+      const patched = patchPolicyFile(found.text, record.name, changes);
+      if (!patched.ok) return failure(422, "policy_file_invalid", patched.message);
+      if (preview === true) return Response.json({ before: found.text, after: patched.text });
+      const response = await opened(member.tenantId, record, {
+        path: found.path,
+        text: patched.text,
+        title: `chore: update the Corbits Triage rules in ${found.path}`,
+        body: patchPullBody(found.path, changes),
+      });
+      const body = await response.json() as Record<string, unknown>;
+      return Response.json({ ...body, state: "open" }, { status: response.status });
+    } catch (err) {
+      deps.log({ level: "warn", msg: "policy_file_patch_failed", tenantId: member.tenantId, repo, error: errorText(err) });
+      const what = `open the pull request updating ${repo}'s policy file`;
+      return sourceOf(record) === "github" ? githubFailed(what, err) : bitbucketFailed(what, err);
+    }
+  }
+
   async function upgradeOf(member: Member, record: RepoRecord, listed: () => Promise<OpenPullsRead | Response>): Promise<PolicyUpgradeRow | undefined> {
     if (await sourceCredentialGrant(deps, member.principalId, member.tenantId, record, "read")) return undefined;
     const row = { repo: record.name, source: sourceOf(record) };
@@ -326,5 +412,5 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return Response.json({ repos: rows.filter((row) => row !== undefined) });
   }
 
-  return { current, onPush, fileRoute, exportRoute, upgradesRoute };
+  return { current, onPush, fileRoute, exportRoute, patchRoute, upgradesRoute };
 }

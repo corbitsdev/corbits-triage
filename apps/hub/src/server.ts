@@ -691,6 +691,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   policyRead: createGithubPolicyRead({ readCheckPack }),
   policyFileRead: policyFile.fileRoute,
   policyFileExport: policyFile.exportRoute,
+  policyFilePatch: policyFile.patchRoute,
   policyUpgrades: policyFile.upgradesRoute,
   backlog: createGithubBacklog({
     ...credentialDeps,

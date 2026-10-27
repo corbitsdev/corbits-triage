@@ -9,7 +9,7 @@ import type { DB } from "@intx/db";
 import { getLogger } from "@intx/log";
 import { honoLogger, type HonoContext } from "@intx/log/hono";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyPatchResponse, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { CODE_REVIEW_PATH, CodeReviewQueued, CodeReviewRunBody } from "../code-review.js";
@@ -25,7 +25,7 @@ import { failure } from "../github/portal-credential.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
-import { PolicyExportBody, PolicyFileBody } from "../github/policy-file.js";
+import { PolicyExportBody, PolicyFileBody, PolicyPatchBody } from "../github/policy-file.js";
 import { PolicyQuery } from "../github/policy-read.js";
 import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
@@ -75,6 +75,7 @@ export type IntegrationHandlers = {
   policyRead: BodyHandler<typeof PolicyQuery.infer>;
   policyFileRead: BodyHandler<typeof PolicyFileBody.infer>;
   policyFileExport: BodyHandler<typeof PolicyExportBody.infer>;
+  policyFilePatch: BodyHandler<typeof PolicyPatchBody.infer>;
   policyUpgrades: (member: Member) => Promise<Response>;
   backlog: BodyHandler<typeof BacklogBody.infer>;
   openPulls: (member: Member) => Promise<Response>;
@@ -471,6 +472,31 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     body(PolicyExportBody),
     function policyFileExport(c) {
       return handlers.policyFileExport(c.req.valid("json"), memberOf(c));
+    },
+  );
+
+  app.post(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/patch`,
+    describeRoute({
+      summary: "Patch a repository's policy file and open one pull request",
+      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository that already has a policy file. Reads `.corbits-triage.yml` or `.yaml` from the open `corbits-triage/policy` pull request when one exists, otherwise from the default branch, and changes only the pairs named in `changes`: turn a rule on or off, set a rule's options, add or remove a custom rule, or turn the `code-review` block on or off. Comments and untouched pairs stay. One pull request is opened or updated for the whole batch; its `state` is `open`. With `preview: true`, returns the file before and after the patch and writes nothing. There is no diff library in this repo, so the preview is that pair of texts, not a computed diff. Refused when the repository has no policy file (the export route creates one), or when the file or the batch is refused, including a file with no `rules` list, which is the older shape and needs converting first. `source` is the repository's host; without it, a name connected on both hosts is refused.",
+      tags: TAGS,
+      responses: {
+        200: json("The patched file, before and after, or the pull request opened or brought up to date", PolicyPatchResponse),
+        ...invalid,
+        ...failures,
+        409: json("`policy_file_absent`: the repository has no policy file. `repo_not_connected`: it is not connected, or the host was not named and both hosts hold the name", Failure),
+        413: json("The body is too large", Failure),
+        422: json("`policy_file_invalid`: the file is unreadable or refused, or the batch cannot be applied; `message` names the problem", Failure),
+        502: json("The host refused", Failure),
+        ...githubLimited,
+      },
+    }),
+    member,
+    policyBodyLimit,
+    body(PolicyPatchBody),
+    function policyFilePatch(c) {
+      return handlers.policyFilePatch(c.req.valid("json"), memberOf(c));
     },
   );
 

@@ -6,10 +6,10 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { createArtifact, findArtifactByTitle, runArtifactMigrations } from "@corbits/artifacts";
-import { checkPackName, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, starterPack, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { checkPackName, checkPolicyFile, emptyPack, exportPolicyFile, policyDifferences, readPolicyFile, starterPack, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { PROVIDER, TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
 import { fileRefusal, settlePolicy } from "./check-pack-store.js";
-import { createPolicyFile, listedPolicyPull } from "./policy-file.js";
+import { createPolicyFile, listedPolicyPull, PolicyPatchBody } from "./policy-file.js";
 import { POLICY_BRANCH } from "./policy-pull.js";
 import { createMemberOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createRepoActivity } from "./repo-activity.js";
@@ -30,6 +30,7 @@ const EXTENDS = "acme/extends";
 const CHOSEN = "acme/chosen";
 const CHOSEN_SAVED = "acme/chosen-saved";
 const CHOSEN_RACED = "acme/chosen-raced";
+const PATCHED = "acme/patched";
 const BOTH = "acme/both";
 const UNHEARD = "acme/unheard";
 const BITBUCKET_UNHEARD = "PROJ/unheard";
@@ -155,7 +156,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_SAVED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
+  const repos = [...[FROM_FILE, SAVED, EXPORTED, STARTER, PATCHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: OFF, connected: true, enabled: false, installationId: 1 }, { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_SAVED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -220,6 +221,11 @@ async function upgradeOf(repo: string): Promise<Record<string, unknown> | undefi
 
 async function exportOf(repo: string, text?: string): Promise<Record<string, unknown>> {
   const res = await policyFile.exportRoute({ repo, ...(text !== undefined && { text }) }, MEMBER);
+  return { http: res.status, ...(await res.json() as Record<string, unknown>) };
+}
+
+async function patchOf(body: typeof PolicyPatchBody.infer): Promise<Record<string, unknown>> {
+  const res = await policyFile.patchRoute(body, MEMBER);
   return { http: res.status, ...(await res.json() as Record<string, unknown>) };
 }
 
@@ -487,4 +493,85 @@ test("a Bitbucket policy pull request carries no head, so it is merged on Bitbuc
   expect(listedPolicyPull(listing("bitbucket-datacenter"), "PROJ/widgets", "bitbucket-datacenter")).toEqual({ url: pr.url, number: 4 });
   expect(listedPolicyPull(listing("github"), "PROJ/widgets", "github")).toEqual({ url: pr.url, number: 4, headSha: "bb-head" });
   expect(listedPolicyPull(listing("github"), "PROJ/widgets", "bitbucket-datacenter")).toBeUndefined();
+});
+
+const PATCH_FILE = `# Corbits Triage policy.
+rules:
+  # leave ci-green alone
+  - check: ci-green
+    text: CI passes.
+    reason: Required by branch protection.
+    evidence: [maintainer-stated]
+  - check: focused
+    text: One focused change.
+    reason: Mixed changes were split.
+    evidence: [maintainer-stated]
+  - check: max-lines-changed
+    text: Flag pull requests over 400 lines changed.
+    reason: Review load.
+    evidence: [maintainer-stated]
+    max: 400
+pauseLabel: hold
+code-review:
+  on: false
+  provider: anthropic
+`;
+
+const PATCH_CHANGES = [
+  { kind: "rule" as const, id: "focused", enabled: false },
+  { kind: "rule-options" as const, id: "max-lines-changed", options: { max: 200 } },
+  { kind: "rule" as const, id: "docs", enabled: true },
+  { kind: "code-review" as const, on: true },
+];
+
+test("PostgreSQL: a batch of policy edits opens one pull request, a preview writes nothing, and the same batch again makes no new commit", async () => {
+  const absent = await patchOf({ repo: PATCHED, changes: PATCH_CHANGES });
+  expect(absent).toMatchObject({ http: 409, error: { code: "policy_file_absent" } });
+  expect(pulls.filter((row) => row.repo === PATCHED)).toEqual([]);
+
+  onMain(PATCHED, YML, PATCH_FILE, "patch-main");
+  const refused = await patchOf({ repo: PATCHED, changes: [{ kind: "rule", id: "made-up", enabled: true }] });
+  expect(refused).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: "Unknown rule made-up." } });
+  expect(files.has(`${PATCHED}@${POLICY_BRANCH}/${YML}`)).toBe(false);
+  expect(pulls.filter((row) => row.repo === PATCHED)).toEqual([]);
+
+  const preview = await patchOf({ repo: PATCHED, changes: PATCH_CHANGES, preview: true });
+  expect(preview.http).toBe(200);
+  expect(preview.before).toBe(PATCH_FILE);
+  expect(preview.after).toEqual(expect.any(String));
+  expect(String(preview.after)).toContain("# leave ci-green alone");
+  expect(String(preview.after)).toContain("text: CI passes.");
+  expect(String(preview.after)).not.toBe(PATCH_FILE);
+  expect(files.get(`${PATCHED}@main/${YML}`)?.text).toBe(PATCH_FILE);
+  expect(files.has(`${PATCHED}@${POLICY_BRANCH}/${YML}`)).toBe(false);
+  expect(pulls.filter((row) => row.repo === PATCHED)).toEqual([]);
+
+  const number = pulls.length + 1;
+  const opened = await patchOf({ repo: PATCHED, changes: PATCH_CHANGES });
+  expect(opened).toEqual({ http: 200, status: "opened", state: "open", url: `https://github.com/${PATCHED}/pull/${number}`, number, headSha: "head-sha" });
+  expect(pulls.filter((row) => row.repo === PATCHED)).toMatchObject([{ number, head: POLICY_BRANCH, base: "main", title: `chore: update the Corbits Triage rules in ${YML}` }]);
+  const written = files.get(`${PATCHED}@${POLICY_BRANCH}/${YML}`)!;
+  expect(written.text).toContain("# leave ci-green alone");
+  expect(written.text).toContain("text: CI passes.");
+  expect(written.text).toContain("pauseLabel: hold");
+  expect(written.text).toContain("provider: anthropic");
+  expect(written.text).toContain("max: 200");
+  expect(written.text).toContain("Check docs are updated when behavior changes.");
+  expect(checkPolicyFile(written.text!, PATCHED)).toMatchObject({ ok: true });
+
+  const sha = written.sha;
+  const again = await patchOf({ repo: PATCHED, changes: PATCH_CHANGES });
+  expect(again).toMatchObject({ http: 200, status: "opened", state: "open", number, headSha: "patched-head" });
+  expect(pulls.filter((row) => row.repo === PATCHED)).toHaveLength(1);
+  expect(files.get(`${PATCHED}@${POLICY_BRANCH}/${YML}`)?.sha).toBe(sha);
+
+  // An edit made on the open pull request's branch is what the next patch reads, so it is not overwritten from the default branch.
+  const branchKey = `${PATCHED}@${POLICY_BRANCH}/${YML}`;
+  const edited = files.get(branchKey)!.text!.replace("# leave ci-green alone", "# leave ci-green alone\n  # edited on the pull request");
+  files.set(branchKey, { sha, text: edited });
+  const follow = await patchOf({ repo: PATCHED, changes: [{ kind: "rule", id: "ci-green", enabled: false }] });
+  expect(follow).toMatchObject({ http: 200, number, state: "open" });
+  expect(files.get(branchKey)?.text).toContain("# edited on the pull request");
+  expect(files.get(branchKey)?.text).toContain("# leave ci-green alone");
+  expect(pulls.filter((row) => row.repo === PATCHED)).toHaveLength(1);
 });
