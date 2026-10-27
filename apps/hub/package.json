@@ -22,7 +22,7 @@
     "@corbits/provisioner-railway": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@corbits/triage-workflows": "workspace:*",
-    "@corbits/webhooks": "0.3.1",
+    "@corbits/webhooks": "0.3.2",
     "@intx/authz": "workspace:*",
     "@intx/crypto": "0.5.0",
     "@intx/db": "workspace:*",
