@@ -75,7 +75,8 @@ test("persisted stats render from the cache after a reload", () => {
 
 test("the outcomes show the triaged medians with their counts, and each missing state as one sentence", () => {
   const card = (outcomes: TriageStats["outcomes"], source: RepoSource = "github") => renderToStaticMarkup(createElement(OutcomesCard, { outcomes, source }));
-  const measured = STATS.outcomes!;
+  const measured = STATS.outcomes;
+  if (measured === null || measured.state !== "measured") throw new Error("fixture outcomes are measured");
   const html = card(measured);
   expect(html).toContain("3 PRs, 2 closed");
   expect(html).toContain("1d 1h <span>P75 2d</span>");

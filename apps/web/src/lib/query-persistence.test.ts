@@ -31,7 +31,7 @@ test("a failed session check keeps the cache", async () => {
 
   await cache.update(sessionState(true, null, "HTTP 502"));
 
-  expect(queryClient.getQueryData(OPEN_KEY)).toEqual(OPEN);
+  expect(queryClient.getQueryData<typeof OPEN>(OPEN_KEY)).toEqual(OPEN);
   expect(storage.items.get("corbits.queries")).toContain("A's pull request");
 });
 
@@ -70,7 +70,7 @@ test("the same user's stored cache is restored", async () => {
   const again = new QueryClient();
   await createUserCache(again, storage).update(sessionState(true, "a", ""));
 
-  expect(again.getQueryData(OPEN_KEY)).toEqual(OPEN);
+  expect(again.getQueryData<typeof OPEN>(OPEN_KEY)).toEqual(OPEN);
 });
 
 async function signInOptionsAfterSignOut(queryClient: QueryClient, cache: ReturnType<typeof createUserCache>) {

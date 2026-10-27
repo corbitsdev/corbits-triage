@@ -106,7 +106,7 @@ describe("check rows", () => {
 
 describe("needs-human queue sources", () => {
   test("human-gated PRs remain projected while an approval is pending", () => {
-    const approvals = [approval("mirror", false)];
+    const approvals = [approval("mirror")];
     expect(queue(approvals).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
   });
 });

@@ -55,7 +55,8 @@ async function serveGit(request: Request): Promise<Response> {
     else headers.set(name, value);
   }
   const body = output.subarray(split + 4);
-  return new Response(url.searchParams.get("service") === "git-receive-pack" ? withoutSideBand(body) : body, { status, headers });
+  const payload = url.searchParams.get("service") === "git-receive-pack" ? withoutSideBand(body) : body;
+  return new Response(new Uint8Array(payload), { status, headers });
 }
 
 // Like the hub, receive-pack offers no side-band, so a push is answered with bare report-status lines.
@@ -96,6 +97,8 @@ function createRepo(name: string): void {
 
 const OFFERINGS = { decision: ["mof_decision", "corbits-system-one"], "claude-opus-5-5": ["mof_opus", "anthropic"], "claude-haiku-5-5": ["mof_haiku", "anthropic"] };
 
+type GrantBody = { principalId: string; resource: string; action: string; effect: string; origin: string };
+
 function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [], offerings: Record<string, string[]> = OFFERINGS) {
   /** Who the hub's session is signed in as, which creates the assets. */
   const session = { principalId: PUBLISHER.principalId };
@@ -103,7 +106,7 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
   const requests: string[] = [];
   const tokens: unknown[] = [];
   const refused = new Set<string>();
-  const grants: Array<{ resource: string }> = [];
+  const grants: GrantBody[] = [];
   /** How many grant requests fail before one succeeds. */
   const failing = { grants: 0 };
   async function json<T>(method: string, route: string, body?: unknown): Promise<T> {
@@ -128,7 +131,7 @@ function fakeHub(seeded: Array<{ name: string; creatorPrincipalId: string }> = [
         failing.grants -= 1;
         throw new Error("The hub answered with an error (HTTP 500).");
       }
-      grants.push(body as { resource: string });
+      grants.push(body as GrantBody);
       return body as T;
     }
     if (method === "POST" && route === `/api/tenants/t/principals/${session.principalId}/evaluate`) {

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Outcome } from "./held-actions.ts";
 import type { GithubPullDetail, PrGithubWriteInput, PrItem } from "./hub-api.ts";
-import { canRun, paneActions, paneFacts, paneWrite, replyDraft, type PaneGate } from "./inbox-pane.ts";
+import { canRun, paneActions, paneFacts, paneWrite, replyDraft, type PaneGate, type WriteKind } from "./inbox-pane.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
-  return {
+  const base: PrItem = {
     key: "acme/widgets#1",
     repo: "acme/widgets",
     number: 1,
@@ -41,11 +41,16 @@ function item(overrides: Partial<PrItem>): PrItem {
     reviewAnswered: false,
     posted: false,
     running: false,
+    waitingForCi: false,
+    waitingHeadSha: null,
     failure: null,
     actions: [],
+    automatic: [],
     href: "/prs/acme/widgets/1",
-    ...overrides,
+    source: "github",
+    url: null,
   };
+  return Object.assign(base, overrides);
 }
 
 function gate(overrides: Partial<PrItem>, detail?: GithubPullDetail, flags: Partial<Pick<PaneGate, "readOnly" | "busy">> = {}): PaneGate {
@@ -54,27 +59,28 @@ function gate(overrides: Partial<PrItem>, detail?: GithubPullDetail, flags: Part
 }
 
 function detail(pr: Partial<GithubPullDetail["pr"]>): GithubPullDetail {
+  const base: GithubPullDetail["pr"] = {
+    number: 1,
+    title: "Live title",
+    body: null,
+    shownBody: "",
+    state: "open",
+    merged: false,
+    draft: false,
+    author: "grace",
+    sha: "abc",
+    base: "main",
+    mergeable: true,
+    requestedReviewers: 0,
+    additions: 1,
+    deletions: 1,
+    changedFiles: 1,
+    labels: [],
+    createdAt: "2026-09-30T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  };
   return {
-    pr: {
-      number: 1,
-      title: "Live title",
-      body: null,
-      state: "open",
-      merged: false,
-      draft: false,
-      author: "grace",
-      sha: "abc",
-      base: "main",
-      mergeable: true,
-      requestedReviewers: 0,
-      additions: 1,
-      deletions: 1,
-      changedFiles: 1,
-      labels: [],
-      createdAt: "2026-09-30T00:00:00.000Z",
-      updatedAt: "2026-10-01T00:00:00.000Z",
-      ...pr,
-    },
+    pr: Object.assign(base, pr),
     files: [],
     commits: [],
     comments: [],
@@ -165,7 +171,7 @@ describe("canRun", () => {
 
 describe("paneWrite", () => {
   type Options = { commentId?: number | null; labelsFail?: string; replyFail?: string };
-  async function record(kind: "reply" | "close", overrides: Partial<PrItem>, text: string, options: Options = {}): Promise<{ calls: unknown[]; outcome: Outcome }> {
+  async function record(kind: WriteKind, overrides: Partial<PrItem>, text: string, options: Options = {}): Promise<{ calls: unknown[]; outcome: Outcome }> {
     const calls: unknown[] = [];
     async function write(input: PrGithubWriteInput) {
       calls.push(input);

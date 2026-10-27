@@ -13,8 +13,8 @@
     "jsx": "react-jsx",
     "strict": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["vite/client", "node"]
+    "types": ["vite/client", "node", "bun"]
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/lib/dom-preload.ts"]
+  "exclude": ["src/lib/dom-preload.ts"]
 }
