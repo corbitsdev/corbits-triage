@@ -116,6 +116,7 @@ const DoneInput = type({
   "waiting?": { output: { waiting: "boolean" } },
   "rules?": { output: { items: type({ facts: "Record<string, unknown>", "det?": "unknown" }).array() } },
   "evaluateRules?": Output,
+  "reviewScope?": { output: { "skipped?": "string" } },
   "mirrorRules?": Output,
   "executeRules?": Output,
   "reviewMailed?": { output: { "reviewer?": Reviewer } },
@@ -129,15 +130,17 @@ const RuledReasons = type({ "+": "delete", "reason?": "string", "findings?": typ
 
 /**
  * What the pass did on its head, for the hub to record: held it for CI, or posted the verdict its mirror ran on, with
- * only the facts and reasons the verdict keeps, never the diff.
+ * why the policy left code review out, and only the facts and reasons the verdict keeps, never the diff.
  */
-function doneReport({ take, waiting, rules, evaluateRules, mirrorRules, executeRules }: DoneInput): Record<string, unknown> | undefined {
+function doneReport({ take, waiting, rules, evaluateRules, reviewScope, mirrorRules, executeRules }: DoneInput): Record<string, unknown> | undefined {
   const { head } = take.output;
   if (head === undefined) return undefined;
   if (waiting?.output.waiting) return { head, waiting: true };
   if (!rules || !evaluateRules || !mirrorRules) return undefined;
   const items = rules.output.items.map(({ facts, det }) => ({ facts: { ...VerdictFacts.assert(facts), repo: facts["repo"], number: facts["number"] }, ...(det !== undefined && { det: RuledReasons.assert(det) }) }));
-  return { head, verdict: evaluateRules.output, mirror: mirrorRules.output, ...(executeRules && { executed: executeRules.output }), rules: { items } };
+  const skipped = reviewScope?.output.skipped;
+  const verdict = skipped === undefined ? evaluateRules.output : { ...evaluateRules.output, codeReviewSkipped: skipped };
+  return { head, verdict, mirror: mirrorRules.output, ...(executeRules && { executed: executeRules.output }), rules: { items } };
 }
 
 /** This pass's report, or a passed deadline, recorded on the reviewer it belongs to. */

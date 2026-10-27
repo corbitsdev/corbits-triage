@@ -1,7 +1,8 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CodeReviewOutput, repoSourceOf, RULE_GATES, rulesGate } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, authorGroupsOf, checkName, CodeReviewOutput, EVERYONE, readCheckPack, repoSourceOf, RULE_GATES, rulesGate, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import { call, hostWrite, toolName } from "@corbits/triage-workflows/logic/host";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import { Mailed, type MailInput } from "../mail.js";
@@ -12,8 +13,86 @@ import { Reviewer, TakeOutput } from "./manager.js";
 /** How long the manager waits for a code review it deployed, from its deploy to its report. */
 export const REVIEW_DEADLINE_MS = 60 * 60_000;
 
-const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "again?": "string > 0" });
-const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, evaluateRules: { output: "unknown" } });
+const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "for?": "string[]", "triage?": "string[]", "paths?": "string[]", "again?": "string > 0" });
+type CodeReviewPart = typeof CodeReviewPart.infer;
+const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, evaluateRules: { output: "unknown" } });
+
+/** What scope reads of the rules step's pull request: the author and changed files it read, or that it could not read them. */
+const RuledItem = type({ error: "string" }).or({
+  facts: {
+    author: "string",
+    "authorKind?": type.enumerated(...AUTHOR_KINDS),
+    authorTeams: "string[]",
+    authorTeamsUnknown: "string[]",
+    changedFiles: "number",
+    files: type({ path: "string", "previousPath?": "string" }).array(),
+  },
+  pack: "object",
+});
+type ReadItem = Omit<Exclude<typeof RuledItem.infer, { error: string }>, "pack"> & { pack: CheckPack };
+type Ruled = { error: string } | ReadItem;
+
+/** Whether `when.paths` takes in `path`: an including glob matches it, or there is none, and no `!` glob does. */
+function pathIn(path: string, globs: readonly string[]): boolean {
+  const including = globs.filter((glob) => !glob.startsWith("!"));
+  const excluding = globs.filter((glob) => glob.startsWith("!")).map((glob) => glob.slice(1));
+  return (including.length === 0 || including.some((glob) => globMatch(path, glob))) && !excluding.some((glob) => globMatch(path, glob));
+}
+
+function capitalized(word: string): string {
+  return `${word[0]!.toUpperCase()}${word.slice(1)}`;
+}
+
+/** Why `for` leaves the author out, failing closed when their groups cannot be told. */
+function authorOutside(groups: readonly string[], { facts, pack }: ReadItem): string | undefined {
+  if (groups.includes(EVERYONE)) return undefined;
+  const held = authorGroupsOf(pack.groups ?? {}, { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown });
+  const named = `the ${groups.join(" or ")} group`;
+  if (held === undefined) return `Triage could not tell whether the author is in ${named}`;
+  return held.some((group) => groups.includes(group)) ? undefined : `the author is not in ${named}`;
+}
+
+/**
+ * Why the policy's `for` and `when` leave the pull request out of code review, or undefined when they take it in.
+ * Changed files that were not all read never leave it out, and a renamed file counts under its old and new path.
+ */
+function outOfScope(part: CodeReviewPart, item: ReadItem, verdict: unknown): string | undefined {
+  if (part.triage && typeof verdict === "string" && !part.triage.includes(verdict)) return `triage's verdict is ${capitalized(verdict)}, not ${part.triage.map(capitalized).join(" or ")}`;
+  const author = part.for && authorOutside(part.for, item);
+  if (author) return author;
+  const { files, changedFiles } = item.facts;
+  if (!part.paths || files.length === 0 || files.length < changedFiles) return undefined;
+  const globs = part.paths;
+  const taken = files.some((file) => [file.path, file.previousPath].some((path) => path !== undefined && pathIn(path, globs)));
+  return taken ? undefined : "every changed file is excluded by the policy's paths";
+}
+
+/** Whether `for` or `when` could leave a pull request out. */
+function limited(part: CodeReviewPart): boolean {
+  return (part.for !== undefined && !part.for.includes(EVERYONE)) || (part.triage !== undefined && VERDICTS.some((verdict) => !part.triage!.includes(verdict))) || part.paths !== undefined;
+}
+
+type Scope = { open: boolean; skipped?: string };
+
+/**
+ * Whether code review runs past triage's rules and the policy's `for` and `when`, and why not when they leave it out. A
+ * pull request triage could not read is not left out: its review waits while `for` or `when` could leave it out.
+ */
+function scopeOf(part: CodeReviewPart, verdict: Record<string, unknown> | undefined, item: Ruled): Scope {
+  const gate = rulesGate(part.rules, verdict?.["checks"]);
+  if ("error" in item) return { open: gate.open && !limited(part) };
+  if (gate.open === false && gate.outcome === "skipped") return { open: false, skipped: `rules failed: ${gate.failed.map((id) => checkName(item.pack, id)).join(", ")}` };
+  if (!gate.open) return { open: false };
+  const skipped = outOfScope(part, item, verdict?.["verdict"]);
+  return skipped === undefined ? { open: true } : { open: false, skipped };
+}
+
+/** The rules step's one pull request, its policy read as triage reads it. */
+function ruledItem(items: readonly object[]): Ruled {
+  const item = RuledItem(items[0]);
+  if (item instanceof type.errors) throw new Error(`reviewScope: ${item.summary}`);
+  return "error" in item ? item : { ...item, pack: readCheckPack(item.pack) };
+}
 
 /**
  * Whether the pass deploys code review, and whether it posts. Code review runs once per head, when the policy turns it on,
@@ -22,15 +101,19 @@ const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, eval
  * it, and every pass before its review is in, posts nothing, so the verdict and the review go up together; one that
  * reported a failure or ran past its deadline posts the verdict alone. A later pass on a head whose review settled posts
  * again and deploys no other. A Review again names itself as `again`, so its head is reviewed once more for it, whatever
- * earlier reviews of the head said.
+ * earlier reviews of the head said. A pull request that failed rules, `for` or `when` leave out is not reviewed, and
+ * `skipped` says why.
  */
-export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean; reviewed: boolean }> {
+export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean; reviewed: boolean; skipped?: string }> {
   const parsed = ScopeInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewScope: ${parsed.summary}`);
   const { taken, head, review, reviewFailed, reviewers } = parsed.take.output;
   const part = CodeReviewPart(taken?.["codeReview"]);
   const again = part instanceof type.errors ? undefined : part.again;
-  const reviewed = !(part instanceof type.errors) && part.on && rulesGate(part.rules, asRecord(parsed.evaluateRules.output)?.["checks"]).open;
+  const off: Scope = { open: false };
+  const scope = part instanceof type.errors || !part.on ? off : scopeOf(part, asRecord(parsed.evaluateRules.output), ruledItem(parsed.rules.output.items));
+  const reviewed = scope.open;
+  if (scope.skipped !== undefined) return { deploy: false, post: true, reviewed, skipped: scope.skipped };
   const published = publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") !== undefined;
   const own = reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.head === head && (again === undefined || reviewer.again === again));
   const settled = own.some((reviewer) => reviewer.result !== undefined || Date.parse(reviewer.deadline) <= Date.now());

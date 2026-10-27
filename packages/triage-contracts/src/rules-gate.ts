@@ -20,7 +20,8 @@ export function hardFailures<T extends RuleOutcome>(checks: readonly T[]): T[] {
 
 const Checks = type({ check: "string", kind: "string", result: "string", "onFail?": "string" }).array();
 
-export type RulesGate = { open: true } | { open: false; outcome: "skipped" | "incomplete"; reason: string };
+/** `failed` names the rules whose failure keeps the block shut. */
+export type RulesGate = { open: true } | { open: false; outcome: "skipped"; reason: string; failed: string[] } | { open: false; outcome: "incomplete"; reason: string };
 
 /**
  * Whether a block runs past triage's rules, from the verdict's `checks`. Under `pass` only the policy's own rules read
@@ -34,7 +35,7 @@ export function rulesGate(when: RuleGate, checks: unknown): RulesGate {
   if (parsed instanceof type.errors) return { open: false, outcome: "incomplete", reason: "triage gave no rule results" };
   const policy = parsed.filter((check) => failsPullRequest(check) && !BUILT_IN_CHECK_NAMES.has(check.check));
   const failed = hardFailures(policy).map((check) => check.check);
-  if (failed.length > 0) return { open: false, outcome: "skipped", reason: `rules failed: ${failed.join(", ")}` };
+  if (failed.length > 0) return { open: false, outcome: "skipped", reason: `rules failed: ${failed.join(", ")}`, failed };
   const unknown = policy.filter((check) => check.result !== "pass").map((check) => check.check);
   if (unknown.length > 0) return { open: false, outcome: "incomplete", reason: `rules not settled yet: ${unknown.join(", ")}` };
   return { open: true };

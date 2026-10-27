@@ -8,7 +8,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { Markdown } from "./Markdown.tsx";
 
-type Reviewed = Pick<PrItem, "repo" | "source" | "headSha" | "draft"> & { number: number };
+type Reviewed = Pick<PrItem, "repo" | "source" | "headSha" | "draft" | "verdictSha" | "codeReviewSkipped"> & { number: number };
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
@@ -113,7 +113,8 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
   const again = useReviewAgain(item);
   const send = useSendCodeReview(item);
   const askable = Boolean(snapshot?.codeReviewPlace) && item.draft !== true;
-  if (!reviews || (!reviews.review && !askable)) return null;
+  const skipped = item.codeReviewSkipped !== undefined && !again.isSuccess && reviews?.review?.headSha !== item.verdictSha;
+  if (!reviews || (!reviews.review && !askable && !skipped)) return null;
   const { review, completed, carriedTo } = reviews;
   const unreviewed = again.isSuccess ? "Review requested" : "No review yet";
 
@@ -127,6 +128,7 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       </h3>
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
       {send.error ? <p role="alert" className="error">Could not send to {hostName(item.source)}. {errorText(send.error)}</p> : null}
+      {skipped ? <p className="note">Not reviewed: {item.codeReviewSkipped}.{completed ? ` The review below is of ${shortSha(completed.headSha)}.` : null}</p> : null}
       {completed && carriedTo ? <p className="note">Carried over from {shortSha(completed.headSha)}: the new commits leave the diff as it was reviewed.</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
       {completed?.cut ? <CutNote cut={completed.cut} /> : null}
