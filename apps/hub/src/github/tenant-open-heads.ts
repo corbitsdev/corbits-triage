@@ -14,8 +14,7 @@ import type { OpenPr } from "./reconcile-plan.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
 export type OpenHeadsReader = (record: RepoRecord) => Promise<OpenPr[]>;
-/** Null once the pull request is closed; undefined when it is open but the host gave no head. */
-export type OpenHeadReader = (record: RepoRecord, number: number) => Promise<Pick<OpenPr, "headSha" | "draft"> | null | undefined>;
+export type OpenHeadReader = (record: RepoRecord, number: number) => Promise<Pick<OpenPr, "headSha" | "draft"> | undefined>;
 
 export type TenantGithubDeps = AppKeyDeps & { githubApiOrigin: string };
 
@@ -53,8 +52,7 @@ function openHeadsOf(prs: Array<{ number: number; sha?: string; updatedAt: strin
 }
 
 function openHeadOf(pr: { state: string; sha?: string; draft?: boolean }) {
-  if (pr.state !== "open") return null;
-  return typeof pr.sha === "string" && pr.sha !== "" ? { headSha: pr.sha, draft: pr.draft === true } : undefined;
+  return pr.state === "open" && typeof pr.sha === "string" && pr.sha !== "" ? { headSha: pr.sha, draft: pr.draft === true } : undefined;
 }
 
 function createTenantSources(deps: TenantSourcesDeps) {

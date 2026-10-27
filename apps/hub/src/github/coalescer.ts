@@ -193,7 +193,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     const read = await deps.openHeadFor(head.tenantId);
     if (!read) throw new Error("no active github credential");
     const pr = await read(latest.record, head.number);
-    if (!pr) return "not_open";
+    if (pr === undefined) return "not_open";
     if (pr.headSha !== head.headSha) return "superseded";
     return pr.draft ? "draft" : undefined;
   }

@@ -13,7 +13,6 @@ import { PR_TRIAGE_STUCK_RUN_MS, REPO_SOURCES, repoPolicy, triageStopped, Triage
 import { bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
 import { listConnectedPulls, listingRefusal, refusedSources, type OpenPrsLister, type OpenPullsCache, type OpenPullsRead, type RepoPulls } from "./open-pulls.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
-import type { OpenHeadReader } from "./tenant-open-heads.js";
 import type { Member } from "../integrations/app.js";
 import { runKeyNumber, type ObservedRun } from "./reconcile-plan.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
@@ -60,7 +59,6 @@ export type TriageVerdictsDeps = PortalCredentialDeps & {
   managerRuns: ManagerRuns;
   openPulls: OpenPullsCache;
   list: OpenPrsLister;
-  openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   triageState: Pick<TriageStateStore, "load">;
   now: () => Date;
 };
@@ -170,6 +168,18 @@ function openHeads(listed: OpenPullsRead | undefined, records: readonly RepoReco
     return wanted || heads.length > 0 ? [[key, { repo, source, heads: new Map(heads) }]] : [];
   }
   return new Map(listed.repos.flatMap(headsOf));
+}
+
+/**
+ * A note explains the head it was recorded on while that head is still open, or while the host can't say: it could not list the
+ * repository, or listed the pull request open with no head.
+ */
+function noteCurrent(open: OpenHeads, pull: HostedPull, headSha: string): boolean {
+  const listing = open.get(hostKey(pull));
+  if (listing === undefined) return true;
+  if (!listing.heads.has(pull.number)) return false;
+  const head = listing.heads.get(pull.number);
+  return !head || head === headSha;
 }
 
 const ApprovalPull = type({ repo: "string", number: "number.integer" });
@@ -295,29 +305,17 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     const pairs = [...open.values()].flatMap(({ repo, heads }) => [...heads.keys()].map((number) => ({ repo, number })));
     const since = new Date(deps.now().getTime() - RECENT_MS);
     // A repository its host could not list keeps its notes, shown only on a pull request listed for another reason.
-    function current(pull: HostedPull, headSha: string): boolean {
-      const listing = open.get(hostKey(pull));
-      return listing === undefined || listing.heads.get(pull.number) === headSha;
-    }
-    const [known, recent, notes] = await Promise.all([deps.verdicts.latest(tenantId, pairs), deps.verdicts.latestSince(tenantId, unknown.map((record) => record.name), since), notesOf(tenantId, enabled, current)]);
+    const [known, recent, notes] = await Promise.all([
+      deps.verdicts.latest(tenantId, pairs),
+      deps.verdicts.latestSince(tenantId, unknown.map((record) => record.name), since),
+      notesOf(tenantId, enabled, (pull, headSha) => noteCurrent(open, pull, headSha)),
+    ]);
     function wanted(pull: HostedPull): boolean {
       const listing = open.get(hostKey(pull));
       return listing === undefined ? unlisted.has(hostKey(pull)) : listing.heads.has(pull.number);
     }
     const noted = [...notes.untriaged.values()].filter((pull) => open.has(hostKey(pull)));
     return build(tenantId, [...known.filter((verdict) => open.has(hostKey(verdict))), ...recent], live, notes, noted, wanted, connected);
-  }
-
-  /** The pull request's open head on its host: null once it is closed, undefined when the host could not say. */
-  async function headOn(tenantId: string, record: RepoRecord, number: number): Promise<string | null | undefined> {
-    try {
-      const read = await deps.openHeadFor(tenantId);
-      if (!read) return undefined;
-      const head = await read(record, number);
-      return head === null ? null : head?.headSha;
-    } catch {
-      return undefined;
-    }
   }
 
   return async function handle(req: Request, member: Member): Promise<Response> {
@@ -336,8 +334,8 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       const [latest, notes, runs] = await Promise.all([deps.verdicts.latestFor(tenantId, pull), notesOf(tenantId, [record], () => true), deps.managerRuns(tenantId, [pull])]);
       const key = pullKey(pull);
       const note = notes.untriaged.get(key);
-      const head = note === undefined ? undefined : await headOn(tenantId, record, pull.number);
-      const untriaged = new Map(note !== undefined && (head === undefined || head === note.headSha) ? [[key, note]] : []);
+      const current = note !== undefined && noteCurrent(openHeads(await listingOf(member, connected), [record], []), note, note.headSha);
+      const untriaged = new Map(current ? [[key, note]] : []);
       const one = await build(tenantId, latest ? [latest] : [], new Map([...livePulls(runs)].filter(([id]) => id === key)), {
         waiting: new Map([...notes.waiting].filter(([id]) => id === key)),
         untriaged,
