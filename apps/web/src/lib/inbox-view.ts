@@ -1,6 +1,6 @@
 import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
 import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
-import { holdsActionForYou } from "./pending-dos.ts";
+import { holdsActionForYou, mergesOnItsOwn, pendingDos, triageActed } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
 import { priorityRank } from "./triage-view.ts";
 
@@ -165,6 +165,32 @@ export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
   if (item.ci === "pending" || item.waitingForCi) return "ci";
   if (inboxAction(item) === null) return "triage";
   return "nobody";
+}
+
+/** `did` is what Triage did on its own and `reason` why; `person` also leaves the next step to you. */
+export type ActionMode =
+  | { mode: "waiting"; reason: string }
+  | { mode: "person"; did: string; reason: string }
+  | { mode: "automatic"; did: string; reason: string };
+
+/** The step this pull request waits on is yours unless Triage will merge it. */
+function nextStepIsYours(item: PrItem): boolean {
+  return inNeedsYou(item) && !(inboxAction(item) === "merge" && mergesOnItsOwn(item));
+}
+
+/**
+ * Waiting while a held action or an approval waits on you. A pending approval stays waiting after the pull request leaves
+ * the open list, which clears needsHuman but keeps pendingApprovalId. Otherwise the card says what Triage did on its own,
+ * beside your controls while the next step is still yours. Null when Triage did nothing on its own.
+ */
+export function actionMode(item: PrItem): ActionMode | null {
+  const [pending] = pendingDos(item);
+  if (pending !== undefined || item.pendingApprovalId !== null) {
+    return { mode: "waiting", reason: pending?.reason ?? item.reasons[0] ?? item.nextAction ?? "Waiting for your approval." };
+  }
+  const acted = triageActed(item);
+  if (acted === null) return null;
+  return { mode: nextStepIsYours(item) ? "person" : "automatic", ...acted };
 }
 
 /** Triage decides nothing in a repository whose policy cannot run, so its pull requests waiting on Triage wait on its setup instead. */

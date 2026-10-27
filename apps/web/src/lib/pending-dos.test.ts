@@ -4,6 +4,7 @@ import { ApiError, type Transport } from "@intx/hub-client";
 import { createHoldQueue, HOLD_MS } from "./held-actions.ts";
 import { approveHeldDo, projectQueue, type PrItem } from "./hub-api.ts";
 import { doWrite } from "./inbox-pane.ts";
+import { actionMode } from "./inbox-view.ts";
 import { pendingDos, withoutDecidedDos, type PendingDo } from "./pending-dos.ts";
 
 const NOW = "2026-10-01T02:00:00.000Z";
@@ -14,8 +15,8 @@ function step(kind: string, target: Record<string, unknown>, index = 0): Record<
   return { list: "fail", index, effectId: `effect-${index}`, kind, held: true, reason: "Size failed.", target };
 }
 
-function verdict(actions: unknown[]): PrItem {
-  const detail = VerdictDetail.assert({ labels: ["triage:needs-decision"], feedback: "Please split this.", actions });
+function verdict(actions: unknown[], automatic: string[] = []): PrItem {
+  const detail = VerdictDetail.assert({ labels: ["triage:needs-decision"], feedback: "Please split this.", actions, ...(automatic.length > 0 ? { automatic } : {}) });
   const recorded = {
     runId: "run-8", at: NOW, headSha: "abc", verdict: "fail" as const, settled: true, state: "needs-decision", actor: "maintainer", humanGated: true,
     degraded: null, commented: false, checks: [], detail,
@@ -123,5 +124,26 @@ describe("pendingDos", () => {
     expect(queue.undo()).toBe(true);
     expect(labels(pendingDos(withoutDecidedDos(item, NONE, held)))).toEqual(["Add label size/xl", "Comment \"Hi\""]);
     expect(sent).toEqual([]);
+  });
+});
+
+describe("actionMode", () => {
+  test("a held action stays waiting even when that kind is on the automatic list", () => {
+    const item = verdict([step("merge", {}, 0)], ["merge"]);
+    expect(actionMode(item)).toEqual({ mode: "waiting", reason: "Size failed." });
+  });
+
+  test("a pull request that needs a person with an approval pending is waiting", () => {
+    const item = { ...verdict([]), pendingApprovalId: "a1", reasons: ["Needs a person."] };
+    expect(actionMode(item)).toEqual({ mode: "waiting", reason: "Needs a person." });
+  });
+
+  test("a done automatic action stays waiting while an approval is still pending, even after it no longer needs a person", () => {
+    const item = {
+      ...verdict([{ ...step("comment", { body: "Hi" }, 0), held: false, status: "done" }], ["comment"]),
+      needsHuman: false,
+      pendingApprovalId: "a1",
+    };
+    expect(actionMode(item)?.mode).toBe("waiting");
   });
 });
