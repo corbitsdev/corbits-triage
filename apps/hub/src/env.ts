@@ -79,6 +79,7 @@ const HubEnvSchema = type({
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
   "HUB_PROBE_TIMEOUT_MS?": positiveInteger,
+  "HUB_SIDECAR_REQUEST_TIMEOUT_MS?": positiveInteger,
   "HUB_MAIL_HOLD_TTL_MS?": positiveInteger,
   "HUB_MAIL_ACK_RETRY_INTERVAL_MS?": positiveInteger,
   "HUB_MAIL_ACK_MAX_RETRIES?": positiveInteger,
@@ -347,7 +348,7 @@ export type InterchangeSettings = {
   agentGc: { packThreshold: number; looseThreshold: number; warnBytes: number };
   probeTimeoutMs?: number;
   hubApiOrigin?: string;
-  sidecarLink: { mailHoldTTLMs: number; mailAckRetryIntervalMs: number; mailAckMaxRetries: number };
+  sidecarLink: { requestTimeoutMs?: number; mailHoldTTLMs: number; mailAckRetryIntervalMs: number; mailAckMaxRetries: number };
   sidecarWebSocketUrl: string;
   defaultLifecyclePolicy: ResolvedWorkflowLifecyclePolicy;
 };
@@ -376,6 +377,7 @@ export function interchangeSettings(env: HubEnv): InterchangeSettings {
     // Triage mail is routed, not dispatched, so only the router's ack retries keep it alive. A
     // pack receive holds the connection queue for minutes and the stock 5 x 10 s give-up drops it.
     sidecarLink: {
+      ...(env.HUB_SIDECAR_REQUEST_TIMEOUT_MS !== undefined && { requestTimeoutMs: Number(env.HUB_SIDECAR_REQUEST_TIMEOUT_MS) }),
       mailHoldTTLMs: numberOr(env.HUB_MAIL_HOLD_TTL_MS, 15 * 60_000),
       mailAckRetryIntervalMs: numberOr(env.HUB_MAIL_ACK_RETRY_INTERVAL_MS, 30_000),
       mailAckMaxRetries: numberOr(env.HUB_MAIL_ACK_MAX_RETRIES, 10),
