@@ -43,7 +43,6 @@ test("PostgreSQL: a name connected on both hosts is read from the host named, wi
     }
     const reads = createHostReads({
       db,
-      artifacts: db,
       cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
       onKeyMoved: noKeyPush,
       authorize,

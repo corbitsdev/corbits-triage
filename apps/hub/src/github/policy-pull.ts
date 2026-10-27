@@ -1,4 +1,4 @@
-// The pull request that writes a repository's saved rules to its policy file, on one branch so it is opened once:
+// The pull request that writes a repository's policy file, on one branch so it is opened once:
 // asking again updates the open one, and with none open the branch starts over from the default branch.
 import { errorText } from "@corbits/common";
 import { json, listPrCommits, readRepoFileResponse, requestError, type GithubFetch } from "@corbits/github-reads";

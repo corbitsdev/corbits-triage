@@ -521,7 +521,7 @@ describe("bridge handler", () => {
     expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_skipped_no_rules", repo: "octocat/hello" }));
   });
 
-  test("a repo without a check pack is needs-setup and does not mail", async () => {
+  test("a repo without a policy file is needs-setup and does not mail", async () => {
     const sent: Sent[] = [];
     const res = await bridge({ sent, readCheckPack: packsFor([]) })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "needs-setup" });
@@ -531,7 +531,7 @@ describe("bridge handler", () => {
   test("a policy triage can't read is queued with its reason and no pack, so the run marks the head failed", async () => {
     const sent: Sent[] = [];
     async function readCheckPack() {
-      return { status: "corrupt" as const, reason: "The policy has unknown checks: max-size.", repo: { id: "art_pack", version: 1 }, automatic: ["labels" as const] };
+      return { status: "invalid" as const, reason: "The policy has unknown checks: max-size.", path: ".corbits-triage.yml", automatic: ["labels" as const] };
     }
     const res = await bridge({ sent, readCheckPack })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "queued" });

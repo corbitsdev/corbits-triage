@@ -40,7 +40,7 @@ export async function allowCreator(tx: Tx, tenantId: string, principalId: string
   await allow(tx, tenantId, { roleId: null, principalId, origin: "creator" }, resource, action, stamp);
 }
 
-export async function adminRoleId(tx: Tx, tenantId: string): Promise<string | undefined> {
+async function adminRoleId(tx: Tx, tenantId: string): Promise<string | undefined> {
   const [admin] = await tx.select({ id: role.id }).from(role)
     .where(and(eq(role.tenantId, tenantId), eq(role.name, "admin"), eq(role.isSystem, true)));
   return admin?.id;

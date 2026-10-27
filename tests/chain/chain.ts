@@ -25,6 +25,7 @@ export const HELD = `${OWNER}/held`;
 export const WOKEN = `${OWNER}/woken`;
 export const UNWOKEN = `${OWNER}/unwoken`;
 export const DISCONNECTED = `${OWNER}/disconnected`;
+export const UNSET = `${OWNER}/unset`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -33,12 +34,12 @@ export function isLiveDeployment(status: string): boolean {
   return LIVE_DEPLOYMENT_STATUSES.has(status);
 }
 
-const MAX_FILES = "  - check: max-files-changed\n    text: Flag pull requests over 30 files changed.\n    max: 30\n";
+export const MAX_FILES = "  - check: max-files-changed\n    text: Flag pull requests over 30 files changed.\n    max: 30\n";
 const FOCUSED = "  - check: focused\n    text: Check the change is focused on one thing.\n";
 const CI_GREEN = "  - check: ci-green\n    text: CI must pass before merge.\n";
 const ASSIGN_ON_PASS = "actions:\n  pass:\n    - do: assign\n      target:\n        to: users\n        users:\n          - octocat\n";
 
-function policy(rules: string[], extra = ""): string {
+export function policy(rules: string[], extra = ""): string {
   return `rules:\n${rules.map((rule) => `${rule}    reason: The maintainers set it.\n    evidence:\n      - maintainer-stated\n`).join("")}${extra}`;
 }
 
@@ -82,6 +83,7 @@ export function chainStack() {
     github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
     github.addRepo(UNWOKEN, policy([MAX_FILES]));
     github.addRepo(DISCONNECTED, policy([MAX_FILES]));
+    github.addRepo(UNSET, null);
     const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
     database = created;
     hub = await startHub(database, github, portalDir);

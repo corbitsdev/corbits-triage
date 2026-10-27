@@ -19,7 +19,7 @@ import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
 import { ownedLabels, TRIAGE_LABELS, type ActionKind, type SendCodeReviewInput } from "@corbits/triage-contracts";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import type { CodeReviewRuns, CompletedReview } from "../code-review-runs.js";
-import type { PolicyReader } from "./check-pack-store.js";
+import type { PolicyReader } from "./repo-policy.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";

@@ -105,16 +105,6 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq({ ...current, repos: [github] })))).toEqual([409, "use_bitbucket_route"]);
     current = await store(github, bitbucket);
 
-    const pointed = { ...current, repos: [{ ...github, checkPack: { name: "policy", id: "art_other" } }, bitbucket] };
-    expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq(pointed)))).toEqual([403, "forbidden"]);
-    current = await store({ ...github, checkPack: { name: "policy", id: "art_pinned" } }, bitbucket);
-    const unpinned = { ...current, repos: [{ ...github, checkPack: { name: "policy" } }, bitbucket] };
-    expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq(unpinned)))).toEqual([403, "forbidden"]);
-    for (const id of ["art_a", "art_b"]) await db.transaction((tx) => allowCreator(tx, T, MANAGER, `artifact:${id}`, "write", new Date()));
-    current = await store({ ...github, checkPack: { name: "policy", id: "art_a" } }, bitbucket);
-    current = await patched({ ...current, repos: [{ ...github, checkPack: { name: "policy", id: "art_b" } }, bitbucket] });
-    expect(repoRecords(current)[0]?.checkPack).toEqual({ name: "policy", id: "art_b" });
-
     const added = { ...current, repos: [github, bitbucket, { name: "acme/new", connected: true, enabled: true }] };
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq(added)))).toEqual([400, "repo_not_found"]);
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq(null)))).toEqual([400, "invalid_request"]);
@@ -135,8 +125,8 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
         return deps.authorize(principalId, tenantId, resource, action);
       },
     };
-    const repinned = { ...current, repos: [{ ...github, checkPack: { name: "policy", id: "art_a" } }, bitbucket] };
-    expect(await errorOf(await prepareCorbitsTriagePatch(interleaved, T, MANAGER, patchReq(repinned)))).toEqual([409, "config_conflict"]);
+    const switchedOn = { ...current, repos: [{ ...github, enabled: true }, bitbucket] };
+    expect(await errorOf(await prepareCorbitsTriagePatch(interleaved, T, MANAGER, patchReq(switchedOn)))).toEqual([409, "config_conflict"]);
     current = await storedNs();
     expect(current["interleaved"]).toBe(true);
 

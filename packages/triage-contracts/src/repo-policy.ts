@@ -24,7 +24,7 @@ export type RepoPolicy = {
   checks: RepoCheckFlags;
   approvedAuthors: string[];
   /** Not params. */
-  checkPack?: { name: string; id?: string };
+  checkPack?: { name: string };
 };
 
 export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
@@ -44,7 +44,7 @@ export const repoPolicySchema = type({
     "ci?": "boolean",
     "conflicts?": "boolean",
   },
-  "checkPack?": { name: "string", "id?": "string" },
+  "checkPack?": { name: "string" },
 });
 
 function flag(value: unknown, fallback: boolean): boolean {
@@ -84,6 +84,6 @@ export function repoPolicy(raw: unknown): RepoPolicy {
       conflicts: flag(checks.conflicts, true),
     },
     approvedAuthors: logins(source.approvedAuthors),
-    ...(pointerName.length > 0 ? { checkPack: { name: pointerName, ...(typeof pointer.id === "string" && { id: pointer.id }) } } : {}),
+    ...(pointerName.length > 0 ? { checkPack: { name: pointerName } } : {}),
   };
 }

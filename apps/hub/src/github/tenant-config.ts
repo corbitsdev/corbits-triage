@@ -25,7 +25,6 @@ export type RepoRecord = {
   selection?: "all" | "selected";
   enabled?: boolean;
   checks?: RepoPolicy["checks"];
-  checkPack?: RepoPolicy["checkPack"];
 };
 
 export type InstallationFields = {
@@ -174,7 +173,6 @@ const TriagePatch = type({
     name: "string > 0",
     "source?": type.enumerated(...REPO_SOURCES),
     "enabled?": "boolean",
-    "checkPack?": { "+": "delete", name: "string", "id?": "string" },
   }).array(),
 });
 
@@ -206,18 +204,7 @@ async function changeRefusal(d: PatchDeps, tenantId: string, principalId: string
   if (wasOn !== isOn && sourceOf(before) !== "github") {
     return failure(409, "use_bitbucket_route", "Turn Bitbucket Data Center repositories on or off with their own switch.");
   }
-  if (isOn && !wasOn) {
-    const refused = await sourceCredentialGrant(d, principalId, tenantId, before, "use");
-    if (refused) return refused;
-  }
-  const pinned = before.checkPack?.id;
-  const pin = after?.checkPack?.id;
-  if (after === undefined || pin === pinned) return undefined;
-  for (const id of [pinned, pin]) {
-    if (id !== undefined && !(await d.authorize(principalId, tenantId, `artifact:${id}`, "write"))) {
-      return failure(403, "forbidden", "You do not have permission to write that policy.");
-    }
-  }
+  if (isOn && !wasOn) return sourceCredentialGrant(d, principalId, tenantId, before, "use");
   return undefined;
 }
 

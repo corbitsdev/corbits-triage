@@ -7,13 +7,17 @@ import { DO_GRANT_ACTION, doResource, emptyPack, readCheckPack, TRIAGE_ROLE, typ
 import { holdDos, type SuggestedDo } from "@corbits/triage-workflows/logic/actions";
 import { allowRole } from "./admin-github-grant.js";
 import { connectTriage, createAutomation, grantEnabledKinds } from "./automation.js";
-import type { CheckPackRead } from "./check-pack-store.js";
 import { createPolicyGrants } from "./policy-grants.js";
+import { previewRepoPolicy, type CheckPackRead } from "./repo-policy.js";
 import { patchCorbitsTriage, type RepoRecord } from "./tenant-config.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_automation";
 const REPO = "acme/api";
+
+async function noSharedFile(): Promise<never> {
+  throw new Error("No policy here extends another.");
+}
 
 async function inFreshDatabase(run: (db: DB["db"]) => Promise<void>): Promise<void> {
   const database = `corbits_automation_${randomBytes(6).toString("hex")}`;
@@ -83,8 +87,8 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
     const grants = createPolicyGrants({
       db,
       automaticKinds: automation.automaticKinds,
-      async filePack(_tenantId, repo, _source, policy) {
-        return readCheckPack(policy, repo);
+      preview(tenantId, repo, source, text) {
+        return previewRepoPolicy({ policyFile: noSharedFile, automaticKinds: automation.automaticKinds }, tenantId, repo, source, text);
       },
       now: () => new Date(),
     });
@@ -99,7 +103,7 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
       await patchCorbitsTriage(db, TENANT, (ns) => ({ ...ns, automation }));
     }
     function read(repo: string, pass: Step[]): CheckPackRead {
-      return { status: "ok", pack: readCheckPack({ ...emptyPack(repo), actions: { when: ["opened"], pass, fail: [], unsure: [] } }, repo), automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
+      return { status: "ok", pack: readCheckPack({ ...emptyPack(repo), actions: { when: ["opened"], pass, fail: [], unsure: [] } }, repo), automatic: [], source: {} };
     }
     async function rows(): Promise<string[]> {
       return (await db.select({ id: schema.grant.id }).from(schema.grant).where(eq(schema.grant.tenantId, TENANT))).map((row) => row.id).sort();

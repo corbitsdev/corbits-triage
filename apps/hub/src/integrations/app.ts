@@ -9,7 +9,7 @@ import type { DB } from "@intx/db";
 import { getLogger } from "@intx/log";
 import { honoLogger, type HonoContext } from "@intx/log/hono";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyPatchResponse, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyPatchResponse, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { CODE_REVIEW_PATH, CodeReviewQueued, CodeReviewRunBody } from "../code-review.js";
@@ -25,8 +25,8 @@ import { failure } from "../github/portal-credential.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
-import { PolicyExportBody, PolicyFileBody, PolicyPatchBody } from "../github/policy-file.js";
-import { PolicyQuery } from "../github/policy-read.js";
+import { PolicyExportBody, PolicyFileBody, PolicyPatchBody, PolicyPushBody } from "../github/policy-file.js";
+import { PolicyPreviewBody, PolicyQuery } from "../github/policy-read.js";
 import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
@@ -72,9 +72,12 @@ export type IntegrationHandlers = {
   heldDos: BodyHandler<typeof HeldDoBody.infer>;
   prTriage: BodyHandler<typeof TriageBody.infer>;
   policyRead: BodyHandler<typeof PolicyQuery.infer>;
+  policyPreview: BodyHandler<typeof PolicyPreviewBody.infer>;
   policyFileRead: BodyHandler<typeof PolicyFileBody.infer>;
   policyFileExport: BodyHandler<typeof PolicyExportBody.infer>;
   policyFilePatch: BodyHandler<typeof PolicyPatchBody.infer>;
+  policyPushAccess: BodyHandler<typeof PolicyFileBody.infer>;
+  policyFilePush: BodyHandler<typeof PolicyPushBody.infer>;
   policyUpgrades: (member: Member) => Promise<Response>;
   backlog: BodyHandler<typeof BacklogBody.infer>;
   openPulls: (member: Member) => Promise<Response>;
@@ -407,7 +410,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy`,
     describeRoute({
       summary: "A repository's policy as triage reads it",
-      description: "Any member of the workspace. Answers `ok` with the resolved pack and what it came from, `missing`, `corrupt` with the reason and the artifact a save replaces, or `invalid` with why triage refuses the repository's policy file. `source.file` names the policy file when the pack was read from it, `source.repo` the stored policy otherwise. `mergeRisks` names what Triage's automatic approve or merge can let in: `first-timers` when one is for first-time contributors, `ci-config` when one fires on a verdict a pull request changing a GitHub workflow file under `.github/workflows` can reach. Both name GitHub's author associations and workflow paths. `codeReview` is whether the policy file turns code review on. The `source` query parameter is the repository's host, GitHub when absent.",
+      description: "Any member of the workspace. Answers `ok` with the pack resolved from the repository's policy file and what it came from, `missing` when the repository has no policy file and so runs no triage, or `invalid` with why triage refuses the file. `source.file` names the policy file, `source.sharedFile` the file it extends. `mergeRisks` names what Triage's automatic approve or merge can let in: `first-timers` when one is for first-time contributors, `ci-config` when one fires on a verdict a pull request changing a GitHub workflow file under `.github/workflows` can reach. Both name GitHub's author associations and workflow paths. `codeReview` is whether the policy file turns code review on. The `source` query parameter is the repository's host, GitHub when absent.",
       tags: TAGS,
       parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
       responses: { 200: json("The resolved pack and the policy versions it was read from, or why there is none", PolicyRead), ...invalid, ...failures },
@@ -419,11 +422,27 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     },
   );
 
+  app.post(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/preview`,
+    describeRoute({
+      summary: "A policy file's text as triage would read it for a repository",
+      description: "Any member of the workspace. Answers `text` as the policy read would answer it once `text` is the repository's policy file: `ok` with the pack, `extends` resolved against this workspace, what Triage may do on its own there and `mergeRisks`, or `invalid` with why triage would refuse it. Reads the repository's grants and any file `text` extends; writes nothing. `source` is the repository's host, GitHub when absent.",
+      tags: TAGS,
+      responses: { 200: json("The policy the text would be, or why triage would refuse it", PolicyRead), ...invalid, ...failures, 413: json("The body is too large", Failure) },
+    }),
+    member,
+    policyBodyLimit,
+    body(PolicyPreviewBody),
+    function policyPreview(c) {
+      return handlers.policyPreview(c.req.valid("json"), memberOf(c));
+    },
+  );
+
   app.get(
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/file`,
     describeRoute({
       summary: "A repository's policy file and why triage refuses it, if it does",
-      description: "Needs `read` or `use` on the workspace's source credential and a connected repository. Reads `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the default branch; `file` is null when there is none. While a file is there, triage runs on it in place of the stored policy, and runs nothing while it has a `problem`. `source` is the repository's host; without it, a name connected on both hosts is refused.",
+      description: "Needs `read` or `use` on the workspace's source credential and a connected repository. Reads `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the default branch, with its `text` unless it is too large to read; `file` is null when there is none, and triage then runs nothing in the repository. Triage runs on the file, and runs nothing while it has a `problem`. `source` is the repository's host; without it, a name connected on both hosts is refused.",
       tags: TAGS,
       parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
       responses: { 200: json("The policy file, or null", PolicyFileRead), ...invalid, ...failures, ...githubFailed },
@@ -438,8 +457,8 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.get(
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/upgrades`,
     describeRoute({
-      summary: "How each enabled repository's saved rules stand against its policy file",
-      description: "Each enabled repository whose host credential the member may read. `start`: no saved rules and no policy file; its `pull` is found in the workspace's shared open pull request listing. `upgrade`: saved rules and no policy file. `differs`: both, running differently, or a file triage refuses; the saved rules apply until the file matches them or the `saved` artifact is archived through the stock artifact route. `ok`: the file alone, the saved rules alone with nothing to write, or both running the same, after which the saved rules are archived. `pull` is the open pull request on `corbits-triage/policy`. Each row names its repository's host as `source`.",
+      summary: "Whether each enabled repository has a policy file",
+      description: "Each enabled repository whose host credential the member may read. `start`: no policy file on the default branch, so triage runs nothing; its `pull` is the open pull request on `corbits-triage/policy`, found in the workspace's shared open pull request listing. `ok`: it has one. Each row names its repository's host as `source`.",
       tags: TAGS,
       responses: { 200: json("Each enabled repository's standing", PolicyUpgrades), ...failures },
     }),
@@ -452,14 +471,14 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.post(
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/export`,
     describeRoute({
-      summary: "Open a pull request writing the repository's saved rules, a starter policy or a chosen file to its policy file",
-      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository whose saved rules differ from its policy file or have no file, or an enabled one with neither. Writes the saved rules as a schema 3 file at the existing file's path, else `.corbits-triage.yml`, on `corbits-triage/policy`, and opens a pull request listing what the file cannot hold; an enabled repository with neither gets a starter `.corbits-triage.yml` instead, and asking again while its pull request is open answers that pull request unchanged. Otherwise asking again updates the open pull request instead of opening another. With `text`, the repository need not be enabled: the text is written to `.corbits-triage.yml` and a new pull request opened, only for a repository with no policy file on its default branch (read fresh from the host), no saved rules and no policy pull request open, which is left as it is. The text is refused as triage would refuse it once merged, `extends` resolved against this workspace. `source` is the repository's host; without it, a name connected on both hosts is refused.",
+      summary: "Open a pull request writing a starter policy or edited text to the repository's policy file",
+      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository. Without `text`, a repository with no policy file on its default branch gets a pull request on `corbits-triage/policy` adding a starter `.corbits-triage.yml`; asking again while it is open answers that pull request unchanged. With `text`, the text is written over the policy file at its own path, or to `.corbits-triage.yml` where there is none, and a new pull request opened; an open policy pull request is left as it is and refuses it. `sha` is the file's sha the text was edited from, as the file route answered it, or null when there was no file; a file that is no longer that one refuses it. The default branch is read fresh from the host. The text is refused as triage would refuse it once merged, `extends` resolved against this workspace. `source` is the repository's host; without it, a name connected on both hosts is refused.",
       tags: TAGS,
       responses: {
         200: json("The pull request opened or brought up to date", PolicyExported),
         ...invalid,
         ...failures,
-        409: json("GitHub, the workspace or the repository is not ready. With `text`: `policy_file_present`, the repository has a policy file; `saved_rules`, it has saved rules; `policy_pull_open`, its policy pull request is open, given as `url` and `number`", Failure.or(PolicyPullOpen)),
+        409: json("GitHub, the workspace or the repository is not ready. Without `text`: `policy_file_present`, the repository has a policy file. With `text`: `policy_pull_open`, its policy pull request is open, given as `url` and `number`; `policy_file_changed`, the file is no longer the one `sha` names; `policy_file_unchanged`, the file already holds `text`", Failure.or(PolicyPullOpen)),
         413: json("The body is too large", Failure),
         422: json("`policy_file_invalid`: triage refuses `text`, or the policy it `extends`; `message` holds each problem, one per line, led by its line", Failure),
         502: json("The host refused", Failure),
@@ -471,6 +490,47 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     body(PolicyExportBody),
     function policyFileExport(c) {
       return handlers.policyFileExport(c.req.valid("json"), memberOf(c));
+    },
+  );
+
+  app.get(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/push`,
+    describeRoute({
+      summary: "Whether the hub may push a repository's policy file straight to its default branch",
+      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository. Asks the host whether its rules for the default branch, `branch`, let the hub push a commit to it without a pull request: on GitHub, branch protection and the rulesets that apply to the branch, a protected branch or any rule a commit may fail counting as no; on Bitbucket Data Center, the branch permissions that apply to it and exempt the connected account by name. `reason` says why not. `source` is the repository's host; without it, a name connected on both hosts is refused.",
+      tags: TAGS,
+      parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
+      responses: { 200: json("Whether the hub may push, and why not", PolicyPushAccess), ...invalid, ...failures, 502: json("The host refused", Failure), ...githubLimited },
+    }),
+    member,
+    validator("query", PolicyFileBody, refuseInvalid),
+    function policyPushAccess(c) {
+      return handlers.policyPushAccess(c.req.valid("query"), memberOf(c));
+    },
+  );
+
+  app.post(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/push`,
+    describeRoute({
+      summary: "Push edited text to a repository's policy file on its default branch",
+      description: "Needs `use` on the host credential (GitHub App or Bitbucket Data Center) and a connected repository with a policy file. Writes exactly the policy file, at its own path, as one commit with the message `chore: update the Corbits Triage policy`, through the GitHub App or the Bitbucket Data Center account. Refused when the default branch's rules would not let the hub push (see `GET …/policy/push`), when the file on the branch is no longer the one `sha` names (as the file route answered it), and as triage would refuse the text, `extends` resolved against this workspace. The push reaches triage as any push to the default branch does. `source` is the repository's host; without it, a name connected on both hosts is refused.",
+      tags: TAGS,
+      responses: {
+        200: json("The file's new sha and the commit that wrote it", PolicyPushed),
+        ...invalid,
+        ...failures,
+        409: json("GitHub, the workspace or the repository is not ready. `push_refused`: the branch's rules keep the hub from pushing, `message` says which. `policy_file_changed`: the file is no longer the one `sha` names, or is gone. `policy_file_unchanged`: the file already holds `text`", Failure),
+        413: json("The body is too large", Failure),
+        422: json("`policy_file_invalid`: triage refuses `text`, or the policy it `extends`; `message` holds each problem, one per line, led by its line", Failure),
+        502: json("The host refused", Failure),
+        ...githubLimited,
+      },
+    }),
+    member,
+    policyBodyLimit,
+    body(PolicyPushBody),
+    function policyFilePush(c) {
+      return handlers.policyFilePush(c.req.valid("json"), memberOf(c));
     },
   );
 

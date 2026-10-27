@@ -39,6 +39,7 @@ import { createManagerIntake, createManagerWake, createOverdueWake, createSupers
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
+import { archiveStoredPolicies } from "./stored-policies.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
@@ -101,10 +102,10 @@ import { createGithubPrDetails } from "./github/pr-details.js";
 import { createMergeStates } from "./github/merge-states.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
-import { createGithubPolicyRead } from "./github/policy-read.js";
+import { createGithubPolicyRead, createPolicyPreview } from "./github/policy-read.js";
 import { createBacklogStart, createGithubBacklog } from "./github/backlog-triage.js";
-import { fileRefusal, fileResolved, loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
 import { createPolicyGrants } from "./github/policy-grants.js";
+import { fileRefusal, previewRepoPolicy, readRepoPolicy } from "./github/repo-policy.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { githubUsage } from "./github/github-usage.js";
@@ -347,7 +348,8 @@ const wakeManager = createManagerWake({
   },
 });
 const wakeOverdue = createOverdueWake({ db: composition.db, wake: wakeManager, log: logJson });
-mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede, now });
+await archiveStoredPolicies(composition.db, composition.db, logJson);
+mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
     where: eq(schema.tenant.id, tenantId),
@@ -487,7 +489,6 @@ const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, ...creden
 const repoActivity = createRepoActivity(now, { quietMs: TRIAGE_RELIST_QUIET_MS, graceMs: TRIAGE_RELIST_GRACE_MS });
 const policyFile = createPolicyFile({
   ...credentialDeps,
-  settle: settleRepoPolicy,
   refusal: chosenFileRefusal,
   authorize: authorizePortal,
   tenantGithub,
@@ -498,31 +499,22 @@ const policyFile = createPolicyFile({
   quiet: repoActivity.quiet,
   waitingKinds: policyWaitingKinds,
 });
-const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
-const policyGrants = createPolicyGrants({ db: composition.db, automaticKinds: automation.automaticKinds, filePack: resolvedFilePack, now });
-function readStoredCheckPack(tenantId: string, repo: string, source: RepoSource) {
-  return loadCheckPack(checkPackStore, tenantId, repo, source);
-}
-function settleRepoPolicy(tenantId: string, repo: string, source: RepoSource) {
-  return settlePolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source);
-}
+const repoPolicyDeps = { policyFile: policyFile.current, automaticKinds: automation.automaticKinds };
+const policyGrants = createPolicyGrants({ db: composition.db, automaticKinds: automation.automaticKinds, preview: previewPolicy, now });
 function chosenFileRefusal(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
-  return fileRefusal({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source, policy);
-}
-async function resolvedFilePack(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
-  return (await fileResolved({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source, policy)).pack;
+  return fileRefusal(repoPolicyDeps, tenantId, repo, source, policy);
 }
 function policyWaitingKinds(tenantId: string, repo: string, source: RepoSource, text: string) {
   return policyGrants.waitingKinds(tenantId, repo, source, text);
 }
 async function readCheckPack(tenantId: string, repo: string, source: RepoSource) {
-  return policyGrants.followPolicy(tenantId, repo, source, (await settleRepoPolicy(tenantId, repo, source)).read);
+  return policyGrants.followPolicy(tenantId, repo, source, await readRepoPolicy(repoPolicyDeps, tenantId, repo, source));
 }
-/** A push that lands a file matching the saved rules retires them now, so an edit after it is not taken for a difference. */
-async function refreshPolicyFile(tenantId: string, repo: string, source: RepoSource) {
-  const state = await policyFile.onPush(tenantId, repo, source);
-  if (state) await settleRepoPolicy(tenantId, repo, source);
-  return state;
+function previewPolicy(tenantId: string, repo: string, source: RepoSource, text: string) {
+  return previewRepoPolicy(repoPolicyDeps, tenantId, repo, source, text);
+}
+async function triageBeganAt(tenantId: string, repo: string): Promise<Date | undefined> {
+  return (await verdictRecordStore.earliest(tenantId, repo)) ?? undefined;
 }
 async function githubSenderPrincipal(tenantId: string): Promise<string> {
   return (await systemSenderOf(GITHUB_SENDER, tenantId)).principalId;
@@ -771,7 +763,7 @@ const bridge = createBridgeHandler({
   readCheckPack,
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
-  refreshPolicyFile,
+  refreshPolicyFile: policyFile.onPush,
   heard: repoActivity.heard,
   startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
   repoChanged: repoReads.changed,
@@ -786,7 +778,7 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   coalescer,
   readCheckPack,
   recheckOpenPulls,
-  refreshPolicyFile,
+  refreshPolicyFile: policyFile.onPush,
   heard: repoActivity.heard,
 }));
 
@@ -840,9 +832,12 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),
+  policyPreview: createPolicyPreview({ preview: previewPolicy }),
   policyFileRead: policyFile.fileRoute,
   policyFileExport: policyFile.exportRoute,
   policyFilePatch: policyFile.patchRoute,
+  policyPushAccess: policyFile.pushAccessRoute,
+  policyFilePush: policyFile.pushRoute,
   policyUpgrades: policyFile.upgradesRoute,
   backlog: createGithubBacklog({
     ...credentialDeps,
@@ -859,11 +854,11 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     outcomes: createOutcomeReader({
       ...createHostReads({
         ...credentialDeps,
-        artifacts: composition.db,
         githubApiOrigin: githubOrigin,
         tenantBitbucket,
         authorize: authorizePortal,
       }),
+      enabledAt: triageBeganAt,
       now,
       log: logJson,
     }),
@@ -883,8 +878,6 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   }),
   audit: createAuditLog({
     db: composition.db,
-    artifacts: composition.db,
-    readCheckPack: readStoredCheckPack,
     runReader: composition.runReader,
     authorize: authorizePortal,
     workflows: APPROVAL_WORKFLOWS,

@@ -7,7 +7,6 @@ import { sql } from "drizzle-orm";
 import { runArtifactMigrations } from "@corbits/artifacts";
 import { runCronMigrations } from "@corbits/cron/migrations";
 import { createDB } from "@intx/db";
-import { grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { migrateRepoEnabledFlag } from "./github/tenant-config.js";
 import { migrationEnv } from "./env.js";
 import { migrateWebhooks } from "./hooks.js";
@@ -83,7 +82,6 @@ test("PostgreSQL: a database the old hub start migrated takes the new migrate an
     await runCronMigrations(config, { schema: "public" });
     await migrateRepoEnabledFlag(db);
     await migrateTriageTables(db, "public");
-    await grantAdminsPolicyWrites(db, function now() { return new Date(); }, ignore);
     await migrate(config);
     await assertMigrated(config);
   });

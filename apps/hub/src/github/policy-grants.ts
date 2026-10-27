@@ -3,17 +3,16 @@
 // only posting, on enable, and every other kind waits for a person.
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPolicyFile, policyKinds, postingKinds, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { policyKinds, postingKinds, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { grantWanted } from "./automation.js";
-import type { CheckPackRead } from "./check-pack-store.js";
-import { prWorkflowKeys } from "./pr-workflow.js";
+import type { CheckPackRead } from "./repo-policy.js";
 import { automationMode, repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 
 export type PolicyGrantsDeps = {
   db: DB["db"];
   automaticKinds: (tenantId: string, repo: string) => Promise<ActionKind[]>;
-  /** The pack a policy file holding `policy` runs, its `extends` resolved; throws why triage would refuse it. */
-  filePack: (tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) => Promise<CheckPack>;
+  /** Edited policy file text read as triage would read it once merged. */
+  preview: (tenantId: string, repo: string, source: RepoSource, text: string) => Promise<CheckPackRead>;
   now: () => Date;
 };
 
@@ -41,19 +40,11 @@ export function createPolicyGrants(deps: PolicyGrantsDeps) {
   async function waitingKinds(tenantId: string, repo: string, source: RepoSource, text: string): Promise<ActionKind[]> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
     if (automationMode(triageNs(tenant?.config)) === "policy") return [];
-    const checked = checkPolicyFile(text, repo);
-    if (!checked.ok) return [];
-    let pack: CheckPack;
-    try {
-      pack = await deps.filePack(tenantId, repo, source, checked.policy);
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
-      return [];
-    }
-    const held = await deps.automaticKinds(tenantId, repo);
+    const read = await deps.preview(tenantId, repo, source, text);
+    if (read.status !== "ok") return [];
     // Enabling a repository grants posting, and triage runs on no other.
-    const waits = policyKinds(pack, prWorkflowKeys(checked.workflow, pack)?.decide ?? [], source).filter((kind) => !postingKinds(source).includes(kind));
-    return waits.filter((kind) => !held.includes(kind));
+    const waits = policyKinds(read.pack, read.policyWorkflow?.decide ?? [], source).filter((kind) => !postingKinds(source).includes(kind));
+    return waits.filter((kind) => !read.automatic.includes(kind));
   }
 
   return { followPolicy, waitingKinds };

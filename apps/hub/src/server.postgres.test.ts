@@ -8,7 +8,7 @@ import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
-import { checkPackName, emptyPack, parseTriageState, TRIAGE_LISTENERS, triageStateName, TriageStats } from "@corbits/triage-contracts";
+import { emptyPack, exportPolicyFile, parseTriageState, TRIAGE_LISTENERS, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
@@ -302,8 +302,10 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-held-dos/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}/policy": ["get"],
+    "/api/integrations/github-triage/{tenantId}/policy/preview": ["post"],
     "/api/integrations/github-triage/{tenantId}/policy/file": ["get"],
     "/api/integrations/github-triage/{tenantId}/policy/export": ["post"],
+    "/api/integrations/github-triage/{tenantId}/policy/push": ["get", "post"],
     "/api/integrations/github-triage/{tenantId}/policy/patch": ["post"],
     "/api/integrations/github-triage/{tenantId}/policy/upgrades": ["get"],
     "/api/integrations/github-triage/{tenantId}/backlog": ["post"],
@@ -381,7 +383,8 @@ const REPO = "acme/widgets";
 const HEAD = "abc0000000000000000000000000000000000000";
 const APP_BOT = { login: "corbits[bot]", type: "Bot" };
 
-function fakeGithub() {
+/** `policy` is the repository's policy file on its default branch; without it, the repository has none. */
+function fakeGithub(policy?: string) {
   const labels: string[] = [];
   const comments: Array<{ id: number; user: typeof APP_BOT; body: string }> = [];
   const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
@@ -393,6 +396,7 @@ function fakeGithub() {
     [`/repos/${REPO}/pulls/8/commits`]: [{ sha: HEAD, commit: { message: "fix: the widget" } }],
     [`/repos/${REPO}/pulls/8/files`]: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+fixed" }],
     [`/repos/${REPO}/commits/${HEAD}/check-runs`]: { check_runs: [{ name: "build", status: "completed", conclusion: "success" }] },
+    ...(policy !== undefined && { [`/repos/${REPO}/contents/.corbits-triage.yml`]: { type: "file", sha: "policy", encoding: "base64", content: Buffer.from(policy).toString("base64"), html_url: `https://github.com/${REPO}/blob/main/.corbits-triage.yml` } }),
   };
   async function github(req: Request): Promise<Response> {
     const { pathname } = new URL(req.url);
@@ -546,11 +550,11 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
   }
 }, 60_000);
 
-const SAVED_PACK = {
+const POLICY_FILE = exportPolicyFile({
   ...emptyPack(REPO),
   checks: { "ci-green": { enabled: true } },
   actions: { when: ["opened", "updated", "checks", "ready"], pass: [{ do: "labels", target: { from: "list", labels: ["checked"] } }], fail: [], unsure: [] },
-};
+}).text;
 
 /** A manager's verdict as its pass records it: made `tookMs` after the pass started, its comment posted when `mirrored`. */
 async function seedVerdict(db: Db, tenantId: string, runId: string, started: Date, tookMs: number, verdict: Record<string, unknown>, mirrored = false): Promise<void> {
@@ -624,7 +628,7 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
 const HOOK_SECRET = "hook-secret";
 
 test("a burst of webhook deliveries for one pull request queues its head once and mails it once", async () => {
-  const github = fakeGithub();
+  const github = fakeGithub(POLICY_FILE);
   const output: string[] = [];
   const { db, close } = createDB(DATABASE);
   try {
@@ -632,11 +636,6 @@ test("a burst of webhook deliveries for one pull request queues its head once an
     const headers = await signedIn(origin);
     const tenantId = await createTenant(origin, headers);
     const providerId = await connectGithub(db, origin, headers, tenantId, github.origin);
-    const title = checkPackName(REPO, "github");
-    const saved = await fetch(`${origin}/api/tenants/${tenantId}/artifacts`, {
-      method: "POST", headers, body: JSON.stringify({ mode: "text", title, content: JSON.stringify(SAVED_PACK), metadata: { checkPack: title } }),
-    });
-    expect(saved.status).toBe(201);
     const hook = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
       method: "POST",
       headers,

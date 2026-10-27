@@ -24,7 +24,8 @@ export type Pull = {
 };
 export type Write = { method: string; path: string; body: unknown };
 
-type Repo = { name: string; policy: string; pulls: Map<number, Pull>; checks: Map<string, CheckRun[]> };
+/** A null `policy` is a repository with no policy file. */
+type Repo = { name: string; policy: string | null; pulls: Map<number, Pull>; checks: Map<string, CheckRun[]> };
 
 export function fakeGithub() {
   const repos = new Map<string, Repo>();
@@ -48,7 +49,7 @@ export function fakeGithub() {
   async function readRoute(repo: Repo, rest: string, url: URL): Promise<Response | undefined> {
     if (rest === "") return Response.json({ full_name: repo.name, default_branch: "main", private: false, owner: { login: OWNER, type: "Organization" } });
     if (rest === "/installation") return Response.json({ id: INSTALLATION });
-    if (rest === `/contents/${POLICY_FILE_PATH}`) return Response.json({ type: "file", sha: "policy", encoding: "base64", content: Buffer.from(repo.policy).toString("base64"), html_url: `https://github.com/${repo.name}/blob/main/${POLICY_FILE_PATH}` });
+    if (rest === `/contents/${POLICY_FILE_PATH}` && repo.policy !== null) return Response.json({ type: "file", sha: "policy", encoding: "base64", content: Buffer.from(repo.policy).toString("base64"), html_url: `https://github.com/${repo.name}/blob/main/${POLICY_FILE_PATH}` });
     if (rest.startsWith("/contents")) return new Response(null, { status: 404 });
     if (rest === "/pulls") return Response.json([...repo.pulls.values()].map((pull) => pullJson(repo, pull)));
     const pulled = /^\/(pulls|issues)\/(\d+)(\/.*)?$/.exec(rest);
@@ -158,8 +159,12 @@ export function fakeGithub() {
     misses,
     requests,
     refused,
-    addRepo(name: string, policy: string): void {
+    addRepo(name: string, policy: string | null): void {
       repos.set(name, { name, policy, pulls: new Map(), checks: new Map() });
+    },
+    /** The policy file as a merge to the default branch leaves it. */
+    setPolicy(name: string, policy: string): void {
+      repos.get(name)!.policy = policy;
     },
     /** Shows `pull` at its head, which has no check runs unless the test set some. */
     open(repo: string, pull: Pull): void {

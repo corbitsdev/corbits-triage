@@ -3,11 +3,9 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema, type DB } from "@intx/db";
-import { createArtifact, runArtifactMigrations } from "@corbits/artifacts";
-import { APPROVE_DO_KIND, AuditLog, checkPackName, emptyPack, stockTriggerMail } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AuditLog, stockTriggerMail } from "@corbits/triage-contracts";
 import type { WorkflowRunEvent } from "@intx/hub-sessions";
 import { createAuditLog, ROTATION_REASON } from "./audit-log.js";
-import { loadCheckPack } from "./github/check-pack-store.js";
 import { migrateTriageTables } from "./triage-db.js";
 import { type RecordedVerdict, replaceVerdict } from "./github/verdict-record-store.js";
 
@@ -59,7 +57,6 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
   let handle: ReturnType<typeof createDB> | undefined;
   try {
     await runMigrations(config, { schema: "public" });
-    await runArtifactMigrations(config, { schema: "public" });
     handle = createDB(config);
     const db = handle.db;
     await migrateTriageTables(db, "public");
@@ -86,21 +83,11 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
       { id: "wfr_approval", anchorRunId: "wfr_anchor", definitionId: "wfd_triage", tenantId: TENANT, status: "completed", createdAt: at("10:05") },
     ]);
     await seed(db, TENANT, [verdict("wfr_verdict", "10:00", "needs-review", "done"), verdict("wfr_retriage", "10:30", "ready", "failed", "fedcba321")]);
-    await db.transaction(async function seedPack(tx) {
-      await createArtifact(tx, {
-        scope: { tenantId: TENANT, principalId: "prn_owner" }, ownerPrincipalId: "prn_owner", kind: "document",
-        title: checkPackName(REPO, "github"), content: JSON.stringify(emptyPack(REPO)), source: { origin: "user" },
-      });
-    });
 
     const read: string[] = [];
     function auditFor(denied: ReadonlySet<string>) {
       return createAuditLog({
         db,
-        artifacts: db,
-        readCheckPack(tenantId, repo, source) {
-          return loadCheckPack({ db, artifacts: db, async automaticKinds() { return []; }, log() {} }, tenantId, repo, source);
-        },
         workflows: ["pr-triage"],
         runReader: {
           async readRunEvents(_repoId, _ref, runId) {
@@ -119,7 +106,6 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
 
     const audit = auditFor(new Set());
     expect(lines(await log(audit))).toEqual([
-      `${OWNER} | Created checks | ${REPO}`,
       `Triage | Triaged | ${REPO}#7`,
       `Triage | Failed comment | ${REPO}#7`,
       "unknown | Membership changed | dana@acme.test",
@@ -135,7 +121,6 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
     expect(read.toSorted()).toEqual(["wfr_approval", "wfr_forged"]);
 
     expect(lines(await log(audit, "?since=2026-10-01T10:05:00Z"))).toEqual([
-      `${OWNER} | Created checks | ${REPO}`,
       `Triage | Triaged | ${REPO}#7`,
       `Triage | Failed comment | ${REPO}#7`,
       "unknown | Membership changed | dana@acme.test",
@@ -143,11 +128,10 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
       `${OWNER} | Approved a held Do | ${REPO}#7`,
     ]);
     const windowed = (await log(audit, `?repo=${REPO}&since=2026-10-01T10:05:00Z`)).entries;
-    expect(windowed.map((entry) => entry.action)).toEqual(["Created checks", "Triaged", "Failed comment", "Approved a held Do"]);
+    expect(windowed.map((entry) => entry.action)).toEqual(["Triaged", "Failed comment", "Approved a held Do"]);
     expect(windowed.find((entry) => entry.action === "Failed comment")?.detail).toBe("on fail");
 
     expect(lines(await log(auditFor(new Set(["principal:*", "workflow:*"])), "?since=2026-10-01T10:05:00Z"))).toEqual([
-      `prn_owner | Created checks | ${REPO}`,
       `Triage | Triaged | ${REPO}#7`,
       `Triage | Failed comment | ${REPO}#7`,
       `prn_owner | Approved a held Do | ${REPO}#7`,

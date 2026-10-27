@@ -1,16 +1,14 @@
 // What the workspace already recorded, as one list newest first: verdicts and
-// the Dos their runs ran, held Do approvals, check pack versions, members,
-// grants and workflow deployments. Nothing is written for the log.
+// the Dos their runs ran, held Do approvals, members, grants and workflow
+// deployments. Nothing is written for the log; a policy's history is its
+// file's, on the host.
 import { and, desc, eq, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import { type } from "arktype";
-import { listArtifactVersions, type ArtifactDb } from "@corbits/artifacts";
-import { type AuditEntry, type AuditLog, type PolicySource, type RepoSource } from "@corbits/triage-contracts";
+import { type AuditEntry, type AuditLog } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
-import type { CheckPackRead } from "./github/check-pack-store.js";
 import { failure } from "./github/portal-credential.js";
-import { repoRecords, sourceOf, triageNs } from "./github/tenant-config.js";
 import { approvalIn, type Approval } from "./github/triage-runs.js";
 import { verdictRecord, type VerdictRecord } from "./github/verdict-record-store.js";
 import type { Member } from "./integrations/app.js";
@@ -43,8 +41,6 @@ type Window = { tenantId: string; repo?: string; since?: Date; limit: number; pe
 
 export type AuditLogDeps = {
   db: DB["db"];
-  artifacts: ArtifactDb;
-  readCheckPack: (tenantId: string, repo: string, source: RepoSource) => Promise<CheckPackRead>;
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
   /** The workflows whose approval runs are read. */
@@ -128,32 +124,6 @@ export function createAuditLog(deps: AuditLogDeps) {
       const approval = approvalIn(await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, row.id));
       if (!approval || (repo !== undefined && approval.repo !== repo)) continue;
       entries.push({ at: row.createdAt, actor: approval.principalId ?? UNKNOWN, action: "Approved a held Do", target: pull(approval.repo, approval.number), detail: approvalOutcome(approval) });
-    }
-    return entries;
-  }
-
-  async function versionsOf(artifactId: string, target: string, limit: number): Promise<Entry[]> {
-    const { versions } = await listArtifactVersions(deps.artifacts, artifactId, { limit: Math.min(limit, 100) });
-    return versions.map((version) => ({
-      at: new Date(version.createdAt),
-      actor: version.authorId,
-      action: `${version.version === 1 ? "Created" : "Changed"} checks`,
-      target,
-      detail: `version ${version.version}`,
-    }));
-  }
-
-  async function policyVersions({ tenantId, repo, limit }: Window): Promise<Entry[]> {
-    const row = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
-    const records = repoRecords(triageNs(row?.config)).filter((record) => repo === undefined || record.name === repo);
-    const repos = repo !== undefined && records.length === 0 ? [{ name: repo, source: "github" as const }] : records;
-    const entries: Entry[] = [];
-    for (const record of repos) {
-      const { name } = record;
-      const read = await deps.readCheckPack(tenantId, name, sourceOf(record));
-      if (read.status === "missing" || read.status === "invalid") continue;
-      const source: PolicySource = read.status === "ok" ? read.source : { repo: read.repo };
-      if (source.repo) entries.push(...(await versionsOf(source.repo.id, name, limit)));
     }
     return entries;
   }
@@ -258,7 +228,7 @@ export function createAuditLog(deps: AuditLogDeps) {
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
     const people = await deps.authorize(principalId, tenantId, "principal:*", "read");
     const window: Window = { tenantId, people, limit: query.limit ?? DEFAULT_LIMIT, ...(query.repo !== undefined && { repo: query.repo }), ...(query.since !== undefined && { since: query.since }) };
-    const sources = [verdicts(window), approvals(window), policyVersions(window), ...(query.repo === undefined ? await workspaceSources(window, principalId) : [])];
+    const sources = [verdicts(window), approvals(window), ...(query.repo === undefined ? await workspaceSources(window, principalId) : [])];
     const merged = (await Promise.all(sources))
       .flat()
       .filter((entry) => query.since === undefined || entry.at >= query.since)

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Type } from "arktype";
 import { readCheckPack } from "./check-pack.ts";
-import { exportPolicyFile, policyDifferences } from "./policy-export.ts";
+import { exportPolicyFile } from "./policy-export.ts";
 import { checkPolicyFile, readPolicyFile } from "./policy-file.ts";
 import { policyWorkflowSchema } from "./policy-workflow.ts";
 import { authorGroupsOf, whenHolds, type StepAuthor } from "./step-when.ts";
@@ -280,22 +280,6 @@ describe("author groups", () => {
     expect(authorGroupsOf(groups, author({ teams: undefined }))).toBeUndefined();
     expect(authorGroupsOf(groups, author({ teamsUnknown: ["acme/core"] }))).toBeUndefined();
     expect(authorGroupsOf({ maintainers: { users: ["octocat"] }, ...groups }, author({ teams: undefined }))).toEqual(["maintainers", "external", "everyone"]);
-  });
-
-  test("widening a group, or reordering groups, is a difference from the saved policy", () => {
-    const pack = readCheckPack(readPolicyFile(`${RULES}groups:\n  core: { teams: [acme/core] }\n  staff: { association: [MEMBER] }\n`, REPO), REPO);
-    const wider = { ...pack, groups: { core: { teams: ["acme/core"] }, staff: { association: ["MEMBER" as const, "CONTRIBUTOR" as const] } } };
-    expect(policyDifferences(pack, pack)).toEqual([]);
-    expect(policyDifferences(pack, wider)).toEqual([{ rule: "The group staff", saved: ["MEMBER"], file: ["MEMBER", "CONTRIBUTOR"], instead: "The group staff: MEMBER, CONTRIBUTOR instead of MEMBER." }]);
-    expect(policyDifferences(pack, { ...pack, groups: { staff: pack.groups!.staff!, core: pack.groups!.core! } })).toEqual([
-      { rule: "The order groups are matched in", saved: ["core", "staff"], file: ["staff", "core"], instead: "Triage will match groups in the order staff, core." },
-    ]);
-  });
-
-  test("a step for named people names them", () => {
-    const pack = readCheckPack(readPolicyFile(RULES, REPO), REPO);
-    const named = { ...pack, actions: { ...pack.actions, pass: [{ do: "approve" as const, when: { author: [{ users: ["octocat"] }, { team: "core" }] } }] } };
-    expect(policyDifferences(pack, named).find((difference) => difference.rule === "When it passes")?.instead).toBe("When it passes, Triage will approve for @octocat, @core.");
   });
 
   test("a step for a group holds by the author's groups, everyone always, and is not known without them", () => {

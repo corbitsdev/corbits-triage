@@ -249,8 +249,8 @@ export type AuditLog = typeof AuditLog.infer;
 
 const ArtifactRefShape = type({ id: "string", version: "number" });
 
-/** The repository's policy file on its default branch; `problem` is why triage does not run on it. */
-export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "problem?": "string" });
+/** The repository's policy file on its default branch; `text` is absent when it is too large to read, `problem` is why triage does not run on it. */
+export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string" });
 export type PolicyFileStatus = typeof PolicyFileStatus.infer;
 
 const FileRefShape = type({ path: "string", sha: "string" });
@@ -270,7 +270,6 @@ export type MergeRisk = (typeof MERGE_RISKS)[number];
  */
 export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, decide: ActionKinds, mergeRisks: type.enumerated(...MERGE_RISKS).array(), codeReview: "boolean" })
   .or({ status: "'missing'" })
-  .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape })
   .or({ status: "'invalid'", reason: "string", path: "string" });
 
 /** Read apart from the policy because it asks GitHub, which the repositories table must not do for every repository. */
@@ -295,27 +294,19 @@ export type PolicyPatchPreview = typeof PolicyPatchPreview.infer;
 export const PolicyPatchResponse = PolicyPatchPreview.or(PolicyExported);
 export type PolicyPatchResponse = typeof PolicyPatchResponse.infer;
 
-/**
- * One way the file's policy runs differently from the saved one: the rule or step list, its values in each (empty is
- * off or nothing), and in plain words what changes if the file is used instead.
- */
-export const PolicyDifference = type({ rule: "string", saved: "string[]", file: "string[]", instead: "string" });
-export type PolicyDifference = typeof PolicyDifference.infer;
-
-/**
- * How a repository's saved rules stand against its policy file. `start`: neither. `upgrade`: saved rules and no file.
- * `differs`: both, and they run differently, or triage refuses the file at `path` for `problem`; the saved rules apply
- * until the file matches them or the saved artifact is archived; `fixable` is false when writing the saved rules to the
- * file would change nothing it does, because the rest is what a file cannot hold. `unexpressed` lists what the saved
- * rules hold that a policy file cannot.
- */
-export const PolicyUpgrade = type({ state: "'ok'" })
-  .or({ state: "'start'" })
-  .or({ state: "'upgrade'", saved: ArtifactRefShape, unexpressed: "string[]" })
-  .or({ state: "'differs'", path: "string", saved: ArtifactRefShape, differences: PolicyDifference.array(), "problem?": "string", fixable: "boolean", unexpressed: "string[]" });
+/** `start`: the repository has no policy file, so triage runs nothing in it; `ok`: it has one. */
+export const PolicyUpgrade = type({ state: "'ok'" }).or({ state: "'start'" });
 export type PolicyUpgrade = typeof PolicyUpgrade.infer;
 
-/** Each enabled repository the member may read; `pull` is the open pull request writing the saved rules to the file, `error` why the repository could not be read. */
+/** Whether the hub may push the policy file straight to `branch`, the default branch; `reason` says why not. */
+export const PolicyPushAccess = type({ branch: "string", allowed: "true" }).or({ branch: "string", allowed: "false", reason: "string" });
+export type PolicyPushAccess = typeof PolicyPushAccess.infer;
+
+/** The pushed file's `sha`, as the next read of it answers, and the commit that wrote it. */
+export const PolicyPushed = type({ status: "'pushed'", path: "string", sha: "string", commit: "string" });
+export type PolicyPushed = typeof PolicyPushed.infer;
+
+/** Each enabled repository the member may read; `pull` is the open pull request adding its policy file, `error` why the repository could not be read. */
 export const PolicyUpgrades = type({ repos: type({ repo: "string", source: type.enumerated(...REPO_SOURCES), "upgrade?": PolicyUpgrade, "pull?": PolicyPull, "error?": "string" }).array() });
 export type PolicyUpgrades = typeof PolicyUpgrades.infer;
 
