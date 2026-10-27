@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun scripts/build-workflows.ts && vite",
-    "build": "bun scripts/build-workflows.ts && tsc -b && vite build",
+    "build": "bun scripts/build-workflows.ts && bun check --no-script && vite build",
     "preview": "vite preview",
     "workflows": "bun scripts/build-workflows.ts"
   },
@@ -41,7 +41,6 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "5.2.0",
-    "typescript": "5.9.3",
     "vite": "6.4.3"
   }
 }
