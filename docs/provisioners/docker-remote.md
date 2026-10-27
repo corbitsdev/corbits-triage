@@ -148,7 +148,7 @@ Or paste the lines the `printf` above prints into the service's Variables → Ra
 
 Restart the hub and read its boot log. With the VPS registered there is no `docker_sidecars_off` line, and `docker_sidecars_swept` says how many leftover containers it removed. Otherwise the line gives the reason; [Not registered](docker.md#not-registered) lists each one and its fix.
 
-Press **Review again** on a pull request in the Inbox. Its sidecar shows up on the VPS:
+Press **Review again** on a pull request on Triage. Its sidecar shows up on the VPS:
 
 ```sh
 DOCKER_HOST=tcp://$HOST:2376 DOCKER_TLS_VERIFY=1 DOCKER_CERT_PATH=/path/to/certs docker ps --filter label=corbits.hub

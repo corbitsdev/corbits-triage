@@ -5,16 +5,15 @@ import { errorText } from "@corbits/common";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
-import { initialsOf, listCounts } from "../lib/inbox-view.ts";
+import { initialsOf, needsYouCount } from "../lib/inbox-view.ts";
 import { useOpenWorkspaceAfterSending, useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { useOpenItems, useOpenPullsUnanswered } from "../lib/open-pulls.ts";
 import { createExtraWorkspace, sharesName } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
-import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useSession } from "../lib/session.tsx";
-import { CheckIcon, GearIcon, InboxIcon, ListIcon, MergeIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, GearIcon, InboxIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
   const { snapshot, warn } = usePortal();
@@ -116,12 +115,16 @@ function UserBlock() {
   );
 }
 
+function triageList(path: string): boolean {
+  return path === "/" || path.startsWith("/pr/");
+}
+
 function roomOf(path: string, pullPage: boolean) {
   if (path.startsWith("/settings")) return "settings";
   if (path.startsWith("/repositories")) return "repos";
   if (pullPage) return "pr";
-  if (path.startsWith("/pulse")) return "pulse";
-  return "inbox";
+  if (triageList(path)) return "inbox";
+  return "other";
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -129,16 +132,14 @@ export default function Layout({ children }: { children: ReactNode }) {
   const { snapshot } = usePortal();
   const open = useOpenItems();
   const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
-  const counts = useMemo(() => listCounts(open, enabled), [open, enabled]);
+  const needsYou = useMemo(() => needsYouCount(open, enabled), [open, enabled]);
   const openPullsUnanswered = useOpenPullsUnanswered();
   const path = location.pathname;
   const pullPage = path.startsWith("/triage/pr/") || path.startsWith("/prs/");
   const room = roomOf(path, pullPage);
-  const needsYouActive = path.startsWith("/inbox") || path.startsWith("/triage") || pullPage;
-  const readyActive = path.startsWith("/ready");
-  const allOpenActive = path.startsWith("/open");
-  // The inbox and the repositories table draw their own inset panels, so they skip the stage card.
-  const ownPanels = room === "inbox" || room === "repos";
+  const triageActive = room === "inbox" || room === "pr";
+  // The triage list and the repositories table draw their own inset panels, so they skip the stage card. Audit does too.
+  const ownPanels = room === "inbox" || room === "repos" || room === "other";
   const stageClass = room === "pr" ? "stage has-sliver" : "stage";
 
   useEffect(function markBody() {
@@ -149,68 +150,43 @@ export default function Layout({ children }: { children: ReactNode }) {
   }, [room]);
 
   return (
-    <PulseProvider open={open} path={path}>
-      <div className="app shell">
-        <a className="skip" href="#main">
-          Skip to content
-        </a>
-        <nav className="rail" aria-label="Main">
-          <Link className="brand" to="/inbox">
-            <img src="/triage-logo.svg" alt="" />
-            Corbits Triage
-          </Link>
-          <Link className="nav-a" to="/pulse" aria-current={room === "pulse" ? "true" : undefined}>
-            <PulseIcon />
-            Pulse
-          </Link>
-          <h3>Inbox</h3>
-          <Link className="nav-a" to="/inbox" aria-current={needsYouActive ? "true" : undefined}>
-            <InboxIcon />
-            Needs you
-            {openPullsUnanswered ? null : <span className="n">{counts["needs-you"]}</span>}
-          </Link>
-          <Link className="nav-a" to="/ready" aria-current={readyActive ? "true" : undefined}>
-            <MergeIcon />
-            Ready
-            {openPullsUnanswered ? null : <span className="n">{counts.ready}</span>}
-          </Link>
-          <Link className="nav-a" to="/open" aria-current={allOpenActive ? "true" : undefined}>
-            <ListIcon />
-            All open
-            {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
-          </Link>
-          <span className="grow" />
-          <WorkspaceSwitcher />
-          <UserBlock />
-        </nav>
-        {ownPanels ? children : (
-          <div className={stageClass} id="stage">
-            {children}
-          </div>
-        )}
-        <nav className="mobile-nav" aria-label="Mobile">
-          <NavLink to="/inbox" className={needsYouActive ? "active" : undefined}>
-            <InboxIcon />
-            Needs you
-          </NavLink>
-          <NavLink to="/ready" className={readyActive ? "active" : undefined}>
-            <MergeIcon />
-            Ready
-          </NavLink>
-          <NavLink to="/open" className={allOpenActive ? "active" : undefined}>
-            <ListIcon />
-            All open
-          </NavLink>
-          <NavLink to="/repositories">
-            <RepoIcon />
-            Repos
-          </NavLink>
-          <NavLink to="/settings">
-            <GearIcon />
-            Settings
-          </NavLink>
-        </nav>
-      </div>
-    </PulseProvider>
+    <div className="app shell">
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
+      <nav className="rail" aria-label="Main">
+        <Link className="brand" to="/">
+          <img src="/triage-logo.svg" alt="" />
+          Corbits Triage
+        </Link>
+        <Link className="nav-a" to="/" aria-current={triageActive ? "true" : undefined}>
+          <InboxIcon />
+          Triage
+          {openPullsUnanswered ? null : <span className="n">{needsYou}</span>}
+        </Link>
+        <span className="grow" />
+        <WorkspaceSwitcher />
+        <UserBlock />
+      </nav>
+      {ownPanels ? children : (
+        <div className={stageClass} id="stage">
+          {children}
+        </div>
+      )}
+      <nav className="mobile-nav" aria-label="Mobile">
+        <NavLink to="/" className={triageActive ? "active" : undefined}>
+          <InboxIcon />
+          Triage
+        </NavLink>
+        <NavLink to="/repositories">
+          <RepoIcon />
+          Repos
+        </NavLink>
+        <NavLink to="/settings">
+          <GearIcon />
+          Settings
+        </NavLink>
+      </nav>
+    </div>
   );
 }

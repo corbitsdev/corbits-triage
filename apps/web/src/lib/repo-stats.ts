@@ -83,7 +83,3 @@ export function outcomeCounts(medians: OutcomeMedians): string {
 export function humansText(humans: number): string {
   return `${humans} ${humans === 1 ? "person" : "people"} involved`;
 }
-
-export function actedOn(stats: TriageStats): number {
-  return Object.values(stats.actions).reduce((sum, action) => sum + action.executed, 0);
-}

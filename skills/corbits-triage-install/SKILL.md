@@ -72,7 +72,7 @@ Either the person presses **Start a policy file** on the repository and merges t
 
 ## 6. Turn triage on
 
-The person opens the repository under Repositories and turns on **Triage pull requests in this repository**. If the repository has no open pull request, open one so there is something to triage. Done when a verdict appears in the Inbox, which can take up to five minutes.
+The person opens the repository under Repositories and turns on **Triage pull requests in this repository**. If the repository has no open pull request, open one so there is something to triage. Done when a verdict appears on Triage, which can take up to five minutes.
 
 Code review is optional and needs an isolated place to run: `docs/SELF_HOST.md`, "Where sidecars run".
 
@@ -83,4 +83,4 @@ Code review is optional and needs an isolated place to run: `docs/SELF_HOST.md`,
 - [ ] Hub logs `Started server`; portal opens
 - [ ] Person signed up, created the GitHub App, chose repositories, saved the model key
 - [ ] Policy file merged
-- [ ] Triage on; first verdict in the Inbox
+- [ ] Triage on; first verdict on Triage

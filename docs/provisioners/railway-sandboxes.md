@@ -56,7 +56,7 @@ Railway's standard image cannot be pinned by digest: in Railway's public GraphQL
 
 Open Settings → Code review. **Railway Sandboxes** says **Ready**, or **In use** when no Docker or E2B place comes before it. If it says **Failing**, the reason under it, shown to admins, says what to fix; the hub also logs it as `railway_sidecars_off`. Shortly after boot, `railway_sidecars_swept` says how many of this hub's leftover sandboxes it destroyed; the sweep runs in the background and never holds up the hub.
 
-Press **Review again** on a pull request in the Inbox. Its sidecar's sandbox shows up in the environment:
+Press **Review again** on a pull request on Triage. Its sidecar's sandbox shows up in the environment:
 
 ```sh
 railway sandbox list --environment sidecars

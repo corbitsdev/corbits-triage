@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@corbits/react-ui";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@corbits/react-ui/ui/toast";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { INVITE_PATH, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { HeldInboxProvider, useSignOutAfterSending } from "./lib/held-inbox.tsx";
 import { SessionProvider, useSession } from "./lib/session.tsx";
@@ -24,12 +24,29 @@ import { Welcome } from "./pages/Welcome.tsx";
 import Audit from "./pages/Audit.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
-import Pulse from "./pages/Pulse.tsx";
 import Repositories from "./pages/Repositories.tsx";
 import Settings from "./pages/Settings.tsx";
+import { legacyTriageTarget } from "./lib/inbox-view.ts";
 
-function InboxRedirect() {
-  return <Navigate to="/inbox" replace />;
+function LegacyListRedirect() {
+  const { pathname, search } = useLocation();
+  return <Navigate to={legacyTriageTarget(pathname, search) ?? "/"} replace />;
+}
+
+const TRIAGE_ROOTS = new Set(["triage", "queue", "runs", "approvals"]);
+
+/** `/:owner/:repo/:number` outranks splat routes, so the old list roots are told apart from owners here. */
+function SelectedPullRedirect() {
+  const { pathname, search } = useLocation();
+  const { owner } = useParams();
+  const legacy = legacyTriageTarget(pathname, search);
+  if (legacy !== null) return <Navigate to={legacy} replace />;
+  if (owner !== undefined && TRIAGE_ROOTS.has(owner)) return <TriageRedirect />;
+  return <Navigate to={`/pr${pathname}${search}`} replace />;
+}
+
+function TriageRedirect() {
+  return <Navigate to="/" replace />;
 }
 
 function NotConfigured() {
@@ -145,37 +162,39 @@ function Gate() {
   if (snapshot.denied.repos || snapshot.denied.credentials || snapshot.denied.models) {
     return <DeniedGate snapshot={snapshot} />;
   }
-  const entry = path === "/" || path === "/login";
   if (!connected || path === "/connect") return <Connect />;
 
   if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;
-  if (entry) {
-    return <Navigate to={snapshot.repos.length > 0 ? "/inbox" : "/repositories"} replace />;
+  if (path === "/" || path === "/login") {
+    if (snapshot.repos.length === 0) return <Navigate to="/repositories" replace />;
+    if (path === "/login") return <Navigate to="/" replace />;
   }
 
   return (
     <Layout>
       <Routes>
-        <Route path="/pulse" element={<Pulse />} />
-        <Route path="/inbox" element={<Inbox view="needs-you" />} />
-        <Route path="/inbox/:owner/:repo/:number" element={<Inbox view="needs-you" />} />
-        <Route path="/ready" element={<Inbox view="ready" />} />
-        <Route path="/ready/:owner/:repo/:number" element={<Inbox view="ready" />} />
-        <Route path="/open" element={<Inbox view="all-open" />} />
-        <Route path="/open/:owner/:repo/:number" element={<Inbox view="all-open" />} />
+        <Route path="/pulse" element={<LegacyListRedirect />} />
+        <Route path="/inbox" element={<LegacyListRedirect />} />
+        <Route path="/inbox/:owner/:repo/:number" element={<LegacyListRedirect />} />
+        <Route path="/ready" element={<LegacyListRedirect />} />
+        <Route path="/ready/:owner/:repo/:number" element={<LegacyListRedirect />} />
+        <Route path="/open" element={<LegacyListRedirect />} />
+        <Route path="/open/:owner/:repo/:number" element={<LegacyListRedirect />} />
         <Route path="/triage/pr/:owner/:repo/:number" element={<PRDetail />} />
         <Route path="/triage/pr/:id" element={<PRDetail />} />
         <Route path="/prs/:owner/:repo/:number" element={<PRDetail />} />
         <Route path="/prs/:id" element={<PRDetail />} />
-        <Route path="/triage/*" element={<InboxRedirect />} />
-        <Route path="/queue/*" element={<InboxRedirect />} />
-        <Route path="/approvals" element={<InboxRedirect />} />
+        <Route path="/triage/*" element={<TriageRedirect />} />
+        <Route path="/queue/*" element={<TriageRedirect />} />
+        <Route path="/approvals" element={<TriageRedirect />} />
         <Route path="/audit" element={<Audit />} />
-        <Route path="/runs/*" element={<InboxRedirect />} />
+        <Route path="/runs/*" element={<TriageRedirect />} />
         <Route path="/repositories/:owner?/:repo?" element={<Repositories />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/:tab" element={<Settings />} />
-        <Route path="/" element={<InboxRedirect />} />
+        <Route path="/" element={<Inbox />} />
+        <Route path="/pr/:owner/:repo/:number" element={<Inbox />} />
+        <Route path="/:owner/:repo/:number" element={<SelectedPullRedirect />} />
         <Route path="*" element={<div className="empty">Page not found. Choose a page from the navigation.</div>} />
       </Routes>
     </Layout>

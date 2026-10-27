@@ -60,9 +60,9 @@ Or by hand:
    ```
 
 4. **Turn on triage** for the repository under Repositories. Once a decision
-   model is saved, its open pull requests appear in the Inbox with a verdict,
+   model is saved, its open pull requests appear on Triage with a verdict,
    a score and the reasons. Triage posts its comment and verdict
-   label on GitHub; every other action waits for a click in the Inbox until
+   label on GitHub; every other action waits for a click on Triage until
    you let Triage take it on its own.
 
 ## Other setup paths

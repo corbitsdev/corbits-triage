@@ -44,15 +44,17 @@ mock.module("../lib/held-inbox.tsx", () => ({
 mock.module("../lib/open-pulls.ts", () => ({
   leavesOpen() { return false; },
   useOpenItems() { return open; },
+  useMarkedItems() { return { open, known: open }; },
   useOpenPulls() { return { data: undefined, isError: false, isEnabled: false }; },
   useOpenPullsUnanswered() { return false; },
   useQueueLoading() { return false; },
 }));
 
-mock.module("../lib/pulse-visit.tsx", () => ({
-  usePulse() {
-    return { pulse: null, endVisit() {}, saveVisit() {} };
+mock.module("../lib/tenant-entities.ts", () => ({
+  useRoles() {
+    return { rows: [], loading: true, denied: false, unavailable: false };
   },
+  useAllowed() { return false; },
 }));
 
 mock.module("../lib/triage-verdicts.ts", () => ({
@@ -176,7 +178,7 @@ function show(first: RepoSource) {
     root?.render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter>
-          <Inbox view="needs-you" />
+          <Inbox />
           <PolicyFiles snapshot={portalSnapshot()} />
         </MemoryRouter>
       </QueryClientProvider>,

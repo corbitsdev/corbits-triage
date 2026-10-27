@@ -513,7 +513,7 @@ from the repository policy and any policy file it extends, and `checkPack`
 in the shape a deployment built before steps reads.
 
 A person holding the same grant approves a held action, or one the run failed
-to write, from the Inbox: the hub mails the deployment the action, its effect
+to write, from Triage: the hub mails the deployment the action, its effect
 id, head and approver. That mail skips triage: an `approval` action step
 reads it, trusting only the hub's sender, and execute writes the action unless
 the host already shows it; a close, merge, comment or review is refused once
@@ -723,8 +723,8 @@ review, not the listener.
 
 Where triage mirrors and its policy approves, a settled head that may not be
 approved dismisses the approvals the approve action made; one dismissed on a
-head is not made again on it. A person's own approval from the Inbox is never
-dismissed; an approve action a person lets through from the Inbox is.
+head is not made again on it. A person's own approval from Triage is never
+dismissed; an approve action a person lets through from Triage is.
 
 The portal saves repository settings through the stock tenant update (`PATCH
 /api/tenants/:id`), which the hub checks first. Besides tenant `manage`, it

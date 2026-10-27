@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { projectQueue, type OpenPulls, type PullTriage } from "./hub-api.ts";
-import { openItems, withPull, type Handled } from "./open-pulls.ts";
+import { knownItems, openItems, withPull, type Handled } from "./open-pulls.ts";
 
 const KEY = "acme/widgets#8";
 
@@ -55,6 +55,13 @@ describe("handled pull requests", () => {
     if (item === undefined) throw new Error("no item");
     expect(marksOf(PUSHED, open("a"), withPull({}, item, "merge"))).toEqual([]);
     expect(marksOf(PUSHED, open("a"), {}, withPull({}, item, "close"))).toEqual([]);
+  });
+
+  test("All keeps one merged here until the next refresh, but never one already closed", () => {
+    const [mergedHere, closed] = projectQueue([PUSHED], [], open("a", [8, 9]));
+    if (mergedHere === undefined || closed === undefined) throw new Error("no items");
+    const known = knownItems([mergedHere, { ...closed, closed: true }], withPull({}, mergedHere, "merge"), {});
+    expect(known.map((entry) => entry.item.key)).toEqual([KEY]);
   });
 
   test("an entry stored before kinds were recorded matches on the verdict run it answered", () => {

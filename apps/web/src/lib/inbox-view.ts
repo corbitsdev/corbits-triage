@@ -265,14 +265,50 @@ export function matchesQuery(item: PrItem, query: string): boolean {
 
 export type ListView = "needs-you" | "ready" | "all-open";
 
-const LIST_ROOT: Record<ListView, string> = { "needs-you": "/inbox", ready: "/ready", "all-open": "/open" };
+/** Ready, Open and All are filters on Triage. Open is the old All open list. All is every open pull request across the repositories Triage runs on. */
+export type TriageView = ListView | "all";
 
-export function listRoot(view: ListView): string {
-  return LIST_ROOT[view];
+const VIEW_PARAM = "view";
+
+const FILTER_PARAM: Record<Exclude<TriageView, "needs-you">, string> = { ready: "ready", "all-open": "open", all: "all" };
+
+const VIEW_FROM_PARAM: Record<string, TriageView> = { ready: "ready", open: "all-open", all: "all" };
+
+/** Needs you has no filter in the address. Anything else is ignored. */
+export function triageView(params: URLSearchParams): TriageView {
+  const named = params.get(VIEW_PARAM);
+  return named !== null && Object.hasOwn(VIEW_FROM_PARAM, named) ? VIEW_FROM_PARAM[named]! : "needs-you";
 }
 
-export function listHref(view: ListView, item: Pick<PrItem, "repo" | "number">): string {
-  return `${LIST_ROOT[view]}/${item.repo}/${item.number ?? ""}`;
+/** Keeps the other search filters. Waiting is only the Waiting tab, so choosing any slice drops it. */
+export function withTriageView(params: URLSearchParams, view: TriageView): URLSearchParams {
+  const next = new URLSearchParams(params);
+  if (view === "needs-you") next.delete(VIEW_PARAM);
+  else next.set(VIEW_PARAM, FILTER_PARAM[view]);
+  next.delete("waiting");
+  return next;
+}
+
+/** The list lives at `/`. A selected pull request is under `/pr/`, and the filter stays in the search string. A row with no number has no address. */
+export function listHref(item: Pick<PrItem, "repo" | "number">): string | undefined {
+  if (item.number === null) return undefined;
+  return `/pr/${item.repo}/${item.number}`;
+}
+
+/**
+ * Pulse, Inbox, Ready and Open, including a pull request open on them, become the same place on Triage.
+ * Returns null when the path is not one of those pages.
+ */
+export function legacyTriageTarget(pathname: string, search: string): string | null {
+  const parts = pathname.split("/").filter(Boolean);
+  const root = parts[0];
+  if (root !== "pulse" && root !== "inbox" && root !== "ready" && root !== "open") return null;
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  if (root === "ready" || root === "open") params.set(VIEW_PARAM, root);
+  const rest = root === "pulse" ? [] : parts.slice(1);
+  const path = rest.length === 3 ? `/pr/${rest.join("/")}` : "/";
+  const query = params.toString();
+  return query === "" ? path : `${path}?${query}`;
 }
 
 export function repoOf(key: string): string {
@@ -310,12 +346,22 @@ export function readyToMerge(open: OpenItem[], enabled: ReadonlySet<string>): Op
   return allOpen(open, enabled).filter((entry) => isReadyToMerge(entry.item)).sort((a, b) => waitingSince(a.item) - waitingSince(b.item));
 }
 
-export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Record<ListView, number> {
-  return {
-    "needs-you": needsYou(open, enabled).filter((entry) => inNeedsYou(entry.item)).length,
-    ready: readyToMerge(open, enabled).length,
-    "all-open": allOpen(open, enabled).length,
-  };
+export function needsYouCount(open: OpenItem[], enabled: ReadonlySet<string>): number {
+  return needsYou(open, enabled).filter((entry) => inNeedsYou(entry.item)).length;
+}
+
+/** Needs you, Ready and Open match the old lists. All is every open pull request across the repositories Triage runs on, plus any merged or closed here before the next refresh. */
+export function entriesFor(view: TriageView, open: OpenItem[], known: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
+  switch (view) {
+    case "needs-you":
+      return needsYou(open, enabled);
+    case "ready":
+      return readyToMerge(open, enabled);
+    case "all-open":
+      return allOpen(open, enabled);
+    case "all":
+      return allOpen(known, enabled);
+  }
 }
 
 export const AUTHOR_KIND_LABEL: Record<AuthorKind, string> = {
