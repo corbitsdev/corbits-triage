@@ -637,15 +637,7 @@ input, textarea { caret-color: var(--heat); }
 .check-counts .fail { color: var(--bad); }
 .check-counts .wait { color: var(--heat); }
 .check-counts .pass { color: var(--ok); }
-.pr-timeline { grid-column: 1 / -1; border-right: 0; }
-.pr-overview > .pr-pane {
-  grid-column: 1 / -1;
-  flex: none;
-  min-height: auto;
-  overflow: visible;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--rule);
-}
+.pr-timeline, .pr-history { grid-column: 1 / -1; border-right: 0; }
 .timeline-trend { font-size: 14px; font-weight: 700; color: var(--ink-soft); }
 .timeline {
   display: grid;

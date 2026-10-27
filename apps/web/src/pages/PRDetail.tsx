@@ -106,6 +106,12 @@ function CheckList({ source, repo, sha, checks, fallback }: { source: RepoSource
   );
 }
 
+function loadNotice(host: string, pending: boolean, error: unknown): ReactNode {
+  if (pending) return <p className="muted">Loading from {host}…</p>;
+  if (error) return <p role="alert" className="error">Could not load from {host}. {errorText(error)}</p>;
+  return null;
+}
+
 /** Commits, then conversation, under the verdict and the evidence. */
 export function PullHistory({ host, pending, error, commits, comments }: {
   host: string;
@@ -114,15 +120,11 @@ export function PullHistory({ host, pending, error, commits, comments }: {
   commits: GithubPullDetail["commits"];
   comments: GithubPullDetail["comments"];
 }) {
-  const notice = pending
-    ? <p className="muted">Loading from {host}…</p>
-    : error
-      ? <p role="alert" className="error">Could not load from {host}. {errorText(error)}</p>
-      : null;
+  const notice = loadNotice(host, pending, error);
   return (
     <>
-      <div className="pr-pane" aria-label="Commits">
-        <h1>Commits</h1>
+      <section className="brief pr-history">
+        <h2>Commits</h2>
         {notice ?? (commits.length === 0 ? <p className="muted">No commits.</p> : commits.map((commit) => (
           <div className="commit-row" key={commit.sha}>
             <span className="mono">{commit.sha.slice(0, 7)}</span>
@@ -130,13 +132,13 @@ export function PullHistory({ host, pending, error, commits, comments }: {
             <span className="muted">{commit.author} · {relativeTime(commit.committedAt)}</span>
           </div>
         )))}
-      </div>
-      <div className="pr-pane" aria-label="Conversation">
-        <h1>Conversation</h1>
+      </section>
+      <section className="brief pr-history">
+        <h2>Conversation</h2>
         {notice ?? (comments.length === 0 ? <p className="muted">No comments yet.</p> : comments.map((comment) => (
           <p key={comment.id}><strong>{comment.author}</strong> <span className="muted">{relativeTime(comment.createdAt)}</span><br />{comment.body}</p>
         )))}
-      </div>
+      </section>
     </>
   );
 }
@@ -500,12 +502,6 @@ export default function PRDetail() {
   const host = hostName(item.source);
   const notPosted = notPostedText(item);
 
-  function loadNotice(): ReactNode {
-    if (pullPending) return <p className="muted">Loading from {host}…</p>;
-    if (pull.error) return <p role="alert" className="error">Could not load from {host}. {errorText(pull.error)}</p>;
-    return null;
-  }
-
   function filesPane(): ReactNode {
     if (loadState) return <div className="diff-empty">{loadState}</div>;
     if (selected) return <DiffView file={selected} layout={diffLayout.layout} canSplit={diffLayout.splitFits} onLayout={diffLayout.choose} />;
@@ -545,7 +541,7 @@ export default function PRDetail() {
     return <p className="sliver-empty">Overview of this pull request.</p>;
   }
   let pane: ReactNode = <About item={item} drafted={showRecommended && !recommendedPosted} />;
-  const loadState = loadNotice();
+  const loadState = loadNotice(host, pullPending, pull.error);
   if (tab === "files") pane = filesPane();
   if (tab === "issue") {
     pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><IssueList item={item} issues={pull.data?.issues ?? []} pending={pullPending} error={pull.error} /></div>;

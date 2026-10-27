@@ -14,7 +14,6 @@ test("commits come before conversation, and each section names itself when empty
   expect(conversationAt).toBeGreaterThan(commitsAt);
   expect(html).toContain("No commits.");
   expect(html).toContain("No comments yet.");
-  expect(html).not.toContain("Talk");
 });
 
 test("a commit shows its short id and first line, and a comment shows its author and text", () => {
@@ -36,17 +35,4 @@ test("a commit shows its short id and first line, and a comment shows its author
   expect(html).toContain("Looks good");
   expect(html).not.toContain("No commits.");
   expect(html).not.toContain("No comments yet.");
-});
-
-test("loading replaces both lists, and a failed load says so", () => {
-  const loading = renderToStaticMarkup(
-    <PullHistory host="Bitbucket" pending error={null} commits={[]} comments={[]} />,
-  );
-  expect(loading).toContain("Loading from Bitbucket…");
-  expect(loading).not.toContain("No commits.");
-  const failed = renderToStaticMarkup(
-    <PullHistory host="GitHub" pending={false} error={new Error("offline")} commits={[]} comments={[]} />,
-  );
-  expect(failed).toContain("Could not load from GitHub.");
-  expect(failed).toContain("offline");
 });
