@@ -56,10 +56,16 @@ function Place({ place }: { place: CodeReviewPlaceOption }) {
   );
 }
 
-/** Shown until a place is in use. The list below already carries each place's lines and guide, so this names none. */
-export function CodeReviewPlaceNotice({ place }: { place: string | null | undefined }) {
+/** Shown until a place is in use, with the setup of the first place in the list, the one recommended. */
+export function CodeReviewPlaceNotice({ place, places }: { place: string | null | undefined; places: CodeReviewPlaceOption[] | undefined }) {
   if (place !== null) return null;
-  return <p role="status" className="note">Code review needs an isolated place to run.</p>;
+  const recommended = places?.[0];
+  return (
+    <div role="status" className="note">
+      <p>Code review needs an isolated place to run.{recommended && <> We recommend <b>{recommended.label}</b>.</>}</p>
+      {recommended && <PlaceSetup place={recommended} />}
+    </div>
+  );
 }
 
 function WhereItRuns({ places }: { places: CodeReviewPlaceOption[] }) {
@@ -86,7 +92,7 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
         <p>Reads each new commit of a pull request for bugs, in the repositories where it is switched on.</p>
       </header>
       <div>
-        <CodeReviewPlaceNotice place={snapshot.codeReviewPlace} />
+        <CodeReviewPlaceNotice place={snapshot.codeReviewPlace} places={snapshot.codeReviewPlaces} />
         {snapshot.denied.credentials && <DeniedNotice section="credentials" />}
         <div className="sentences">
           <KeyRow

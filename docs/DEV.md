@@ -43,7 +43,7 @@ It first applies the database migrations (`bun run db:migrate`), then starts bot
 
 Hub on http://localhost:3000 (API only), portal on http://localhost:5173 (it proxies `/api` to the hub and bundles the workflows on start). Restart after changing `apps/hub` or `packages/`; only the portal hot-reloads.
 
-When no isolated place is registered, the hub prints one warning, `code_review_no_isolated_place`. The line names the environment variables the places declare (`DOCKER_HOST`, `DOCKER_TLS_CA`, `DOCKER_TLS_CERT`, `DOCKER_TLS_KEY`, `E2B_API_KEY`, `RAILWAY_SANDBOX_TOKEN`, `RAILWAY_SANDBOX_ENVIRONMENT_ID`) and `docs/provisioners/`. The hub still starts. Triage runs; code review does not. Settings → Code review shows **Code review needs an isolated place to run** at the top. When a place is in use, that warning is not printed and the notice is gone. The line and the notice do not choose a place; each place's `.env` lines and guide stay on that page and under `docs/provisioners/`.
+When no isolated place is registered, the hub prints one warning, `code_review_no_isolated_place`, and still starts; triage runs and code review does not. Docker on this machine needs no variable, only Docker running and the `corbits-triage-sidecar` image built ([steps 1 to 3](provisioners/docker.md#set-up)), optionally with `DOCKER_CONTEXT`. The other places need `DOCKER_HOST`, `DOCKER_TLS_CA`, `DOCKER_TLS_CERT`, `DOCKER_TLS_KEY`, `E2B_API_KEY`, `RAILWAY_SANDBOX_TOKEN` and `RAILWAY_SANDBOX_ENVIRONMENT_ID` ([docs/provisioners/](provisioners/)). Settings → Code review shows **Code review needs an isolated place to run** at the top, with the first place's `.env` lines and setup guide, until a place is in use.
 
 ## 5. Set up in the portal
 

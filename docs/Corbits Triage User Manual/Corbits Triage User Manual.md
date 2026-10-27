@@ -391,7 +391,7 @@ It needs the workspace's Anthropic key, saved under [Settings → Code review](#
 
 Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up), or in an [E2B](../provisioners/e2b.md) or [Railway](../provisioners/railway-sandboxes.md) sandbox in the cloud. [Settings → Code review](#code-review-2) says where it runs.
 
-A server with no isolated place set up for Triage has nowhere to run it. Each repository's page then says **Code review needs an isolated place to run**, with **Set one up**, which opens Settings → Code review, and **Review again** is hidden in the Inbox. Settings → Code review says the same at the top of the section. Nothing is reviewed until a place is set up. Once a place is in use, both notices are gone.
+A server with no isolated place set up for Triage has nowhere to run it. Each repository's page then says **Code review needs an isolated place to run**, with **Set one up**, which opens Settings → Code review, and **Review again** is hidden in the Inbox. Nothing is reviewed until a place is set up.
 
 ![The Code review section on a server with no isolated place: Code review needs an isolated place to run, with Set one up](images/38.png)
 
@@ -596,7 +596,7 @@ Every secret Triage holds can be replaced from Settings without disconnecting an
 
 [Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**. With no key, the Anthropic key field is open: paste the key and press **Save key**. When a key is stored, that field is hidden and the key itself is not shown. **Rotate** opens a blank field for a new key; press **Save key** to replace the stored one. **Remove** deletes it after you confirm. As for the decision model, when Triage cannot read the saved keys, the row says so and shows no field.
 
-When no place is in use, the top of this section says **Code review needs an isolated place to run**. It does not name a place to choose. Once a place says **In use**, that notice is gone.
+When no place is in use, the top of this section says **Code review needs an isolated place to run** and names the place recommended, the first in **Where it runs**, with the lines to add to the Triage server's `.env`, **Copy**, and its **Setup guide**. Once a place says **In use**, that notice is gone.
 
 Below it, **Where it runs** lists every isolated place this server can run code review, such as **Docker on this machine**, **Docker on another machine (TLS)** **E2B sandboxes** and **Railway Sandboxes**, each with a line on why you would choose it. Code review never runs inside Triage itself. It runs in the first place in the list, in the order shown, that is ready. When that place is full, new reviews wait there for room; they do not move to the next place.
 

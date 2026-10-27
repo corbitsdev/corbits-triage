@@ -13,12 +13,10 @@ test("boot warns once when no isolated place is registered, and stays quiet once
   const reason = warning?.reason ?? "";
   expect(reason).not.toContain("\n");
   expect(reason).toContain("docs/provisioners/");
-  expect(reason.toLowerCase()).not.toContain("recommend");
   for (const place of PLACES) {
     for (const line of place.env) {
       expect(reason).toContain(line.slice(0, line.indexOf("=")));
     }
   }
-  expect(reason).not.toContain("DOCKER_PLACE");
   expect(isolatedPlaceBootWarning(true, PLACES)).toBeUndefined();
 });

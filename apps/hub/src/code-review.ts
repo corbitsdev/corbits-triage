@@ -60,10 +60,7 @@ function declaredEnvNames(guides: readonly Pick<PlaceGuide, "env">[]): string[] 
   return names;
 }
 
-/**
- * One boot line when no isolated place is registered. The hub still starts and triage still runs.
- * The line names the variables the places declare and docs/provisioners/, and does not choose a place.
- */
+/** A warning rather than a failure: the hub still starts and triage still runs without code review. */
 export function isolatedPlaceBootWarning(registered: boolean, guides: readonly Pick<PlaceGuide, "env">[]): { level: "warn"; msg: "code_review_no_isolated_place"; reason: string } | undefined {
   if (registered) return undefined;
   const declared = declaredEnvNames(guides);
@@ -71,7 +68,7 @@ export function isolatedPlaceBootWarning(registered: boolean, guides: readonly P
   return {
     level: "warn",
     msg: "code_review_no_isolated_place",
-    reason: `Code review needs an isolated place to run. Environment variables the places declare: ${declared.join(", ")}. See docs/provisioners/.`,
+    reason: `Code review has no isolated place to run. Docker on this machine needs no variable, only Docker running and the corbits-triage-sidecar image built (docs/provisioners/docker.md), optionally with DOCKER_CONTEXT. The other places need ${declared.join(", ")}. See docs/provisioners/.`,
   };
 }
 
