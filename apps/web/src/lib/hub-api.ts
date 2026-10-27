@@ -1336,6 +1336,8 @@ export type PrItem = {
   posted: boolean;
   /** Why the run posted nothing on the host, when it said: `stale`, `waiting`, `no_request` or `no_grants`. */
   notPosted?: string;
+  /** Why the policy's `for` or `when` left the verdict's head out of code review. */
+  codeReviewSkipped?: string;
   running: boolean;
   /** Its policy reads CI, so triage holds this head until its CI finishes. */
   waitingForCi: boolean;
@@ -1491,6 +1493,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     reviewAnswered: facts.reviewAnswered === true,
     posted: verdict.commented,
     ...(detail.notPosted !== undefined && { notPosted: detail.notPosted }),
+    ...(detail.codeReviewSkipped !== undefined && { codeReviewSkipped: detail.codeReviewSkipped }),
     running: isRunning(pull.run),
     ...waitingFields(pull.run),
     failure: failureOf(pull.run),

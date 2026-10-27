@@ -58,6 +58,8 @@ export const VerdictDetail = type({
   "automatic?": "string[]",
   /** Why the run's mirror posted nothing on the host: `stale`, `waiting`, `no_request` or `no_grants`. */
   "notPosted?": "string",
+  /** Why the policy's `for` or `when` left the head out of code review. */
+  "codeReviewSkipped?": "string",
   "facts?": VerdictFacts,
 });
 export type VerdictDetail = typeof VerdictDetail.infer;

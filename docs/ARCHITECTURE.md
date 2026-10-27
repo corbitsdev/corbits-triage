@@ -274,13 +274,18 @@ any other tenant or an unknown sender.
   a pass deploys it the same way (without one it declares no code-review
   asset, and the verdict goes up alone), mails it the request until the
   review's one-hour deadline, and still posts nothing while that review is
-  out. The pass that collects its report mirrors the verdict, then posts the
-  review through the host's `send_code_review` tool, so they go up together. A
-  review stays on its reviewer for its head like a decided verdict, so a later
-  pass on that head whose rules still let code review past posts it with the
-  verdict and deploys no other; a review that could not be mailed, reported a
-  failure or ran past its deadline leaves the verdict to go up alone and is
-  deployed again on the next event. Each reviewer the manager records names
+  out. A pull request whose failed rules shut the rules gate, or that the
+  block's `for`, `when.triage` or `when.paths` leaves out, read from the rules
+  step's facts and the verdict, is not reviewed; done reports why on the
+  verdict as `codeReviewSkipped`, which the portal shows as Not reviewed. One
+  triage could not read is not left out: its review waits while `for` or
+  `when` could leave it out. The pass that collects its report mirrors the
+  verdict, then posts the review through the host's `send_code_review` tool,
+  so they go up together. A review stays on its reviewer for its head like a
+  decided verdict, so a later pass on that head whose rules still let code
+  review past posts it with the verdict and deploys no other; a review that
+  could not be mailed, reported a failure or ran past its deadline leaves the
+  verdict to go up alone and is deployed again on the next event. Each reviewer the manager records names
   the manager run that deployed it (`deployedBy`). Done stops each judge or
   code review this run deployed and no longer waits for, one on an older head
   or past its deadline, through the same stop-run route;

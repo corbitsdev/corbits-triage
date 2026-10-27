@@ -41,7 +41,7 @@ function hubAction(handler: string, input: Selector, after: readonly string[]) {
  */
 function reviewSteps(sources: Sources): Record<string, Primitive> {
   return {
-    reviewScope: action({ handler: "reviewScope", input: { merge: [MAIL, stepsOf("take", "evaluateRules")] }, after: ["evaluateRules"] }),
+    reviewScope: action({ handler: "reviewScope", input: { merge: [MAIL, stepsOf("take", "rules", "evaluateRules")] }, after: ["evaluateRules"] }),
     reviewing: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "deployReview", else: "posting", after: ["reviewScope"] }),
     deployReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["reviewing"]),
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
@@ -110,7 +110,7 @@ function passOf(id: string, sources: Sources) {
       executeRules: { ...executeRules, after: ["postReview"] },
       // A skipped step is missing from every selector, so the branches that report a held head or a posted verdict have their own done.
       doneWaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "waiting")] }, ["markWaiting"]),
-      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "evaluateRules", "mirrorRules", "executeRules")] }, ["executeRules"]),
+      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "evaluateRules", "reviewScope", "mirrorRules", "executeRules")] }, ["executeRules"]),
       done: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals")] }, ["ran", "triaged", "judgeWait", "posting"]),
     },
   });

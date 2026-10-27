@@ -434,6 +434,40 @@ describe("triage-manager with code review", () => {
     expect(hub.calls).toEqual(calls);
   });
 
+  const CONTRIBUTOR = { author_association: "CONTRIBUTOR" };
+  const FAILED_CI = [{ name: "ci", status: "completed", conclusion: "failure" }];
+
+  test.each([
+    ["an author outside `for`", { for: ["maintainers"] }, { pull: CONTRIBUTOR }, "the author is not in the maintainers group"],
+    ["an author whose group cannot be told under `for`", { for: ["maintainers"] }, {}, "Triage could not tell whether the author is in the maintainers group"],
+    ["a verdict outside `when.triage`", { triage: ["fail"] }, {}, "triage's verdict is Pass, not Fail"],
+    ["changed files all left out by `when.paths`", { paths: ["!**/*.ts", "!**/*.md"] }, {}, "every changed file is excluded by the policy's paths"],
+    ["a failed rule under `when.rules: pass`", { rules: "pass" }, { checkRuns: FAILED_CI }, "rules failed: CI green"],
+  ])("%s is not reviewed, and done says why", async (_name, limit, pull, why) => {
+    const { host } = githubHost(HEAD, pull);
+    const limited = hubRequest(RULES, { codeReview: { ...CODE_REVIEW.codeReview, ...limit }, ...REVIEW_REQUEST });
+    const hub = fakeHub({ takes: [{ ...PASS, request: limited }], dones: [ENDED] });
+    const { ran } = await runMail(reviewed, wake(), host, hub.hub);
+    expect(ran).not.toContain("deployReview");
+    expect(ran).toContain("mirrorRules");
+    expect(doneBody(hub.calls)["report"]).toMatchObject({ verdict: { codeReviewSkipped: why } });
+  });
+
+  test.each([
+    ["a changed file `when.paths` keeps is reviewed", { paths: ["!**/*.md"] }, {}, true],
+    ["fewer files read than changed are never left out by `when.paths`", { paths: ["!**/*.ts"] }, { pull: { changed_files: 2 } }, true],
+    ["a pull request triage could not read waits for its review while `for` could leave it out", { for: ["maintainers"] }, { pull: { changed_files: 2 }, unread: true }, false],
+  ])("%s, with no skip recorded", async (_name, limit, { pull, unread }: { pull?: Record<string, unknown>; unread?: true }, deployed) => {
+    const { host } = githubHost(HEAD, { pull });
+    async function files(url: URL, init?: RequestInit): Promise<Response> {
+      return unread && url.pathname.endsWith("/files") ? Response.json({ message: "Server Error" }, { status: 500 }) : host(url, init);
+    }
+    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(RULES, { codeReview: { ...CODE_REVIEW.codeReview, ...limit }, ...REVIEW_REQUEST }) }], dones: [ENDED] });
+    const { ran } = await runMail(reviewed, wake(), files, hub.hub);
+    expect(ran.includes("deployReview")).toBe(deployed);
+    expect(JSON.stringify(doneBody(hub.calls) ?? {})).not.toContain("codeReviewSkipped");
+  });
+
   test("a review that could not be mailed by its deadline leaves the verdict to go up alone, waiting for no reviewer", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, request: ON }], dones: [ENDED] });
