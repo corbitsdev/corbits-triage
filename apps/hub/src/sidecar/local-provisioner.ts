@@ -1,8 +1,6 @@
-// Production copy of the provisioning logic in
-// vendor/interchange/tests/admin-ui-e2e/harness/local-process-sidecar-provisioner.ts.
-// The hub must not import from the vendor test harness: tests/ trees are not
-// shipped and may change without notice. Unlike the harness, the caller always
-// supplies the spawn so the child env is built from validated hub config.
+// One sidecar process on the hub's machine hosts every allocation placed here. The first ensure starts it under the
+// identity the hub offered; every later ensure answers with that sidecar, which stock Interchange then deploys into
+// over the same connection, up to the active deployments the sidecar advertises in its hello.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { errorText } from "@corbits/common";
@@ -15,20 +13,23 @@ import type {
 } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
 import { CAPACITY_UNAVAILABLE, shortfall, type HostCapacity } from "./host-capacity.js";
-import type { LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
+import type { LocalSidecarHold, LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
-const DATA_DIR_NAME = /^(.+)-[A-Za-z0-9]{6}$/;
+const DATA_DIR_NAME = "sidecar";
+
+/** How the process ended: its exit code, or the signal that killed it. */
+export type LocalSidecarExit = { readonly code: number | null; readonly signal: string | null };
 
 interface LocalSidecarProcess {
   readonly pid: number;
-  readonly exited: Promise<number>;
+  readonly exited: Promise<LocalSidecarExit>;
   kill(signal: NodeJS.Signals): void;
 }
 
 export type SpawnLocalSidecar = (args: {
-  readonly request: EnsureSidecarRequest;
-  readonly dataDir: string;
+  readonly manifest: LocalSidecarManifest;
+  readonly adapterManifest: AdapterManifest;
 }) => LocalSidecarProcess;
 
 export type CreateLocalProcessSidecarProvisionerOpts = {
@@ -36,20 +37,22 @@ export type CreateLocalProcessSidecarProvisionerOpts = {
   readonly spawnSidecar: SpawnLocalSidecar;
   readonly manifests: LocalSidecarManifestStore;
   readonly capacity: HostCapacity;
-  /** Operator config, so a restored sidecar loads the hub's adapters, not the ones its record was written with. */
+  /** Operator config, so a respawned sidecar loads the hub's adapters, not the ones it first started with. */
   readonly adapterManifest: AdapterManifest;
   readonly stopTimeoutMs?: number;
   readonly log: (entry: Record<string, unknown>) => void;
 };
 
-
-type IsLocalSidecarLive = (manifest: LocalSidecarManifest) => Promise<boolean>;
+export type LocalSidecarRecords = {
+  /** Whether the hub still holds this allocation, at this generation, on the local sidecar. */
+  isLive(hold: LocalSidecarHold & { readonly sidecarId: string }): Promise<boolean>;
+  /** Whether the hub still has work on the sidecar, including copies it waits for the sidecar to remove. */
+  hasWork(sidecarId: string): Promise<boolean>;
+};
 
 export interface LocalProcessSidecarProvisioner {
   readonly provisioner: SidecarProvisioner;
-  restore(isLive: IsLocalSidecarLive): Promise<void>;
-  /** The hub saw this allocation's sidecar connect, so its memory now shows in the box's own figures. */
-  connected(allocation: { allocationId: string; generation: number }): void;
+  restore(records: LocalSidecarRecords): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -58,30 +61,21 @@ type ManagedProcess = {
   exited: boolean;
 };
 
-type AllocationState =
-  | {
-      readonly kind: "live";
-      readonly generation: number;
-      readonly sidecarId: string;
-      readonly dataDir: string;
-      readonly process: ManagedProcess;
-    }
+type HoldState =
+  | ({ readonly kind: "live" } & LocalSidecarHold)
   | {
       readonly kind: "destroyed";
       readonly generation: number;
-      readonly sidecarId: string;
+      /** The identities a late ensure at this generation may still carry. */
+      readonly sidecarIds: readonly string[];
     };
-
 
 async function waitForExit(managed: ManagedProcess): Promise<true> {
   await managed.handle.exited;
   return true;
 }
 
-async function exitedWithin(
-  managed: ManagedProcess,
-  timeoutMs: number,
-): Promise<boolean> {
+async function exitedWithin(managed: ManagedProcess, timeoutMs: number): Promise<boolean> {
   if (managed.exited) return true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<false>(function scheduleTimeout(resolve) {
@@ -94,20 +88,11 @@ async function exitedWithin(
   }
 }
 
-async function trackExit(managed: ManagedProcess, onExit?: () => void): Promise<void> {
-  try {
-    await managed.handle.exited;
-  } finally {
-    managed.exited = true;
-    onExit?.();
-  }
-}
-
 async function settle(operation: Promise<unknown>): Promise<void> {
   try {
     await operation;
   } catch {
-    // The caller observes the failure; the per-allocation queue only needs ordering.
+    // The caller observes the failure; the queue only needs ordering.
   }
 }
 
@@ -124,272 +109,196 @@ export function createLocalProcessSidecarProvisioner({
     throw new Error("Local sidecar stop timeout must be positive");
   }
 
-  function logAllocation(msg: string, manifest: LocalSidecarManifest): void {
-    log({
-      level: "info",
-      msg,
-      allocationId: manifest.allocationId,
-      generation: manifest.generation,
-      sidecarId: manifest.sidecarId,
-    });
-  }
-
-  const allocations = new Map<string, AllocationState>();
-  const operations = new Map<string, Promise<void>>();
-  /** Sidecars started and not yet connected or exited, by allocation and generation. */
-  const starting = new Set<string>();
+  const dataDir = path.join(dataRoot, DATA_DIR_NAME);
+  const holds = new Map<string, HoldState>();
+  let manifest: LocalSidecarManifest | null = null;
+  let running: ManagedProcess | null = null;
+  let queue: Promise<void> = Promise.resolve();
   let shutdownPromise: Promise<void> | null = null;
 
-  function startingKey({ allocationId, generation }: { allocationId: string; generation: number }): string {
-    return `${allocationId}@${String(generation)}`;
+  // Every operation runs alone: the sidecar starts once, and the holds file is written whole.
+  async function serialize<R, T>(request: R, run: (request: R) => Promise<T>): Promise<T> {
+    if (shutdownPromise !== null) {
+      throw new Error("Local sidecar provisioner is shutting down");
+    }
+    const previous = queue;
+    const pending = runAfter(previous, request, run);
+    queue = settle(pending);
+    return pending;
   }
 
-  async function runAfter<R, T>(
-    previous: Promise<void> | undefined,
-    request: R,
-    run: (request: R) => Promise<T>,
-  ): Promise<T> {
+  async function runAfter<R, T>(previous: Promise<void>, request: R, run: (request: R) => Promise<T>): Promise<T> {
     await previous;
     return run(request);
   }
 
-  async function releaseWhenSettled(allocationId: string, settled: Promise<void>): Promise<void> {
-    await settled;
-    if (operations.get(allocationId) === settled) operations.delete(allocationId);
+  async function persistHolds(): Promise<void> {
+    const live = [...holds.values()].flatMap((state) =>
+      state.kind === "live" ? [{ allocationId: state.allocationId, generation: state.generation, offeredSidecarId: state.offeredSidecarId }] : []);
+    await manifests.writeHolds(live);
   }
 
-  async function serialize<R extends { readonly allocationId: string }, T>(
-    request: R,
-    run: (request: R) => Promise<T>,
-  ): Promise<T> {
-    if (shutdownPromise !== null) {
-      throw new Error("Local sidecar provisioner is shutting down");
-    }
-    const pending = runAfter(operations.get(request.allocationId), request, run);
-    const settled = settle(pending);
-    operations.set(request.allocationId, settled);
-    void releaseWhenSettled(request.allocationId, settled);
-    return pending;
-  }
-
-  async function stopProcess(
-    state: Extract<AllocationState, { kind: "live" }>,
-  ): Promise<void> {
-    if (!state.process.exited) {
-      try {
-        state.process.handle.kill("SIGTERM");
-      } catch (error) {
-        if (!state.process.exited) throw error;
-      }
-      if (!(await exitedWithin(state.process, stopTimeoutMs))) {
-        state.process.handle.kill("SIGKILL");
-        if (!(await exitedWithin(state.process, stopTimeoutMs))) {
-          throw new Error(
-            `Local sidecar process ${String(state.process.handle.pid)} did not exit`,
-          );
-        }
-      }
+  // One exit takes down every deployment the sidecar hosts, so each is logged.
+  async function trackExit(managed: ManagedProcess, sidecarId: string): Promise<void> {
+    try {
+      const { code, signal } = await managed.handle.exited;
+      log({ level: shutdownPromise === null ? "error" : "info", msg: "local_sidecar_exited", sidecarId, pid: managed.handle.pid, code, signal });
+    } finally {
+      managed.exited = true;
     }
   }
 
-  async function removeStored(allocationId: string, dataDir: string): Promise<void> {
-    await manifests.remove(allocationId);
-    await fs.rm(dataDir, { recursive: true, force: true });
+  function start(current: LocalSidecarManifest): ManagedProcess {
+    const managed: ManagedProcess = { handle: spawnSidecar({ manifest: current, adapterManifest }), exited: false };
+    void trackExit(managed, current.sidecarId);
+    running = managed;
+    return managed;
   }
 
-  async function stopAndRemove(
-    allocationId: string,
-    state: Extract<AllocationState, { kind: "live" }>,
-  ): Promise<void> {
-    await stopProcess(state);
-    await removeStored(allocationId, state.dataDir);
+  /** The running sidecar, started under `request`'s identity when none was minted yet. */
+  async function sidecarFor(request: EnsureSidecarRequest): Promise<
+    | { readonly kind: "running"; readonly manifest: LocalSidecarManifest; readonly process: ManagedProcess }
+    | Extract<EnsureSidecarResult, { kind: "rejected" }>
+  > {
+    if (manifest !== null && running !== null && !running.exited) {
+      return { kind: "running", manifest, process: running };
+    }
+    const full = shortfall(await capacity.freeBytes());
+    if (full !== undefined) {
+      return { kind: "rejected", code: CAPACITY_UNAVAILABLE, message: full, retryable: true };
+    }
+    request.signal?.throwIfAborted();
+    const minted = manifest === null;
+    const current = manifest ?? { sidecarId: request.sidecarId, token: request.token, hubWebSocketUrl: request.hubWebSocketUrl, dataDir };
+    try {
+      if (minted) {
+        await fs.mkdir(dataDir, { recursive: true });
+        await manifests.write(current);
+        manifest = current;
+      }
+      const child = start(current);
+      log({ level: "info", msg: minted ? "local_sidecar_started" : "local_sidecar_respawned", sidecarId: current.sidecarId, pid: child.handle.pid });
+      return { kind: "running", manifest: current, process: child };
+    } catch (error) {
+      // A rejected ensure retires the identity it was offered, so a sidecar minted from it must not outlive it.
+      if (minted) {
+        manifest = null;
+        await manifests.remove();
+      }
+      return { kind: "rejected", code: "spawn_failed", message: errorText(error), retryable: true };
+    }
   }
 
   async function ensureAllocation(request: EnsureSidecarRequest): Promise<EnsureSidecarResult> {
     request.signal?.throwIfAborted();
-    const existing = allocations.get(request.allocationId);
+    const existing = holds.get(request.allocationId);
     if (existing !== undefined && existing.generation > request.generation) {
       return {
-        kind: "rejected" as const,
+        kind: "rejected",
         code: "stale_generation",
         message: `Generation ${String(request.generation)} is older than ${String(existing.generation)}`,
         retryable: false,
       };
     }
-    // Replacement destroys the old identity at the new generation before
-    // ensuring a fresh identity at that same generation. Fence only the exact
-    // identity that was destroyed.
-    if (
-      existing?.kind === "destroyed" &&
-      existing.generation === request.generation &&
-      existing.sidecarId === request.sidecarId
-    ) {
+    // Replacement destroys the old copy at the new generation before ensuring a fresh identity at that same
+    // generation. Fence only the identities that destroy named.
+    if (existing?.kind === "destroyed" && existing.generation === request.generation && existing.sidecarIds.includes(request.sidecarId)) {
       return {
-        kind: "rejected" as const,
+        kind: "rejected",
         code: "generation_destroyed",
         message: `Generation ${String(request.generation)} was already destroyed`,
         retryable: false,
       };
     }
-    if (
-      existing?.kind === "live" &&
-      existing.generation === request.generation &&
-      existing.sidecarId !== request.sidecarId
-    ) {
+    if (existing?.kind === "live" && existing.generation === request.generation && existing.offeredSidecarId !== request.sidecarId) {
       return {
-        kind: "rejected" as const,
+        kind: "rejected",
         code: "sidecar_identity_conflict",
         message: `Generation ${String(request.generation)} already belongs to another sidecar identity`,
         retryable: false,
       };
     }
-    if (
-      existing?.kind === "live" &&
-      existing.generation === request.generation &&
-      !existing.process.exited
-    ) {
-      return {
-        kind: "accepted" as const,
-        externalRef: String(existing.process.handle.pid),
-      };
-    }
-    if (existing?.kind === "live") {
-      await stopAndRemove(request.allocationId, existing);
-    }
-    // Decided and counted in one turn, so ensures running side by side each see the others.
-    const full = shortfall(await capacity.freeBytes(), starting.size);
-    if (full !== undefined) {
-      return { kind: "rejected" as const, code: CAPACITY_UNAVAILABLE, message: full, retryable: true };
-    }
-    const key = startingKey(request);
-    starting.add(key);
-    function startedExited(): void {
-      starting.delete(key);
-    }
-    let dataDir: string | undefined;
-    let live: Extract<AllocationState, { kind: "live" }> | undefined;
-    try {
-      await fs.mkdir(dataRoot, { recursive: true });
-      dataDir = await fs.mkdtemp(path.join(dataRoot, `${request.allocationId}-`));
-      request.signal?.throwIfAborted();
-      const handle = spawnSidecar({ request, dataDir });
-      const managed: ManagedProcess = { handle, exited: false };
-      void trackExit(managed, startedExited);
-      live = {
-        kind: "live",
-        generation: request.generation,
-        sidecarId: request.sidecarId,
-        dataDir,
-        process: managed,
-      };
-      allocations.set(request.allocationId, live);
-      await manifests.write({
-        allocationId: request.allocationId,
-        generation: request.generation,
-        sidecarId: request.sidecarId,
-        tenantId: request.tenantId,
-        anchorRunId: request.anchorRunId,
-        hubWebSocketUrl: request.hubWebSocketUrl,
-        dataDir,
-        token: request.token,
-      });
-      return { kind: "accepted" as const, externalRef: String(handle.pid) };
-    } catch (error) {
-      starting.delete(key);
-      if (live !== undefined) {
-        allocations.delete(request.allocationId);
-        await stopAndRemove(request.allocationId, live);
-      } else if (dataDir !== undefined) {
-        await fs.rm(dataDir, { recursive: true, force: true });
-      }
-      return {
-        kind: "rejected" as const,
-        code: "spawn_failed",
-        message: errorText(error),
-        retryable: true,
-      };
-    }
+    const sidecar = await sidecarFor(request);
+    if (sidecar.kind === "rejected") return sidecar;
+    holds.set(request.allocationId, { kind: "live", allocationId: request.allocationId, generation: request.generation, offeredSidecarId: request.sidecarId });
+    await persistHolds();
+    return {
+      kind: "accepted",
+      externalRef: String(sidecar.process.handle.pid),
+      ...(sidecar.manifest.sidecarId !== request.sidecarId && { sidecarId: sidecar.manifest.sidecarId }),
+    };
   }
 
-  // Each allocation runs in its own process, and a newer generation or identity
-  // stopped and removed the older one first, so every destroy confirms cleanup.
+  // The sidecar outlives every hold, so its copy of the allocation is removed by the hub over its connection, which
+  // confirms the cleanup. An identity that is not the sidecar's was only offered: nothing was deployed under it.
   async function destroyAllocation(request: DestroySidecarRequest): Promise<DestroySidecarResult> {
-    const existing = allocations.get(request.allocationId);
-    if (existing !== undefined && existing.generation > request.generation) {
-      return { kind: "destroyed", cleanup: "confirmed" };
+    const existing = holds.get(request.allocationId);
+    // A destroy older than the allocation's hold is for a copy a newer generation already replaced, so the live hold
+    // stays. Its answer is still `required` for the sidecar's id: stock retires an identity whose cleanup a destroy
+    // confirms, which would stop every placement on the sidecar, and the undeploy it leads to removes only
+    // incarnations up to the destroy's generation, never the live one.
+    const stale = existing !== undefined && existing.generation > request.generation;
+    if (!stale) {
+      const sidecarIds = existing?.kind === "live" ? [request.sidecarId, existing.offeredSidecarId] : [request.sidecarId];
+      holds.set(request.allocationId, { kind: "destroyed", generation: request.generation, sidecarIds });
+      if (existing?.kind === "live") await persistHolds();
     }
-    // A delayed destroy for the superseded identity must not terminate the
-    // replacement that already owns this generation.
-    if (existing !== undefined && existing.sidecarId !== request.sidecarId) {
-      return { kind: "destroyed", cleanup: "confirmed" };
-    }
-    if (existing?.kind === "live") {
-      await stopAndRemove(request.allocationId, existing);
-    }
-    if (existing === undefined) {
-      // A previous hub process may have left this allocation's state on disk.
-      const dataDir = await manifests.readDataDir(request.allocationId);
-      if (dataDir !== null) await removeStored(request.allocationId, dataDir);
-    }
-    allocations.set(request.allocationId, {
-      kind: "destroyed",
-      generation: request.generation,
-      sidecarId: request.sidecarId,
-    });
-    return { kind: "destroyed", cleanup: "confirmed" };
+    return { kind: "destroyed", cleanup: request.sidecarId === manifest?.sidecarId ? "required" : "confirmed" };
   }
 
-  // Ensure or destroy may reach an allocation before restore does; their
-  // outcome wins.
-  async function restoreAllocation(
-    { manifest, isLive }: { readonly allocationId: string; readonly manifest: LocalSidecarManifest; readonly isLive: IsLocalSidecarLive },
-  ): Promise<void> {
-    if (allocations.has(manifest.allocationId)) return;
-    if (!(await isLive(manifest))) {
-      await removeStored(manifest.allocationId, manifest.dataDir);
-      logAllocation("local_sidecar_removed", manifest);
+  async function forget(): Promise<void> {
+    await manifests.remove();
+    await manifests.writeHolds([]);
+    await fs.rm(dataDir, { recursive: true, force: true });
+  }
+
+  // A copy whose hold a destroy released is removed only once the sidecar reconnects and the hub undeploys it, so the
+  // sidecar comes back for that cleanup too; forgetting it would leave the copy holding a slot for good.
+  async function restoreSidecar({ isLive, hasWork }: LocalSidecarRecords): Promise<void> {
+    const legacy = await manifests.removeLegacyLayout();
+    if (legacy.length > 0) log({ level: "info", msg: "local_sidecar_legacy_layout_removed", removed: legacy });
+    const stored = await manifests.read();
+    const recorded = await manifests.readHolds();
+    if (stored === null) {
+      if (recorded.length > 0) await forget();
       return;
     }
-    const request = { ...manifest, adapterManifest };
-    const handle = spawnSidecar({ request, dataDir: manifest.dataDir });
-    const managed: ManagedProcess = { handle, exited: false };
-    void trackExit(managed);
-    allocations.set(manifest.allocationId, {
-      kind: "live",
-      generation: manifest.generation,
-      sidecarId: manifest.sidecarId,
-      dataDir: manifest.dataDir,
-      process: managed,
-    });
-    logAllocation("local_sidecar_respawned", manifest);
+    const live: LocalSidecarHold[] = [];
+    for (const hold of recorded) {
+      if (await isLive({ ...hold, sidecarId: stored.sidecarId })) live.push(hold);
+    }
+    const dropped = recorded.length - live.length;
+    if (live.length === 0 && !(await hasWork(stored.sidecarId))) {
+      await forget();
+      log({ level: "info", msg: "local_sidecar_removed", sidecarId: stored.sidecarId, dropped });
+      return;
+    }
+    manifest = stored;
+    for (const hold of live) holds.set(hold.allocationId, { kind: "live", ...hold });
+    await manifests.writeHolds(live);
+    const child = start(stored);
+    log({ level: "info", msg: "local_sidecar_respawned", sidecarId: stored.sidecarId, pid: child.handle.pid, holds: live.length, dropped });
   }
 
-  async function removeOrphan(
-    { allocationId, dataDir }: { readonly allocationId: string; readonly dataDir: string },
-  ): Promise<void> {
-    const state = allocations.get(allocationId);
-    if (state?.kind === "live" && state.dataDir === dataDir) return;
-    if ((await manifests.readDataDir(allocationId)) === dataDir) return;
-    await fs.rm(dataDir, { recursive: true, force: true });
-    log({ level: "info", msg: "local_sidecar_orphan_removed", allocationId, dataDir });
-  }
-
-  // A hub that stopped between creating a data dir and writing its manifest
-  // leaves a dir no manifest names, which destroy would never remove.
-  async function removeOrphans(): Promise<void> {
-    await fs.mkdir(dataRoot, { recursive: true });
-    for (const entry of await fs.readdir(dataRoot, { withFileTypes: true })) {
-      const allocationId = entry.isDirectory() ? DATA_DIR_NAME.exec(entry.name)?.[1] : undefined;
-      if (allocationId === undefined) continue;
-      await serialize({ allocationId, dataDir: path.join(dataRoot, entry.name) }, removeOrphan);
+  async function stopProcess(managed: ManagedProcess): Promise<void> {
+    if (managed.exited) return;
+    try {
+      managed.handle.kill("SIGTERM");
+    } catch (error) {
+      if (!managed.exited) throw error;
+    }
+    if (await exitedWithin(managed, stopTimeoutMs)) return;
+    managed.handle.kill("SIGKILL");
+    if (!(await exitedWithin(managed, stopTimeoutMs))) {
+      throw new Error(`Local sidecar process ${String(managed.handle.pid)} did not exit`);
     }
   }
 
-  async function restore(isLive: IsLocalSidecarLive): Promise<void> {
-    for (const manifest of await manifests.readAll()) {
-      await serialize({ allocationId: manifest.allocationId, manifest, isLive }, restoreAllocation);
-    }
-    await removeOrphans();
+  // The manifest, holds and data dir survive shutdown so the next hub boot can respawn the sidecar.
+  async function stopAll(): Promise<void> {
+    await queue;
+    if (running !== null) await stopProcess(running);
+    running = null;
   }
 
   const provisioner: SidecarProvisioner = {
@@ -397,8 +306,6 @@ export function createLocalProcessSidecarProvisioner({
     apiVersion: 2,
     bindingFingerprint: "local-process:v1",
     capabilities: [],
-    // Keep cleanup behind any late ensure for the same allocation, including
-    // work the Hub stopped awaiting after an operation timeout.
     ensure(request) {
       return serialize(request, ensureAllocation);
     },
@@ -407,26 +314,10 @@ export function createLocalProcessSidecarProvisioner({
     },
   };
 
-  // Data dirs and manifests survive shutdown so the next hub boot can respawn.
-  async function stopAll(): Promise<void> {
-    await Promise.all(operations.values());
-    const live = [...allocations.values()].filter((state) => state.kind === "live");
-    const results = await Promise.allSettled(live.map(stopProcess));
-    const failures = results.filter((result) => result.status === "rejected").map((result) => result.reason);
-    allocations.clear();
-    if (failures.length > 0) {
-      throw new AggregateError(
-        failures,
-        "Failed to stop every local sidecar process",
-      );
-    }
-  }
-
   return {
     provisioner,
-    restore,
-    connected(allocation) {
-      starting.delete(startingKey(allocation));
+    restore(records) {
+      return serialize(records, restoreSidecar);
     },
     shutdown() {
       shutdownPromise ??= stopAll();
