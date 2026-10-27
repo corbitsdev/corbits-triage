@@ -1,7 +1,8 @@
 // What a roll reads from the hub's database: the workspace's catalog, its live deployments and how a deploy is starting,
 // and the lock that keeps one roll per workspace.
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { listVisibleOfferings, schema, type createDB, type DB, type WorkflowRunLaunchSpecStore } from "@intx/db";
+import type { AllocatedSidecarTarget } from "@intx/hub-sessions";
 import type { ModelInfo } from "@corbits/triage-contracts";
 import { resolveLiveDeployments } from "../github/deployment.js";
 import { sourceOf } from "../workflow-versions.js";
@@ -73,4 +74,27 @@ export async function deploymentState(db: DB["db"], runId: string): Promise<Depl
   if (row.allocation !== null && ENDED_ALLOCATIONS.has(row.allocation)) return "ended";
   if (row.allocation === null || (row.allocation === "allocated" && row.nextAttemptAt === null)) return "live";
   return "starting";
+}
+
+/**
+ * The allocation generation a deployment runs on once its first deploy completed, which stock's router then routes its
+ * mail to; undefined while it starts or once it stops.
+ */
+export async function deployedAllocation(db: DB["db"], runId: string): Promise<AllocatedSidecarTarget | undefined> {
+  const [row] = await db
+    .select({ allocationId: schema.sidecarAllocation.id, generation: schema.sidecarAllocation.generation, status: schema.workflowRun.status })
+    .from(schema.workflowRun)
+    .innerJoin(schema.sidecarAllocation, eq(schema.sidecarAllocation.anchorRunId, schema.workflowRun.id))
+    .where(
+      and(
+        eq(schema.workflowRun.id, runId),
+        isNull(schema.workflowRun.cancellationRequestedAt),
+        isNotNull(schema.workflowRun.publicKey),
+        eq(schema.sidecarAllocation.status, "allocated"),
+        isNotNull(schema.sidecarAllocation.sidecarId),
+        eq(schema.sidecarAllocation.ensureAcceptedGeneration, schema.sidecarAllocation.generation),
+      ),
+    );
+  if (!row || !schema.isLiveWorkflowRunStatus(row.status)) return undefined;
+  return { allocationId: row.allocationId, generation: row.generation };
 }

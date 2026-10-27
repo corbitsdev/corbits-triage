@@ -277,5 +277,17 @@ export function createRolloutQueue(rollout: { roll: (tenantId: string, redeploy:
     schedule(tenantId, [], timing.quietMs, true);
   }
 
-  return { run, request, ensure };
+  /**
+   * Starts the host's listener again unless a roll is running, which may already be replacing it, or one due already
+   * starts it again. Whether this asked for it.
+   */
+  function replace(tenantId: string, source: RepoSource): boolean {
+    const state = stateOf(tenantId);
+    if (state.running || state.redeploy.has(source)) return false;
+    if (state.timer) state.redeploy.add(source);
+    else schedule(tenantId, [source], timing.quietMs, true);
+    return true;
+  }
+
+  return { run, request, ensure, replace };
 }

@@ -68,7 +68,7 @@ import { triageTenants } from "./deployer-role.js";
 import { bundleAt, bundled, type Publisher } from "./workflow-release/publish.js";
 import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers.js";
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
-import { catalogModels, createWorkspaceLock, deploymentState, liveDeployments } from "./workflow-release/reads.js";
+import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
 import { createRolloutQueue, createWorkflowRollout, type DeployRequest } from "./workflow-release/rollout.js";
 import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, localSidecarMaxDeployments, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
@@ -588,9 +588,17 @@ const watchListeners = createListenerWatch({
     return connectedSources(composition.db, tenantId);
   },
   listener: liveListenerOf,
+  allocation: function allocationOf(runId) {
+    return deployedAllocation(composition.db, runId);
+  },
+  routable: composition.sidecarRouter.isAllocatedWorkflowActive,
   ensure: function rollWorkspace(tenantId) {
     if (workflowsBundled) workflowReleases.ensure(tenantId);
   },
+  replace: function replaceListener(tenantId, source) {
+    return workflowsBundled && workflowReleases.replace(tenantId, source);
+  },
+  log: logJson,
 });
 const managerRuns = createManagerRuns(composition.db, verdictRecordStore, now);
 const tenantOpenHeads = createTenantOpenHeads(tenantSources);

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
 import { listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents } from "@intx/hub-client";
-import { VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
+import { TRIAGE_LISTENERS, VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
 import { approveHeldDo } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
@@ -20,6 +20,9 @@ const MANAGER = "triage-manager-github";
 const SETTLE_MS = 90_000;
 // The listener waits two minutes for a manager's key before its wake mail fails; stock then stops it within its 30-second cancel grace.
 const UNWOKEN_MS = 5 * 60_000;
+// The hub drops a silent sidecar's socket after stock's one-minute ping timeout, and the reconcile pass that finds the
+// listener unroutable comes up to five minutes later.
+const REPLACE_MS = 9 * 60_000;
 
 const DETERMINISTIC = `${OWNER}/deterministic`;
 const JUDGED = `${OWNER}/judged`;
@@ -28,6 +31,7 @@ const PUSHED = `${OWNER}/pushed`;
 const HELD = `${OWNER}/held`;
 const WOKEN = `${OWNER}/woken`;
 const UNWOKEN = `${OWNER}/unwoken`;
+const UNROUTABLE = `${OWNER}/unroutable`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -67,6 +71,7 @@ beforeAll(async () => {
   github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
   github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
   github.addRepo(UNWOKEN, policy([MAX_FILES]));
+  github.addRepo(UNROUTABLE, policy([MAX_FILES]));
   const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
   database = created;
   hub = await startHub(database, github, portalDir);
@@ -436,4 +441,57 @@ test("a manager whose wake mail failed is cancelled, and the next event deploys 
   expect(deployed.map((run) => run.id)).toEqual([cancelled.id, claim.history.at(-1)!.runId]);
   expect(claim).toMatchObject({ status: "ended", history: [{ head: second }] });
   expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
+});
+
+/** Every GitHub listener deployment's anchor run, oldest first, and the pid of the local sidecar it runs on. */
+async function listeners(): Promise<{ id: string; status: string; pid: number }[]> {
+  const found = await rows(`select r.id, r.status, a.external_ref from workflow_run r join workflow_definition d on d.id = r.definition_id left join workflow_run_launch_spec s on s.anchor_run_id = r.id join sidecar_allocation a on a.anchor_run_id = r.id where r.id = r.anchor_run_id and coalesce(s.frozen_approval_bundle -> 'projection' ->> 'id', d.name) = '${TRIAGE_LISTENERS.github}' order by r.created_at`);
+  return found.map((row) => ({ id: String(row["id"]), status: String(row["status"]), pid: Number(row["external_ref"]) }));
+}
+
+function loggedUnroutable(): Record<string, unknown>[] {
+  return hub.logs.filter((line) => line.includes(`"msg":"listener_unroutable"`)).map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/** Wakes the frozen sidecar so the hub can stop it, unless the hub already killed it. */
+function resume(pid: number): void {
+  try {
+    process.kill(pid, "SIGCONT");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+const unroutable = once(async function unroutable() {
+  await after(approved);
+  const [old] = (await listeners()).filter((row) => isLiveDeployment(row.status));
+  if (!old) throw new Error("The GitHub listener is not live.");
+  // A frozen sidecar keeps its process and stops pinging, so stock drops its socket and with it the listener's route,
+  // while the run stays live and its allocation allocated.
+  process.kill(old.pid, "SIGSTOP");
+  let fresh: { id: string; status: string; pid: number };
+  try {
+    fresh = await until("a fresh listener", async function rolled() {
+      const now = await listeners();
+      const newest = now.at(-1)!;
+      const replaced = now.find((row) => row.id === old.id);
+      return newest.id !== old.id && isLiveDeployment(newest.status) && !isLiveDeployment(replaced!.status) ? newest : undefined;
+    }, REPLACE_MS);
+  } finally {
+    resume(old.pid);
+  }
+  const head = sha("unroutable-1");
+  const missed = github.misses.length;
+  await pushed(UNROUTABLE, pullOf(1, head));
+  await settled(UNROUTABLE, 1);
+  return { old, fresh, logged: loggedUnroutable(), writes: github.writesTo(UNROUTABLE, 1), misses: github.misses.slice(missed) };
+});
+
+test("a listener whose mail the hub can no longer route is replaced once, and the next pull request gets its verdict", async () => {
+  const { old, fresh, logged, writes, misses } = await unroutable();
+  expect(logged).toEqual([expect.objectContaining({ tenantId: workspace.tenantId, source: "github", deployment: old.id })]);
+  expect((await listeners()).filter((row) => isLiveDeployment(row.status)).map((row) => row.id)).toEqual([fresh.id]);
+  expect(misses).toEqual([]);
+  expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
+  expect(labelled(writes)).toEqual([VERDICT_LABELS.pass]);
 });

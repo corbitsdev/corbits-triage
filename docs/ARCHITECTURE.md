@@ -241,7 +241,7 @@ any other tenant or an unknown sender.
   is connected or its key replaced, a Bitbucket Data Center instance is
   connected, its token replaced or its webhook secret rotated, and when
   GitHub installations sync; and when a reconcile pass finds a connected host
-  with no live listener. At most two rolls run at once across the hub, and
+  with no live listener, or with one the hub cannot route mail to. At most two rolls run at once across the hub, and
   one per workspace across hub processes, under a Postgres session advisory
   lock held on a connection reserved for it, so a roll holds no transaction
   while it waits. A hub whose build has no `packages/sources/index.json`
@@ -298,6 +298,20 @@ any other tenant or an unknown sender.
   removed. A running listener keeps the credentials it launched with, which is
   why a credential write deploys its host's listener again; managers and
   judges launch with the current value.
+
+  Stock routes a deployment's mail through the sidecar router's address
+  index, per allocation generation, and acts on a lost route only when a
+  sidecar connects or reports a stop, or once it stayed disconnected past the
+  deployment's `maxDisconnected`, so until then a listener stays live while
+  the hub holds no route to it. Each reconcile
+  pass therefore asks the router, through `isAllocatedWorkflowActive`, the
+  check stock's mail routing uses, whether it routes the generation of each
+  host's live listener whose first deploy completed. A `false` answer or a
+  check that throws, as for a sidecar whose socket closed, starts that host's
+  listener again exactly as a credential write does, and the hub logs
+  `listener_unroutable` with the workspace, host, run, allocation, generation
+  and reason. A host whose roll is running or already due to redeploy it is
+  left to that roll, so one unroutable listener is replaced once.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes

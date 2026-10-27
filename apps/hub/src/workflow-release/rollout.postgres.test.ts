@@ -367,7 +367,7 @@ test("a roll that fails while a request waits out its quiet window rolls again w
 
 test("a connected host found with no live listener rolls its workspace", async () => {
   const ensured: string[] = [];
-  const listeners: Partial<Record<RepoSource, string>> = { github: "run_listener" };
+  const listeners: Partial<Record<RepoSource, { runId: string }>> = { github: { runId: "run_listener" } };
   const watch = createListenerWatch({
     async connectedSources() {
       return ["github", "bitbucket-datacenter"];
@@ -375,15 +375,86 @@ test("a connected host found with no live listener rolls its workspace", async (
     async listener(_tenantId, source) {
       return listeners[source];
     },
+    async allocation() {
+      return undefined;
+    },
+    async routable() {
+      return true;
+    },
     ensure(tenantId) {
       ensured.push(tenantId);
     },
+    replace() {
+      return true;
+    },
+    log() {},
   });
   await watch("tnt_watch");
   expect(ensured).toEqual(["tnt_watch"]);
-  listeners["bitbucket-datacenter"] = "run_bitbucket";
+  listeners["bitbucket-datacenter"] = { runId: "run_bitbucket" };
   await watch("tnt_watch");
   expect(ensured).toEqual(["tnt_watch"]);
+});
+
+test("a listener whose mail the router cannot route, or whose check throws, is started again once, and each is logged", async () => {
+  const listeners: Record<RepoSource, { runId: string }> = { github: { runId: "run_github" }, "bitbucket-datacenter": { runId: "run_bitbucket" } };
+  const routes: Record<string, () => boolean> = {
+    alc_github: () => false,
+    alc_bitbucket: () => {
+      throw new Error("Allocation alc_bitbucket is not connected");
+    },
+  };
+  const rolled: Array<RepoSource[]> = [];
+  const entered = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  const replaced = Promise.withResolvers<void>();
+  const rollout = {
+    async roll(_tenantId: string, redeploy: ReadonlySet<RepoSource>): Promise<RollOutcome> {
+      rolled.push([...redeploy].sort());
+      entered.resolve();
+      await gate.promise;
+      for (const source of redeploy) listeners[source] = { runId: `${listeners[source].runId}_next` };
+      replaced.resolve();
+      return SUCCEEDED;
+    },
+  };
+  const logged: Record<string, unknown>[] = [];
+  const queue = createRolloutQueue(rollout, { quietMs: 0, retryMs: 60_000, concurrency: 2, random: Math.random }, function ignore() {});
+  const watch = createListenerWatch({
+    async connectedSources() {
+      return ["github", "bitbucket-datacenter"];
+    },
+    async listener(_tenantId, source) {
+      return listeners[source];
+    },
+    async allocation(runId) {
+      return runId.endsWith("_next") ? { allocationId: "alc_next", generation: 1 } : { allocationId: `alc_${runId.slice(4)}`, generation: 1 };
+    },
+    async routable(target) {
+      return routes[target.allocationId]?.() ?? true;
+    },
+    ensure() {
+      throw new Error("Every host has a listener.");
+    },
+    replace: queue.replace,
+    log(entry) {
+      logged.push(entry);
+    },
+  });
+  await watch("tnt_unroutable");
+  await watch("tnt_unroutable");
+  await entered.promise;
+  await watch("tnt_unroutable");
+  gate.resolve();
+  await replaced.promise;
+  await Bun.sleep(10);
+  await watch("tnt_unroutable");
+  await Bun.sleep(10);
+  expect(rolled).toEqual([["bitbucket-datacenter", "github"]]);
+  expect(logged).toEqual([
+    { level: "warn", msg: "listener_unroutable", tenantId: "tnt_unroutable", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, reason: "the hub holds no route to it" },
+    { level: "warn", msg: "listener_unroutable", tenantId: "tnt_unroutable", source: "bitbucket-datacenter", deployment: "run_bitbucket", allocationId: "alc_bitbucket", generation: 1, reason: "Allocation alc_bitbucket is not connected" },
+  ]);
 });
 
 test("PostgreSQL: a person keeps the Deployer role until a roll leaves every host's listener running", async () => {
