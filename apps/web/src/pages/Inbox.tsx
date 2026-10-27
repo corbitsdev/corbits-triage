@@ -71,7 +71,7 @@ import { leavesOpen, useOpenItems, useOpenPulls, useOpenPullsUnanswered, useQueu
 import { usePortal } from "../lib/portal.tsx";
 import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
-import { packsPending, reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
+import { packsPending, repoHref, reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
@@ -413,7 +413,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
         <div className="pane-in r3">
           <header className="ph">
             <div className="crumb">
-              <Link className="mono repo-link" to={`/repositories/${item.repo}`} title="Repository settings">{item.repo}</Link>
+              <Link className="mono repo-link" to={repoHref({ name: item.repo, source: item.source })} title="Repository settings">{item.repo}</Link>
               {item.number === null ? null : <span className="mono">#{item.number}</span>}
               <span className="sp" />
               {link === null ? null : <Button asChild variant="ghost" size="sm"><a href={link} target="_blank" rel="noreferrer">{viewOnHost(item)} <ExternalIcon /></a></Button>}
@@ -492,7 +492,7 @@ function PolicyUpgradeNotice() {
   const starting = rows.length - moving.length;
   return (
     <>
-      {moving.length ? <p role="status" className="note">{moving.map((row, at) => <Fragment key={row.repo}>{at > 0 ? " · " : null}<Link to={`/repositories/${row.repo}`}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
+      {moving.length ? <p role="status" className="note">{moving.map((row, at) => <Fragment key={`${row.source}:${row.repo}`}>{at > 0 ? " · " : null}<Link to={repoHref({ name: row.repo, source: row.source })}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
       {starting ? <p role="status" className="note"><Link to="/repositories">{repositoriesText(starting)}</Link> {starting === 1 ? "has" : "have"} no policy file yet, so Triage runs nothing there.</p> : null}
     </>
   );

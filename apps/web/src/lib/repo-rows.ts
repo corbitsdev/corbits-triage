@@ -42,7 +42,7 @@ export function hostedRepos(rows: ReadonlyArray<{ repo: string; source: RepoSour
 }
 
 /** A GitHub repository's link carries no host, so links from before Bitbucket Data Center still open it. */
-function repoHref(repo: RepoId): string {
+export function repoHref(repo: RepoId): string {
   return repo.source === "bitbucket-datacenter" ? `/repositories/${repo.name}?source=${repo.source}` : `/repositories/${repo.name}`;
 }
 
