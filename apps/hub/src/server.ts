@@ -69,7 +69,7 @@ import { bundleAt, bundled, type Publisher } from "./workflow-release/publish.js
 import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers.js";
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
-import { createRolloutQueue, createWorkflowRollout, stopOverdue, type DeployRequest } from "./workflow-release/rollout.js";
+import { createRolloutQueue, createWorkflowRollout, stopGivenUp, type DeployRequest } from "./workflow-release/rollout.js";
 import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, localSidecarMaxDeployments, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
@@ -570,7 +570,9 @@ const workflowRollout = createWorkflowRollout({
   async cancel(tenantId, runId) {
     await composition.workflowLifecycleService.requestCancellation(tenantId, runId, "replaced");
   },
-  stop: (tenantId, runId) => composition.workflowLifecycleService.getStatus(tenantId, runId),
+  status(tenantId, runId) {
+    return composition.workflowLifecycleService.getStatus(tenantId, runId);
+  },
   lock: createWorkspaceLock(composition.db.$client),
   sleep: Bun.sleep,
   now,
@@ -590,7 +592,7 @@ async function stuckListeners(tenantId: string, source: RepoSource): Promise<str
   for (const listener of await resolveLiveDeployments(composition.db, tenantId, TRIAGE_LISTENERS[source])) {
     if (!listener.cancelling) continue;
     const run = await composition.workflowLifecycleService.getStatus(tenantId, listener.runId);
-    if (run && stopOverdue(run, now())) stuck.push(listener.runId);
+    if (run && stopGivenUp(run)) stuck.push(listener.runId);
   }
   return stuck;
 }
@@ -603,7 +605,9 @@ const watchListeners = createListenerWatch({
   allocation: function allocationOf(runId) {
     return deployedAllocation(composition.db, runId);
   },
-  routable: (target) => composition.sidecarRouter.isAllocatedWorkflowActive(target),
+  routable: function routableOf(target) {
+    return composition.sidecarRouter.isAllocatedWorkflowActive(target);
+  },
   ensure: function rollWorkspace(tenantId) {
     if (workflowsBundled) workflowReleases.ensure(tenantId);
   },

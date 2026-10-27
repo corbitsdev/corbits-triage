@@ -308,22 +308,24 @@ any other tenant or an unknown sender.
   which reads the same per-connection route table mail is routed by, whether
   it routes the generation of each host's live listener whose first deploy
   completed. Like stock's own reconciler calling it, the check undeploys a
-  sidecar whose identity is no longer current. When the listener's sidecar is connected but the
-  router holds no route to it, the hub starts that host's listener again
-  exactly as a credential write does and logs `listener_unroutable` with the
-  workspace, host, run, allocation, generation and reason. A host whose roll
-  is running or already due to redeploy it is left to that roll, so one
-  unroutable listener is replaced once. A listener whose sidecar is not
+  sidecar whose identity is no longer current. When the listener's sidecar is
+  connected but the router holds no route to it, the hub starts that host's
+  listener again exactly as a credential write does and logs
+  `listener_unroutable` with the workspace, host, run, allocation, generation
+  and reason. A host whose roll is running or already due to redeploy it is
+  left to that roll, so one unroutable listener is replaced once. A listener whose sidecar is not
   connected is left to stock, which fails it once it stays away past
   `maxDisconnected`; each pass logs `listener_disconnected` at debug level
   for it, or `listener_identity_unknown` when the router could not validate
   the sidecar's identity. After asking stock to stop the listeners and
-  workflows a roll replaces, the roll waits for each to end, until the
-  deadline stock sets for the stop plus the minute stock keeps trying an
-  unreachable stop, and keeps waiting while that deadline is not set yet. A
-  listener still live then is logged as `listener_cancel_stuck`, and every
-  reconcile pass logs it again while it stays live; a replaced workflow is
-  logged once as `rollout_cancel_stuck` with its name.
+  workflows a roll replaces, the roll polls stock's lifecycle status until
+  each ends. One that stays live once stock gave up stopping it, which
+  stock's lifecycle status shows as its allocation no longer dispatchable,
+  one still live five minutes after the stop was requested, and one whose
+  status could not be read after three retries are logged and the roll goes
+  on: a listener as `listener_cancel_stuck`, which every reconcile pass logs
+  again while stock has given up on it, and a replaced workflow once as
+  `rollout_cancel_stuck` with its name.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes

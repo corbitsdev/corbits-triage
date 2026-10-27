@@ -1,6 +1,7 @@
 // Rolls a workspace onto the hub build's release: publishes it as the workspace's system principal, deploys each
 // connected host's listener from it once the running one differs, waits for it to start and stops what it replaces.
 import { schema } from "@intx/db";
+import { isSidecarAllocationDispatchable, type WorkflowLifecycleResponse } from "@intx/types";
 import { errorText } from "@corbits/common";
 import { chainOf, offeringsIn, publishable, TRIAGE_LISTENERS, type DeployedVersions, type ModelInfo, type PublishedSource, type RepoSource } from "@corbits/triage-contracts";
 import { revokeHumanDeployers } from "../deployer-role.js";
@@ -14,8 +15,7 @@ export type DeployRequest = { tenantId: string; principalId: string; assetId: st
 /** `live` once the deployment runs, `ended` once it stopped or failed without running. */
 export type DeployState = "starting" | "live" | "ended";
 
-/** A deployment as stock's lifecycle status reports it; `cancellationDeadline` is set once its stop was requested. */
-export type RunStop = { status: string; cancellationDeadline: string | null };
+export type RunStop = Pick<typeof WorkflowLifecycleResponse.infer, "status" | "allocation">;
 
 /** Releases a held workspace lock. */
 export type Unlock = () => Promise<void>;
@@ -36,7 +36,7 @@ type RolloutDeps = PublishDeps & {
   state: (runId: string) => Promise<DeployState>;
   cancel: (tenantId: string, runId: string) => Promise<void>;
   /** Stock's lifecycle status of the deployment; null once it is gone. */
-  stop: (tenantId: string, runId: string) => Promise<RunStop | null>;
+  status: (tenantId: string, runId: string) => Promise<RunStop | null>;
   /** Takes the workspace's lock across hub processes; undefined while another holds it. */
   lock: (tenantId: string) => Promise<Unlock | undefined>;
   sleep: (ms: number) => Promise<void>;
@@ -48,18 +48,18 @@ const ROLL_FAILED = "Updating Triage failed; see the hub log.";
 
 /** A new listener that is not live by then is stopped, and the one before it keeps running. */
 export const START_DEADLINE_MS = 5 * 60_000;
-const START_POLL_MS = 2_000;
+const POLL_MS = 2_000;
 
-/** Stock's `unreachableStopGraceMs`, which the hub leaves at its default: how long past its deadline stock tries a stop. */
-const STOP_GRACE_MS = 60_000;
+/** A replaced deployment stock has neither stopped nor given up on by then is logged as stuck, and the roll goes on. */
+const STOP_WAIT_MS = 5 * 60_000;
+const STATUS_RETRIES = 3;
 
 /**
- * Whether a deployment whose stop was requested is still live after stock stopped trying to stop it, counted from the
- * cancellation deadline stock set rather than from when the hub asked.
+ * Whether stock gave up stopping a deployment whose stop was requested: it stays live while stock reclaims its sidecar,
+ * as stock's forced release does once the stop goes unconfirmed past its grace.
  */
-export function stopOverdue(run: RunStop, now: Date): boolean {
-  if (!schema.isLiveWorkflowRunStatus(run.status) || run.cancellationDeadline === null) return false;
-  return now.getTime() >= Date.parse(run.cancellationDeadline) + STOP_GRACE_MS;
+export function stopGivenUp(run: RunStop): boolean {
+  return schema.isLiveWorkflowRunStatus(run.status) && run.allocation !== null && !isSidecarAllocationDispatchable(run.allocation.status);
 }
 
 /** Each host's workflows from before the listener, which nothing mails any more. */
@@ -96,26 +96,50 @@ export function createWorkflowRollout(deps: RolloutDeps) {
       const state = await deps.state(runId);
       if (state === "live") return;
       if (state === "ended") throw new Error(`Listener ${runId} ended before it started.`);
-      await deps.sleep(START_POLL_MS);
+      await deps.sleep(POLL_MS);
     }
     await deps.cancel(tenantId, runId);
     throw new Error(`Listener ${runId} did not start within five minutes and was stopped.`);
   }
 
+  function logStuck(tenantId: string, source: RepoSource, workflow: string, runId: string, error?: unknown): void {
+    const reason = error === undefined ? {} : { error: errorText(error) };
+    if (workflow === TRIAGE_LISTENERS[source]) deps.log({ level: "warn", msg: "listener_cancel_stuck", tenantId, source, deployment: runId, ...reason });
+    else deps.log({ level: "warn", msg: "rollout_cancel_stuck", tenantId, source, workflow, deployment: runId, ...reason });
+  }
+
+  /** Stock's status of the deployment, read again after a failure until the retries are spent. */
+  async function statusOf(tenantId: string, runId: string): Promise<RunStop | null> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await deps.status(tenantId, runId);
+      } catch (error) {
+        if (attempt > STATUS_RETRIES) throw error;
+        await deps.sleep(POLL_MS * attempt);
+      }
+    }
+  }
+
   /**
-   * Waits until a deployment whose stop was requested ends; one whose deadline stock has not set yet is still being
-   * stopped. One stock gave up stopping stays live, and is only logged: nothing the hub may do stops it.
+   * Waits until a deployment whose stop was requested ends. One stock gave up stopping, or that outlasts the wait, stays
+   * live and is only logged: stopping it is stock's.
    */
   async function waitUntilStopped(tenantId: string, source: RepoSource, workflow: string, runId: string): Promise<void> {
+    const deadline = deps.now().getTime() + STOP_WAIT_MS;
     for (;;) {
-      const run = await deps.stop(tenantId, runId);
-      if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return;
-      if (stopOverdue(run, deps.now())) {
-        if (workflow === TRIAGE_LISTENERS[source]) deps.log({ level: "warn", msg: "listener_cancel_stuck", tenantId, source, deployment: runId });
-        else deps.log({ level: "warn", msg: "rollout_cancel_stuck", tenantId, source, workflow, deployment: runId });
+      let run: RunStop | null;
+      try {
+        run = await statusOf(tenantId, runId);
+      } catch (error) {
+        logStuck(tenantId, source, workflow, runId, error);
         return;
       }
-      await deps.sleep(START_POLL_MS);
+      if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return;
+      if (stopGivenUp(run) || deps.now().getTime() >= deadline) {
+        logStuck(tenantId, source, workflow, runId);
+        return;
+      }
+      await deps.sleep(POLL_MS);
     }
   }
 
@@ -323,8 +347,7 @@ export function createRolloutQueue(rollout: { roll: (tenantId: string, redeploy:
   function replace(tenantId: string, source: RepoSource): boolean {
     const state = stateOf(tenantId);
     if (state.running || state.redeploy.has(source)) return false;
-    if (state.timer) state.redeploy.add(source);
-    else schedule(tenantId, [source], timing.quietMs, true);
+    schedule(tenantId, [source], timing.quietMs, false);
     return true;
   }
 

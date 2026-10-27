@@ -83,7 +83,7 @@ export function createListenerWatch(deps: ListenerWatchDeps) {
       const listener = await deps.listener(tenantId, source);
       if (!listener) {
         deps.ensure(tenantId);
-        return;
+        continue;
       }
       const target = await deps.allocation(listener.runId);
       if (!target) continue;

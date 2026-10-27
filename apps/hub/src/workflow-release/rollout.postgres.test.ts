@@ -64,7 +64,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-type Run = Deployment & { workflow: string; state: DeployState; deadline?: string };
+type Run = Deployment & { workflow: string; state: DeployState; polls: number };
 
 /** A workspace with its publisher, rolled against fake deployments. */
 async function workspace(name: string) {
@@ -78,7 +78,8 @@ async function workspace(name: string) {
     starts: "live" as DeployState,
     deployFails: false,
     stopHangs: false,
-    deadlineAfterPolls: 0,
+    releasedAfterPolls: Infinity,
+    statusFails: 0,
     clock: Date.now(),
     runs: [] as Run[],
     requests: [] as DeployRequest[],
@@ -103,7 +104,7 @@ async function workspace(name: string) {
       if (fake.deployFails) throw new Error("no sidecar capacity");
       fake.requests.push(request);
       const runId = `run_${fake.requests.length}`;
-      fake.runs.push({ runId, workflow: LISTENER, state: fake.starts, createdAt: new Date(fake.clock + fake.requests.length), cancelling: false, source: { assetId: request.assetId, commitSha: request.commitSha } });
+      fake.runs.push({ runId, workflow: LISTENER, state: fake.starts, createdAt: new Date(fake.clock + fake.requests.length), cancelling: false, polls: 0, source: { assetId: request.assetId, commitSha: request.commitSha } });
       return runId;
     },
     async state(runId) {
@@ -111,15 +112,21 @@ async function workspace(name: string) {
     },
     async cancel(_tenant, runId) {
       const run = fake.runs.find((row) => row.runId === runId);
-      if (!run) return;
-      run.cancelling = true;
-      if (fake.deadlineAfterPolls === 0) run.deadline = new Date(fake.clock + 30_000).toISOString();
+      if (run) run.cancelling = true;
     },
-    async stop(_tenant, runId) {
+    async status(_tenant, runId) {
+      if (fake.statusFails > 0) {
+        fake.statusFails -= 1;
+        throw new Error("status read failed");
+      }
       const run = fake.runs.find((row) => row.runId === runId);
       if (!run) return null;
-      if (run.cancelling && !run.deadline && --fake.deadlineAfterPolls === 0) run.deadline = new Date(fake.clock + 30_000).toISOString();
-      return { status: run.cancelling && !fake.stopHangs ? "cancelled" : "running", cancellationDeadline: run.deadline ?? null };
+      run.polls += 1;
+      const released = run.cancelling && run.polls >= fake.releasedAfterPolls;
+      return {
+        status: run.cancelling && !fake.stopHangs ? "cancelled" : "running",
+        allocation: { id: `alc_${runId}`, generation: 1, status: released ? "releasing" : "allocated", failureCode: null, failureMessage: null },
+      };
     },
     lock: createWorkspaceLock(handle.db.$client),
     async sleep(ms) {
@@ -229,9 +236,9 @@ test("PostgreSQL: once the newest listener runs the release, the listeners befor
   await rollout.roll(tenantId, NO_REDEPLOY);
   const release = { assetId: await listenerAsset(), commitSha: fake.requests[0]!.commitSha };
   fake.runs.push(
-    { runId: "run_older", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, source: { assetId: "ast_old", commitSha: "old" } },
-    { runId: "run_replaced", workflow: "pr-triage-github", state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, source: null },
-    { runId: "run_cut_short", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock + 60_000), cancelling: false, source: release },
+    { runId: "run_older", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, polls: 0, source: { assetId: "ast_old", commitSha: "old" } },
+    { runId: "run_replaced", workflow: "pr-triage-github", state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, polls: 0, source: null },
+    { runId: "run_cut_short", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock + 60_000), cancelling: false, polls: 0, source: release },
   );
   expect(await rollout.roll(tenantId, NO_REDEPLOY)).toEqual(SUCCEEDED);
   expect(fake.requests).toHaveLength(1);
@@ -239,14 +246,13 @@ test("PostgreSQL: once the newest listener runs the release, the listeners befor
   expect(live("pr-triage-github")).toEqual([]);
 }, 120_000);
 
-test("PostgreSQL: a replaced listener or workflow that stock never stops is waited on until its stop is overdue, then logged as stuck", async () => {
+test("PostgreSQL: a replaced listener or workflow that stays live once stock gave up stopping it is logged as stuck, and the roll succeeds", async () => {
   const { tenantId, fake, rollout, live } = await workspace("stuck");
   await rollout.roll(tenantId, NO_REDEPLOY);
-  fake.runs.push({ runId: "run_historical", workflow: "pr-triage-historical", state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, source: null });
+  fake.runs.push({ runId: "run_historical", workflow: "pr-triage-historical", state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, polls: 0, source: null });
   fake.stopHangs = true;
-  const before = fake.clock;
+  fake.releasedAfterPolls = 3;
   expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
-  expect(fake.clock - before).toBeGreaterThanOrEqual(90_000);
   expect(live()).toEqual(["run_2"]);
   const stuck = fake.logs.filter((entry) => String(entry["msg"]).endsWith("_cancel_stuck"));
   expect(stuck).toHaveLength(2);
@@ -256,25 +262,33 @@ test("PostgreSQL: a replaced listener or workflow that stock never stops is wait
   ]));
 }, 120_000);
 
-test("PostgreSQL: a replaced listener whose stop deadline stock sets late is waited on until 60 s past that deadline, and the roll succeeds", async () => {
-  const { tenantId, fake, rollout, live } = await workspace("late");
+test("PostgreSQL: a replaced listener stock neither stops nor gives up on is waited on five minutes from the stop request, then logged as stuck, and the roll succeeds", async () => {
+  const { tenantId, fake, rollout, live } = await workspace("unanswered");
   await rollout.roll(tenantId, NO_REDEPLOY);
   fake.stopHangs = true;
-  fake.deadlineAfterPolls = 3;
   const before = fake.clock;
   expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
-  const deadline = Date.parse(fake.runs.find((run) => run.runId === "run_1")!.deadline!);
-  expect(deadline).toBe(before + 4_000 + 30_000);
-  expect(fake.clock).toBeGreaterThanOrEqual(deadline + 60_000);
-  expect(fake.clock).toBeLessThan(deadline + 60_000 + 2_000);
+  expect(fake.clock - before).toBeGreaterThanOrEqual(5 * 60_000);
   expect(live()).toEqual(["run_2"]);
   expect(fake.logs.filter((entry) => entry["msg"] === "listener_cancel_stuck")).toEqual([{ level: "warn", msg: "listener_cancel_stuck", tenantId, source: "github", deployment: "run_1" }]);
+}, 120_000);
+
+test("PostgreSQL: a stop wait retries a failed status read three times, and one that keeps failing is logged as stuck while the roll succeeds", async () => {
+  const { tenantId, fake, rollout, live } = await workspace("unread");
+  await rollout.roll(tenantId, NO_REDEPLOY);
+  fake.statusFails = 3;
+  expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
+  expect(fake.logs.filter((entry) => String(entry["msg"]).endsWith("_cancel_stuck"))).toEqual([]);
+  fake.statusFails = 4;
+  expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
+  expect(live()).toEqual(["run_3"]);
+  expect(fake.logs.filter((entry) => entry["msg"] === "listener_cancel_stuck")).toEqual([{ level: "warn", msg: "listener_cancel_stuck", tenantId, source: "github", deployment: "run_2", error: "status read failed" }]);
 }, 120_000);
 
 test("PostgreSQL: a roll neither waits on nor stops a listener it did not deploy that runs the release, however long it takes to start", async () => {
   const { tenantId, fake, rollout, live } = await workspace("replacing");
   await rollout.roll(tenantId, NO_REDEPLOY);
-  fake.runs.push({ runId: "run_older", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, source: { assetId: "ast_old", commitSha: "old" } });
+  fake.runs.push({ runId: "run_older", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, polls: 0, source: { assetId: "ast_old", commitSha: "old" } });
   fake.runs[0]!.state = "starting";
   fake.clock += START_DEADLINE_MS * 2;
   const before = fake.clock;
@@ -407,10 +421,10 @@ test("a roll that fails while a request waits out its quiet window rolls again w
   expect(rolls).toBe(2);
 });
 
-test("a connected host found with no live listener rolls its workspace, and a listener stock gave up stopping is reported on every pass", async () => {
+test("a connected host found with no live listener rolls its workspace, and every host's listener stock gave up stopping is reported on every pass", async () => {
   const ensured: string[] = [];
   const logged: Record<string, unknown>[] = [];
-  const listeners: Partial<Record<RepoSource, { runId: string }>> = { github: { runId: "run_listener" } };
+  const listeners: Partial<Record<RepoSource, { runId: string }>> = { "bitbucket-datacenter": { runId: "run_bitbucket" } };
   const watch = createListenerWatch({
     async connectedSources() {
       return ["github", "bitbucket-datacenter"];
@@ -419,7 +433,7 @@ test("a connected host found with no live listener rolls its workspace, and a li
       return listeners[source];
     },
     async stuck(_tenantId, source) {
-      return source === "github" ? ["run_stuck"] : [];
+      return source === "bitbucket-datacenter" ? ["run_stuck"] : [];
     },
     async allocation() {
       return undefined;
@@ -439,10 +453,10 @@ test("a connected host found with no live listener rolls its workspace, and a li
   });
   await watch("tnt_watch");
   expect(ensured).toEqual(["tnt_watch"]);
-  listeners["bitbucket-datacenter"] = { runId: "run_bitbucket" };
+  listeners.github = { runId: "run_github" };
   await watch("tnt_watch");
   expect(ensured).toEqual(["tnt_watch"]);
-  const stuck = { level: "warn", msg: "listener_cancel_stuck", tenantId: "tnt_watch", source: "github", deployment: "run_stuck" };
+  const stuck = { level: "warn", msg: "listener_cancel_stuck", tenantId: "tnt_watch", source: "bitbucket-datacenter", deployment: "run_stuck" };
   expect(logged).toEqual([stuck, stuck]);
 });
 
