@@ -84,13 +84,18 @@ const OPEN: RepoPulls[] = [
   { repo: UNREAD, source: "github", prs: [], error: "rate limited" },
 ];
 
-/** #7 waits for CI; #8's degraded run kept its verdict, #11's run never started, #12's mail failed to send and #6's run failed on a head since pushed over. */
+/**
+ * #7 waits for CI; #8's degraded run kept its verdict, #11's run never started, #12's mail failed to send and #6's run failed on a head since pushed over.
+ * The runs of #13, since closed, and #14, open while its host gives no head, failed.
+ */
 const waitingRows: PrTriageRow[] = [
   { number: 7, headSha: "sha_waiting", status: "waiting", attempts: 0, firstSeenAt: minutes(-3).toISOString(), updatedAt: minutes(-3).toISOString() },
   { number: 8, headSha: "sha_run_3", status: "failed", attempts: 1, error: "degraded: the policy could not be read", firstSeenAt: minutes(9).toISOString(), updatedAt: minutes(10).toISOString() },
   { number: 11, headSha: "sha11", status: "failed", attempts: 3, error: "run never started", firstSeenAt: minutes(-4).toISOString(), updatedAt: minutes(-4).toISOString() },
   { number: 12, headSha: "sha12", status: "failed", attempts: 1, error: "delivery failed: connection refused", firstSeenAt: minutes(-4).toISOString(), updatedAt: minutes(-4).toISOString() },
   { number: 6, headSha: "sha6_old", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-6).toISOString(), updatedAt: minutes(-6).toISOString() },
+  { number: 13, headSha: "sha13", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-6).toISOString(), updatedAt: minutes(-6).toISOString() },
+  { number: 14, headSha: "sha14", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-6).toISOString(), updatedAt: minutes(-6).toISOString() },
 ];
 
 /** In the repository GitHub could not list, #3 has since closed and #4 is open with its manager's run; the run of each failed. */
@@ -167,8 +172,9 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       list: () => async () => { throw new Error("the workspace has no host credential"); },
       openHeadFor: async () => async function openHead(record, number) {
         headReads.push(`${record.name}#${number}`);
+        if (number === 14) return undefined;
         const sha = OPEN[0]!.prs.find((pr) => pr.number === number)?.sha;
-        return sha === undefined ? undefined : { headSha: sha, draft: false };
+        return sha === undefined ? null : { headSha: sha, draft: false };
       },
       triageState: { load: async (_tenant, key) => ({ rows: ({ [REPO]: waitingRows, [UNREAD]: unreadRows })[key] ?? [], version: null }) },
       now: () => now,
@@ -218,7 +224,9 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     }
     expect(await untriagedOf(11)).toEqual(["Couldn't triage: the run never started"]);
     expect(await untriagedOf(6)).toEqual([undefined]);
-    expect(headReads).toEqual([`${REPO}#11`, `${REPO}#6`]);
+    expect(await untriagedOf(13)).toEqual([undefined]);
+    expect(await untriagedOf(14)).toEqual(["Couldn't triage: the run failed"]);
+    expect(headReads).toEqual([`${REPO}#11`, `${REPO}#6`, `${REPO}#13`, `${REPO}#14`]);
 
     // Polls while nothing changed are answered from memory; a recorded change is read once.
     const etag = res.headers.get("etag")!;
@@ -231,6 +239,8 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
 
     const closed = TriageVerdicts.assert(await (await get(`?repo=${REPO}&number=5`)).json());
     expect(closed.pulls.map((pull) => [pull.number, pull.verdict?.runId])).toEqual([[5, "run_5"]]);
+    // With a verdict and no note, there is no head to ask the host for.
+    expect(headReads).toHaveLength(4);
     expect((await get(`?repo=${GONE}&number=4`)).status).toBe(404);
 
     expect((await get(`?repo=${REPO}`)).status).toBe(400);

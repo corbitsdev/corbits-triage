@@ -70,8 +70,8 @@ type LivePull = HostedPull & { runs: ObservedRun[] };
 /** A pull request whose newest head waits for CI, first seen `since`. */
 type WaitingPull = HostedPull & { since: string; headSha: string };
 
-/** Why the pull request's current head has no verdict, in words for the portal, with the pull request it belongs to. */
-type Untriaged = HostedPull & { untriaged: string };
+/** Why the pull request's current head has no verdict, in words for the portal, with the pull request and head it belongs to. */
+type Untriaged = HostedPull & { untriaged: string; headSha: string };
 
 type PullNotes = { waiting: Map<string, WaitingPull>; untriaged: Map<string, Untriaged> };
 
@@ -237,7 +237,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
         const pull = { repo: records[index]!.name, source: sourceOf(records[index]!), number: row.number };
         if (row.status === "waiting") waiting.set(pullKey(pull), { ...pull, since: row.firstSeenAt, headSha: row.headSha });
         const text = row.error === undefined ? undefined : untriagedText(row.error, pull.source);
-        if (text !== undefined && current(pull, row.headSha)) untriaged.set(pullKey(pull), { ...pull, untriaged: text });
+        if (text !== undefined && current(pull, row.headSha)) untriaged.set(pullKey(pull), { ...pull, untriaged: text, headSha: row.headSha });
       }
     }
     return { waiting, untriaged };
@@ -313,7 +313,8 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     try {
       const read = await deps.openHeadFor(tenantId);
       if (!read) return undefined;
-      return (await read(record, number))?.headSha ?? null;
+      const head = await read(record, number);
+      return head === null ? null : head?.headSha;
     } catch {
       return undefined;
     }
@@ -332,10 +333,11 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       const record = connectedRecord(connected, query.repo, query.source);
       if (!record) return failure(404, "not_found", "That repository is not connected.");
       const pull = { repo: query.repo, number: query.number, source: sourceOf(record) };
-      const [latest, head, runs] = await Promise.all([deps.verdicts.latestFor(tenantId, pull), headOn(tenantId, record, pull.number), deps.managerRuns(tenantId, [pull])]);
-      const notes = await notesOf(tenantId, [record], (_pull, headSha) => head === undefined || head === headSha);
+      const [latest, notes, runs] = await Promise.all([deps.verdicts.latestFor(tenantId, pull), notesOf(tenantId, [record], () => true), deps.managerRuns(tenantId, [pull])]);
       const key = pullKey(pull);
-      const untriaged = new Map([...notes.untriaged].filter(([id]) => id === key));
+      const note = notes.untriaged.get(key);
+      const head = note === undefined ? undefined : await headOn(tenantId, record, pull.number);
+      const untriaged = new Map(note !== undefined && (head === undefined || head === note.headSha) ? [[key, note]] : []);
       const one = await build(tenantId, latest ? [latest] : [], new Map([...livePulls(runs)].filter(([id]) => id === key)), {
         waiting: new Map([...notes.waiting].filter(([id]) => id === key)),
         untriaged,
