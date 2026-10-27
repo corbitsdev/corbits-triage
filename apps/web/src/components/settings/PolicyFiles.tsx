@@ -4,6 +4,7 @@ import { DeniedNotice } from "../../lib/denied.tsx";
 import type { PortalSnapshot, RepoRecord } from "../../lib/hub-api.ts";
 import { usePolicyFile } from "../../lib/policy-file.ts";
 import { usePolicyUpgrade } from "../../lib/policy-upgrades.ts";
+import { repoHref } from "../../lib/repo-rows.ts";
 
 function policyText(file: { path: string } | null | undefined, failed: boolean) {
   if (failed) return "Could not read its policy file";
@@ -20,7 +21,7 @@ function PolicyFileRow({ repo }: { repo: RepoRecord }) {
       <span className="txt mono small-text">{repo.name}</span>
       <span className="key-acts">
         <span className="model">{policyText(file.data, file.isError)}</span>
-        {canStart && <Link className="linkish" to={`/repositories/${repo.name}`}>Start a policy file</Link>}
+        {canStart && <Link className="linkish" to={repoHref(repo)}>Start a policy file</Link>}
       </span>
     </div>
   );
@@ -39,7 +40,7 @@ export function PolicyFiles({ snapshot }: { snapshot: PortalSnapshot }) {
       <div className="source-body">
         {snapshot.denied.repos && <DeniedNotice section="repositories" />}
         <div className="sentences">
-          {repos.map((repo) => <PolicyFileRow key={repo.name} repo={repo} />)}
+          {repos.map((repo) => <PolicyFileRow key={`${repo.source}:${repo.name}`} repo={repo} />)}
           <div className="sentence">
             <span className="txt">{repos.length === 0 ? "No repository is connected yet." : "Turn triage on or off per repository."}</span>
             <Link className="linkish" to="/repositories">Open Repositories</Link>
