@@ -83,7 +83,7 @@ test("the outcomes show the triaged medians with their counts, and each missing 
   expect(html).toContain("4 people involved");
   expect(html).toContain("No pull requests closed before Triage was switched on.");
 
-  expect(card({ ...measured, baselineBefore: null, baselineState: "no_policy" })).toContain("The baseline needs a saved policy.");
+  expect(card({ ...measured, baselineBefore: null, baselineState: "no_policy" })).toContain("The baseline starts once Triage gives its first verdict here.");
   expect(card({ ...measured, baselineState: "source_failed" }, "bitbucket-datacenter")).toContain("Bitbucket did not answer; the numbers will return when it does.");
   expect(card({ state: "no_credential" }, "bitbucket-datacenter")).toContain("Needs a Bitbucket credential you can use.");
   expect(card({ state: "source_failed" })).toContain("GitHub did not answer; the numbers will return when it does.");

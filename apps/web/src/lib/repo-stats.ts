@@ -65,7 +65,7 @@ function noAnswer(source: RepoSource): string {
 }
 
 function baselineMissing(outcomes: Extract<TriageOutcomes, { state: "measured" }>, source: RepoSource): string | null {
-  if (outcomes.baselineState === "no_policy") return "The baseline needs a saved policy.";
+  if (outcomes.baselineState === "no_policy") return "The baseline starts once Triage gives its first verdict here.";
   if (outcomes.baselineState === "source_failed") return noAnswer(source);
   if (outcomes.baseline === null) return "No pull requests closed before Triage was switched on.";
   return null;

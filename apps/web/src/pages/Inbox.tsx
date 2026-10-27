@@ -494,16 +494,16 @@ function StoppedNotes({ items }: { items: readonly PrItem[] }) {
 }
 
 /**
- * Each repository whose saved rules still need moving into its policy file, its panel walking through it; those with
+ * Each repository whose policy file pull request is waiting for merge, its panel walking through it; the others with
  * no policy file yet are counted, however many there are.
  */
 function PolicyUpgradeNotice() {
   const rows = usePolicyUpgrades();
-  const moving = rows.filter((row) => row.upgrade?.state !== "start");
-  const starting = rows.length - moving.length;
+  const waiting = rows.filter((row) => row.pull !== undefined);
+  const starting = rows.length - waiting.length;
   return (
     <>
-      {moving.length ? <p role="status" className="note">{moving.map((row, at) => <Fragment key={`${row.source}:${row.repo}`}>{at > 0 ? " · " : null}<Link to={repoHref({ name: row.repo, source: row.source })}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
+      {waiting.length ? <p role="status" className="note">{waiting.map((row, at) => <Fragment key={`${row.source}:${row.repo}`}>{at > 0 ? " · " : null}<Link to={repoHref({ name: row.repo, source: row.source })}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
       {starting ? <p role="status" className="note"><Link to="/repositories">{repositoriesText(starting)}</Link> {starting === 1 ? "has" : "have"} no policy file yet, so Triage runs nothing there.</p> : null}
     </>
   );

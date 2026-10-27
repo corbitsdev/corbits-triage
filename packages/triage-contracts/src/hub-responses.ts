@@ -146,7 +146,7 @@ export type OutcomeTimes = typeof OutcomeTimes.infer;
 export const OutcomeMedians = OutcomeTimes.merge({ prs: "number", closed: "number", p75: OutcomeTimes });
 export type OutcomeMedians = typeof OutcomeMedians.infer;
 
-/** Why the baseline is missing: no saved policy marks when triage began, or the host did not answer. */
+/** Why the baseline is missing: no verdict yet marks when triage began, or the host did not answer. */
 export const BaselineState = type("'measured' | 'no_policy' | 'source_failed'");
 export type BaselineState = typeof BaselineState.infer;
 

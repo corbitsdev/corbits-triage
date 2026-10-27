@@ -91,12 +91,12 @@ mock.module("../lib/policy-upgrades.ts", () => ({
   },
   usePolicyUpgrades() {
     return [
-      { repo: NAME, source: "github" satisfies RepoSource, upgrade: { state: "upgrade" } },
-      { repo: NAME, source: "bitbucket-datacenter" satisfies RepoSource, upgrade: { state: "upgrade" } },
+      { repo: NAME, source: "github" satisfies RepoSource, upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 } },
+      { repo: NAME, source: "bitbucket-datacenter" satisfies RepoSource, upgrade: { state: "start" }, pull: { url: "https://bitbucket.example/pull/1", number: 1 } },
     ];
   },
   upgradeLabel() {
-    return "Move rules to a file";
+    return "Waiting for merge";
   },
 }));
 
@@ -203,10 +203,10 @@ function hrefs(selector: string): string[] {
 test("the same repository name on GitHub and Bitbucket Data Center opens each host from the inbox and the policy files list", () => {
   show("github");
   const pane = document.querySelector("a.repo-link")?.getAttribute("href") ?? "";
-  const moving = hrefs(".note a[href^='/repositories/']");
+  const waiting = hrefs(".note a[href^='/repositories/']");
   const starting = [...document.querySelectorAll("a.linkish")].filter((link) => link.textContent === "Start a policy file").map((link) => link.getAttribute("href") ?? "");
   expect(opened(pane)?.source).toBe("github");
-  expect(moving.map((href) => opened(href)?.source)).toEqual(["github", "bitbucket-datacenter"]);
+  expect(waiting.map((href) => opened(href)?.source)).toEqual(["github", "bitbucket-datacenter"]);
   expect(starting.map((href) => opened(href)?.source)).toEqual(["github", "bitbucket-datacenter"]);
 
   act(() => root?.unmount());
