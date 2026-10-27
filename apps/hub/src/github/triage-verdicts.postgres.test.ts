@@ -58,25 +58,46 @@ function observed(byHead: Array<[string, ObservedRun[]]>): ObservedRuns {
 
 const NO_RUNS: ObservedRuns = { byRepo: new Map() };
 
-/** The managers' runs: #8's newest run failed after its verdict, #9 and #10 are still running and #6's run failed early; #7 has no run, but waits for CI. */
-const MANAGED = observed([
-  ["8@sha_run_3", [live("run_3", "failed", minutes(9))]],
-  ["9@sha9", [live("run_9", "running", minutes(-5), "pull_request:synchronize")]],
-  ["10@sha10", [live("run_10", "running", minutes(-120))]],
-  ["6@sha6", [live("run_6", "failed", minutes(-3))]],
-]);
+/**
+ * The managers' runs: #8's newest run failed after its verdict, #9 and #10 are still running and #6's run failed early; #7 has no run, but waits for CI.
+ * #4 of the repository GitHub could not list has a failed run.
+ */
+const MANAGED: ObservedRuns = {
+  byRepo: new Map([
+    ...observed([
+      ["8@sha_run_3", [live("run_3", "failed", minutes(9))]],
+      ["9@sha9", [live("run_9", "running", minutes(-5), "pull_request:synchronize")]],
+      ["10@sha10", [live("run_10", "running", minutes(-120))]],
+      ["6@sha6", [live("run_6", "failed", minutes(-3))]],
+    ]).byRepo,
+    [UNREAD, new Map([["4@sha_u4", [live("run_u4", "failed", minutes(-2))]]])],
+  ]),
+};
 
+/** #14 is open with no head GitHub could name. */
 const OPEN: RepoPulls[] = [
-  { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10, 11, 12].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
+  { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10, 11, 12, 14].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: number === 14 ? "" : `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
   { repo: UNREAD, source: "github", prs: [], error: "rate limited" },
 ];
 
-/** #7 waits for CI; #8's degraded run kept its verdict, #11's run never started and #12's mail failed to send. */
+/**
+ * #7 waits for CI; #8's degraded run kept its verdict, #11's run never started, #12's mail failed to send and #6's run failed on a head since pushed over.
+ * The runs of #13, since closed, and #14, open while its host gives no head, failed.
+ */
 const waitingRows: PrTriageRow[] = [
   { number: 7, headSha: "sha_waiting", status: "waiting", attempts: 0, firstSeenAt: minutes(-3).toISOString(), updatedAt: minutes(-3).toISOString() },
   { number: 8, headSha: "sha_run_3", status: "failed", attempts: 1, error: "degraded: the policy could not be read", firstSeenAt: minutes(9).toISOString(), updatedAt: minutes(10).toISOString() },
   { number: 11, headSha: "sha11", status: "failed", attempts: 3, error: "run never started", firstSeenAt: minutes(-4).toISOString(), updatedAt: minutes(-4).toISOString() },
   { number: 12, headSha: "sha12", status: "failed", attempts: 1, error: "delivery failed: connection refused", firstSeenAt: minutes(-4).toISOString(), updatedAt: minutes(-4).toISOString() },
+  { number: 6, headSha: "sha6_old", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-6).toISOString(), updatedAt: minutes(-6).toISOString() },
+  { number: 13, headSha: "sha13", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-6).toISOString(), updatedAt: minutes(-6).toISOString() },
+  { number: 14, headSha: "sha14", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-6).toISOString(), updatedAt: minutes(-6).toISOString() },
+];
+
+/** In the repository GitHub could not list, #3 has since closed and #4 is open with its manager's run; the run of each failed. */
+const unreadRows: PrTriageRow[] = [
+  { number: 3, headSha: "sha_u3", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-6).toISOString(), updatedAt: minutes(-6).toISOString() },
+  { number: 4, headSha: "sha_u4", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-2).toISOString(), updatedAt: minutes(-2).toISOString() },
 ];
 
 type DB = ReturnType<typeof createDB>["db"];
@@ -144,7 +165,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       managerRuns: async () => managed,
       openPulls,
       list: () => async () => { throw new Error("the workspace has no host credential"); },
-      triageState: { load: async (_tenant, key) => ({ rows: key === REPO ? waitingRows : [], version: null }) },
+      triageState: { load: async (_tenant, key) => ({ rows: ({ [REPO]: waitingRows, [UNREAD]: unreadRows })[key] ?? [], version: null }) },
       now: () => now,
     });
     const app = guardedApp(db, async () => session as never, createInMemoryGrantStore(grants), { triageVerdicts });
@@ -158,8 +179,8 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     expect(res.status).toBe(200);
     const body = TriageVerdicts.assert(await res.json());
     const byPull = new Map(body.pulls.map((pull) => [`${pull.repo}#${pull.number}`, pull]));
-    // #5 is closed, #4 is in a repository no longer connected, #12 has nothing a person can read; where GitHub could not answer, only a recent verdict is listed.
-    expect([...byPull.keys()]).toEqual([`${UNREAD}#2`, `${REPO}#6`, `${REPO}#7`, `${REPO}#8`, `${REPO}#9`, `${REPO}#10`, `${REPO}#11`]);
+    // #5 is closed, #4 is in a repository no longer connected, #12 has nothing a person can read; where GitHub could not answer, only a recent verdict or a run is listed, never a note alone.
+    expect([...byPull.keys()]).toEqual([`${UNREAD}#2`, `${UNREAD}#4`, `${REPO}#6`, `${REPO}#7`, `${REPO}#8`, `${REPO}#9`, `${REPO}#10`, `${REPO}#11`, `${REPO}#14`]);
     expect(body.triaged).toEqual([{ repo: REPO, source: "github" }, { repo: UNREAD, source: "github" }]);
     expect(body.active).toEqual([{ repo: REPO, source: "github" }, { repo: UNREAD, source: "github" }]);
     expect(body.scored).toBe(false);
@@ -184,6 +205,14 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     });
     expect(byPull.get(`${REPO}#10`)?.run?.status).toBe("stuck");
     expect(byPull.get(`${REPO}#6`)?.run?.status).toBe("failed");
+    expect(byPull.get(`${REPO}#6`)?.untriaged).toBeUndefined();
+    expect(byPull.get(`${UNREAD}#4`)?.untriaged).toBe("Couldn't triage: the run failed");
+    expect(byPull.get(`${REPO}#14`)?.untriaged).toBe("Couldn't triage: the run failed");
+    // A single read keeps and drops the same notes the list does.
+    async function untriagedOf(number: number): Promise<Array<string | undefined>> {
+      return TriageVerdicts.assert(await (await get(`?repo=${REPO}&number=${number}`)).json()).pulls.map((pull) => pull.untriaged);
+    }
+    for (const number of [6, 11, 13, 14]) expect(await untriagedOf(number)).toEqual([byPull.get(`${REPO}#${number}`)?.untriaged]);
 
     // Polls while nothing changed are answered from memory; a recorded change is read once.
     const etag = res.headers.get("etag")!;
@@ -255,7 +284,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
 test("PostgreSQL: a host with no credential costs only its own repositories, while a member barred from a host's credential is refused and leaves the shared listing as it was", async () => {
   await withDatabase(async function hostWithoutCredential(db) {
     const bitbucket = "TRI/widgets";
-    const config = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true }, { name: bitbucket, connected: true, source: "bitbucket-datacenter", enabled: true }] } };
+    const config = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true }, { name: UNREAD, connected: true, enabled: true }, { name: bitbucket, connected: true, source: "bitbucket-datacenter", enabled: true }] } };
     await db.insert(schema.tenant).values({ id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config });
     await db.insert(schema.principal).values({ id: "prn_verdicts", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" });
     await db.insert(schema.provider).values({ id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: "https://api.github.test" });
@@ -263,10 +292,15 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
       id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key", secret: "unused", status: "active",
     });
     const verdicts = createVerdictRecordStore(db);
-    await seed(db, TENANT, [verdict("run_1", 1, 0)]);
+    await seed(db, TENANT, [verdict("run_3", 3, 0)]);
     let now = minutes(0);
     const openPulls = createOpenPullsCache(() => now);
     const listed: string[] = [];
+    /** #1's run failed on its open head; #3's failed too, but #3 has a verdict. */
+    const noted: PrTriageRow[] = [
+      { number: 1, headSha: "sha1", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-1).toISOString(), updatedAt: minutes(-1).toISOString() },
+      { number: 3, headSha: "sha3", status: "failed", attempts: 1, error: "run failed", firstSeenAt: minutes(-1).toISOString(), updatedAt: minutes(-1).toISOString() },
+    ];
     const deps = {
       db,
       cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
@@ -284,7 +318,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
       ...deps,
       verdicts,
       managerRuns: async () => NO_RUNS,
-      triageState: { load: async () => ({ rows: [], version: null }) },
+      triageState: { load: async (_tenant, key) => ({ rows: key === REPO ? noted : [], version: null }) },
       now: () => now,
     });
     const githubOpenPulls = createGithubOpenPulls({ ...deps, cache: openPulls });
@@ -299,13 +333,24 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
       return TriageVerdicts.assert(await res.json()).pulls.map((pull) => `${pull.repo}#${pull.number}`);
     }
 
-    expect(await pullsListed()).toEqual([`${REPO}#1`]);
+    // A single read lists only its own repository, only for a note a verdict does not replace, and within the listing's 30 seconds only once.
+    async function single(number: number): Promise<void> {
+      expect((await app.request(`/api/integrations/triage-verdicts/${TENANT}?repo=${REPO}&number=${number}`, { headers: { "sec-fetch-site": "same-origin" } })).status).toBe(200);
+    }
+    await single(3);
+    expect(listed).toEqual([]);
+    await single(1);
+    now = minutes(0.1);
+    await single(1);
     expect(listed).toEqual([REPO]);
+    expect(await pullsListed()).toEqual([`${REPO}#1`]);
+    expect(listed).toEqual([REPO, REPO, UNREAD]);
     const res = await get(GITHUB_OPEN_PULLS_PATH);
     expect(res.status).toBe(200);
     const { repos } = await res.json() as { repos: RepoPulls[] };
     expect(repos.map((row) => [row.repo, row.source, row.prs.length, row.error])).toEqual([
       [REPO, "github", 1, undefined],
+      [UNREAD, "github", 1, undefined],
       [bitbucket, "bitbucket-datacenter", 0, "Connect Bitbucket Data Center first."],
     ]);
 
@@ -318,7 +363,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({ error: { code: "forbidden", message: "You do not have access to the Bitbucket Data Center credential." } });
     expect(await pullsListed()).toEqual([`${REPO}#1`]);
-    expect(listed).toEqual([REPO]);
+    expect(listed).toEqual([REPO, REPO, UNREAD]);
     expect(openPulls.kept(TENANT, Infinity)).toBe(kept);
   });
 }, 120_000);
