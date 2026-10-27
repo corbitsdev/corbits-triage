@@ -4,10 +4,9 @@ import { judgeRequest, report, stop } from "./report.js";
 
 const RULES = { items: [{ facts: {} }], batch: false, chunks: [{ item: 0, state: {}, questions: [] }] };
 const CHECKOUT = { source: "github", repo: "acme/widgets", sha: "h1" };
-const REPLY = { to: "run_manager", content: "{\"kind\":\"manage\"}" };
 const MAIL = {
   headers: { from: "run_manager@acme.test", to: ["run_judge@acme.test"] },
-  parts: [{ contentType: "text/plain", text: JSON.stringify({ kind: "judge", tenantId: "tnt_acme", number: 8, checkout: CHECKOUT, rules: RULES, reply: REPLY }) }],
+  parts: [{ contentType: "text/plain", text: JSON.stringify({ kind: "judge", tenantId: "tnt_acme", number: 8, checkout: CHECKOUT, rules: RULES }) }],
 };
 const VERDICT = { repo: "acme/widgets", number: 8, headSha: "h1", verdict: "pass", reasons: ["Every rule passed."], checks: [], request: { repo: "acme/widgets", number: 8, comment: "Ready." }, automatic: ["labels"], actions: [] };
 
@@ -23,12 +22,12 @@ function hubContext() {
   return { ctx, calls };
 }
 
-test("a manager's judge hands over the rules, reports the verdict through the hub, replies to the manager and stops, posting nothing", async () => {
+test("a manager's judge hands over the rules, reports the verdict through the hub and stops, posting nothing", async () => {
   const { ctx, calls } = hubContext();
   const signal = new AbortController().signal;
   expect(await judgeRequest(MAIL)).toEqual(RULES);
-  expect(await report({ payload: MAIL, evaluate: { output: VERDICT }, judge: { output: [] } }, ctx, signal)).toEqual({ recorded: true, mail: { tenantId: "tnt_acme", ...REPLY } });
-  expect(await report({ payload: MAIL }, ctx, signal)).toEqual({ recorded: true, mail: { tenantId: "tnt_acme", ...REPLY } });
+  expect(await report({ payload: MAIL, evaluate: { output: VERDICT }, judge: { output: [] } }, ctx, signal)).toEqual({ recorded: true });
+  expect(await report({ payload: MAIL }, ctx, signal)).toEqual({ recorded: true });
   expect(await stop(MAIL, ctx, signal)).toEqual({ stopped: true });
   const reported = { source: "github", repo: "acme/widgets", number: 8, kind: "judge", head: "h1" };
   expect(calls).toEqual([

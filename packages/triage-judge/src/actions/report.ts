@@ -1,17 +1,15 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { JudgeVerdict, REPO_SOURCES } from "@corbits/triage-contracts";
-import type { MailInput } from "@corbits/triage-manager/mail";
 import { answered, callHub, endRun, mailOf, tenantPath } from "@corbits/triage-manager/actions/hub";
 
-/** The manager's mail to a judge it deployed: the rules output, the pull request and the mail to reply with. */
+/** The manager's mail to a judge it deployed: the rules output and the pull request. */
 const JudgeMail = type({
   kind: "'judge'",
   tenantId: "string > 0",
   number: "number.integer > 0",
   checkout: { source: type.enumerated(...REPO_SOURCES), repo: "string > 0", sha: "string > 0" },
   rules: { items: "unknown[]", batch: "boolean", chunks: "unknown[]" },
-  reply: { to: "string > 0", content: "string > 0" },
 });
 
 function judgeMailOf(payload: unknown) {
@@ -34,20 +32,19 @@ const NOT_FINISHED = "the judge did not finish";
 
 /**
  * Reports the verdict to the pull request's manager as a `StageResult` through the hub, or that the judge did not
- * finish; the reply then wakes the manager. The verdict goes whole, so the manager posts it as it was made. Posts nothing.
+ * finish; the hub then wakes the manager. The verdict goes whole, so the manager posts it as it was made. Posts nothing.
  */
-export async function report(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ recorded: boolean; mail: MailInput }> {
+export async function report(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ recorded: boolean }> {
   const parsed = ReportInput(input);
   if (parsed instanceof type.errors) throw new Error(`report: ${parsed.summary}`);
-  const { tenantId, number, checkout, reply } = judgeMailOf(parsed.payload).mail;
+  const { tenantId, number, checkout } = judgeMailOf(parsed.payload).mail;
   const verdict = JudgeVerdict(parsed.evaluate?.output);
   const outcome = parsed.evaluate?.output === undefined || verdict instanceof type.errors ? { failed: NOT_FINISHED } : { result: verdict };
   const result = { source: checkout.source, repo: checkout.repo, number, kind: "judge" as const, head: checkout.sha, ...outcome };
-  const { recorded } = answered(await callHub(ctx, "report", tenantPath(tenantId, "/manager/reviewer-result"), "POST", result), "report", Recorded);
-  return { recorded, mail: { tenantId, ...reply } };
+  return answered(await callHub(ctx, "report", tenantPath(tenantId, "/manager/reviewer-result"), "POST", result), "report", Recorded);
 }
 
-/** Stops the judge's run once it has replied, whether or not the verdict, its report or its reply went through. */
+/** Stops the judge's run once it has reported, whether or not the verdict or its report went through. */
 export async function stop(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ stopped: true }> {
   const { mail, runId } = judgeMailOf(input);
   await endRun(ctx, mail.tenantId, runId);

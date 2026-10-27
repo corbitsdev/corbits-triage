@@ -216,8 +216,9 @@ function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
 }
 
 /**
- * Closes the pass with what it ran and stops the code reviews it no longer waits for. `more` runs the next pass at once,
- * or with `wait` after waiting for a code review.
+ * Closes the pass with what it ran and stops the reviewers it no longer waits for. A pass that posted to the host or
+ * mailed a reviewer asks the hub to `wait`. `more` runs the next pass at once, or with `wait` after waiting for what the
+ * pass brought; `ended` ends the run, and a reviewer's result or a later event starts the next one.
  */
 export async function done(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ outcome: "ended" | "refused" } | { outcome: "more"; wait: boolean }> {
   const parsed = DoneInput(input);
@@ -226,7 +227,8 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const mail = managerMailOf(parsed.payload);
   const mailed = parsed.judgeMailed?.output.reviewer ?? parsed.reviewMailed?.output.reviewer;
   const report = doneReport(parsed);
-  const body = { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, mailed), ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }) };
+  const wait = mailed !== undefined || report !== undefined || (parsed.approvals?.output.results.length ?? 0) > 0;
+  const body = { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, mailed), wait, ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }) };
   const answer = await asManager(ctx, mail, "done", body, Done);
   if (answer === undefined) return { outcome: "refused" };
   for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);

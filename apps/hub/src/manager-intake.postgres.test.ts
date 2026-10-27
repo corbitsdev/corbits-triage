@@ -7,7 +7,7 @@ import { APPROVE_DO_KIND, emptyPack, repoPolicy } from "@corbits/triage-contract
 import type { PullRequestToReview } from "./pull-request-reader.js";
 import { mailPayload, waitingPayload } from "./github/bridge.js";
 import { createPauseGate } from "./github/pr-workflow.js";
-import { createManagerIntake } from "./manager-intake.js";
+import { createManagerIntake, createManagerWake } from "./manager-intake.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -131,6 +131,31 @@ test("PostgreSQL: a pull request whose manager is up is mailed that manager, and
       { address: "run_mgr@intake.test", payload: { kind: "manage", tenantId: TENANT, repo: RECORD.name, repoSource: "github", prNumber: 7 } },
       { address: "run_mgr@intake.test", payload: { kind: "manage", tenantId: TENANT, repo: RECORD.name, repoSource: "github", prNumber: 7 } },
       { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 8, headSha: "h8" }] } },
+    ]);
+  });
+}, 60_000);
+
+test("PostgreSQL: a reviewer's result wakes the pull request's live manager, or has the listener deploy one once its claim ended, and none without a listener", async () => {
+  await withDatabase(async function wake(db) {
+    await claimManager(db, "run_mgr", 7, "running");
+    const mailed: { address: string; payload: unknown }[] = [];
+    function waker(listener: string | undefined) {
+      return createManagerWake({
+        db,
+        listener: async () => listener,
+        async deliver(_tenantId, address, payload) {
+          mailed.push({ address, payload });
+        },
+      });
+    }
+    const pr = { source: "github" as const, repo: RECORD.name, number: 7 };
+    expect(await waker(LISTENER)(TENANT, pr, "h1")).toBe(true);
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = (state - 'runId') || '{"status":"ended"}' WHERE kind = 'claim'`);
+    expect(await waker(LISTENER)(TENANT, pr, "h1")).toBe(true);
+    expect(await waker(undefined)(TENANT, pr, "h1")).toBe(false);
+    expect(mailed).toEqual([
+      { address: "run_mgr@intake.test", payload: { kind: "manage", tenantId: TENANT, repo: RECORD.name, repoSource: "github", prNumber: 7 } },
+      { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] } },
     ]);
   });
 }, 60_000);

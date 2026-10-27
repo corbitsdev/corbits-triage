@@ -70,7 +70,6 @@ function actionCredentials(hub: (url: URL, init?: RequestInit) => Promise<Respon
 /** Runs the judge's body over the rules a manager would mail it. */
 async function runJudge(rulesOutput: { chunks: unknown[] }) {
   const calls: { method: string; path: string; body?: unknown }[] = [];
-  const mailed: unknown[] = [];
   async function hub(url: URL, init?: RequestInit): Promise<Response> {
     calls.push({ method: init?.method ?? "GET", path: url.pathname, ...(init?.body !== undefined && { body: JSON.parse(String(init.body)) }) });
     return init?.method === "DELETE" ? new Response(null, { status: 202 }) : Response.json({ recorded: true }, { status: 201 });
@@ -81,16 +80,11 @@ async function runJudge(rulesOutput: { chunks: unknown[] }) {
     headers: { from: "run_manager@triage.test", to: [`${RUN}@triage.test`] },
     parts: [{ contentType: "text/plain", text: JSON.stringify({
       kind: "judge", tenantId: TENANT, number: 8, checkout: { source: "github", repo: "acme/widgets", sha: SHA }, rules: rulesOutput,
-      reply: { to: "run_manager", content: JSON.stringify({ kind: "manage", tenantId: TENANT, repo: "acme/widgets", repoSource: "github", prNumber: 8 }) },
     }) }],
   };
   const { terminalStatus } = await runLocal(body.inline, {
     authorize: allow,
     invokeStep: async function invoke({ agent, input }) {
-      if (agent.id.startsWith("triage-mail")) {
-        mailed.push(input);
-        return { output: JSON.stringify({ mailed: true }) };
-      }
       if (agent.id !== "triage-judge") throw new Error(`no agent but the judge runs, not ${agent.id}`);
       if (!input || typeof input !== "object" || !("questions" in input) || !Array.isArray(input.questions)) throw new Error("the judge step was not given a chunk");
       const text = input.questions.filter(isQuestion).map((question) => answerText(question.id)).join("");
@@ -100,20 +94,19 @@ async function runJudge(rulesOutput: { chunks: unknown[] }) {
     actionCredentials: actionCredentials(hub),
     triggerPayload: mail,
   }).complete;
-  return { terminalStatus, calls, mailed };
+  return { terminalStatus, calls };
 }
 
 test("the judge runs the chunks the manager mailed, reports the whole verdict and stops, posting nothing", async () => {
   const rulesOutput = await ruled();
   expect(rulesOutput.chunks.length).toBeGreaterThan(0);
-  const { terminalStatus, calls, mailed } = await runJudge(rulesOutput);
+  const { terminalStatus, calls } = await runJudge(rulesOutput);
   expect(terminalStatus).toBe("completed");
   const posted = calls.find((call) => call.method === "POST");
   expect(posted).toMatchObject({ path: `/api/tenants/${TENANT}/manager/reviewer-result`, body: { kind: "judge", head: SHA, source: "github", repo: "acme/widgets", number: 8 } });
   if (posted === undefined) throw new Error("the judge posted nothing");
   expect((posted.body as { result?: unknown }).result).toMatchObject({ headSha: SHA, verdict: "pass", request: { header: { head: SHA, verdict: "pass" } }, automatic: [], actions: [] });
   expect(calls.some((call) => call.path.includes("github.com"))).toBe(false);
-  expect(mailed).toHaveLength(1);
   expect(calls.at(-1)).toEqual({ method: "DELETE", path: `/api/tenants/${TENANT}/workflows/runs/${RUN}` });
 });
 

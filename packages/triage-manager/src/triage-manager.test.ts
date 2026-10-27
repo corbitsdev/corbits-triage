@@ -4,7 +4,7 @@ import { createActionCredentialsFactory, createCredentialProviderRegistry, creat
 import type { GrantRule } from "@intx/types/authz";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
-import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, WAITING_KIND, WAITING_LABEL, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, VERDICT_LABELS, WAITING_KIND, WAITING_LABEL, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serve";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
@@ -118,11 +118,19 @@ function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init
 
 const loopFns = (ref: string) => (loops as Record<string, LoopFn>)[ref]!;
 
+/** A clock a minute further on at every reading, so a pass's wait has passed by the time it is timed. */
+function hurried() {
+  let readings = 0;
+  return function clock() {
+    return new Date(Date.now() + ++readings * 60_000);
+  };
+}
+
 /**
  * Runs one mail's body; the mail agent's director runs its one tool, so the mail it would send is recorded and answered
  * `mailed` in the `{ reply, turn }` a live agent step outputs.
  */
-async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers = true) {
+async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers = true, clock?: () => Date) {
   const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the body is not inline");
   const { terminalStatus, outputs } = await runLocal(body.inline, {
@@ -138,6 +146,7 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
     actionCredentials: actionCredentials((definition.credentialBindings ?? []) as Bindings, host, hub),
     loopFns,
     triggerPayload: mail,
+    ...(clock && { clock }),
   }).complete;
   const passes = outputs["passes"] as { iterations: number; final: Record<string, unknown> } | undefined;
   const last = passes?.final ?? outputs;
@@ -242,9 +251,19 @@ describe("triage-manager", () => {
     expect(live.calls).toEqual([TAKE, DONE, TAKE, DONE, END]);
   });
 
+  test("a pass that posted asks the hub to wait, and the pass after the wait, which runs nothing, ends the run", async () => {
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [PASS, IDLE], dones: [{ outcome: "more", wait: true }, ENDED] });
+    const { passes, ran } = await runMail(github, wake(), host, hub.hub, [], true, hurried());
+    expect(passes).toBe(2);
+    expect(ran).toEqual(["approvals", "done", "paused", "poll", "ran", "take"]);
+    expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, false]);
+    expect(hub.calls.at(-1)).toEqual(END);
+  });
+
   test("passes that run out are stopped once, by the run's last step", async () => {
     const { host } = githubHost();
-    const passes = 280;
+    const passes = 40;
     const hub = fakeHub({ takes: Array.from({ length: passes }, () => IDLE), dones: Array.from({ length: passes }, () => MORE) });
     expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes });
     expect(hub.calls.filter((call) => call.method === "DELETE")).toEqual([END]);
@@ -276,6 +295,7 @@ describe("triage-manager", () => {
     expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["approvals", "done", "paused", "ran", "take"]);
     expect(writes).toEqual([]);
     expect(hub.calls).toEqual([TAKE, DONE, STOP_REVIEW, END]);
+    expect(doneBody(hub.calls)["wait"]).toBe(false);
   });
 
   test("a review an earlier manager deployed is left to run out its own deadline", async () => {
@@ -368,7 +388,8 @@ describe("triage-manager with code review", () => {
     expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
-    expect({ ...mail, content: JSON.parse(mail.content) }).toMatchObject({ tenantId: TENANT, to: DEPLOYED, content: { ...REVIEW_REQUEST.codeReviewRequest, tenantId: TENANT, reply: { to: RUN, content: manageMail(TENANT, PULL) } } });
+    expect({ ...mail, content: JSON.parse(mail.content) }).toEqual({ tenantId: TENANT, to: DEPLOYED, readyBy: mail.readyBy, content: { ...REVIEW_REQUEST.codeReviewRequest, tenantId: TENANT } });
+    expect(doneBody(first.calls)["wait"]).toBe(true);
 
     const second = fakeHub({ takes: [reported({ result: REVIEW }, ON)], dones: [ENDED] });
     const { ran } = await runMail(reviewed, wake(), host, second.hub, mailed);
@@ -601,10 +622,11 @@ describe("triage-manager with a judge", () => {
     expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_judge", package: { format: "source", commitSha: "c0ffee", packageName: JUDGE_RELEASE.workflow.packageName } }, entry: JUDGE_RELEASE.workflow.entry, sourceOfferingIds: ["off_d"], defaultSourceOfferingId: "off_d" } });
     expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
-    const content = JSON.parse(mail.content) as { kind: string; rules: MailedRules; reply: { to: string } };
+    const content = JSON.parse(mail.content) as { kind: string; rules: MailedRules };
     expect(content.kind).toBe("judge");
     expect(content.rules.chunks.length).toBeGreaterThan(0);
-    expect(content.reply.to).toBe(RUN);
+    expect(content).not.toHaveProperty("reply");
+    expect(doneBody(first.calls)["wait"]).toBe(true);
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
 
     const verdict = await judgeVerdict(content.rules);
@@ -718,7 +740,7 @@ describe("triage-manager with a judge", () => {
     const { ran } = await runMail(github, wake(), host, hub.hub);
     expect(ran).toContain("mirrorRules");
     expect(ran).not.toContain("deployJudge");
-    expect(writes.length).toBeGreaterThan(0);
+    expect(writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [VERDICT_LABELS.unsure] } }));
     expect(writes).not.toContainEqual(JUDGE_POSTED);
     expect(hub.calls).toEqual(calls);
   });

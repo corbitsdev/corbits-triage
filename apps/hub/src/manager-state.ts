@@ -62,6 +62,11 @@ export type Closing = { head: string; startedAt: string; mail?: Record<string, u
 /** Records what the closed pass reported in done's transaction, so the claim never moves on without it. */
 export type RecordDone = (tx: Tx, closing: Closing | undefined) => Promise<void>;
 type DoneResult = { outcome: "refused" } | { outcome: "ended" } | { outcome: "more"; wait: boolean };
+/**
+ * `wait` when the pass posted to the host or mailed a reviewer, so the manager waits once for what that brings before
+ * its claim ends. `report` and `record` record what the pass did; `log` names each reviewer it gave up on.
+ */
+export type DoneOptions = { wait?: boolean; report?: PassReport; record?: RecordDone; log?: (entry: Record<string, unknown>) => void };
 
 function pullKey({ source, repo, number }: PullRequestRef): string {
   return `${source}:${repo}#${number}`;
@@ -379,12 +384,22 @@ async function closingOf(tx: Tx, tenantId: string, pr: PullRequestRef, runId: st
   return { head, startedAt: first.takenAt, ...(mail && { mail }) };
 }
 
+/** The claim's reviewers that ran past their deadline with no report and that `recorded` no longer waits for. */
+async function givenUp(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, recorded: readonly Reviewer[], now: Date): Promise<Reviewer[]> {
+  const late = claim.reviewers.filter((reviewer) => reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime() && !recorded.some((kept) => kept.runId === reviewer.runId && kept.result === undefined));
+  if (late.length === 0) return [];
+  const rows = await tx.select({ key: managerState.key }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, inArray(managerState.key, late.map((reviewer) => eventKey(pr, reviewer.runId)))));
+  const reported = new Set(rows.map((row) => row.key));
+  return late.filter((reviewer) => !reported.has(eventKey(pr, reviewer.runId)));
+}
+
 /**
- * Closes the open pass with what it reported and records `reviewers`. The claim ends when no event is pending and no
- * reviewer of the current head is still due; otherwise the manager has more to do: at once when an event is pending,
- * else after it waits for its reviewer.
+ * Closes the open pass with what it reported and records `reviewers`. The manager has more to do while an event is
+ * pending, at once, and once more after a pass that asks to `wait`; otherwise the claim ends, and a later event or
+ * reviewer result starts the next manager. A reviewer the pass gave up on past its deadline with no report is logged.
  */
-export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], report?: PassReport, record?: RecordDone): Promise<DoneResult> {
+export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], { wait = false, report, record, log }: DoneOptions = {}): Promise<DoneResult> {
   return db.transaction(async function finishPass(tx) {
     const claim = await lockClaim(tx, tenantId, pr);
     if (!fencedTo(claim, runId)) return { outcome: "refused" };
@@ -393,13 +408,14 @@ export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     const now = new Date();
     const closed = closing(claim, runId, now, report);
     const history = closed ? closedInto(claim.history, closed) : claim.history;
-    const head = history.at(-1)?.head;
-    const due = recorded.some((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime());
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState).where(pending(tenantId, pr));
     const waiting = passHeadOf(eventsOf(rows), history) !== undefined;
     const kept = { claimId: claim.claimId, claimedAt: claim.claimedAt, reviewers: recorded, history, starts: claim.starts };
     if (record) await record(tx, report && await closingOf(tx, tenantId, pr, runId, report.head, history));
-    if (due || waiting) {
+    for (const reviewer of await givenUp(tx, tenantId, pr, claim, recorded, now)) {
+      log?.({ level: "warn", msg: "reviewer_overdue", tenantId, source: pr.source, repo: pr.repo, number: pr.number, kind: reviewer.kind, head: reviewer.head, runId: reviewer.runId, deadline: reviewer.deadline });
+    }
+    if (waiting || wait) {
       await writeClaim(tx, tenantId, pr, { ...kept, status: "live", runId });
       return { outcome: "more", wait: !waiting };
     }
@@ -421,8 +437,8 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
  */
 export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass }; gone?: { runId: string; pass: Pass } };
 
-/** The newest head a pull request mail named, which a live manager takes next or has taken. */
-async function newestHead(tx: Tx, tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
+/** The newest head a pull request mail named, which a live manager takes next or has taken; undefined before any. */
+export async function newestHead(tx: Tx | DB["db"], tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
   const [row] = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${eventPrefix(pr)}%`), sql`${managerState.state}->>'type' = 'webhook'`, sql`${managerState.state}->'payload'->>'kind' IS DISTINCT FROM ${APPROVE_DO_KIND}`))
     .orderBy(desc(sql`${managerState.state}->>'receivedAt'`), desc(managerState.key))

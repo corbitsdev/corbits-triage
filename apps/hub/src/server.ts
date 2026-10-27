@@ -35,7 +35,7 @@ import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
-import { createManagerIntake } from "./manager-intake.js";
+import { createManagerIntake, createManagerWake } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { deploymentUp, liveListener, passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
@@ -322,7 +322,14 @@ const toListener = createManagerIntake({
   },
   log: logJson,
 });
-mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, now });
+const wakeManager = createManagerWake({
+  db: composition.db,
+  listener: listenerAddress,
+  deliver: function deliverOf(tenantId, address, payload) {
+    return deliverToListener(tenantId, address, payload);
+  },
+});
+mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, now });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
     where: eq(schema.tenant.id, tenantId),

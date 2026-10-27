@@ -7,7 +7,7 @@ import { hostChecksPending } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
-import { deploy, managerMailOf, manageMail } from "./hub.js";
+import { deploy, managerMailOf } from "./hub.js";
 import { Reviewer, TakeOutput } from "./manager.js";
 
 /** How long the manager waits for a judge it deployed, from its deploy to its report. */
@@ -81,8 +81,8 @@ export async function judgeScope(input: unknown): Promise<{ deploy: boolean; pos
 const DeployInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: "unknown" } });
 
 /**
- * Deploys the judge from the host's published release. It is mailed the rules output and, to reply with, the mail that
- * wakes this manager. The mail waits for the new run until the judge's deadline.
+ * Deploys the judge from the host's published release. It is mailed the rules output, and reports its verdict to the
+ * hub, which wakes the pull request's manager. The mail waits for the new run until the judge's deadline.
  */
 export async function deployJudge(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ reviewer: Reviewer; mail: MailInput }> {
   const parsed = DeployInput(input);
@@ -96,7 +96,7 @@ export async function deployJudge(input: unknown, ctx: EffectContext, _signal: A
   if (!release) throw new Error("deployJudge: release.json publishes no judge for the host");
   const judgeRun = await deploy(ctx, "deployJudge", tenantId, release);
   const deadline = new Date(Date.now() + JUDGE_DEADLINE_MS).toISOString();
-  const content = JSON.stringify({ kind: "judge", tenantId, number: pullRequest.number, checkout: { source, repo: pullRequest.repo, sha: head }, rules, reply: { to: runId, content: manageMail(tenantId, pullRequest) } });
+  const content = JSON.stringify({ kind: "judge", tenantId, number: pullRequest.number, checkout: { source, repo: pullRequest.repo, sha: head }, rules });
   return { reviewer: { kind: "judge", head, runId: judgeRun, deployedBy: runId, deadline }, mail: { tenantId, to: judgeRun, content, readyBy: deadline } };
 }
 

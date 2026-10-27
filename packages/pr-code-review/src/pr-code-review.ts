@@ -102,7 +102,7 @@ function hubAction(handler: string, input: Selector, after: readonly string[]) {
 
 /**
  * The review a pull request's manager deploys, under `id`, also its mail address: it reviews the request the manager
- * mails it, reports the review through the hub, or that it did not finish, replies so the manager collects it, then
+ * mails it, reports the review through the hub, or that it did not finish, which wakes the pull request's manager, then
  * stops, whatever failed before. It posts nothing to the pull request. Only the manager that deployed it may mail it.
  */
 export function codeReviewReviewer(agents: CodeReviewAgents) {
@@ -113,10 +113,9 @@ export function codeReviewReviewer(agents: CodeReviewAgents) {
       steps: {
         reviewRequest: action({ handler: "reviewRequest", input: { from: "trigger.payload" } }),
         ...codeReviewSteps(agents, sources, { prefix: "", request: { from: "steps.reviewRequest.output.request" }, after: ["reviewRequest"] }),
-        // Stock runs a step whose dependencies failed, so the report, the reply and the stop run however the review ended.
+        // Stock runs a step whose dependencies failed, so the report and the stop run however the review ended.
         report: hubAction("report", { merge: [{ from: "steps" }, { project: { from: "trigger" }, fields: ["payload"] }] }, ["review"]),
-        reply: step({ agent: agents.mailAgent, input: { from: "steps.report.output.mail" }, after: ["report"] }),
-        stop: hubAction("stop", { from: "trigger.payload" }, ["reply"]),
+        stop: hubAction("stop", { from: "trigger.payload" }, ["report"]),
       },
     });
     return defineWorkflow({

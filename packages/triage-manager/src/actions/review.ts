@@ -7,7 +7,7 @@ import { call, hostWrite, toolName } from "@corbits/triage-workflows/logic/host"
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
-import { deploy, managerMailOf, manageMail } from "./hub.js";
+import { deploy, managerMailOf } from "./hub.js";
 import { Reviewer, storedReview, TakeOutput } from "./manager.js";
 
 /** How long the manager waits for a code review it deployed, from its deploy to its report. */
@@ -126,8 +126,8 @@ export async function reviewScope(input: unknown): Promise<{ deploy: boolean; po
 const DeployInput = type({ payload: "unknown", take: { output: TakeOutput } });
 
 /**
- * Deploys code review from the host's published release; it is mailed the head's review request and, to reply with, the mail that wakes
- * this manager. The mail waits for the new run until the review's deadline.
+ * Deploys code review from the host's published release; it is mailed the head's review request, and reports its result
+ * to the hub, which wakes the pull request's manager. The mail waits for the new run until the review's deadline.
  */
 export async function deployReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ reviewer: Reviewer; mail: MailInput }> {
   const parsed = DeployInput(input);
@@ -140,7 +140,7 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   const again = asRecord(taken["codeReview"])?.["again"];
   const reviewRun = await deploy(ctx, "deploy", tenantId, release);
   const deadline = new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString();
-  const content = JSON.stringify({ ...asRecord(taken["codeReviewRequest"]), tenantId, reply: { to: runId, content: manageMail(tenantId, pullRequest) } });
+  const content = JSON.stringify({ ...asRecord(taken["codeReviewRequest"]), tenantId });
   return { reviewer: { kind: "code-review", head, runId: reviewRun, deployedBy: runId, deadline, ...(typeof again === "string" && { again }) }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
 }
 

@@ -65,13 +65,23 @@ function buildStock(db: Db) {
 
 function ignore(): void {}
 
-function routeDeps(db: Db) {
-  return { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), log: ignore };
+type Woken = { tenantId: string; pr: PullRequestRef; head: string };
+
+/** The hub's wake, recording each pull request it wakes; `listening` false is a workspace with no listener for the host. */
+function waker(woken: Woken[] = [], listening = true) {
+  return async function wake(tenantId: string, pr: PullRequestRef, head: string): Promise<boolean> {
+    if (listening) woken.push({ tenantId, pr, head });
+    return listening;
+  };
 }
 
-function buildHub(db: Db) {
+function routeDeps(db: Db, { log = ignore, wake = waker() }: { log?: (entry: Record<string, unknown>) => void; wake?: ReturnType<typeof waker> } = {}) {
+  return { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), log, wake };
+}
+
+function buildHub(db: Db, deps: Parameters<typeof routeDeps>[1] = {}) {
   const app = buildStock(db);
-  mountTenantRoutes(app, { ...routeDeps(db), now: () => new Date() });
+  mountTenantRoutes(app, { ...routeDeps(db, deps), now: () => new Date() });
   return app;
 }
 
@@ -162,6 +172,35 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
       expect(await (await post(app, "take", pr, manager)).json()).toMatchObject({ outcome: "pass", events: [{ key: `evt:${pr.source}:${pr.repo}#7:run_reviewer`, event: { type: "reviewer-result", payload: { kind: "code-review", result: REVIEW } } }] });
       expect(await (await post(app, "done", { ...pr, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });
     }
+  });
+}, 60_000);
+
+test("PostgreSQL: a reviewer's result wakes the pull request's manager as a host event does, and one for a head the pull request moved past is dropped and logged", async () => {
+  await withDatabase(async function woken(db) {
+    const woken: Woken[] = [];
+    const logged: Record<string, unknown>[] = [];
+    function log(entry: Record<string, unknown>): void {
+      logged.push(entry);
+    }
+    const app = buildHub(db, { log, wake: waker(woken) });
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
+    await webhook(db, GITHUB);
+    const result = { ...GITHUB, kind: "judge", head: "h1", failed: "the judge did not finish" };
+    expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: true });
+    expect(woken).toEqual([{ tenantId: TENANT, pr: GITHUB, head: "h1" }]);
+
+    await recordEvent(db, TENANT, GITHUB, "pushed", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
+    const late = bearer(await runWithToken(db, "run_late", [RESULT]));
+    expect(await (await post(app, "reviewer-result", result, late)).json()).toEqual({ recorded: false });
+    expect(woken).toHaveLength(1);
+    expect(logged).toEqual([{ level: "info", msg: "reviewer_result_stale", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", current: "h2", runId: "run_late" }]);
+    const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE key LIKE '%:run_late'`);
+    expect(stored!.events).toBe(0);
+
+    const unrouted = buildHub(db, { log, wake: waker([], false) });
+    const quiet = bearer(await runWithToken(db, "run_quiet", [RESULT]));
+    expect(await (await post(unrouted, "reviewer-result", { ...result, head: "h2" }, quiet)).json()).toEqual({ recorded: true });
+    expect(logged.at(-1)).toMatchObject({ level: "warn", msg: "reviewer_result_unrouted", runId: "run_quiet" });
   });
 }, 60_000);
 
