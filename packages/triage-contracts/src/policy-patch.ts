@@ -18,12 +18,11 @@ export const PolicyPatchChange = type({ kind: "'rule'", id: RuleId, enabled: "bo
 export type PolicyPatchChange = typeof PolicyPatchChange.infer;
 
 export const PolicyPatchChanges = PolicyPatchChange.array().atLeastLength(1).atMostLength(40);
-export type PolicyPatchChanges = typeof PolicyPatchChanges.infer;
 
 type PolicyRule = typeof policyRuleSchema.infer;
 
 /** `changed` is false when the patched file reads the same as before, however the YAML library re-spaced it. */
-export type PolicyPatchOutcome = { ok: true; text: string; changed: boolean } | { ok: false; message: string };
+type PolicyPatchOutcome = { ok: true; text: string; changed: boolean } | { ok: false; message: string };
 
 const MIGRATION = "This file has no rules list. It is the older policy shape and needs converting before it can be changed.";
 const WRITTEN = { lineWidth: 0, flowCollectionPadding: false } as const;
@@ -68,9 +67,11 @@ function ruleIdAt(item: unknown): string | undefined {
   return scalarText(item.get("id", true));
 }
 
-function rulesOf(doc: Document): YAMLSeq | undefined {
+/** `parsedPolicy` refuses a file without a rules list, and no change removes it. */
+function rulesOf(doc: Document): YAMLSeq {
   const rules = doc.get("rules", true);
-  return isSeq(rules) ? rules : undefined;
+  if (!isSeq(rules)) throw new Error("the policy file lost its rules list");
+  return rules;
 }
 
 function ruleIndex(rules: YAMLSeq, id: string): number {
@@ -79,9 +80,7 @@ function ruleIndex(rules: YAMLSeq, id: string): number {
 
 /** A plain object pushed onto `rules` is invisible to `ruleIdAt`, so a later change in the batch would miss it. */
 function appendRule(doc: Document, rule: unknown): void {
-  const rules = rulesOf(doc);
-  if (!rules) return;
-  rules.add(doc.createNode(rule));
+  rulesOf(doc).add(doc.createNode(rule));
 }
 
 /** Skip a write that would replace a pair with the value it already holds, so asking again does not rewrite the line. */
@@ -98,7 +97,8 @@ function addedCatalogRule(id: CatalogId, repo: string): Record<string, unknown> 
 
 /**
  * The built-in rules a batch turns on or gives new limits: only these must hold their required fields, and `resentence`
- * lists those whose sentence is rewritten from their limits, which are the rules it adds and gives new limits.
+ * lists those whose sentence is rewritten from their limits, which are the rules it turns on without one and gives new
+ * limits, unless their text is set in the batch (`ownText`).
  */
 type Touched = { rules: Set<CatalogId>; resentence: Set<CatalogId>; ownText: Set<CatalogId> };
 
@@ -110,7 +110,6 @@ function touch(touched: Touched, id: CatalogId): void {
 
 function applyEnabled(doc: Document, repo: string, touched: Touched, id: string, enabled: boolean): string | undefined {
   const rules = rulesOf(doc);
-  if (!rules) return MIGRATION;
   const index = ruleIndex(rules, id);
   if (index >= 0) {
     // A rule without `enabled` is on, so turning it on changes nothing; turned back on, it keeps its own text.
@@ -133,7 +132,6 @@ function applyEnabled(doc: Document, repo: string, touched: Touched, id: string,
 function applyOptions(doc: Document, repo: string, touched: Touched, id: string, options: Record<string, unknown>): string | undefined {
   if ("check" in options || "id" in options) return `Rule ${id}'s check and id cannot be changed.`;
   const rules = rulesOf(doc);
-  if (!rules) return MIGRATION;
   const { enabled, ...rest } = options;
   const problem = typeof enabled === "boolean" ? applyEnabled(doc, repo, touched, id, enabled) : undefined;
   if (problem !== undefined) return problem;
@@ -152,20 +150,21 @@ function applyOptions(doc: Document, repo: string, touched: Touched, id: string,
   return undefined;
 }
 
-/** A built-in rule added here is held to what turning it on holds it to, and its sentence is written from its limits. */
+/** A built-in rule added here is held to what turning it on holds it to, and keeps the text it is added with. */
 function applyAdd(doc: Document, touched: Touched, rule: PolicyRule): string | undefined {
   const rules = rulesOf(doc);
-  if (!rules) return MIGRATION;
   const id = fileRuleId(rule);
   if (ruleIndex(rules, id) >= 0) return present(id);
   appendRule(doc, rule);
-  if (isCatalogId(id)) touch(touched, id);
+  if (isCatalogId(id)) {
+    touched.ownText.add(id);
+    touched.rules.add(id);
+  }
   return undefined;
 }
 
 function applyRemove(doc: Document, id: string): string | undefined {
   const rules = rulesOf(doc);
-  if (!rules) return MIGRATION;
   const index = ruleIndex(rules, id);
   if (index < 0) return isCatalogId(id) ? missing(id) : unknown(id);
   rules.delete(index);
@@ -212,7 +211,6 @@ function requiredField(id: CatalogId): string | undefined {
 /** A size or path rule is not given a made-up limit, nor a turned-on rule a made-up reason; the batch has to set them, or the refusal names both. */
 function missingRequired(doc: Document, touched: ReadonlySet<CatalogId>): string | undefined {
   const rules = rulesOf(doc);
-  if (!rules) return undefined;
   for (const id of touched) {
     const item = rules.items[ruleIndex(rules, id)];
     if (!isMap(item)) continue;
@@ -227,7 +225,7 @@ function missingRequired(doc: Document, touched: ReadonlySet<CatalogId>): string
 function writeSentences(doc: Document, repo: string, resentence: ReadonlySet<CatalogId>, policy: Record<string, unknown>): void {
   const rules = rulesOf(doc);
   const checks = asRecord(policy.checks);
-  if (!rules || !checks) return;
+  if (!checks) return;
   for (const id of resentence) {
     const index = ruleIndex(rules, id);
     if (index < 0) continue;

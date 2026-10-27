@@ -17,6 +17,8 @@ let raced: (typeof pulls)[number] | undefined;
 const log: Array<{ branch: string; id: string; message: string }> = [];
 /** How many description edits fail next. */
 let pullPutFailures = 0;
+/** Set, the description is edited on Bitbucket just before the next edit, so that edit's version is stale. */
+let editedBeforePut = false;
 /** Set, the policy file appears on the branch just before the next commit. */
 let appearsBeforePut: string | undefined;
 
@@ -75,6 +77,8 @@ async function bitbucket(req: Request): Promise<Response> {
       return new Response(null, { status: 502 });
     }
     const pull = pulls.find((row) => row.id === Number(path.slice("/pull-requests/".length)))!;
+    if (editedBeforePut) Object.assign(pull, { description: `${pull.description}\n\nedited on Bitbucket`, version: pull.version + 1 });
+    editedBeforePut = false;
     const body = await req.json() as { version: number; title: string; description: string };
     if (body.version !== pull.version) return new Response(null, { status: 409 });
     Object.assign(pull, { title: body.title, description: body.description, version: pull.version + 1 });
@@ -123,6 +127,12 @@ test("the Bitbucket pull request is made once from a new branch, then brought up
     await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Found }\n", body: "found", append: true });
     expect(pulls[0]!.description).toStartWith(appended);
     expect(pulls[0]!.description).toMatch(/\nlost\n[\s\S]*\nfound$/);
+
+    // A description edited on Bitbucket between the read and the edit is read again and keeps both.
+    editedBeforePut = true;
+    await proposePolicy(bb, REPO, "main", { ...change, text: "rules: []\nlabels: { pass: Raced }\n", body: "raced", append: true });
+    expect(pulls[0]!.description).toContain("\nedited on Bitbucket\n");
+    expect(pulls[0]!.description).toEndWith("\nraced");
 
     // An export's refused edit is Bitbucket's refusal, sent once and not retried.
     pullPutFailures = 1;

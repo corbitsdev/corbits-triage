@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bodyWith, missingSections, PolicyFileMoved, proposePolicy, PULL_BODY_MAX } from "./policy-pull.js";
+import { bodyWith, DescriptionNotUpdated, missingSections, PolicyFileMoved, proposePolicy, PULL_BODY_MAX } from "./policy-pull.js";
 
 const TITLE = "chore: update the Corbits Triage rules";
 
@@ -27,20 +27,35 @@ test("the cap holds when the body has CRLF endings, and a section too long for i
   expect(capped).toContain("batch 1\n");
   expect(capped).toEndWith("\n(truncated)");
   const full = bodyWith("x".repeat(PULL_BODY_MAX), [{ commit: "c2", text: "batch 2" }]);
-  expect(full).toStartWith("x".repeat(PULL_BODY_MAX));
+  expect(full.length).toBeLessThanOrEqual(PULL_BODY_MAX);
+  expect(full).toContain("(corbits-triage added c2)");
   expect(full).not.toContain("batch 2");
-  expect(full).toEndWith("\n(truncated)");
+});
+
+test("markers past the cap give way to one line, and the commits it leaves out are not added back", () => {
+  function sha(at: number): string {
+    return at.toString(16).padStart(40, "0");
+  }
+  const body = ["Opened.", ...Array.from({ length: 900 }, (_, at) => `[//]: # (corbits-triage added ${sha(at)})`)].join("\n\n");
+  const capped = bodyWith(body, [{ commit: sha(900), text: "newest" }]);
+  expect(capped.length).toBeLessThanOrEqual(PULL_BODY_MAX);
+  expect(capped).toStartWith("Opened.\n\n");
+  expect(capped.split("Earlier batches are left out to fit the description.")).toHaveLength(2);
+  expect(capped).not.toContain(`added ${sha(0)})`);
+  expect(capped).toEndWith("newest");
+  const commits = Array.from({ length: 902 }, (_, at) => ({ commit: sha(at), message: `${TITLE}\n\nbatch ${at}` }));
+  expect(missingSections(capped, commits, TITLE)).toEqual([{ commit: sha(901), text: "batch 901" }]);
+  expect(bodyWith(capped, [{ commit: sha(901), text: "next" }]).length).toBeLessThanOrEqual(PULL_BODY_MAX);
 });
 
 test("only the batch commits the description does not name yet get a section", () => {
-  const title = "chore: update the Corbits Triage rules";
   const body = bodyWith("Opened.", [{ commit: "c1", text: "first" }]);
   const commits = [
-    { commit: "c1", message: `${title}\n\nfirst` },
+    { commit: "c1", message: `${TITLE}\n\nfirst` },
     { commit: "c2", message: "chore: add a Corbits Triage policy" },
-    { commit: "c3", message: `${title}\n\nthird` },
+    { commit: "c3", message: `${TITLE}\n\nthird` },
   ];
-  expect(missingSections(body, commits, title)).toEqual([{ commit: "c3", text: "third" }]);
+  expect(missingSections(body, commits, TITLE)).toEqual([{ commit: "c3", text: "third" }]);
 });
 
 const CHANGE = { path: ".corbits-triage.yml", text: "rules: []\n", title: TITLE, body: "- Turns on `docs`.", append: true };
@@ -103,4 +118,18 @@ test("an export over a description holding batch sections keeps them and adds it
   await proposePolicy(gh, "acme/w", { ...CHANGE, body: "batch 3" });
   expect(edits.at(-1)!.split("(corbits-triage added c1)")).toHaveLength(2);
   expect(edits.at(-1)!.endsWith("(corbits-triage added c3)\n\nbatch 3")).toBe(true);
+});
+
+test("a description edit GitHub refuses for good is its refusal at once, not retried", async () => {
+  let patches = 0;
+  const gh = fakeGithub(() => Response.json({ commit: { sha: "c1" } }, { status: 201 }), [[]], []);
+  async function refusing(path: string, init?: RequestInit): Promise<Response> {
+    if (init?.method !== "PATCH") return gh(path, init);
+    patches += 1;
+    return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
+  }
+  const refused = proposePolicy(refusing, "acme/w", CHANGE);
+  await expect(refused).rejects.not.toBeInstanceOf(DescriptionNotUpdated);
+  await expect(refused).rejects.toThrow("-> 403 Resource not accessible by integration");
+  expect(patches).toBe(1);
 });

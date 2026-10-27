@@ -1,6 +1,9 @@
 // The pull request that writes a repository's saved rules to its policy file, on one branch so it is opened once:
 // asking again updates the open one, and with none open the branch starts over from the default branch.
-import { json, jsonAll, readRepoFileResponse, requestError, type GithubFetch } from "@corbits/github-reads";
+import { errorText } from "@corbits/common";
+import { json, listPrCommits, readRepoFileResponse, requestError, type GithubFetch } from "@corbits/github-reads";
+import { BitbucketFailed } from "../bitbucket-datacenter/client.js";
+import { GithubRateLimited } from "./github-usage.js";
 
 export const POLICY_BRANCH = "corbits-triage/policy";
 
@@ -31,21 +34,37 @@ export function commitMessage({ title, body, append }: PolicyChange): string {
 
 const EDIT_DELAYS_MS = [100, 200, 400];
 
-/** A batch's description edit, tried again after each of `EDIT_DELAYS_MS`; still failing, it is `DescriptionNotUpdated`. */
+/**
+ * A host answer of 429 or 5xx, or none at all, may pass, as may Bitbucket's 409 for a description edited since it was
+ * read, which the next try reads again; the hub's own GitHub limit and any other refusal are final.
+ */
+function isTransient(err: unknown): boolean {
+  if (err instanceof GithubRateLimited) return false;
+  if (err instanceof BitbucketFailed) return err.status === 409 || err.status === 429 || err.status >= 500;
+  const status = /-> (\d{3})\b/.exec(errorText(err))?.[1];
+  return status === undefined || status === "429" || status.startsWith("5");
+}
+
+/**
+ * A batch's description edit, tried again after each of `EDIT_DELAYS_MS` while it fails in a way that may pass; still
+ * failing so, it is `DescriptionNotUpdated`. Any other failure is thrown as the host gave it.
+ */
 export async function retriedEdit<T>(commit: string | undefined, edit: () => Promise<T>): Promise<T> {
   for (const delay of EDIT_DELAYS_MS) {
     try {
       return await edit();
-    } catch {
-      await Bun.sleep(delay);
+    } catch (err) {
+      if (!isTransient(err)) throw err;
     }
+    await Bun.sleep(delay);
   }
   try {
     return await edit();
   } catch (err) {
-    throw new DescriptionNotUpdated(commit, err);
+    throw isTransient(err) ? new DescriptionNotUpdated(commit, err) : err;
   }
 }
+
 export type PolicyPull = { url: string; number: number; headSha?: string };
 
 type Pull = { number: number; html_url: string; head: { sha: string }; body: string | null };
@@ -96,53 +115,72 @@ async function commitFile(gh: GithubFetch, repo: string, change: PolicyChange): 
 }
 
 /** One batch's part of the description, named by the commit that made it. */
-export type Section = { commit: string; text: string };
-export type BranchCommit = { commit: string; message: string };
+type Section = { commit: string; text: string };
+type BranchCommit = { commit: string; message: string };
+/** The text before the first section, the newest commit whose section was dropped for length, and the sections kept. */
+type Body = { opened: string; omitted?: string; sections: Section[] };
 
 /** Starts each section, naming its commit; a Markdown comment, so it shows nothing. */
 function marker(commit: string): string {
   return `[//]: # (corbits-triage added ${commit})`;
 }
 const MARKER = /^\[\/\/\]: # \(corbits-triage added ?([0-9A-Za-z]*)\)(?:\n\n([\s\S]*))?$/;
-const BEFORE_MARKER = /\n\n(?=\[\/\/\]: # \(corbits-triage added)/;
+const OMITTED = /^\[\/\/\]: # \(corbits-triage omitted through ([0-9A-Za-z]+)\)(?:\n\n[\s\S]*)?$/;
+const BEFORE_MARKER = /\n\n(?=\[\/\/\]: # \(corbits-triage (?:added|omitted through) )/;
+
+function omission(commit: string): string {
+  return `[//]: # (corbits-triage omitted through ${commit})\n\nEarlier batches are left out to fit the description.`;
+}
 
 /** Under GitHub's 65,536-character body limit, with room. */
 export const PULL_BODY_MAX = 60_000;
 
 const TRUNCATED = "\n(truncated)";
 
-/** The description before its first section, and its sections; CRLF endings from an edit on the host are read as LF. */
-function sectionsOf(body: string | null | undefined): { opened: string; sections: Section[] } {
+/** CRLF endings from an edit on the host are read as LF. */
+function sectionsOf(body: string | null | undefined): Body {
   const chunks = (body ?? "").replace(/\r\n/g, "\n").trimEnd().split(BEFORE_MARKER);
-  const opened = MARKER.test(chunks[0]!) ? "" : chunks.shift()!;
+  const opened = MARKER.test(chunks[0]!) || OMITTED.test(chunks[0]!) ? "" : chunks.shift()!;
+  const omitted = OMITTED.exec(chunks[0] ?? "")?.[1];
+  if (omitted !== undefined) chunks.shift();
   const sections = chunks.map(function sectionOf(chunk) {
     const [, commit = "", text = ""] = MARKER.exec(chunk) ?? [];
     return { commit, text };
   });
-  return { opened, sections };
+  return { opened, omitted, sections };
 }
 
-function joined(opened: string, sections: readonly Section[]): string {
+function joined({ opened, omitted, sections }: Body): string {
   const written = sections.map((section) => (section.text === "" ? marker(section.commit) : `${marker(section.commit)}\n\n${section.text}`));
-  return [opened, ...written].filter((part) => part !== "").join("\n\n");
+  return [opened, omitted === undefined ? "" : omission(omitted), ...written].filter((part) => part !== "").join("\n\n");
+}
+
+/** `text` shortened by `over` characters and marked as cut; as it is when nothing is over. */
+function cut(text: string, over: number): string {
+  if (over <= 0) return text;
+  return `${text.slice(0, Math.max(0, text.length - over - TRUNCATED.length))}${TRUNCATED}`;
 }
 
 /**
- * The description with `added` as its newest sections. Past `PULL_BODY_MAX`, the oldest sections lose their text
- * first but keep their marker, so their commits stay named and are not added again; the opening, everything before
- * the first section, stays. When that is still too long, the newest section loses its tail.
+ * The description with `added` as its newest sections, never past `PULL_BODY_MAX`. The oldest sections lose their
+ * text first but keep their marker, so their commits stay named and are not added again. When the markers alone are
+ * too long, the oldest are dropped and one line says so, naming the newest commit dropped so the commits before it
+ * are not added again either. Still too long, the newest section and then the opening lose their tail.
  */
 export function bodyWith(body: string | null | undefined, added: readonly Section[]): string {
-  const { opened, sections: kept } = sectionsOf(body);
-  const sections = [...kept, ...added];
+  const read = sectionsOf(body);
+  const fitted: Body = { ...read, sections: [...read.sections, ...added] };
+  const { sections } = fitted;
   for (const [at, section] of sections.slice(0, -1).entries()) {
-    if (joined(opened, sections).length <= PULL_BODY_MAX) break;
+    if (section.text === "") continue;
+    if (joined(fitted).length <= PULL_BODY_MAX) break;
     sections[at] = { ...section, text: "" };
   }
+  while (sections.length > 1 && joined(fitted).length > PULL_BODY_MAX) fitted.omitted = sections.shift()!.commit;
   const newest = sections.at(-1);
-  if (newest === undefined || joined(opened, sections).length <= PULL_BODY_MAX) return joined(opened, sections);
-  const room = PULL_BODY_MAX - joined(opened, [...sections.slice(0, -1), { ...newest, text: "" }]).length - 2;
-  return joined(opened, [...sections.slice(0, -1), { ...newest, text: `${newest.text.slice(0, Math.max(0, room - TRUNCATED.length))}${TRUNCATED}` }]);
+  if (newest !== undefined) sections[sections.length - 1] = { ...newest, text: cut(newest.text, joined(fitted).length - PULL_BODY_MAX) };
+  fitted.opened = cut(fitted.opened, joined(fitted).length - PULL_BODY_MAX);
+  return joined(fitted);
 }
 
 /**
@@ -150,15 +188,18 @@ export function bodyWith(body: string | null | undefined, added: readonly Sectio
  * those sections with the change added as one more, so later batches find every commit named.
  */
 export function replacedBody(current: string | null | undefined, change: PolicyChange, committed: string | undefined): string {
-  if (sectionsOf(current).sections.length === 0) return change.body;
+  const read = sectionsOf(current);
+  if (read.sections.length === 0 && read.omitted === undefined) return change.body;
   return bodyWith(current, committed === undefined ? [] : [{ commit: committed, text: change.body }]);
 }
 
-/** A section for each of the branch's batch commits, oldest first, that the description does not name yet. */
+/** A section for each of the branch's batch commits, oldest first, that the description does not name or leave out yet. */
 export function missingSections(body: string | null | undefined, commits: readonly BranchCommit[], title: string): Section[] {
-  const named = new Set(sectionsOf(body).sections.map((section) => section.commit));
+  const { omitted, sections } = sectionsOf(body);
+  const named = new Set(sections.map((section) => section.commit));
+  const after = omitted === undefined ? 0 : commits.findIndex((row) => row.commit === omitted) + 1;
   // A message sent as a form field, as Bitbucket's is, comes back with CRLF endings.
-  const batches = commits.map((row) => ({ ...row, message: row.message.replace(/\r\n/g, "\n") })).filter((row) => !named.has(row.commit) && row.message.startsWith(`${title}\n\n`));
+  const batches = commits.slice(after).map((row) => ({ ...row, message: row.message.replace(/\r\n/g, "\n") })).filter((row) => !named.has(row.commit) && row.message.startsWith(`${title}\n\n`));
   return batches.map((row) => ({ commit: row.commit, text: row.message.slice(title.length + 2).trim() }));
 }
 
@@ -168,8 +209,6 @@ export function withCommitted(commits: readonly BranchCommit[], committed: strin
   return [...commits, { commit: committed, message: commitMessage(change) }];
 }
 
-type PullCommit = { sha: string; commit: { message: string } };
-
 /** Adds a section for each batch commit the description lacks, the new one included; with none lacking, no edit is made. */
 async function appendSections(gh: GithubFetch, repo: string, number: number, change: PolicyChange, committed: string | undefined): Promise<Pull> {
   const path = `/repos/${repo}/pulls/${number}`;
@@ -177,8 +216,8 @@ async function appendSections(gh: GithubFetch, repo: string, number: number, cha
     // The description is read just before it is written; GitHub takes no version on the edit, and the hub runs one
     // batch per repository at a time.
     const latest: Pull = await json(gh, path);
-    const listed = await jsonAll<PullCommit>(gh, `${path}/commits?per_page=100`);
-    const commits = withCommitted(listed.map((row) => ({ commit: row.sha, message: row.commit.message })), committed, change);
+    const listed = await listPrCommits(gh, repo, number);
+    const commits = withCommitted(listed.map((row) => ({ commit: row.sha, message: row.message })), committed, change);
     const added = missingSections(latest.body, commits, change.title);
     if (added.length === 0) return latest;
     return json(gh, path, { method: "PATCH", body: JSON.stringify({ body: bodyWith(latest.body, added) }) });

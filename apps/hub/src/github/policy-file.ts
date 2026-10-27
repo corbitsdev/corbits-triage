@@ -127,8 +127,12 @@ const UNHEARD_MAX_AGE_MS = 60_000;
 
 export function createPolicyFile(deps: PolicyFileDeps) {
   const cache = new Map<string, { read: Promise<PolicyFileState>; at: number }>();
-  /** One repository's patches, so a batch's read, commit and body edit finish before the next batch reads. */
+  /** One repository's policy pull request writes, so each one's read, commit and body edit finish before the next reads. */
   const serialized = createKeyedSerial();
+
+  function repoKey(tenantId: string, record: RepoRecord): string {
+    return `${tenantId}\n${sourceOf(record)}\n${record.name}`;
+  }
 
   /**
    * A read is kept until a push re-reads it while the repository's webhook is heard; where it is not (a hub the host
@@ -193,7 +197,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   /** A failed read is not kept, so the next trigger reads again rather than run on a stale answer. */
   async function cached(tenantId: string, record: RepoRecord, maxAgeMs: number): Promise<PolicyFileState> {
-    const key = `${tenantId}\n${sourceOf(record)}\n${record.name}`;
+    const key = repoKey(tenantId, record);
     const kept = cache.get(key);
     if (kept && Date.now() - kept.at < maxAgeMs) return kept.read;
     const entry = { read: load(tenantId, record), at: Date.now() };
@@ -304,9 +308,15 @@ export function createPolicyFile(deps: PolicyFileDeps) {
    * Opens the pull request writing the saved rules to the policy file, or brings the open one up to date; an enabled
    * repository with neither gets a starter file instead, or `text` when sent (see `chosenFile`). Refused when nothing differs.
    */
-  async function exportRoute({ repo, source, text: chosen }: typeof PolicyExportBody.infer, member: Member): Promise<Response> {
-    const record = await grantedRecord(member, repo, source, "use");
+  async function exportRoute(body: typeof PolicyExportBody.infer, member: Member): Promise<Response> {
+    const record = await grantedRecord(member, body.repo, body.source, "use");
     if (record instanceof Response) return record;
+    return serialized(repoKey(member.tenantId, record), function exportOne() {
+      return exportRecord(body, member, record);
+    });
+  }
+
+  async function exportRecord({ repo, text: chosen }: typeof PolicyExportBody.infer, member: Member, record: RepoRecord): Promise<Response> {
     try {
       if (chosen !== undefined) return await chosenFile(member, record, chosen);
       const { upgrade, saved } = await deps.settle(member.tenantId, repo, sourceOf(record));
@@ -346,12 +356,13 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   /**
    * Patches the existing policy file in place and opens the one policy pull request, or adds the batch to the open one,
-   * whose title and earlier batches stay. `preview` returns the file before and after and writes nothing. Refused when there is no file, or the batch or the file is refused.
+   * whose title and earlier batches stay. `preview` returns the file before and after and writes nothing. Refused when
+   * there is no file, or the batch or the file is refused.
    */
   async function patchRoute(body: typeof PolicyPatchBody.infer, member: Member): Promise<Response> {
     const record = await grantedRecord(member, body.repo, body.source, "use");
     if (record instanceof Response) return record;
-    return serialized(`${member.tenantId}\n${sourceOf(record)}\n${record.name}`, function patchOne() {
+    return serialized(repoKey(member.tenantId, record), function patchOne() {
       return patchRecord(body, member, record);
     });
   }

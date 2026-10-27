@@ -227,11 +227,11 @@ test("a batch that changes nothing reads as unchanged even when the YAML library
   expect(patchPolicyFile(unindented, REPO, [{ kind: "rule-options", id: "max-lines-changed", options: { max: 300 } }])).toMatchObject({ ok: true, changed: true });
 });
 
-test("a built-in rule added whole gets its sentence from its limit", () => {
-  const rule = { check: "max-lines-changed" as const, text: "Flag pull requests over 400 lines changed.", reason: "Review load.", evidence: ["maintainer-stated"], max: 200 };
+test("a built-in rule added whole keeps its own text", () => {
+  const rule = { check: "max-lines-changed" as const, text: "Keep pull requests short.", reason: "Review load.", evidence: ["maintainer-stated"], max: 200 };
   const patched = patchPolicyFile(BASE, REPO, [{ kind: "add-rule", rule }]);
   expect(patched).toMatchObject({ ok: true, changed: true });
   if (!patched.ok) return;
-  expect(patched.text).toContain("text: Flag pull requests over 200 lines changed.");
-  expect(patched.text).not.toContain("over 400");
+  expect(patched.text).toContain("text: Keep pull requests short.");
+  expect(patched.text).toContain("max: 200");
 });
