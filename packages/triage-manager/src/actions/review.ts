@@ -1,14 +1,14 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { AUTHOR_KINDS, authorGroupsOf, checkName, CodeReviewOutput, EVERYONE, readCheckPack, repoSourceOf, RULE_GATES, rulesGate, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, authorGroupsOf, checkName, EVERYONE, readCheckPack, repoSourceOf, RULE_GATES, rulesGate, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import { call, hostWrite, toolName } from "@corbits/triage-workflows/logic/host";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
 import { deploy, managerMailOf, manageMail } from "./hub.js";
-import { Reviewer, TakeOutput } from "./manager.js";
+import { Reviewer, storedReview, TakeOutput } from "./manager.js";
 
 /** How long the manager waits for a code review it deployed, from its deploy to its report. */
 export const REVIEW_DEADLINE_MS = 60 * 60_000;
@@ -159,16 +159,6 @@ export async function reviewMailed(input: unknown): Promise<{ reviewer?: Reviewe
 }
 
 const PostInput = type({ payload: "unknown", take: { output: TakeOutput }, reviewScope: { output: { reviewed: "boolean" } } });
-
-/** The review a code review of `head` reported on an earlier pass, stored on its reviewer. */
-function storedReview(reviewers: readonly Reviewer[], head: string): CodeReviewOutput | undefined {
-  for (const reviewer of reviewers) {
-    if (reviewer.kind !== "code-review" || reviewer.head !== head) continue;
-    const review = CodeReviewOutput(reviewer.result);
-    if (!(review instanceof type.errors)) return review;
-  }
-  return undefined;
-}
 
 /**
  * Posts the code review reported on its head after the verdict: this pass's, or one an earlier pass stored when this
