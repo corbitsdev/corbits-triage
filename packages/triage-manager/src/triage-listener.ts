@@ -9,9 +9,10 @@ import { deployGrants, type Release } from "./release.js";
 
 /**
  * A workspace's listener for one host under `id`, its mail address, which the hub mails the pull requests it records:
- * it deploys each one's manager from the host's published release and wakes it. With `manager`, the release published
- * as the definition loads, it declares the grants to deploy that asset; without, none, and its body fails. It writes nothing to the pull request and holds
- * no grant on its state; a manager whose take finds another live one stops itself.
+ * it deploys each one's manager from the host's published release and wakes it, and cancels a manager whose wake mail
+ * did not go, so it is not left deployed. With `manager`, the release published as the definition loads, it declares the
+ * grants to deploy that asset; without, none, and its body fails. It writes nothing to the pull request and holds no
+ * grant on its state; a manager whose take finds another live one stops itself.
  */
 export function triageListener({ id, manager }: { id: string; manager: Release | undefined }) {
   const perMail = defineWorkflow({
@@ -24,7 +25,14 @@ export function triageListener({ id, manager }: { id: string; manager: Release |
         credentials: [HUB_CREDENTIAL_HANDLE],
         effect: { requires: [HUB_WRITE] },
       }),
-      mail: map({ over: { from: "steps.forward.output.mails" }, step: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: false }), input: { from: "trigger.payload" } }), after: ["forward"] }),
+      mail: map({ over: { from: "steps.forward.output.mails" }, step: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "trigger.payload" } }), after: ["forward"] }),
+      unwoken: action({
+        handler: "unwoken",
+        input: { project: { from: "steps" }, fields: ["forward", "mail"] },
+        after: ["mail"],
+        credentials: [HUB_CREDENTIAL_HANDLE],
+        effect: { requires: [HUB_WRITE] },
+      }),
     },
   });
   return defineWorkflow({

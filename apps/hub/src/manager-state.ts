@@ -195,13 +195,14 @@ export async function recordResult(db: DB["db"], tenantId: string, pr: PullReque
  */
 const MANAGER_START_GRACE_MS = 2 * 60_000;
 
-type ManagerRun = { status: string; createdAt: Date; allocationStatus: string | null; sidecarId: string | null };
+type ManagerRun = { status: string; createdAt: Date; cancelling: Date | null; allocationStatus: string | null; sidecarId: string | null };
 
 async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun | undefined> {
   const [run] = await tx
     .select({
       status: schema.workflowRun.status,
       createdAt: schema.workflowRun.createdAt,
+      cancelling: schema.workflowRun.cancellationRequestedAt,
       allocationStatus: schema.sidecarAllocation.status,
       sidecarId: schema.sidecarAllocation.sidecarId,
     })
@@ -214,16 +215,21 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
 /** A just-deployed listener counts as live longer than a roll waits for it, so one a roll still waits on is never released. */
 const LISTENER_START_GRACE_MS = START_DEADLINE_MS + 60_000;
 
+/** A live run whose stop nobody has requested; one being cancelled is mailed nothing and takes no claim. */
+function runIsLive(run: ManagerRun | undefined): run is ManagerRun {
+  return run !== undefined && schema.isLiveWorkflowRunStatus(run.status) && run.cancelling === null;
+}
+
 /** A run that is running, or whose sidecar is up. */
 function runIsRunning(run: ManagerRun | undefined): boolean {
-  if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
+  if (!runIsLive(run)) return false;
   return run.status === "running" || (run.allocationStatus === "allocated" && run.sidecarId !== null);
 }
 
 /** A running run, or one deployed inside the startup window. A deploy that never got a sidecar past that window is not. */
 function runIsUp(run: ManagerRun | undefined, now: Date, graceMs = MANAGER_START_GRACE_MS): boolean {
   if (runIsRunning(run)) return true;
-  if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
+  if (!runIsLive(run)) return false;
   return now.getTime() - run.createdAt.getTime() < graceMs;
 }
 
@@ -276,12 +282,14 @@ export async function liveManager(db: DB["db"], tenantId: string, pr: PullReques
 
 /**
  * The claim `runId` holds, taken for it when no up run holds it: it is missing or ended, or the run it names has gone,
- * whose open pass the caller resumes. Undefined while another up run holds it. Concurrent callers queue on the
- * claim's row lock, so exactly one takes it.
+ * whose open pass the caller resumes. Undefined while another up run holds it, or while `runId` itself is being
+ * cancelled. Concurrent callers queue on the claim's row lock, so exactly one takes it.
  */
 async function claimFor(tx: Tx, tenantId: string, pr: PullRequestRef, runId: string): Promise<Claim | undefined> {
   const key = claimKey(pr);
   const now = new Date();
+  const own = await managerRun(tx, runId);
+  if (own && own.cancelling !== null) return undefined;
   const fresh = { status: "live" as const, claimId: randomUUID(), claimedAt: now.toISOString(), runId };
   await tx.insert(managerState).values({ tenantId, key, kind: "claim", state: claimOf(key, { ...fresh, reviewers: [], history: [], starts: 1 }) }).onConflictDoNothing();
   const claim = await lockClaim(tx, tenantId, pr);

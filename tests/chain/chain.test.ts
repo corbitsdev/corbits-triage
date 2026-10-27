@@ -18,6 +18,8 @@ setDefaultTimeout(20 * 60_000);
 
 const MANAGER = "triage-manager-github";
 const SETTLE_MS = 90_000;
+// The listener waits two minutes for a manager's key before its wake mail fails; stock then stops it within its 30-second cancel grace.
+const UNWOKEN_MS = 5 * 60_000;
 
 const DETERMINISTIC = `${OWNER}/deterministic`;
 const JUDGED = `${OWNER}/judged`;
@@ -25,6 +27,7 @@ const WAITING = `${OWNER}/waiting`;
 const PUSHED = `${OWNER}/pushed`;
 const HELD = `${OWNER}/held`;
 const WOKEN = `${OWNER}/woken`;
+const UNWOKEN = `${OWNER}/unwoken`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -63,6 +66,7 @@ beforeAll(async () => {
   github.addRepo(PUSHED, policy([MAX_FILES]));
   github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
   github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
+  github.addRepo(UNWOKEN, policy([MAX_FILES]));
   const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
   database = created;
   hub = await startHub(database, github, portalDir);
@@ -100,24 +104,52 @@ async function pushed(repo: string, pull: Pull, action: "opened" | "synchronize"
   });
 }
 
-/** Every run of every deployment, step by step, for a failure message. */
-async function runEvents(): Promise<string> {
+type RunEvent = { type: string; body: Record<string, unknown> };
+
+/** Every event of every run of every deployment once, child runs included, which a deployment also lists, in order. */
+async function eachRunEvent(visit: (runId: string, event: RunEvent) => void): Promise<void> {
   const { transport, tenantId } = workspace;
-  const lines: string[] = [];
-  async function dump(deploymentId: string, runId: string): Promise<void> {
+  const walked = new Set<string>();
+  async function walk(deploymentId: string, runId: string): Promise<void> {
+    if (walked.has(runId)) return;
+    walked.add(runId);
     const { events } = await readWorkflowRunEvents(transport, tenantId, deploymentId, runId);
-    lines.push(`== ${runId}`);
     for (const event of events) {
       const body = event.body as Record<string, unknown>;
-      if (event.type === "ChildSpawned") await dump(deploymentId, String(body["childRunId"]));
-      else if (event.type.startsWith("Step") && event.type !== "StepStarted") lines.push(`${event.type} ${String(body["stepId"])} ${JSON.stringify(body["output"] ?? body["error"] ?? body["message"]).slice(0, 400)}`);
-      else if (event.type.startsWith("Run")) lines.push(event.type);
+      visit(runId, { type: event.type, body });
+      if (event.type === "ChildSpawned") await walk(deploymentId, String(body["childRunId"]));
     }
   }
   for (const deployment of await listWorkflowDeployments(transport, tenantId)) {
-    for (const run of await listWorkflowRuns(transport, tenantId, deployment.id)) await dump(deployment.id, run);
+    for (const run of await listWorkflowRuns(transport, tenantId, deployment.id)) await walk(deployment.id, run);
   }
+}
+
+/** Every run of every deployment, step by step, for a failure message. */
+async function runEvents(): Promise<string> {
+  const lines: string[] = [];
+  let current: string | undefined;
+  await eachRunEvent(function dump(runId, { type, body }) {
+    if (runId !== current) lines.push(`== ${runId}`);
+    current = runId;
+    if (type.startsWith("Step") && type !== "StepStarted") lines.push(`${type} ${String(body["stepId"])} ${JSON.stringify(body["output"] ?? body["error"] ?? body["message"]).slice(0, 400)}`);
+    else if (type.startsWith("Run")) lines.push(type);
+  });
   return lines.join("\n");
+}
+
+const INLINE = "inline:";
+
+/** The managers the listener's unwoken steps cancelled, as their outputs, which the hub reads back inline, name them. */
+async function unwokenCancelled(): Promise<{ runId: string; reason: string }[]> {
+  const cancelled: { runId: string; reason: string }[] = [];
+  await eachRunEvent(function collect(_runId, { type, body }) {
+    if (type !== "StepCompleted" || body["stepId"] !== "unwoken") return;
+    const { ref } = body["output"] as { ref: string };
+    if (!ref.startsWith(INLINE)) throw new Error(`unwoken's output is not inline: ${ref}`);
+    cancelled.push(...(JSON.parse(ref.slice(INLINE.length)) as { cancelled: { runId: string; reason: string }[] }).cancelled);
+  });
+  return cancelled;
 }
 
 async function until<T>(what: string, read: () => Promise<T | undefined> | T | undefined, ms = SETTLE_MS): Promise<T> {
@@ -361,4 +393,47 @@ test("a manager ends after it mails the judge, and the judge's report wakes a fr
   expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
   expect(labelled(writes)).toEqual([VERDICT_LABELS.pass]);
   expect(await verdictsOf(WOKEN, 1)).toEqual([expect.objectContaining({ run_id: deployed[1]!.id, head_sha: head, run_status: "completed" })]);
+});
+
+/** Keeps every run deployed from now on from recording its public key, as a sidecar that never acks its deploy would. */
+async function refuseKeys(): Promise<void> {
+  await rows("create function chain_refuse_key() returns trigger language plpgsql as $$ begin new.public_key := null; return new; end $$");
+  await rows(`create trigger chain_refuse_key before update of public_key on workflow_run for each row when (new.created_at > '${new Date().toISOString()}') execute function chain_refuse_key()`);
+}
+
+async function acceptKeys(): Promise<void> {
+  await rows("drop trigger if exists chain_refuse_key on workflow_run");
+  await rows("drop function if exists chain_refuse_key()");
+}
+
+const unwoken = once(async function unwoken() {
+  const [first, second] = [sha("unwoken-1"), sha("unwoken-2")];
+  await after(approved);
+  const [before, missed] = [(await managers()).length, github.misses.length];
+  await refuseKeys();
+  let cancelled: { id: string; status: string };
+  try {
+    await pushed(UNWOKEN, pullOf(1, first));
+    cancelled = await until("the unwoken manager to end", async function ended() {
+      const [deployed] = (await managers()).slice(before);
+      return deployed && !isLiveDeployment(deployed.status) ? deployed : undefined;
+    }, UNWOKEN_MS);
+  } finally {
+    await acceptKeys();
+  }
+  const whileUnwoken = [...github.writesTo(UNWOKEN, 1)];
+  await pushed(UNWOKEN, pullOf(1, second), "synchronize");
+  const claim = await settled(UNWOKEN, 1);
+  return { second, cancelled, whileUnwoken, claim, unwoken: await unwokenCancelled(), deployed: (await managers()).slice(before), writes: github.writesTo(UNWOKEN, 1), misses: github.misses.slice(missed) };
+});
+
+test("a manager whose wake mail failed is cancelled, and the next event deploys a fresh one that posts the verdict", async () => {
+  const { second, cancelled, whileUnwoken, claim, unwoken: reported, deployed, writes, misses } = await unwoken();
+  expect(misses).toEqual([]);
+  expect(cancelled.status).toBe("cancelled");
+  expect(whileUnwoken).toEqual([]);
+  expect(reported).toEqual([{ runId: cancelled.id, reason: expect.stringContaining("public key") }]);
+  expect(deployed.map((run) => run.id)).toEqual([cancelled.id, claim.history.at(-1)!.runId]);
+  expect(claim).toMatchObject({ status: "ended", history: [{ head: second }] });
+  expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
 });

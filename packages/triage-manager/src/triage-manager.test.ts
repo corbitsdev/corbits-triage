@@ -101,7 +101,7 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
 
 /** The host's credentials as triage-workflows wires them, plus the hub credential deploy binds to the hub actions. */
 function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init?: RequestInit) => Promise<Response>) {
-  const consumers = ["take", "done", "deployReview", "deployJudge", "forward", "stop"].map(actionConsumer);
+  const consumers = ["take", "done", "deployReview", "deployJudge", "forward", "unwoken", "stop"].map(actionConsumer);
   const cell = delivered(bindings, [{ credentialId: "hub", providerKey: "http", origin: HUB_ORIGIN, secret: "run-token" }]);
   cell.current = { ...cell.current, bindings: [...cell.current.bindings, ...consumers.map((consumer) => ({ handle: HUB_CREDENTIAL_HANDLE, credentialId: "hub", consumer }))] };
   const hubGrants: GrantRule[] = consumers.map((tool, index) => ({ id: `hub-${index}`, resource: "credential:hub", action: "use", effect: "allow", origin: "system", conditions: { tool }, expiresAt: null, roleId: null, principalId: null }));
@@ -136,7 +136,7 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
     invokeStep: async function mailAgent({ agent, input }) {
       if (!agent.id.startsWith("triage-mail")) throw new Error(`no agent but the mail agent runs, not ${agent.id}`);
       mailed.push(input);
-      const reply = JSON.stringify({ mailed: delivers });
+      const reply = JSON.stringify(delivers ? { mailed: true } : { mailed: false, error: "public key was not published by its readyBy" });
       return { output: { reply, turn: { role: "assistant", content: [{ type: "text", text: reply }] } } };
     },
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
@@ -910,6 +910,15 @@ describe("triage-listener", () => {
       [DEPLOYED, JSON.parse(manageMail(TENANT, PULL))],
       [DEPLOYED, JSON.parse(manageMail(TENANT, { ...PULL, number: 9 }))],
     ]);
+  });
+
+  test("a manager whose wake mail did not go is cancelled once, and the listener deploys no other for it", async () => {
+    const hub = fakeHub({ takes: [] });
+    const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }] });
+    const { terminalStatus, outputs } = await runMail(listener, mail, githubHost().host, hub.hub, [], false);
+    expect(terminalStatus).toBe("completed");
+    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }]);
+    expect(outputs["unwoken"]).toEqual({ cancelled: [{ runId: DEPLOYED, reason: expect.stringContaining("public key") }] });
   });
 
   test("a mail that names no pull request, or is not from the hub, fails instead of being dropped", async () => {

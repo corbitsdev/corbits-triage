@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { Tx } from "./github/admin-github-grant.js";
-import { done, liveListener, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
+import { done, liveListener, liveManager, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -446,6 +446,19 @@ test("PostgreSQL: a manager deployed inside the startup window, or one with a si
     expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
     const [heldRun] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_fresh'`);
     expect(heldRun?.cancellationRequestedAt).toBeNull();
+  });
+}, 120_000);
+
+test("PostgreSQL: a manager being cancelled holds no pull request and takes none, so the next one claims it", async () => {
+  await withDatabase(async function cancelling(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await startManager(db, GITHUB, "run_cancelling");
+    await db.update(schema.workflowRun).set({ cancellationRequestedAt: new Date(), cancellationDeadline: new Date(), cancellationReason: "unwoken" }).where(sql`${schema.workflowRun.id} = 'run_cancelling'`);
+    expect(await liveManager(db, TENANT, GITHUB)).toBeUndefined();
+    expect(await take(db, TENANT, GITHUB, "run_cancelling")).toEqual({ outcome: "refused" });
+    await liveRun(db, "run_next");
+    expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
+    expect(await stateOf(db, CLAIM)).toMatchObject({ status: "live", runId: "run_next" });
   });
 }, 120_000);
 
