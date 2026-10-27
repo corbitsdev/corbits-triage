@@ -6,7 +6,7 @@ import { AUTOMATION_MODES, REPO_SOURCES, repoPolicy, repoSourceOf, type Automati
 import { asRecord, isRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
 import type { Tx } from "./admin-github-grant.js";
-import { revokeRepoKinds } from "./automation.js";
+import { grantWanted, revokeRepoKinds } from "./automation.js";
 import { failure, memberPrincipal, sourceCredentialGrant, type GrantDeps } from "./portal-credential.js";
 
 const CONFIG_KEY = "corbitsTriage";
@@ -94,7 +94,8 @@ function switchedOff(before: CorbitsTriageNs, after: CorbitsTriageNs): string[] 
  * tenant is missing. Bumps `rev` so a concurrent portal PATCH can 409 instead
  * of clobbering install writes. A patch returning undefined writes nothing.
  * Every writer of the namespace comes through here, so a repository switched
- * off or removed loses what triage may do on it on its own in the same write.
+ * off or removed loses what triage may do on it on its own in the same write,
+ * and a switch to `ask` takes back every kind a policy granted but posting.
  */
 export async function patchCorbitsTriage(
   db: DB["db"],
@@ -109,6 +110,9 @@ export async function patchCorbitsTriage(
     const patched = await patch(current, tx);
     if (patched === undefined) return current;
     for (const repo of switchedOff(current, patched)) await revokeRepoKinds(tx, tenantId, repo);
+    if (automationMode(current) === "policy" && automationMode(patched) === "ask") {
+      for (const record of repoRecords(patched).filter((each) => each.enabled === true)) await grantWanted(tx, tenantId, record.name, sourceOf(record), [], new Date());
+    }
     const nextNs = { ...patched, rev: nsRev(current) + 1 };
     await tx.update(schema.tenant)
       .set({ config: { ...existing, [CONFIG_KEY]: nextNs }, updatedAt: new Date() })

@@ -869,7 +869,8 @@ Switching a GitHub repository on wakes the reconcile pass, whose read grants
 the rest; switching the workspace from `ask` to `policy` takes effect on the
 next pass, which reads every enabled repository's policy. Under `ask` the hub
 writes no grant but posting, on enable, and switching from `policy` to `ask`
-writes and removes nothing; a policy pull request the hub opens lists the
+takes back every kind but posting on each enabled repository in the same
+write; a policy pull request the hub opens lists the
 kinds its file uses that the role does not hold, which will wait for a
 person. A member given the `pr-triage`
 role is refused every action until it is removed, so what triage does

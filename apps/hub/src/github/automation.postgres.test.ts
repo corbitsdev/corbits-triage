@@ -135,10 +135,12 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
     await grants.followPolicy(TENANT, BITBUCKET, "bitbucket-datacenter", read(BITBUCKET, [{ do: "assign", target: { to: "author" } }, { do: "approve" }]));
     expect(await automation.automaticKinds(TENANT, BITBUCKET)).toEqual(["comment", "approve"]);
 
-    // Back to ask writes and removes nothing, and a repository switched off is not granted again.
+    // Back to ask leaves posting alone and takes the rest back, and a repository switched off is not granted again.
     await setMode("ask");
+    expect(await automation.automaticKinds(TENANT, REPO)).toEqual(["labels", "comment"]);
+    expect(await automation.automaticKinds(TENANT, BITBUCKET)).toEqual(["comment"]);
     const held = await rows();
-    await grants.followPolicy(TENANT, REPO, "github", read(REPO, []));
+    await grants.followPolicy(TENANT, REPO, "github", assignAndMerge);
     expect(await rows()).toEqual(held);
     await setMode("policy");
     await patchCorbitsTriage(db, TENANT, (ns) => ({ ...ns, repos: [{ ...repos[0]!, enabled: false }, repos[1]!] }));
