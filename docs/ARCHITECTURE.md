@@ -3,7 +3,7 @@
 Triage is an app on [Interchange](https://github.com/faremeter/interchange).
 Interchange owns identity, tenancy, grants, credentials, workflow runs and
 audit. Triage is a hub composition, a client-driven portal, and the workflow
-and tool packages the portal deploys.
+and tool packages the hub publishes and deploys.
 
 ## Components
 
@@ -62,7 +62,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     mail to the tenant's live listener for the repository's host, as the
     tenant system sender, the same path cron uses, naming the host as
     `repoSource`. A workspace with no live listener runs nothing: the head
-    fails with what to press, **Upgrade to new version** in Settings. When the policy depends on CI, a head whose CI is still
+    fails saying Triage is not running on that host and that Settings →
+    Triage shows why. When the policy depends on CI, a head whose CI is still
     running is not mailed: its triage-state row turns `waiting` and keeps the
     window's events (`triage_waiting_ci`). The window that sees CI finish, or
     its first check fail, mails the head once with those events; a head with
@@ -87,10 +88,13 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     `check_run` never arrived. Moving a head from `waiting` to `queued` is a
     compare-and-swap write, so a check run and the reconciler releasing it
     together start one run. It mails its heads to the listener. A listener
-    counts as live as a manager does: running, on its sidecar, or deployed
-    within the last two minutes; one deployed without a sidecar past that is
-    released, so the next Upgrade deploys it again. The workflow-versions route
-    reports each deployment's `live` the same way, which Settings reads.
+    counts as live while it runs or is on its sidecar, and as starting for six
+    minutes after it is deployed, longer than a roll waits for it; the
+    reconciler mails the newest running listener, else the newest starting
+    one. One deployed without a sidecar past that is released, and a host
+    left with no live listener has its workspace rolled again. The
+    workflow-versions route reports each deployment's `live` as a manager's
+    is counted, which Settings reads.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
     exchanged server side, so the private key never reaches the browser. The
     `state` round-tripped through GitHub is signed by the hub and bound to the
@@ -164,12 +168,11 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
   one. While it is null **Review again** refuses (`no_isolated_place`),
   nothing is mailed, and the repository page links Settings → Code review.
 - **Portal** (`apps/web`): owns setup. It writes the tenant, credentials and
-  inference offerings over stock hub routes, and **Upgrade to new version**
-  publishes the workflow sources and deploys the listeners. The hub seeds nothing for it. It is a wrapper over the
-  routes; nothing is possible only through it. Each minute and on focus it
-  reads the served `index.html`; once its hashed entry script differs from the
-  one the tab loaded, it offers a reload, since a stale tab would deploy the
-  workflows of the build it runs.
+  inference offerings over stock hub routes. Its build bundles the workflow
+  sources, which the hub publishes and deploys (see the listener below). It
+  is a wrapper over the routes; nothing is possible only through it. Each
+  minute and on focus it reads the served `index.html`; once its hashed entry
+  script differs from the one the tab loaded, it offers a reload.
 
 ## Workflows
 
@@ -188,7 +191,7 @@ any other tenant or an unknown sender.
   one host. The hub mails it the pull requests it recorded that have no
   manager up (`items`); for each, it deploys a manager through the stock deploy route with its run
   token, from the manager's source asset at the commit and the offerings the
-  portal publishes beside it in `release.json`, read as each body runs, and
+  hub publishes beside it in `release.json`, read as each body runs, and
   wakes it with a mail that names only the pull request. A pull request
   whose manager is up is mailed that manager instead, so a later webhook
   does not deploy a second one. A mail that is not
@@ -196,31 +199,71 @@ any other tenant or an unknown sender.
   `release.json` fails its body. Built with the release the module loads,
   its definition declares `workflow:*` `create` and `read` on exactly the
   manager's asset, sourced from its creator; built without one, neither.
-  The portal deploys it from Settings, **Upgrade to new version**
-  (`apps/web/src/lib/triage-upgrade.ts`): it publishes the release as the
-  person upgrading, deploys each connected host's listener through the stock
-  deploy route from that person's source asset, waits for it to be live
-  (cancelling it after five minutes), then cancels the host's live listeners
-  created before it, found by workflow name, so of two upgrades at once the
-  newer stays, and every live deployment of the workflows the listener
-  replaced: pr-triage, pr-triage-historical, the standalone code review and
-  the PR workflow variants. Settings offers Upgrade again while a host has more than one
-  live listener. A
-  published workflow's asset, and so its definition, is named for its
-  publisher and release, so the hub finds a deployment by the workflow id in
-  its frozen projection (`apps/hub/src/github/deployment.ts`), and the
-  workflow-versions route reports a source deployment's asset, commit and package from its
-  closure. Onboarding runs the same upgrade once the decision model is saved,
-  for an owner or Deployer. The upgrade also sets the tenant's
-  `lifecycle.maxLifetime` to the longest Interchange accepts, so a listener
-  lives until a newer one replaces it. A host's listener and its managers are
-  released once the host is disconnected: right away when Bitbucket Data
-  Center is disconnected through its route, and on the next reconcile pass
-  when the GitHub App credential is removed. A running listener keeps the
-  credentials it launched with, so after a host's credential is replaced the
-  portal deploys that host's newest listener again from the same asset
-  commit, which the workflow-versions route reports, and cancels the older
-  ones, as Upgrade does; managers and judges launch with the current value.
+  The hub publishes and deploys it (`apps/hub/src/workflow-release/`). A
+  roll of a workspace runs in the background of what triggered it: at start,
+  for every workspace holding the `pr-triage` role; once a workspace's
+  credential or catalog writes through the stock routes go quiet for three
+  seconds, so a key saved as several writes rolls once; when the GitHub App
+  is connected or its key replaced, a Bitbucket Data Center instance is
+  connected, its token replaced or its webhook secret rotated, and when
+  GitHub installations sync; and when a reconcile pass finds a connected host
+  with no live listener. At most two rolls run at once across the hub, and
+  one per workspace across hub processes, under a Postgres session advisory
+  lock held on a connection reserved for it, so a roll holds no transaction
+  while it waits. A hub whose build has no `packages/sources/index.json`
+  logs `workflow_release_unbundled` with the path at start and rolls nothing.
+  A roll reads the workspace's catalog the way stock's model discovery does
+  and leaves out a host while the workspace has no decision model. It
+  publishes the portal build's sources (`packages/sources/` under
+  `PORTAL_DIR`, or `apps/web/public/` when the hub serves no build) in the
+  build's order as source-format `workflow` assets through the stock asset
+  service, as the workspace's `triage-publisher` system principal, which it
+  gives the `Deployer` role; once a roll leaves every host's listener
+  running, the role is taken from every person who holds it. Each host's code review, judge, manager and
+  listener publish in that order: the manager's tree gets a `release.json`
+  naming the code review and judge just published and the offerings each runs
+  on, the listener's the same for the manager. A chain workflow publishes
+  only while the workspace has every model it names, so code review publishes
+  once its key is saved, and the release after that gives the manager and the
+  listener new assets. An asset is named `<workflow>-<publisher>-<8 hex>`,
+  the build's content hash or, for a workflow with a release, a hash of it and
+  its `release.json`. An asset another principal created is refused, and one
+  already published keeps its commit only while that commit's tree is the
+  release's files; any other tree fails the roll. The publisher gets `read`
+  on the asset of each workflow another one deploys, since stock gives a
+  creator none and a listener deploys its manager under its creator's read.
+  The roll raises the tenant's `lifecycle.maxLifetime` to the longest
+  Interchange accepts when it is unset or lower, since stock takes no
+  lifetime per deployment and the definition does not exist before the first
+  one, so a listener lives until a newer one replaces it. A host whose newest
+  live listener runs the published listener's commit keeps it without
+  waiting on it, and the host's older listeners stop; otherwise, and when a write changed that
+  host's credentials, the hub deploys the listener through the stock
+  workflow allocation service with the publisher as its source authority,
+  waits for it to be live (cancelling it after five minutes), then cancels
+  the host's other live listeners and every live deployment of the
+  workflows the listener replaced: pr-triage, pr-triage-historical, the
+  standalone code review and the PR workflow variants. A model key or
+  catalog write deploys every host's listener again, a host's own
+  credential only that host's. Until the new listener runs, the hub mails
+  pull requests to the one it replaces, and a listener counts as starting,
+  not stuck, for longer than a roll waits for it. A failed roll leaves the
+  previous listener running and is tried again about ten minutes later, as
+  is a roll that finds another hub process holding the workspace; the hub
+  logs `workflow_release_failed` with the cause, and the workflow-versions
+  route reports the host, when the roll ended and, when it failed, a fixed
+  sentence under `rollouts`, which Settings → Triage shows beside each
+  host's running version. A published workflow's asset,
+  and so its definition, is named for its publisher and release, so the hub
+  finds a deployment by the workflow id in its frozen projection
+  (`apps/hub/src/github/deployment.ts`), and the workflow-versions route
+  reports a source deployment's asset, commit and package from its closure.
+  A host's listener and its managers are released once the host is
+  disconnected: right away when Bitbucket Data Center is disconnected through
+  its route, and on the next reconcile pass when the GitHub App credential is
+  removed. A running listener keeps the credentials it launched with, which is
+  why a credential write deploys its host's listener again; managers and
+  judges launch with the current value.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes
@@ -665,25 +708,18 @@ hold every grant. A member given the `pr-triage` role is refused every action
 until it is removed, so what triage does unattended never becomes what a person
 may do. Approving a held action checks only its kind's grant.
 
-A deployment acts with the grants its source asset's creator holds, so
-whoever publishes the listener's chain needs every grant it declares from its
+A deployment acts with the grants its source asset's creator holds, so the
+hub's publisher needs every grant the listener's chain declares from its
 creator. The hub keeps a system `Deployer` role per workspace
-(`apps/hub/src/deployer-role.ts`), ensured with the `pr-triage` role when a
-host is connected and at every migrate for workspaces already connected. It
-holds `DEPLOYER_GRANTS` (`@corbits/triage-contracts`): `create` on `asset:*`
-and `workflow:*`, `manage` on `workflow-run:*`, `write` on
-`triage-manager:state` and `create` on `triage-manager:result`. It holds no
-read, since it is given to admins, whose role reads everything. Stock gives an
-asset's creator no grant on it, and a push needs `write`, so before pushing to a
-workflow asset its user created, the portal grants that user `write` on that
-one asset through the stock grants route (admins hold `create` on `grant:*`),
-unless the evaluate route says the user already holds it. The portal only
-pushes to assets its user created. Under Interchange, an admin can grant itself
-anything. Stock admin lacks the manager state `write`. Stock lets owners and
-admins assign roles through the role assignment routes, and the portal offers
-the role on admins' rows only and its removal on any row that has it; it refuses to publish, before it creates
-anything, unless the stock evaluate route allows every one of the role's
-grants.
+(`apps/hub/src/deployer-role.ts`), ensured only by the publisher before each
+roll, which gives it to the workspace's `triage-publisher` system principal.
+It holds exactly `DEPLOYER_GRANTS` (`@corbits/triage-contracts`), and any
+other grant on it is dropped: `create` on `workflow:*`, `manage` and `read`
+on `workflow-run:*`, `write` on `triage-manager:state` and `create` on
+`triage-manager:result`. Stock gives an asset's creator no grant on it, so
+the publisher also holds `read`, granted as its creator, on the asset of
+each workflow another one deploys: the manager, the judge and the code
+review, not the listener.
 
 Where triage mirrors and its policy approves, a settled head that may not be
 approved dismisses the approvals the approve action made; one dismissed on a
@@ -818,8 +854,8 @@ read it, and passes the rest of the request to stock.
   is triaged again. A workspace with no live listener for the host mails
   nothing: Triage again, Review again, a held Do's approval and backlog
   triage answer 503 `service_not_running`, and a webhook's head fails, each
-  saying Triage is stopped on that host until someone presses **Upgrade to new
-  version** in Settings.
+  saying Triage is not running on that host and that Settings → Triage shows
+  why.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

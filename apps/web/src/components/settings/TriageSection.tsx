@@ -9,13 +9,13 @@ import { counted } from "../../lib/plural.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { hostFullName } from "../../lib/pull-link.ts";
 import { packsPending, triageEnabledRepos, triageReadyRepos } from "../../lib/repo-rows.ts";
-import type { TenantSection } from "../../lib/tenant-entities.ts";
+import type { DeployedSection } from "../../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../DecisionModelForm.tsx";
 import { BitbucketDatacenterSource } from "./BitbucketDatacenterSource.tsx";
 import { GithubSource } from "./GithubSource.tsx";
 import { KeyRow } from "./KeyRow.tsx";
 import { PolicyFiles } from "./PolicyFiles.tsx";
-import { TriageUpgrade } from "./TriageUpgrade.tsx";
+import { TriageVersions } from "./TriageVersions.tsx";
 
 /** The connected hosts without a listener up. */
 function undeployedSources(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): RepoSource[] {
@@ -69,7 +69,7 @@ function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
   );
 }
 
-export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: TenantSection<DeployedWorkflow> }) {
+export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: DeployedSection }) {
   const enabled = useMemo(() => [...triageEnabledRepos(snapshot.repos)], [snapshot.repos]);
   const packs = useCheckPacks(enabled);
   const ready = !deployed.denied && !deployed.loading && !deployed.unavailable && !packsPending(packs);
@@ -96,7 +96,7 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
               <span className="txt">{statusText(status)}</span>
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
-            {sources.length > 0 && status.model && <TriageUpgrade />}
+            {sources.length > 0 && status.model && <TriageVersions deployed={deployed} sources={sources} />}
           </div>
         )}
         <GithubSource snapshot={snapshot} />

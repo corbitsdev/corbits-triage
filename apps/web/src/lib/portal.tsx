@@ -8,8 +8,6 @@ import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
 import { ApiError, createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
 import {
-  ANTHROPIC_PROVIDER,
-  INFERENCE_PROVIDER,
   configureGithubHook,
   createGrant,
   ensureWorkspace,
@@ -38,7 +36,7 @@ import type { CreateGrantInput } from "./grant-actions.ts";
 import { reconcileModelCatalog, removeModelKey, saveInference } from "./model-catalog.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
-import { checkPackName } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, checkPackName, INFERENCE_PROVIDER } from "@corbits/triage-contracts";
 
 /** `now` confirms the write with a toast; `held` writes were announced by the inbox's Undo toast; `leaving` ones are held writes sent as the page goes away, so they must outlive it. */
 type GithubDelivery = "now" | "held" | "leaving";
@@ -97,11 +95,10 @@ export const TRIAGE_VERDICTS_QUERY_KEY = "triage-verdicts";
 export const APPROVALS_QUERY_KEY = "approvals";
 export const PRINCIPALS_QUERY_KEY = "principals";
 export const ROLES_QUERY_KEY = "roles";
-export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
+export const DEPLOYED_VERSIONS_QUERY_KEY = "deployed-versions";
 export const ALLOWED_QUERY_KEY = "allowed";
 export const INVITATIONS_QUERY_KEY = "invitations";
 export const BITBUCKET_DATACENTER_QUERY_KEY = "bitbucket-datacenter";
-export const TRIAGE_RELEASE_QUERY_KEY = "triage-release";
 export const INVITE_PATH = "/invite/";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
@@ -110,11 +107,10 @@ const REFRESH_QUERY_KEYS = [
   [APPROVALS_QUERY_KEY],
   [PRINCIPALS_QUERY_KEY],
   [ROLES_QUERY_KEY],
-  [DEPLOYED_WORKFLOWS_QUERY_KEY],
+  [DEPLOYED_VERSIONS_QUERY_KEY],
   [ALLOWED_QUERY_KEY],
   [INVITATIONS_QUERY_KEY],
   [BITBUCKET_DATACENTER_QUERY_KEY],
-  [TRIAGE_RELEASE_QUERY_KEY],
 ];
 
 async function invalidateChangeable(queryClient: QueryClient, queryKeys: ReadonlyArray<readonly unknown[]>): Promise<void> {

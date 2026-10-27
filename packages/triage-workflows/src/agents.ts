@@ -25,8 +25,8 @@ export function credentialBindingsFor(sources: Sources) {
 export const credentialBindings = credentialBindingsFor(["github"]);
 
 /**
- * System One answers the offering's configured questions over the input as evaluation state; the portal deploys onto
- * the tenant's corbits-system-one offerings (apps/web/src/lib/workflow-deploy.ts). The workflow maps it over the rules
+ * System One answers the offering's configured questions over the input as evaluation state; the hub deploys onto
+ * the tenant's corbits-system-one offerings (apps/hub/src/workflow-release). The workflow maps it over the rules
  * output's chunks, and its director makes one System One call per chunk.
  */
 export const judgeAgent = defineAgent({

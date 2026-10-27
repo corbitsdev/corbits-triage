@@ -12,7 +12,7 @@ const Offerings = type({ ids: type("string > 0").array().atLeastLength(1), defau
 export const Release = type({ workflow: PublishedWorkflow, offerings: Offerings });
 export type Release = typeof Release.infer;
 
-/** What each host's listener and manager deploy: the portal writes `release.json` into each published tree; a source run has none. */
+/** What each host's listener and manager deploy: the hub writes `release.json` into each published tree; a source run has none. */
 const Published = type({ "[string]": { "manager?": Release, "codeReview?": Release, "judge?": Release } });
 
 /** The creator-sourced grants to deploy the published workflow: create a deployment, read exactly its asset, and read the run it starts. */

@@ -9,8 +9,7 @@
     "@corbits/triage-contracts": "workspace:*",
     "@intx/db": "workspace:*",
     "@intx/hub-client": "workspace:*",
-    "drizzle-orm": "catalog:",
-    "isomorphic-git": "catalog:"
+    "drizzle-orm": "catalog:"
   },
   "description": "The live triage chain from webhook to verdict, run locally against a fake GitHub and a stub decision model"
 }

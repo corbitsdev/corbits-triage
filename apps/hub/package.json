@@ -41,6 +41,7 @@
     "hono": "catalog:",
     "hono-openapi": "1.3.3",
     "ipaddr.js": "2.2.0",
+    "isomorphic-git": "catalog:",
     "nodemailer": "10.1.0"
   },
   "devDependencies": {

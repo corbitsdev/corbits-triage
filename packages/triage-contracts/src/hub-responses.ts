@@ -208,6 +208,8 @@ export const DeployedVersions = type({
     /** The source asset commit a source-format deployment runs, so it can be deployed again as it is. */
     source: type({ assetId: "string", commitSha: "string" }).or("null"),
   }).array(),
+  /** Each host the hub rolled since it started: when the roll ended, and why it failed if it did; the listener before it keeps running. */
+  rollouts: type({ source: type.enumerated(...REPO_SOURCES), at: "string", "error?": "string" }).array(),
 });
 export type DeployedVersions = typeof DeployedVersions.infer;
 

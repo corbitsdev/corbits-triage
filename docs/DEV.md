@@ -41,7 +41,7 @@ bun run dev
 
 It first applies the database migrations (`bun run db:migrate`), then starts both services; the hub itself never migrates.
 
-Hub on http://localhost:3000 (API only), portal on http://localhost:5173 (it proxies `/api` to the hub and bundles the workflows on start). Restart after changing `apps/hub` or `packages/`; only the portal hot-reloads.
+It packs the workflows into `apps/web/public/packages/` first. Hub on http://localhost:3000 (API only), portal on http://localhost:5173 (it proxies `/api` to the hub). As it starts, the hub publishes the packed workflows and rolls every workspace onto them. Restart after changing `apps/hub` or `packages/`; only the portal hot-reloads.
 
 When no isolated place is registered, the hub prints one warning, `code_review_no_isolated_place`, and still starts; triage runs and code review does not. Docker on this machine needs no variable, only Docker running and the `corbits-triage-sidecar` image built ([steps 1 to 3](provisioners/docker.md#set-up)), optionally with `DOCKER_CONTEXT`. The other places need `DOCKER_HOST`, `DOCKER_TLS_CA`, `DOCKER_TLS_CERT`, `DOCKER_TLS_KEY`, `E2B_API_KEY`, `RAILWAY_SANDBOX_TOKEN` and `RAILWAY_SANDBOX_ENVIRONMENT_ID` ([docs/provisioners/](provisioners/)). Settings → Code review shows **Code review needs an isolated place to run** at the top, with the first place's `.env` lines and setup guide, until a place is in use.
 
@@ -87,7 +87,7 @@ bun run lint
 
 Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` and ignore `DATABASE_URL`.
 
-`bun run test:chain` (`tests/chain/`) starts the hub on a database of its own, publishes and upgrades the workspace as Settings does, and sends GitHub's webhooks to it. GitHub and the decision model are local stand-ins, so it needs no account or key; each sidecar is a local process, and it installs the workflows' native modules from the npm registry as a deploy does. Code review needs an isolated sidecar, which a local process is not, so it is not part of the chain test.
+`bun run test:chain` (`tests/chain/`) starts the hub on a database of its own, serving a portal build, sets up a workspace through the portal's routes, waits for the hub to start its listener, and sends GitHub's webhooks to it. GitHub and the decision model are local stand-ins, so it needs no account or key; each sidecar is a local process, and it installs the workflows' native modules from the npm registry as a deploy does. Code review needs an isolated sidecar, which a local process is not, so it is not part of the chain test.
 
 Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
@@ -100,5 +100,5 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
 - **"The workspace has no decision model"**: store a decision model key in the **Triage** section of Settings.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
-- **New PRs never reach triage**: the host has no live listener (`triage-listener-github` or `triage-listener-bitbucket-datacenter`), and Settings says Triage is stopped until it is upgraded. Press **Upgrade to new version** in Settings.
+- **New PRs never reach triage**: the host has no live listener (`triage-listener-github` or `triage-listener-bitbucket-datacenter`). Settings → Triage says why; the hub's `workflow_release_*` log lines say what the last roll did. A failed roll is tried again ten minutes later; restart the hub, or save the decision model again, to roll at once.
 - **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.

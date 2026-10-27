@@ -30,7 +30,7 @@ export async function forward(input: unknown, ctx: EffectContext, _signal: Abort
   if (numbers.length === 0) throw new Error(`forward: the mail for ${mail.repo} names no pull request`);
   const source = repoSourceOf(mail.repoSource);
   const release = publishedFor(source, "manager");
-  if (!release) throw new Error(`${TRIAGE_LISTENERS[source]} needs the release's manager in release.json, which the portal publishes beside it`);
+  if (!release) throw new Error(`${TRIAGE_LISTENERS[source]} needs the release's manager in release.json, which the hub publishes beside it`);
   const mails: MailInput[] = [];
   for (const number of numbers) {
     const pullRequest = { source, repo: mail.repo, number };

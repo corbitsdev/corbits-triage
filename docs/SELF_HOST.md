@@ -206,7 +206,8 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
 4. **Add the decision model** (during onboarding, or Settings → Triage).
    Pick TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API key, or
    **Add my own provider** with a System One–compatible base URL (requests go to it + `/systemone`), model and key.
-   Saving deploys the triage workflows; triage is live once that finishes.
+   Saving it, like connecting a host, makes the hub publish and start the
+   triage workflows; triage is live once that finishes.
 5. **Add a policy file.** A repository's rules and actions come only from
    `.corbits-triage.yml` on its default branch ([Policy file](PRODUCT.md#policy-file)).
    A repository without one offers **Start a policy file**: **Open the pull
@@ -275,7 +276,7 @@ under **Settings → People**. Do that only for an address you know is theirs.
 
 | Variable | Value |
 | --- | --- |
-| `PORTAL_DIR` | Directory of the built portal the hub serves. The image sets it. |
+| `PORTAL_DIR` | Directory of the built portal the hub serves, and whose bundled workflows it publishes to every workspace. The image sets it. |
 | `PORTAL_ORIGIN` | The portal's origin when it is [hosted apart from the hub](#portal-hosted-separately) under the same parent domain. The hub allows exactly that origin with credentials, and invite links point there. |
 
 ### Triage tuning
@@ -350,6 +351,9 @@ Unrelated domains without a rewrite (for example `*.vercel.app` and
 `*.up.railway.app`) do not work: browsers do not send the session cookie
 across sites.
 
+The hub still publishes the workflows bundled in its own image's
+`PORTAL_DIR`, so deploy the hub and the portal from the same commit.
+
 ## Where sidecars run
 
 Sidecars run as child processes on the hub's machine by default; triage needs
@@ -390,13 +394,10 @@ then shows **Docker on this machine** ready. Or set `DOCKER_HOST` in `.env` to
 
 Pull the new version, rebuild the image, run the [migrations](#migrations)
 and redeploy; the hub does not start until they have run. On Railway, repeat
-[step 7](#railway) so the commit variables name the version you deploy.
-
-- **Open the portal as an owner right after upgrading to the build that keeps
-  the GitHub App key on the server.** Opening it deploys the new workflows.
-  Until then Triage's runs cannot read or write GitHub, because the workflows
-  deployed earlier ask GitHub for the App with a credential that can no longer
-  do that.
+[step 7](#railway) so the commit variables name the version you deploy. As it
+starts, the hub publishes the build's workflows and rolls every workspace onto
+them, at most two workspaces at a time; Settings → Triage shows each host's version and
+any roll that failed.
 - A workspace whose GitHub App is installed on more than one account must
   sync its repositories after upgrading and keep the App on one account: one
   installation token serves the workspace, so the other accounts' repositories

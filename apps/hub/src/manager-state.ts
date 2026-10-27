@@ -9,8 +9,9 @@ import { schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
-import { resolveLiveDeployment, type LiveDeployment } from "./github/deployment.js";
+import { resolveLiveDeployments, type LiveDeployment } from "./github/deployment.js";
 import { triageSchema } from "./triage-db.js";
+import { START_DEADLINE_MS } from "./workflow-release/rollout.js";
 
 const managerState = triageSchema.table("manager_state", {
   tenantId: text("tenant_id").notNull(),
@@ -179,12 +180,20 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
   return run;
 }
 
-/** A running manager, one whose sidecar is up, or one deployed inside the startup window. A deploy that never got a sidecar past that window is not. */
-function runIsUp(run: ManagerRun | undefined, now: Date): boolean {
+/** A just-deployed listener counts as live longer than a roll waits for it, so one a roll still waits on is never released. */
+const LISTENER_START_GRACE_MS = START_DEADLINE_MS + 60_000;
+
+/** A run that is running, or whose sidecar is up. */
+function runIsRunning(run: ManagerRun | undefined): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
-  if (run.status === "running") return true;
-  if (run.allocationStatus === "allocated" && run.sidecarId !== null) return true;
-  return now.getTime() - run.createdAt.getTime() < MANAGER_START_GRACE_MS;
+  return run.status === "running" || (run.allocationStatus === "allocated" && run.sidecarId !== null);
+}
+
+/** A running run, or one deployed inside the startup window. A deploy that never got a sidecar past that window is not. */
+function runIsUp(run: ManagerRun | undefined, now: Date, graceMs = MANAGER_START_GRACE_MS): boolean {
+  if (runIsRunning(run)) return true;
+  if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
+  return now.getTime() - run.createdAt.getTime() < graceMs;
 }
 
 async function runGone(tx: Tx | DB["db"], runId: string, now: Date): Promise<boolean> {
@@ -198,7 +207,7 @@ export async function deploymentUp(db: DB["db"], runId: string): Promise<boolean
 
 /**
  * Asks the sweep to stop a deploy that still counts as live but never became a process, so a manager cannot start after
- * its claim has moved on, and a listener is deployed again by the next Upgrade.
+ * its claim has moved on, and a listener is deployed again by the hub's next roll of the workspace.
  */
 async function releaseStuck(tx: Tx | DB["db"], runId: string, now: Date, what: "manager" | "listener"): Promise<void> {
   await tx
@@ -207,14 +216,21 @@ async function releaseStuck(tx: Tx | DB["db"], runId: string, now: Date, what: "
     .where(and(eq(schema.workflowRun.id, runId), inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]), isNull(schema.workflowRun.cancellationRequestedAt)));
 }
 
-/** The workspace's newest listener for the host while it is up, as a manager is; one that never got a sidecar is released. */
+/**
+ * The workspace's newest running listener for the host, so pull requests keep going to the one a roll replaces until
+ * the new one runs; else the newest still starting. One that never got a sidecar past its startup window is released.
+ */
 export async function liveListener(db: DB["db"], tenantId: string, source: RepoSource): Promise<LiveDeployment | undefined> {
-  const listener = await resolveLiveDeployment(db, tenantId, TRIAGE_LISTENERS[source]);
-  if (!listener) return undefined;
   const now = new Date();
-  if (runIsUp(await managerRun(db, listener.runId), now)) return listener;
-  await releaseStuck(db, listener.runId, now, "listener");
-  return undefined;
+  let starting: LiveDeployment | undefined;
+  for (const listener of await resolveLiveDeployments(db, tenantId, TRIAGE_LISTENERS[source])) {
+    if (listener.cancelling) continue;
+    const run = await managerRun(db, listener.runId);
+    if (runIsRunning(run)) return listener;
+    if (runIsUp(run, now, LISTENER_START_GRACE_MS)) starting ??= listener;
+    else await releaseStuck(db, listener.runId, now, "listener");
+  }
+  return starting;
 }
 
 /** The run id of the pull request's manager while that run is up. */

@@ -30,6 +30,8 @@ const SPECS: Record<string, unknown> = {
   },
 };
 
+const ROLLOUT = { source: "github" as const, at: CREATED_AT.toISOString(), error: "Updating Triage failed; see the hub log." };
+
 const ROWS = [
   { runId: "run_tarball", workflow: "pr-triage", domain: "tenant.example", createdAt: CREATED_AT, cancellationRequestedAt: null },
   { runId: "run_source", workflow: "pr-triage-historical", domain: "tenant.example", createdAt: CREATED_AT, cancellationRequestedAt: CREATED_AT },
@@ -48,11 +50,11 @@ function db() {
 }
 
 function handler() {
-  return createWorkflowVersions({ db: db(), up: async (anchorRunId) => anchorRunId !== "run_source", launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId] ?? null) as never } });
+  return createWorkflowVersions({ db: db(), up: async (anchorRunId) => anchorRunId !== "run_source", launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId] ?? null) as never }, rollouts: (tenantId) => (tenantId === TENANT_ID ? [ROLLOUT] : []) });
 }
 
 describe("createWorkflowVersions", () => {
-  test("reads each live deployment's workflow and tool versions from its frozen closure", async () => {
+  test("reads each live deployment's workflow and tool versions from its frozen closure, beside the workspace's own rollouts", async () => {
     const res = await handler()({ tenantId: TENANT_ID, principalId: "member-1" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -60,6 +62,7 @@ describe("createWorkflowVersions", () => {
         { id: "run_tarball", workflow: "pr-triage", createdAt: CREATED_AT.toISOString(), cancelling: false, live: true, package: WORKFLOW, tools: [TOOL], source: null },
         { id: "run_source", workflow: "pr-triage-historical", createdAt: CREATED_AT.toISOString(), cancelling: true, live: false, package: SOURCE_WORKFLOW, tools: [], source: { assetId: "ast_triage", commitSha: "c0ffee" } },
       ],
+      rollouts: [ROLLOUT],
     });
   });
 

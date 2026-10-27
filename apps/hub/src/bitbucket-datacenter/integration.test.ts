@@ -34,6 +34,7 @@ function integration(address: string, options: { allowlist?: readonly string[]; 
     } as unknown as typeof fetch,
     onEnabled() {},
     async onConnectionChanged() {},
+    onCredentialsReplaced() {},
     now: () => new Date(),
     log() {},
     egressAllowlist: options.allowlist ?? [],

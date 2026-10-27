@@ -62,9 +62,9 @@ package of its own, `packages/pr-code-review-<provider>`, shaped like
    `src/pr-code-review-reviewer-<host>.ts`, builds `codeReviewReviewer(agents)` under that host's reviewer id, which
    the host's manager deploys.
 4. Add the provider, the credential that holds its key and its models to `CODE_REVIEW_PROVIDERS` in
-   `triage-contracts`, its models and catalog provider to `DECLARED_MODELS` in `apps/web/src/lib/model-catalog.ts`,
-   and one row per host to `CHAIN_PACKAGES` in `apps/web/src/lib/workflow-packages.ts` with its own `packageName`,
-   named in its host's manager row under `deploys`.
+   `triage-contracts`, and its models and catalog provider to `DECLARED_MODELS` and one row per host to
+   `CHAIN_PACKAGES`, both in `triage-contracts`' `workflow-release.ts`, the row with its own `packageName` and named
+   in its host's manager row under `deploys`.
 5. Give it an eval like [pr-code-review-anthropic/evals](../pr-code-review-anthropic/evals/README.md).
 
 ## Test

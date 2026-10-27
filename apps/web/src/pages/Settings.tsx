@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { connectedSources, isPerson, type HubPrincipal, type PortalSnapshot } from "../lib/hub-api.ts";
 import { counted } from "../lib/plural.ts";
 import { usePortal } from "../lib/portal.tsx";
-import { useDeployedWorkflows, usePrincipals, type TenantSection } from "../lib/tenant-entities.ts";
+import { useDeployedVersions, usePrincipals, type TenantSection } from "../lib/tenant-entities.ts";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { AccountSection } from "../components/settings/AccountSection.tsx";
 import { CodeReviewSection } from "../components/settings/CodeReviewSection.tsx";
@@ -65,7 +65,7 @@ export default function Settings() {
   const { snapshot } = usePortal();
   const { tab } = useParams();
   const people = usePrincipals();
-  const deployed = useDeployedWorkflows();
+  const deployed = useDeployedVersions();
   const page = useRef<HTMLElement>(null);
   useLinkedSection(tab, page, snapshot !== null);
 

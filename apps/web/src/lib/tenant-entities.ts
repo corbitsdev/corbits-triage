@@ -1,11 +1,12 @@
 import { skipToken, useIsFetching, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiError, type Transport } from "@intx/hub-client";
+import type { DeployedVersions } from "@corbits/triage-contracts";
 import {
   evaluateAccess,
   listApprovals,
-  listDeployedWorkflows,
   listPrincipals,
   listRoles,
+  readDeployedVersions,
   type DeployedWorkflow,
   type HubApproval,
   type HubPrincipal,
@@ -15,7 +16,7 @@ import { createHubTransport } from "./hub-transport.ts";
 import {
   ALLOWED_QUERY_KEY,
   APPROVALS_QUERY_KEY,
-  DEPLOYED_WORKFLOWS_QUERY_KEY,
+  DEPLOYED_VERSIONS_QUERY_KEY,
   PRINCIPALS_QUERY_KEY,
   ROLES_QUERY_KEY,
   usePortal,
@@ -32,19 +33,15 @@ const NO_ROWS: never[] = [];
  */
 export type TenantSection<T> = { rows: T[]; loading: boolean; denied: boolean; unavailable: boolean };
 
-function useTenantSection<T>(
-  key: string,
-  list: (transport: Transport, tenantId: string) => Promise<T[]>,
-  refetchInterval: number,
-): TenantSection<T> {
+function useTenantRead<R>(key: string, read: (transport: Transport, tenantId: string) => Promise<R>, refetchInterval: number): UseQueryResult<R> {
   const { snapshot } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
   const tenantId = snapshot?.workspace.tenantId;
-  const query = useQuery({
+  return useQuery({
     queryKey: [key, tenantId],
     queryFn: tenantId === undefined ? skipToken : async function readSection() {
       try {
-        return await list(createHubTransport(), tenantId);
+        return await read(createHubTransport(), tenantId);
       } catch (cause: unknown) {
         signOutWhenRejected(cause);
         throw cause;
@@ -52,9 +49,12 @@ function useTenantSection<T>(
     },
     refetchInterval,
   });
+}
+
+function sectionOf<R, T>(query: UseQueryResult<R>, rows: (data: R) => T[]): TenantSection<T> {
   const denied = query.error instanceof ApiError && query.error.status === 403;
   return {
-    rows: query.data ?? NO_ROWS,
+    rows: query.data === undefined ? NO_ROWS : rows(query.data),
     loading: query.isLoading,
     denied,
     unavailable: query.isError && !denied,
@@ -70,6 +70,10 @@ export function useApprovalsFirstLoad(): boolean {
   return useIsFetching({ queryKey: [APPROVALS_QUERY_KEY], predicate: isFirstRead }) > 0;
 }
 
+function useTenantSection<T>(key: string, list: (transport: Transport, tenantId: string) => Promise<T[]>, refetchInterval: number): TenantSection<T> {
+  return sectionOf(useTenantRead(key, list, refetchInterval), (rows) => rows);
+}
+
 export function useApprovals(): TenantSection<HubApproval> {
   return useTenantSection(APPROVALS_QUERY_KEY, listApprovals, LIVE_REFRESH_MS);
 }
@@ -82,8 +86,12 @@ export function useRoles(): TenantSection<HubRole> {
   return useTenantSection(ROLES_QUERY_KEY, listRoles, DIRECTORY_REFRESH_MS);
 }
 
-export function useDeployedWorkflows(): TenantSection<DeployedWorkflow> {
-  return useTenantSection(DEPLOYED_WORKFLOWS_QUERY_KEY, listDeployedWorkflows, DIRECTORY_REFRESH_MS);
+export type DeployedSection = TenantSection<DeployedWorkflow> & { rollouts: DeployedVersions["rollouts"] };
+
+/** The live deployments and the hub's last roll of each host, read often so a roll's outcome shows soon after it ends. */
+export function useDeployedVersions(): DeployedSection {
+  const query = useTenantRead(DEPLOYED_VERSIONS_QUERY_KEY, readDeployedVersions, LIVE_REFRESH_MS);
+  return { ...sectionOf(query, (versions) => versions.deployments), rollouts: query.data?.rollouts ?? NO_ROWS };
 }
 
 export function useAccess(resource: string, action: string): UseQueryResult<boolean> {

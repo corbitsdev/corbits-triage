@@ -10,7 +10,6 @@ import { errorText } from "@corbits/common";
 import type { Member } from "../integrations/app.js";
 import { grantAdminGithub } from "./admin-github-grant.js";
 import { decryptSecret, GITHUB_APP_KEY_CREDENTIAL, GITHUB_CREDENTIAL, lockedCredential, lockGithubCredentials, renewedMetadata, storeAppKey } from "./app-key.js";
-import { ensureDeployerRole } from "../deployer-role.js";
 import { ensureTriageRole } from "./automation.js";
 import type { GithubTokenRenewal, IssuedApp } from "./installation-token.js";
 import { validGithubProvider } from "./manifest.js";
@@ -28,6 +27,8 @@ export type GithubAppConnectionDeps = {
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
   githubApiOrigin: string;
   renewal: Pick<GithubTokenRenewal, "issue" | "push">;
+  /** Called once the App is stored, so the workspace's GitHub listener starts with it. */
+  onConnected: (tenantId: string) => void;
 };
 
 export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
@@ -54,7 +55,6 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
         await grantAdminGithub(tx, tenantId, id, stamp);
       }
       await ensureTriageRole(tx, tenantId, stamp);
-      await ensureDeployerRole(tx, tenantId, stamp);
     });
   }
 
@@ -88,6 +88,7 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
     }
     await store(tenantId, githubProvider.id, appJson, issued);
     if (issued.token) await deps.renewal.push(tenantId);
+    deps.onConnected(tenantId);
     return Response.json({ appSlug: issued.slug });
   };
 }

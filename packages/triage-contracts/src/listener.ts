@@ -7,14 +7,13 @@ export const TRIAGE_LISTENERS: Record<RepoSource, string> = { github: "triage-li
 /** Each host's pull request manager by its definition id, also its mail address. */
 export const TRIAGE_MANAGERS: Record<RepoSource, string> = { github: "triage-manager-github", "bitbucket-datacenter": "triage-manager-bitbucket-datacenter" };
 
-/** The system role a person holds to publish the listener's chain and deploy it, which every deployment of it then acts under. */
+/** The system role the hub's publisher holds to publish the listener's chain and deploy it, which every deployment of it then acts under. */
 export const DEPLOYER_ROLE = "Deployer";
 
-/** Publishing and deploying the chain, and every grant the chain's workflows take from their creator. */
+/** Deploying the chain, and every grant the chain's workflows take from their creator. */
 export const DEPLOYER_GRANTS: ReadonlyArray<{ resource: string; action: string }> = [
-  { resource: "asset:*", action: "create" },
   { resource: "workflow:*", action: "create" },
-  // The manager and the code review stop their own runs, and an upgrade stops the listeners it replaces.
+  // The manager and the code review stop their own runs.
   { resource: "workflow-run:*", action: "manage" },
   // The listener and the manager read the run they just deployed before mailing it; manage does not satisfy read.
   { resource: "workflow-run:*", action: "read" },

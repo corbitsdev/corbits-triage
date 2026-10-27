@@ -12,7 +12,7 @@ export class NoLiveDeploymentError extends Error {
   }
 }
 
-/** A workspace runs no listener for the host, so its pull requests wait for an upgrade; the message says what to press. */
+/** A workspace runs no listener for the host, so its pull requests wait for the hub to start one; the message says where to look. */
 export class TriageStoppedError extends NoLiveDeploymentError {
   constructor(source: RepoSource) {
     super(TRIAGE_LISTENERS[source]);
@@ -58,7 +58,7 @@ export type TenantDeployment = LiveDeployment & { workflow: string };
 type DeploymentQuery = { tenantId: string; definitionName?: string };
 
 /**
- * A workflow the portal publishes per person deploys from an asset named for its publisher and release, which names
+ * A workflow the hub publishes per workspace deploys from an asset named for its publisher and release, which names
  * its definition too; its frozen projection keeps the workflow's own id, so that is the name a deployment is found by.
  */
 export const workflowName = sql<string>`coalesce(${schema.workflowRunLaunchSpec.frozenApprovalBundle} -> 'projection' ->> 'id', ${schema.workflowDefinition.name})`;
@@ -98,18 +98,6 @@ async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<T
 /** Live deployments; every workflow's when no name is given. */
 export function resolveLiveDeployments(db: DB["db"], tenantId: string, definitionName?: string): Promise<TenantDeployment[]> {
   return deploymentsWhere(db, { tenantId, definitionName });
-}
-
-export function newestLive(deployments: readonly LiveDeployment[]): LiveDeployment | undefined {
-  return deployments.find((live) => !live.cancelling);
-}
-
-export async function resolveLiveDeployment(
-  db: DB["db"],
-  tenantId: string,
-  definitionName: string,
-): Promise<LiveDeployment | null> {
-  return newestLive(await resolveLiveDeployments(db, tenantId, definitionName)) ?? null;
 }
 
 type PackageVersion = { name: string; version: string };
