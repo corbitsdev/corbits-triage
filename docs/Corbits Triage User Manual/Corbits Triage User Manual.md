@@ -8,9 +8,10 @@ Oct 16, 2026 · @Brian J. Fox
 2. [Getting started](#getting-started)
 3. [Setting up a repository: rules, verdicts and actions](#setting-up-a-repository-rules-verdicts-and-actions)
 4. [Day to day: the Inbox](#day-to-day-the-inbox)
-5. [Settings: Triage, code review and people](#settings-triage-code-review-and-people)
-6. [The audit log](#the-audit-log)
-7. [Glossary and common questions](#glossary-and-common-questions)
+5. [Code review](#code-review-page)
+6. [Settings: Triage and people](#settings-triage-and-people)
+7. [The audit log](#the-audit-log)
+8. [Glossary and common questions](#glossary-and-common-questions)
 
 ## What Corbits Triage is
 
@@ -97,7 +98,7 @@ Once the steps are done or skipped, the portal takes you to Repositories, where 
 
 ## Setting up a repository: rules, verdicts and actions
 
-Every repository has its own page under **Repositories** in the menu under your name. A repository's rules, and what Triage does with each verdict, live in a file in the repository called `.corbits-triage.yml`. The page reads that file back to you. From top to bottom it holds the triage switch, **Actions Triage takes on its own**, the **Policy**, **Code review**, **Outcomes** and **Remove repository**. Switches are saved as you change them; the word beside the repository's name says **Saving…** while a change is on its way, **Saved** once it is stored, and **Not saved** if the save failed.
+Every repository has its own page under **Repositories** in the menu under your name. A repository's rules, and what Triage does with each verdict, live in a file in the repository called `.corbits-triage.yml` (the policy file). The page reads that file back to you. From top to bottom it holds the triage switch, **Actions Triage takes on its own**, the **Policy**, **Outcomes** and **Remove repository**. You change the rules, judging and code review on the **Code review** page. Switches on the repository page are saved as you change them; the word beside the repository's name says **Saving…** while a change is on its way, **Saved** once it is stored, and **Not saved** if the save failed.
 
 ![The repository page for acme/gadgets beside the Repositories list: the triage switch on, then Policy with Change on GitHub and its rules read back as sentences, from Flag pull requests over 25 files changed to Never accept changes to vendor/**, node_modules/**, then Pass: Comment with the verdict, Label “Triage: Ready”, Approve, for maintainers; Fail: Comment with the verdict, Label “Triage: Not Ready”; Unsure: Comment with the verdict, Label “Triage: Needs Human Review”, Request review from code owners, and Code review below](images/06.png)
 
@@ -383,19 +384,19 @@ On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repos
 
 ### Code review
 
-Code review reads each new commit of a pull request for bugs, and skips drafts. It runs with triage, so only in a repository where triage is on, and only when the repository's [policy file](#writing-the-file) turns code review on. **Review again** reviews the latest commit once more, whatever the policy file says.
+Code review reads each new commit of a pull request for bugs, and skips drafts. It runs with triage, so only in a repository where triage is on, and only when the repository's [policy file](#writing-the-file) turns code review on. You turn it on from the [Code review](#code-review-page) page, which opens a pull request for the change. **Review again** reviews the latest commit once more, whatever the policy file says.
 
-It needs the workspace's Anthropic key, saved under [Settings → Code review](#code-review-2).
+It needs the workspace's Anthropic key, saved on that page.
 
 ### Where code review runs
 
-Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up), or in an [E2B](../provisioners/e2b.md) or [Railway](../provisioners/railway-sandboxes.md) sandbox in the cloud. [Settings → Code review](#code-review-2) says where it runs.
+Code review checks out the pull request's code, so each review runs in a place of its own, apart from Triage and from other reviews: a Docker container on the server that runs Triage, or on a separate machine such as a VPS ([Docker on another machine](../provisioners/docker-remote.md) says how your server administrator sets that up), or in an [E2B](../provisioners/e2b.md) or [Railway](../provisioners/railway-sandboxes.md) sandbox in the cloud. The [Code review](#code-review-page) page says where it runs.
 
-A server with no isolated place set up for Triage has nowhere to run it. Each repository's page then says **Code review needs an isolated place to run**, with **Set one up**, which opens Settings → Code review, and **Review again** is hidden in the Inbox. Nothing is reviewed until a place is set up.
+A server with no isolated place set up for Triage has nowhere to run it. The Code review page then says **Code review needs an isolated place to run**, with **Set one up**, and **Review again** is hidden in the Inbox. Nothing is reviewed until a place is set up.
 
 ![The Code review section on a server with no isolated place: Code review needs an isolated place to run, with Set one up](images/38.png)
 
-If [Settings → Code review](#code-review-2) says **Could not read where code review runs**, repository pages leave out their Code review section and **Review again** is hidden in the Inbox.
+If the Code review page says **Could not read where code review runs**, **Review again** is hidden in the Inbox.
 
 ### Removing a repository
 
@@ -417,6 +418,7 @@ The dark strip on the left is the same on every page:
 
 - **Workspace name** at the top. If you belong to more than one workspace, click it to switch.
 - **Pulse**: a summary of what changed since your last visit.
+- **Code review**: the rules, judging and bug finding for one repository. You pick the repository at the top. Each rule is a switch. Off rules sit below the ones that are on. A change waits in a tray until you open one pull request, which stays listed until it merges. A repository with no policy file offers one button to start one. The model used for judging, and where bug finding runs, are set once for every repository on the same page.
 - **Inbox**, with three views. **Needs you** shows only pull requests waiting on a person, in repositories with triage on. A pull request with an approval or a held action waiting stays there even after triage is turned off. **Ready** shows the pull requests you can merge now. **All open** shows every open pull request in every repository with triage on, and any with an approval waiting.
 - **Your name** at the bottom. Click it for Repositories, Settings and Sign out.
 
@@ -517,9 +519,25 @@ Authors do not use the portal. Depending on the repository's actions, they see a
 
 ![The Pulse page: four counters for new, resolved, now waiting on you and acted on by you since the last visit, a Stuck section, and a table per repository with triaged, needed you, acted on, and median time to merge or close and to first response beside the before-Triage median](images/16.png)
 
-## Settings: Triage, code review and people
+## Code review {#code-review-page}
 
-**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with four sections: Triage, Code review, People and Your account. The links at the top jump to each section. At the very bottom, **Versions for support** opens the version of Triage deployed for each connected host, marked **(not running)** when it is not up, with a **Copy** button; support will ask for it when you report a problem. Most teams visit it once during setup and then only to invite people.
+**Code review** is in the left rail. A policy file is the repository's `.corbits-triage.yml` on its default branch: it decides which rules run, including judging and bug finding (code review).
+
+Pick a repository at the top. You can search, use the arrow keys, and the ones you opened lately stay near the top. Under it, a line says how many rules are on, and whether judging and code review are on.
+
+Rules are sentences with a switch, in three groups: **Checks**, **Judging** and **Code review**. Turning a switch on shows what Triage will do. If judging needs a model, the row says **Needs a model** and **Add a model** is the one thing that fixes it. If code review has nowhere to run, the row says **Code review needs an isolated place to run** and **Set one up** is the one thing that fixes it.
+
+Changes sit in a tray: how many there are, each as a sentence, then the policy file before and after. **Open a pull request** applies them together. The page then says the pull request is open and waiting for review. A dot stays on each changed row until that pull request merges. **Merge** merges it when the host allows it from here.
+
+**New judge rule** asks three questions, in order: what Triage should check, when it passes, and what happens on fail. The sentence on the form is the rule that lands in the file. It passes when that check is true.
+
+A repository with no policy file says **This repository has no policy yet** and offers **Start from** that repository.
+
+**Judging** and **For every repository**, at the bottom, are set once for the whole workspace: the decision model, the Anthropic key bug finding uses, and where those reviews run.
+
+## Settings: Triage and people
+
+**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with three sections: Triage, People and Your account. The links at the top jump to each section. The provider and the place code review runs are on the [Code review](#code-review-page) page. The decision model stays under Triage, and that page sets it too. At the very bottom, **Versions for support** opens the version of Triage deployed for each connected host, marked **(not running)** when it is not up, with a **Copy** button; support will ask for it when you report a problem. Most teams visit it once during setup and then only to invite people.
 
 ### Triage
 
@@ -588,11 +606,11 @@ Every secret Triage holds can be replaced from Settings without disconnecting an
 
 **Bitbucket Data Center webhook secret.** Press **Rotate secret** on the webhook secret row. Triage saves a new secret and updates every webhook it created to use it. Repositories whose webhook was set up by hand, or whose webhook Triage could not update, are named afterwards: each one's repository page shows the new secret, so update its webhook in Bitbucket from there. Pull requests that change in the meantime are picked up automatically.
 
-**Model keys.** Press **Rotate** on the [decision model](#decision-model) or on the Anthropic key under [Code review](#code-review-2), and paste the new key. The key already stored is not shown.
+**Model keys.** Press **Rotate** on the [decision model](#decision-model) or on the Anthropic key on the [Code review](#code-review-page) page, and paste the new key. The key already stored is not shown.
 
 ### Code review
 
-![The Code review section: Review code with Anthropic, No key, with the Anthropic key field and Save key, then Where it runs: Docker on this machine, In use; Docker on another machine (TLS), Not set up, with its .env lines, Copy and Setup guide](images/43.png)
+These controls are on the [Code review](#code-review-page) page, once for every repository.
 
 [Code review](#code-review) runs with the provider whose key is stored here; today that is Anthropic. **Review code with Anthropic** says **Key stored** or **No key**. With no key, the Anthropic key field is open: paste the key and press **Save key**. When a key is stored, that field is hidden and the key itself is not shown. **Rotate** opens a blank field for a new key; press **Save key** to replace the stored one. **Remove** deletes it after you confirm. As for the decision model, when Triage cannot read the saved keys, the row says so and shows no field.
 
@@ -602,7 +620,7 @@ Each place says **In use**, **Ready**, **Not set up** or **Failing**; admins als
 
 ![Where it runs on a server with no place set up: Docker on this machine and Docker on another machine (TLS), both Not set up, each with How to set it up](images/44.png)
 
-If the server cannot say where code review runs, **Where it runs** is replaced by **Could not read where code review runs** with the reason, and repository pages leave out their Code review section. The rest of the portal works as usual; reload the page to try again.
+If the server cannot say where code review runs, **Where it runs** is replaced by **Could not read where code review runs** with the reason. The rest of the portal works as usual; reload the page to try again.
 
 ### People
 
@@ -687,7 +705,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **Why did Triage not call the decision model for a failing pull request?** When a rule fails, the answer is already Fail, so the model is not asked the verdict question. A repository with no Judgement rules never asks it at all. This saves money and keeps verdicts predictable.
 
-**Code review shows nothing for a pull request.** Check that the repository's policy file turns code review on, and that an Anthropic key is stored under Settings → Code review. It runs only after triage, for the groups in `for` and on the verdicts and paths in `when`. By default it reviews only once the rules in your file that fail a pull request and need no model have passed. CI counts only when `ci-green` is on. Triage's built-in checks, such as a draft or a requested change, don't hold the review back. A pull request that fails one gets its Fail with those reasons and no review, and one whose CI is still running is reviewed once CI passes. Write `when: { rules: any }` to review whatever those rules say. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one. If the Code review section says **Code review needs an isolated place to run**, whoever runs your Triage server sets one up first.
+**Code review shows nothing for a pull request.** Check that the repository's policy file turns code review on, and that an Anthropic key is stored on the Code review page. It runs only after triage, for the groups in `for` and on the verdicts and paths in `when`. By default it reviews only once the rules in your file that fail a pull request and need no model have passed. CI counts only when `ci-green` is on. Triage's built-in checks, such as a draft or a requested change, don't hold the review back. A pull request that fails one gets its Fail with those reasons and no review, and one whose CI is still running is reviewed once CI passes. Write `when: { rules: any }` to review whatever those rules say. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one. If the Code review page says **Code review needs an isolated place to run**, whoever runs your Triage server sets one up first.
 
 **The author pushed a fix. Do I need to do anything?** No. Every new commit gets its own verdict, and Triage updates its comment. If you had requested changes through Triage and every failed rule is now fixed, Triage withdraws the request for you. If a reviewer requested changes, the pull request moves to **Needs you** for their re-review.
 

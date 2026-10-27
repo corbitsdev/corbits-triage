@@ -54,3 +54,17 @@
   .settings .sentence { flex-wrap: wrap; }
   .settings .sentence .txt { flex-basis: auto; }
 }
+
+.settings .rule.off { color: var(--ink-mute); }
+.settings .pending-dot { display: inline-block; width: 8px; height: 8px; margin-left: 8px; border-radius: 50%; background: var(--orange); vertical-align: middle; }
+.settings .tray { position: sticky; bottom: 12px; margin-top: 24px; padding: 16px; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
+.settings .tray ul { margin: 8px 0; padding-left: 18px; }
+.settings .file-pair { display: grid; gap: 12px; margin: 8px 0; }
+.settings .file-text { white-space: pre-wrap; font: 12px/1.4 var(--mono); background: var(--fill); padding: 8px; overflow: auto; max-height: 240px; }
+.settings .repo-switch { position: relative; max-width: 420px; }
+.settings .repo-switch ul { position: absolute; z-index: 2; left: 0; right: 0; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--white); border: 1px solid var(--rule); border-radius: var(--r-md); max-height: 280px; overflow: auto; }
+.settings .repo-switch li button { width: 100%; text-align: left; border: 0; background: none; font: inherit; padding: 6px 8px; cursor: pointer; }
+.settings .repo-switch li button.on, .settings .repo-switch li button:hover { background: var(--fill-hover); }
+.settings .judge-form { display: grid; gap: 8px; margin-top: 8px; }
+.settings .judge-form .ask { display: grid; gap: 6px; }
+.settings .judge-form fieldset { border: 0; padding: 0; display: grid; gap: 4px; }

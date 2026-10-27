@@ -36,6 +36,9 @@ export function ListIcon() {
 export function MergeIcon() {
   return <Icon><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="8" r="1.5" /><path d="M4.5 5v6M4.5 5c0 2.5 2 3 5.5 3" /></Icon>;
 }
+export function ReviewIcon() {
+  return <Icon><path d="M3 2.5h7l3 3V13.5H3zM10 2.5V6h3M5 8.5l1.5 1.5L11 6" /></Icon>;
+}
 export function RepoIcon() {
   return <Icon><path d="M3.5 2.5h9v11h-9zM6 2.5v11" /></Icon>;
 }

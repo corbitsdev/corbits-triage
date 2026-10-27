@@ -13,7 +13,7 @@ import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useSession } from "../lib/session.tsx";
-import { CheckIcon, GearIcon, InboxIcon, ListIcon, MergeIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, GearIcon, InboxIcon, ListIcon, MergeIcon, PulseIcon, RepoIcon, ReviewIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
   const { snapshot, warn } = usePortal();
@@ -119,7 +119,7 @@ function roomOf(path: string, pullPage: boolean) {
   if (path.startsWith("/settings")) return "settings";
   if (path.startsWith("/repositories")) return "repos";
   if (pullPage) return "pr";
-  if (path.startsWith("/pulse")) return "pulse";
+  if (path.startsWith("/pulse") || path.startsWith("/code-review")) return "pulse";
   return "inbox";
 }
 
@@ -158,9 +158,13 @@ export default function Layout({ children }: { children: ReactNode }) {
             <img src="/triage-logo.svg" alt="" />
             Corbits Triage
           </Link>
-          <Link className="nav-a" to="/pulse" aria-current={room === "pulse" ? "true" : undefined}>
+          <Link className="nav-a" to="/pulse" aria-current={path.startsWith("/pulse") ? "true" : undefined}>
             <PulseIcon />
             Pulse
+          </Link>
+          <Link className="nav-a" to="/code-review" aria-current={path.startsWith("/code-review") ? "true" : undefined}>
+            <ReviewIcon />
+            Code review
           </Link>
           <h3>Inbox</h3>
           <Link className="nav-a" to="/inbox" aria-current={needsYouActive ? "true" : undefined}>
@@ -199,6 +203,10 @@ export default function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/open" className={allOpenActive ? "active" : undefined}>
             <ListIcon />
             All open
+          </NavLink>
+          <NavLink to="/code-review">
+            <ReviewIcon />
+            Review
           </NavLink>
           <NavLink to="/repositories">
             <RepoIcon />

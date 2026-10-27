@@ -11,8 +11,8 @@ function policyFileQuery(tenantId: string | undefined, repo: string) {
   return queryOptions({ queryKey: ["policy-file", tenantId, repo], queryFn, staleTime: 60_000, refetchOnMount: "always" });
 }
 
-/** The repository's policy file. */
-export function usePolicyFile(repo: string) {
+/** The repository's policy file. While `poll` is set, an open pull request is read again until it merges. */
+export function usePolicyFile(repo: string, poll = false) {
   const { snapshot } = usePortal();
-  return useQuery(policyFileQuery(snapshot?.workspace.tenantId, repo));
+  return useQuery({ ...policyFileQuery(snapshot?.workspace.tenantId, repo), refetchInterval: poll ? 30_000 : false });
 }

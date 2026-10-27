@@ -76,8 +76,8 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
   return (
     <section className="sec" id="code-review" aria-labelledby="sec-code-review">
       <header>
-        <h2 id="sec-code-review">Code review</h2>
-        <p>Reads each new commit of a pull request for bugs, in the repositories where it is switched on.</p>
+        <h2 id="sec-code-review">For every repository</h2>
+        <p>The provider and the place reviews run are set once. Reads each new commit of a pull request for bugs, in the repositories where it is switched on.</p>
       </header>
       <div>
         {snapshot.denied.credentials && <DeniedNotice section="credentials" />}

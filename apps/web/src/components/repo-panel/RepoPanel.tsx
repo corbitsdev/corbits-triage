@@ -10,7 +10,6 @@ import type { RepoRow } from "../../lib/repo-rows.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import { hasRuleOn } from "../../lib/pack-draft.ts";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
-import CodeReviewCard from "./CodeReviewCard.tsx";
 import OutcomesCard from "./OutcomesCard.tsx";
 import PolicyGrants from "./PolicyGrants.tsx";
 import PolicySection from "./PolicySection.tsx";
@@ -69,7 +68,6 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
         {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
         <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><PolicyGrants repo={repo.name} source={repo.source} disabled={disabled} /></div>
         <PolicySection repo={repo.name} source={repo.source} pack={settings.saved.pack} disabled={readOnly || snapshot?.denied.repos === true} onSettled={settings.reload} />
-        <CodeReviewCard />
         {stats ? <OutcomesCard outcomes={stats.outcomes} source={repo.source} /> : null}
         <RemoveRepository repo={repo.name} source={repo.source} disabled={readOnly || snapshot?.denied.repos === true} onRemoved={onClose} />
       </>

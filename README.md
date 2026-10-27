@@ -48,7 +48,9 @@ Or by hand:
 3. **Add a policy file.** Commit `.corbits-triage.yml` to the repository's
    default branch, press **Start a policy file** in the portal to open a pull
    request with starter rules, or give your coding agent the Configure Prompt
-   inside the repository. The format is in
+   inside the repository. Change rules, judging and code review later from the
+   portal's **Code review** page, which opens a pull request for each batch.
+   The format is in
    [Policy file](docs/PRODUCT.md#policy-file).
 
    **Configure Prompt**

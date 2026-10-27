@@ -163,9 +163,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
   stock's plugin registry selects for it under the workspace's placement
   policies, or null, and lists every place the hub's provisioner packages
   describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`, `RAILWAY_PLACE`) with the state the hub
-  found at boot, for Settings → Code review. The hub's own machine is never
+  found at boot, for the Code Review page. The hub's own machine is never
   one. While it is null **Review again** refuses (`no_isolated_place`),
-  nothing is mailed, and the repository page links Settings → Code review.
+  nothing is mailed, and the Code Review page says a place is needed.
 - **Portal** (`apps/web`): owns setup. It writes the tenant, credentials and
   inference offerings over stock hub routes, and **Upgrade to new version**
   publishes the workflow sources and deploys the listeners. The hub seeds nothing for it. It is a wrapper over the
@@ -492,9 +492,11 @@ operation has one implementation.
 
 A repository's policy file turns code review on with its `code-review` block,
 and **Review again** asks for one whatever the file says; both need a code
-review provider's key. A
-workspace runs one provider, the one whose key it stores in Settings → Code
-review
+review provider's key. The Code Review page reads that file (the policy-file
+route names it; a preview of the patch route, which writes nothing, returns
+its text) and opens one pull request for a batch of rule and code-review
+changes. A
+workspace runs one provider, the one whose key it stores on that page
 (`CODE_REVIEW_PROVIDERS` in `triage-contracts`; only Anthropic today). A
 pull request's code review runs in its manager: the hub attaches the review
 request to a pull request mail whose `codeReview` is on, which the policy

@@ -26,6 +26,7 @@ import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
 import Pulse from "./pages/Pulse.tsx";
 import Repositories from "./pages/Repositories.tsx";
+import CodeReview from "./pages/CodeReview.tsx";
 import Settings from "./pages/Settings.tsx";
 
 function InboxRedirect() {
@@ -173,6 +174,7 @@ function Gate() {
         <Route path="/audit" element={<Audit />} />
         <Route path="/runs/*" element={<InboxRedirect />} />
         <Route path="/repositories/:owner?/:repo?" element={<Repositories />} />
+        <Route path="/code-review" element={<CodeReview />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/:tab" element={<Settings />} />
         <Route path="/" element={<InboxRedirect />} />
