@@ -384,6 +384,9 @@ rules:
     reason: AGENTS.md allows a fallback only where a real default exists.
     evidence:
       - maintainer-stated
+code-review:
+  on: true
+  provider: anthropic
 actions:
   pass:
     - do: approve
