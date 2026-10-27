@@ -24,14 +24,12 @@ import { hostedRepos, sameRepo } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { CopyField } from "../components/CopyField.tsx";
 import { BitbucketDatacenterSource } from "../components/settings/BitbucketDatacenterSource.tsx";
-import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { OtherWorkspaces } from "../components/OtherWorkspaces.tsx";
-import { DECISION_MODEL_INTRO } from "@corbits/triage-contracts";
 
-type GuidedStep = "create" | "install" | "select" | "model";
+type GuidedStep = "create" | "install" | "select";
 
-const STEP_PHASE: Record<GuidedStep, number> = { create: 0, install: 1, select: 1, model: 2 };
+const STEP_PHASE: Record<GuidedStep, number> = { create: 0, install: 1, select: 1 };
 
 function stepState(phase: number, index: number): "done" | "active" | "todo" {
   if (phase > index) return "done";
@@ -46,9 +44,9 @@ function returnedFromInstall(): boolean {
 
 function startingStep(snapshot: PortalSnapshot | null): GuidedStep {
   if (!snapshot || !portalConnected(snapshot)) return "create";
-  if (!hasActiveGithubCredential(snapshot.credentials)) return "model";
+  if (!hasActiveGithubCredential(snapshot.credentials)) return "select";
   if (returnedFromInstall()) return "select";
-  return snapshot.repos.length > 0 ? "model" : "install";
+  return snapshot.repos.length > 0 ? "select" : "install";
 }
 
 export default function Connect() {
@@ -71,7 +69,6 @@ export default function Connect() {
   const verdicts = useTriageVerdicts();
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const catching = useMemo(() => catchingUpRepos(verdicts.data?.pulls ?? [], triaged), [verdicts.data, triaged]);
-  const modelStored = snapshot?.decisionModel !== undefined;
 
   async function generateAndCopyWebhookSecret() {
     const secret = generateWebhookSecret();
@@ -158,7 +155,7 @@ export default function Connect() {
   const [lastSync, setLastSync] = useState(sync.data);
   if (sync.data && sync.data !== lastSync) {
     setLastSync(sync.data);
-    setStep(sync.data.repos.length > 0 ? "model" : "install");
+    setStep(sync.data.repos.length > 0 ? "select" : "install");
   }
 
   async function chooseRepositories() {
@@ -185,7 +182,7 @@ export default function Connect() {
   }
 
   useEffect(function advancePastCreate() {
-    if (step === "create" && snapshot && portalConnected(snapshot)) setStep(hasActiveGithubCredential(snapshot.credentials) ? "install" : "model");
+    if (step === "create" && snapshot && portalConnected(snapshot)) setStep(hasActiveGithubCredential(snapshot.credentials) ? "install" : "select");
   }, [snapshot, step]);
 
   function clearPrivateKey() {
@@ -265,23 +262,9 @@ export default function Connect() {
       {syncError && <p role="alert" className="error">{syncError}</p>}
       {repos.length > 0 && <div className="repository-list">{repos.map(renderInstallRow)}</div>}
       <div className="task-actions">
-        {repos.length > 0 && <Button type="button" onClick={() => setStep("model")}>Next: add decision model</Button>}
-        <Button type="button" variant="outline" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</Button>
+        <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>
+        {githubConnected && <Button type="button" variant="outline" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</Button>}
         {syncError && <Button type="button" variant="outline" disabled={sync.isFetching} onClick={() => void sync.refetch()}>Try again</Button>}
-      </div>
-    </>;
-  }
-
-  function renderModelBody() {
-    return <>
-      <p>{DECISION_MODEL_INTRO}</p>
-      {modelStored
-        ? <div className="success-callout" role="status"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>Decision model connected</strong><p>Triage is still off for every repository. Turn it on under Repositories.</p></div></div>
-        : <><p className="muted">You can skip this for now. Triage asks for it when you turn it on for a repository.</p><DecisionModelForm /></>}
-      <div className="task-actions">
-        {modelStored && <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>}
-        {!modelStored && <Button type="button" variant="outline" onClick={() => navigate("/repositories")}>Skip for now</Button>}
-        {githubConnected && <Button type="button" variant="ghost" onClick={() => setStep("select")}>Back to repositories</Button>}
       </div>
     </>;
   }
@@ -296,12 +279,11 @@ export default function Connect() {
     </span>
     <section className="setup" aria-labelledby="setup-title" aria-busy={busy}>
       <h1 id="setup-title">Set up Triage</h1>
-      <p className="setup-lede">Three steps, then turn triage on for each repository.</p>
+      <p className="setup-lede">Two steps, then turn triage on for each repository.</p>
       <OtherWorkspaces />
       <ol className="setup-steps">
         {renderStep(0, "Connect a source", sourceDoneNote, renderCreateBody)}
         {renderStep(1, "Repositories", reposDoneNote, renderRepositoriesBody)}
-        {renderStep(2, "Decision model", "", renderModelBody)}
       </ol>
       <InvitePeople onSetupPage />
     </section>

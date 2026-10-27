@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type PolicyActions, type Step } from "@corbits/triage-contracts";
-import { freshStepId, fromPack, packChanges, savable, setSteps, stepEntries, toPack, validate } from "./pack-draft.ts";
+import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, starterPack, type CheckPack, type CustomCheck, type PolicyActions, type Step } from "@corbits/triage-contracts";
+import { freshStepId, fromPack, packChanges, policyNeedsModel, savable, setSteps, stepEntries, toPack, validate } from "./pack-draft.ts";
 
 const repo = "acme/widgets";
 
@@ -73,5 +73,17 @@ describe("pack draft", () => {
     const row = stored.custom[0]!;
     const emptied = { ...saved, pack: { ...stored, custom: stored.custom.map((item) => (item.id === row.id && item.kind === "model" && item.shape === "is-true" ? { ...item, claim: "" } : item)) } };
     expect(savable(emptied, saved).pack.custom).toEqual(stored.custom);
+  });
+
+  test("a policy needs a model only while a judgement rule is on", () => {
+    const text: CustomCheck = { id: "notes", name: "Notes", group: "pull-request", kind: "text", fields: ["title"], failWhen: "contains", phrases: ["wip"] };
+    expect(policyNeedsModel(emptyPack(repo))).toBe(false);
+    expect(policyNeedsModel(starterPack(repo))).toBe(false);
+    expect(policyNeedsModel(pack({ custom: [text], checks: { "ci-green": { enabled: true } } }))).toBe(false);
+    expect(policyNeedsModel(pack({ custom: [{ ...custom[0]!, enabled: false }] }))).toBe(false);
+    expect(policyNeedsModel(pack({ checks: { focused: { enabled: false } } }))).toBe(false);
+    expect(policyNeedsModel(recommendedPack(repo))).toBe(true);
+    expect(policyNeedsModel(pack({ checks: { focused: { enabled: true } } }))).toBe(true);
+    expect(policyNeedsModel(pack({ custom: [custom[0]!] }))).toBe(true);
   });
 });

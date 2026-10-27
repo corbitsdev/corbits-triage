@@ -1165,9 +1165,6 @@ textarea {
   margin: 0;
 }
 
-/* The form sits between DialogContent and its body and footer, so it carries their column. */
-.key-popup form { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
-
 input[aria-invalid="true"],
 textarea[aria-invalid="true"] {
   border-color: var(--bad);

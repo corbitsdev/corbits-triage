@@ -7,13 +7,13 @@ policy lists for that verdict. It runs as workflows on a stock
 [Interchange](https://github.com/faremeter/interchange) hub, which owns
 identity, grants, credentials, runs and audit.
 
-Nothing runs by default: a repository is triaged only once a decision model is
-saved, someone turns triage on, and its policy has a rule.
+Nothing runs by default. Setup asks for a host connection (a GitHub App or
+Bitbucket Data Center) and nothing else. A decision model is not a hub
+variable, and triage does not start until one is saved in Settings.
 
 ## Get started
 
-You need a GitHub account that can create a GitHub App, an API key for the
-[decision model](docs/DECISION_MODEL.md), and one of:
+You need a GitHub account that can create a GitHub App, and one of:
 
 | Way to run it | Needs | Portal |
 | --- | --- | --- |
@@ -43,8 +43,10 @@ Or by hand:
    this machine's Docker gives the hub control of that Docker, which on Linux
    is root on the machine ([Where sidecars run](docs/SELF_HOST.md#where-sidecars-run)).
 2. **Connect GitHub.** Sign up; the portal shows **Set up Triage**: create the
-   GitHub App, choose repositories, and save a decision model key
-   ([Set up in the portal](docs/SELF_HOST.md#set-up-in-the-portal)).
+   GitHub App, choose repositories, then open Repositories
+   ([Set up in the portal](docs/SELF_HOST.md#set-up-in-the-portal)). Setup does
+   not ask for a decision model. Save one in Settings → Triage
+   ([decision model](docs/DECISION_MODEL.md)); triage starts once it is saved.
 3. **Add a policy file.** Commit `.corbits-triage.yml` to the repository's
    default branch, press **Start a policy file** in the portal to open a pull
    request with starter rules, or give your coding agent the Configure Prompt
@@ -57,10 +59,11 @@ Or by hand:
    Use the corbits-triage-setup skill to write a policy for this repository. Look around first, suggest rules, and ask me what should happen on Pass, Fail and Unsure.
    ```
 
-4. **Turn on triage** for the repository under Repositories. Its open pull
-   requests appear in the Inbox with a verdict, a score and the reasons.
-   Triage posts its comment and verdict label on GitHub; every other action
-   waits for a click in the Inbox until you let Triage take it on its own.
+4. **Turn on triage** for the repository under Repositories. Once a decision
+   model is saved, its open pull requests appear in the Inbox with a verdict,
+   a score and the reasons. Triage posts its comment and verdict
+   label on GitHub; every other action waits for a click in the Inbox until
+   you let Triage take it on its own.
 
 ## Other setup paths
 

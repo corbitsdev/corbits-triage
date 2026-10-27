@@ -32,7 +32,7 @@ Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center on
 
 1. **The portal** is the website you use. This manual is about the portal.
 2. **The hub** is the server that stores your settings, talks to GitHub or Bitbucket and runs the checks. You normally never see it.
-3. **The decision model** is an AI service that answers the judgment questions rules cannot answer from repository data alone, such as "Is this change focused on one thing?" You connect it once in Settings.
+3. **The decision model** is an AI service that answers the judgment questions rules cannot answer from repository data alone, such as "Is this change focused on one thing?" You connect it once in Settings. Triage does not start until it is saved.
 
 ### Code review
 
@@ -74,9 +74,7 @@ Creating an account also creates a **workspace**, the shared space your whole te
 
 ### First-time setup
 
-The first time you sign in to a new workspace, the portal walks you through three steps. The third, the decision model, can wait: press **Skip for now** and add it later.
-
-![The setup screen listing three steps: Connect a source, Repositories and Decision model. The first step offers Create GitHub App, Connect an existing GitHub App instead and Use Bitbucket Data Center instead](images/03.png)
+The first time you sign in to a new workspace, the portal walks you through two steps. It asks for a host connection, a GitHub App or Bitbucket Data Center, and nothing else. A decision model is not part of setup.
 
 1. **Connect a source.** A source is where your pull requests live: GitHub or Bitbucket Data Center. Triage talks to GitHub through a GitHub App. Press **Create GitHub App** and GitHub opens with a prefilled form for you to confirm, then asks which account and repositories the App may see. Pick them and GitHub sends you back to the portal, so one trip covers the first two steps. On a Triage server at a localhost address, GitHub cannot reach it, so the App is created without a webhook and Triage picks up pull requests every five minutes; the setup screen says so. The App's private key is stored on the Triage server and is never shown in the browser. If your organization already has a GitHub App for Triage, expand **Connect an existing GitHub App instead** and enter its App ID, its private key file and its webhook secret; GitHub checks the App ID and key before they are saved. The portal shows the webhook URL you must paste into the App's settings on GitHub. A workspace works with the App on one GitHub account: if the App is installed on more than one, Triage keeps the first account's repositories and asks you to remove the App from the others. A workspace set up before this, with the App on several accounts, must sync its repositories once and keep the App on one account.
 
@@ -85,16 +83,13 @@ The first time you sign in to a new workspace, the portal walks you through thre
    If your team uses Bitbucket Data Center rather than GitHub, expand **Use Bitbucket Data Center instead** and connect your instance as described under [GitHub and Bitbucket Data Center](#github-and-bitbucket-data-center).
 
    ![Use Bitbucket Data Center instead, expanded: the Instance URL and HTTP access token fields, the note on the Corbits Triage user and its permissions, the Download the Corbits Triage avatar link and the Connect button](images/24.png)
-2. **Repositories.** On GitHub, the portal lists the repositories you picked. To change them, or if you connected an existing App, press **Choose repositories on GitHub** (**Choose repositories again** once some are listed) and pick which repositories the App may see. GitHub tells Triage which ones you chose. With Bitbucket Data Center there is nothing to pick: Triage lists every repository the token can see, and you turn triage on for each one under Repositories. Either way they arrive with triage switched off, so nothing runs yet.
-3. **Decision model.** Pick an AI provider from the list, paste the key your provider gave you, and press **Save decision model**. The key is stored in the server's vault and you will not see it again. If your organization runs its own compatible model service, choose **Add my own provider** and enter its address, model name and key. To do this later, press **Skip for now**. Triage does not run without a decision model: the first time you turn triage on for a repository, the portal asks for it in a popup, and **Save and turn on** saves it and turns triage on.
-
-![The setup screen after the first two steps are done: Bitbucket Data Center connected, Turn triage on for each repository in Repositories, and the decision-model choices](images/05.png)
+2. **Repositories.** On GitHub, the portal lists the repositories you picked. To change them, or if you connected an existing App, press **Choose repositories on GitHub** (**Choose repositories again** once some are listed) and pick which repositories the App may see. GitHub tells Triage which ones you chose. With Bitbucket Data Center there is nothing to pick: Triage lists every repository the token can see, and you turn triage on for each one under Repositories. Either way they arrive with triage switched off, so nothing runs yet. Press **Open Repositories** to leave setup.
 
 You can also invite teammates from this screen by expanding **Invite people**, or do it later from Settings.
 
 ### After setup
 
-Once the steps are done or skipped, the portal takes you to Repositories, where triage is still off for every repository. The next section shows how to turn it on, and the one after it shows what you will see.
+Once you press **Open Repositories**, the portal takes you to Repositories, where triage is still off for every repository. The next section shows how to turn it on, and the one after it shows what you will see.
 
 ## Setting up a repository: rules, verdicts and actions
 
@@ -105,6 +100,8 @@ Every repository has its own page under **Repositories** in the menu under your 
 ### Turning triage on
 
 The switch labeled **Triage pull requests in this repository** is the master control. While it is off, Triage ignores the repository entirely and the rest of the page is grayed out. You can turn it on before the policy has any rule: the page then says **Triage is on. It starts once the policy has a rule.** and nothing is checked until it does. Once the policy has a rule, Triage checks every open pull request, and on GitHub it does so again each time a valid policy file is pushed to the default branch. From then on it reacts to each new pull request event as it happens. On GitHub, the link **Triage open pull requests again** re-checks everything that is currently open, which is useful after you change the policy. When the run finishes, each pull request's new result replaces its old one in the inbox. Drafts are skipped until they are marked ready for review; one without a result shows **Draft** and **Draft: Not evaluated** instead of **Not triaged yet** and **Not evaluated**.
+
+When the policy has judgement rules and the workspace has no decision model, the page says **This policy needs a model before its judgement rules can run.** **Add one in Settings** opens Settings → Triage, where you save it. A policy whose rules all run without a model shows no such line, but Triage still does not start on any repository until a model is saved.
 
 ### Bitbucket Data Center repositories
 
@@ -538,7 +535,7 @@ Everything triage needs, top to bottom: its status, where pull requests come fro
 
 ![The top of the Triage section of Settings: Triage is running on 0 of 2 repositories, with Choose repositories](images/22.png)
 
-The first line says how many repositories Triage is running on, with a **Choose repositories** link. Until a decision model is added, it says **Triage needs a decision model before it can run. Add one below.**
+The first line says how many repositories Triage is running on, with a **Choose repositories** link. Until a decision model is added, it says **Triage needs a decision model before it can run. Add one below.** Judgement rules are the ones that use the model. Add it on this page: pick a provider, paste the key and save it. The key is stored in the server's vault and you will not see it again.
 
 #### Which version runs
 
@@ -581,7 +578,7 @@ Lists each connected repository and whether its default branch has a `.corbits-t
 
 ![The Decision model card: Answers your policies' Judgement rules and chooses the verdict, and Judge pull requests with TypeSafe (Jev), Key stored, with Rotate and Remove](images/41.png)
 
-**Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider. It answers your policies' Judgement rules and chooses the verdict.
+**Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider. It answers your policies' Judgement rules and chooses the verdict. Setup does not ask for it. A repository whose policy has judgement rules says it needs a model until you save one here.
 
 The row says **Key stored** or **No key**. With no key, its form is open below it: pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. **Rotate** opens a blank form to replace the key, and **Remove** deletes it after you confirm. Keys are kept in the server's vault and never shown again. When Triage cannot read the saved keys, the row says **Triage could not read the saved keys** with the reason, and shows no form.
 
