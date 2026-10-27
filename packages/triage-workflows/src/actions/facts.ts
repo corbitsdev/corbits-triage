@@ -63,10 +63,11 @@ function policySource(request: Record<string, unknown>): PolicySource | undefine
   return source instanceof type.errors ? undefined : source;
 }
 
-/** The Do kinds the hub's mail says the pr-triage role is granted; only the hub's mail is trusted to grant any. */
-function automaticKinds(trusted: boolean, request: Record<string, unknown> | undefined): ActionKind[] {
+/** The Do kinds the hub's mail says the pr-triage role is granted; only the hub's mail is trusted to grant any. Undefined when that mail names no list, which fails the read. */
+function automaticKinds(trusted: boolean, request: Record<string, unknown> | undefined): ActionKind[] | undefined {
   const kinds = request?.automatic;
-  if (!trusted || !Array.isArray(kinds)) return [];
+  if (!trusted) return [];
+  if (!Array.isArray(kinds)) return undefined;
   return ACTION_KINDS.filter((kind) => kinds.includes(kind));
 }
 
@@ -222,12 +223,12 @@ function fail(reason: string, automatic: ActionKind[]): FactsOutput {
 }
 
 /** The hub could not read the policy, so nothing is triaged and each head the mail names is marked failed with why. */
-function unreadablePolicy(request: Record<string, unknown>, repo: string, reason: string, appLogin: { appLogin?: string }): FactsOutput {
+function unreadablePolicy(request: Record<string, unknown>, repo: string, reason: string, appLogin: { appLogin?: string }, automatic: ActionKind[]): FactsOutput {
   const error = `${POLICY_UNREADABLE}${reason}`;
   const heads = [...mailHeads(request)];
-  if (heads.length === 0) return fail(error, automaticKinds(true, request));
+  if (heads.length === 0) return fail(error, automatic);
   const repoSource = repoSourceOf(request.repoSource);
-  const marked = { automatic: automaticKinds(true, request), ...(repoSource !== "github" && { repoSource }), ...appLogin };
+  const marked = { automatic, ...(repoSource !== "github" && { repoSource }), ...appLogin };
   return { items: heads.map(([number, headSha]) => ({ error, pull: { repo, number, headSha }, ...marked })), batch: Array.isArray(request.items) };
 }
 
@@ -443,11 +444,13 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
     if (!Number.isSafeInteger(limit) || (limit as number) < 1) return fail("facts: history limit must be a positive integer", stamp.automatic);
     return fetchHistory({ host: hostFor("github"), stamp }, repo, limit as number);
   }
-  const granted = automaticKinds(trusted, request);
+  const kinds = automaticKinds(trusted, request);
   const policy = repoPolicy(request?.policy);
-  if (!request || typeof repo !== "string") return fail("facts: input has no repo", granted);
+  if (!request || typeof repo !== "string") return fail("facts: input has no repo", kinds ?? []);
+  if (kinds === undefined) throw new Error("facts: the hub's mail names no automatic grants");
+  const granted = kinds;
   if (!policy.enabled) return fail("Triage is disabled for this repository.", granted);
-  if (trusted && typeof request.policyUnreadable === "string") return unreadablePolicy(request, repo, request.policyUnreadable, appLogin);
+  if (trusted && typeof request.policyUnreadable === "string") return unreadablePolicy(request, repo, request.policyUnreadable, appLogin, granted);
   const rawPack = request.pack ?? request.checkPack;
   if (rawPack === undefined || rawPack === null) return fail(NEEDS_SETUP_REASON, granted);
   let pack: CheckPack;

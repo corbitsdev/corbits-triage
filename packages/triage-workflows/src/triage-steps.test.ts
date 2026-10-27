@@ -114,6 +114,17 @@ describe("facts policy", () => {
     expect(read).toEqual({ items: [{ error: "Triage is disabled for this repository.", automatic: [] }], batch: false });
   });
 
+  test("a hub mail that names no automatic grants fails the read", async () => {
+    function hubMail(request: Record<string, unknown>) {
+      return { headers: { from: "github@acme.test", to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
+    }
+    const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: false } };
+    await expect(readFacts(hubMail(request), () => answering({}, []))).rejects.toThrow("facts: the hub's mail names no automatic grants");
+    await expect(readFacts(hubMail({ ...request, automatic: "labels" }), () => answering({}, []))).rejects.toThrow("facts: the hub's mail names no automatic grants");
+    expect(await readFacts(hubMail({ kind: "pr", prNumber: 8 }), () => answering({}, []))).toEqual({ items: [{ error: "facts: input has no repo", automatic: [] }], batch: false });
+    expect(await readFacts(hubMail({ ...request, automatic: [] }), () => answering({}, []))).toEqual({ items: [{ error: "Triage is disabled for this repository.", automatic: [] }], batch: false });
+  });
+
   test("a missing check pack needs setup and one this deployment can't read says why and stays unsettled, without fetching", async () => {
     const calls: ToolCall[] = [];
     const mail = { kind: "pr", repo: "acme/widgets", prNumber: 8, headSha: "abc", policy: { enabled: true } };
