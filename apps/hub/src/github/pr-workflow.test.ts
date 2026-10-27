@@ -38,6 +38,7 @@ test("only a block on, or a decide other than the actions', needs the PR workflo
   expect(prWorkflowKeys({ decide: decideOf(pack.actions, false) }, pack)).toBeUndefined();
   expect(prWorkflowKeys({ decide: DECIDE }, pack)).toEqual({ decide: DECIDE });
   expect(prWorkflowKeys({ security: { on: true } }, pack)).toEqual({ security: { on: true } });
+  expect(prWorkflowKeys({ "code-review": { on: true }, decide: DECIDE }, pack)).toEqual({ "code-review": { on: true }, decide: DECIDE });
   expect(workflowPart({ "code-review": { on: true, for: ["maintainers"], when: { triage: "pass", paths: ["src/**"], rules: "any" }, clean: { below: "high" }, provider: "anthropic" }, decide: DECIDE })).toEqual({
     codeReview: { on: true, for: ["maintainers"], triage: ["pass"], rules: "any", paths: ["src/**"], clean: { below: "high" }, provider: "anthropic" },
     blocks: ["code-review"],
@@ -58,10 +59,12 @@ test("a pull request carrying the pause label on GitHub starts no run, and one w
   expect(await unread.route(unlabelled)).toEqual(unlabelled);
 });
 
-test("a policy writing its own decide leaves approve and merge to a person; code review alone, or a waiting mail, leaves the job as it is", async () => {
+test("a policy writing its own decide leaves approve and merge to a person; code review alone, with decide derived from its actions, or a waiting mail, leaves the job as it is", async () => {
   const { route } = gate();
+  const pack = { actions: defaultActions() };
+  const derived = prWorkflowKeys({ "code-review": { on: true }, decide: decideOf(pack.actions, true) }, pack);
   expect(await route(job({ decide: DECIDE }))).toMatchObject({ automatic: ["comment"] });
-  for (const sent of [job(undefined), job({ "code-review": { on: true } }), job({ decide: DECIDE }, WAITING_KIND)]) {
+  for (const sent of [job(undefined), job({ "code-review": { on: true } }), job(derived), job({ decide: DECIDE }, WAITING_KIND)]) {
     expect(await route(sent)).toEqual(sent);
   }
 });
