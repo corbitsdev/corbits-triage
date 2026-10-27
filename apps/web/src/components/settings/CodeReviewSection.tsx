@@ -56,6 +56,18 @@ function Place({ place }: { place: CodeReviewPlaceOption }) {
   );
 }
 
+/** Shown until a place is in use, with the setup of the first place in the list, the one recommended. */
+export function CodeReviewPlaceNotice({ place, places }: { place: string | null | undefined; places: CodeReviewPlaceOption[] | undefined }) {
+  if (place !== null) return null;
+  const recommended = places?.[0];
+  return (
+    <div role="status" className="note">
+      <p>Code review needs an isolated place to run.{recommended && <> We recommend <b>{recommended.label}</b>.</>}</p>
+      {recommended && <PlaceSetup place={recommended} />}
+    </div>
+  );
+}
+
 function WhereItRuns({ places }: { places: CodeReviewPlaceOption[] }) {
   return (
     <div className="gcard source" aria-labelledby="code-review-places" role="group">
@@ -80,6 +92,7 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
         <p>Reads each new commit of a pull request for bugs, in the repositories where it is switched on.</p>
       </header>
       <div>
+        <CodeReviewPlaceNotice place={snapshot.codeReviewPlace} places={snapshot.codeReviewPlaces} />
         {snapshot.denied.credentials && <DeniedNotice section="credentials" />}
         <div className="sentences">
           <KeyRow
