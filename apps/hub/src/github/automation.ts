@@ -48,12 +48,6 @@ async function deleteKinds(tx: Tx, tenantId: string, roleId: string, repo: strin
   ));
 }
 
-/** Triage posts its verdict unattended on a repository from the moment it is enabled. */
-export async function grantEnabledKinds(tx: Tx, tenantId: string, repo: string, source: RepoSource, stamp: Date): Promise<void> {
-  const roleId = await requireTriageRole(tx, tenantId);
-  for (const kind of postingKinds(source)) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);
-}
-
 /**
  * The pr-triage role holds exactly `wanted` on the enabled repository, posting included: only missing kinds are
  * inserted and only the others deleted, so the same policy read again touches no row.
@@ -64,6 +58,14 @@ export async function grantWanted(tx: Tx, tenantId: string, repo: string, source
   const kinds = hostKinds(source).filter((kind) => wanted.includes(kind) || postingKinds(source).includes(kind));
   await deleteKinds(tx, tenantId, roleId, repo, ACTION_KINDS.filter((kind) => !kinds.includes(kind)));
   for (const kind of kinds) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);
+}
+
+/**
+ * Triage posts its verdict unattended on a repository from the moment it is enabled, and nothing else until a policy
+ * read grants it: a grant left from before the repository was last switched off does not come back.
+ */
+export async function grantEnabledKinds(tx: Tx, tenantId: string, repo: string, source: RepoSource, stamp: Date): Promise<void> {
+  await grantWanted(tx, tenantId, repo, source, [], stamp);
 }
 
 /** Every kind the pr-triage role holds on the repository, so enabling it again starts from the enabled kinds. */

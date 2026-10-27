@@ -72,6 +72,8 @@ test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its k
     expect(await automation.automaticKinds(TENANT, REPO)).toEqual(["labels", "comment"]);
     await store(off);
     expect(await automation.automaticKinds(TENANT, REPO)).toEqual([]);
+    // A grant left on a switched-off repository, as one from before grants followed the policy, does not come back on enable.
+    await db.transaction((tx) => allowRole(tx, TENANT, role!.id, doResource("merge", REPO), DO_GRANT_ACTION, new Date()));
     await store({ ...off, enabled: true });
     expect(await automation.automaticKinds(TENANT, REPO)).toEqual(["labels", "comment"]);
     await store(undefined);
