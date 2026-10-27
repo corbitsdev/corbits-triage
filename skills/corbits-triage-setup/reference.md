@@ -101,7 +101,7 @@ A step may add `when`, and every condition in it must hold.
 - `ci`: list of `passing`, `failing`, `pending`, `none`.
 - `files` / `lines`: `{ over: N, atMost: M }`, either or both, `atMost` more than `over`.
 
-Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person in the Inbox. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. An `onFail: label` rule's label is added the same way, as an Add labels action. On Bitbucket Data Center, `labels` and `assign` have no effect (an `onFail: label` rule only adds its note), `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
+Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person on Triage. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. An `onFail: label` rule's label is added the same way, as an Add labels action. On Bitbucket Data Center, `labels` and `assign` have no effect (an `onFail: label` rule only adds its note), `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
 
 ## Labels
 

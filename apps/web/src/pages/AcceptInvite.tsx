@@ -42,7 +42,7 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
       if (!(await hasSignInMethod()) && (await getAuthMethods()).passwordReset) {
         warn("No password is set on this account. Use Reset password on the sign-in page to set one.");
       }
-      await openWorkspace(tenantId, "/inbox");
+      await openWorkspace(tenantId, "/");
     } catch (cause: unknown) {
       if (cause instanceof ApiError && cause.code === "email_unverified") setUnverified(true);
       else setRefusal(errorText(cause));

@@ -27,9 +27,11 @@ How to use the portal, screen by screen, is in the
 
 ## What you see
 
-- **Inbox**: open pull requests across repositories with triage on, in three
-  views, **Needs you**, **Ready** (passed on the latest commit, CI passed, no
-  conflicts, oldest first) and **All open**. A row is a state mark and the
+- **Triage**: the page you land on after you sign in (a workspace with no
+  repositories lands on **Repositories**). One list, with **Needs you**,
+  **Waiting**, **Ready** (passed on the latest commit, CI passed, no conflicts,
+  oldest first), **Open** and **All** (every open pull request across the repositories
+  Triage runs on). A row is a state mark and the
   title, then the number (with the repository's name unless grouped by
   repository), a short status, the author when grouped by repository, and its
   age. Each opens a reading pane: the status line, which says what the bar's
@@ -39,9 +41,9 @@ How to use the portal, screen by screen, is in the
   the description, and folded rows for the linked issue, the changed files and
   the rules that passed (**Checked and fine**). A bar at the bottom offers the
   next step; merging from the portal is pinned to the commit Triage checked.
-  Pull requests waiting on the author, on CI or on Triage, and drafts, sit
-  behind **Waiting**.
-- **Pulse**: what changed since your last visit and what is stuck.
+  Without a decision model, a card at the top links to Settings → Triage to add one. After
+  a policy file is merged, a card at the top names actions the policy
+  wants that are not allowed yet.
 - **Repositories**: per repository, the triage switch and **Triage open pull
   requests again**, its policy file read back as sentences, where code review
   runs when the server has no place for it (the policy file turns code review
@@ -222,7 +224,7 @@ actions:
 
 Actions of the kinds Triage's own `pr-triage` role holds run during triage,
 allowed per repository on its page, where one approval allows every kind its
-policy uses; the rest wait in the Inbox for a person whose role holds that
+policy uses; the rest wait on Triage for a person whose role holds that
 kind. Turning triage on for a repository lets
 Triage post its comment and verdict label there; everything else waits until
 you allow it. Close never runs on its own on Unsure, and merge never on
@@ -241,7 +243,7 @@ When the policy depends on CI (CI green is on, a step has a `ci` condition, or
 a step approves or merges), Triage waits for CI to finish on the head, or for
 its first check to fail, before it triages it. A head with no checks after 2
 minutes is taken as having no CI, and none waits longer than an hour; a run by
-hand does not wait. Meanwhile the Inbox shows **Waiting for CI**. On GitHub a
+hand does not wait. Meanwhile Triage shows **Waiting for CI**. On GitHub a
 pull request labelled `Triage: Not Ready` or `Triage: Needs Human Review`
 keeps it, so a push that leaves the verdict as it was changes no label; any
 other shows `Triage: Waiting for CI` until the verdict replaces it, or no
@@ -289,7 +291,7 @@ through a long GitHub outage it waits out a bounded number of retries and is
 triaged on its next event. The `code-review` block runs a review whatever
 `provider` it names. `security`, `deslop` and `pace` are accepted and run nothing. `decide`
 is not carried out. A file that turns a block on, or writes its own `decide`,
-holds approve and merge for a person in the Inbox. `decide` replaces `actions`,
+holds approve and merge for a person on Triage. `decide` replaces `actions`,
 so a file holds one or the other, and a file that uses `extends` holds none of
 these keys.
 

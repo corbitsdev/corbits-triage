@@ -40,10 +40,10 @@ function customText(row: CustomCheck): string {
   return row.kind === "model" && row.shape === "is-true" ? row.claim : customSentence(row);
 }
 
-const WAITS = " (waits for you in the Inbox)";
+const WAITS = " (waits for you on Triage)";
 
 /**
- * One line of the verdict Triage posts before any step. Posting it from the Inbox writes only the comment and its
+ * One line of the verdict Triage posts before any step. Posting it from Triage writes only the comment and its
  * labels, so a label waits there only beside a waiting comment, and a build status never does.
  */
 function postText(pack: CheckPack, source: RepoSource, verdict: VerdictWord, kind: ActionKind, allowed: (kind: ActionKind) => boolean): string {

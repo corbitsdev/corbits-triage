@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CheckResult, PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
-import { allOpen, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, listCounts, needsYou, notPostedText, postedLabel, primaryAction, readyToMerge, waitingOnOthers, waitsOn, waitsOnIn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, notPostedText, postedLabel, primaryAction, readyToMerge, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -148,7 +148,7 @@ describe("requested changes", () => {
 
   test("leave Needs you and wait on the author until the verdict sees an answer", () => {
     expect(groupInbox([reviewed], READY).groups).toEqual([]);
-    expect(listCounts(entries(reviewed), READY)["needs-you"]).toBe(0);
+    expect(needsYouCount(entries(reviewed), READY)).toBe(0);
     expect(waitsOn(reviewed, null)).toBe("author");
   });
 
@@ -165,18 +165,18 @@ describe("requested changes", () => {
 
   test("a pending approval keeps it in Needs you", () => {
     const pending = { ...reviewed, pendingApprovalId: "a1" };
-    expect(listCounts(entries(pending), READY)["needs-you"]).toBe(1);
+    expect(needsYouCount(entries(pending), READY)).toBe(1);
     expect(waitsOn(pending, null)).toBe("maintainer");
   });
 
   test("a held action keeps it in Needs you until it is approved, refused or skipped", () => {
     const action = { list: "fail", index: 0, effectId: "e", kind: "request-changes", reason: "Size failed.", target: { body: "Split this." }, held: true } as const;
     const held = { ...reviewed, posted: true, actions: [action] };
-    expect(listCounts(entries(held), READY)["needs-you"]).toBe(1);
-    expect(listCounts(entries({ ...held, actions: [{ ...action, status: "failed" }] }), READY)["needs-you"]).toBe(1);
-    expect(listCounts(entries({ ...held, actions: [{ ...action, status: "done" }] }), READY)["needs-you"]).toBe(0);
-    expect(listCounts(entries({ ...held, actions: [{ ...action, status: "skipped" }] }), READY)["needs-you"]).toBe(0);
-    expect(listCounts(entries(withoutDecidedDos(held, new Set(["e"]), new Set())), READY)["needs-you"]).toBe(0);
+    expect(needsYouCount(entries(held), READY)).toBe(1);
+    expect(needsYouCount(entries({ ...held, actions: [{ ...action, status: "failed" }] }), READY)).toBe(1);
+    expect(needsYouCount(entries({ ...held, actions: [{ ...action, status: "done" }] }), READY)).toBe(0);
+    expect(needsYouCount(entries({ ...held, actions: [{ ...action, status: "skipped" }] }), READY)).toBe(0);
+    expect(needsYouCount(entries(withoutDecidedDos(held, new Set(["e"]), new Set())), READY)).toBe(0);
   });
 });
 
@@ -233,10 +233,10 @@ describe("All open", () => {
     expect(allOpen(open, new Set())).toEqual([]);
   });
 
-  test("Needs you and All open count only repositories with triage enabled", () => {
-    expect(listCounts(open, READY)).toEqual({ "needs-you": 1, ready: 0, "all-open": 3 });
-    expect(listCounts(open, new Set())).toEqual({ "needs-you": 0, ready: 0, "all-open": 0 });
-    expect(listCounts([], READY)).toEqual({ "needs-you": 0, ready: 0, "all-open": 0 });
+  test("Needs you counts only repositories with triage enabled", () => {
+    expect(needsYouCount(open, READY)).toBe(1);
+    expect(needsYouCount(open, new Set())).toBe(0);
+    expect(needsYouCount([], READY)).toBe(0);
   });
 
   test("Waiting lists every open pull request outside Needs you, each with what it waits on", () => {
@@ -256,7 +256,7 @@ describe("All open", () => {
       ["acme/widgets#6", "ci"],
     ]);
     expect(needsYou(waiting, READY).filter((entry) => inNeedsYou(entry.item)).map((entry) => entry.item.key)).toEqual(["acme/widgets#1", "acme/widgets#7", "acme/widgets#8", "acme/widgets#9", "acme/off#10"]);
-    expect(listCounts(waiting, READY)["needs-you"] + waitingOnOthers(waiting, READY).length).toBe(allOpen(waiting, READY).length);
+    expect(needsYouCount(waiting, READY) + waitingOnOthers(waiting, READY).length).toBe(allOpen(waiting, READY).length);
   });
 
   test("an untriaged pull request in a repository that is not set up waits on its setup", () => {
@@ -287,7 +287,14 @@ describe("Ready", () => {
       passed(8, { key: "acme/off#8", repo: "acme/off" }),
     ];
     expect(readyToMerge(open, READY).map((entry) => entry.item.number)).toEqual([2, 1]);
-    expect(listCounts(open, READY).ready).toBe(2);
+  });
+
+  test("All keeps a pull request merged here, and like the other views only repositories with triage enabled", () => {
+    const open = [passed(1, {}), passed(2, { waitingSince: "2026-10-02T00:00:00.000Z" })];
+    const known = [...open, { item: item({ key: "acme/widgets#9", number: 9 }), handled: { kind: "merge" as const } }, passed(10, { key: "acme/off#10", repo: "acme/off" })];
+    expect(entriesFor("ready", open, known, READY).map((entry) => entry.item.number)).toEqual(readyToMerge(open, READY).map((entry) => entry.item.number));
+    expect(entriesFor("all-open", open, known, READY)).toEqual(allOpen(open, READY));
+    expect(entriesFor("all", open, known, READY).map((entry) => entry.item.number)).toEqual([1, 2, 9]);
   });
 
   test("a pass the host would not merge leaves Ready and Merge for where it gets unblocked", () => {
@@ -298,5 +305,28 @@ describe("Ready", () => {
       ["unblock", [3]],
       ["merge", [1]],
     ]);
+  });
+});
+
+describe("Triage address", () => {
+  test("Needs you has no filter, and Ready, Open and All are search filters", () => {
+    expect(triageView(new URLSearchParams())).toBe("needs-you");
+    expect(triageView(new URLSearchParams("view=ready"))).toBe("ready");
+    expect(triageView(new URLSearchParams("view=open"))).toBe("all-open");
+    expect(triageView(new URLSearchParams("view=all"))).toBe("all");
+    expect(triageView(new URLSearchParams("view=nope"))).toBe("needs-you");
+    expect(withTriageView(new URLSearchParams("waiting=1&repo=acme"), "ready").toString()).toBe("repo=acme&view=ready");
+    expect(withTriageView(new URLSearchParams("waiting=1"), "needs-you").toString()).toBe("");
+    expect(withTriageView(new URLSearchParams("view=all&repo=acme"), "needs-you").toString()).toBe("repo=acme");
+  });
+
+  test("the old list addresses open the same pull request on Triage", () => {
+    expect(legacyTriageTarget("/pulse", "")).toBe("/");
+    expect(legacyTriageTarget("/inbox", "?waiting=1")).toBe("/?waiting=1");
+    expect(legacyTriageTarget("/inbox/acme/widgets/4", "")).toBe("/pr/acme/widgets/4");
+    expect(legacyTriageTarget("/ready", "")).toBe("/?view=ready");
+    expect(legacyTriageTarget("/ready/acme/widgets/4", "?repo=acme")).toBe("/pr/acme/widgets/4?repo=acme&view=ready");
+    expect(legacyTriageTarget("/open/acme/widgets/4", "")).toBe("/pr/acme/widgets/4?view=open");
+    expect(legacyTriageTarget("/settings", "")).toBeNull();
   });
 });

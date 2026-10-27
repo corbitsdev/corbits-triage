@@ -24,17 +24,8 @@ export function ExternalIcon() {
 export function CheckIcon() {
   return <Icon><path d="m3 8.5 3 3 7-7" /></Icon>;
 }
-export function PulseIcon() {
-  return <Icon><path d="M1.5 8.5h3l1.5-4 3 8 1.5-4h4" /></Icon>;
-}
 export function InboxIcon() {
   return <Icon><path d="M2 9.5 4 3h8l2 6.5V13H2zM2 9.5h3.5l1 1.5h3l1-1.5H14" /></Icon>;
-}
-export function ListIcon() {
-  return <Icon><path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.5M2.5 8h.5M2.5 12h.5" /></Icon>;
-}
-export function MergeIcon() {
-  return <Icon><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="8" r="1.5" /><path d="M4.5 5v6M4.5 5c0 2.5 2 3 5.5 3" /></Icon>;
 }
 export function RepoIcon() {
   return <Icon><path d="M3.5 2.5h9v11h-9zM6 2.5v11" /></Icon>;

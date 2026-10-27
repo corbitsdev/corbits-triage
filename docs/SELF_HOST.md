@@ -214,7 +214,7 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
    (requests go to it + `/systemone`), model and key. Saving it makes the hub
    publish and start the triage workflows; triage is live once that
    finishes. Open pull requests are triaged, then every new pull request
-   event. Verdicts appear in the Inbox.
+   event. Verdicts appear on Triage.
 
 ## Configuration
 
