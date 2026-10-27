@@ -2,13 +2,15 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
 import { Button, Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
-import { BUILT_IN_CHECK_NAMES, isCatalogId, type CheckPack } from "@corbits/triage-contracts";
+import { BUILT_IN_CHECK_NAMES, DO_GRANT_ACTION, doResource, isCatalogId, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
 import { errorText } from "@corbits/common";
 import { linearIssues } from "../lib/linked-issue.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
 import { heldText, lineText, passedChecks, type HeldChoice, type PaneStatus, type Problem, type Severity } from "../lib/pane-report.ts";
+import { heldOffer } from "../lib/pending-dos.ts";
+import { useAllowed } from "../lib/tenant-entities.ts";
 import { checkMeasuredText, prHref } from "../lib/triage-view.ts";
 import { CitedEvidence } from "./CitedEvidence.tsx";
 import { DetailsBoundary } from "./DetailsBoundary.tsx";
@@ -48,22 +50,36 @@ export function StatusLine({ status }: { status: PaneStatus }) {
   );
 }
 
-type HeldActionsProps = { held: HeldChoice[]; doBlocked: boolean; onApprove: (choice: HeldChoice) => void; onHide: (() => void) | null };
+type HeldRowProps = { choice: HeldChoice; disabled: boolean; onApprove: (choice: HeldChoice, always: boolean) => void };
 
-/** Each held action under the status line, with why it is held and its approve button; Hide for me hides them in this browser. */
+/** One held action, run once as the person or, by one who may manage grants, left to Triage in this repository from now on. */
+function HeldRow({ choice, disabled, onApprove }: HeldRowProps) {
+  const { pending } = choice;
+  const holdsDo = useAllowed(doResource(pending.kind, pending.ref.repo), DO_GRANT_ACTION);
+  const createsGrants = useAllowed("grant:*", "create");
+  const offer = heldOffer(pending, { holdsDo, createsGrants });
+  return (
+    <li>
+      <span className="held-what">
+        {heldText(pending)}
+        {pending.until === null ? <span className="held-why">{pending.reason}</span> : null}
+      </span>
+      {offer.doIt && <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onApprove(choice, false)}>Do it</Button>}
+      {offer.always && <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onApprove(choice, true)}>Always, in this repository</Button>}
+    </li>
+  );
+}
+
+type HeldActionsProps = { held: HeldChoice[]; doBlocked: boolean; onApprove: (choice: HeldChoice, always: boolean) => void; onHide: (() => void) | null };
+
+/** Each held action under the status line, with why it is held and how it may run; Hide for me hides them in this browser. */
 export function HeldActions({ held, doBlocked, onApprove, onHide }: HeldActionsProps) {
   if (held.length === 0) return null;
   return (
     <div className="held">
       <ul aria-label="Held actions">
         {held.map((choice) => (
-          <li key={choice.pending.key}>
-            <span className="held-what">
-              {heldText(choice.pending)}
-              {choice.pending.until === null ? <span className="held-why">{choice.pending.reason}</span> : null}
-            </span>
-            <Button type="button" variant="outline" size="sm" disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onClick={() => onApprove(choice)}>Approve</Button>
-          </li>
+          <HeldRow key={choice.pending.key} choice={choice} disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onApprove={onApprove} />
         ))}
       </ul>
       {onHide === null ? null : <Button type="button" variant="ghost" size="sm" onClick={onHide}>Hide for me</Button>}

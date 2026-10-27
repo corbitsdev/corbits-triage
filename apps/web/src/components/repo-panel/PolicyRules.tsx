@@ -50,7 +50,7 @@ function postText(pack: CheckPack, source: RepoSource, verdict: VerdictWord, kin
   if (kind === "labels") {
     const label = `Label “${pack.labels[verdict]}”`;
     if (allowed("labels")) return label;
-    return allowed("comment") ? `${label} (not added until you allow labels)` : `${label}${WAITS}`;
+    return allowed("comment") ? `${label} (not added: Triage may not add labels here)` : `${label}${WAITS}`;
   }
   return allowed("comment") ? `${doName(source, "comment")} with the verdict` : `Comment with the verdict${WAITS}`;
 }

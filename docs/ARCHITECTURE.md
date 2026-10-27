@@ -651,6 +651,21 @@ the host already shows it; a close, merge, comment or review is refused once
 the head has moved. The hub reads the approval run's outcome back onto the
 verdict that held it.
 
+"Always, in this repository" on a held action approves it as above, then calls
+`POST /api/integrations/triage-automation/:tenantId` with `{ repo, source,
+kind }` (`apps/hub/src/github/triage-automation.ts`). The route checks the
+caller's stock `create` on `grant:*`, refuses a kind the host cannot write
+(`hostKinds`), and, reading the tenant row under a share lock so a repository
+switched off meanwhile loses the grant with its others, requires an enabled
+record of that source. It builds `triage-do:<kind>:<repo>` itself and gives it
+to the `pr-triage` role with `allowRole`, so the portal never names a role or a
+grant resource, and answers the repository's `automatic` kinds. Other held
+actions of that kind stay as recorded; the next pass of each pull request's
+manager is mailed the kind as automatic and runs it. Settings lists those kinds
+per repository and, only while `corbitsTriage.automation` is `ask`, removes one
+through the stock grant delete route by grant id; otherwise the next policy
+read would grant it again.
+
 Every step but the judge is a deterministic `action`. Facts, mirror and
 execute reach the pull request's host through its credential, bound to each
 of those action handlers (`credentialBindings` with `action: <handler>`):

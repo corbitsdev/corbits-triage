@@ -9,7 +9,7 @@ import type { DB } from "@intx/db";
 import { getLogger } from "@intx/log";
 import { honoLogger, type HonoContext } from "@intx/log/hono";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyPatchResponse, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, REPO_SOURCES, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyPatchResponse, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, MAX_MERGE_STATES, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, TriageAutomated, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { CODE_REVIEW_PATH, CodeReviewQueued, CodeReviewRunBody } from "../code-review.js";
@@ -28,6 +28,7 @@ import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 import { PolicyExportBody, PolicyFileBody, PolicyPatchBody, PolicyPushBody } from "../github/policy-file.js";
 import { PolicyPreviewBody, PolicyQuery } from "../github/policy-read.js";
 import { BacklogBody } from "../github/backlog-triage.js";
+import { AutomationBody, TRIAGE_AUTOMATION_PATH } from "../github/triage-automation.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
@@ -70,6 +71,7 @@ export type IntegrationHandlers = {
   prActions: BodyHandler<typeof ActionBody.infer>;
   bitbucketCodeReviewSend: BodyHandler<typeof CodeReviewSendBody.infer>;
   heldDos: BodyHandler<typeof HeldDoBody.infer>;
+  triageAutomation: BodyHandler<typeof AutomationBody.infer>;
   prTriage: BodyHandler<typeof TriageBody.infer>;
   policyRead: BodyHandler<typeof PolicyQuery.infer>;
   policyPreview: BodyHandler<typeof PolicyPreviewBody.infer>;
@@ -382,6 +384,27 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     body(HeldDoBody),
     function heldDos(c) {
       return handlers.heldDos(c.req.valid("json"), memberOf(c));
+    },
+  );
+
+  app.post(
+    `${TRIAGE_AUTOMATION_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Let Triage do one kind of action on its own in a repository",
+      description: "Needs stock `create` on `grant:*`, and the repository enabled on `source`. Gives the workspace's pr-triage role `invoke` on `triage-do:<kind>:<owner/name>`, at most once however often it is asked, and answers what Triage now does on its own there. Held Dos already recorded stay held until the next triage pass on their pull request, which finds the kind automatic and runs it. The kinds a host cannot write are refused: Bitbucket Data Center has no `labels` or `assign`.",
+      tags: TAGS,
+      responses: {
+        200: json("What Triage does on its own in the repository", TriageAutomated),
+        ...invalid,
+        ...failures,
+        409: json("`repo_not_enabled`: the repository is not an enabled one of `source`", Failure),
+        422: json("`kind_not_on_host`: the repository's host has no such action", Failure),
+      },
+    }),
+    member,
+    body(AutomationBody),
+    function triageAutomation(c) {
+      return handlers.triageAutomation(c.req.valid("json"), memberOf(c));
     },
   );
 

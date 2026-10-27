@@ -16,6 +16,7 @@ import { BitbucketDatacenterSource } from "./BitbucketDatacenterSource.tsx";
 import { GithubSource } from "./GithubSource.tsx";
 import { KeyRow } from "./KeyRow.tsx";
 import { PolicyFiles } from "./PolicyFiles.tsx";
+import { TriageAutomation } from "./TriageAutomation.tsx";
 import { TriageVersions } from "./TriageVersions.tsx";
 
 /** The connected hosts without a listener up. */
@@ -119,6 +120,7 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
         <PolicyFiles snapshot={snapshot} />
         <DecisionModel snapshot={snapshot} />
         <AutomationModeCard snapshot={snapshot} />
+        <TriageAutomation snapshot={snapshot} />
       </div>
     </section>
   );

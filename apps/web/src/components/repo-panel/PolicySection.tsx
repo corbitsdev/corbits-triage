@@ -13,7 +13,7 @@ import PolicyEditor from "./PolicyEditor.tsx";
 import PolicyRules from "./PolicyRules.tsx";
 import PolicyStart, { HOST_NAME } from "./PolicyStart.tsx";
 
-/** What Triage may do on its own; nothing when the policy could not be read, as PolicyGrants says. */
+/** What Triage may do on its own; nothing when the policy could not be read. */
 function automaticOf(read: CheckPackArtifact | null | undefined): readonly ActionKind[] {
   return read?.kind === "file" ? read.automatic : [];
 }

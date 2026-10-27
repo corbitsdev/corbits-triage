@@ -39,7 +39,7 @@
 .repos .rp .saved.saving::before { background: transparent; border: 1px solid var(--rule-strong); box-sizing: border-box; }
 .repos .rp .saved.not-saved::before { background: var(--orange); }
 
-/* Triage switch: the one prominent block; everything under it is gated */
+/* Triage switch: the one prominent block */
 .repos .switch-card { display: flex; align-items: center; gap: 16px; margin-top: 10px; padding: 14px 16px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
 .repos .sc-t { flex: 1; display: grid; gap: 2px; justify-items: start; }
 .repos .sc-t label { font-size: 15px; font-weight: 700; cursor: pointer; }
@@ -51,7 +51,6 @@
 .repos .sw.lg::after { content: ""; position: absolute; inset: -9px -6px; }
 .repos .sw.lg > span { width: 20px; height: 20px; }
 .repos .sw.lg[aria-checked="true"] > span { translate: 18px 0; }
-.repos .gated { opacity: 0.35; pointer-events: none; user-select: none; transition: opacity 0.15s; }
 
 .repos .gcard > .sentences:first-child { border-top: 0; }
 .repos .outcomes-card .gcard { margin-top: 8px; }

@@ -4,11 +4,13 @@ import type { DeployedVersions } from "@corbits/triage-contracts";
 import {
   evaluateAccess,
   listApprovals,
+  listGrants,
   listPrincipals,
   listRoles,
   readDeployedVersions,
   type DeployedWorkflow,
   type HubApproval,
+  type HubGrant,
   type HubPrincipal,
   type HubRole,
 } from "./hub-api.ts";
@@ -17,6 +19,7 @@ import {
   ALLOWED_QUERY_KEY,
   APPROVALS_QUERY_KEY,
   DEPLOYED_VERSIONS_QUERY_KEY,
+  GRANTS_QUERY_KEY,
   PRINCIPALS_QUERY_KEY,
   ROLES_QUERY_KEY,
   usePortal,
@@ -84,6 +87,10 @@ export function usePrincipals(): TenantSection<HubPrincipal> {
 
 export function useRoles(): TenantSection<HubRole> {
   return useTenantSection(ROLES_QUERY_KEY, listRoles, DIRECTORY_REFRESH_MS);
+}
+
+export function useGrants(): TenantSection<HubGrant> {
+  return useTenantSection(GRANTS_QUERY_KEY, listGrants, DIRECTORY_REFRESH_MS);
 }
 
 export type DeployedSection = TenantSection<DeployedWorkflow> & { rollouts: DeployedVersions["rollouts"]; sidecar: DeployedVersions["sidecar"] | undefined };

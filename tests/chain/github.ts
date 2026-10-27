@@ -105,6 +105,7 @@ export function fakeGithub() {
       return Response.json(pull.comments.at(-1), { status: 201 });
     }
     if (pull && tail === "/assignees" && method === "POST") return Response.json(pullJson(repo, pull), { status: 201 });
+    if (pull && tail === "/requested_reviewers" && method === "POST") return Response.json({ ...pullJson(repo, pull), requested_reviewers: (body["reviewers"] as string[]).map((login) => ({ login })) }, { status: 201 });
     const edited = /^\/issues\/comments\/(\d+)$/.exec(rest);
     const comment = edited && method === "PATCH" ? [...repo.pulls.values()].flatMap((each) => each.comments).find((row) => row.id === Number(edited[1])) : undefined;
     if (comment) {

@@ -300,6 +300,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-app/{tenantId}": ["put"],
     "/api/integrations/github-actions/{tenantId}": ["post"],
     "/api/integrations/github-held-dos/{tenantId}": ["post"],
+    "/api/integrations/triage-automation/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}/policy": ["get"],
     "/api/integrations/github-triage/{tenantId}/policy/preview": ["post"],

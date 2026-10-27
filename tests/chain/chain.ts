@@ -22,6 +22,7 @@ export const JUDGED = `${OWNER}/judged`;
 export const WAITING = `${OWNER}/waiting`;
 export const PUSHED = `${OWNER}/pushed`;
 export const HELD = `${OWNER}/held`;
+export const ALWAYS = `${OWNER}/always`;
 export const WOKEN = `${OWNER}/woken`;
 export const UNWOKEN = `${OWNER}/unwoken`;
 export const DISCONNECTED = `${OWNER}/disconnected`;
@@ -38,6 +39,7 @@ export const MAX_FILES = "  - check: max-files-changed\n    text: Flag pull requ
 const FOCUSED = "  - check: focused\n    text: Check the change is focused on one thing.\n";
 const CI_GREEN = "  - check: ci-green\n    text: CI must pass before merge.\n";
 const ASSIGN_ON_PASS = "actions:\n  pass:\n    - do: assign\n      target:\n        to: users\n        users:\n          - octocat\n";
+const REVIEW_ON_PASS = "actions:\n  pass:\n    - do: request-review\n      target:\n        to: users\n        users:\n          - hubot\n";
 
 export function policy(rules: string[], extra = ""): string {
   return `rules:\n${rules.map((rule) => `${rule}    reason: The maintainers set it.\n    evidence:\n      - maintainer-stated\n`).join("")}${extra}`;
@@ -80,6 +82,7 @@ export function chainStack() {
     github.addRepo(WAITING, policy([CI_GREEN]));
     github.addRepo(PUSHED, policy([MAX_FILES]));
     github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
+    github.addRepo(ALWAYS, policy([MAX_FILES], REVIEW_ON_PASS));
     github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
     github.addRepo(UNWOKEN, policy([MAX_FILES]));
     github.addRepo(DISCONNECTED, policy([MAX_FILES]));

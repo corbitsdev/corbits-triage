@@ -5,8 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
-import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
+import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageAutomated, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 
 const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
@@ -335,10 +334,10 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
 }
 
 /**
- * `automatic` is what Triage may do on its own in the repository; `wanted` every kind the policy has Triage do there;
- * `mergeRisks` what its automatic approve or merge can let in.
+ * `automatic` is what Triage may do on its own in the repository; `mergeRisks` what its automatic approve or merge
+ * can let in.
  */
-type PolicyKinds = { automatic: ActionKind[]; wanted: ActionKind[]; mergeRisks: MergeRisk[] };
+type PolicyKinds = { automatic: ActionKind[]; mergeRisks: MergeRisk[] };
 /** Read from the repository's policy file; `path` is absent for text not yet in the file, `codeReview` is whether it turns code review on. */
 type FileCheckPack = { kind: "file"; path?: string; pack: CheckPack; codeReview: boolean } & PolicyKinds;
 /** The repository's policy file is refused, so triage runs nothing until it is fixed. */
@@ -349,7 +348,7 @@ function checkPackOf(raw: unknown, repo: string): CheckPackArtifact | null {
   const read = PolicyRead.assert(raw);
   if (read.status === "missing") return null;
   if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
-  const kinds = { automatic: read.automatic, wanted: read.wanted, mergeRisks: read.mergeRisks };
+  const kinds = { automatic: read.automatic, mergeRisks: read.mergeRisks };
   return { kind: "file", ...(read.source.file && { path: read.source.file.path }), pack: readCheckPack(read.pack, repo), codeReview: read.codeReview, ...kinds };
 }
 
@@ -1071,6 +1070,24 @@ export async function listRoles(transport: Transport, tenantId: string): Promise
   return listAll<HubRole>(transport, `/api/tenants/${tid}/roles`);
 }
 
+export async function listGrants(transport: Transport, tenantId: string): Promise<HubGrant[]> {
+  const tid = enc(requireTenantId(tenantId));
+  return listAll<HubGrant>(transport, `/api/tenants/${tid}/grants`);
+}
+
+export async function deleteGrant(transport: Transport, tenantId: string, grantId: string): Promise<void> {
+  const tid = enc(requireTenantId(tenantId));
+  await transport.fetch("DELETE", `/api/tenants/${tid}/grants/${enc(requireId(grantId, "Grant id"))}`);
+}
+
+export type AutomationInput = { repo: string; source: RepoSource; kind: ActionKind };
+
+/** The hub names the grant, so the portal sends only which action in which repository; it answers what Triage now does there on its own. */
+export async function allowTriageAutomation(transport: Transport, tenantId: string, input: AutomationInput): Promise<ActionKind[]> {
+  const body = { ...input, repo: validateRepo(input.repo) };
+  return TriageAutomated.assert(await transport.fetch<unknown>("POST", `/api/integrations/triage-automation/${enc(requireTenantId(tenantId))}`, body)).automatic;
+}
+
 export async function evaluateAccess(
   transport: Transport,
   tenantId: string,
@@ -1082,16 +1099,6 @@ export async function evaluateAccess(
   const pid = enc(requireId(principalId, "Principal id"));
   const result = await transport.fetch<{ effect: string }>("POST", `/api/tenants/${tid}/principals/${pid}/evaluate`, { resource, action });
   return result.effect === "allow";
-}
-
-export async function createGrant(
-  transport: Transport,
-  tenantId: string,
-  input: CreateGrantInput,
-): Promise<HubGrant> {
-  const tid = enc(requireTenantId(tenantId));
-  const body = createGrantBody(input);
-  return transport.fetch<HubGrant>("POST", `/api/tenants/${tid}/grants`, body);
 }
 
 /** Once and standing map to the hub approval scopes. Deny is the reject route. */

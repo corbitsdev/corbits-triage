@@ -14,7 +14,6 @@ import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import CodeReviewCard from "./CodeReviewCard.tsx";
 import OutcomesCard from "./OutcomesCard.tsx";
-import PolicyGrants from "./PolicyGrants.tsx";
 import PolicySection from "./PolicySection.tsx";
 import RemoveRepository from "./RemoveRepository.tsx";
 import RepoByline from "./RepoByline.tsx";
@@ -72,7 +71,6 @@ export default function RepoPanel({ repo, row, live, stats: statsReader, onClose
         <TriageSwitch repo={repo.name} enabled={enabled} triaging={triaging} disabled={locked || switching.isPending} onSwitch={switching.mutate} ruleOn={ruleOn} needsModel={pack !== null && policyNeedsModel(pack)} rerunnable={repo.source === "github"} />
         {switching.error ? <p role="alert" className="error">Could not switch triage. {errorText(switching.error)} <button type="button" className="linkish" onClick={() => switching.mutate(!triaging)}>Try again</button></p> : null}
         {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
-        <div className={triaging ? undefined : "gated"} inert={!triaging}><PolicyGrants repo={repo.name} source={repo.source} disabled={locked} /></div>
         <PolicySection repo={repo.name} source={repo.source} pack={pack} disabled={locked} />
         <CodeReviewCard />
         {stats ? <OutcomesCard outcomes={stats.outcomes} source={repo.source} /> : null}

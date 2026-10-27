@@ -88,6 +88,7 @@ import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, kep
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
+import { createTriageAutomation } from "./github/triage-automation.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { createManagerRuns } from "./github/manager-runs.js";
 import { createSessions } from "./sessions.js";
@@ -830,6 +831,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     log: logJson,
   }),
   heldDos: githubHeldDos,
+  triageAutomation: createTriageAutomation({ db: composition.db, authorize: authorizePortal, automaticKinds: automation.automaticKinds, now, log: logJson }),
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),
   policyPreview: createPolicyPreview({ preview: policyGrants.previewGranted }),

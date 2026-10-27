@@ -80,7 +80,6 @@ function portalValue(current: PortalSnapshot): ReturnType<typeof usePortal> {
     decide: async () => {},
     replaceSecret: async () => {},
     revoke: async () => {},
-    addGrant: async () => {},
     saveInferenceSecret: async () => {},
     saveAnthropic: async () => {},
     removeAnthropic: async () => {},

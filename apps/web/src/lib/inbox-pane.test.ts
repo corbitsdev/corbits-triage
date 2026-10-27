@@ -186,9 +186,12 @@ describe("paneWrite", () => {
     async function approveDo(): Promise<never> {
       throw new Error("a pane write approves no pack Do");
     }
+    async function automate(): Promise<never> {
+      throw new Error("a pane write leaves no kind to Triage");
+    }
     const pr = item(overrides);
     if (pr.number === null) throw new Error("test item needs a number");
-    const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent, approveDo });
+    const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent, approveDo, automate });
     return { calls, outcome };
   }
 

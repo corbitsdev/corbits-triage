@@ -273,6 +273,9 @@ export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>"
   .or({ status: "'missing'" })
   .or({ status: "'invalid'", reason: "string", path: "string" });
 
+/** What Triage does on its own in the repository once a kind is allowed there. */
+export const TriageAutomated = type({ automatic: ActionKinds });
+
 /** Read apart from the policy because it asks GitHub, which the repositories table must not do for every repository. */
 export const PolicyFileRead = type({ file: PolicyFileStatus.or("null") });
 export type PolicyFileRead = typeof PolicyFileRead.infer;

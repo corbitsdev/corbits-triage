@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { browserTimers, createHoldQueue, HOLD_MS, type Notices } from "./held-actions.ts";
-import { useApproveDo } from "./held-dos.ts";
-import type { HeldDoRef, PrGithubWriteInput } from "./hub-api.ts";
+import { useAllowAutomation, useApproveDo } from "./held-dos.ts";
+import type { AutomationInput, HeldDoRef, PrGithubWriteInput } from "./hub-api.ts";
 import type { NumberedItem, PaneDraft, PaneWrite } from "./inbox-pane.ts";
 import { useHandledPulls, useMarkReplySent } from "./open-pulls.ts";
 import { usePortal } from "./portal.tsx";
@@ -35,6 +35,7 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
   const replySent = useMarkReplySent();
   const handledPulls = useHandledPulls();
   const approveDo = useApproveDo();
+  const allowAutomation = useAllowAutomation();
   const [queue] = useState(() => createHoldQueue(browserTimers, HOLD_MS));
   const notices = useSyncExternalStore(queue.subscribe, queue.notices);
   const [restored, setRestored] = useState<Restored>({});
@@ -92,7 +93,10 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
         function approveHeldDo(ref: HeldDoRef) {
           return approveDo(ref, leaving);
         }
-        const outcome = await write.send({ write: leaving ? writeLeaving : writeHeld, replySent, approveDo: approveHeldDo });
+        function automate(input: AutomationInput) {
+          return allowAutomation(input, leaving);
+        }
+        const outcome = await write.send({ write: leaving ? writeLeaving : writeHeld, replySent, approveDo: approveHeldDo, automate });
         if (settles !== null) handledPulls.sent(settles);
         if (!outcome.complete) tellIfAway(outcome.message);
         return outcome;

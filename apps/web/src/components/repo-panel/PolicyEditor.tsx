@@ -4,7 +4,7 @@ import { errorText } from "@corbits/common";
 import type { MergeRisk, PolicyExported, PolicyFileStatus, PolicyPushed, RepoSource } from "@corbits/triage-contracts";
 import { usePolicyEditActions, usePolicyPushAccess } from "../../lib/policy-file.ts";
 import { ExternalIcon } from "../inbox-icons.tsx";
-import { MergeCaution } from "./PolicyGrants.tsx";
+import { MergeCaution } from "./MergeCaution.tsx";
 import { HOST_NAME } from "./PolicyStart.tsx";
 
 type Save = "pull" | "push";

@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
-import { approveHeldDo, type HeldDoRef } from "./hub-api.ts";
+import { checkPackQuery } from "./check-packs.ts";
+import { allowTriageAutomation, approveHeldDo, type AutomationInput, type HeldDoRef } from "./hub-api.ts";
 import { createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
 import { usePortal } from "./portal.tsx";
 
@@ -70,4 +71,16 @@ export function useApproveDo(): (ref: HeldDoRef, leaving: boolean) => Promise<vo
     if (tenantId === undefined) throw new Error("The workspace is not loaded yet.");
     await approveHeldDo(leaving ? createLeavingHubTransport() : createHubTransport(), tenantId, ref);
   }, [tenantId]);
+}
+
+/** Triage does the kind on its own in the repository from now on; the repository's policy is read again to show it. */
+export function useAllowAutomation(): (input: AutomationInput, leaving: boolean) => Promise<void> {
+  const { snapshot } = usePortal();
+  const queryClient = useQueryClient();
+  const tenantId = snapshot?.workspace.tenantId;
+  return useCallback(async function allowAutomation(input: AutomationInput, leaving: boolean) {
+    if (tenantId === undefined) throw new Error("The workspace is not loaded yet.");
+    await allowTriageAutomation(leaving ? createLeavingHubTransport() : createHubTransport(), tenantId, input);
+    await queryClient.invalidateQueries({ queryKey: checkPackQuery(tenantId, input.repo, input.source).queryKey });
+  }, [queryClient, tenantId]);
 }

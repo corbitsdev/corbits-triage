@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
 import {
-  createGrant,
   ensureWorkspace,
   ensureHookCredential,
   GITHUB_HOOK_CREDENTIAL_NAME,
@@ -364,37 +363,6 @@ describe("patchAppConfig CAS", () => {
     };
     await expect(patchAppConfig(transport, "tenant", (current) => current)).rejects.toBeInstanceOf(ApiError);
     expect(patches).toBe(8);
-  });
-});
-
-describe("access grant transport", () => {
-  test("createGrant posts an allow grant with origin role, never system", async () => {
-    const posted: unknown[] = [];
-    const transport: Transport = {
-      fetch: async (method, path, body) => {
-        posted.push({ method, path, body });
-        return { id: "grn_2" } as never;
-      },
-      subscribe: () => () => {},
-    };
-    await createGrant(transport, "tenant", {
-      roleId: "rol_owner",
-      resource: "grant:*",
-      action: "manage",
-    });
-    expect(posted).toEqual([
-      {
-        method: "POST",
-        path: "/api/tenants/tenant/grants",
-        body: {
-          roleId: "rol_owner",
-          resource: "grant:*",
-          action: "manage",
-          effect: "allow",
-          origin: "role",
-        },
-      },
-    ]);
   });
 });
 
