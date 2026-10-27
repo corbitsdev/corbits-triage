@@ -1,6 +1,6 @@
 import { schema, type DB } from "@intx/db";
 import { createSidecarCredentialResolver } from "@intx/hub-sessions";
-import { and, eq, isNull, notInArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import type { LocalProcessSidecarProvisioner } from "./local-provisioner.js";
 import type { LocalSidecarHold } from "./manifest-store.js";
 
@@ -26,17 +26,18 @@ export async function restoreLocalSidecars(
   async function hasWork(sidecarId: string): Promise<boolean> {
     return (await credentials.resolveBindings(sidecarId)).length > 0;
   }
-  async function isOpen(allocationId: string): Promise<boolean> {
-    const allocation = await db.query.sidecarAllocation.findFirst({
-      columns: { id: true },
-      where: and(eq(schema.sidecarAllocation.id, allocationId), notInArray(schema.sidecarAllocation.status, ["released", "failed"])),
-    });
-    if (allocation !== undefined) return true;
-    const probe = await db.query.workflowProbe.findFirst({
-      columns: { id: true },
-      where: and(eq(schema.workflowProbe.id, allocationId), notInArray(schema.workflowProbe.status, ["succeeded", "failed"])),
-    });
-    return probe !== undefined;
+  async function stillOpen(allocationIds: readonly string[]): Promise<ReadonlySet<string>> {
+    if (allocationIds.length === 0) return new Set();
+    const ids = [...allocationIds];
+    const allocations = await db
+      .select({ id: schema.sidecarAllocation.id })
+      .from(schema.sidecarAllocation)
+      .where(and(inArray(schema.sidecarAllocation.id, ids), notInArray(schema.sidecarAllocation.status, ["released", "failed"])));
+    const probes = await db
+      .select({ id: schema.workflowProbe.id })
+      .from(schema.workflowProbe)
+      .where(and(inArray(schema.workflowProbe.id, ids), notInArray(schema.workflowProbe.status, ["succeeded", "failed"])));
+    return new Set([...allocations, ...probes].map((row) => row.id));
   }
-  await local.restore({ isLive, hasWork, isOpen });
+  await local.restore({ isLive, hasWork, stillOpen });
 }

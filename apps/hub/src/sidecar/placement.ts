@@ -1,7 +1,7 @@
 import { schema, type DB } from "@intx/db";
 import type { SidecarProvisioner, SidecarProvisionerChooser } from "@intx/hub-sessions";
 import type { DeployedVersions } from "@corbits/triage-contracts";
-import { and, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 
 export type CreatePlacementChooserOpts = {
   readonly db: DB["db"];
@@ -34,16 +34,18 @@ export const WAITING_FOR_SLOT = "sidecar_reuse_rejected";
 /** Stock's probe statuses short of an outcome, as its probe store counts them. */
 const ACTIVE_PROBE_STATUSES = ["pending", "provisioning", "probing", "releasing"] as const;
 
-/** A placement refused for room that waits in stock's retry: it holds no slot yet, but takes the next one that frees. */
+/**
+ * A placement refused for room, which stock moves to `replacing` with the code until it tries again: it holds no slot,
+ * its cleanup confirmed since nothing was deployed, but takes the next one that frees.
+ */
 function waitsForSlot(): SQL | undefined {
-  return and(eq(allocation.status, "provisioning"), eq(allocation.failureCode, WAITING_FOR_SLOT));
+  return and(eq(allocation.status, "replacing"), eq(allocation.failureCode, WAITING_FOR_SLOT));
 }
 
-/** An allocation holding an active slot, as stock counts a sidecar's room at placement, less those waiting for one. */
+/** An allocation holding an active slot, as stock counts a sidecar's room at placement. */
 function holdsSlot(): SQL | undefined {
   return or(
-    and(eq(allocation.status, "provisioning"), or(isNull(allocation.failureCode), ne(allocation.failureCode, WAITING_FOR_SLOT))),
-    eq(allocation.status, "allocated"),
+    inArray(allocation.status, ["provisioning", "allocated"]),
     and(inArray(allocation.status, ["replacing", "releasing", "destroy_failed"]), eq(allocation.deploymentCleanupConfirmed, false)),
   );
 }

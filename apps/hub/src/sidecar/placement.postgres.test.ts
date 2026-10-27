@@ -52,7 +52,7 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
 
 let next = 0;
 
-async function deployed(db: Db, on: SidecarProvisioner, status: Status, { deploymentCleanupConfirmed = false, requires = [] as string[], failureCode = null as string | null } = {}): Promise<void> {
+async function deployed(db: Db, on: SidecarProvisioner, status: Status, { deploymentCleanupConfirmed = false, requires = [] as string[], failureCode = null as string | null, generation = 0 } = {}): Promise<void> {
   const id = `run_${String(++next)}`;
   await db.insert(schema.workflowRun).values({ id, anchorRunId: id, definitionId: "wfd_manager", tenantId: TENANT, status: "running" });
   await db.insert(schema.workflowRunLaunchSpec).values({
@@ -76,6 +76,7 @@ async function deployed(db: Db, on: SidecarProvisioner, status: Status, { deploy
     status,
     deploymentCleanupConfirmed,
     failureCode,
+    generation,
     maxDisconnectedMs: 60_000,
   });
 }
@@ -141,7 +142,8 @@ test("probes on the local sidecar take its slots, and placements waiting there f
     await probing(db, sandbox, "probing");
     expect(await localSidecarUsage(db, local, 3)).toEqual({ active: 2, waiting: 0, cap: 3, overflow: 0 });
 
-    await deployed(db, local, "provisioning", { failureCode: WAITING_FOR_SLOT });
+    // What stock writes for a placement refused for room while it waits to try again.
+    await deployed(db, local, "replacing", { failureCode: WAITING_FOR_SLOT, generation: 1, deploymentCleanupConfirmed: true });
     await deployed(db, local, "failed", { failureCode: WAITING_FOR_SLOT });
     expect(await localSidecarUsage(db, local, 3)).toEqual({ active: 2, waiting: 1, cap: 3, overflow: 0 });
     expect(await choose([local, sandbox])).toBe(sandbox);

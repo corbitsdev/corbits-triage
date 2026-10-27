@@ -96,7 +96,17 @@ function nothingElse(): Promise<boolean> {
   return Promise.resolve(false);
 }
 
-const NOTHING_HELD: LocalSidecarRecords = { isLive: nothingElse, hasWork: nothingElse, isOpen: nothingElse };
+async function noneOpen(): Promise<ReadonlySet<string>> {
+  return new Set();
+}
+
+function openOnly(...open: string[]): LocalSidecarRecords["stillOpen"] {
+  return async function stillOpen(allocationIds) {
+    return new Set(allocationIds.filter((allocationId) => open.includes(allocationId)));
+  };
+}
+
+const NOTHING_HELD: LocalSidecarRecords = { isLive: nothingElse, hasWork: nothingElse, stillOpen: noneOpen };
 
 test("restore respawns the sidecar once for the holds still live and drops the rest", async () => {
   const { dataRoot, manifests, spawned, logs, create } = await setup();
@@ -259,7 +269,7 @@ test("a destroy with no hold is fenced across a restart, until stock has ended t
   await before.shutdown();
 
   const after = create();
-  await after.restore({ ...NOTHING_HELD, isOpen: async (allocationId) => allocationId === "a" });
+  await after.restore({ ...NOTHING_HELD, stillOpen: openOnly("a") });
   expect(await after.provisioner.ensure(request("a"))).toMatchObject({ kind: "rejected", code: "generation_destroyed" });
   await after.shutdown();
 
@@ -268,4 +278,19 @@ test("a destroy with no hold is fenced across a restart, until stock has ended t
   expect(await manifests.readFences()).toEqual([]);
   expect((await ended.provisioner.ensure(request("a"))).kind).toBe("accepted");
   await ended.shutdown();
+});
+
+test("each fence write drops the fences of allocations stock has ended", async () => {
+  const { manifests, create } = await setup();
+  const local = create();
+  const open = new Set(["a", "b"]);
+  await local.restore({ ...NOTHING_HELD, stillOpen: async (allocationIds) => new Set(allocationIds.filter((allocationId) => open.has(allocationId))) });
+
+  await local.provisioner.destroy({ allocationId: "a", generation: 1, sidecarId: "sc_a" });
+  expect(await manifests.readFences()).toEqual([{ allocationId: "a", generation: 1, sidecarIds: ["sc_a"] }]);
+  open.delete("a");
+  await local.provisioner.destroy({ allocationId: "b", generation: 1, sidecarId: "sc_b" });
+
+  expect(await manifests.readFences()).toEqual([{ allocationId: "b", generation: 1, sidecarIds: ["sc_b"] }]);
+  await local.shutdown();
 });

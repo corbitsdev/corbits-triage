@@ -464,7 +464,7 @@ test("PostgreSQL: a manager being cancelled is mailed nothing and takes nothing,
   });
 }, 120_000);
 
-async function allocate(db: Db, runId: string, fields: { status: "allocated" | "provisioning"; sidecarId?: string; failureCode?: string }): Promise<void> {
+async function allocate(db: Db, runId: string, fields: { status: "allocated" | "provisioning" | "replacing"; sidecarId?: string; failureCode?: string; generation?: number; deploymentCleanupConfirmed?: boolean }): Promise<void> {
   if (fields.sidecarId !== undefined) {
     await db.insert(schema.sidecar).values({ id: fields.sidecarId, tokenHashSha256: new Uint8Array(32).fill(runId.length), provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest" }).onConflictDoNothing();
   }
@@ -512,7 +512,8 @@ test("PostgreSQL: a manager that waited past five minutes for a slot is timed fr
 test("PostgreSQL: a manager whose placement waits for a free slot keeps the pull request for half an hour", async () => {
   await withDatabase(async function waiting(db) {
     await deployedRun(db, "run_waiting", new Date(Date.now() - 10 * MINUTE));
-    await allocate(db, "run_waiting", { status: "provisioning", failureCode: "sidecar_reuse_rejected" });
+    // What stock writes for a placement refused for room while it waits to try again.
+    await allocate(db, "run_waiting", { status: "replacing", failureCode: "sidecar_reuse_rejected", generation: 1, deploymentCleanupConfirmed: true });
     await claimRun(db, "run_waiting");
     await liveRun(db, "run_next");
     expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });

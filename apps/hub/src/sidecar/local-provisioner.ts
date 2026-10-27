@@ -14,7 +14,7 @@ import type {
 } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
 import { CAPACITY_UNAVAILABLE, shortfall, type HostCapacity } from "./host-capacity.js";
-import type { LocalSidecarHold, LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
+import type { LocalSidecarFence, LocalSidecarHold, LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
 const DATA_DIR_NAME = "sidecar";
@@ -49,8 +49,8 @@ export type LocalSidecarRecords = {
   isLive(hold: LocalSidecarHold & { readonly sidecarId: string }): Promise<boolean>;
   /** Whether the hub still has work on the sidecar, including copies it waits for the sidecar to remove. */
   hasWork(sidecarId: string): Promise<boolean>;
-  /** Whether stock may still ensure this allocation or probe: one it ended is never ensured again. */
-  isOpen(allocationId: string): Promise<boolean>;
+  /** Those of these allocations and probes stock may still ensure: one it ended is never ensured again. */
+  stillOpen(allocationIds: readonly string[]): Promise<ReadonlySet<string>>;
 };
 
 export interface LocalProcessSidecarProvisioner {
@@ -119,6 +119,7 @@ export function createLocalProcessSidecarProvisioner({
   let queue: Promise<void> = Promise.resolve();
   let shutdownPromise: Promise<void> | null = null;
   let host: SidecarProvisionerHost | undefined;
+  let records: LocalSidecarRecords | undefined;
 
   // Every operation runs alone: the sidecar starts once, and the holds file is written whole.
   async function serialize<R, T>(request: R, run: (request: R) => Promise<T>): Promise<T> {
@@ -142,11 +143,19 @@ export function createLocalProcessSidecarProvisioner({
     await manifests.writeHolds(live);
   }
 
-  // The hub never repeats a destroy, so a fence only memory held would let a late ensure through after a restart.
+  // The hub never repeats a destroy, so a fence only memory held would let a late ensure through after a restart. A
+  // fence for an allocation stock ended guards nothing and goes; before restore hands over the records, restore's own
+  // write trims them.
   async function persistFences(): Promise<void> {
-    const fences = [...holds.entries()].flatMap(([allocationId, state]) =>
+    const fenced = [...holds.entries()].flatMap(([allocationId, state]) =>
       state.kind === "destroyed" ? [{ allocationId, generation: state.generation, sidecarIds: [...state.sidecarIds] }] : []);
-    await manifests.writeFences(fences);
+    const open = records === undefined ? undefined : await records.stillOpen(fenced.map((fence) => fence.allocationId));
+    const kept: LocalSidecarFence[] = [];
+    for (const fence of fenced) {
+      if (open === undefined || open.has(fence.allocationId)) kept.push(fence);
+      else holds.delete(fence.allocationId);
+    }
+    await manifests.writeFences(kept);
   }
 
   // One exit takes down every deployment the sidecar hosts, so each is logged.
@@ -286,11 +295,10 @@ export function createLocalProcessSidecarProvisioner({
   }
 
   // Ensure or destroy may reach an allocation before restore does; their outcome wins.
-  async function restoreFences(isOpen: LocalSidecarRecords["isOpen"]): Promise<void> {
+  async function restoreFences(): Promise<void> {
     const stored = await manifests.readFences();
     for (const fence of stored) {
-      if (holds.has(fence.allocationId) || !(await isOpen(fence.allocationId))) continue;
-      holds.set(fence.allocationId, { kind: "destroyed", generation: fence.generation, sidecarIds: fence.sidecarIds });
+      if (!holds.has(fence.allocationId)) holds.set(fence.allocationId, { kind: "destroyed", generation: fence.generation, sidecarIds: fence.sidecarIds });
     }
     if (stored.length > 0) await persistFences();
   }
@@ -303,9 +311,11 @@ export function createLocalProcessSidecarProvisioner({
 
   // A copy whose hold a destroy released is removed only once the sidecar reconnects and the hub undeploys it, so the
   // sidecar comes back for that cleanup too; forgetting it would leave the copy holding a slot for good.
-  async function restoreSidecar({ isLive, hasWork, isOpen }: LocalSidecarRecords): Promise<void> {
+  async function restoreSidecar(restored: LocalSidecarRecords): Promise<void> {
+    const { isLive, hasWork } = restored;
+    records = restored;
     await retireLegacySidecars();
-    await restoreFences(isOpen);
+    await restoreFences();
     const stored = await manifests.read();
     const recorded = await manifests.readHolds();
     if (stored === null) {

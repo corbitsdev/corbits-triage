@@ -280,7 +280,7 @@ function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = MANAGER_STA
   if (run.status === "running") return true;
   const age = now.getTime() - run.createdAt.getTime();
   if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < NEVER_RAN_MS;
-  if (run.allocationStatus === "provisioning" && run.failureCode === WAITING_FOR_SLOT) return age < SLOT_WAIT_MS;
+  if (run.allocationStatus === "replacing" && run.failureCode === WAITING_FOR_SLOT) return age < SLOT_WAIT_MS;
   return age < graceMs;
 }
 
