@@ -10,6 +10,7 @@ import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession 
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
 import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
+import { createOverdueWake, createSupersede } from "./manager-intake.js";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { passRequest, recordEvent, type PullRequestRef } from "./manager-state.js";
@@ -65,13 +66,27 @@ function buildStock(db: Db) {
 
 function ignore(): void {}
 
-function routeDeps(db: Db) {
-  return { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), log: ignore };
+type Woken = { tenantId: string; pr: PullRequestRef; head: string };
+
+/** The hub's wake, recording each pull request it wakes; `listening` false is a workspace with no listener for the host. */
+function waker(woken: Woken[] = [], listening = true) {
+  return async function wake(tenantId: string, pr: PullRequestRef, head: string): Promise<boolean> {
+    if (listening) woken.push({ tenantId, pr, head });
+    return listening;
+  };
 }
 
-function buildHub(db: Db) {
+async function unsuperseded(): Promise<void> {}
+
+type RouteOptions = { log?: (entry: Record<string, unknown>) => void; wake?: ReturnType<typeof waker>; supersede?: (tenantId: string, pr: PullRequestRef) => Promise<void> };
+
+function routeDeps(db: Db, { log = ignore, wake = waker(), supersede = unsuperseded }: RouteOptions = {}) {
+  return { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), log, wake, supersede };
+}
+
+function buildHub(db: Db, deps: RouteOptions = {}) {
   const app = buildStock(db);
-  mountTenantRoutes(app, { ...routeDeps(db), now: () => new Date() });
+  mountTenantRoutes(app, { ...routeDeps(db, deps), now: () => new Date() });
   return app;
 }
 
@@ -162,6 +177,99 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
       expect(await (await post(app, "take", pr, manager)).json()).toMatchObject({ outcome: "pass", events: [{ key: `evt:${pr.source}:${pr.repo}#7:run_reviewer`, event: { type: "reviewer-result", payload: { kind: "code-review", result: REVIEW } } }] });
       expect(await (await post(app, "done", { ...pr, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });
     }
+  });
+}, 60_000);
+
+test("PostgreSQL: a reviewer's result wakes the pull request's manager as a host event does, and one for a head the pull request moved past is dropped and logged", async () => {
+  await withDatabase(async function woken(db) {
+    const woken: Woken[] = [];
+    const logged: Record<string, unknown>[] = [];
+    function log(entry: Record<string, unknown>): void {
+      logged.push(entry);
+    }
+    const app = buildHub(db, { log, wake: waker(woken) });
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
+    await webhook(db, GITHUB);
+    const result = { ...GITHUB, kind: "judge", head: "h1", failed: "the judge did not finish" };
+    expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: true });
+    expect(woken).toEqual([{ tenantId: TENANT, pr: GITHUB, head: "h1" }]);
+
+    await recordEvent(db, TENANT, GITHUB, "pushed", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
+    const late = bearer(await runWithToken(db, "run_late", [RESULT]));
+    expect(await (await post(app, "reviewer-result", result, late)).json()).toEqual({ recorded: false });
+    expect(woken).toHaveLength(1);
+    expect(logged).toEqual([{ level: "info", msg: "reviewer_result_stale", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", current: "h2", runId: "run_late" }]);
+    const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE key LIKE '%:run_late'`);
+    expect(stored!.events).toBe(0);
+
+    const unrouted = buildHub(db, { log, wake: waker([], false) });
+    const quiet = bearer(await runWithToken(db, "run_quiet", [RESULT]));
+    expect(await (await post(unrouted, "reviewer-result", { ...result, head: "h2" }, quiet)).json()).toEqual({ recorded: true });
+    expect(logged.at(-1)).toMatchObject({ level: "warn", msg: "reviewer_result_unrouted", runId: "run_quiet" });
+  });
+}, 60_000);
+
+test("PostgreSQL: a result whose wake fails stays recorded with nothing else, the route answers 502, and a reconcile pass wakes a manager for it once the start grace has passed since it was recorded", async () => {
+  await withDatabase(async function unwoken(db) {
+    const logged: Record<string, unknown>[] = [];
+    function log(entry: Record<string, unknown>): void {
+      logged.push(entry);
+    }
+    async function failingWake(): Promise<boolean> {
+      throw new Error("delivery failed");
+    }
+    const app = buildHub(db, { log, wake: failingWake });
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
+    await webhook(db, GITHUB);
+    await post(app, "take", GITHUB, manager);
+    expect(await (await post(app, "done", { ...GITHUB, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });
+    await db.execute(sql`UPDATE workflow_run SET status = 'completed' WHERE id = 'run_manager'`);
+    const before = await db.execute(sql`SELECT key, state FROM corbits_triage.manager_state WHERE kind = 'claim'`);
+
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
+    const failed = await post(app, "reviewer-result", { ...GITHUB, kind: "judge", head: "h1", failed: "the judge did not finish" }, reviewer);
+    expect(failed.status).toBe(502);
+    expect(await errorCode(failed)).toBe("wake_failed");
+    expect(logged).toEqual([{ level: "error", msg: "reviewer_result_wake_failed", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", runId: "run_reviewer", error: "Error: delivery failed" }]);
+    const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE key LIKE '%:run_reviewer' AND state->>'consumedBy' IS NULL`);
+    expect(stored!.events).toBe(1);
+    expect(await db.execute(sql`SELECT key, state FROM corbits_triage.manager_state WHERE kind = 'claim'`)).toEqual(before);
+
+    const woken: Woken[] = [];
+    const wakeOverdue = createOverdueWake({ db, wake: waker(woken), log });
+    await wakeOverdue(TENANT);
+    expect(woken).toEqual([]);
+    const earlier = new Date(Date.now() - 2 * 60_000 - 1_000).toISOString();
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = jsonb_set(state, '{receivedAt}', to_jsonb(${earlier}::text)) WHERE key LIKE '%:run_reviewer'`);
+    await wakeOverdue(TENANT);
+    expect(woken).toEqual([{ tenantId: TENANT, pr: GITHUB, head: "h1" }]);
+    // The manager that wake deployed has not taken the claim yet, so the next pass does not deploy another.
+    await wakeOverdue(TENANT);
+    expect(woken).toHaveLength(1);
+  });
+}, 60_000);
+
+test("PostgreSQL: done stops a reviewer the pass deployed on a head a push moved past, and takes it off the claim", async () => {
+  await withDatabase(async function supersededMidPass(db) {
+    const cancelled: string[] = [];
+    const { supersede } = createSupersede({
+      db,
+      async cancel(_tenantId, runId) {
+        cancelled.push(runId);
+      },
+      log: ignore,
+    });
+    const app = buildHub(db, { supersede });
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
+    await webhook(db, GITHUB);
+    await post(app, "take", GITHUB, manager);
+    await recordEvent(db, TENANT, GITHUB, "pushed", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
+    const deadline = new Date(Date.now() + 60 * 60_000).toISOString();
+    const deployed = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_manager", deadline };
+    expect(await (await post(app, "done", { ...GITHUB, reviewers: [deployed], wait: true }, manager)).json()).toEqual({ outcome: "more", wait: false });
+    expect(cancelled).toEqual(["run_judge"]);
+    const [claim] = await db.execute<{ state: { reviewers: unknown[] } }>(sql`SELECT state FROM corbits_triage.manager_state WHERE kind = 'claim'`);
+    expect(claim!.state.reviewers).toEqual([]);
   });
 }, 60_000);
 

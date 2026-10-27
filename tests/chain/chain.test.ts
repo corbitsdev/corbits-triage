@@ -24,6 +24,7 @@ const JUDGED = `${OWNER}/judged`;
 const WAITING = `${OWNER}/waiting`;
 const PUSHED = `${OWNER}/pushed`;
 const HELD = `${OWNER}/held`;
+const WOKEN = `${OWNER}/woken`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -61,6 +62,7 @@ beforeAll(async () => {
   github.addRepo(WAITING, policy([CI_GREEN]));
   github.addRepo(PUSHED, policy([MAX_FILES]));
   github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
+  github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
   const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
   database = created;
   hub = await startHub(database, github, portalDir);
@@ -322,4 +324,41 @@ test("a held Do approved through the hub runs once on the pull request", async (
   await until("the assignment", () => github.writesTo(HELD, 1).find((write) => write.path.endsWith("/assignees")));
   await settled(HELD, 1, 2);
   expect(github.writesTo(HELD, 1).filter((write) => write.path.endsWith("/assignees"))).toEqual([expect.objectContaining({ method: "POST", body: { assignees: ["octocat"] } })]);
+});
+
+const woken = once(async function woken() {
+  const head = sha("woken-1");
+  await after(approved);
+  const [before, asked, missed] = [(await managers()).length, model.decisions.length, github.misses.length];
+  const release = model.hold();
+  let releasedAt: Date;
+  let ended: Claim;
+  let first: Awaited<ReturnType<typeof managers>>;
+  try {
+    await pushed(WOKEN, pullOf(1, head));
+    // The judge's answer is held, so its manager mails it, waits out its 30 seconds and ends with the judge still out.
+    ended = await settled(WOKEN, 1);
+    first = (await managers()).slice(before);
+  } finally {
+    releasedAt = new Date();
+    release();
+  }
+  const claim = await settled(WOKEN, 1, ended.history.length + 1);
+  return { head, ended, first, releasedAt, claim, deployed: (await managers()).slice(before), asked: model.decisions.slice(asked).map((row) => row.id), writes: github.writesTo(WOKEN, 1), misses: github.misses.slice(missed) };
+});
+
+test("a manager ends after it mails the judge, and the judge's report wakes a fresh manager through the hub, which posts the verdict", async () => {
+  const { head, ended, first, releasedAt, claim, deployed, asked, writes, misses } = await woken();
+  expect(misses).toEqual([]);
+  expect(ended.status).toBe("ended");
+  expect(first).toHaveLength(1);
+  expect(isLiveDeployment(first[0]!.status)).toBe(false);
+  expect(deployed).toHaveLength(2);
+  expect(deployed[1]!.createdAt.getTime()).toBeGreaterThanOrEqual(releasedAt.getTime() - 1_000);
+  expect(claim).toMatchObject({ status: "ended" });
+  expect(claim.history.at(-1)).toMatchObject({ head, runId: deployed[1]!.id });
+  expect(asked).toContain("focused");
+  expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
+  expect(labelled(writes)).toEqual([VERDICT_LABELS.pass]);
+  expect(await verdictsOf(WOKEN, 1)).toEqual([expect.objectContaining({ run_id: deployed[1]!.id, head_sha: head, run_status: "completed" })]);
 });

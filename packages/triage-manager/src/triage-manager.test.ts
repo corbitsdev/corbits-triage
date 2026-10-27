@@ -4,7 +4,7 @@ import { createActionCredentialsFactory, createCredentialProviderRegistry, creat
 import type { GrantRule } from "@intx/types/authz";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
-import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, WAITING_KIND, WAITING_LABEL, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, VERDICT_LABELS, WAITING_KIND, WAITING_LABEL, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serve";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
@@ -28,8 +28,6 @@ const END = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${RUN}` };
 const DEPLOY = { method: "POST", path: `${TENANT_PATH}/workflows/deployments` };
 const DEPLOYED = "run_deployed";
 const STOP_REVIEW = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` };
-/** A code review an earlier manager deployed, which only that manager may stop. */
-const INHERITED = "run_inherited";
 /** The eval fixture's head. */
 const HEAD = "e0a1".repeat(10);
 
@@ -82,7 +80,7 @@ const allow: WorkflowAuthorizeFn = async function allow() {
 type HubCall = { method: string; path: string; body?: unknown };
 type HubAnswer = Record<string, unknown> | typeof REFUSED;
 
-/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route, which refuses to stop an inherited review. */
+/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route. */
 function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[] }) {
   const calls: HubCall[] = [];
   function answer(next: HubAnswer | undefined): Response {
@@ -94,7 +92,6 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
     calls.push({ method, path: url.pathname, ...(init?.body !== undefined && { body: JSON.parse(String(init.body)) }) });
     if (url.pathname === `${TENANT_PATH}/manager/take`) return answer(takes.shift());
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
-    if (method === "DELETE" && url.pathname === `${TENANT_PATH}/workflows/runs/${INHERITED}`) return Response.json({ error: { code: "forbidden" } }, { status: 403 });
     if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
     if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: DEPLOYED }, { status: 201 });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });
@@ -118,11 +115,19 @@ function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init
 
 const loopFns = (ref: string) => (loops as Record<string, LoopFn>)[ref]!;
 
+/** A clock a minute further on at every reading, so a pass's wait has passed by the time it is timed. */
+function hurried() {
+  let readings = 0;
+  return function clock() {
+    return new Date(Date.now() + ++readings * 60_000);
+  };
+}
+
 /**
  * Runs one mail's body; the mail agent's director runs its one tool, so the mail it would send is recorded and answered
  * `mailed` in the `{ reply, turn }` a live agent step outputs.
  */
-async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers = true) {
+async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers = true, clock?: () => Date) {
   const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the body is not inline");
   const { terminalStatus, outputs } = await runLocal(body.inline, {
@@ -138,6 +143,7 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
     actionCredentials: actionCredentials((definition.credentialBindings ?? []) as Bindings, host, hub),
     loopFns,
     triggerPayload: mail,
+    ...(clock && { clock }),
   }).complete;
   const passes = outputs["passes"] as { iterations: number; final: Record<string, unknown> } | undefined;
   const last = passes?.final ?? outputs;
@@ -243,9 +249,19 @@ describe("triage-manager", () => {
     expect(live.calls).toEqual([TAKE, DONE, TAKE, DONE, END]);
   });
 
+  test("a pass that posted asks the hub to wait, and the pass after the wait, which runs nothing, ends the run", async () => {
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [PASS, IDLE], dones: [{ outcome: "more", wait: true }, ENDED] });
+    const { passes, ran } = await runMail(github, wake(), host, hub.hub, [], true, hurried());
+    expect(passes).toBe(2);
+    expect(ran).toEqual(["approvals", "done", "paused", "poll", "ran", "take"]);
+    expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, false]);
+    expect(hub.calls.at(-1)).toEqual(END);
+  });
+
   test("passes that run out are stopped once, by the run's last step", async () => {
     const { host } = githubHost();
-    const passes = 280;
+    const passes = 40;
     const hub = fakeHub({ takes: Array.from({ length: passes }, () => IDLE), dones: Array.from({ length: passes }, () => MORE) });
     expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes });
     expect(hub.calls.filter((call) => call.method === "DELETE")).toEqual([END]);
@@ -271,20 +287,13 @@ describe("triage-manager", () => {
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
   });
 
-  test("an old review's reply finds nothing for its head, runs no stage 1 and stops the superseded review", async () => {
+  test("an old review's reply finds nothing for its head, runs no stage 1 and leaves the superseded review for the hub to stop", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [{ ...reviewer(), head: "older" }] }], dones: [ENDED] });
     expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["approvals", "done", "paused", "ran", "take"]);
     expect(writes).toEqual([]);
-    expect(hub.calls).toEqual([TAKE, DONE, STOP_REVIEW, END]);
-  });
-
-  test("a review an earlier manager deployed is left to run out its own deadline", async () => {
-    const { host } = githubHost();
-    const inherited = { ...reviewer(), head: "older", runId: INHERITED, deployedBy: "run_earlier" };
-    const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [inherited] }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).terminalStatus).toBe("completed");
     expect(hub.calls).toEqual([TAKE, DONE, END]);
+    expect(doneBody(hub.calls)["wait"]).toBe(false);
   });
 
   test("a pass of an approval alone, before any pull request mail was recorded, runs it and triages nothing", async () => {
@@ -369,7 +378,8 @@ describe("triage-manager with code review", () => {
     expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
-    expect({ ...mail, content: JSON.parse(mail.content) }).toMatchObject({ tenantId: TENANT, to: DEPLOYED, content: { ...REVIEW_REQUEST.codeReviewRequest, tenantId: TENANT, reply: { to: RUN, content: manageMail(TENANT, PULL) } } });
+    expect({ ...mail, content: JSON.parse(mail.content) }).toEqual({ tenantId: TENANT, to: DEPLOYED, readyBy: mail.readyBy, content: { ...REVIEW_REQUEST.codeReviewRequest, tenantId: TENANT } });
+    expect(doneBody(first.calls)["wait"]).toBe(true);
 
     const second = fakeHub({ takes: [reported({ result: REVIEW }, ON)], dones: [ENDED] });
     const { ran } = await runMail(reviewed, wake(), host, second.hub, mailed);
@@ -716,10 +726,11 @@ describe("triage-manager with a judge", () => {
     expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_judge", package: { format: "source", commitSha: "c0ffee", packageName: JUDGE_RELEASE.workflow.packageName } }, entry: JUDGE_RELEASE.workflow.entry, sourceOfferingIds: ["off_d"], defaultSourceOfferingId: "off_d" } });
     expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
-    const content = JSON.parse(mail.content) as { kind: string; rules: MailedRules; reply: { to: string } };
+    const content = JSON.parse(mail.content) as { kind: string; rules: MailedRules };
     expect(content.kind).toBe("judge");
     expect(content.rules.chunks.length).toBeGreaterThan(0);
-    expect(content.reply.to).toBe(RUN);
+    expect(content).not.toHaveProperty("reply");
+    expect(doneBody(first.calls)["wait"]).toBe(true);
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
 
     const verdict = await judgeVerdict(content.rules);
@@ -833,7 +844,7 @@ describe("triage-manager with a judge", () => {
     const { ran } = await runMail(github, wake(), host, hub.hub);
     expect(ran).toContain("mirrorRules");
     expect(ran).not.toContain("deployJudge");
-    expect(writes.length).toBeGreaterThan(0);
+    expect(writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [VERDICT_LABELS.unsure] } }));
     expect(writes).not.toContainEqual(JUDGE_POSTED);
     expect(hub.calls).toEqual(calls);
   });

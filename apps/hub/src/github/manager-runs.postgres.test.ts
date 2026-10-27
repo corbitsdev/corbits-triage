@@ -50,13 +50,14 @@ const pr8: PullRequestRef = { source: "github", repo: REPO, number: 8 };
 
 /** The manager posts a settled verdict on h1 and reports done, recording it as the done route does, in done's transaction. */
 async function reportedDone(db: Db, pr: PullRequestRef, runId: string, now: Date): Promise<void> {
-  const result = await done(db, TENANT, pr, runId, [], { head: "h1", request: { repo: REPO, number: pr.number, labels: [], owned: [], comment: "" } }, async function record(tx, closing) {
+  const report = { head: "h1", request: { repo: REPO, number: pr.number, labels: [], owned: [], comment: "" } };
+  const result = await done(db, TENANT, pr, runId, [], { report, record: async function record(tx, closing) {
     if (!closing) throw new Error("a reporting pass has a closing");
     await replaceVerdict(tx, TENANT, {
       runId, repo: REPO, number: pr.number, headSha: closing.head, startedAt: new Date(closing.startedAt), verdictAt: now, settled: true, state: "ready-monitoring",
       actor: "author", humanGated: false, degraded: null, checks: [], dos: [], commented: true, detail: { headSha: closing.head, checks: [] }, runStatus: "completed",
     });
-  });
+  } });
   if (result.outcome === "refused") throw new Error("done refused the manager the claim names");
 }
 
@@ -90,7 +91,7 @@ test("PostgreSQL: the reconciler does not mail a head again while a live manager
     await reportedDone(db, triaged, "run_triaged", now);
     await mailed(db, held, "h1");
     await take(db, TENANT, held, "run_held");
-    await done(db, TENANT, held, "run_held", [], { head: "h1", waiting: true });
+    await done(db, TENANT, held, "run_held", [], { report: { head: "h1", waiting: true } });
     const firstSeenAt = new Date(now.getTime() - MINUTE).toISOString();
     const fresh: PrTriageRow = { number: 8, headSha: "h1", status: "new", attempts: 0, firstSeenAt, updatedAt: firstSeenAt };
 

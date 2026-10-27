@@ -1,5 +1,4 @@
 import { defineAgent, defineTool } from "@intx/agent";
-import { mailAgentOf } from "@corbits/triage-manager/mail";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 import { githubRead } from "@corbits/github-tool";
 import { repoReadUnder } from "@corbits/repo-read-tool";
@@ -113,7 +112,7 @@ const WRITE_SCHEMA = {
  * The review's agents, each declaring its step's model on the profile's provider and run by the provider's directors;
  * the repository finder reads checkouts under the sidecar data dir `dataDir` names.
  */
-export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolidate, structured, mail }: CodeReviewDirectors, dataDir: () => string) {
+export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolidate, structured }: CodeReviewDirectors, dataDir: () => string) {
   function inference(role: Role) {
     return { sources: [{ provider: profile.provider, model: profile.models[role] }] };
   }
@@ -158,8 +157,6 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
     planAgent: structuredAgent("code-review-plan", "plan", PLAN_SCHEMA),
     checkAgent: structuredAgent("code-review-check", "check", CHECK_SCHEMA),
     writeAgent: structuredAgent("code-review-write", "write", WRITE_SCHEMA),
-    /** Replies to the manager that deployed the review; it makes no model call. */
-    mailAgent: mailAgentOf(mail, inference("write"), { tolerate: false }),
   };
 }
 

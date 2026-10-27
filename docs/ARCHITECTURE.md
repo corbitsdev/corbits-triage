@@ -267,8 +267,8 @@ any other tenant or an unknown sender.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which runs only while it
   has work, and the only workflow that writes to the pull request. It takes
-  mail from the hub (`tenant`), the listener that deployed it (`invoker`) and
-  the judge and the code reviews it mailed (`correspondent`). A mail starts a loop of passes. Each pass
+  mail from the hub (`tenant`) and the listener that deployed it (`invoker`).
+  A mail starts a loop of passes. Each pass
   takes, which claims the pull request and its pending events and answers the
   newest pull request mail the hub recorded. Each held Do approved since runs
   as pr-triage runs an approval, which skips one whose pull request moved past
@@ -284,9 +284,15 @@ any other tenant or an unknown sender.
   the pass ran: the approved Dos' outcomes, a head it held for CI, or the
   verdict it posted as its evaluate, mirror, execute and rules steps output
   it, with the facts the verdict keeps rather than the diff. Each branch that
-  reports one of these has its own done step. Done then answers
-  `ended`, or `more`: the next pass runs at once when an event is pending, or
-  every 30 seconds while it waits for its judge or its code review.
+  reports one of these has its own done step. A pass that posted to the host
+  or mailed a judge or code review asks done to `wait`. Done then answers
+  `more` when an event is pending, and the next pass runs at once; `more` with
+  `wait` after a pass that asked, and the next pass runs once 30 seconds have
+  passed, taking whatever arrived meanwhile; otherwise `ended`. So a manager
+  ends 30 seconds after it last posted or mailed, never waiting out a judge or
+  a code review: their results reach the hub, which wakes the pull request's
+  manager the way a host event does, and the listener deploys a fresh one once
+  the claim has ended.
   Once the passes end, fail or run out, or take finds another run holds the
   claim, the run's last step stops it through the stop-run route under a
   `manage` grant on its own run, so the run is ended once and never keeps
@@ -328,13 +334,37 @@ any other tenant or an unknown sender.
   decided verdict, so a later pass on that head whose rules still let code
   review past posts it with the verdict and deploys no other; a review that
   could not be mailed, reported a failure or ran past its deadline leaves the
-  verdict to go up alone and is deployed again on the next event. Each reviewer the manager records names
-  the manager run that deployed it (`deployedBy`). Done stops each judge or
-  code review this run deployed and no longer waits for, one on an older head
-  or past its deadline, through the same stop-run route;
-  one an earlier manager deployed runs out its own deadline. Stock grants the
+  verdict to go up alone and is deployed again on the next event. Each
+  reviewer keeps its head and deadline on the claim, so whichever manager
+  takes the next pass on that head sees a deadline that passed with no
+  report; it posts the verdict without that reviewer, which for a judge is
+  Needs Human Review and for code review holds approve and merge for a person,
+  and done logs `reviewer_overdue`. The triage reconcile pass, every 5
+  minutes, wakes a manager through `createManagerWake` for each pull request
+  whose manager is not up while a reviewer of its newest head is past its
+  deadline with no result recorded (`createOverdueWake`,
+  `apps/hub/src/manager-intake.ts`), and logs `manager_woken_overdue`. A
+  wake that succeeded is recorded on the claim (`overdueWokenAt`), and the
+  next pass wakes again only once the manager start grace has passed: two
+  minutes when a manager has taken the claim since, thirty while none has, so
+  a manager slow to reach a sidecar is never deployed twice. Each pull request
+  is woken on its own: one whose wake fails is logged as
+  `manager_overdue_wake_failed`, the rest are still woken, and the next pass
+  tries it again. The same pass wakes a pull request whose manager is not up
+  while a reviewer result no pass has taken waits for it, as after the
+  reviewer-result route could not wake one, once two minutes have passed
+  since that result was recorded, so a manager the route's own wake deployed
+  is not deployed again while it starts, and with the same hold after its
+  own overdue wake. So
+  within one pass of the deadline that manager posts the verdict without the
+  reviewer and the pull request needs a person. Each reviewer the manager
+  records names the manager run that deployed it (`deployedBy`). Done stops a
+  judge or code review this run deployed that ran past its deadline on the
+  pass's head, through the same stop-run route. Stock grants the
   deployer `read` on a run it deployed, and the vendored Interchange carries
-  `manage` instead (`vendor/interchange/VENDORED.md`).
+  `manage` instead (`vendor/interchange/VENDORED.md`). A reviewer on an older
+  head is stopped by the hub, which a later manager could not do: see intake
+  below.
   The hub records the verdict done reports as the manager run's, in done's
   transaction (`apps/hub/src/manager-routes.ts`), with the row-building code
   pr-triage's run logs use (`apps/hub/src/github/verdict-row.ts`). The
@@ -355,7 +385,7 @@ any other tenant or an unknown sender.
   sidecar. It takes mail only from that manager and reviews the request.
   Stock runs a step whose dependencies failed, so however the review ended it
   records its `StageResult` through the reviewer-result route (a failure as
-  `failed`), mails the manager a wake-up and stops. It posts nothing to the
+  `failed`), which wakes the pull request's manager, and stops. It posts nothing to the
   pull request. Its definition declares only `create` on
   `triage-manager:result` and `manage` on `workflow-run:self`, sourced from
   its creator: it can report a result and stop itself, and reach no other
@@ -367,12 +397,12 @@ any other tenant or an unknown sender.
   dependencies failed, so however the judge ended it records a `StageResult`
   of kind `judge` through the reviewer-result route: the whole verdict
   evaluate made, its comment, labels, Dos and rule results, or a failure as
-  `failed`. It mails the manager a wake-up and stops. It posts nothing to the
+  `failed`, which wakes the pull request's manager, and stops. It posts nothing to the
   pull request. Its definition declares only `create` on
   `triage-manager:result` and `manage` on `workflow-run:self`, sourced from
   its creator.
-- A run sends mail only through an agent step's transport, so the listener,
-  the manager, the judge and the code review mail through one agent whose
+- A run sends mail only through an agent step's transport, so the listener
+  and the manager mail through one agent whose
   director makes no model call: it runs its one tool, which waits for a
   just-deployed run to reach a sidecar until a deadline and then mails it as
   the sending run.
@@ -594,7 +624,8 @@ only what is missing, and none once the summary stands on either head.
 
 A pull request's latest review (`GET …/code-review`, `code-review-runs.ts`)
 is read from `manager_state`: the newest of the code reviews its claim still
-waits on, shown as running, those the manager gave up on, such as one past its
+waits on, shown as running from the reviewer's own record until it reports or
+its deadline passes, whether or not a manager is up, those the manager gave up on, such as one past its
 deadline, and the results its code reviews reported through the
 reviewer-result route that a pass took or that name a reviewer of the claim. A
 review that did not finish shows as failed; its run log keeps the error.
@@ -813,10 +844,9 @@ read it, and passes the rest of the request to stock.
   way it answers the reviewers the last done recorded and the newest
   pull request mail recorded: the pass's own, or for a pass without one the
   newest `pr` mail. Done
-  closes the pass and, under the claim's lock, ends the claim only when no
-  event is pending and no reviewer of the current head is due, so an event
-  committed before it is taken by this manager and one after it by the
-  next. A manager run reaches take and done, and a reviewer run records its
+  closes the pass and, under the claim's lock, ends the claim when no event
+  is pending and the pass did not ask to `wait`, so an event committed before
+  it is taken by this manager and one after it by the next. A manager run reaches take and done, and a reviewer run records its
   result (under its own run id), through `POST
   /api/tenants/:tenantId/manager/{take,done,reviewer-result}`
   (`apps/hub/src/manager-routes.ts`). They admit a run token only, as the
@@ -835,7 +865,20 @@ read it, and passes the rest of the request to stock.
   Its body is a `StageResult` (`@corbits/triage-contracts`): the reviewer's
   kind (`code-review` or `judge`), the head it reviewed and its result, a
   code review's output or a judge's whole verdict, or `failed` with why it
-  has none.
+  has none. The result is recorded by one statement only while its head is
+  the newest one a pull request mail named, so no push slips between the
+  check and the record; one for another head is dropped and logged as
+  `reviewer_result_stale`. Otherwise, once recorded, the route wakes the pull
+  request's manager as intake does for a host event (`createManagerWake`,
+  `apps/hub/src/manager-intake.ts`): the live manager the claim names is
+  mailed, or the host's listener is mailed the head to deploy one; a
+  workspace with no listener logs `reviewer_result_unrouted`. A wake that
+  fails leaves the result recorded and nothing else, is logged as
+  `reviewer_result_wake_failed`, and answers 502 `wake_failed`; the next
+  reconcile pass wakes a manager for it. Done records the reviewers the
+  manager reports, then the hub stops each the claim holds on a head older
+  than the newest, as one the pass deployed while a push arrived, the way
+  intake does below.
 - Pull request, waiting, held-Do approval and backlog mail goes to the
   host's listener (`apps/hub/src/manager-intake.ts`), on both hosts. Each
   pull request the mail names (a reconciler's `items`, a backlog's open pull
@@ -845,7 +888,13 @@ read it, and passes the rest of the request to stock.
   workflow carries it out. The hub records one webhook event per pull request
   that passed, with the head's code review request when the policy turns
   code review on and the App's login on GitHub, then mails the listener the
-  heads. When the host's head moved past the mail's, the event goes without
+  heads. Once it records a head, every judge or code review the claim still
+  waits on for an older head of that pull request is stopped through the
+  stock run lifecycle with the hub's own authority and then taken off the
+  claim, each logged once as `reviewer_superseded`. A stop that fails is
+  logged as `reviewer_supersede_failed` and leaves the reviewer on the claim;
+  each triage reconcile pass stops the superseded reviewers of every claim
+  again (`createSupersede`). When the host's head moved past the mail's, the event goes without
   a review request and the hub logs `code_review_head_moved`; the new head's
   own mail carries one. An event's id is the webhook's delivery id, which
   the coalescer's mail carries, so a redelivery records nothing new; any

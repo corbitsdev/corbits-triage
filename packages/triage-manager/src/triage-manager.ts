@@ -5,17 +5,15 @@ import { credentialBindingsFor, judgeAgent, type Sources } from "@corbits/triage
 import { WRITE_PULL_REQUEST } from "@corbits/triage-workflows/logic/host";
 import { hostAction, triageSteps } from "@corbits/triage-workflows/triage-steps";
 import { HUB_WRITE } from "./actions/hub.js";
-import { JUDGE_DEADLINE_MS } from "./actions/judge.js";
-import { REVIEW_DEADLINE_MS } from "./actions/review.js";
 import { mailDirector } from "./directors.js";
 import { mailAgentOf } from "./mail.js";
 import { deployGrants, type Release } from "./release.js";
 
-/** How often a manager waiting for its code review asks the hub whether the review reported. */
+/** How long a manager whose pass posted to the host or mailed a reviewer waits for what that brings before it ends. */
 const POLL_MS = 30_000;
 
-/** Enough passes to wait out a judge and then a code review, and the events that arrive meanwhile. */
-const PASSES = Math.ceil((JUDGE_DEADLINE_MS + REVIEW_DEADLINE_MS) / POLL_MS) + 40;
+/** Enough passes for the events that arrive while the manager runs; it waits only after a pass that posted or mailed. */
+const PASSES = 40;
 
 const PAYLOAD = { project: { from: "trigger" }, fields: ["payload"] } as const;
 
@@ -84,7 +82,7 @@ function judgeSteps(): Record<string, Primitive> {
  * One pass: take claims the pull request and its pending events. Each held Do approved since runs; then, when the head
  * is triaged, pr-triage's own steps run on the newest mail the hub recorded for it. A head held for CI is marked
  * waiting. A policy of only deterministic rules is triaged on this pass. One that asks the judge or for code review
- * posts once both have reported or given up. A pass after one that waits for a reviewer first waits `POLL_MS`.
+ * posts once both have reported or given up. A pass after one that posted or mailed a reviewer first waits `POLL_MS`.
  */
 function passOf(id: string, sources: Sources) {
   const { waiting, held, markWaiting, unready, rules, mirrorRules, executeRules } = triageSteps(sources);
@@ -124,10 +122,11 @@ function passOf(id: string, sources: Sources) {
 /**
  * A pull request's manager under `id`, also its mail address, for the given hosts: the only workflow that writes to the
  * pull request, one live run per pull request, which runs only while it has work. A mail wakes it to run passes until
- * done ends the claim or another run holds the claim, after which its last step stops it. When the host's release
- * publishes a code review or a judge, each runs as its own deployment, which reports back; `codeReview` and `judge`, the
- * ones published as the definition loads, name the assets it declares the grants to deploy. Mail comes from the hub,
- * the listener that deployed it, and the judge and the reviews it mailed.
+ * done ends the claim or another run holds the claim, after which its last step stops it; once a pass posted to the
+ * host or mailed a reviewer, it waits `POLL_MS` for what that brings and then ends. When the host's release publishes a
+ * code review or a judge, each runs as its own deployment, which reports its result to the hub; the hub wakes the
+ * manager then, or has the listener deploy a new one. `codeReview` and `judge`, the ones published as the definition
+ * loads, name the assets it declares the grants to deploy. Mail comes from the hub and the listener that deployed it.
  */
 export function triageManager({ id, sources, codeReview, judge }: { id: string; sources: Sources; codeReview: Release | undefined; judge?: Release }) {
   const perMail = defineWorkflow({
@@ -158,7 +157,7 @@ export function triageManager({ id, sources, codeReview, judge }: { id: string; 
       ...(codeReview ? deployGrants(codeReview) : []),
       ...(judge ? deployGrants(judge) : []),
     ],
-    mailAccept: { invoker: true, correspondent: true, tenant: true },
+    mailAccept: { invoker: true, tenant: true },
     steps: {
       events: onTrigger({ on: { type: "mail", to: id }, body: perMail, onBodyFailure: "tolerate" }),
     },

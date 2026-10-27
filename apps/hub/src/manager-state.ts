@@ -2,12 +2,12 @@
 // pull request when no live run holds it, and done checks for pending events under the claim's lock, so an event is
 // either taken by the live manager or by the next one. Only the run the claim names takes events or finishes a pass.
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull, like, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, or, sql, type SQL } from "drizzle-orm";
 import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, REPO_SOURCES, TRIAGE_LISTENERS, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, type LiveDeployment } from "./github/deployment.js";
 import { triageSchema } from "./triage-db.js";
@@ -31,6 +31,7 @@ const ClaimState = type({
   reviewers: ReviewerState.array(),
   history: PassState.and({ runId: "string > 0", doneAt: "string.date.iso", "waiting?": "true", "request?": "Record<string, unknown>" }).array(),
   starts: "number.integer >= 0",
+  "overdueWokenAt?": "string.date.iso",
 });
 const EventPayload = type("Record<string, unknown>").narrow(function plainObject(value) {
   return !Array.isArray(value);
@@ -62,6 +63,11 @@ export type Closing = { head: string; startedAt: string; mail?: Record<string, u
 /** Records what the closed pass reported in done's transaction, so the claim never moves on without it. */
 export type RecordDone = (tx: Tx, closing: Closing | undefined) => Promise<void>;
 type DoneResult = { outcome: "refused" } | { outcome: "ended" } | { outcome: "more"; wait: boolean };
+/**
+ * `wait` when the pass posted to the host or mailed a reviewer, so the manager waits once for what that brings before
+ * its claim ends. `report` and `record` record what the pass did; `log` names each reviewer it gave up on.
+ */
+export type DoneOptions = { wait?: boolean; report?: PassReport; record?: RecordDone; log?: (entry: Record<string, unknown>) => void };
 
 function pullKey({ source, repo, number }: PullRequestRef): string {
   return `${source}:${repo}#${number}`;
@@ -146,16 +152,41 @@ function passHeadOf(taken: readonly TakenEvent[], history: Claim["history"]): st
   return mails.findLast((row) => row.event.payload["kind"] !== APPROVE_DO_KIND)?.event.head ?? history.at(-1)?.head ?? mails.at(-1)?.event.head;
 }
 
-/** Records the event under its delivery id; false when it was recorded before, as on a redelivery. */
-export async function recordEvent(db: DB["db"], tenantId: string, pr: PullRequestRef, deliveryId: string, event: Pick<ManagerEvent, "type" | "head" | "payload">): Promise<boolean> {
+/** The event's row key and state under its delivery id. */
+function newEvent(pr: PullRequestRef, deliveryId: string, event: Pick<ManagerEvent, "type" | "head" | "payload">): { key: string; state: SQL } {
   if (deliveryId.length === 0) throw new Error(`an event for ${claimKey(pr)} has no delivery id`);
   const key = eventKey(pr, deliveryId);
   const fields = NewEvent(asStored({ type: event.type, head: event.head, payload: event.payload }));
   if (fields instanceof type.errors) throw new Error(`manager_state ${key} is not an event: ${fields.summary}`);
   // Stamped by the database to the microsecond as it inserts the row, so events sort in the order they were recorded.
-  const state = sql`${JSON.stringify(fields)}::jsonb || jsonb_build_object('receivedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))`;
+  return { key, state: sql`${JSON.stringify(fields)}::jsonb || jsonb_build_object('receivedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))` };
+}
+
+/** Records the event under its delivery id; false when it was recorded before, as on a redelivery. */
+export async function recordEvent(db: DB["db"], tenantId: string, pr: PullRequestRef, deliveryId: string, event: Pick<ManagerEvent, "type" | "head" | "payload">): Promise<boolean> {
+  const { key, state } = newEvent(pr, deliveryId, event);
   const inserted = await db.insert(managerState).values({ tenantId, key, kind: "event", state }).onConflictDoNothing().returning({ key: managerState.key });
   return inserted.length === 1;
+}
+
+const ResultRecorded = type([{ recorded: "0 | 1", current: "string | null" }]);
+
+/**
+ * Records a reviewer's result on `head` under its run's id, in one statement only while `head` is the newest a pull
+ * request mail named, or none named one yet, so a push recorded meanwhile cannot slip between the check and the record.
+ * `recorded` is false as well when the run reported before; `current` is the newest head the statement saw.
+ */
+export async function recordResult(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, head: string, payload: Record<string, unknown>): Promise<{ recorded: boolean; current: string | undefined }> {
+  const { key, state } = newEvent(pr, runId, { type: "reviewer-result", head, payload });
+  const [row] = ResultRecorded.assert(await db.execute(sql`
+    WITH newest AS (SELECT ${managerState.state}->>'head' AS head FROM ${managerState} WHERE ${mails(tenantId, pr)} ORDER BY ${newestFirst} LIMIT 1),
+    inserted AS (
+      INSERT INTO ${managerState} (tenant_id, key, kind, state)
+      SELECT ${tenantId}, ${key}, 'event', ${state} WHERE NOT EXISTS (SELECT 1 FROM newest WHERE head <> ${head})
+      ON CONFLICT DO NOTHING RETURNING 1
+    )
+    SELECT (SELECT count(*) FROM inserted)::int AS recorded, (SELECT head FROM newest) AS current`));
+  return { recorded: row.recorded === 1, current: row.current ?? undefined };
 }
 
 /**
@@ -313,7 +344,7 @@ export async function codeReviews(db: DB["db"], tenantId: string, pr: PullReques
       const failed = asRecord(reviewer.result)?.["failed"];
       const base = { runId: reviewer.runId, head: reviewer.head, at: run.createdAt.toISOString() };
       if (typeof failed === "string") records.push({ ...base, state: "failed", failed });
-      else if (reviewer.result === undefined && claim.status === "live" && Date.parse(reviewer.deadline) > Date.now()) records.push({ ...base, state: "running" });
+      else if (reviewer.result === undefined && Date.parse(reviewer.deadline) > Date.now()) records.push({ ...base, state: "running" });
     }
   }
   return records.sort((a, b) => b.at.localeCompare(a.at));
@@ -379,12 +410,26 @@ async function closingOf(tx: Tx, tenantId: string, pr: PullRequestRef, runId: st
   return { head, startedAt: first.takenAt, ...(mail && { mail }) };
 }
 
+/** The claim's reviewers that ran past their deadline with no report and that `recorded` no longer waits for. */
+async function givenUp(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, recorded: readonly Reviewer[], now: Date): Promise<Reviewer[]> {
+  const late = claim.reviewers.filter((reviewer) => reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime() && !recorded.some((kept) => kept.runId === reviewer.runId && kept.result === undefined));
+  if (late.length === 0) return [];
+  const rows = await tx.select({ key: managerState.key }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, inArray(managerState.key, late.map((reviewer) => eventKey(pr, reviewer.runId)))));
+  const reported = new Set(rows.map((row) => row.key));
+  return late.filter((reviewer) => !reported.has(eventKey(pr, reviewer.runId)));
+}
+
+function reviewerKey({ kind, head, runId }: Reviewer): string {
+  return `${kind}:${head}:${runId}`;
+}
+
 /**
- * Closes the open pass with what it reported and records `reviewers`. The claim ends when no event is pending and no
- * reviewer of the current head is still due; otherwise the manager has more to do: at once when an event is pending,
- * else after it waits for its reviewer.
+ * Closes the open pass with what it reported and records `reviewers`. The manager has more to do while an event is
+ * pending, at once, and once more after a pass that asks to `wait`; otherwise the claim ends, and a later event or
+ * reviewer result starts the next manager. A reviewer the pass gave up on past its deadline with no report is logged.
  */
-export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], report?: PassReport, record?: RecordDone): Promise<DoneResult> {
+export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], { wait = false, report, record, log }: DoneOptions = {}): Promise<DoneResult> {
   return db.transaction(async function finishPass(tx) {
     const claim = await lockClaim(tx, tenantId, pr);
     if (!fencedTo(claim, runId)) return { outcome: "refused" };
@@ -393,13 +438,14 @@ export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     const now = new Date();
     const closed = closing(claim, runId, now, report);
     const history = closed ? closedInto(claim.history, closed) : claim.history;
-    const head = history.at(-1)?.head;
-    const due = recorded.some((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime());
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState).where(pending(tenantId, pr));
     const waiting = passHeadOf(eventsOf(rows), history) !== undefined;
     const kept = { claimId: claim.claimId, claimedAt: claim.claimedAt, reviewers: recorded, history, starts: claim.starts };
     if (record) await record(tx, report && await closingOf(tx, tenantId, pr, runId, report.head, history));
-    if (due || waiting) {
+    for (const reviewer of await givenUp(tx, tenantId, pr, claim, recorded, now)) {
+      log?.({ level: "warn", msg: "reviewer_overdue", tenantId, source: pr.source, repo: pr.repo, number: pr.number, kind: reviewer.kind, head: reviewer.head, runId: reviewer.runId, deadline: reviewer.deadline });
+    }
+    if (waiting || wait) {
       await writeClaim(tx, tenantId, pr, { ...kept, status: "live", runId });
       return { outcome: "more", wait: !waiting };
     }
@@ -421,13 +467,118 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
  */
 export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass }; gone?: { runId: string; pass: Pass } };
 
-/** The newest head a pull request mail named, which a live manager takes next or has taken. */
-async function newestHead(tx: Tx, tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
+/** The pull request's mails that name its head: its webhooks other than a held Do's approval. */
+function mails(tenantId: string, pr: PullRequestRef): SQL | undefined {
+  return and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${eventPrefix(pr)}%`), sql`${managerState.state}->>'type' = 'webhook'`, sql`${managerState.state}->'payload'->>'kind' IS DISTINCT FROM ${APPROVE_DO_KIND}`);
+}
+
+const newestFirst = sql`${managerState.state}->>'receivedAt' DESC, ${managerState.key} DESC`;
+
+/** The newest head a pull request mail named, which a live manager takes next or has taken; undefined before any. */
+async function newestHead(tx: Tx | DB["db"], tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
   const [row] = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
-    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${eventPrefix(pr)}%`), sql`${managerState.state}->>'type' = 'webhook'`, sql`${managerState.state}->'payload'->>'kind' IS DISTINCT FROM ${APPROVE_DO_KIND}`))
-    .orderBy(desc(sql`${managerState.state}->>'receivedAt'`), desc(managerState.key))
+    .where(mails(tenantId, pr))
+    .orderBy(newestFirst)
     .limit(1);
   return row && eventOf(row.key, row.state).head;
+}
+
+/** The claim's reviewers still out on a head older than the newest one a pull request mail named, which no manager waits for any more. */
+export async function superseded(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<Reviewer[]> {
+  return db.transaction(async function older(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    const head = await newestHead(tx, tenantId, pr);
+    if (!claim || head === undefined) return [];
+    return claim.reviewers.filter((reviewer) => reviewer.head !== head && reviewer.result === undefined);
+  });
+}
+
+/** Takes the reviewer off the claim, once its run was asked to stop. */
+export async function dropReviewer(db: DB["db"], tenantId: string, pr: PullRequestRef, reviewer: Reviewer): Promise<void> {
+  await db.transaction(async function drop(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) return;
+    const key = reviewerKey(reviewer);
+    await writeClaim(tx, tenantId, pr, { ...claim, reviewers: claim.reviewers.filter((held) => reviewerKey(held) !== key) });
+  });
+}
+
+const CLAIM_KEY = /^mgr:([^:]+):(.+)#(\d+)$/;
+
+function pullOf(key: string): PullRequestRef {
+  const [, source, repo, number] = CLAIM_KEY.exec(key) ?? [];
+  const known = REPO_SOURCES.find((each) => each === source);
+  if (!known || repo === undefined || number === undefined) throw new Error(`manager_state ${key} is not a claim key`);
+  return { source: known, repo, number: Number(number) };
+}
+
+/** How long an overdue wake no manager has taken the claim since holds off the next, while its manager may still be reaching a sidecar. */
+const OVERDUE_UNSTARTED_GRACE_MS = 30 * 60_000;
+
+/** Whether the claim's last overdue wake is still within its grace: a manager took the claim since, or none has yet. */
+function recentlyWoken(claim: Claim, now: Date): boolean {
+  if (claim.overdueWokenAt === undefined) return false;
+  const woken = Date.parse(claim.overdueWokenAt);
+  const grace = Date.parse(claim.claimedAt) >= woken ? MANAGER_START_GRACE_MS : OVERDUE_UNSTARTED_GRACE_MS;
+  return now.getTime() - woken < grace;
+}
+
+/** Records on the claim that the hub woke a manager for an overdue reviewer, so the next reconcile pass holds off. */
+export async function recordOverdueWake(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<void> {
+  await db.transaction(async function wokenAt(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) throw new Error(`${claimKey(pr)} has no claim to wake`);
+    await writeClaim(tx, tenantId, pr, { ...claim, overdueWokenAt: new Date().toISOString() });
+  });
+}
+
+/** The tenant's pull requests whose claim holds a reviewer with no result. */
+export async function reviewedPulls(db: DB["db"], tenantId: string): Promise<PullRequestRef[]> {
+  const rows = await db.select({ key: managerState.key }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), eq(managerState.kind, "claim"), sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)))')`));
+  return rows.map((row) => pullOf(row.key));
+}
+
+/** Each claim with a reviewer result recorded that no pass has taken, with its newest such result. */
+async function unreadResults(db: DB["db"], tenantId: string): Promise<Map<string, ManagerEvent>> {
+  const rows = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'reviewer-result'`));
+  // A result's key is its pull request's event prefix and the reporting run's id, which has no colon.
+  return new Map(eventsOf(rows).map((row) => [`mgr:${row.key.slice("evt:".length, row.key.lastIndexOf(":"))}`, row.event]));
+}
+
+/**
+ * The tenant's pull requests whose manager has gone, with the head to wake one on: each with a reviewer result no pass
+ * has taken, as when waking a manager for it failed, once the manager start grace has passed since that result, so a
+ * manager its own wake deployed is not deployed again while it starts; and each whose reviewer of its newest head is past
+ * its deadline with no result recorded, so a manager posts its verdict without the reviewer. Either is skipped while the
+ * claim's last overdue wake is within its grace.
+ */
+export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr: PullRequestRef; head: string }[]> {
+  const now = new Date();
+  const unread = await unreadResults(db, tenantId);
+  const late = sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)) && @.deadline <= $now)', jsonb_build_object('now', ${now.toISOString()}::text))`;
+  const rows = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), eq(managerState.kind, "claim"), unread.size === 0 ? late : or(late, inArray(managerState.key, [...unread.keys()]))));
+  const overdue: { pr: PullRequestRef; head: string }[] = [];
+  for (const { key, state } of rows) {
+    const claim = claimOf(key, state);
+    const pr = pullOf(key);
+    if (recentlyWoken(claim, now) || (claim.status === "live" && claim.runId !== undefined && !(await runGone(db, claim.runId, now)))) continue;
+    const head = await newestHead(db, tenantId, pr);
+    const result = unread.get(key);
+    if (result !== undefined) {
+      if (now.getTime() - Date.parse(result.receivedAt) >= MANAGER_START_GRACE_MS) overdue.push({ pr, head: head ?? result.head });
+      continue;
+    }
+    if (head === undefined) continue;
+    const pastDeadline = claim.reviewers.filter((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime());
+    if (pastDeadline.length === 0) continue;
+    const reported = await db.select({ key: managerState.key }).from(managerState)
+      .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, inArray(managerState.key, pastDeadline.map((reviewer) => eventKey(pr, reviewer.runId)))));
+    if (reported.length < pastDeadline.length) overdue.push({ pr, head });
+  }
+  return overdue;
 }
 
 /** The claims of `pulls` a manager made. */

@@ -1,7 +1,7 @@
 // The hub's side of a pull request's manager. In a workspace with a host's listener live, each pull request, waiting,
-// held-Do approval and backlog mail is recorded as one event per pull request it names. A pull request whose manager
-// is up is mailed that manager. One with none is sent to the listener, which deploys a manager and wakes it. A manager
-// reads the newest recorded mail back through take.
+// held-Do approval and backlog mail is recorded as one event per pull request it names, as a reviewer's result is by
+// its route. A pull request whose manager is up is mailed that manager. One with none is sent to the listener, which
+// deploys a manager and wakes it. A manager reads the newest recorded mail back through take.
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
@@ -9,7 +9,7 @@ import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, repoSourceOf, WAITING_KIND, type RepoSource } from "@corbits/triage-contracts";
 import { reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
-import { liveManager, recordEvent } from "./manager-state.js";
+import { dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, type PullRequestRef } from "./manager-state.js";
 
 export type ManagerIntakeDeps = {
   db: DB["db"];
@@ -22,6 +22,8 @@ export type ManagerIntakeDeps = {
   /** The mail as a GitHub workspace's runs read it, naming the App's bot account. */
   withAppLogin: (tenantId: string, payload: Record<string, unknown>) => Promise<unknown>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
+  /** Stops the pull request's reviewers on a head older than its newest, as `createSupersede` does. */
+  supersede: (tenantId: string, pr: PullRequestRef) => Promise<void>;
   /** The pull request's mail as its manager takes it, or undefined when none is to be taken, as for a paused pull request. */
   gate: (tenantId: string, record: RepoRecord, number: number, request: Record<string, unknown>) => Promise<Record<string, unknown> | undefined>;
   log: (entry: Record<string, unknown>) => void;
@@ -49,6 +51,110 @@ function itemsOf(request: Record<string, unknown>, items: readonly unknown[]): N
     const head = asRecord(entry);
     return named({ ...single, prNumber: head?.["prNumber"], headSha: head?.["headSha"] }, head?.["prNumber"], head?.["headSha"]);
   });
+}
+
+/** The tenant domain on a listener address, which a manager's address shares. */
+function domainOf(address: string): string {
+  const at = address.lastIndexOf("@");
+  if (at <= 0 || at === address.length - 1) throw new Error(`listener address ${address} has no domain`);
+  return address.slice(at + 1);
+}
+
+type Delivery = Pick<ManagerIntakeDeps, "db" | "deliver">;
+
+/** Mails the pull request's manager while one is up; false when none is, for the listener to deploy one. */
+async function mailedLive(deps: Delivery, tenantId: string, domain: string, pr: PullRequestRef): Promise<boolean> {
+  const runId = await liveManager(deps.db, tenantId, pr);
+  if (!runId) return false;
+  await deps.deliver(tenantId, `${runId}@${domain}`, { kind: "manage", tenantId, repo: pr.repo, repoSource: pr.source, prNumber: pr.number });
+  return true;
+}
+
+/** Mails the listener the heads of `repo` it deploys a manager for. */
+async function deployFor(deps: Delivery, tenantId: string, address: string, source: RepoSource, repo: string, heads: readonly { number: number; head: string }[]): Promise<void> {
+  await deps.deliver(tenantId, address, { kind: "pr", repo, ...(source !== "github" && { repoSource: source }), tenantId, items: heads.map((pull) => ({ prNumber: pull.number, headSha: pull.head })) });
+}
+
+/**
+ * Wakes the manager of a pull request whose reviewer result was recorded, as a host event does: its live manager is
+ * mailed, or the listener deploys one. False when the workspace has no listener for the host.
+ */
+export function createManagerWake(deps: Delivery & Pick<ManagerIntakeDeps, "listener">) {
+  return async function wake(tenantId: string, pr: PullRequestRef, head: string): Promise<boolean> {
+    const address = await deps.listener(tenantId, pr.source);
+    if (!address) return false;
+    if (!(await mailedLive(deps, tenantId, domainOf(address), pr))) await deployFor(deps, tenantId, address, pr.source, pr.repo, [{ number: pr.number, head }]);
+    return true;
+  };
+}
+
+type Wake = ReturnType<typeof createManagerWake>;
+
+/**
+ * Wakes a manager for each of the tenant's pull requests whose manager has gone while a reviewer result waits for it,
+ * or a reviewer of its newest head is past its deadline with no result, so that manager posts the verdict. A wake is
+ * recorded once it succeeded; a pull request whose wake fails is logged, the rest are still woken, and the next
+ * reconcile pass tries it again.
+ */
+export function createOverdueWake(deps: Pick<ManagerIntakeDeps, "db" | "log"> & { wake: Wake }) {
+  async function wakeOne(tenantId: string, pr: PullRequestRef, head: string): Promise<void> {
+    const entry = { tenantId, source: pr.source, repo: pr.repo, number: pr.number, head };
+    try {
+      if (!(await deps.wake(tenantId, pr, head))) return;
+      await recordOverdueWake(deps.db, tenantId, pr);
+      deps.log({ level: "info", msg: "manager_woken_overdue", ...entry });
+    } catch (err) {
+      deps.log({ level: "error", msg: "manager_overdue_wake_failed", ...entry, error: String(err) });
+    }
+  }
+
+  return async function wakeOverdue(tenantId: string): Promise<void> {
+    try {
+      for (const { pr, head } of await overduePulls(deps.db, tenantId)) await wakeOne(tenantId, pr, head);
+    } catch (err) {
+      deps.log({ level: "error", msg: "manager_overdue_wake_failed", tenantId, error: String(err) });
+    }
+  };
+}
+
+type SupersedeDeps = Pick<ManagerIntakeDeps, "db" | "log"> & {
+  /** Stops a run through the stock run lifecycle with the hub's own authority; stopping one already ending is a no-op. */
+  cancel: (tenantId: string, runId: string, reason: string) => Promise<void>;
+};
+
+/**
+ * Stops each reviewer a pull request's claim still waits on for a head older than its newest, then takes it off the
+ * claim. A reviewer whose stop fails is logged and stays on the claim, so the next reconcile pass, which runs this over
+ * every pull request with a reviewer out (`supersedeAll`), stops it again.
+ */
+export function createSupersede(deps: SupersedeDeps) {
+  async function supersede(tenantId: string, pr: PullRequestRef): Promise<void> {
+    const base = { tenantId, source: pr.source, repo: pr.repo, number: pr.number };
+    try {
+      for (const reviewer of await superseded(deps.db, tenantId, pr)) {
+        const entry = { ...base, kind: reviewer.kind, head: reviewer.head, runId: reviewer.runId };
+        try {
+          await deps.cancel(tenantId, reviewer.runId, "superseded by a newer head");
+          await dropReviewer(deps.db, tenantId, pr, reviewer);
+          deps.log({ level: "info", msg: "reviewer_superseded", ...entry });
+        } catch (err) {
+          deps.log({ level: "error", msg: "reviewer_supersede_failed", ...entry, error: String(err) });
+        }
+      }
+    } catch (err) {
+      deps.log({ level: "error", msg: "reviewer_supersede_failed", ...base, error: String(err) });
+    }
+  }
+
+  async function supersedeAll(tenantId: string): Promise<void> {
+    try {
+      for (const pr of await reviewedPulls(deps.db, tenantId)) await supersede(tenantId, pr);
+    } catch (err) {
+      deps.log({ level: "error", msg: "reviewer_supersede_failed", tenantId, error: String(err) });
+    }
+  }
+
+  return { supersede, supersedeAll };
 }
 
 export function createManagerIntake(deps: ManagerIntakeDeps) {
@@ -85,13 +191,6 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     return request;
   }
 
-  /** The tenant domain on a listener address, which a manager's address shares. */
-  function domainOf(address: string): string {
-    const at = address.lastIndexOf("@");
-    if (at <= 0 || at === address.length - 1) throw new Error(`listener address ${address} has no domain`);
-    return address.slice(at + 1);
-  }
-
   /**
    * Records each pull request a mail names. One whose manager is up is mailed that run; the rest go to the listener,
    * which deploys them, including those recorded before a later one failed. True with nothing recorded when the mail
@@ -115,18 +214,13 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
         if (!request) continue;
         const pull = { ...asked, request };
         const recorded = await deps.withAppLogin(tenantId, await withReviewRequest(tenantId, record, pull));
-        await recordEvent(deps.db, tenantId, { source, repo, number: pull.number }, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
-        const runId = await liveManager(deps.db, tenantId, { source, repo, number: pull.number });
-        if (runId) {
-          await deps.deliver(tenantId, `${runId}@${domain}`, { kind: "manage", tenantId, repo, repoSource: source, prNumber: pull.number });
-        } else {
-          start.push(pull);
-        }
+        const pr = { source, repo, number: pull.number };
+        await recordEvent(deps.db, tenantId, pr, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
+        await deps.supersede(tenantId, pr);
+        if (!(await mailedLive(deps, tenantId, domain, pr))) start.push(pull);
       }
     } finally {
-      if (start.length > 0) {
-        await deps.deliver(tenantId, address, { kind: "pr", repo, ...(source !== "github" && { repoSource: source }), tenantId, items: start.map((pull) => ({ prNumber: pull.number, headSha: pull.head })) });
-      }
+      if (start.length > 0) await deployFor(deps, tenantId, address, source, repo, start);
     }
     return true;
   };

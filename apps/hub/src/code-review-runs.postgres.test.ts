@@ -59,9 +59,9 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
       await db.insert(schema.workflowRun).values({ id: runId, definitionId: "wfd_review", anchorRunId: runId, tenantId: TENANT, status: "running", createdAt });
       return createdAt;
     }
-    async function claim(reviewers: unknown[], taken: string[]) {
+    async function claim(reviewers: unknown[], taken: string[], status: "live" | "ended" = "live") {
       const since = new Date(0).toISOString();
-      const state = { status: "live", claimId: "claim-1", claimedAt: since, runId: "run_manager", reviewers, history: [{ id: "pass-1", head: "sha1", events: taken, takenAt: since, takes: 1, runId: "run_manager", doneAt: since }], starts: 1 };
+      const state = { status, claimId: "claim-1", claimedAt: since, ...(status === "live" && { runId: "run_manager" }), reviewers, history: [{ id: "pass-1", head: "sha1", events: taken, takenAt: since, takes: 1, runId: "run_manager", doneAt: since }], starts: 1 };
       await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, 'mgr:github:acme/widgets#7', 'claim', ${JSON.stringify(state)}::jsonb) ON CONFLICT (tenant_id, key) DO UPDATE SET state = excluded.state`);
     }
     let head: PullRequestToReview = { title: "Fix", description: "", headSha: "sha5", draft: false, open: true, diff: DIFF };
@@ -97,6 +97,10 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
     const live = await deployed("run_live");
     await claim([reviewer("run_live", "sha4")], [eventKey("run_old"), eventKey("run_new")]);
     expect(await reviewsOf(GITHUB)).toEqual({ review: { status: "running", headSha: "sha4", startedAt: live.toISOString() }, completed: finished, carriedTo: null });
+    // A manager ends once it mailed its review, which still runs until it reports or its deadline passes, and no head takes over the finished one meanwhile.
+    await claim([reviewer("run_live", "sha4")], [eventKey("run_old"), eventKey("run_new")], "ended");
+    expect(await reviewsOf(GITHUB, "sha5")).toEqual({ review: { status: "running", headSha: "sha4", startedAt: live.toISOString() }, completed: finished, carriedTo: null });
+    expect(hostReads).toBe(0);
 
     // A finished review names its diff's hash, so a later head with the same diff takes it over.
     await recordEvent(db, TENANT, GITHUB, "run_live", { type: "reviewer-result", head: "sha4", payload: { kind: "code-review", result: OUTPUT, diffHash: diffHash(DIFF) } });

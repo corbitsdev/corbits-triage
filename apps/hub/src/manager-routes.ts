@@ -18,7 +18,7 @@ import { body, Failure, json } from "./route-schema.js";
 import type { Tx } from "./github/admin-github-grant.js";
 import { recordApproved, replaceVerdict } from "./github/verdict-record-store.js";
 import { doResultsOf, eventOf, mirrorOutcomesOf, ruledOf, summaryOf, withResults } from "./github/verdict-row.js";
-import { done, EventState, PassState, recordEvent, ReviewerState, take, type Closing, type PassReport } from "./manager-state.js";
+import { done, EventState, PassState, recordResult, ReviewerState, take, type Closing, type PassReport, type PullRequestRef } from "./manager-state.js";
 
 const TAKE_PATH = "/manager/take";
 const DONE_PATH = "/manager/done";
@@ -43,8 +43,8 @@ const Report = type({
   "executed?": "Record<string, unknown>",
   "rules?": "Record<string, unknown>",
 });
-/** `approvals` is the pass's approved Dos as its approvals step ran them. */
-const DoneBody = PullRequest.and({ reviewers: ReviewerState.array(), "report?": Report, "approvals?": { results: "Record<string, unknown>[]" } });
+/** `approvals` is the pass's approved Dos as its approvals step ran them; `wait` that the pass posted to the host or mailed a reviewer. */
+const DoneBody = PullRequest.and({ reviewers: ReviewerState.array(), "wait?": "boolean", "report?": Report, "approvals?": { results: "Record<string, unknown>[]" } });
 const ReviewerResultBody = PullRequest.and(StageResult);
 
 const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array() } as const;
@@ -69,7 +69,15 @@ function refused(): Response {
 
 type RunEnv = TenantEnv & { Variables: TenantEnv["Variables"] & { runId: string } };
 
-export type ManagerRoutesDeps = { db: DB["db"]; requireGrant: RequireGrant; log: (entry: Record<string, unknown>) => void };
+export type ManagerRoutesDeps = {
+  db: DB["db"];
+  requireGrant: RequireGrant;
+  log: (entry: Record<string, unknown>) => void;
+  /** Wakes the pull request's manager for a reviewer result, as a host event does; false when the workspace has no listener for the host. */
+  wake: (tenantId: string, pr: PullRequestRef, head: string) => Promise<boolean>;
+  /** Stops the pull request's reviewers on a head older than its newest and takes them off the claim; never throws. */
+  supersede: (tenantId: string, pr: PullRequestRef) => Promise<void>;
+};
 
 type Reported = typeof Report.infer;
 
@@ -86,7 +94,7 @@ function passReport(report: Reported | undefined, posted: Record<string, unknown
   return { head: report.head, ...(request && { request }) };
 }
 
-export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps) {
+export function createManagerRoutes({ db, requireGrant, log, wake, supersede }: ManagerRoutesDeps) {
   const app = new Hono<RunEnv>();
   // Hono throws on a body that is not JSON; it keeps the hub's error envelope.
   app.onError(function onError(err) {
@@ -130,7 +138,7 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     DONE_PATH,
     describeRoute({
       summary: "Close the manager's pass and record its reviewers and its verdict",
-      description: `Run token only. In the same transaction, a \`report\` of a verdict the pass posted is recorded as the run's verdict on the pull request, replacing one the run recorded before, and \`approvals\` sets each approved Do's outcome on the verdicts that suggest it. \`ended\`: no event is pending and no reviewer of the current head is due, so the claim ended and the run should end. \`more\`: the manager takes again at once, or with \`wait\` after waiting for its reviewer. ${NOT_MANAGER}`,
+      description: `Run token only. In the same transaction, a \`report\` of a verdict the pass posted is recorded as the run's verdict on the pull request, replacing one the run recorded before, and \`approvals\` sets each approved Do's outcome on the verdicts that suggest it. A reviewer the claim recorded that ran past its deadline with no result and that \`reviewers\` no longer waits for is logged. Each reviewer the claim then holds on a head older than the newest a pull request mail named, as one the pass deployed while a push arrived, is stopped and taken off the claim. \`more\`: an event is pending, so the manager takes again at once, or the pass asked to \`wait\` because it posted to the host or mailed a reviewer, so it takes again after waiting. \`ended\`: otherwise; the claim ended and the run should end, and a later event or reviewer result starts the next manager. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("Whether the manager is done", Done), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),
@@ -139,7 +147,7 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     granted,
     body(DoneBody),
     async function finishPass(c) {
-      const { reviewers, report, approvals, ...pr } = c.req.valid("json");
+      const { reviewers, wait, report, approvals, ...pr } = c.req.valid("json");
       const tenantId = c.get("tenant").id;
       const runId = c.get("runId");
       const posted = postedOf(report);
@@ -154,8 +162,9 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
         const approved = approvals === undefined ? [] : approvals.results.flatMap((ran) => [...doResultsOf(ran).values()].map((outcome) => ({ repo: pr.repo, number: pr.number, ...outcome })));
         await recordApproved(tx, tenantId, approved);
       }
-      const result = await done(db, tenantId, pr, runId, reviewers, kept, recordPass);
+      const result = await done(db, tenantId, pr, runId, reviewers, { ...(wait !== undefined && { wait }), ...(kept && { report: kept }), record: recordPass, log });
       if (result.outcome === "refused") return refused();
+      await supersede(tenantId, pr);
       return c.json(result);
     },
   );
@@ -164,9 +173,14 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     REVIEWER_RESULT_PATH,
     describeRoute({
       summary: "Record a reviewer's result for the pull request's manager",
-      description: "Run token only, for a reviewer granted `create` on `triage-manager:result`, which reaches no other manager route. The body is a `StageResult`. The event is recorded under the calling run's id, so `recorded` is false when that run reported before. The reviewer then mails the manager that deployed it, which collects the result on its next take.",
+      description: "Run token only, for a reviewer granted `create` on `triage-manager:result`, which reaches no other manager route. The body is a `StageResult`. A result for a head the pull request has moved past is dropped and logged, and `recorded` is false. Otherwise the event is recorded under the calling run's id, so `recorded` is false when that run reported before, and the pull request's manager is woken as a host event wakes it: its live manager is mailed, or the host's listener deploys one, whose take collects the result. When that wake fails the result stays recorded, the route answers `wake_failed`, and the hub's next reconcile pass wakes a manager for it.",
       tags: TAGS,
-      responses: { 200: json("Whether the result was recorded now", Recorded), ...refusals, 403: json("Not a workflow run, or the run lacks `create` on `triage-manager:result`", Failure) },
+      responses: {
+        200: json("Whether the result was recorded now", Recorded),
+        ...refusals,
+        403: json("Not a workflow run, or the run lacks `create` on `triage-manager:result`", Failure),
+        502: json("`wake_failed`: the result is recorded, but the pull request's manager could not be woken", Failure),
+      },
     }),
     limited,
     asRun,
@@ -174,7 +188,21 @@ export function createManagerRoutes({ db, requireGrant, log }: ManagerRoutesDeps
     body(ReviewerResultBody),
     async function reviewerResult(c) {
       const { source, repo, number, head, ...reported } = c.req.valid("json");
-      const recorded = await recordEvent(db, c.get("tenant").id, { source, repo, number }, c.get("runId"), { type: "reviewer-result", head, payload: reported });
+      const tenantId = c.get("tenant").id;
+      const runId = c.get("runId");
+      const pr = { source, repo, number };
+      const { recorded, current } = await recordResult(db, tenantId, pr, runId, head, reported);
+      const entry = { tenantId, source, repo, number, kind: reported.kind, head, runId };
+      if (!recorded && current !== undefined && current !== head) {
+        log({ level: "info", msg: "reviewer_result_stale", ...entry, current });
+        return c.json({ recorded: false });
+      }
+      try {
+        if (!(await wake(tenantId, pr, head))) log({ level: "warn", msg: "reviewer_result_unrouted", ...entry, reason: "the workspace has no listener for the host" });
+      } catch (err) {
+        log({ level: "error", msg: "reviewer_result_wake_failed", ...entry, error: String(err) });
+        return failure(502, "wake_failed", "The result is recorded, but the pull request's manager could not be woken.");
+      }
       return c.json({ recorded });
     },
   );

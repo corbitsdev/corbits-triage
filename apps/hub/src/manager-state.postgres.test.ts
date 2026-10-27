@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { Tx } from "./github/admin-github-grant.js";
-import { done, liveListener, recordEvent, take, type PullRequestRef } from "./manager-state.js";
+import { done, liveListener, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -238,13 +238,66 @@ test("PostgreSQL: a claim taken again after it ended keeps its history, starts a
   });
 }, 120_000);
 
+test("PostgreSQL: a manager that posted or mailed takes once more, then the claim ends with its reviewer still out, and the reviewer's result is taken by the next manager", async () => {
+  await withDatabase(async function wakeByResult(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await startManager(db, GITHUB, "run_a");
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
+    const reviewer = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date(Date.now() + 60_000).toISOString() };
+    expect(await done(db, TENANT, GITHUB, "run_a", [reviewer], { wait: true })).toEqual({ outcome: "more", wait: true });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [reviewer] });
+    expect(await done(db, TENANT, GITHUB, "run_a", [reviewer])).toEqual({ outcome: "ended" });
+    expect(await stateOf(db, CLAIM)).toMatchObject({ status: "ended", reviewers: [reviewer] });
+
+    await recordEvent(db, TENANT, GITHUB, "run_judge", { type: "reviewer-result", head: "h1", payload: { kind: "judge", failed: "the judge did not finish" } });
+    await liveRun(db, "run_b");
+    expect(await take(db, TENANT, GITHUB, "run_b")).toMatchObject({ outcome: "pass", pass: { head: "h1", events: ["evt:github:acme/widgets#7:run_judge"] }, reviewers: [reviewer] });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "refused" });
+  });
+}, 120_000);
+
+test("PostgreSQL: a reviewer result is recorded only on the newest head a mail named, judged by the one statement that records it", async () => {
+  await withDatabase(async function conditional(db) {
+    const result = { kind: "judge", failed: "the judge did not finish" };
+    expect(await recordResult(db, TENANT, GITHUB, "run_first", "h0", result)).toEqual({ recorded: true, current: undefined });
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    expect(await recordResult(db, TENANT, GITHUB, "run_stale", "h0", result)).toEqual({ recorded: false, current: "h1" });
+    expect(await recordResult(db, TENANT, GITHUB, "run_judge", "h1", result)).toEqual({ recorded: true, current: "h1" });
+    expect(await recordResult(db, TENANT, GITHUB, "run_judge", "h1", result)).toEqual({ recorded: false, current: "h1" });
+    const rows = await db.execute<{ key: string }>(sql`SELECT key FROM corbits_triage.manager_state WHERE state->>'type' = 'reviewer-result' ORDER BY key`);
+    expect(rows.map((row) => row.key)).toEqual(["evt:github:acme/widgets#7:run_first", "evt:github:acme/widgets#7:run_judge"]);
+  });
+}, 120_000);
+
+test("PostgreSQL: done logs once each reviewer the pass gave up on past its deadline with no report", async () => {
+  await withDatabase(async function overdue(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await startManager(db, GITHUB, "run_a");
+    await take(db, TENANT, GITHUB, "run_a");
+    const past = new Date(Date.now() - 1_000).toISOString();
+    const silent = { kind: "code-review", head: "h1", runId: "run_silent", deployedBy: "run_a", deadline: past };
+    const reported = { ...silent, kind: "judge", runId: "run_reported" };
+    const due = { ...silent, runId: "run_due", deadline: new Date(Date.now() + 60_000).toISOString() };
+    await done(db, TENANT, GITHUB, "run_a", [silent, reported, due], { wait: true });
+    await recordEvent(db, TENANT, GITHUB, "run_reported", { type: "reviewer-result", head: "h1", payload: { kind: "judge", failed: "the judge did not finish" } });
+    await take(db, TENANT, GITHUB, "run_a");
+    const logged: Record<string, unknown>[] = [];
+    function log(entry: Record<string, unknown>): void {
+      logged.push(entry);
+    }
+    await done(db, TENANT, GITHUB, "run_a", [due], { wait: true, log });
+    await done(db, TENANT, GITHUB, "run_a", [due], { log });
+    expect(logged).toEqual([{ level: "warn", msg: "reviewer_overdue", tenantId: TENANT, ...GITHUB, kind: "code-review", head: "h1", runId: "run_silent", deadline: past }]);
+  });
+}, 120_000);
+
 test("PostgreSQL: take skips events another transaction holds, keeps the newest head and drops reviewer results for another head", async () => {
   await withDatabase(async function skips(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     await startManager(db, GITHUB, "run_a");
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
     const reviewer = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date(Date.now() + 60_000).toISOString() };
-    expect(await done(db, TENANT, GITHUB, "run_a", [reviewer])).toEqual({ outcome: "more", wait: true });
+    expect(await done(db, TENANT, GITHUB, "run_a", [reviewer], { wait: true })).toEqual({ outcome: "more", wait: true });
 
     await recordEvent(db, TENANT, GITHUB, "d2", webhook("h2"));
     await recordEvent(db, TENANT, GITHUB, "r1", { type: "reviewer-result", head: "h1", payload: { verdict: "pass" } });
