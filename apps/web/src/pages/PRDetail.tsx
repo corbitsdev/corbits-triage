@@ -3,7 +3,7 @@ import { Badge, Button } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type LucideIcon } from "lucide-react";
+import { CircleDot, FileText, Info, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
 import { usePullPageItems, useQueueLoading } from "../lib/open-pulls.ts";
@@ -37,7 +37,7 @@ import {
   verdictText,
 } from "../lib/triage-view.ts";
 
-type SliverTab = "about" | "files" | "commits" | "issue" | "conversation";
+type SliverTab = "about" | "files" | "issue";
 
 /** Bitbucket resolves no issue records; the reference the linked-issue rule found stands in for them. */
 function ruleIssueReference(item: PrItem): string | null {
@@ -102,6 +102,41 @@ function CheckList({ source, repo, sha, checks, fallback }: { source: RepoSource
           <ul className="verdict-checks">{passed.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} source={source} repo={repo} sha={sha} />)}</ul>
         </details>
       ) : null}
+    </>
+  );
+}
+
+/** Commits, then conversation, under the verdict and the evidence. */
+export function PullHistory({ host, pending, error, commits, comments }: {
+  host: string;
+  pending: boolean;
+  error: unknown;
+  commits: GithubPullDetail["commits"];
+  comments: GithubPullDetail["comments"];
+}) {
+  const notice = pending
+    ? <p className="muted">Loading from {host}…</p>
+    : error
+      ? <p role="alert" className="error">Could not load from {host}. {errorText(error)}</p>
+      : null;
+  return (
+    <>
+      <div className="pr-pane" aria-label="Commits">
+        <h1>Commits</h1>
+        {notice ?? (commits.length === 0 ? <p className="muted">No commits.</p> : commits.map((commit) => (
+          <div className="commit-row" key={commit.sha}>
+            <span className="mono">{commit.sha.slice(0, 7)}</span>
+            <strong>{commit.message.split("\n")[0]}</strong>
+            <span className="muted">{commit.author} · {relativeTime(commit.committedAt)}</span>
+          </div>
+        )))}
+      </div>
+      <div className="pr-pane" aria-label="Conversation">
+        <h1>Conversation</h1>
+        {notice ?? (comments.length === 0 ? <p className="muted">No comments yet.</p> : comments.map((comment) => (
+          <p key={comment.id}><strong>{comment.author}</strong> <span className="muted">{relativeTime(comment.createdAt)}</span><br />{comment.body}</p>
+        )))}
+      </div>
     </>
   );
 }
@@ -222,6 +257,7 @@ function About({ item, drafted }: { item: PrItem; drafted: boolean }) {
         )}
       </section>
       <PrTimeline item={item} />
+      <PullHistory host={hostName(item.source)} pending={pending} error={pull.error} commits={pull.data?.commits ?? []} comments={pull.data?.comments ?? []} />
     </article>
   );
 }
@@ -229,9 +265,7 @@ function About({ item, drafted }: { item: PrItem; drafted: boolean }) {
 const SLIVER_ICONS: Record<SliverTab, LucideIcon> = {
   about: Info,
   files: FileText,
-  commits: GitCommitVertical,
   issue: CircleDot,
-  conversation: MessageSquare,
 };
 
 function SliverTabButton({ id, label, current, onSelect }: { id: SliverTab; label: string; current: SliverTab; onSelect: (id: SliverTab) => void }) {
@@ -320,7 +354,6 @@ export default function PRDetail() {
   const pull = useGithubPull(item?.repo ?? "", item?.number ?? null);
   const pullPending = pull.isPending && pull.fetchStatus !== "idle";
   const files = pull.data?.files ?? [];
-  const commits = pull.data?.commits ?? [];
   const comments = pull.data?.comments ?? [];
   const selected = useMemo(() => files.find((file) => file.path === filePath) ?? files[0], [files, filePath]);
   const pending = approval?.status.toLowerCase() === "pending";
@@ -508,40 +541,14 @@ export default function PRDetail() {
         </div>
       );
     }
-    if (tab === "commits") return <p className="sliver-empty">{sliverText("commits", `${commits.length} commits`)}</p>;
     if (tab === "issue") return <p className="sliver-empty">{sliverText("issues", `${pull.data?.issues.length ?? 0} linked issues`)}</p>;
-    if (tab === "conversation") return <p className="sliver-empty">{sliverText("conversation", `${comments.length} comments`)}</p>;
     return <p className="sliver-empty">Overview of this pull request.</p>;
   }
   let pane: ReactNode = <About item={item} drafted={showRecommended && !recommendedPosted} />;
   const loadState = loadNotice();
   if (tab === "files") pane = filesPane();
-  if (tab === "commits") {
-    pane = (
-      <div className="pr-pane" aria-label="Commits">
-        <h1>Commits</h1>
-        {loadState ?? (commits.length === 0 ? <p className="muted">No commits.</p> : commits.map((commit) => (
-          <div className="commit-row" key={commit.sha}>
-            <span className="mono">{commit.sha.slice(0, 7)}</span>
-            <strong>{commit.message.split("\n")[0]}</strong>
-            <span className="muted">{commit.author} · {relativeTime(commit.committedAt)}</span>
-          </div>
-        )))}
-      </div>
-    );
-  }
   if (tab === "issue") {
     pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><IssueList item={item} issues={pull.data?.issues ?? []} pending={pullPending} error={pull.error} /></div>;
-  }
-  if (tab === "conversation") {
-    pane = (
-      <div className="pr-pane" aria-label="Talk">
-        <h1>Talk</h1>
-        {loadState ?? (comments.length === 0 ? <p className="muted">No comments yet.</p> : comments.map((comment) => (
-          <p key={comment.id}><strong>{comment.author}</strong> <span className="muted">{relativeTime(comment.createdAt)}</span><br />{comment.body}</p>
-        )))}
-      </div>
-    );
   }
 
   return (
@@ -630,9 +637,7 @@ export default function PRDetail() {
         <div className="sliver-tabs" role="toolbar" aria-label="Pull request">
           <SliverTabButton id="about" label="About" current={tab} onSelect={setTab} />
           <SliverTabButton id="files" label="Files" current={tab} onSelect={setTab} />
-          <SliverTabButton id="commits" label="Commits" current={tab} onSelect={setTab} />
           <SliverTabButton id="issue" label="Issue" current={tab} onSelect={setTab} />
-          <SliverTabButton id="conversation" label="Talk" current={tab} onSelect={setTab} />
         </div>
         <div className="sliver-body">
           {renderSliver()}

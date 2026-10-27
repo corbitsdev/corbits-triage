@@ -469,7 +469,7 @@ Clicking a pull request opens it on the right. The pane is built to be read top 
 4. **Code review**: before the pull request's first review it says **No review yet**, and **Review requested** once you press **Review again**. Once reviewed: what the change does, then each bug it found as a comment from **Code review**, with the commit it reviewed, how severe it is (P0 is the most severe), the file and line, and the code it points at. A bug in a file code review could not read says **Not checked against the file**, here and on GitHub. If the review fails or runs past its hour, the section shows **The last review did not finish** instead of **No findings**. **Review again** reviews the latest commit once more, or for the first time; it is hidden on a draft. A commit that left the change as it was keeps the last review and says **Carried over from** the commit it was made for. On a GitHub pull request, **Send to GitHub** posts the review to the pull request, inline where the lines are part of the change; it then says **Sent to GitHub**. On a Bitbucket Data Center pull request, **Send to Bitbucket** does the same with a comment per finding and one summary comment. Either needs the Comment permission for the repository, and is refused once the pull request has newer commits that did not keep the review: review again, then send.
 5. **The description** the author wrote.
 6. **Folded rows** you can expand: the linked issues, the changed files (with the diff), and the rules that passed. Evidence for a file cites its changed lines and links them at the exact commit Triage judged. Linked issues are the GitHub issues the title, description or commits mention, and the Linear issues linked in the description, the commits or a comment from one of Linear's bots. Links hidden in the description are ignored.
-7. **Commits and conversation** opens the full history and comments.
+7. **Commits and conversation** opens the pull request's page. That page reads the verdict, the evidence, then **Commits** and **Conversation**. See [The pull request page](#the-pull-request-page).
 
 ![The reading pane for acme/widgets #2 with its Code review: 3 findings, Sent to GitHub and Review again, the summary, then comments from Code review (Bot, reviewed 60f1fc6): total() skips the first element, P1 at src/total.ts:3, and average() divides by zero for an empty array, P2 at src/total.ts:26–32, each with its quoted line](images/28.png)
 
@@ -478,6 +478,19 @@ Clicking a pull request opens it on the right. The pane is built to be read top 
 ![The Checked and fine row expanded, listing each rule with its result: not a draft, CI passing, 0 change requests, no conflicts, issue linked, focused does not apply](images/14.png)
 
 Expanding **Checked and fine** shows every rule with a short note on why it passed, such as CI passing or the number of files changed against the limit. This is the quickest way to see what Triage actually checked.
+
+### The pull request page
+
+**Commits and conversation** in the reading pane opens the pull request on its own page. **Comment**, **Merge** and **More** sit at the top, the same actions as the pane, and **View on GitHub** or **View on Bitbucket** opens it on the host. On the side are **About**, **Files** and **Issue**.
+
+The page reads from top to bottom:
+
+1. **The verdict.** The header shows it beside the repository and number. Under the title, one line says why, and **Status** states the verdict again.
+2. **The evidence.** **Rules** lists what Triage checked and what it found. **Pull request**, **Issue**, **CI** and **Reviews** sit with that.
+3. **Commits**, after **Readiness history**. Each commit shows its short id, the first line of its message, who made it and when. When there are none, it says **No commits.**
+4. **Conversation.** Each comment shows who wrote it and when, then the comment. When there are none, it says **No comments yet.**
+
+**About** is that reading. **Files** lists the files that changed; choose one to read its changes. **Issue** lists the linked issues, or says **No linked issue.** Choose **About** to come back to the verdict, the evidence, the commits and the conversation.
 
 ### Taking action
 
