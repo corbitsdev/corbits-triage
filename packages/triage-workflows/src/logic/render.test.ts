@@ -99,6 +99,7 @@ function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).fo
 const UNSURE = "**Triage: Unsure**\n\n";
 const UNSURE_FOCUSED = "Not yet confirmed, a maintainer will check:\n- makes one focused change";
 const OUTAGE_NOTE = "Some rules could not run this time. Triage will re-check this pull request.";
+const FOCUSED_UNDECIDED = "Triage could not tell whether the changed files serve this pull request.";
 
 describe("focused rendering", () => {
   test("fails on more than one thing, whatever the verdict question says, naming at most three files most likely to be the separate change", () => {
@@ -134,7 +135,7 @@ describe("focused rendering", () => {
     expect(verdict).toMatchObject({ state: "ready-monitoring", mirror: true, humanGated: false, score: 0.8 });
     expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 80, passAt: 60, items: [] } }]);
     const unread = focusedPlan({}, { focused: [] }, ["src/big.ts"]).focused;
-    expect(focusedVerdict(focusedAnswer(0.8, 0.1), unread).checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "could-not-check", reason: "file could not be read", items: ["src/big.ts"] } }]);
+    expect(focusedVerdict(focusedAnswer(0.8, 0.1), unread).checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: FOCUSED_UNDECIDED, evidence: [], output: { kind: "could-not-check", reason: "file could not be read", items: ["src/big.ts"] } }]);
     expect(focusedVerdict(focusedAnswer(0.1, 0.8), unread).checks[0]).toMatchObject({ result: "fail", output: { kind: "score", unread: ["src/big.ts"] } });
   });
 
@@ -158,7 +159,7 @@ describe("focused rendering", () => {
   test("names an unsure focused check in the comment and among the reasons of an unsure verdict", () => {
     const verdict = focusedVerdict(focusedAnswer(0.5, 0.4), undefined, CHOICE.unsure);
     expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, humanGated: false, degraded: null, score: 0.5, reasons: ["Not confirmed: makes one focused change"] });
-    expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "score", score: 50, passAt: 60, items: [] } }]);
+    expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: FOCUSED_UNDECIDED, evidence: [], output: { kind: "score", score: 50, passAt: 60, items: [] } }]);
     expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}`);
     expect(focusedVerdict(focusedAnswer(0.5, 0.4), undefined, CHOICE.pass)).toMatchObject({ verdict: "unsure", reason: "the decision model passed it, but a rule could not be confirmed" });
   });

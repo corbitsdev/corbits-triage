@@ -17,7 +17,7 @@ import { Markdown } from "./Markdown.tsx";
 
 export type PullState = { data: GithubPullDetail | undefined; loading: boolean; error: unknown };
 
-/** Labels in the status line's words; a failed rule is the author's to fix only once it is their turn. */
+/** Labels in the status line's words, read out but not shown since the status line already says them; a failed rule is the author's to fix only once it is their turn. */
 const MARK: Record<Severity, { className: string; glyph: string; label: string }> = {
   fail: { className: "mk flag", glyph: "!", label: "Not met" },
   unsure: { className: "mk judge", glyph: "?", label: "Decide" },
@@ -60,7 +60,7 @@ function ProblemRow({ problem, pack, item, authorsTurn }: Omit<ProblemsProps, "p
     <li className={`pb s-${severity}`}>
       <span className={mark.className} aria-hidden="true">{mark.glyph}</span>
       <div>
-        <p className="pb-w">{severity === "unsure" ? <b>{label}: </b> : <span className="sr-only">{label}: </span>}{text}</p>
+        <p className="pb-w"><span className="sr-only">{label}: </span>{text}</p>
         {cited.length > 0 ? (
           <p className="pb-c">{cited.map((evidence) => <span key={evidence} className="mono"><CitedEvidence text={evidence} output={check.output} source={item.source} repo={item.repo} sha={item.verdictSha} /></span>)}</p>
         ) : null}
