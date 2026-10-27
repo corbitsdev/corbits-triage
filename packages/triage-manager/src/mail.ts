@@ -109,5 +109,5 @@ export function mailAgentOf(director: ReturnType<typeof mailDirectorOf>, inferen
   return defineAgent({ id: tolerate ? "triage-mail-tolerant" : "triage-mail", systemPrompt: "Send the mail the input names.", tools: [mailTool], capabilities: [], inference, director: director.build({ tolerate }) });
 }
 
-/** A tolerant mail agent's reply: whether the mail went. */
-export const Mailed = type("string.json.parse").to({ mailed: "boolean" });
+/** A tolerant mail agent's reply: whether the mail went, and why when it did not. */
+export const Mailed = type("string.json.parse").to(type({ mailed: "true" }).or({ mailed: "false", error: "unknown" }));

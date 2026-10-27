@@ -198,7 +198,17 @@ any other tenant or an unknown sender.
   hub publishes beside it in `release.json`, read as each body runs, and
   wakes it with a mail that names only the pull request. A pull request
   whose manager is up is mailed that manager instead, so a later webhook
-  does not deploy a second one. A mail that is not
+  does not deploy a second one. A wake mail waits up to two minutes for the
+  new manager to publish its key. When a wake mail fails for any reason, the
+  listener cancels that manager through the stock stop-run route under the
+  `manage` grant stock gives a deployment's creator, and its `unwoken` step's
+  output names each run it cancelled and why the mail failed. A run stock
+  no longer lets execute, as one whose cancellation is requested or whose
+  deadline has passed, is mailed nothing and its own take is refused; one
+  that holds the claim keeps it until it ends, so no second manager writes
+  to the pull request meanwhile. The pull request's next event, or the
+  reconciler re-queuing its head, which has no verdict, deploys a fresh
+  manager that claims it. A mail that is not
   the hub's, that names no pull request, or that finds no manager in
   `release.json` fails its body. Built with the release the module loads,
   its definition declares `workflow:*` `create` and `read` on exactly the
