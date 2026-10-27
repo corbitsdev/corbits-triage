@@ -79,6 +79,8 @@ export interface BridgeDeps {
   heard: (tenantId: string, source: RepoSource, repo: string) => void;
   /** Every verified delivery about a repository, so the GitHub reads kept for it are read again. */
   repoChanged: RepoReads["changed"];
+  /** The workspace's GitHub repositories changed, so the read token, which names them, is minted again. */
+  installationChanged: (tenantId: string) => void;
 }
 
 /** Mirrors @corbits/webhooks parseWebhookMeta (not exported upstream). */
@@ -369,6 +371,7 @@ async function handleInstallEvent(
     });
   }
 
+  d.installationChanged(loaded.tenantId);
   log({ level: "info", msg: "accepted", delivery, event, action, hook: loaded.credentialId, reason: "recorded_only" });
   return json(202, { status: "accepted" });
 }

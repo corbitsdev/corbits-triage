@@ -11,7 +11,7 @@ import type { Member } from "../integrations/app.js";
 import { grantAdminGithub } from "./admin-github-grant.js";
 import { decryptSecret, GITHUB_APP_KEY_CREDENTIAL, GITHUB_CREDENTIAL, lockedCredential, lockGithubCredentials, renewedMetadata, storeAppKey } from "./app-key.js";
 import { ensureTriageRole } from "./automation.js";
-import type { GithubTokenRenewal, IssuedApp } from "./installation-token.js";
+import { storeReadToken, type GithubTokenRenewal, type IssuedApp } from "./installation-token.js";
 import { validGithubProvider } from "./manifest.js";
 import { failure } from "./portal-credential.js";
 
@@ -54,6 +54,7 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
         await tx.insert(credential).values({ ...values, id, tenantId, principalId: null, oauthClientId: null, name: GITHUB_CREDENTIAL, type: "api_key", description: null, refreshSecret: null, scopes: null, createdAt: stamp });
         await grantAdminGithub(tx, tenantId, id, stamp);
       }
+      if (issued.read) await storeReadToken(tx, cipher, { tenantId, providerId }, issued.read);
       await ensureTriageRole(tx, tenantId, stamp);
     });
   }

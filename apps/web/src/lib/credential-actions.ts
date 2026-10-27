@@ -1,4 +1,4 @@
-import { ANTHROPIC_CREDENTIAL_NAME, BITBUCKET_DATACENTER_CREDENTIAL_NAME, GITHUB_APP_KEY_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
+import { ANTHROPIC_CREDENTIAL_NAME, BITBUCKET_DATACENTER_CREDENTIAL_NAME, GITHUB_APP_KEY_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, GITHUB_READ_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
 
 export type CredentialAction = "rotate" | "revoke";
 
@@ -43,13 +43,15 @@ function bitbucketDatacenterSecrets(credentials: readonly HubCredential[]): HubC
   return credentials.filter((credential) => BITBUCKET_DATACENTER_CREDENTIAL_NAMES.has(credential.name.trim()));
 }
 
-/** The App's private key is replaced through the GitHub App secret, so it is not listed on its own. */
-function githubAppKeys(credentials: readonly HubCredential[]): HubCredential[] {
-  return credentials.filter((credential) => credential.name.trim() === GITHUB_APP_KEY_CREDENTIAL_NAME);
+const GITHUB_APP_HELD = new Set([GITHUB_APP_KEY_CREDENTIAL_NAME, GITHUB_READ_CREDENTIAL_NAME]);
+
+/** The App's private key is replaced through the GitHub App secret and its read token is minted from it, so neither is listed on its own. */
+export function githubAppHeld(credentials: readonly HubCredential[]): HubCredential[] {
+  return credentials.filter((credential) => GITHUB_APP_HELD.has(credential.name.trim()));
 }
 
 export function otherSecrets(credentials: readonly HubCredential[]): HubCredential[] {
-  const ours = new Set([...githubSecrets(credentials), ...githubAppKeys(credentials), ...modelSecrets(credentials), ...anthropicSecrets(credentials), ...bitbucketDatacenterSecrets(credentials)]);
+  const ours = new Set([...githubSecrets(credentials), ...githubAppHeld(credentials), ...modelSecrets(credentials), ...anthropicSecrets(credentials), ...bitbucketDatacenterSecrets(credentials)]);
   return credentials.filter((credential) => !ours.has(credential));
 }
 

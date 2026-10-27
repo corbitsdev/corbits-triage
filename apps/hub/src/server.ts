@@ -766,6 +766,9 @@ const bridge = createBridgeHandler({
   heard: repoActivity.heard,
   startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
   repoChanged: repoReads.changed,
+  installationChanged: function installationChanged(tenantId) {
+    void renewGithubToken(tenantId);
+  },
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
   db: credentialDeps.db,

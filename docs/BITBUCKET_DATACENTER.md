@@ -44,6 +44,8 @@ An HTTP access token, sent as `Authorization: Bearer`. A fresh Data Center 10.5 
 | Repository write | What triage does on pull requests |
 | Repository admin | Creating and removing the webhook. Without it, set the webhook up by hand (below). |
 
+Data Center has no token the hub can narrow, so code review is handed this same token, unlike on GitHub, where it holds one that can only read.
+
 ## Routes
 
 All answer errors as `{ "error": { "code", "message" } }`.

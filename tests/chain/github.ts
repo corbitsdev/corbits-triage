@@ -5,6 +5,9 @@ import { POLICY_FILE_PATH } from "@corbits/triage-contracts";
 export const OWNER = "acme";
 export const INSTALLATION = 1;
 const BOT = { login: "corbits[bot]", type: "Bot" };
+const TOKEN = "installation-token";
+/** What the hub mints for code review: GitHub lets it read contents and nothing else. */
+const READ_TOKEN = "read-token";
 
 export type File = { filename: string; status: string; additions: number; deletions: number; patch: string };
 export type CheckRun = { name: string; status: "queued" | "in_progress" | "completed"; conclusion: "success" | "failure" | null };
@@ -28,6 +31,8 @@ export function fakeGithub() {
   const writes: Write[] = [];
   const misses: string[] = [];
   const requests: string[] = [];
+  /** Writes refused for being made with the read token. */
+  const refused: string[] = [];
   const held = new Map<string, Promise<void>>();
   let ids = 0;
 
@@ -108,19 +113,30 @@ export function fakeGithub() {
     return undefined;
   }
 
+  function mint(asked: string): Response {
+    const expires_at = new Date(Date.now() + 3_600_000).toISOString();
+    if (asked === "") return Response.json({ token: TOKEN, expires_at }, { status: 201 });
+    const { permissions } = JSON.parse(asked) as { permissions: Record<string, string> };
+    return Response.json({ token: READ_TOKEN, expires_at, permissions: { ...permissions, metadata: "read" } }, { status: 201 });
+  }
+
   async function serve(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const { pathname } = url;
     requests.push(`${req.method} ${pathname}${url.search}`);
     if (pathname === "/app") return Response.json({ id: 1, slug: "corbits", name: "Corbits" });
     if (pathname === "/app/installations") return Response.json([{ id: INSTALLATION, account: { login: OWNER }, html_url: "https://github.com/settings/installations/1", repository_selection: "selected", suspended_at: null }]);
-    if (pathname === `/app/installations/${INSTALLATION}/access_tokens`) return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() }, { status: 201 });
+    if (pathname === `/app/installations/${INSTALLATION}/access_tokens`) return mint(await req.text());
     if (pathname === "/installation/repositories") return Response.json({ total_count: repos.size, repositories: [...repos.keys()].map((name) => ({ full_name: name })) });
     const named = /^\/repos\/([^/]+\/[^/]+)(.*)$/.exec(pathname);
     const repo = named ? repos.get(named[1]!) : undefined;
     if (repo && req.method === "GET") {
       const answer = await readRoute(repo, named![2]!, url);
       if (answer) return answer;
+    }
+    if (repo && req.method !== "GET" && req.headers.get("authorization") === `Bearer ${READ_TOKEN}`) {
+      refused.push(`${req.method} ${pathname}`);
+      return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
     }
     if (repo && req.method !== "GET") {
       const text = await req.text();
@@ -141,6 +157,7 @@ export function fakeGithub() {
     writes,
     misses,
     requests,
+    refused,
     addRepo(name: string, policy: string): void {
       repos.set(name, { name, policy, pulls: new Map(), checks: new Map() });
     },

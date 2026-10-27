@@ -16,6 +16,8 @@ export const GITHUB_CREDENTIAL_NAME = "github";
 export const GITHUB_HOOK_CREDENTIAL_NAME = "github-hook";
 /** The App's private key: the hub moves it here off the GitHub App credential, which then holds an installation token. */
 export const GITHUB_APP_KEY_CREDENTIAL_NAME = "github-app";
+/** A token the hub mints beside the GitHub App credential's that can only read contents; code review holds only this. */
+export const GITHUB_READ_CREDENTIAL_NAME = "github-read";
 const INFERENCE_PROVIDER_PLUGIN = "corbits-system-one";
 export const INFERENCE_CREDENTIAL_NAME = "corbits-system-one";
 export const ANTHROPIC_API = "https://api.anthropic.com";

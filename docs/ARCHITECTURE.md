@@ -784,8 +784,17 @@ host's `*_read_file`), never a shell, network, write or push tool, and
 `tooling/model-step-tools.test.ts` fails `bun run test` otherwise.
 
 GitHub access is the tenant credential `github` (provider `github`, stock
-`http`), bound to the GitHub tools and host actions. It holds an installation
-token, never the App key. The vault holds the App as
+`http`), bound by the listener, manager and judge to the GitHub tools and host
+actions. It holds an installation token, never the App key. Code review, which
+runs a model over the pull request's code, binds only `github-read` (same
+provider): a second token for the same installation the hub mints with
+`contents: read` and the workspace's repositories from that installation, and
+refuses to keep if GitHub answers with any other permission, so no code review
+deployment holds a token that can write. It is minted, stored, pushed and marked
+`expired` with `github`, in the same transaction under the same lock, and minted
+again when installation sync or an installation webhook changes the repositories.
+A refused read token leaves `github` renewed, keeps its reason as `tokenError` on
+`github-read`, and code review is not deployed until a good one is minted. The vault holds the App as
 `{"appId","privateKey"}` under `github-app`, which no workflow binds, and its
 webhook secret under `github-hook`. The manifest callback and
 `PUT /api/integrations/github-app/:tenantId` write the key and the token minted
@@ -800,7 +809,7 @@ since a secret update alone reaches a deployment only when its sidecar
 reconnects. One token covers one installation: the workspace uses the one its
 repositories came from, else the oldest; installation sync and the
 installation webhook leave out other accounts' repositories. A `github-app`
-key whose `github` credential was deleted is dropped by the renewal loop. A
+key and `github-read` token whose `github` credential was deleted are dropped by the renewal loop. A
 failed renewal keeps its reason as `tokenError` on the credential's metadata,
 shown on the portal's GitHub App row; once the token is past its expiry the
 credential is marked `expired`, which stock launch resolution skips, so no

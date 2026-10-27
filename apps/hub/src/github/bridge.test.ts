@@ -174,6 +174,7 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
     },
     heard() {},
     repoChanged() {},
+    installationChanged() {},
     ...overrides,
   });
 }
