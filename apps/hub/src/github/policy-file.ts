@@ -319,14 +319,14 @@ export function createPolicyFile(deps: PolicyFileDeps) {
    * as triage would refuse it once merged, and when the file is no longer the one `sha` names. An open pull request may
    * hold the maintainer's edits, so it is never written over.
    */
-  async function chosenFile(member: Member, record: RepoRecord, text: string, sha: string | null | undefined): Promise<Response> {
+  async function chosenFile(member: Member, record: RepoRecord, text: string, sha: string | null): Promise<Response> {
     const refused = await textRefusal(member.tenantId, record, text);
     if (refused) return refused;
     const pull = await openPull(member.tenantId, record);
     if (pull) return failure(409, "policy_pull_open", `${record.name}'s policy pull request is open; merge or close it first.`, pull);
     const file = await freshFile(member.tenantId, record);
     if (file instanceof Response) return file;
-    if (sha !== undefined && (file?.sha ?? null) !== sha) return fileMoved(file?.path ?? POLICY_FILE_PATH);
+    if ((file?.sha ?? null) !== sha) return fileMoved(file?.path ?? POLICY_FILE_PATH);
     if (!file) return addFile(member, record, { path: POLICY_FILE_PATH, text, title: ADD_TITLE, body: CHOSEN_BODY, readSha: null });
     if (file.text === text) return failure(409, "policy_file_unchanged", `${file.path} already holds this text.`);
     return addFile(member, record, { path: file.path, text, title: `chore: update the Corbits Triage rules in ${file.path}`, body: editedBody(file.path), readSha: file.sha });
@@ -346,7 +346,11 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   async function exportRecord({ repo, text: chosen, sha }: typeof PolicyExportBody.infer, member: Member, record: RepoRecord): Promise<Response> {
     try {
-      if (chosen !== undefined) return await chosenFile(member, record, chosen, sha);
+      if (chosen !== undefined) {
+        // Without the sha the text was edited from, a file changed meanwhile would be overwritten unseen.
+        if (sha === undefined) return failure(400, "invalid_request", "Send the sha of the policy file the text was edited from, or null for a repository with no file.");
+        return await chosenFile(member, record, chosen, sha);
+      }
       if ((await cached(member.tenantId, record, 0)).status !== "absent") return failure(409, "policy_file_present", `${repo} already has a policy file; change it by editing it.`);
       return await startFile(member, record);
     } catch (err) {

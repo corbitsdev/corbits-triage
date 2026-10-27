@@ -369,18 +369,19 @@ test("PostgreSQL: a repository with no policy file runs nothing and is offered a
 }, 60_000);
 
 test("PostgreSQL: edited text is opened as a pull request as triage would run it, over the file it was edited from, and the open pull request is left as it is", async () => {
-  expect(await exportOf(CHOSEN, "rules: [")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: expect.stringContaining("Line 1: The policy file is not YAML") } });
-  expect(await exportOf(CHOSEN, "extends: acme/nowhere\nchecks: {}\n")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: "acme/nowhere is not connected to this workspace or has no policy file." } });
+  expect(await exportOf(CHOSEN, "rules: [", null)).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: expect.stringContaining("Line 1: The policy file is not YAML") } });
+  expect(await exportOf(CHOSEN, "extends: acme/nowhere\nchecks: {}\n", null)).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: "acme/nowhere is not connected to this workspace or has no policy file." } });
   expect(await exportOf(CHOSEN, FILE, "blob-never")).toMatchObject({ http: 409, error: { code: "policy_file_changed" } });
   expect(pulls.filter((row) => row.repo === CHOSEN)).toEqual([]);
 
   const number = pulls.length + 1;
   const url = `https://github.com/${CHOSEN}/pull/${number}`;
-  expect(await exportOf(CHOSEN, FILE)).toEqual({ http: 200, status: "opened", url, number, headSha: "head-sha" });
+  expect(await exportOf(CHOSEN, FILE)).toMatchObject({ http: 400, error: { code: "invalid_request" } });
+  expect(await exportOf(CHOSEN, FILE, null)).toEqual({ http: 200, status: "opened", url, number, headSha: "head-sha" });
   expect(pulls.filter((row) => row.repo === CHOSEN)).toMatchObject([{ head: POLICY_BRANCH, base: "main", title: `chore: add a Corbits Triage policy in ${YML}` }]);
   expect(files.get(`${CHOSEN}@${POLICY_BRANCH}/${YML}`)!.text).toBe(FILE);
 
-  expect(await exportOf(CHOSEN, FILE.replace("CI passes.", "CI is green."))).toMatchObject({ http: 409, error: { code: "policy_pull_open", url, number } });
+  expect(await exportOf(CHOSEN, FILE.replace("CI passes.", "CI is green."), null)).toMatchObject({ http: 409, error: { code: "policy_pull_open", url, number } });
   expect(files.get(`${CHOSEN}@${POLICY_BRANCH}/${YML}`)!.text).toBe(FILE);
 
   // Merged where no push is heard, the file is still found, and an edit goes over it from the sha it was made from.
@@ -398,7 +399,7 @@ test("PostgreSQL: edited text is opened as a pull request as triage would run it
   // Another caller opening it between the check and the create is answered with theirs.
   const theirs = pulls.length + 1;
   raced = { repo: CHOSEN_RACED, number: theirs, head: POLICY_BRANCH, base: "main", title: "theirs", body: "", open: true };
-  expect(await exportOf(CHOSEN_RACED, FILE)).toMatchObject({ http: 200, number: theirs });
+  expect(await exportOf(CHOSEN_RACED, FILE, null)).toMatchObject({ http: 200, number: theirs });
   expect(pulls.filter((row) => row.repo === CHOSEN_RACED)).toHaveLength(1);
 }, 60_000);
 
