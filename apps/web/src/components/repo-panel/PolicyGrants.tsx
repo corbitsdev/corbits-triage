@@ -9,7 +9,6 @@ import { doName, postingKinds } from "../../lib/policy-view.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { useAllowed, useRoles } from "../../lib/tenant-entities.ts";
 
-
 function policyKinds(pack: CheckPack, decide: readonly ActionKind[], source: RepoSource): ActionKind[] {
   const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].flatMap((step) => (step.do === "nothing" || alwaysHeld(verdict, step.do) ? [] : [step.do])));
   const used = new Set<string>([...postingKinds(source), ...decide, ...steps]);

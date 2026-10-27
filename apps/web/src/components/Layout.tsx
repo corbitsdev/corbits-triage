@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Button, Input } from "@corbits/react-ui";
+import { errorText } from "@corbits/common";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
@@ -41,7 +42,7 @@ function WorkspaceSwitcher() {
     try {
       tenantId = await create.mutateAsync(name.trim());
     } catch (cause) {
-      warn(`Could not create the workspace. ${cause instanceof Error ? cause.message : String(cause)}`);
+      warn(`Could not create the workspace. ${errorText(cause)}`);
       return;
     }
     setOpening(true);
@@ -49,7 +50,7 @@ function WorkspaceSwitcher() {
       await openWorkspace(tenantId);
     } catch (cause) {
       setOpening(false);
-      warn(`The workspace was created but could not be opened. ${cause instanceof Error ? cause.message : String(cause)}`);
+      warn(`The workspace was created but could not be opened. ${errorText(cause)}`);
     }
   }
 
