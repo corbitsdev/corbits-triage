@@ -1,18 +1,16 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { connectedSources, isPerson, type HubPrincipal, type PortalSnapshot } from "../lib/hub-api.ts";
 import { counted } from "../lib/plural.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useDeployedVersions, usePrincipals, type TenantSection } from "../lib/tenant-entities.ts";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { AccountSection } from "../components/settings/AccountSection.tsx";
-import { CodeReviewSection } from "../components/settings/CodeReviewSection.tsx";
 import { SupportVersions } from "../components/settings/SupportVersions.tsx";
 import { TriageSection } from "../components/settings/TriageSection.tsx";
 
 const SECTIONS = [
   { id: "triage", label: "Triage" },
-  { id: "code-review", label: "Code review" },
   { id: "people", label: "People" },
   { id: "account", label: "Your account" },
 ] as const;
@@ -74,6 +72,7 @@ export default function Settings() {
   }
 
   if (!snapshot) return null;
+  if (tab === "code-review") return <Navigate to="/code-review#code-review" replace />;
   return (
     <main className="settings" id="main" ref={page}>
       <h1>Workspace settings</h1>
@@ -82,7 +81,6 @@ export default function Settings() {
         {SECTIONS.map((section) => <span key={section.id}><Link className="linkish quiet" to={`/settings/${section.id}`} replace onClick={() => jumpTo(section.id)}>{section.label}</Link></span>)}
       </nav>
       <TriageSection snapshot={snapshot} deployed={deployed} />
-      <CodeReviewSection snapshot={snapshot} />
       <InvitePeople onSetupPage={false} />
       <AccountSection />
       {!deployed.denied && !deployed.loading && !deployed.unavailable && <SupportVersions deployments={deployed.rows} sources={connectedSources(snapshot.credentials)} />}

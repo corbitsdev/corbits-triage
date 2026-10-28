@@ -12,7 +12,6 @@ import { useRepoStats, type StatsReader } from "../../lib/repo-stats.ts";
 import type { RepoRow } from "../../lib/repo-rows.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
-import CodeReviewCard from "./CodeReviewCard.tsx";
 import OutcomesCard from "./OutcomesCard.tsx";
 import PolicySection from "./PolicySection.tsx";
 import RemoveRepository from "./RemoveRepository.tsx";
@@ -72,7 +71,6 @@ export default function RepoPanel({ repo, row, live, stats: statsReader, onClose
         {switching.error ? <p role="alert" className="error">Could not switch triage. {errorText(switching.error)} <button type="button" className="linkish" onClick={() => switching.mutate(!triaging)}>Try again</button></p> : null}
         {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
         <PolicySection repo={repo.name} source={repo.source} pack={pack} disabled={locked} />
-        <CodeReviewCard />
         {stats ? <OutcomesCard outcomes={stats.outcomes} source={repo.source} /> : null}
         <RemoveRepository repo={repo.name} source={repo.source} disabled={locked} onRemoved={onClose} />
       </>
