@@ -11,6 +11,7 @@ import type { PortalSnapshot, WorkspaceOption } from "./lib/hub-api.ts";
 import Layout from "./components/Layout.tsx";
 import LoadingIndicator from "./components/LoadingIndicator.tsx";
 import NewerPortalNotice from "./components/NewerPortalNotice.tsx";
+import WorkspaceStalledNotice from "./components/TriageStalledNotice.tsx";
 import Connect from "./pages/Connect.tsx";
 import { OtherWorkspaces } from "./components/OtherWorkspaces.tsx";
 import { SignInShell } from "./components/SignInShell.tsx";
@@ -197,7 +198,10 @@ function AppShell() {
             <Gate />
           </HeldInboxProvider>
           <LoadingIndicator />
-          <NewerPortalNotice />
+          <div className="notices">
+            <NewerPortalNotice />
+            <WorkspaceStalledNotice />
+          </div>
           <Toaster position="bottom-right" />
         </PortalProvider>
       </UserQueryCache>

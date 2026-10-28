@@ -108,11 +108,11 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
               <span className="txt">{statusText(status)}</span>
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
-            {deployed.stalled && (
-              <div className="sentence">
-                <span className="txt">{stalledText(deployed.stalled)}</span>
+            {deployed.stalled?.map((host) => (
+              <div className="sentence" key={host.source}>
+                <span className="txt">{stalledText(host)}</span>
               </div>
-            )}
+            ))}
             {deployed.sidecar && (
               <div className="sentence">
                 <span className="txt">{sidecarText(deployed.sidecar)}</span>

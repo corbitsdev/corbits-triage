@@ -11,7 +11,7 @@ afterEach(function restore() {
   document.body.innerHTML = "";
 });
 
-test("the workspace is told pull requests wait for Triage only while the hub counts it stalled", () => {
+test("the workspace is told which host has pull requests waiting for Triage only while the hub counts it stalled", () => {
   const host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -20,8 +20,8 @@ test("the workspace is told pull requests wait for Triage only while the hub cou
   expect(status?.textContent).toBe("");
 
   const since = new Date("2026-10-27T10:42:00Z");
-  act(() => root?.render(<MemoryRouter><TriageStalledNotice stalled={{ since: since.toISOString() }} /></MemoryRouter>));
+  act(() => root?.render(<MemoryRouter><TriageStalledNotice stalled={[{ source: "bitbucket-datacenter", since: since.toISOString() }]} /></MemoryRouter>));
   expect(document.querySelector("[role=status]")).toBe(status);
-  expect(status?.textContent).toContain(`Pull requests have waited since ${since.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} for Triage to start.`);
+  expect(status?.textContent).toContain(`Pull requests on Bitbucket Data Center have waited since ${since.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} for Triage to start.`);
   expect(document.querySelector("a")?.getAttribute("href")).toBe("/settings/triage");
 });
