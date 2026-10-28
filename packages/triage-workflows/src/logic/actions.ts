@@ -29,7 +29,8 @@ export function doEffectId(ref: DoRef): string {
   return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
 }
 
-type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: string };
+/** `awaits: "ci"` marks a Do held or skipped for the head's CI, which a run of CI on the same head can still change. */
+type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: string; awaits?: "ci" };
 
 /**
  * `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant.
@@ -244,16 +245,16 @@ export function evaluateActions(input: ActionInput): SuggestedAction[] {
   return stepActions(input, input.pack.actions[input.verdict]);
 }
 
+/** Why an approval cannot stand on this head. */
+export type ApprovalHold = Pick<Place, "reason" | "awaits">;
+
 /**
  * Why an approval cannot stand on this head, if it cannot: it says the pull request may merge, so the verdict must pass
  * and CI must have finished green. A head without CI cannot be told apart from one whose CI has not started yet, so it is not approved either.
  */
-/** Why an approve Do is skipped on a passing verdict whose head's CI has not passed. */
-export const CI_NOT_PASSED = "CI has not passed on this head.";
-
-export function approvalHeldBy(verdict: VerdictWord, ci: PrFacts["checks"]): string | undefined {
-  if (verdict !== "pass") return "The pull request does not pass its policy.";
-  if (ci !== "success") return CI_NOT_PASSED;
+export function approvalHeldBy(verdict: VerdictWord, ci: PrFacts["checks"]): ApprovalHold | undefined {
+  if (verdict !== "pass") return { reason: "The pull request does not pass its policy." };
+  if (ci !== "success") return { reason: "CI has not passed on this head.", awaits: "ci" };
   return undefined;
 }
 
@@ -276,12 +277,12 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
 }
 
 /** An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. */
-export function heldApprovals(actions: SuggestedAction[], approval: string | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
+export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
-    if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, reason: approval };
-    if (ci === "pending") return { ...action, held: true, heldUntil: "ci-finishes", reason: `${ciRefusal(ci)}.` };
-    if (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.` };
+    if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, ...approval };
+    if (ci === "pending") return { ...action, held: true, heldUntil: "ci-finishes", reason: `${ciRefusal(ci)}.`, awaits: "ci" };
+    if (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, awaits: "ci" };
     return action;
   });
 }

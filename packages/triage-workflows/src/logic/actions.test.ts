@@ -158,8 +158,8 @@ describe("evaluateActions", () => {
       const pack = { ...emptyPack("acme/widgets"), checks: ciGreen === undefined ? {} : { "ci-green": { enabled: ciGreen } }, actions: { ...defaultActions(), pass: [{ do: "merge" }] satisfies Step[] } };
       return heldApprovals(evaluateActions({ facts: { ...facts, checks: ci }, checks: [], verdict: "pass", reason: "passes", pack }), undefined, ci)[0];
     }
-    expect(merge("pending", false)).toMatchObject({ effectId: expect.any(String), held: true, heldUntil: "ci-finishes", reason: "CI has not finished on this head." });
-    expect(merge("none", true)).toMatchObject({ held: true, reason: "There is no CI on this head." });
+    expect(merge("pending", false)).toMatchObject({ effectId: expect.any(String), held: true, heldUntil: "ci-finishes", reason: "CI has not finished on this head.", awaits: "ci" });
+    expect(merge("none", true)).toMatchObject({ held: true, reason: "There is no CI on this head.", awaits: "ci" });
     expect(merge("none", true)).not.toHaveProperty("heldUntil");
     expect(merge("none")).toMatchObject({ held: true, reason: "There is no CI on this head." });
     expect(merge("none", false)).toMatchObject({ target: { ciOptional: true }, reason: "passes" });
