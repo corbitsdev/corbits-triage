@@ -204,9 +204,6 @@ describe("policy file v4", () => {
     [`${RULES}decide:\n  - { if: { autor: [maintainers] }, do: approve }\n`, "`decide[0].if.autor` is not a key; did you mean `decide[0].if.author`?", 7],
     [`${RULES}decide:\n  - { if: { author: [maintainer] }, do: approve }\n`, "`decide[0].if.author` names `maintainer`, which is not a group; did you mean `maintainers`?", 7],
     [`${RULES}code-review: { on: false }\ndecide:\n  - { if: { code-review: clean }, do: approve }\n`, "`decide[0].if.code-review`: `code-review` is not turned on in this file; set `code-review.on: true` or remove the condition.", 8],
-    [`${RULES}security: { on: true }\n`, "`security`: security and deslop reviews are not available yet; remove the block.", 6],
-    [`${RULES}deslop: { on: false }\n`, "`deslop`: security and deslop reviews are not available yet; remove the block.", 6],
-    [`${RULES}${ON}decide:\n  - { if: { security: clean }, do: approve }\n`, "`decide[0].if.security`: security and deslop reviews are not available yet; remove the condition.", 8],
     [`${RULES}${ON}decide:\n  - if: { triage: pass }\n    do: approve\n  - if: { code-review: [clean, incomplete] }\n    do: [approve, merge]\n`, "`decide[1].if.code-review` can't match incomplete in a rule that approves or merges; incomplete is never clean.", 10],
     [`${RULES}actions:\n  pass: [{ do: approve }]\ndecide:\n  - { if: { triage: pass }, do: approve }\n`, "`actions` and `decide` can't both be set; move the actions into decide.", 6],
     [`${RULES}actions:\n  pass: [{ do: aprove }]\n`, `\`actions.pass[0].do\` must be one of ${STEP_KINDS}; did you mean \`approve\`?`, 7],
@@ -219,6 +216,32 @@ describe("policy file v4", () => {
     [`rules:\n  - check: model\n    id: tidy\n    text: "Is pauseLabel: set?"\n    reason: r\n    evidence: [maintainer-stated]\npauseLabel: "${"x".repeat(60)}"\n`, "`pauseLabel` must be a label of at most 50 characters.", 7],
   ])("refuses %#", (text, message, line) => {
     expect(problems(text)).toEqual([{ message, line }]);
+  });
+
+  test.each([
+    [`${RULES}deslop: { on: false }\n`, [{ message: "`deslop`: security and deslop reviews are not available yet, so Triage skips this block; remove it.", line: 6 }], undefined],
+    [`${RULES}security: { on: true, for: [maintainers] }\n`, [{ message: "`security`: security and deslop reviews are not available yet, so Triage skips this block; remove it.", line: 6 }], undefined],
+    [
+      `${RULES}security: { on: true }\ndecide:\n  - { if: { triage: pass, security: clean }, do: merge }\n  - { if: { triage: fail }, do: request-changes }\n`,
+      [
+        { message: "`security`: security and deslop reviews are not available yet, so Triage skips this block; remove it.", line: 6 },
+        { message: "`decide[0].if.security`: security and deslop reviews are not available yet, so Triage skips this rule; remove the rule.", line: 8 },
+      ],
+      [{ if: { triage: "fail" }, do: "request-changes" }],
+    ],
+  ])("a security or deslop block, or a rule conditioned on one, is skipped and named as pending %#", (text, pending, decide) => {
+    const checked = checkPolicyFile(text, REPO);
+    if (!checked.ok) throw new Error(JSON.stringify(checked.problems));
+    expect(checked.pending).toEqual(pending);
+    expect(checked.policy).toEqual(readPolicyFile(RULES, REPO));
+    if (decide) expect(checked.workflow.decide).toEqual(decide);
+  });
+
+  test("a file refused for something else names its security or deslop block among its problems", () => {
+    expect(problems(`${RULES}deslop: { on: false }\npauseLabel: [hold]\n`)).toEqual([
+      { message: "`pauseLabel` must be a label of at most 50 characters.", line: 7 },
+      { message: "`deslop`: security and deslop reviews are not available yet; remove the block.", line: 6 },
+    ]);
   });
 
   test("every key the grammar takes is said in the file's terms when it is wrong", () => {

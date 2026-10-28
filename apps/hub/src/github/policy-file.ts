@@ -52,6 +52,8 @@ function changeSentence(change: PolicyPatchChange): string {
       return `Removes the rule \`${change.id}\`.`;
     case "code-review":
       return `${change.on ? "Turns on" : "Turns off"} code review.`;
+    case "strip-reserved":
+      return "Removes the security and deslop blocks, and the decide rules with a condition on one, which Triage skips.";
   }
 }
 
@@ -133,7 +135,7 @@ function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
   const file = { path, sha: read.sha, url: read.url, text: read.text };
   const checked = checkPolicyFile(read.text, repo);
   if (!checked.ok) return { status: "invalid", path, reason: policyFileReason(checked.problems), file };
-  return { status: "ok", file, policy: checked.policy, workflow: checked.workflow };
+  return { status: "ok", file: { ...file, ...(checked.pending && { pending: policyFileReason(checked.pending) }) }, policy: checked.policy, workflow: checked.workflow };
 }
 
 /** How long a read of a repository whose webhook the hub has not heard lately is kept. */
@@ -331,6 +333,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function textRefusal(tenantId: string, record: RepoRecord, text: string): Promise<Response | undefined> {
     const checked = checkPolicyFile(text, record.name);
     if (!checked.ok) return failure(422, "policy_file_invalid", policyFileReason(checked.problems));
+    if (checked.pending) return failure(422, "policy_file_invalid", policyFileReason(checked.pending));
     const refusal = await deps.refusal(tenantId, record.name, sourceOf(record), checked.policy);
     return refusal === undefined ? undefined : failure(422, "policy_file_invalid", refusal);
   }

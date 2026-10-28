@@ -30,6 +30,7 @@ const PUSHED = "acme/pushed";
 const BITBUCKET_PUSHED = "PROJ/pushed";
 const PATCHED = "acme/patched";
 const PATCH_LISTED = "acme/patch-listed";
+const RESERVED = "acme/reserved";
 const PULL_READ = "acme/pull-read";
 const BOTH = "acme/both";
 const UNHEARD = "acme/unheard";
@@ -197,7 +198,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, PULL_READ, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
+  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, RESERVED, PULL_READ, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -312,7 +313,6 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
     [`rules:\n  - check: ci-green\n    text: CI passes.\n    evidence: [maintainer-stated]\n`, "Line 2: rules[0].reason must be"],
     [`checks: {}\n${manyKeys}\n`, "unknown keys: k0, k1, k2, k3, k4 and 2 more."],
     ["checks:\n  ci-gren:\n    enabled: true\n", "unknown checks: ci-gren."],
-    ["rules: []\ndeslop: { on: false }\n", "Line 2: `deslop`: security and deslop reviews are not available yet; remove the block."],
     [DIRECTORY, `${YML} is not a file.`],
     [aliasBomb(), "too large or uses aliases"],
     [`checks: {}\n#${"x".repeat(70 * 1024)}\n`, "too large or uses aliases"],
@@ -602,6 +602,26 @@ test("PostgreSQL: a batch of policy edits opens one pull request, a preview writ
   const body = pulls.find((row) => row.repo === PATCHED)!.body;
   expect(body).toContain("Turns off code review.");
   expect(body.indexOf("Turns off code review.")).toBeLessThan(body.lastIndexOf("Turns off `focused`."));
+});
+
+test("PostgreSQL: a policy file with a security or deslop block is triaged on the rest, shows the block as pending, and refuses other edits until a strip-reserved patch removes it", async () => {
+  const held = `${PATCH_FILE}security: { on: true }\n`;
+  const line = held.split("\n").indexOf("security: { on: true }") + 1;
+  onMain(RESERVED, YML, held, "reserved-main");
+  await policyFile.onPush(TENANT, RESERVED, "github");
+  expect(await readPack(RESERVED)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "reserved-main" } } });
+  const pending = `Line ${line}: \`security\`: security and deslop reviews are not available yet, so Triage skips this block; remove it.`;
+  expect(await fileOf(RESERVED)).toMatchObject({ sha: "reserved-main", pending });
+
+  expect(await patchOf({ repo: RESERVED, changes: [{ kind: "rule", id: "focused", enabled: false }] })).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: expect.stringContaining("`security`: security and deslop reviews are not available yet") } });
+  expect(await exportOf(RESERVED, held, "reserved-main")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: pending } });
+  expect(pulls.filter((row) => row.repo === RESERVED)).toEqual([]);
+
+  expect(await patchOf({ repo: RESERVED, changes: [{ kind: "strip-reserved" }] })).toMatchObject({ http: 200, status: "opened" });
+  const written = files.get(`${RESERVED}@${POLICY_BRANCH}/${YML}`)!.text!;
+  expect(written).not.toContain("security");
+  expect(checkPolicyFile(written, RESERVED)).toEqual({ ok: true, policy: expect.anything(), workflow: expect.anything() });
+  expect(pulls.find((row) => row.repo === RESERVED)!.body).toContain("- Removes the security and deslop blocks, and the decide rules with a condition on one, which Triage skips.");
 });
 
 test("PostgreSQL: a repository with a policy file reads ok with its open policy pull request, which a patch shows at once", async () => {

@@ -1,6 +1,6 @@
 import { queryOptions, skipToken, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { PolicyUpgrades, RepoSource } from "@corbits/triage-contracts";
-import { exportPolicyFile, loadPolicyUpgrades } from "./hub-api.ts";
+import { exportPolicyFile, loadPolicyUpgrades, patchPolicyFile } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { POLICY_FILE_QUERY_KEY } from "./policy-file.ts";
 import { usePortal } from "./portal.tsx";
@@ -74,9 +74,9 @@ export function usePolicyUpgrade(repo: string): PolicyUpgradeRow | undefined {
   return useUpgradeRows().find((row) => row.repo === repo && (row.error !== undefined || starting(row)));
 }
 
-/** Opening the pull request that adds the starter policy, and merging it; each is followed by reading every view of the policy again. */
-export function usePolicyStartActions(repo: string, source: RepoSource) {
-  const { snapshot, writeGithub } = usePortal();
+/** The workspace a policy write goes to, and reading every view of the policy again after one. */
+function usePolicyWrites() {
+  const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   const queryClient = useQueryClient();
 
@@ -88,6 +88,14 @@ export function usePolicyStartActions(repo: string, source: RepoSource) {
   async function reread() {
     await Promise.all([POLICY_UPGRADES_QUERY_KEY, POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId] })));
   }
+
+  return { workspace, reread };
+}
+
+/** Opening the pull request that adds the starter policy, and merging it; each is followed by reading every view of the policy again. */
+export function usePolicyStartActions(repo: string, source: RepoSource) {
+  const { writeGithub } = usePortal();
+  const { workspace, reread } = usePolicyWrites();
 
   const propose = useMutation({
     mutationFn: function openPull() {
@@ -102,4 +110,15 @@ export function usePolicyStartActions(repo: string, source: RepoSource) {
     onSuccess: reread,
   });
   return { propose, merge };
+}
+
+/** Opening the policy pull request that removes what Triage skips in the file, then reading every view of the policy again. */
+export function usePolicyStrip(repo: string, source: RepoSource) {
+  const { workspace, reread } = usePolicyWrites();
+  return useMutation({
+    mutationFn: function stripReserved() {
+      return patchPolicyFile(createHubTransport(), workspace(), repo, source, [{ kind: "strip-reserved" }]);
+    },
+    onSuccess: reread,
+  });
 }

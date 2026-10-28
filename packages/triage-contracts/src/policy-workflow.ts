@@ -1,6 +1,7 @@
 // The policy file's v4 keys beside `rules`: author groups, one key per block that runs after triage, `pace`, `pauseLabel`
 // and `decide`. They are read and validated here; nothing acts on them yet, except steps naming a group.
 import { type } from "arktype";
+import { asRecord } from "@corbits/common";
 import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, Glob, GROUP_NAME_MAX, GroupName, Label, POLICY_EVENTS, VERDICTS, type AuthorKind, type AuthorMatch, type FileAuthorMatch, type PolicyActions, type Step, type VerdictWord } from "./check-pack.js";
 import { RULE_GATES } from "./rules-gate.js";
 import { EVERYONE } from "./step-when.js";
@@ -8,7 +9,10 @@ import { EVERYONE } from "./step-when.js";
 export const BLOCK_KINDS = ["code-review"] as const;
 export type BlockKind = (typeof BLOCK_KINDS)[number];
 
-/** Keys kept for blocks no workflow runs yet; a file that sets one, or a `decide` condition on one, is refused. */
+/**
+ * Keys kept for blocks no workflow runs yet. Triage reads a file that sets one, or a `decide` condition on one, without
+ * it (`withoutReserved`); a file written from the portal is refused while it holds either.
+ */
 export const RESERVED_BLOCKS = ["security", "deslop"] as const;
 
 export const PROVIDERS = ["anthropic", "openai", "xai", "google", "opencode", "custom"] as const;
@@ -70,6 +74,30 @@ export const WORKFLOW_PROPS = {
   "pauseLabel?": Label,
   "decide?": DecideRuleSchema.array(),
 } as const;
+
+const SKIPPED = "security and deslop reviews are not available yet, so Triage skips this";
+
+function reservedCondition(rule: unknown): string | undefined {
+  const condition = asRecord(asRecord(rule)?.if);
+  return condition && RESERVED_BLOCKS.find((kind) => Object.hasOwn(condition, kind));
+}
+
+/**
+ * The file without its reserved blocks and the `decide` rules with a condition on one, each named as pending. A rule
+ * goes whole: without the condition it would match pull requests it never matched.
+ */
+export function withoutReserved(file: Record<string, unknown>): { file: Record<string, unknown>; pending: PathProblem[] } {
+  const blocks: string[] = RESERVED_BLOCKS.filter((kind) => Object.hasOwn(file, kind));
+  const decide = Array.isArray(file.decide) ? file.decide : [];
+  const rules = decide.flatMap((rule, at) => {
+    const kind = reservedCondition(rule);
+    return kind === undefined ? [] : [{ message: `\`${pathText(["decide", at, "if", kind])}\`: ${SKIPPED} rule; remove the rule.`, path: ["decide", at, "if", kind] }];
+  });
+  if (blocks.length === 0 && rules.length === 0) return { file, pending: [] };
+  const kept = Object.fromEntries(Object.entries(file).filter(([key]) => !blocks.includes(key)));
+  if (rules.length > 0) kept.decide = decide.filter((_, at) => !rules.some(({ path }) => path[1] === at));
+  return { file: kept, pending: [...blocks.map((kind) => ({ message: `\`${kind}\`: ${SKIPPED} block; remove it.`, path: [kind] })), ...rules] };
+}
 
 export const WORKFLOW_KEYS = ["groups", ...BLOCK_KINDS, ...RESERVED_BLOCKS, "pace", "pauseLabel", "decide"] as const;
 

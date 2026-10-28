@@ -253,7 +253,7 @@ export type AuditLog = typeof AuditLog.infer;
  * The repository's policy file on its default branch; `text` is absent when it is too large to read, `problem` is why
  * triage does not run on it. `pull` is the open policy pull request's copy of the file at its head `headSha`.
  */
-export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string", "pull?": { text: "string", headSha: "string" } });
+export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string", "pending?": "string", "pull?": { text: "string", headSha: "string" } });
 export type PolicyFileStatus = typeof PolicyFileStatus.infer;
 
 const FileRefShape = type({ path: "string", sha: "string" });
@@ -285,7 +285,7 @@ export type PolicyFileRead = typeof PolicyFileRead.infer;
 
 const PolicyProblem = type({ message: "string", "line?": "number", "column?": "number" });
 
-export const PolicyValidated = type({ ok: "true", policy: "Record<string, unknown>", workflow: policyWorkflowSchema }).or({ ok: "false", problems: PolicyProblem.array() });
+export const PolicyValidated = type({ ok: "true", policy: "Record<string, unknown>", workflow: policyWorkflowSchema, "pending?": PolicyProblem.array() }).or({ ok: "false", problems: PolicyProblem.array() });
 export type PolicyValidated = typeof PolicyValidated.infer;
 
 /** `headSha`: the GitHub pull request's head, which a merge from the portal pins; a Bitbucket one is merged there. */
