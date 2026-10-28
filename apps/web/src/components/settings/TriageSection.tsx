@@ -18,6 +18,7 @@ import { KeyRow } from "./KeyRow.tsx";
 import { PolicyFiles } from "./PolicyFiles.tsx";
 import { TriageAutomation } from "./TriageAutomation.tsx";
 import { TriageVersions } from "./TriageVersions.tsx";
+import { stalledText } from "../TriageStalledNotice.tsx";
 
 /** The connected hosts without a listener up. */
 function undeployedSources(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): RepoSource[] {
@@ -107,6 +108,11 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
               <span className="txt">{statusText(status)}</span>
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
+            {deployed.stalled?.map((host) => (
+              <div className="sentence" key={host.source}>
+                <span className="txt">{stalledText(host)}</span>
+              </div>
+            ))}
             {deployed.sidecar && (
               <div className="sentence">
                 <span className="txt">{sidecarText(deployed.sidecar)}</span>

@@ -646,6 +646,30 @@ export async function recordOverdueWake(db: DB["db"], tenantId: string, pr: Pull
   });
 }
 
+const NewestTakes = type({ tenantId: "string", source: "string", at: "string" }).array();
+
+/** When a manager of each tenant and host last opened a pass on a pull request. Read once, as the hub starts. */
+export async function lastTakes(db: DB["db"]): Promise<{ tenantId: string; source: RepoSource; at: string }[]> {
+  const rows = NewestTakes.assert(await db.execute(sql`
+    SELECT ${managerState.tenantId} AS "tenantId", split_part(${managerState.key}, ':', 2) AS source, max(taken.at) AS at FROM ${managerState},
+    LATERAL (VALUES (${managerState.state}->'pass'->>'takenAt'), (${managerState.state}->'history'->-1->>'takenAt')) AS taken(at)
+    WHERE ${managerState.kind} = 'claim' AND taken.at IS NOT NULL
+    GROUP BY 1, 2`));
+  return rows.flatMap(function known(row) {
+    const source = REPO_SOURCES.find((each) => each === row.source);
+    return source === undefined ? [] : [{ tenantId: row.tenantId, source, at: row.at }];
+  });
+}
+
+/** When the oldest pull request mail of the tenant's host that no manager has taken was recorded, among those recorded after `after`. */
+export async function oldestPendingMail(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<string | undefined> {
+  const since = after === undefined ? undefined : sql`(${managerState.state}->>'receivedAt')::timestamptz > ${after}::timestamptz`;
+  const ofHost = like(managerState.key, `evt:${source}:%`);
+  const [row] = await db.select({ at: sql<string | null>`min(${managerState.state}->>'receivedAt')` }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since));
+  return row?.at ?? undefined;
+}
+
 /** The tenant's pull requests whose claim holds a reviewer with no result. */
 export async function reviewedPulls(db: DB["db"], tenantId: string): Promise<PullRequestRef[]> {
   const rows = await db.select({ key: managerState.key }).from(managerState)

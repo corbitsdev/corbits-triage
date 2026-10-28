@@ -28,6 +28,7 @@ import {
 
 const LIVE_REFRESH_MS = 10_000;
 const DIRECTORY_REFRESH_MS = 60_000;
+const STALLED_REFRESH_MS = 60_000;
 const NO_ROWS: never[] = [];
 
 /**
@@ -93,12 +94,17 @@ export function useGrants(): TenantSection<HubGrant> {
   return useTenantSection(GRANTS_QUERY_KEY, listGrants, DIRECTORY_REFRESH_MS);
 }
 
-export type DeployedSection = TenantSection<DeployedWorkflow> & { rollouts: DeployedVersions["rollouts"]; sidecar: DeployedVersions["sidecar"] | undefined };
+export type DeployedSection = TenantSection<DeployedWorkflow> & { rollouts: DeployedVersions["rollouts"]; sidecar: DeployedVersions["sidecar"] | undefined; stalled: DeployedVersions["stalled"] };
 
 /** The live deployments, the hub's last roll of each host and its local sidecar's use, read often so a roll's outcome shows soon after it ends. */
 export function useDeployedVersions(): DeployedSection {
   const query = useTenantRead(DEPLOYED_VERSIONS_QUERY_KEY, readDeployedVersions, LIVE_REFRESH_MS);
-  return { ...sectionOf(query, (versions) => versions.deployments), rollouts: query.data?.rollouts ?? NO_ROWS, sidecar: query.data?.sidecar };
+  return { ...sectionOf(query, (versions) => versions.deployments), rollouts: query.data?.rollouts ?? NO_ROWS, sidecar: query.data?.sidecar, stalled: query.data?.stalled };
+}
+
+/** Since when the workspace's pull requests have waited for Triage to start, while the hub counts it stalled. */
+export function useTriageStalled(): DeployedVersions["stalled"] {
+  return useTenantRead(DEPLOYED_VERSIONS_QUERY_KEY, readDeployedVersions, STALLED_REFRESH_MS).data?.stalled;
 }
 
 export function useAccess(resource: string, action: string): UseQueryResult<boolean> {

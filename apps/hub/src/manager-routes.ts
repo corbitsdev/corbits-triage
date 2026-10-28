@@ -10,7 +10,7 @@ import { describeRoute } from "hono-openapi";
 import { schema, type DB } from "@intx/db";
 import type { RequireGrant, RunTokenRoute, TenantEnv } from "@intx/hub-api";
 import { asRecord } from "@corbits/common";
-import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
+import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult, type RepoSource } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
@@ -77,6 +77,8 @@ export type ManagerRoutesDeps = {
   wake: (tenantId: string, pr: PullRequestRef, head: string) => Promise<boolean>;
   /** Stops the pull request's reviewers on a head older than its newest and takes them off the claim; never throws. */
   supersede: (tenantId: string, pr: PullRequestRef) => Promise<void>;
+  /** Notes that a manager of the host opened a pass on a pull request, so the hub knows its managers still triage. */
+  taken: (tenantId: string, source: RepoSource, at: string) => void;
 };
 
 type Reported = typeof Report.infer;
@@ -94,7 +96,7 @@ function passReport(report: Reported | undefined, posted: Record<string, unknown
   return { head: report.head, ...(request && { request }) };
 }
 
-export function createManagerRoutes({ db, requireGrant, log, wake, supersede }: ManagerRoutesDeps) {
+export function createManagerRoutes({ db, requireGrant, log, wake, supersede, taken }: ManagerRoutesDeps) {
   const app = new Hono<RunEnv>();
   // Hono throws on a body that is not JSON; it keeps the hub's error envelope.
   app.onError(function onError(err) {
@@ -128,8 +130,10 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede }: 
     granted,
     body(PullRequest),
     async function takeEvents(c) {
-      const result = await take(db, c.get("tenant").id, c.req.valid("json"), c.get("runId"));
+      const pr = c.req.valid("json");
+      const result = await take(db, c.get("tenant").id, pr, c.get("runId"));
       if (result.outcome === "refused") return refused();
+      if (result.outcome === "pass") taken(c.get("tenant").id, pr.source, result.pass.takenAt);
       return c.json(result);
     },
   );

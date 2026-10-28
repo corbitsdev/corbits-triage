@@ -744,7 +744,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${WORKFLOW_VERSIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Package versions of the workspace's live workflow deployments and the hub's last roll of each host",
-      description: "Each live deployment, newest first, with the workflow package it pinned and the packages its frozen closure carries. `package` is null for a deployment without a frozen closure; `source` is the asset and commit a source-format deployment runs, else null. `rollouts` holds each host the hub rolled onto its build's release since it started: when that roll ended and, when it failed, the error; a failed roll leaves the host's previous listener running.",
+      description: "Each live deployment, newest first, with the workflow package it pinned and the packages its frozen closure carries. `package` is null for a deployment without a frozen closure; `source` is the asset and commit a source-format deployment runs, else null. `rollouts` holds each host the hub rolled onto its build's release since it started: when that roll ended and, when it failed, the error; a failed roll leaves the host's previous listener running. `stalled` is present while the workspace's pull requests have waited past the hub's alarm age (`TRIAGE_STALLED_AFTER_MS`) for a manager to take them: `since` is when the oldest still waiting was queued, `lastTakeAt` when a manager last took one.",
       tags: TAGS,
       responses: { 200: json("Live deployments and their versions", DeployedVersions), 401: failures[401], 403: failures[403] },
     }),
