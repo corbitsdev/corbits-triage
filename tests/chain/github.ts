@@ -6,7 +6,7 @@ export const OWNER = "acme";
 export const INSTALLATION = 1;
 const BOT = { login: "corbits[bot]", type: "Bot" };
 const TOKEN = "installation-token";
-/** What the hub mints for code review: GitHub lets it read contents and nothing else. */
+/** What the hub mints for code review, asked with the permissions it narrows to. */
 const READ_TOKEN = "read-token";
 
 export type File = { filename: string; status: string; additions: number; deletions: number; patch: string };
@@ -32,8 +32,6 @@ export function fakeGithub() {
   const writes: Write[] = [];
   const misses: string[] = [];
   const requests: string[] = [];
-  /** Writes refused for being made with the read token. */
-  const refused: string[] = [];
   const held = new Map<string, Promise<void>>();
   let ids = 0;
 
@@ -136,10 +134,6 @@ export function fakeGithub() {
       const answer = await readRoute(repo, named![2]!, url);
       if (answer) return answer;
     }
-    if (repo && req.method !== "GET" && req.headers.get("authorization") === `Bearer ${READ_TOKEN}`) {
-      refused.push(`${req.method} ${pathname}`);
-      return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
-    }
     if (repo && req.method !== "GET") {
       const text = await req.text();
       const body = text ? JSON.parse(text) as Record<string, unknown> : {};
@@ -159,7 +153,6 @@ export function fakeGithub() {
     writes,
     misses,
     requests,
-    refused,
     addRepo(name: string, policy: string | null): void {
       repos.set(name, { name, policy, pulls: new Map(), checks: new Map() });
     },

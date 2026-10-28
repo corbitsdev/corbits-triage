@@ -1,11 +1,11 @@
 // A Do the policy holds, approved through the hub.
 import { expect, test } from "bun:test";
-import { VERDICT_LABELS } from "@corbits/triage-contracts";
-import { approveHeldDo, saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
+import { TRIAGE_ROLE, VERDICT_LABELS } from "@corbits/triage-contracts";
+import { approveHeldDo, saveAutomationMode, saveRepoSettings } from "../../apps/web/src/lib/hub-api.ts";
 import { chainStack, HELD, sha, pullOf, labelled, once } from "./chain.ts";
 
 const chain = chainStack();
-const { github, pushed, until, settled, verdictsOf } = chain;
+const { github, pushed, until, rows, settled, verdictsOf } = chain;
 
 const approved = once(async function approved() {
   const head = sha("held-1");
@@ -53,4 +53,23 @@ test("under policy automation, the next pass runs a Do the policy uses on its ow
   expect(actions).toEqual([expect.objectContaining({ list: "pass", kind: "assign", target: { users: ["octocat"] } })]);
   expect(actions[0]!.held).not.toBe(true);
   expect(writes.filter((write) => write.path.endsWith("/assignees"))).toEqual([expect.objectContaining({ method: "POST", body: { assignees: ["octocat"] } })]);
+});
+
+/** What the pr-triage role holds on `repo`. */
+async function triageGrantsOn(repo: string): Promise<string[]> {
+  const found = await rows(`select g.resource from "grant" g join role r on r.id = g.role_id where r.name = '${TRIAGE_ROLE}' and g.resource like 'triage-do:%:${repo}' order by g.resource`);
+  return found.map((row) => String(row["resource"]));
+}
+
+const switchedOff = once(async function switchedOff() {
+  await followed();
+  const before = await triageGrantsOn(HELD);
+  await saveRepoSettings(chain.workspace.transport, chain.workspace.tenantId, HELD, "github", { enabled: false });
+  return { before, after: await triageGrantsOn(HELD) };
+});
+
+test("switching a repository off takes back everything Triage did there on its own", async () => {
+  const { before, after } = await switchedOff();
+  expect(before).toEqual([`triage-do:assign:${HELD}`, `triage-do:comment:${HELD}`, `triage-do:labels:${HELD}`]);
+  expect(after).toEqual([]);
 });
