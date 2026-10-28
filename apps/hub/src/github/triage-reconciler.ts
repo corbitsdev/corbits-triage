@@ -125,13 +125,21 @@ function headKey(row: Pick<PrTriageRow, "number" | "headSha">): string {
   return runKey(row.number, row.headSha);
 }
 
-/** Theirs in their order, each head replaced by ours only when ours is newer; heads only we have follow. */
-function mergeRows(theirs: readonly PrTriageRow[], ours: readonly PrTriageRow[]): PrTriageRow[] {
+/** Whether someone wrote the head's row after the pass read `read`. */
+function writtenSince(read: ReadonlyMap<string, PrTriageRow>, row: PrTriageRow): boolean {
+  return read.get(headKey(row))?.updatedAt !== row.updatedAt;
+}
+
+/**
+ * Theirs in their order, each head replaced by ours unless they wrote it after the pass read it, whatever either clock
+ * says; heads only we have follow.
+ */
+function mergeRows(read: ReadonlyMap<string, PrTriageRow>, theirs: readonly PrTriageRow[], ours: readonly PrTriageRow[]): PrTriageRow[] {
   const byHead = new Map(ours.map((row) => [headKey(row), row]));
-  const merged = theirs.map(function newer(row) {
+  const merged = theirs.map(function unlessWritten(row) {
     const mine = byHead.get(headKey(row));
     byHead.delete(headKey(row));
-    return mine !== undefined && new Date(mine.updatedAt).getTime() > new Date(row.updatedAt).getTime() ? mine : row;
+    return mine === undefined || writtenSince(read, row) ? row : mine;
   });
   return [...merged, ...byHead.values()];
 }
@@ -276,10 +284,15 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       if (!(err instanceof TriageStateConflictError)) throw err;
     }
     const fresh = await deps.store.load(tenantId, repo);
+    const read = new Map(stored.rows.map((row) => [headKey(row), row]));
     const theirs = new Map(fresh.rows.map((row) => [headKey(row), row]));
     const headOf = (queued: QueuedPr) => headKey(plan.rows.find((row) => row.number === queued.number)!);
-    const left = new Set(plan.enqueue.map(headOf).filter((key) => theirs.has(key) && inFlight(theirs.get(key)!)));
-    const rows = mergeRows(fresh.rows, plan.rows.filter((row) => !left.has(headKey(row))));
+    function takenByThem(key: string): boolean {
+      const row = theirs.get(key);
+      return row !== undefined && (inFlight(row) || writtenSince(read, row));
+    }
+    const left = new Set(plan.enqueue.map(headOf).filter(takenByThem));
+    const rows = mergeRows(read, fresh.rows, plan.rows.filter((row) => !left.has(headKey(row))));
     try {
       const version = await deps.store.save(tenantId, repo, rows, fresh.version);
       deps.log({ level: "info", msg: "triage_state_merged", tenantId, repo, left: left.size });
