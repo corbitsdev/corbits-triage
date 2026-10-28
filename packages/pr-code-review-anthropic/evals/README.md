@@ -45,8 +45,9 @@ shas adds about 300.
   the `golden` file it came from.
   - `bugs`: the true-labelled golden findings in the `correctness` or
     `security` category, with findings whose line ranges overlap in one file
-    merged into one bug, so recall counts defects rather than findings. A
-    bug's `sites` are its findings' file and `start_line` to `end_line` at
+    merged into one bug, so recall counts flagged line ranges: distinct
+    defects on overlapping lines count as one bug, so a finding on those lines
+    is one catch and a second finding there is a false alarm. A bug's `sites` are its findings' file and `start_line` to `end_line` at
     head, its `reach` is `diff` when any of its findings is `diff-only` and
     `repo` otherwise, and `golden` keeps each finding's message (`evidence`),
     `severity`, `category` and `difficulty`. 24 bugs from 37 findings, 23 of
