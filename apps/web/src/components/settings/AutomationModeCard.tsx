@@ -13,6 +13,7 @@ const LABEL = "Take the actions each policy file names without asking";
 export function AutomationModeCard({ snapshot }: { snapshot: PortalSnapshot }) {
   const { readOnly, notify, refresh } = usePortal();
   const switchId = useId();
+  const titleId = useId();
   const { tenantId } = snapshot.workspace;
   const canManage = useAllowed(`tenant:${tenantId}`, "manage");
   const fromPolicy = snapshot.config?.automation !== "ask";
@@ -30,9 +31,9 @@ export function AutomationModeCard({ snapshot }: { snapshot: PortalSnapshot }) {
     : "Triage posts its verdict on its own. Every other action waits for you on Triage, and a policy pull request lists the actions that will.";
 
   return (
-    <div className="gcard source" aria-labelledby="triage-automation" role="group">
+    <div className="gcard source" aria-labelledby={titleId} role="group">
       <header>
-        <b id="triage-automation">Actions Triage takes on its own</b>
+        <b id={titleId}>Actions Triage takes on its own</b>
         <span>{help}</span>
       </header>
       {canManage && (

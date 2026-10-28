@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { DO_GRANT_ACTION, doResource, repoPolicy, type ActionKind } from "@corbits/triage-contracts";
@@ -73,6 +74,7 @@ export function TriageAutomation({ snapshot }: { snapshot: PortalSnapshot }) {
   const managesGrants = useAllowed("grant:*", "manage");
   const roles = useRoles();
   const grants = useGrants();
+  const titleId = useId();
   if (!managesGrants) return null;
   const repos = snapshot.repos.filter((repo) => repo.connected && repoPolicy(repo).enabled);
   const triage = findTriageRole(roles.rows);
@@ -80,9 +82,9 @@ export function TriageAutomation({ snapshot }: { snapshot: PortalSnapshot }) {
   const ask = snapshot.config?.automation === "ask";
 
   return (
-    <div className="gcard source" aria-labelledby="triage-automation" role="group">
+    <div className="gcard source" aria-labelledby={titleId} role="group">
       <header>
-        <b id="triage-automation">On its own</b>
+        <b id={titleId}>On its own</b>
         <span>What Triage does without asking in each enabled repository.</span>
       </header>
       <div className="source-body">
