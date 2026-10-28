@@ -6,9 +6,8 @@ import { and, eq } from "drizzle-orm";
 import git from "isomorphic-git";
 import { schema, type DB } from "@intx/db";
 import { AssetServiceError, DEFAULT_ASSET_REF, type AssetService, type RepoStore } from "@intx/hub-sessions";
-import { deployedByChain, publishable, withRelease, workflowTimings, type ModelInfo, type PublishedSource, type SourceIndexEntry, type SourceTree } from "@corbits/triage-contracts";
+import { deployedByChain, publishable, withRelease, type ModelInfo, type PublishedSource, type SourceIndexEntry, type SourceTree } from "@corbits/triage-contracts";
 import { allowCreator } from "../github/admin-github-grant.js";
-import { timings } from "../timings.js";
 
 /** The workflow sources the portal build writes under `packages/sources/`, in the order they publish. */
 export type Bundle = {
@@ -133,7 +132,7 @@ async function publishSource(deps: PublishDeps, publisher: Publisher, workflow: 
 export async function publishRelease(deps: PublishDeps, publisher: Publisher, bundle: Bundle, models: readonly ModelInfo[]): Promise<PublishedSource[]> {
   const published: PublishedSource[] = [];
   for (const entry of (await bundle.index()).filter((row) => publishable(models, row.workflow))) {
-    const { hash, tree } = await withRelease(models, entry, await bundle.tree(entry), published, workflowTimings(timings()));
+    const { hash, tree } = await withRelease(models, entry, await bundle.tree(entry), published);
     published.push(await publishSource(deps, publisher, entry.workflow, assetName(entry.workflow, publisher, hash), tree));
   }
   return published;

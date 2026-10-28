@@ -12,7 +12,8 @@
 //   the hub, so an ended run's sidecar has nothing left to keep. `sidecarLink`
 //   is spread into createSidecarRouter with longer mail hold and ack retries
 //   than the router's defaults: triage mail is routed, not dispatched, so only
-//   those retries keep it alive while a pack receive holds the connection.
+//   those retries keep it alive while a pack receive holds the connection. The
+//   hub's start grace for a just-deployed manager is that same mail hold.
 // - `adapterManifest` replaces stock's `sidecarAdapterManifest` and has no
 //   SIDECAR_ADAPTER_MANIFEST fallback: the hub's adapters are fixed in
 //   sidecar-config.ts, not operator configuration.

@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { DEFAULT_TIMINGS, REPO_SOURCES, workflowTimings, WorkflowTimings, type RepoSource } from "@corbits/triage-contracts";
+import type { RepoSource } from "@corbits/triage-contracts";
 import published from "./release.json" with { type: "json" };
 
 /** A workflow as a release publishes it: its source asset at one commit, the workspace member that is the definition and its entry. */
@@ -12,17 +12,8 @@ const Offerings = type({ ids: type("string > 0").array().atLeastLength(1), defau
 export const Release = type({ workflow: PublishedWorkflow, offerings: Offerings });
 export type Release = typeof Release.infer;
 
-const Slots = type({ "manager?": Release, "codeReview?": Release, "judge?": Release });
-const slotsBySource = Object.fromEntries(REPO_SOURCES.map((source) => [`${source}?`, Slots])) as { [S in RepoSource as `${S}?`]: typeof Slots };
-
-/**
- * What each host's listener and manager deploy, and the waits they run on: the hub writes `release.json` into each
- * published tree; a source run, or a tree published before the hub wrote waits, runs on the defaults.
- */
-const Published = type({ ...slotsBySource, "timings?": WorkflowTimings });
-
-/** The waits this release runs on. */
-export const TIMINGS: WorkflowTimings = Published.assert(published).timings ?? workflowTimings(DEFAULT_TIMINGS);
+/** What each host's listener and manager deploy: the hub writes `release.json` into each published tree; a source run has none. */
+const Published = type({ "[string]": { "manager?": Release, "codeReview?": Release, "judge?": Release } });
 
 /** The creator-sourced grants to deploy the published workflow: create a deployment, read exactly its asset, and read the run it starts. */
 export function deployGrants({ workflow }: Release) {

@@ -4,8 +4,8 @@ A workspace's listener and a pull request's manager.
 
 - **Listener** (`triageListener`, `triage-listener-<host>`): the hub mails it the pull requests it recorded. For each, it
   deploys a manager through Interchange's deploy route with its run token and wakes it with a mail that names only the
-  pull request. A manager whose wake mail fails is cancelled and one more is deployed and woken in its place; if that
-  mail fails too, it is cancelled, and the pull request's next event, or the reconciler re-queuing its head, deploys
+  pull request at once; Interchange holds that mail until the manager's deploy is recorded. A manager that never comes
+  up gives up its pull request once that hold lapses; its next event, or the reconciler re-queuing its head, deploys
   another.
 - **Manager** (`triageManager`, `triage-manager-<host>`): one live run per pull request, which lives until its head has
   its final verdict or waits only on CI, and the only workflow that writes to the pull request. A mail starts a loop of passes: `take` claims the pull

@@ -16,6 +16,7 @@ import { MAX_BODY_BYTES } from "./read-json.js";
 import { askDeploy, managedPulls, passRequest, recordEvent, recordRefused, type PullRequestRef } from "./manager-state.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
+import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -243,7 +244,7 @@ test("PostgreSQL: a result whose wake fails stays recorded with nothing else, th
     const wakeOverdue = createOverdueWake({ db, wake: waker(woken), log });
     await wakeOverdue(TENANT);
     expect(woken).toEqual([]);
-    const earlier = new Date(Date.now() - 2 * 60_000 - 1_000).toISOString();
+    const earlier = new Date(Date.now() - timings().mailHoldMs - 1_000).toISOString();
     await db.execute(sql`UPDATE corbits_triage.manager_state SET state = jsonb_set(state, '{receivedAt}', to_jsonb(${earlier}::text)) WHERE key LIKE '%:run_reviewer'`);
     await wakeOverdue(TENANT);
     expect(woken).toEqual([{ tenantId: TENANT, pr: GITHUB, head: "h1" }]);

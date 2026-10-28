@@ -5,6 +5,8 @@ import { DEFAULT_RECONCILE_POLICY, planTenant, pullKey, requeue, runKey, type Ob
 const MINUTE = 60_000;
 const T0 = new Date("2026-10-07T00:00:00.000Z");
 const policy = DEFAULT_RECONCILE_POLICY;
+/** Minutes a queued head may wait to start. */
+const UNSTARTED = policy.unstartedAfterMs / MINUTE;
 
 function at(minutes: number): Date {
   return new Date(T0.getTime() + minutes * MINUTE);
@@ -77,8 +79,8 @@ describe("reconcile plan", () => {
 
   test("a queued mail lost before any run started is queued again", () => {
     const queued = plan([pr(1)], [], at(0)).rows;
-    expect(enqueued(plan([pr(1)], queued, at(9)))).toEqual([]);
-    expect(enqueued(plan([pr(1)], queued, at(11)))).toEqual([1]);
+    expect(enqueued(plan([pr(1)], queued, at(UNSTARTED - 1)))).toEqual([]);
+    expect(enqueued(plan([pr(1)], queued, at(UNSTARTED + 1)))).toEqual([1]);
   });
 
   test("failed runs retry with backoff and stop at the attempt cap", () => {
@@ -160,7 +162,7 @@ describe("reconcile plan", () => {
     const queued = plan([pr(1)], [], at(0)).rows;
     const result = plan([pr(1)], queued, at(3), [[pr(1), [{ ...run("run_a", "failed", 0), startedAt: at(-0.5).toISOString() }]]]);
     expect(status(result, 1)).toMatchObject({ status: "failed", runId: "run_a", attempts: 1, error: "run failed" });
-    const before = plan([pr(1)], queued, at(11), [[pr(1), [run("run_old", "failed", -5)]]]);
+    const before = plan([pr(1)], queued, at(UNSTARTED + 1), [[pr(1), [run("run_old", "failed", -5)]]]);
     expect(status(before, 1)).toMatchObject({ status: "queued", attempts: 2 });
   });
 
@@ -295,8 +297,8 @@ describe("a head whose manager was refused for capacity", () => {
     const placed = plan([pr(1)], waiting, at(31));
     expect(enqueued(placed)).toEqual([]);
     expect(status(placed, 1)).toEqual(expect.not.objectContaining({ error: expect.anything() }));
-    expect(status(plan([pr(1)], placed.rows, at(41)), 1)).toMatchObject({ status: "queued", attempts: 1 });
-    expect(status(plan([pr(1)], placed.rows, at(42)), 1)).toMatchObject({ status: "queued", attempts: 2 });
+    expect(status(plan([pr(1)], placed.rows, at(31 + UNSTARTED)), 1)).toMatchObject({ status: "queued", attempts: 1 });
+    expect(status(plan([pr(1)], placed.rows, at(32 + UNSTARTED)), 1)).toMatchObject({ status: "queued", attempts: 2 });
   });
 });
 

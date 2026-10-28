@@ -27,7 +27,7 @@ export const HELD = `${OWNER}/held`;
 export const ALWAYS = `${OWNER}/always`;
 export const WOKEN = `${OWNER}/woken`;
 export const REREAD = `${OWNER}/reread`;
-export const UNWOKEN = `${OWNER}/unwoken`;
+export const UNSTARTED = `${OWNER}/unstarted`;
 export const DISCONNECTED = `${OWNER}/disconnected`;
 export const UNSET = `${OWNER}/unset`;
 export const UNROUTED = `${OWNER}/unrouted`;
@@ -90,7 +90,7 @@ export function chainStack(env: Record<string, string> = {}) {
     github.addRepo(ALWAYS, policy([MAX_FILES], REVIEW_ON_PASS));
     github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
     github.addRepo(REREAD, policy([MAX_FILES, CI_GREEN]));
-    github.addRepo(UNWOKEN, policy([MAX_FILES]));
+    github.addRepo(UNSTARTED, policy([MAX_FILES]));
     github.addRepo(DISCONNECTED, policy([MAX_FILES]));
     github.addRepo(UNSET, null);
     github.addRepo(UNROUTED, policy([MAX_FILES]));
