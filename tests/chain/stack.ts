@@ -4,6 +4,7 @@ import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { Subprocess } from "bun";
 import { eq, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { ApiError, type Transport } from "@intx/hub-client";
@@ -71,7 +72,7 @@ async function collect(stream: ReadableStream<Uint8Array>, lines: string[]): Pro
   }
 }
 
-export type Hub = { origin: string; dataDir: string; logs: string[]; stop: () => Promise<void> };
+export type Hub = { origin: string; dataDir: string; logs: string[]; stop: () => Promise<void>; restart: () => Promise<void> };
 
 /** The hub as the image starts it, serving the portal build in `portalDir`, with its sidecar a local process under its data directory. */
 export async function startHub(database: Database, github: FakeGithub, portalDir: string, env: Record<string, string> = {}): Promise<Hub> {
@@ -79,47 +80,65 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const origin = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "corbits-chain-"));
   const logs: string[] = [];
-  const child = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
-    cwd: ROOT,
-    env: {
-      PATH: CHILD_PATH,
-      HOME: homedir(),
-      ...SECRETS,
-      DATABASE_URL: database.url,
-      HUB_DATA_DIR: dataDir,
-      PORTAL_DIR: portalDir,
-      PORT: String(port),
-      BETTER_AUTH_BASE_URL: origin,
-      GITHUB_API_ORIGIN: github.origin,
-      TRIAGE_COALESCE_QUIET_MS: "500",
-      TRIAGE_RECONCILE_INTERVAL_MS: String(RECONCILE_INTERVAL_MS),
-      // Every sidecar a local process, as on a hub without Docker, so each reaches the fake GitHub and model on loopback.
-      DOCKER_HOST: "unix:///nonexistent/docker.sock",
-      ...env,
-    },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  void collect(child.stdout, logs);
-  void collect(child.stderr, logs);
-  async function stop(): Promise<void> {
+  let child = launch();
+  function launch(): Subprocess<"ignore", "pipe", "pipe"> {
+    const started = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
+      cwd: ROOT,
+      env: {
+        PATH: CHILD_PATH,
+        HOME: homedir(),
+        ...SECRETS,
+        DATABASE_URL: database.url,
+        HUB_DATA_DIR: dataDir,
+        PORTAL_DIR: portalDir,
+        PORT: String(port),
+        BETTER_AUTH_BASE_URL: origin,
+        GITHUB_API_ORIGIN: github.origin,
+        TRIAGE_COALESCE_QUIET_MS: "500",
+        TRIAGE_RECONCILE_INTERVAL_MS: String(RECONCILE_INTERVAL_MS),
+        // Every sidecar a local process, as on a hub without Docker, so each reaches the fake GitHub and model on loopback.
+        DOCKER_HOST: "unix:///nonexistent/docker.sock",
+        ...env,
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    void collect(started.stdout, logs);
+    void collect(started.stderr, logs);
+    return started;
+  }
+  async function halt(): Promise<void> {
     child.kill("SIGTERM");
     await Promise.race([child.exited, Bun.sleep(30_000)]);
     if (child.exitCode === null) child.kill("SIGKILL");
+    await child.exited;
+  }
+  async function stop(): Promise<void> {
+    await halt();
     rmSync(dataDir, { recursive: true, force: true });
   }
-  const deadline = Date.now() + READY_MS;
-  while (Date.now() < deadline && child.exitCode === null) {
-    try {
-      if ((await fetch(`${origin}/api/me`)).status === 401) return { origin, dataDir, logs, stop };
-    } catch {
-      // Still binding its socket.
+  async function ready(): Promise<void> {
+    const deadline = Date.now() + READY_MS;
+    while (Date.now() < deadline && child.exitCode === null) {
+      try {
+        if ((await fetch(`${origin}/api/me`)).status === 401) return;
+      } catch {
+        // Still binding its socket.
+      }
+      await Bun.sleep(200);
     }
-    await Bun.sleep(200);
+    await stop();
+    throw new Error(`The hub did not start:\n${logs.join("\n")}`);
   }
-  await stop();
-  throw new Error(`The hub did not start:\n${logs.join("\n")}`);
+  /** Stops the hub process and starts it again on the same port, database and data directory. */
+  async function restart(): Promise<void> {
+    await halt();
+    child = launch();
+    await ready();
+  }
+  await ready();
+  return { origin, dataDir, logs, stop, restart };
 }
 
 /** The portal's transport, signed in as one person by their session cookie. */

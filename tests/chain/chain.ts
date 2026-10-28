@@ -24,6 +24,7 @@ export const HELD = `${OWNER}/held`;
 export const WOKEN = `${OWNER}/woken`;
 export const UNWOKEN = `${OWNER}/unwoken`;
 export const DISCONNECTED = `${OWNER}/disconnected`;
+export const RESTARTED = `${OWNER}/restarted`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -81,6 +82,7 @@ export function chainStack() {
     github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
     github.addRepo(UNWOKEN, policy([MAX_FILES]));
     github.addRepo(DISCONNECTED, policy([MAX_FILES]));
+    github.addRepo(RESTARTED, policy([MAX_FILES]));
     const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
     database = created;
     hub = await startHub(database, github, portalDir);
