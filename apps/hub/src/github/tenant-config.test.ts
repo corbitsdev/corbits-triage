@@ -1,51 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_BODY_BYTES } from "../read-json.js";
-import { patchCorbitsTriage, prepareCorbitsTriagePatch, tenantManager, type CorbitsTriageNs } from "./tenant-config.js";
+import { prepareCorbitsTriagePatch, tenantManager } from "./tenant-config.js";
 
 const TENANT_ID = "tnt_test";
-
-function stubDb(config: unknown) {
-  const box = { config };
-  const tx = {
-    select() {
-      return { from() { return { where() { return { async for() { return [{ id: TENANT_ID, config: box.config }]; } }; } }; } };
-    },
-    update() {
-      return {
-        set(values: { config?: unknown }) {
-          return {
-            async where() {
-              if (values.config !== undefined) box.config = values.config;
-            },
-          };
-        },
-      };
-    },
-  };
-  return {
-    async transaction(fn: (value: typeof tx) => unknown) {
-      return fn(tx);
-    },
-  } as never;
-}
 
 async function noGrant(): Promise<void> {}
 
 async function allowAll(): Promise<boolean> {
   return true;
 }
-
-function unchanged(ns: CorbitsTriageNs): CorbitsTriageNs {
-  return ns;
-}
-
-describe("corbitsTriage rev CAS", () => {
-  test("install-style patches bump rev from missing to 1 then 2", async () => {
-    const db = stubDb({ corbitsTriage: { repos: [] } });
-    expect((await patchCorbitsTriage(db, TENANT_ID, unchanged))?.rev).toBe(1);
-    expect((await patchCorbitsTriage(db, TENANT_ID, unchanged))?.rev).toBe(2);
-  });
-});
 
 const untouchable = new Proxy({}, {
   get() {

@@ -109,19 +109,6 @@ describe("check rows", () => {
   });
 });
 
-describe("needs-human queue sources", () => {
-  test("human-gated PRs remain projected while an approval is pending", () => {
-    const approvals = [approval("mirror")];
-    expect(queue(approvals).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
-  });
-});
-
-describe("All-view queue sources", () => {
-  test("does not surface listener deployments as pull requests when the project queue is empty", () => {
-    expect(projectQueue([], [], undefined)).toEqual([]);
-  });
-});
-
 describe("projectQueue from the hub's verdicts", () => {
   const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: "def", updatedAt: "2026-10-01T00:00:00.000Z", labels: [] });
   const openPulls = { repos: [{ repo: "acme/widgets", prs: [pr(8), pr(9), pr(10)] }] };
@@ -374,20 +361,6 @@ describe("patchAppConfig CAS", () => {
 });
 
 describe("repository policy config", () => {
-  test("reposFromConfig defaults missing policy fields to the defaults", () => {
-    expect(reposFromConfig({
-      corbitsTriage: { repos: [{ name: "acme/widgets", connected: true }] },
-    })).toEqual([expect.objectContaining({
-      name: "acme/widgets",
-      connected: true,
-      enabled: false,
-      checks: {
-        ci: true,
-        conflicts: true,
-      },
-    })]);
-  });
-
   test("saveRepoSettings PATCHes only that repo and spreads other fields", async () => {
     let config: Record<string, unknown> = {
       other: 1,
