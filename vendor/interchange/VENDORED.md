@@ -171,8 +171,8 @@ Remove when stock grants the deployer `manage` on the run it deployed.
   `401a8a58` (`Resolve referenced directors from workflow package slots`) and
   `4649da4e` (`Require a director registry for step and child environments`),
   so the step env and spawned-child deps resolve the closure's directors and
-  `substrate-factory.ts` is stock again. `tooling/vendor-health.test.ts`
-  still asserts the step env resolves the director.
+  `substrate-factory.ts` is stock again. The chain tests cover the built
+  workflow packages' directors end to end.
 - INTR-583 (operator-registered model-provider keys): stock `9ae47143`
   contains `5185df1a` (`Accept operator-registered provider plugins in the
   model catalog`), the merged form of `44170ebb`; the catalog files and
@@ -213,5 +213,5 @@ individually in `tooling/vendor-diff-allowlist.txt`.
 
 The health command enables `intx-src`, runs the catalog, tool-packaging,
 workflow-deploy, and workflow-definition-loader suites, and runs
-`tooling/vendor-health.test.ts` against this repository's real custom
-workflow.
+`tooling/vendor-health.test.ts`, which checks the operator model-provider key
+against the vendored catalog.
