@@ -1189,6 +1189,19 @@ the publisher also holds `read`, granted as its creator, on the asset of
 each workflow another one deploys: the manager, the judge and the code
 review, not the listener.
 
+The publisher's setup, its `Deployer` assignment and the workspace's lifetime
+ceiling, goes through the hub's write layer (`apps/hub/src/system-writes`) in
+one transaction. The layer writes as the workspace's `triage-hub` system
+principal, never a mail sender: its first write in a workspace mints it
+through stock's principal store, as the system senders are, and gives it
+stock's system `admin` role; a workspace without that role is refused. Before
+each write it runs stock's `authorize` for what stock's own route checks
+(`manage` on `tenant:<id>` for the ceiling, `manage` on `role:*` to assign a
+role) and throws `SystemWriteDenied` unless it allows, so taking `admin` from
+`triage-hub` stops those writes in that workspace. Stock's grant store reads
+only through the top-level database, so each check is one more pooled read
+taken while the write's transaction holds its own connection.
+
 Where triage mirrors and its policy approves, a settled head that may not be
 approved dismisses the approvals the approve action made; one dismissed on a
 head is not made again on it. A person's own approval from Triage is never
