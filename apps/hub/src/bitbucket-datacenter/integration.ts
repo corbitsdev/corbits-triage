@@ -358,8 +358,11 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       const name = bitbucketRepoName(repo.project.key, repo.slug);
       const branch = await defaultBranch(bb, repo.project.key, repo.slug);
       if (branch === undefined) return failure(409, "repo_empty", "The repository has no default branch yet. Push one first.");
-      const stored = repoRecords(await tenantNs(member.tenantId)).find((record) => record.name === name);
-      if (stored && !isBitbucketRecord(stored)) return failure(409, "repo_name_taken", `A GitHub repository is already named ${name}.`);
+      // Grants name a repository without its host or case, so a GitHub repository of the same name in any case would share them.
+      const named = repoRecords(await tenantNs(member.tenantId)).filter((record) => record.name.toLowerCase() === name.toLowerCase());
+      const taken = named.find((record) => !isBitbucketRecord(record));
+      if (taken) return failure(409, "repo_name_taken", `A GitHub repository is already named ${taken.name}.`);
+      const stored = named.find((record) => isBitbucketRecord(record) && record.name === name);
       const webhookId = await keptOrCreatedWebhook(bb, member, repo.project.key, repo.slug, stored?.webhookId);
       if (webhookId instanceof Response) return webhookId;
       const written = await patchCorbitsTriage(db, member.tenantId, async function enableBitbucketRepo(ns, tx) {

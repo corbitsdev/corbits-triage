@@ -7,7 +7,7 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { connectTriage, createAutomation } from "../github/automation.js";
-import { repoRecords, triageNs } from "../github/tenant-config.js";
+import { patchCorbitsTriage, repoRecords, triageNs } from "../github/tenant-config.js";
 import { WEBHOOK_EVENTS } from "./client.js";
 import { createBitbucketIntegration } from "./integration.js";
 import { HOOK_CREDENTIAL, TOKEN_CREDENTIAL } from "./records.js";
@@ -91,6 +91,19 @@ test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enable
     expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual([]);
     expect((await integration.enable(MEMBER, "TRI", "widgets")).status).toBe(200);
     expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual(["comment"]);
+  });
+}, 120_000);
+
+test("PostgreSQL: a Bitbucket repository named as a GitHub one, in any case, is refused", async () => {
+  await withDatabase(async function nameTaken(db, cipher) {
+    const integration = createBitbucketIntegration({
+      db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
+      async stockFetch() { return new Response(null, { status: 500 }); },
+      publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201), lookup: lookupBitbucket,
+      onEnabled() {}, async onConnectionChanged() {}, onCredentialsReplaced() {}, now: () => new Date(), log() {},
+    });
+    await patchCorbitsTriage(db, TENANT, (ns) => ({ ...ns, repos: [{ name: "tri/Widgets", connected: true, installationId: 1 }] }));
+    expect(await failureCode(integration.enable(MEMBER, "TRI", "widgets"))).toEqual([409, "repo_name_taken"]);
   });
 }, 120_000);
 
