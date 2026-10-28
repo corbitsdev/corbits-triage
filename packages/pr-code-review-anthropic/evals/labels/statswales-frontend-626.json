@@ -6,9 +6,6 @@
   "bugs": [
     {
       "id": "b1",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/consumer/services/consumer-api.ts",
@@ -17,13 +14,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "The `language` parameter is typed as `string` but cast to `Locale` without any runtime validation. The GET handler in the controller constructs `download_language` directly from `req.query.download_language?.toString()` (consumer.ts:353), meaning a user can craft an arbitrary string into the `lang` query param and `Accept-Language` header sent to the backend. The parameter type should be narrowed to `Locale` at the method boundary, or runtime validation should be added in the GET handler (matching what the POST path already does via `downloadLanguageValidator()`)."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "The `language` parameter is typed as `string` but cast to `Locale` without any runtime validation. The GET handler in the controller constructs `download_language` directly from `req.query.download_language?.toString()` (consumer.ts:353), meaning a user can craft an arbitrary string into the `lang` query param and `Accept-Language` header sent to the backend. The parameter type should be narrowed to `Locale` at the method boundary, or runtime validation should be added in the GET handler (matching what the POST path already does via `downloadLanguageValidator()`)."
+        }
+      ]
     },
     {
       "id": "b2",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "easy",
       "sites": [
         {
           "path": "src/consumer/services/consumer-api.ts",
@@ -32,13 +33,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "Same `language: string` → `as Locale` unsafe cast as in `downloadPublishedData`. The unsanitised user-supplied `download_language` query param flows through the GET handler into this method. The parameter type should be `Locale`, not `string`, to match the actual constraint."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "easy",
+          "evidence": "Same `language: string` → `as Locale` unsafe cast as in `downloadPublishedData`. The unsanitised user-supplied `download_language` query param flows through the GET handler into this method. The parameter type should be `Locale`, not `string`, to match the actual constraint."
+        }
+      ]
     },
     {
       "id": "b3",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/publisher/services/publisher-api.ts",
@@ -47,7 +52,14 @@
         }
       ],
       "reach": "repo",
-      "evidence": "Same `language: string` → `as Locale` unsafe cast in `downloadDatasetPreview`. The GET handler in `publish.ts` reads `req.query.download_language?.toString()` without validation and passes it here. The parameter type should be `Locale` to close the gap between the validated POST path and the unvalidated GET path."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "Same `language: string` → `as Locale` unsafe cast in `downloadDatasetPreview`. The GET handler in `publish.ts` reads `req.query.download_language?.toString()` without validation and passes it here. The parameter type should be `Locale` to close the gap between the validated POST path and the unvalidated GET path."
+        }
+      ]
     }
   ],
   "ignored": [

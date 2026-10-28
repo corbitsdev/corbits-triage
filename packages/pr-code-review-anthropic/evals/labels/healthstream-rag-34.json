@@ -1,0 +1,65 @@
+{
+  "id": "healthstream-rag-34",
+  "source": "reviewbench",
+  "golden": "golden/melroyanthony_healthstream-rag_34-a1d2b3e0.json",
+  "verdict": "clean",
+  "bugs": [],
+  "ignored": [
+    {
+      "id": "i1",
+      "severity": "medium",
+      "category": "testing",
+      "sites": [
+        {
+          "path": "solution/backend/tests/test_ingest.py",
+          "start": 1,
+          "end": 3
+        }
+      ],
+      "evidence": "There are zero tests for the two new endpoints: POST /api/v1/ingest/source and GET /api/v1/loaders. These are live routes in a HIPAA-critical API. The PR description's own test plan item \"Verify OpenAPI paths match actual routes\" is explicitly unchecked. The parameter-binding bug in ingest_from_source (source_type as query param vs body) would be caught immediately by a basic integration test."
+    },
+    {
+      "id": "i2",
+      "severity": "low",
+      "category": "documentation",
+      "sites": [
+        {
+          "path": "README.md",
+          "start": 206,
+          "end": 206
+        }
+      ],
+      "evidence": "The updated test-count audit is incomplete in this README: this line says 35 tests, but the test suite table immediately below still lists `Unit tests | 34` at README.md:218. That leaves the documented count inconsistent for readers."
+    }
+  ],
+  "rejected": [
+    {
+      "was": "solution/docs/architecture/openapi.yaml:205-221: The request body schema for POST /api/v1/ingest/source is wrong. In FastAPI, a bare `str` parameter like `source_type: str` is bound as a query parameter, not a body field. Only `raw_data: dict` becomes the body (as the raw JSON object, not wrapped in {\"raw_data\": {...}}). Clients following this spec will send a JSON body of {\"source_type\":\"...\",\"raw_data\":{...}} and receive 422 errors because source_type will not be found in the query string. The spec should show source_type as a query parameter and raw_data as the entire body.",
+      "why": "The diff hunk for /api/v1/ingest/source correctly places source_type as an `in: query` parameter and raw_data as the entire request body, matching FastAPI's routing semantics for `source_type: str` (query param) and `raw_data: dict` (body). The finding claims source_type is in the request body, which contradicts the diff hunk that must be trusted. The discrepancy with the checked-out file is an artifact of the classifier repo fixture."
+    },
+    {
+      "was": "solution/backend/app/api/routes/ingest.py:99-106: ingest_from_source accepts source_type and raw_data as separate parameters rather than a Pydantic model, creating a parameter-binding mismatch: source_type becomes a query param while raw_data becomes the entire body. The newly added OpenAPI spec documents both as fields of a single JSON body object, which is incorrect. Additionally, collection_name is documented in the spec but entirely absent from the function signature — the implementation hardcodes \"default\" throughout, silently ignoring any client-supplied collection.",
+      "why": "The diff hunk shows the spec correctly places source_type as a query parameter and raw_data as the entire request body — matching FastAPI semantics. The finding's claim that the spec 'documents both as fields of a single JSON body' is factually wrong per the diff. The collection_name claim is also wrong per the diff, which does not include collection_name in the /api/v1/ingest/source spec at all. Both central claims contradict the authoritative diff hunk."
+    },
+    {
+      "was": "solution/docs/architecture/openapi.yaml:218-220: The spec documents collection_name as an optional body field with default \"default\" for POST /api/v1/ingest/source, but the ingest_from_source function signature has no collection_name parameter and hardcodes \"default\" in every call. This feature is fully documented but completely non-functional.",
+      "why": "The diff hunk for the PR-added /api/v1/ingest/source endpoint does not include collection_name in the spec. The finding claims collection_name is documented there (lines 218-220), which is true in the checked-out file but contradicts the diff that must be trusted. The discrepancy between the diff and file on disk is a classifier fixture artifact."
+    },
+    {
+      "was": "solution/docs/architecture/openapi.yaml:231-252: GET /api/v1/loaders has no security requirement in the spec, which matches the implementation (no get_patient_id dependency). All other non-health endpoints require bearerAuth. This exposes the internal loader registry (ehr, fhir, healthkit) to unauthenticated callers — inconsistent with HIPAA-critical posture and contrary to defence-in-depth. Either auth should be added or the deliberate omission should be explicitly justified.",
+      "why": "The PR diff shows the /api/v1/loaders endpoint was added WITH `security: - bearerAuth: []`. The finding claims the spec lacks a security requirement for this endpoint, which is factually wrong per the diff hunk that must be trusted. The file on disk omits the security entry but diverges from the diff."
+    },
+    {
+      "was": "solution/docs/architecture/openapi.yaml:224-230: POST /api/v1/ingest/source declares security: [{bearerAuth: []}] but its responses section omits the 401 response. Every other authenticated endpoint in the spec documents 401. Client code generators and API consumers will not know to handle unauthenticated calls to this endpoint. The 400 response also has no content/schema (unlike the 400 on /api/v1/ingest which references ErrorResponse), breaking generated client models.",
+      "why": "The claim that 'every other authenticated endpoint documents 401' is demonstrably false — collections endpoints (GET, POST, DELETE) and the health endpoint have no 401 documented. The claim about missing 400 schema is also wrong per the diff hunk, which adds ErrorResponse to the 400 for /api/v1/ingest/source. Both key factual premises are incorrect."
+    },
+    {
+      "was": "solution/docs/architecture/openapi.yaml:255-272: The OpenAPI spec adds a `/api/v1/loaders` endpoint, but this route is not implemented in the FastAPI application. The router at `solution/backend/app/api/v1/endpoints/ingest.py` does not define a `/loaders` path.",
+      "why": "The /api/v1/loaders route IS implemented: solution/backend/app/api/routes/ingest.py line 180 defines @router.get('/loaders') with a list_loaders() function. The file path cited by the finding (solution/backend/app/api/v1/endpoints/ingest.py) does not exist in the repository. Both factual claims are wrong."
+    },
+    {
+      "was": "solution/docs/architecture/openapi.yaml:217-253: The OpenAPI spec adds a `/api/v1/ingest/source` endpoint to handle various data sources, but the implementation uses separate endpoints for each source type (`/ingest/file`, `/ingest/text`). The OpenAPI spec should be updated to reflect the actual implementation to avoid confusion.",
+      "why": "The finding claims the implementation uses separate /ingest/file and /ingest/text endpoints, but these routes do not exist anywhere in the codebase. The actual implementation defines POST /ingest/source (ingest_from_source) which is exactly what the OpenAPI spec documents. The finding's factual premise is entirely wrong."
+    }
+  ]
+}

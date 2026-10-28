@@ -18,8 +18,8 @@ export interface Bug {
   sites: Site[];
 }
 
-/** A true finding that is not a bug, such as style or testing: a finding on it is neither a catch nor a false alarm. */
-interface Ignored {
+/** A true finding that is not a bug, such as style or testing: one finding on it is neither a catch nor a false alarm. */
+export interface Ignored {
   id: string;
   sites: Site[];
 }
@@ -44,7 +44,7 @@ export interface CaseKey {
   id: string;
   kind: AnswerKey["verdict"];
   bugs: Bug[];
-  ignored: Site[];
+  ignored: Ignored[];
 }
 
 export interface PullRequest {
@@ -113,7 +113,7 @@ export function loadKeys(only?: readonly string[]): CaseKey[] {
   if (unknown.length > 0) throw new Error(`no answer key: ${unknown.join(", ")}`);
   function caseKey(id: string): CaseKey {
     const key = readJson<AnswerKey>(join(LABELS, `${id}.json`));
-    return { id, kind: key.verdict, bugs: key.bugs, ignored: key.ignored.flatMap((item) => item.sites) };
+    return { id, kind: key.verdict, bugs: key.bugs, ignored: key.ignored };
   }
   return ids.filter((id) => !only || only.includes(id)).map(caseKey);
 }

@@ -6,9 +6,6 @@
   "bugs": [
     {
       "id": "b1",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "hard",
       "sites": [
         {
           "path": "src/API/Dockerfile",
@@ -17,7 +14,14 @@
         }
       ],
       "reach": "repo",
-      "evidence": "Installing iputils-ping does not enable .NET's Ping.SendPingAsync() to work in a non-root container. .NET's Ping class creates ICMP sockets directly using the OS socket API; it never invokes the system ping binary. The iputils-ping package only provides the /bin/ping binary (which has a setuid bit). Whether non-root .NET ICMP works on Linux is determined by CAP_NET_RAW capability or the process GID falling within /proc/sys/net/ipv4/ping_group_range. The package installation is therefore ineffective for the stated purpose."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "Installing iputils-ping does not enable .NET's Ping.SendPingAsync() to work in a non-root container. .NET's Ping class creates ICMP sockets directly using the OS socket API; it never invokes the system ping binary. The iputils-ping package only provides the /bin/ping binary (which has a setuid bit). Whether non-root .NET ICMP works on Linux is determined by CAP_NET_RAW capability or the process GID falling within /proc/sys/net/ipv4/ping_group_range. The package installation is therefore ineffective for the stated purpose."
+        }
+      ]
     }
   ],
   "ignored": [

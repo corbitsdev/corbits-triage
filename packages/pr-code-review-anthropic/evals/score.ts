@@ -10,41 +10,51 @@ function hits(finding: Finding, site: Site): boolean {
   return samePath(finding.path, site.path) && finding.start <= site.end + SLACK && finding.end >= site.start - SLACK;
 }
 
-/** The first bug the finding hits, if any. */
-export function bugOf(key: CaseKey, finding: Finding): string | undefined {
-  return key.bugs.find((bug) => bug.sites.some((site) => hits(finding, site)))?.id;
-}
-
 export const REACHES: readonly Reach[] = ["diff", "repo", "intent"];
+
+/** What a finding scored: the bug it caught, the ignored item it used up, or a false alarm. */
+export type Outcome = { kind: "caught"; bug: string } | { kind: "ignored"; item: string } | { kind: "falseAlarm" };
 
 export interface CaseScore {
   caught: string[];
   falseAlarms: number;
-  /** Findings that caught no bug but hit a true finding that is not a bug. */
+  /** Findings that used up an ignored item: a true finding that is not a bug. */
   ignored: number;
   flaggedClean: boolean;
+  /** Each finding's outcome, in the findings' order. */
+  outcomes: Outcome[];
 }
 
 /**
- * Each finding, in order, catches the first bug it hits that no earlier finding caught. A finding that catches none is
- * ignored when it hits a true finding that is not a bug, else a false alarm, so one defect split into several findings
- * scores one bug and the rest as false alarms. A clean case is flagged by any false alarm.
+ * Each finding, in order, catches the first bug it hits that no earlier finding caught. A finding that hits only caught
+ * bugs is a false alarm, so one defect split into several findings scores one bug and the rest as false alarms. A finding
+ * that hits no bug uses up the first ignored item it hits that no earlier finding used, else it is a false alarm. A
+ * clean case is flagged by any false alarm.
  */
 export function scoreCase(key: CaseKey, findings: readonly Finding[]): CaseScore {
   const caught = new Set<string>();
-  let falseAlarms = 0;
-  let ignored = 0;
-  for (const finding of findings) {
-    const bug = key.bugs.find((candidate) => !caught.has(candidate.id) && candidate.sites.some((site) => hits(finding, site)));
-    if (bug) caught.add(bug.id);
-    else if (key.ignored.some((site) => hits(finding, site))) ignored++;
-    else falseAlarms++;
+  const used = new Set<string>();
+  function outcomeOf(finding: Finding): Outcome {
+    const hit = key.bugs.filter((bug) => bug.sites.some((site) => hits(finding, site)));
+    const bug = hit.find((candidate) => !caught.has(candidate.id));
+    if (bug) {
+      caught.add(bug.id);
+      return { kind: "caught", bug: bug.id };
+    }
+    if (hit.length > 0) return { kind: "falseAlarm" };
+    const item = key.ignored.find((candidate) => !used.has(candidate.id) && candidate.sites.some((site) => hits(finding, site)));
+    if (!item) return { kind: "falseAlarm" };
+    used.add(item.id);
+    return { kind: "ignored", item: item.id };
   }
+  const outcomes = findings.map(outcomeOf);
+  const falseAlarms = outcomes.filter((outcome) => outcome.kind === "falseAlarm").length;
   return {
     caught: key.bugs.filter((bug) => caught.has(bug.id)).map((bug) => bug.id),
     falseAlarms,
-    ignored,
+    ignored: used.size,
     flaggedClean: key.kind === "clean" && falseAlarms > 0,
+    outcomes,
   };
 }
 

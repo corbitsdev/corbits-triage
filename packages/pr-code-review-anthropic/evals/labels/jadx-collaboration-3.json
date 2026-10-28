@@ -6,9 +6,6 @@
   "bugs": [
     {
       "id": "b1",
-      "severity": "high",
-      "category": "correctness",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
@@ -17,13 +14,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "The PR description promises a shared single-thread executor to serialize pull/push operations, but the actual code still uses `kotlin.concurrent.thread` for all four entry points. Each invocation spawns a fresh, unconstrained thread. Concurrent pulls and pushes remain fully possible on rapid key presses or menu clicks, leaving the interleaved repository read/write problem the PR claims to fix entirely unsolved."
+      "golden": [
+        {
+          "severity": "high",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "The PR description promises a shared single-thread executor to serialize pull/push operations, but the actual code still uses `kotlin.concurrent.thread` for all four entry points. Each invocation spawns a fresh, unconstrained thread. Concurrent pulls and pushes remain fully possible on rapid key presses or menu clicks, leaving the interleaved repository read/write problem the PR claims to fix entirely unsolved."
+        }
+      ]
     },
     {
       "id": "b2",
-      "severity": "high",
-      "category": "correctness",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
@@ -32,13 +33,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "`localRepository` is declared as `var localRepository: LocalRepository? = null` (nullable). Inside the non-inline `uiRun` lambda, it is passed directly to `localRepositoryToProject(localRepository: LocalRepository)` which requires a non-null type. Kotlin's smart-cast rules do not apply to captured `var` variables inside non-inline lambdas, so this is either a compile error under the K2 compiler or will throw a NullPointerException at runtime if the smart-cast is somehow accepted. The fix is to capture a non-nullable local copy before the lambda: `val repo = localRepository!!; uiRun { localRepositoryToProject(repo) }`."
+      "golden": [
+        {
+          "severity": "high",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "`localRepository` is declared as `var localRepository: LocalRepository? = null` (nullable). Inside the non-inline `uiRun` lambda, it is passed directly to `localRepositoryToProject(localRepository: LocalRepository)` which requires a non-null type. Kotlin's smart-cast rules do not apply to captured `var` variables inside non-inline lambdas, so this is either a compile error under the K2 compiler or will throw a NullPointerException at runtime if the smart-cast is somehow accepted. The fix is to capture a non-nullable local copy before the lambda: `val repo = localRepository!!; uiRun { localRepositoryToProject(repo) }`."
+        }
+      ]
     },
     {
       "id": "b3",
-      "severity": "high",
-      "category": "correctness",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
@@ -47,13 +52,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "`uiRun` delegates to `SwingUtilities.invokeLater` (asynchronous). Scheduling `localRepositoryToProject` inside `uiRun` means `pull()` returns — and the background thread exits — before the project state has actually been updated. If a new pull is triggered immediately afterwards (which is possible because no serialization exists), `projectToLocalRepository` in the new pull reads stale project renames/comments from before the previous pull's EDT update ran. The same problem applies to the equivalent block at the end of `push()` (lines 645–648)."
+      "golden": [
+        {
+          "severity": "high",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "`uiRun` delegates to `SwingUtilities.invokeLater` (asynchronous). Scheduling `localRepositoryToProject` inside `uiRun` means `pull()` returns — and the background thread exits — before the project state has actually been updated. If a new pull is triggered immediately afterwards (which is possible because no serialization exists), `projectToLocalRepository` in the new pull reads stale project renames/comments from before the previous pull's EDT update ran. The same problem applies to the equivalent block at the end of `push()` (lines 645–648)."
+        }
+      ]
     },
     {
       "id": "b4",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "hard",
       "sites": [
         {
           "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
@@ -62,7 +71,14 @@
         }
       ],
       "reach": "repo",
-      "evidence": "In `push()`, `projectToLocalRepository(localRepository)` is called on the background thread at the top of the retry loop, reading `codeData.renames/comments`. However, the previous iteration's `writeRemoteRepository` and script have already updated the remote, and any pending `localRepositoryToProject` from a previous pull (dispatched asynchronously to the EDT) may not have run yet. This makes the `localRepository` snapshot built from project state inconsistent with what was last pushed to the remote, potentially re-introducing already-resolved renames into the next write."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "In `push()`, `projectToLocalRepository(localRepository)` is called on the background thread at the top of the retry loop, reading `codeData.renames/comments`. However, the previous iteration's `writeRemoteRepository` and script have already updated the remote, and any pending `localRepositoryToProject` from a previous pull (dispatched asynchronously to the EDT) may not have run yet. This makes the `localRepository` snapshot built from project state inconsistent with what was last pushed to the remote, potentially re-introducing already-resolved renames into the next write."
+        }
+      ]
     }
   ],
   "ignored": [

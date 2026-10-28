@@ -6,24 +6,36 @@
   "bugs": [
     {
       "id": "b1",
-      "severity": "high",
-      "category": "security",
-      "difficulty": "easy",
       "sites": [
         {
           "path": "src/server/handlers.ts",
           "start": 438,
           "end": 454
+        },
+        {
+          "path": "src/server/handlers.ts",
+          "start": 439,
+          "end": 448
         }
       ],
       "reach": "repo",
-      "evidence": "The user-supplied `path` parameter is passed directly to `fileExists`, `getFileStats`, and `readFile` without validating via `path.isAbsolute()` or normalizing via `path.resolve()`. A malicious client can supply a relative traversal string like `../../../../etc/passwd` to read arbitrary files, bypassing the intent of the size guard entirely. The project's AGENTS.md explicitly mandates these checks before any filesystem operation (Issues #125, #126) and no such validation is present anywhere in the server directory."
+      "golden": [
+        {
+          "severity": "high",
+          "category": "security",
+          "difficulty": "easy",
+          "evidence": "The user-supplied `path` parameter is passed directly to `fileExists`, `getFileStats`, and `readFile` without validating via `path.isAbsolute()` or normalizing via `path.resolve()`. A malicious client can supply a relative traversal string like `../../../../etc/passwd` to read arbitrary files, bypassing the intent of the size guard entirely. The project's AGENTS.md explicitly mandates these checks before any filesystem operation (Issues #125, #126) and no such validation is present anywhere in the server directory."
+        },
+        {
+          "severity": "low",
+          "category": "security",
+          "difficulty": "easy",
+          "evidence": "The two new error messages `File not found: ${path}` and `Could not read file stats for: ${path}` embed the raw `path` value, which is typically an absolute filesystem path, in the MCP error response. The project's AGENTS.md security section states 'Use getRelativePath() in error messages returned to clients — never leak absolute filesystem paths' (Issue #129). These are new error paths introduced by this PR that do not follow that convention."
+        }
+      ]
     },
     {
       "id": "b2",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "easy",
       "sites": [
         {
           "path": "src/core/customRulesEngine.ts",
@@ -32,13 +44,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "ALLOWED_FLAGS_RE = /^[gimsuy]*$/ excludes the `d` flag (hasIndices), which is a valid ECMAScript 2022 flag supported since Node.js 16. The project declares `engines.node >= 18`, making `d` a fully valid flag on every supported runtime. Any user passing `flags: 'd'` to `add_custom_rule` or `validate_custom_pattern` gets an incorrect 'Invalid regex flags' rejection, and the flag is silently stripped at execution time, changing matching behavior without warning."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "easy",
+          "evidence": "ALLOWED_FLAGS_RE = /^[gimsuy]*$/ excludes the `d` flag (hasIndices), which is a valid ECMAScript 2022 flag supported since Node.js 16. The project declares `engines.node >= 18`, making `d` a fully valid flag on every supported runtime. Any user passing `flags: 'd'` to `add_custom_rule` or `validate_custom_pattern` gets an incorrect 'Invalid regex flags' rejection, and the flag is silently stripped at execution time, changing matching behavior without warning."
+        }
+      ]
     },
     {
       "id": "b3",
-      "severity": "low",
-      "category": "correctness",
-      "difficulty": "hard",
       "sites": [
         {
           "path": "src/core/customRulesEngine.ts",
@@ -47,22 +63,14 @@
         }
       ],
       "reach": "repo",
-      "evidence": "When `pattern.flags` contains disallowed characters, `validatePattern` pushes a flags-error and then continues to compile the regex using normalized (stripped) flags. This means a pattern that is syntactically invalid only when combined with its declared flags (rare but possible with flag-specific syntax like `\\p{}` requiring `u`) will be compiled with `u` stripped and may not surface an 'Invalid regex pattern' error. The two validation concerns — flags and pattern — are tested independently rather than together, so the reported validity does not reflect the actual behavior at execution time when both flags and pattern interact."
-    },
-    {
-      "id": "b4",
-      "severity": "low",
-      "category": "security",
-      "difficulty": "easy",
-      "sites": [
+      "golden": [
         {
-          "path": "src/server/handlers.ts",
-          "start": 439,
-          "end": 448
+          "severity": "low",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "When `pattern.flags` contains disallowed characters, `validatePattern` pushes a flags-error and then continues to compile the regex using normalized (stripped) flags. This means a pattern that is syntactically invalid only when combined with its declared flags (rare but possible with flag-specific syntax like `\\p{}` requiring `u`) will be compiled with `u` stripped and may not surface an 'Invalid regex pattern' error. The two validation concerns — flags and pattern — are tested independently rather than together, so the reported validity does not reflect the actual behavior at execution time when both flags and pattern interact."
         }
-      ],
-      "reach": "repo",
-      "evidence": "The two new error messages `File not found: ${path}` and `Could not read file stats for: ${path}` embed the raw `path` value, which is typically an absolute filesystem path, in the MCP error response. The project's AGENTS.md security section states 'Use getRelativePath() in error messages returned to clients — never leak absolute filesystem paths' (Issue #129). These are new error paths introduced by this PR that do not follow that convention."
+      ]
     }
   ],
   "ignored": [

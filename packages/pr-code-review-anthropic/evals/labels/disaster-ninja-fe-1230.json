@@ -6,85 +6,32 @@
   "bugs": [
     {
       "id": "b1",
-      "severity": "high",
-      "category": "correctness",
-      "difficulty": "hard",
       "sites": [
         {
           "path": "src/core/logical_layers/renderers/GenericRenderer.ts",
           "start": 239,
           "end": 240
-        }
-      ],
-      "reach": "repo",
-      "evidence": "layer('disable') and layer('enable') are not valid reatom v2 API calls. LayerAtom is AtomSelfBinded<LogicalLayerState, LogicalLayerActions>; actions must be dispatched via store.dispatch([layer.disable()]) and store.dispatch([layer.enable()]), as demonstrated in applyNewLayerSource.ts. Calling the atom as a plain function with a string argument invokes the reducer directly with an invalid argument — not the action handler — so the remounting logic is a no-op. store is not imported in GenericRenderer.ts, so this cannot be fixed without adding that import."
-    },
-    {
-      "id": "b2",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "medium",
-      "sites": [
+        },
         {
           "path": "src/core/logical_layers/renderers/GenericRenderer.ts",
           "start": 235,
           "end": 238
-        }
-      ],
-      "reach": "repo",
-      "evidence": "styledata is the wrong event to wait for after setStyle. MapLibre fires styledata for each incremental style update and it can fire before the basemap's own layers are fully parsed. As a result, map.getStyle().layers may be incomplete when layersOrderManager.init() reads it to set _baseMapFirstLayerIdx, producing an incorrect index that causes subsequent user layers to be inserted below basemap layers. The correct event to await full style load after setStyle is style.load."
-    },
-    {
-      "id": "b3",
-      "severity": "low",
-      "category": "correctness",
-      "difficulty": "hard",
-      "sites": [
+        },
         {
           "path": "src/core/logical_layers/renderers/GenericRenderer.ts",
           "start": 236,
           "end": 236
-        }
-      ],
-      "reach": "repo",
-      "evidence": "mapLibreParentsIds.clear() removes all maplibre-layer-to-UI-layer mappings immediately, including entries for layers that will not be successfully remounted (because the remounting API is broken). Any concurrent call to layersOrderManager that still references those IDs (e.g. _getMountedOrderedLayers) will silently skip those layers with a 'id was not found' warning and produce wrong ordering decisions."
-    },
-    {
-      "id": "b4",
-      "severity": "low",
-      "category": "correctness",
-      "difficulty": "medium",
-      "sites": [
+        },
         {
           "path": "src/core/logical_layers/renderers/GenericRenderer.ts",
           "start": 229,
           "end": 243
-        }
-      ],
-      "reach": "repo",
-      "evidence": "After `map.setStyle(styleUrl)`, execution falls through to the rest of `_updateMap` (the `if (!isVisible) this.willHide(...)`, tooltip provider registration, click listener registration, etc., starting at line 247). For a basemap layer this state is mostly empty, but it does mean `willHide` may be invoked while the new style is still loading asynchronously, and the layer-list cleanup runs before the styledata callback fires. Consider `return`ing after scheduling the styledata handler so the basemap branch doesn't accidentally execute logic intended only for data layers."
-    },
-    {
-      "id": "b5",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "medium",
-      "sites": [
+        },
         {
           "path": "src/core/logical_layers/renderers/GenericRenderer.ts",
           "start": 238,
           "end": 240
-        }
-      ],
-      "reach": "repo",
-      "evidence": "This remounts the snapshot taken before the async style change completed. If a user disables one of these layers while the new style is loading, this handler still calls `enable` on that stale layer and turns it back on, overriding the user's latest choice. Check the current mounted/enabled state when the style event fires instead of unconditionally disabling and enabling the snapshot."
-    },
-    {
-      "id": "b6",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "hard",
-      "sites": [
+        },
         {
           "path": "src/core/logical_layers/renderers/GenericRenderer.ts",
           "start": 231,
@@ -92,7 +39,44 @@
         }
       ],
       "reach": "repo",
-      "evidence": "The remount snapshot includes any previously mounted basemap because it only filters out the newly selected layer. Base layers are mutually exclusive (`src/core/logical_layers/constants.ts:14-17`), but during a switch the old basemap can still be in `mountedLayersAtom`; the later `disable`/`enable` remount sequence will re-enable that old basemap and can switch the style back. Filter remounts to non-basemap overlay layers or use the current enabled set after mutual exclusion has settled."
+      "golden": [
+        {
+          "severity": "high",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "layer('disable') and layer('enable') are not valid reatom v2 API calls. LayerAtom is AtomSelfBinded<LogicalLayerState, LogicalLayerActions>; actions must be dispatched via store.dispatch([layer.disable()]) and store.dispatch([layer.enable()]), as demonstrated in applyNewLayerSource.ts. Calling the atom as a plain function with a string argument invokes the reducer directly with an invalid argument — not the action handler — so the remounting logic is a no-op. store is not imported in GenericRenderer.ts, so this cannot be fixed without adding that import."
+        },
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "styledata is the wrong event to wait for after setStyle. MapLibre fires styledata for each incremental style update and it can fire before the basemap's own layers are fully parsed. As a result, map.getStyle().layers may be incomplete when layersOrderManager.init() reads it to set _baseMapFirstLayerIdx, producing an incorrect index that causes subsequent user layers to be inserted below basemap layers. The correct event to await full style load after setStyle is style.load."
+        },
+        {
+          "severity": "low",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "mapLibreParentsIds.clear() removes all maplibre-layer-to-UI-layer mappings immediately, including entries for layers that will not be successfully remounted (because the remounting API is broken). Any concurrent call to layersOrderManager that still references those IDs (e.g. _getMountedOrderedLayers) will silently skip those layers with a 'id was not found' warning and produce wrong ordering decisions."
+        },
+        {
+          "severity": "low",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "After `map.setStyle(styleUrl)`, execution falls through to the rest of `_updateMap` (the `if (!isVisible) this.willHide(...)`, tooltip provider registration, click listener registration, etc., starting at line 247). For a basemap layer this state is mostly empty, but it does mean `willHide` may be invoked while the new style is still loading asynchronously, and the layer-list cleanup runs before the styledata callback fires. Consider `return`ing after scheduling the styledata handler so the basemap branch doesn't accidentally execute logic intended only for data layers."
+        },
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "This remounts the snapshot taken before the async style change completed. If a user disables one of these layers while the new style is loading, this handler still calls `enable` on that stale layer and turns it back on, overriding the user's latest choice. Check the current mounted/enabled state when the style event fires instead of unconditionally disabling and enabling the snapshot."
+        },
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "The remount snapshot includes any previously mounted basemap because it only filters out the newly selected layer. Base layers are mutually exclusive (`src/core/logical_layers/constants.ts:14-17`), but during a switch the old basemap can still be in `mountedLayersAtom`; the later `disable`/`enable` remount sequence will re-enable that old basemap and can switch the style back. Filter remounts to non-basemap overlay layers or use the current enabled set after mutual exclusion has settled."
+        }
+      ]
     }
   ],
   "ignored": [

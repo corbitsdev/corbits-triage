@@ -6,39 +6,66 @@
   "bugs": [
     {
       "id": "b1",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "services/copilot-review-mcp/internal/auth/session.go",
           "start": 111,
           "end": 115
+        },
+        {
+          "path": "services/copilot-review-mcp/internal/auth/session.go",
+          "start": 99,
+          "end": 123
         }
       ],
-      "reach": "repo",
-      "evidence": "PKCE is not enforced. ExchangeCode only verifies the code_challenge when sess.CodeChallenge != \"\", but the /authorize handler never requires code_challenge to be present. An attacker who obtains an internal authorization code (e.g. via referrer header, browser history, or log inspection) can call /token with no code_verifier and receive the GitHub access token. The Discovery endpoint advertises PKCE S256 as supported but the implementation makes it purely opt-in. PKCE should be required on every flow."
+      "reach": "diff",
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "PKCE is not enforced. ExchangeCode only verifies the code_challenge when sess.CodeChallenge != \"\", but the /authorize handler never requires code_challenge to be present. An attacker who obtains an internal authorization code (e.g. via referrer header, browser history, or log inspection) can call /token with no code_verifier and receive the GitHub access token. The Discovery endpoint advertises PKCE S256 as supported but the implementation makes it purely opt-in. PKCE should be required on every flow."
+        },
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "easy",
+          "evidence": "When `ExchangeCode` fails due to `redirect_uri` mismatch or PKCE verification failure, the authorization code is left in `s.codes` and remains valid until TTL expiry. RFC 6749 §10.5 and RFC 7636 §4.6 require that an authorization code be invalidated as soon as it has been used (or attempted) so an attacker who obtains the code cannot brute-force the `code_verifier`. Recommend deleting the entry from `s.codes` (and the matching session) on any validation failure, not only on success."
+        }
+      ]
     },
     {
       "id": "b2",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "services/copilot-review-mcp/internal/auth/handler.go",
           "start": 173,
           "end": 213
+        },
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 193,
+          "end": 198
         }
       ],
       "reach": "repo",
-      "evidence": "The /token endpoint performs no client_id validation. The comment claims GitHub validates client_id during code exchange, but that exchange happens at /callback, not at /token time. When /token is called, the internal code is already in the store and no outbound GitHub call is made. Combined with the missing PKCE enforcement, any party that obtains an internal code can present it to /token without supplying client_id and receive the GitHub access token. RFC 6749 §3.2.1 requires public clients to be identified at the token endpoint."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "The /token endpoint performs no client_id validation. The comment claims GitHub validates client_id during code exchange, but that exchange happens at /callback, not at /token time. When /token is called, the internal code is already in the store and no outbound GitHub call is made. Combined with the missing PKCE enforcement, any party that obtains an internal code can present it to /token without supplying client_id and receive the GitHub access token. RFC 6749 §3.2.1 requires public clients to be identified at the token endpoint."
+        },
+        {
+          "severity": "low",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "Forwarding `err.Error()` from `ExchangeCode` directly into the `error_description` field leaks internal state to the client. In particular, the \"session not found or expired for state %q\" error from `session.go` will echo the client-supplied state value back in the response and the \"redirect_uri mismatch\" message can also be informative to attackers. Per RFC 6749 §5.2, `error_description` should be a human-readable explanation safe for the client, not an internal log message. Consider mapping internal errors to a generic message (e.g. \"authorization code is invalid or expired\") and keeping the detailed `err` only in the `slog.Warn` log line above."
+        }
+      ]
     },
     {
       "id": "b3",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "services/copilot-review-mcp/internal/auth/session.go",
@@ -47,13 +74,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "SaveSession adds entries to the sessions map with no upper bound on the total count. Any unauthenticated caller can flood /authorize with distinct state values to fill the map indefinitely. The janitor only runs every minute, so a sustained burst can consume substantial memory between sweeps. There is no session count cap, no per-IP rate limit, and no rejection when the store is full."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "SaveSession adds entries to the sessions map with no upper bound on the total count. Any unauthenticated caller can flood /authorize with distinct state values to fill the map indefinitely. The janitor only runs every minute, so a sustained burst can consume substantial memory between sweeps. There is no session count cap, no per-IP rate limit, and no rejection when the store is full."
+        }
+      ]
     },
     {
       "id": "b4",
-      "severity": "low",
-      "category": "security",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "services/copilot-review-mcp/internal/auth/handler.go",
@@ -62,58 +93,47 @@
         }
       ],
       "reach": "repo",
-      "evidence": "The redirect_uri allowlist check uses parsedRedirect.Hostname(), which strips the port. This means any port on an allowed host is accepted: both http://localhost:8080/callback and http://localhost:9999/evil pass the check when \"localhost\" is in AllowedRedirectHosts. An attacker running any service on localhost (or any allowed host) can receive the authorization code redirect. The check should include the port, or restrict to specific full origins."
+      "golden": [
+        {
+          "severity": "low",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "The redirect_uri allowlist check uses parsedRedirect.Hostname(), which strips the port. This means any port on an allowed host is accepted: both http://localhost:8080/callback and http://localhost:9999/evil pass the check when \"localhost\" is in AllowedRedirectHosts. An attacker running any service on localhost (or any allowed host) can receive the authorization code redirect. The check should include the port, or restrict to specific full origins."
+        }
+      ]
     },
     {
       "id": "b5",
-      "severity": "low",
-      "category": "security",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "services/copilot-review-mcp/internal/auth/handler.go",
           "start": 75,
           "end": 75
+        },
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 74,
+          "end": 79
         }
       ],
       "reach": "repo",
-      "evidence": "The state query parameter is accepted with no length limit and stored verbatim as a map key in SaveSession. An attacker can submit a multi-megabyte state value in a single request, inflating the session map entry far beyond a normal key size. Combined with the lack of a session count cap, this makes the memory exhaustion DoS cheaper to execute per request."
+      "golden": [
+        {
+          "severity": "low",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "The state query parameter is accepted with no length limit and stored verbatim as a map key in SaveSession. An attacker can submit a multi-megabyte state value in a single request, inflating the session map entry far beyond a normal key size. Combined with the lack of a session count cap, this makes the memory exhaustion DoS cheaper to execute per request."
+        },
+        {
+          "severity": "low",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "`client_id` is not read or checked on the authorization request, so any caller can create a session that will later be exchanged as this façade's configured GitHub OAuth app. In a single-client façade, validate the incoming `client_id` against the configured client and store it with the session for the `/token` check."
+        }
+      ]
     },
     {
       "id": "b6",
-      "severity": "low",
-      "category": "security",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "services/copilot-review-mcp/internal/auth/handler.go",
-          "start": 193,
-          "end": 198
-        }
-      ],
-      "reach": "repo",
-      "evidence": "Forwarding `err.Error()` from `ExchangeCode` directly into the `error_description` field leaks internal state to the client. In particular, the \"session not found or expired for state %q\" error from `session.go` will echo the client-supplied state value back in the response and the \"redirect_uri mismatch\" message can also be informative to attackers. Per RFC 6749 §5.2, `error_description` should be a human-readable explanation safe for the client, not an internal log message. Consider mapping internal errors to a generic message (e.g. \"authorization code is invalid or expired\") and keeping the detailed `err` only in the `slog.Warn` log line above."
-    },
-    {
-      "id": "b7",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "easy",
-      "sites": [
-        {
-          "path": "services/copilot-review-mcp/internal/auth/session.go",
-          "start": 99,
-          "end": 123
-        }
-      ],
-      "reach": "diff",
-      "evidence": "When `ExchangeCode` fails due to `redirect_uri` mismatch or PKCE verification failure, the authorization code is left in `s.codes` and remains valid until TTL expiry. RFC 6749 §10.5 and RFC 7636 §4.6 require that an authorization code be invalidated as soon as it has been used (or attempted) so an attacker who obtains the code cannot brute-force the `code_verifier`. Recommend deleting the entry from `s.codes` (and the matching session) on any validation failure, not only on success."
-    },
-    {
-      "id": "b8",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "services/copilot-review-mcp/internal/auth/handler.go",
@@ -122,13 +142,23 @@
         }
       ],
       "reach": "repo",
-      "evidence": "The Discovery document advertises `code_challenge_methods_supported: [\"S256\"]`, but the `/authorize` and `/token` handlers treat PKCE as optional (no `code_challenge` parameter at `/authorize` results in `sess.CodeChallenge == \"\"`, and `ExchangeCode` then skips PKCE verification entirely). RFC 8414 / MCP clients (including Claude Desktop, per issue #28) will interpret the Discovery field as PKCE being mandatory. Either advertise that PKCE is optional, or enforce that `code_challenge` is required at `/authorize` (and `code_verifier` at `/token`) to match the advertised metadata."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "The Discovery document advertises `code_challenge_methods_supported: [\"S256\"]`, but the `/authorize` and `/token` handlers treat PKCE as optional (no `code_challenge` parameter at `/authorize` results in `sess.CodeChallenge == \"\"`, and `ExchangeCode` then skips PKCE verification entirely). RFC 8414 / MCP clients (including Claude Desktop, per issue #28) will interpret the Discovery field as PKCE being mandatory. Either advertise that PKCE is optional, or enforce that `code_challenge` is required at `/authorize` (and `code_verifier` at `/token`) to match the advertised metadata."
+        },
+        {
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "easy",
+          "evidence": "PKCE is advertised in discovery but remains optional here: if a client omits `code_challenge`, the session is saved without one and `ExchangeCode` skips verifier validation. For this public OAuth façade, require `code_challenge` with S256 so intercepted internal authorization codes cannot be redeemed without a verifier."
+        }
+      ]
     },
     {
-      "id": "b9",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "medium",
+      "id": "b7",
       "sites": [
         {
           "path": "services/copilot-review-mcp/internal/auth/session.go",
@@ -137,43 +167,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "`Callback` calls `CompleteCallback`, which leaves the original `s.sessions[state]` entry in place (it is only removed later when `/token` consumes the code). This allows the same `state` to be replayed against `/callback` — for example, if the redirect from GitHub is repeated by the browser — and each replay will issue a fresh internal code while overwriting `sess.InternalCode`, leaving orphan entries in `s.codes` that still reference the same underlying session. Consider invalidating the state on first successful callback (i.e. delete `s.sessions[state]` once an internal code has been issued) so a callback can be processed at most once."
-    },
-    {
-      "id": "b10",
-      "severity": "medium",
-      "category": "security",
-      "difficulty": "easy",
-      "sites": [
+      "golden": [
         {
-          "path": "services/copilot-review-mcp/internal/auth/handler.go",
-          "start": 90,
-          "end": 94
+          "severity": "medium",
+          "category": "security",
+          "difficulty": "medium",
+          "evidence": "`Callback` calls `CompleteCallback`, which leaves the original `s.sessions[state]` entry in place (it is only removed later when `/token` consumes the code). This allows the same `state` to be replayed against `/callback` — for example, if the redirect from GitHub is repeated by the browser — and each replay will issue a fresh internal code while overwriting `sess.InternalCode`, leaving orphan entries in `s.codes` that still reference the same underlying session. Consider invalidating the state on first successful callback (i.e. delete `s.sessions[state]` once an internal code has been issued) so a callback can be processed at most once."
         }
-      ],
-      "reach": "repo",
-      "evidence": "PKCE is advertised in discovery but remains optional here: if a client omits `code_challenge`, the session is saved without one and `ExchangeCode` skips verifier validation. For this public OAuth façade, require `code_challenge` with S256 so intercepted internal authorization codes cannot be redeemed without a verifier."
+      ]
     },
     {
-      "id": "b11",
-      "severity": "low",
-      "category": "security",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "services/copilot-review-mcp/internal/auth/handler.go",
-          "start": 74,
-          "end": 79
-        }
-      ],
-      "reach": "repo",
-      "evidence": "`client_id` is not read or checked on the authorization request, so any caller can create a session that will later be exchanged as this façade's configured GitHub OAuth app. In a single-client façade, validate the incoming `client_id` against the configured client and store it with the session for the `/token` check."
-    },
-    {
-      "id": "b12",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "medium",
+      "id": "b8",
       "sites": [
         {
           "path": "services/copilot-review-mcp/internal/auth/handler.go",
@@ -182,7 +186,14 @@
         }
       ],
       "reach": "repo",
-      "evidence": "GitHub OAuth error callbacks (for example `?error=access_denied&state=...` when the user denies consent) are treated as a generic missing-code 400 and are not redirected back to the original client redirect URI. That leaves the MCP client without the OAuth error response it needs to finish the flow; look up the session by state and redirect with the error parameters when GitHub returns an OAuth error."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "GitHub OAuth error callbacks (for example `?error=access_denied&state=...` when the user denies consent) are treated as a generic missing-code 400 and are not redirected back to the original client redirect URI. That leaves the MCP client without the OAuth error response it needs to finish the flow; look up the session by state and redirect with the error parameters when GitHub returns an OAuth error."
+        }
+      ]
     }
   ],
   "ignored": [

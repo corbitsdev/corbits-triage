@@ -6,25 +6,12 @@
   "bugs": [
     {
       "id": "b1",
-      "severity": "low",
-      "category": "correctness",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "internal/admin/api.go",
           "start": 325,
           "end": 341
-        }
-      ],
-      "reach": "repo",
-      "evidence": "`Count` and `QuerySummaries` execute as two independent, non-transactional queries. Any row inserted between the two calls means `total` is understated relative to what `QuerySummaries` sees, causing `has_more` to read `false` on a page that is actually the last full page (one page boundary will appear to have no continuation). Conversely, rows deleted between the calls (e.g., by a retention job) make `total` overstated, so `has_more` stays `true` after the real last page, causing the client to request an empty next page. Wrapping both in a repeatable-read transaction or using a single query with a window function (`COUNT(*) OVER ()`) would fix this."
-    },
-    {
-      "id": "b2",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "easy",
-      "sites": [
+        },
         {
           "path": "internal/admin/api.go",
           "start": 331,
@@ -32,28 +19,64 @@
         }
       ],
       "reach": "repo",
-      "evidence": "When `QuerySummaries` fails (i.e., the pgx `Query` call returns an error), `query` returns `nil`. The handler converts `nil` to `[]types.AuditEntry{}` and responds HTTP 200 with `{\"entries\":[], \"total\": N, \"has_more\": true}` — an empty entry list paired with a positive total and `has_more: true`. The UI will show zero rows but keep the \"Load more\" button active, looping forever. The nil return from `query` signals a DB error and should be converted to a 500 response, the same way a `Count` error already is."
+      "golden": [
+        {
+          "severity": "low",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "`Count` and `QuerySummaries` execute as two independent, non-transactional queries. Any row inserted between the two calls means `total` is understated relative to what `QuerySummaries` sees, causing `has_more` to read `false` on a page that is actually the last full page (one page boundary will appear to have no continuation). Conversely, rows deleted between the calls (e.g., by a retention job) make `total` overstated, so `has_more` stays `true` after the real last page, causing the client to request an empty next page. Wrapping both in a repeatable-read transaction or using a single query with a window function (`COUNT(*) OVER ()`) would fix this."
+        },
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "easy",
+          "evidence": "When `QuerySummaries` fails (i.e., the pgx `Query` call returns an error), `query` returns `nil`. The handler converts `nil` to `[]types.AuditEntry{}` and responds HTTP 200 with `{\"entries\":[], \"total\": N, \"has_more\": true}` — an empty entry list paired with a positive total and `has_more: true`. The UI will show zero rows but keep the \"Load more\" button active, looping forever. The nil return from `query` signals a DB error and should be converted to a 500 response, the same way a `Count` error already is."
+        }
+      ]
     },
     {
-      "id": "b3",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "easy",
+      "id": "b2",
       "sites": [
         {
           "path": "web/src/components/AuditTrail.tsx",
           "start": 103,
           "end": 125
+        },
+        {
+          "path": "web/src/components/AuditTrail.tsx",
+          "start": 113,
+          "end": 113
+        },
+        {
+          "path": "web/src/components/AuditTrail.tsx",
+          "start": 105,
+          "end": 105
         }
       ],
       "reach": "repo",
-      "evidence": "`toggleExpanded` calls `setExpandedId(rowId)` unconditionally, then checks `if (!entry.id || ...)` and returns early without setting `detailLoading[detailKey]`. When `entry.id` is absent (falsy), the row opens in expanded state, but no fetch is started and no loading/error UI is shown. `detailEntry` falls back to the summary `entry`, so all payload fields (headers, body) render as \"(empty)\". A user who expands such a row sees silently missing data with no indication of failure. The guard should be evaluated before `setExpandedId`, or an error state should be set when `entry.id` is missing."
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "easy",
+          "evidence": "`toggleExpanded` calls `setExpandedId(rowId)` unconditionally, then checks `if (!entry.id || ...)` and returns early without setting `detailLoading[detailKey]`. When `entry.id` is absent (falsy), the row opens in expanded state, but no fetch is started and no loading/error UI is shown. `detailEntry` falls back to the summary `entry`, so all payload fields (headers, body) render as \"(empty)\". A user who expands such a row sees silently missing data with no indication of failure. The guard should be evaluated before `setExpandedId`, or an error state should be set when `entry.id` is missing."
+        },
+        {
+          "severity": "high",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "This new lazy-load call makes expanded rows depend on GET /admin/audit/{id}, but that handler currently returns 503 before calling GetEntry when evalStore is nil (api.go:1046-1048), and startAdminAPI only wires evalStore when an LLM judge is configured (cmd/gateway/main.go:223-224). In deployments with the LLM judge disabled, list rows no longer include payloads and expanding a row cannot load them, so request/response details become inaccessible. The detail GET path should not require the eval store, or it should be wired independently of the eval runner."
+        },
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "Caching a fetched detail forever can leave expanded rows with stale response data. Streaming responses are inserted first and then updated later via UpdateResponse after the body is consumed (internal/proxy/handler.go:1696-1715, pg_audit_reader.go:196-222); if an admin expands the row before that update finishes, the empty/partial detail is stored in entryDetails and subsequent expansions skip refetching because of this guard. Consider invalidating/refetching details for rows that may still be updated, or adding a refresh path after loading completes."
+        }
+      ]
     },
     {
-      "id": "b4",
-      "severity": "low",
-      "category": "correctness",
-      "difficulty": "medium",
+      "id": "b3",
       "sites": [
         {
           "path": "web/src/hooks/useAuditLog.ts",
@@ -62,13 +85,17 @@
         }
       ],
       "reach": "repo",
-      "evidence": "`loadMore` appends `data.entries` to the current `entries` array (which may include SSE-injected entries) but advances `offset` by `limit` based on the previous API offset, not the current list length. If N entries arrived via SSE since the last fetch, the next `loadMore` call fetches at `offset + limit` — covering the same DB positions as some of the SSE-injected entries — and `setEntries` appends them without deduplication. The audit table can show duplicate rows for any entry that arrived both via SSE push and via the paginated API response."
+      "golden": [
+        {
+          "severity": "low",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "`loadMore` appends `data.entries` to the current `entries` array (which may include SSE-injected entries) but advances `offset` by `limit` based on the previous API offset, not the current list length. If N entries arrived via SSE since the last fetch, the next `loadMore` call fetches at `offset + limit` — covering the same DB positions as some of the SSE-injected entries — and `setEntries` appends them without deduplication. The audit table can show duplicate rows for any entry that arrived both via SSE push and via the paginated API response."
+        }
+      ]
     },
     {
-      "id": "b5",
-      "severity": "low",
-      "category": "correctness",
-      "difficulty": "medium",
+      "id": "b4",
       "sites": [
         {
           "path": "web/src/components/AuditTrail.tsx",
@@ -77,37 +104,14 @@
         }
       ],
       "reach": "repo",
-      "evidence": "The table row uses `rowId` as its key, which is constructed from `request_id`, `timestamp`, and the row `index`. A key based on a non-stable `index` is an anti-pattern in React. If the list is re-sorted or filtered, this can lead to unpredictable UI behavior and state management issues because React will reuse components for different data items."
-    },
-    {
-      "id": "b6",
-      "severity": "high",
-      "category": "correctness",
-      "difficulty": "hard",
-      "sites": [
+      "golden": [
         {
-          "path": "web/src/components/AuditTrail.tsx",
-          "start": 113,
-          "end": 113
+          "severity": "low",
+          "category": "correctness",
+          "difficulty": "medium",
+          "evidence": "The table row uses `rowId` as its key, which is constructed from `request_id`, `timestamp`, and the row `index`. A key based on a non-stable `index` is an anti-pattern in React. If the list is re-sorted or filtered, this can lead to unpredictable UI behavior and state management issues because React will reuse components for different data items."
         }
-      ],
-      "reach": "repo",
-      "evidence": "This new lazy-load call makes expanded rows depend on GET /admin/audit/{id}, but that handler currently returns 503 before calling GetEntry when evalStore is nil (api.go:1046-1048), and startAdminAPI only wires evalStore when an LLM judge is configured (cmd/gateway/main.go:223-224). In deployments with the LLM judge disabled, list rows no longer include payloads and expanding a row cannot load them, so request/response details become inaccessible. The detail GET path should not require the eval store, or it should be wired independently of the eval runner."
-    },
-    {
-      "id": "b7",
-      "severity": "medium",
-      "category": "correctness",
-      "difficulty": "hard",
-      "sites": [
-        {
-          "path": "web/src/components/AuditTrail.tsx",
-          "start": 105,
-          "end": 105
-        }
-      ],
-      "reach": "repo",
-      "evidence": "Caching a fetched detail forever can leave expanded rows with stale response data. Streaming responses are inserted first and then updated later via UpdateResponse after the body is consumed (internal/proxy/handler.go:1696-1715, pg_audit_reader.go:196-222); if an admin expands the row before that update finishes, the empty/partial detail is stored in entryDetails and subsequent expansions skip refetching because of this guard. Consider invalidating/refetching details for rows that may still be updated, or adding a refresh path after loading completes."
+      ]
     }
   ],
   "ignored": [

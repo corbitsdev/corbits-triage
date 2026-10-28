@@ -1,7 +1,9 @@
 // Finder eval: runs the pr-code-review definition with any finder system prompt over the cases in evals/labels/ and
-// scores the findings against each case's answer key: a bug is caught when a finding on its path overlaps any of its
-// sites within three lines; a finding that hits no bug is a false alarm. A finding with a `code` line is first moved onto
-// that line in the diff. Writes a results JSON beside the table.
+// scores the findings against each case's answer key (score.ts): a bug is caught once, by the first finding on its path
+// that overlaps any of its sites within three lines; a later finding that hits only caught bugs is a false alarm; a
+// finding that hits no bug uses up one ignored item it hits (a true finding that is not a bug) and is neither, else it is
+// a false alarm. A finding with a `code` line is first moved onto that line in the diff. Writes a results JSON beside
+// the table.
 //
 //   bun run eval:review -- --prompt <file.txt> --effort medium [--model claude-haiku-5-5] [--repo] [--cases a,b] [--max-tokens 1000000] [--out <file.json>]
 //   --repo checks each case's head out (with `gh auth token`) and lets the finder read it; every tool call is recorded.
@@ -39,7 +41,7 @@ import { prCodeReview } from "../src/pr-code-review.js";
 import { finderInput } from "./finder-input.js";
 import { prCodeFinder } from "./finder-workflow.js";
 import { headOf, loadCases, loadKeys, pullRequestOf, type Case, type CaseKey, type Reach } from "./cases.js";
-import { bugOf, parseFindings, REACHES, reanchor, scoreCase, type CaseScore, type Finding } from "./score.js";
+import { parseFindings, REACHES, reanchor, scoreCase, type CaseScore, type Finding } from "./score.js";
 import { commentsOf, cutoffs, frontier, KEEP_ALL, loosest, scoreCutoff, type Cutoff, type Replayed, type SavedOutputs, type SweepRow } from "./sweep.js";
 
 // The cases are GitHub pull requests.
@@ -532,13 +534,14 @@ function stageTotals(stage: Stage, results: readonly E2EResult[], keys: readonly
   }];
 }
 
-/** The final review's comments where they sit, each with the bug it hits; their text stays out of the baseline. */
+/** The final review's comments where they sit, each with the bug it caught; their text stays out of the baseline. */
 function baselineCase(result: E2EResult, key: CaseKey) {
-  const caught = result.stages.final?.caught ?? [];
+  const final = result.stages.final;
+  const caught = final?.caught ?? [];
   const review = result.outputs?.review as { comments: (Finding & { priority?: number })[] } | undefined;
-  function placed(comment: Finding & { priority?: number }) {
-    const bug = bugOf(key, comment);
-    return { path: comment.path, line: comment.start, ...(comment.priority !== undefined && { priority: comment.priority }), ...(bug && { bug }) };
+  function placed(comment: Finding & { priority?: number }, index: number) {
+    const outcome = final?.outcomes[index];
+    return { path: comment.path, line: comment.start, ...(comment.priority !== undefined && { priority: comment.priority }), ...(outcome?.kind === "caught" && { bug: outcome.bug }) };
   }
   return {
     id: result.id,

@@ -21,6 +21,13 @@
     "headSha": "d169e9da6b816d04a9697359406cdf154b2f8067"
   },
   {
+    "id": "healthstream-rag-34",
+    "repo": "melroyanthony/healthstream-rag",
+    "number": 34,
+    "baseSha": "adfd09b776343d041eaa1109d06282867580084a",
+    "headSha": "a1d2b3e09cc4cb67477de2abc4ecfb429c37aa13"
+  },
+  {
     "id": "jadx-collaboration-3",
     "repo": "ardevd/jadx-collaboration",
     "number": 3,
@@ -40,13 +47,6 @@
     "number": 29,
     "baseSha": "63baf3dbbc10d271710706f56150dd8425dd4b4a",
     "headSha": "e7705d269ea374d49e7999bdb8bc42e9480a6b37"
-  },
-  {
-    "id": "statista-130",
-    "repo": "Serapieum-of-alex/statista",
-    "number": 130,
-    "baseSha": "39d775aed9c2f48cb7d2137c3a4ac8ca5cc22d71",
-    "headSha": "31bd61f4dbe9dae542ad9eda41b62d982d20da74"
   },
   {
     "id": "statswales-frontend-626",
