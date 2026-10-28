@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
 import { listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents } from "@intx/hub-client";
+import { parseTriageState, triageStateName, type PrTriageRow } from "@corbits/triage-contracts";
 import { saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
@@ -183,16 +184,26 @@ export function chainStack(env: Record<string, string> = {}) {
     return found.map((row) => ({ id: String(row["id"]), createdAt: new Date(String(row["created_at"])), status: String(row["status"]) }));
   }
 
-  /** The claim once its manager's run is gone, whether done ended the claim or the run stopped without ending it. */
+  /** The pull request's rows in the hub's triage state. */
+  async function triageRows(repo: string, number: number): Promise<PrTriageRow[]> {
+    const [stored] = await rows(`select content from artifacts.artifact where tenant_id = '${workspace.tenantId}' and title = '${triageStateName(repo)}' and archived_at is null`);
+    return parseTriageState(stored?.["content"], repo)?.prs.filter((row) => row.number === number) ?? [];
+  }
+
+  /** The claim once its manager's run is gone, whether done ended the claim or the run stopped without ending it; on a timeout, the error names the head's triage rows. */
   async function settled(repo: string, number: number, passes = 1, ms = SETTLE_MS): Promise<Claim> {
-    return until(`${repo}#${number}'s manager to stop`, async function stopped() {
-      const claim = await claimOf(repo, number);
-      if (!claim || claim.history.length < passes) return undefined;
-      const runs = await managers();
-      const runId = claim.runId ?? claim.history.at(-1)!.runId;
-      const live = runs.some((run) => run.id === runId && isLiveDeployment(run.status));
-      return live ? undefined : claim;
-    }, ms);
+    try {
+      return await until(`${repo}#${number}'s manager to stop`, async function stopped() {
+        const claim = await claimOf(repo, number);
+        if (!claim || claim.history.length < passes) return undefined;
+        const runs = await managers();
+        const runId = claim.runId ?? claim.history.at(-1)!.runId;
+        const live = runs.some((run) => run.id === runId && isLiveDeployment(run.status));
+        return live ? undefined : claim;
+      }, ms);
+    } catch (err) {
+      throw new Error(`${String(err)}\nTriage state: ${JSON.stringify(await triageRows(repo, number))}`, { cause: err });
+    }
   }
 
   async function verdictsOf(repo: string, number: number): Promise<Record<string, unknown>[]> {

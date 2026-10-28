@@ -11,6 +11,7 @@ import { createBacklogStart } from "./backlog-triage.js";
 import { ListenerUnroutedError } from "./deployment.js";
 import { createGithubPrTriage } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
+import { failDelivery, queueHead } from "./triage-queue.js";
 import { createTriageReconciler, createUnroutedTries } from "./triage-reconciler.js";
 import { createTriageStateStore, type TriageStateStore } from "./triage-state-store.js";
 import type { ObservedRuns } from "./manager-runs.js";
@@ -62,12 +63,12 @@ function route(store: TriageStateStore, deliver: Deliver) {
   });
 }
 
-function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver, pack: CheckPack = PACK, checks: CheckRun[] = []) {
+function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver, pack: CheckPack = PACK, checks: CheckRun[] = [], updatedAt = LONG_AGO) {
   return createTriageReconciler({
     source: "github",
     tenants: async () => [{ id: TENANT, domain: "tenant.example", config: CONFIG }],
     listener: async () => DEPLOYMENT,
-    openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt: LONG_AGO, draft: false })),
+    openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt, draft: false })),
     activity: { stale: () => true },
     managerRuns: noRuns,
     headChecks: async () => checks,
@@ -191,5 +192,30 @@ test("PostgreSQL: a maintainer's triage request while the listener is starting a
       mails.push(payload);
     })();
     expect(mailsFor8(mails)).toBe(1);
+  });
+}, 120_000);
+
+test("PostgreSQL: a webhook's head queued while a reconcile pass plans over it, whose mail then reaches no listener, goes out on the next pass", async () => {
+  await withStore(async (store) => {
+    const opened = { tenantId: TENANT, repo: REPO, number: 9, headSha: "sha9" };
+    let interleaved = false;
+    const racing: TriageStateStore = {
+      load: (tenantId, repo) => store.load(tenantId, repo),
+      async save(tenantId, repo, rows, expected) {
+        if (!interleaved) {
+          interleaved = true;
+          await queueHead(store, opened, new Date(NOW.getTime() - 5), () => false);
+        }
+        return store.save(tenantId, repo, rows, expected);
+      },
+    };
+    await reconciler(racing, [8, 9], async () => {}, PACK, [], NOW.toISOString())();
+    await failDelivery(store, opened, new ListenerUnroutedError("github", DEPLOYMENT.address), NOW);
+
+    const mails: Array<{ items?: Array<{ prNumber: number }> }> = [];
+    await reconciler(store, [8, 9], async (payload) => {
+      mails.push(payload as never);
+    }, PACK, [], NOW.toISOString())();
+    expect(mails.flatMap((mail) => mail.items?.map((item) => item.prNumber) ?? [])).toContain(9);
   });
 }, 120_000);
