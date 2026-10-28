@@ -3,8 +3,8 @@ import { BLOCK_KINDS, blockCleanSchema, CodeReviewOutput, RULE_GATES, rulesGate,
 import { verdictWithFailure } from "@corbits/triage-workflows/actions/evaluate";
 import type { CheckResult } from "@corbits/triage-workflows/logic/checks";
 import type { Item } from "@corbits/triage-workflows/logic/item";
-import type { Verdict } from "@corbits/triage-workflows/logic/render";
-import { storedReview, TakeOutput } from "./manager.js";
+import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
+import { LIFETIME_MS, storedReview, TakeOutput } from "./manager.js";
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "clean?": blockCleanSchema });
 const BlocksPart = type({ blocks: type.enumerated(...BLOCK_KINDS).array(), codeReview: CodeReviewPart });
@@ -114,6 +114,24 @@ function held(verdict: Verdict, reason: string): Verdict {
 export async function cleared(input: unknown): Promise<Verdict> {
   const parsed = ClearedInput(input);
   if (parsed instanceof type.errors) throw new Error(`cleared: ${parsed.summary}`);
+  const { stopped } = parsed.take.output;
+  const verdict = clean(parsed);
+  return stopped ? stoppedWaiting(verdict, stopped) : verdict;
+}
+
+/**
+ * A verdict made once the manager's lifetime ran out: it says what Triage stopped waiting for, and every Do is held for
+ * a person, since it was decided without them.
+ */
+function stoppedWaiting(verdict: Verdict, stopped: NonNullable<TakeOutput["stopped"]>): Verdict {
+  const note = `Triage stopped waiting for ${awaitsText(stopped)} after ${LIFETIME_MS / (60 * 60_000)} hours, so no action ran on its own.`;
+  const actions = verdict.actions.map((action) => ({ ...action, held: true, reason: note }));
+  const feedback = verdict.feedback ? `${verdict.feedback}\n\n${note}` : note;
+  const request = verdict.request && { ...verdict.request, comment: verdict.request.comment ? `${verdict.request.comment}\n\n${note}` : note };
+  return { ...verdict, actions, feedback, reasons: [...verdict.reasons, note], ...(request && { request }), ...(verdict.approvable !== undefined && { approvable: false }) };
+}
+
+function clean(parsed: typeof ClearedInput.infer): Verdict {
   const verdict = parsed.evaluateRules.output;
   const { head } = parsed.take.output;
   const unclean = uncleared(parsed.take.output, verdict.checks, parsed.reviewScope.output);

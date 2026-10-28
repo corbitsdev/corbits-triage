@@ -2,23 +2,16 @@ import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
 import { evaluate, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
-import type { Item } from "@corbits/triage-workflows/logic/item";
-import { waitsForHost } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
 import { deploy, managerMailOf } from "./hub.js";
-import { Reviewer, TakeOutput } from "./manager.js";
+import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
 
 /** How long the manager waits for a judge it deployed, from its deploy to its report. */
 export const JUDGE_DEADLINE_MS = 60 * 60_000;
 
 const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: "object[]", batch: "boolean" } } });
-
-/** Whether an item waits on the host: CI the policy reads, or a rule the host has still to settle; its judge is held until then. */
-export function waitingOnHost(items: readonly object[]): boolean {
-  return (items as Item[]).some(waitsForHost);
-}
 
 /**
  * The verdict the pass posts. When its rules need the judge and the judge reported a verdict for its head, that

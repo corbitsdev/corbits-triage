@@ -163,12 +163,16 @@ export async function upsertMarked(host: CommentHost, body: string, current: Mar
 }
 
 /**
- * Edits the current comment to `text` without a verdict of its own, as while a verdict is in progress. The comment keeps
- * the header of the verdict it held, so the verdict that replaces it still says what changed since that one.
+ * Edits the current comment to `text` without a verdict of its own, as while a verdict is in progress, and writes nothing
+ * when it already says that. The comment keeps the header of the verdict it held, so the verdict that replaces it still
+ * says what changed since that one.
  */
 export async function writeUnheadedComment(host: CommentHost, markers: MarkerFormat, plainMarker: string, current: MarkedComment[], text: string): Promise<WrittenComment> {
-  const kept = current[0] && markers.headerOf(current[0].body);
-  return upsertMarked(host, `${kept ? markers.current(kept) : plainMarker}\n${text}`, current);
+  const latest = current[0];
+  const kept = latest && markers.headerOf(latest.body);
+  const body = `${kept ? markers.current(kept) : plainMarker}\n${text}`;
+  if (latest?.body === body) return { commentId: latest.id, updated: false, ...(latest.updatedAt && { unchanged: `unchanged since ${latest.updatedAt}` }) };
+  return upsertMarked(host, body, current);
 }
 
 /**

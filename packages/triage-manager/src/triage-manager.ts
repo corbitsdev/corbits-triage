@@ -5,6 +5,7 @@ import { credentialBindingsFor, judgeAgent, type Sources } from "@corbits/triage
 import { WRITE_PULL_REQUEST } from "@corbits/triage-workflows/logic/host";
 import { hostAction, triageSteps } from "@corbits/triage-workflows/triage-steps";
 import { HUB_WRITE } from "./actions/hub.js";
+import { LIFETIME_MS } from "./actions/manager.js";
 import { mailDirector } from "./directors.js";
 import { mailAgentOf } from "./mail.js";
 import { deployGrants, type Release } from "./release.js";
@@ -12,8 +13,11 @@ import { deployGrants, type Release } from "./release.js";
 /** How long a manager whose head awaits CI or a reviewer waits between passes for what it awaits. */
 const POLL_MS = 30_000;
 
-/** Enough passes, one a poll, to wait out CI, the judge and code review one after another, each for up to its hour. */
-export const PASSES = (3 * 60 * 60_000) / POLL_MS;
+/**
+ * A backstop on passes, twice a lifetime of polls for the passes events bring between them; the lifetime clock, which
+ * take reads from the claim, ends a manager first.
+ */
+export const PASSES = (2 * LIFETIME_MS) / POLL_MS;
 
 const PAYLOAD = { project: { from: "trigger" }, fields: ["payload"] } as const;
 
@@ -36,7 +40,7 @@ function hubAction(handler: string, input: Selector, after: readonly string[]) {
 
 /** The in-progress comment of a pass that ends waiting for a reviewer, before its done. */
 function progressAction(sources: Sources, mailed: readonly string[], after: readonly string[]) {
-  return action({ handler: "progress", input: { merge: [MAIL, stepsOf("take", ...mailed)] }, after, credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } });
+  return action({ handler: "progress", input: { merge: [MAIL, stepsOf("take", "rules", ...mailed)] }, after, credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } });
 }
 
 /**

@@ -354,18 +354,23 @@ any other tenant or an unknown sender.
   approves nothing when there is nothing to run. A policy of only deterministic
   rules posts on this pass. One whose rules need the judge, or that asks for
   code review, posts once, after each of those has reported or given up: the machine
-  verdict, the judge's verdict and the code review together. A verdict with
-  any unconfirmed rule of the host's (CI green pending, mergeability not
-  computed), or whose policy reads CI through a step (a CI condition, approve
-  or merge, `dependsOnCi`) while CI runs, waits: its pass writes only the waiting marker and records no
-  verdict. Where the role holds Comment, a pass that ends waiting writes the
-  one triage comment as **Triage: In progress**, naming what the head waits
-  for (CI, the judge, code review), through the same writer as the verdict's
-  comment (`mirror_auto`) under an effect id per head and set of what it
-  waits for (`progress:<owner>--<name>:<number>:<head sha>:<awaits>`, the CI
-  wait's under its waiting marker), so it is rewritten only when that set
-  changes; the verdict then edits that comment in place. A pass that ends
-  waiting for a reviewer writes it in its `progress` step before its done. Done reports what the pass ran: the approved Dos' outcomes, a head
+  verdict, the judge's verdict and the code review together. Whether a head
+  waits on the host is read from its facts, never from rule results
+  (`hostAwaited`, `logic/render.ts`): CI still running (`checks: "pending"`)
+  where the policy reads CI at all (CI green, or a step's CI condition,
+  approve or merge, `dependsOnCi`), or mergeability not computed
+  (`mergeable: null`) where no-merge-conflicts is on. Such a verdict, Fail
+  aside, waits: its pass writes only the waiting marker and records no
+  verdict, and the judge is held. Otherwise CI never holds a verdict. Where the
+  role holds Comment, a pass that ends waiting writes the one triage comment
+  as **Triage: In progress**, naming what the head waits for (CI, the judge,
+  code review), through the same writer as the verdict's comment
+  (`mirror_auto`); a pass that ends waiting for a reviewer writes it in its
+  `progress` step before its done. Every such pass writes it, and the host
+  leaves a comment that already says the same as it is, so it changes only
+  when what the head waits for does; the verdict then edits that comment in
+  place. A pass that deploys code review while CI is still awaited reports
+  the CI wait too, so its 60 minutes keep running. Done reports what the pass ran: the approved Dos' outcomes, a head
   that waits for CI, or the verdict it posted as its evaluate, mirror, execute
   and rules steps output it, with the facts the verdict keeps rather than the
   diff. Each branch that reports one of these has its own done step. A pass
@@ -388,10 +393,20 @@ any other tenant or an unknown sender.
   settles a Bitbucket head, whose builds send no webhook, and a GitHub head
   whose `check_run` never arrived. A pass whose head has waited 60 minutes is
   triaged with `noWait`, so it is
-  decided with CI still running; a manager's passes run out after three
-  hours, time for CI, the judge and code review to each take their hour; for
-  that long a waiting manager holds its sidecar slot, which the local
-  sidecar cap and sandbox overflow bound.
+  decided with CI still running. A manager lives three hours from its claim
+  (`claimedAt`, which take answers), time for CI, the judge and code review
+  to each take their hour; a new head does not extend it. The pass after that
+  stops waiting (`stopped` on take): it takes every reviewer still out as past
+  its deadline and decides with `noWait`, and its verdict says what Triage
+  stopped waiting for and holds every Do for a person. The loop's pass count
+  is only a backstop. For up to three hours a waiting manager holds one of
+  the local sidecar's `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` slots, and its judge
+  and code review take more. Past the cap, deployments go to the sandbox
+  provisioner; with none configured they wait on stock's placement retry and
+  then fail, and the pull request is tried again on its next event. That is
+  the bound (CL-11587); nothing else limits waiting managers. A manager
+  waiting for CI is parked: the reconciler does not count it toward the
+  tenant's in-flight slots, which only managers judging or reviewing hold.
   Once the passes end, fail or run out, or take finds another run holds the
   claim, the run's last step stops it through the stop-run route under a
   `manage` grant on its own run, so the run is ended once and never keeps
@@ -428,10 +443,11 @@ any other tenant or an unknown sender.
   a pass deploys it the same way (without one it declares no code-review
   asset, and the verdict goes up alone), mails it the request until the
   review's one-hour deadline, and still posts only the in-progress comment
-  while that review is out. A pass that mails the judge deploys code review with it, once the
-  rules step's own results open the rules gate, unless the block's
-  `when.triage` leaves out a verdict the judge has still to decide or it is
-  a Review again; the review is still posted with the final verdict. A pull request whose failed rules shut the rules gate, or that the
+  while that review is out. A pass that mails the judge deploys code review with it when the
+  block runs whatever the rules say (`when.rules: any`), since under `pass`
+  the judge's rules could still shut the gate, unless `when.triage` leaves
+  out a verdict the judge has still to decide or it is a Review again; the
+  review is still posted with the final verdict. A pull request whose failed rules shut the rules gate, or that the
   block's `for`, `when.triage` or `when.paths` leaves out, read from the rules
   step's facts and the verdict, is not reviewed; done reports why on the
   verdict as `codeReviewSkipped`, which the portal shows as Not reviewed. One
@@ -624,12 +640,12 @@ label off that head, so it never stands on a head not yet triaged.
    whose conditions do not hold. While CI is pending every runnable action is
    held and an approve that may not stand is skipped; the completed
    `check_run` (or the reconciler's CI re-read) triages it again. A verdict
-   other than Fail with any unconfirmed rule of the host's (CI green pending,
-   mergeability not computed), whatever else is unconfirmed, or whose policy
-   reads CI (`dependsOnCi`) while it runs, is `waiting` instead: no verdict, no
-   actions, the waiting marker as its mirror (`mark`). A rule Triage could
-   not check for its own reasons, as code patterns in a patch it could not
-   read in full, does not wait. The hub records no verdict for a waiting
+   other than Fail on a head whose facts show the host has still to settle
+   what the policy reads (`hostAwaited`, as under the manager above) is
+   `waiting` instead: no verdict, no actions, the waiting marker as its
+   mirror (`mark`). Rule results never decide it, so a rule Triage could not
+   check for its own reasons, as code patterns in a patch it could not read
+   in full, neither waits nor stops the wait. The hub records no verdict for a waiting
    one, nor for one on a closed pull request (`closed`); the manager keeps
    polling until CI finishes. A mail with `noWait` (a manager past its
    60-minute CI wait, a head's last attempt, or Triage again) is decided

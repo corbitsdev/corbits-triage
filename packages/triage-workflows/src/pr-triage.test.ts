@@ -308,6 +308,26 @@ describe("pr-triage body", () => {
     expect((unread.verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
   });
 
+  test("a rules-only policy that reads CI waits while CI runs, even with a code-pattern rule on a patch it could not read", async () => {
+    const github = fakeGithub();
+    github.pr.ci = "pending";
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, custom: [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }] };
+    const { verdict } = await triage(pack, { github });
+    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
+    expect(verdict).toMatchObject({ waiting: true, reason: "checks are still running" });
+  });
+
+  test("a policy that reads no CI decides at once, whether CI runs or there is none", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "max-files-changed": { enabled: true, max: 30 } } };
+    for (const ci of ["none", "pending"] as const) {
+      const github = fakeGithub();
+      github.pr.ci = ci;
+      const { verdict } = await triage(pack, { github });
+      expect(verdict).toMatchObject({ verdict: "pass" });
+      expect((verdict as Verdict).waiting).toBeUndefined();
+    }
+  });
+
   test("a code-pattern rule reads a changed file by the host's path", async () => {
     const files = [{ filename: "src/a​.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const b = y ?? 0;" }];
     const contents = { "src/a.ts": "const a = 1;\n", "src/a%E2%80%8B.ts": "const b = y ?? 0;\n" };

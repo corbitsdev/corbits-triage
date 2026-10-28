@@ -61,14 +61,16 @@ function mailEvent(head: string, payload: Record<string, unknown>, key = "evt_1"
 }
 
 const REQUEST = hubRequest(RULES);
-const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z" };
+/** The run claimed its pull request as the tests start, well inside its lifetime. */
+const CLAIMED = new Date().toISOString();
+const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z", claimedAt: CLAIMED };
 const RESUMED = { ...PASS, pass: { ...PASS.pass, takes: 2 }, resumed: true };
 /** The one in-progress comment, posted or edited in place, naming what the head waits for. */
 function inProgress(awaits: string) {
   return expect.objectContaining({ body: { body: expect.stringContaining(`**Triage: In progress**\n\nTriage is waiting for ${awaits} before it decides.`) } });
 }
 
-const IDLE = { outcome: "idle", request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z" };
+const IDLE = { outcome: "idle", request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z", claimedAt: CLAIMED };
 const ENDED = { outcome: "ended" };
 const MORE = { outcome: "more", wait: false };
 const REFUSED = 409;
@@ -298,6 +300,16 @@ describe("triage-manager", () => {
     expect(comment.body).toContain(`Changed since the last verdict (Pass at \`${before.slice(0, 7)}\`): 2 new commits.`);
   });
 
+  test("a manager three hours past its claim stops waiting: the pass decides without CI, says so, and runs no action on its own", async () => {
+    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
+    const old = new Date(Date.now() - 3 * 60 * 60_000 - 1_000).toISOString();
+    const hub = fakeHub({ takes: [{ ...IDLE, waitingSince: old, claimedAt: old }], dones: [ENDED] });
+    const { outputs } = await runMail(github, wake(), host, hub.hub);
+    expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "unsure" }) } });
+    expect(writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringContaining("Triage stopped waiting for CI to finish after 3 hours, so no action ran on its own.") } }));
+    expect(((outputs["cleared"] as { actions: { held?: true }[] }).actions).every((action) => action.held === true)).toBe(true);
+  });
+
   test("a new head with no checks yet waits two minutes for its CI to start, then is read again and decided as having none", async () => {
     const { writes, host } = githubHost();
     const fresh = { ...PASS, headSince: undefined };
@@ -409,6 +421,14 @@ describe("triage-manager with code review", () => {
   const reviewed = github;
   beforeEach(() => publish({ github: { codeReview: RELEASE } }));
   const ON = hubRequest(RULES, { ...CODE_REVIEW, ...REVIEW_REQUEST });
+
+  test("a review that starts while CI runs keeps the CI wait on the pass, and the in-progress comment names both", async () => {
+    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
+    const first = fakeHub({ takes: [{ ...PASS, request: ON }], dones: [ENDED] });
+    expect((await runMail(reviewed, wake(), host, first.hub)).ran).toContain("doneReviewing");
+    expect(doneBody(first.calls)).toMatchObject({ wait: true, report: { head: HEAD, waiting: true } });
+    expect(writes.filter((write) => write.path.endsWith("/comments"))).toEqual([inProgress("CI to finish and code review")]);
+  });
 
   test("the first pass deploys the review and mails it, posting nothing; the pass that collects its report posts the verdict and the review together", async () => {
     const { writes, host } = githubHost();
@@ -884,10 +904,11 @@ describe("triage-manager with a judge", () => {
       { check: "conventions", kind: "machine", result: "unconfirmed", reason: unread, evidence: [], output: { kind: "could-not-check", reason: unread } },
     ];
     const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD };
-    const rules = { needsJudgment: true, items: [{ facts: { checks: "success" }, det: { checks } }] };
+    const pack = { ...JUDGED, checks: { ...JUDGED.checks, "ci-green": { enabled: true } } };
+    const rules = { needsJudgment: true, items: [{ facts: { checks: "success", pendingChecks: [], mergeable: true }, pack, det: { checks } }] };
     expect(await actions.judgeScope({ payload: wake(), take: { output: take }, rules: { output: rules } })).toEqual({ deploy: true, post: false });
     const running = [{ ...checks[0], result: "unconfirmed", output: { kind: "could-not-check", reason: "checks are still running" } }, checks[1]];
-    expect(await actions.judgeScope({ payload: wake(), take: { output: take }, rules: { output: { ...rules, items: [{ facts: { checks: "pending" }, det: { checks: running } }] } } })).toEqual({ deploy: false, post: true });
+    expect(await actions.judgeScope({ payload: wake(), take: { output: take }, rules: { output: { ...rules, items: [{ facts: { checks: "pending", pendingChecks: ["build"], mergeable: true }, pack, det: { checks: running } }] } } })).toEqual({ deploy: false, post: true });
   });
 
   test.each([
@@ -914,6 +935,16 @@ async function firstJudgeMail(request = hubRequest(JUDGED)): Promise<{ content: 
 
 describe("triage-manager with a judge and code review", () => {
   beforeEach(() => publish({ github: { judge: JUDGE_RELEASE, codeReview: RELEASE } }));
+
+  test("code review whose gate needs the rules to pass waits for the judge, whose rules could still shut it", async () => {
+    const request = hubRequest(JUDGED, { codeReview: { ...CODE_REVIEW.codeReview, rules: "pass" }, blocks: CODE_REVIEW.blocks, ...REVIEW_REQUEST });
+    const { host } = githubHost();
+    const mailed: unknown[] = [];
+    const ran = (await runMail(github, wake(), host, fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] }).hub, mailed)).ran;
+    expect(ran).toContain("deployJudge");
+    expect(ran).not.toContain("deployEarlyReview");
+    expect(mailed).toHaveLength(1);
+  });
 
   test("deploys code review with the judge once the rules gate opens, and posts the judge's verdict and the review together once both have reported, a finding failing the verdict and keeping the judge's words", async () => {
     const { writes, host } = githubHost();

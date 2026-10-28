@@ -16,7 +16,7 @@ export const REVIEW_DEADLINE_MS = 60 * 60_000;
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "for?": "string[]", "triage?": "string[]", "paths?": "string[]", "again?": "string > 0" });
 type CodeReviewPart = typeof CodeReviewPart.infer;
 const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, evaluateRules: { output: "unknown" } });
-const EarlyInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: type({ "det?": { checks: "object[]" } }).array() } } });
+const EarlyInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } } });
 
 /** What scope reads of the rules step's pull request: the author and changed files it read, or that it could not read them. */
 const RuledItem = type({ error: "string" }).or({
@@ -126,7 +126,8 @@ export async function reviewScope(input: unknown): Promise<{ deploy: boolean; po
 
 /**
  * Whether a pass that mailed the judge deploys code review with it, rather than once the verdict is in: the
- * policy turns it on, its `when` leaves out no verdict, which the judge has still to decide, the rules let it past, `for`
+ * policy turns it on, its `when` leaves out no verdict, which the judge has still to decide, and runs it whatever the
+ * rules say (`rules: any`), since the judge's own rules could still shut a `rules: pass` gate; `for`
  * and `when.paths` take the pull request in, the hub read the head's review request, the release publishes a code
  * review for the host, and no review of the head is out or in. Its report is posted with the final verdict.
  */
@@ -137,10 +138,10 @@ export async function reviewEarly(input: unknown): Promise<{ deploy: boolean }> 
   const part = CodeReviewPart(taken?.["codeReview"]);
   const no = { deploy: false };
   const byVerdict = part instanceof type.errors || (part.triage !== undefined && VERDICTS.some((verdict) => !part.triage!.includes(verdict)));
-  if (part instanceof type.errors || !part.on || part.again !== undefined || byVerdict) return no;
+  // Under `rules: pass` the judge's rules could still shut the gate, so only `rules: any` goes out with the judge.
+  if (part instanceof type.errors || !part.on || part.rules !== "any" || part.again !== undefined || byVerdict) return no;
   const item = ruledItem(parsed.rules.output.items);
-  const checks = parsed.rules.output.items[0]?.det?.checks;
-  if ("error" in item || !rulesGate(part.rules, checks).open || outOfScope(part, item, undefined) !== undefined) return no;
+  if ("error" in item || outOfScope(part, item, undefined) !== undefined) return no;
   if (publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") === undefined) return no;
   const reported = review !== undefined || reviewFailed !== undefined;
   const own = reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);

@@ -245,7 +245,9 @@ the verdict waits for CI, the decision model or code review, that comment
 reads **Triage: In progress** and names what it waits for, such as "Triage is
 waiting for the decision model's answer and code review before it decides".
 It is rewritten when what it waits for changes, and the verdict replaces it in
-place.
+place. If Triage is still waiting three hours after it started on the pull
+request, it gives the verdict anyway, says what it stopped waiting for, and
+runs no action on its own.
 
 ### Waiting for CI
 
