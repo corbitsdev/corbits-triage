@@ -1328,11 +1328,11 @@ function isActionKind(value: unknown): value is ActionKind {
 
 function suggestedActions(actions: NonNullable<VerdictDetail["actions"]>): SuggestedAction[] {
   const out: SuggestedAction[] = [];
-  for (const { list, index, effectId, kind, reason, target, skipped, held, heldUntil, status, error } of actions) {
+  for (const { list, index, effectId, kind, reason, target, skipped, held, ci, status, error } of actions) {
     if (skipped || reason === undefined || !isActionKind(kind) || !target) continue;
     // A verdict from before Dos ran from verdict lists names none the hub can run.
     if (list === undefined || index === undefined || effectId === undefined) continue;
-    out.push({ list, index, effectId, kind, reason, target, held: held === true, ...(heldUntil !== undefined && { heldUntil }), ...(isDoStatus(status) && { status }), ...(error !== undefined && { error }) });
+    out.push({ list, index, effectId, kind, reason, target, held: held === true, ...(ci === "pending" && { heldUntil: "ci-finishes" as const }), ...(isDoStatus(status) && { status }), ...(error !== undefined && { error }) });
   }
   return out;
 }

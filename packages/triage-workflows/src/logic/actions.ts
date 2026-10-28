@@ -29,14 +29,11 @@ export function doEffectId(ref: DoRef): string {
   return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
 }
 
-/** `ci` is the head's CI state a Do was held or skipped on. */
+/** `ci` is the head's CI state that alone holds or skips the Do; a Do held for a person, or one the run cannot write, carries none. */
 type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: string; ci?: Exclude<PrFacts["checks"], "success"> };
 
-/**
- * `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant.
- * `heldUntil` says CI still running on the head is what holds it, so the run after CI finishes decides it again.
- */
-export type SuggestedDo = Place & { effectId: string; target: ResolvedTarget; held?: true; heldUntil?: "ci-finishes" };
+/** `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant. */
+export type SuggestedDo = Place & { effectId: string; target: ResolvedTarget; held?: true };
 
 export type SuggestedAction = SuggestedDo | (Place & { skipped: true });
 
@@ -281,7 +278,7 @@ export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
     if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, ...approval };
-    if (ci === "pending") return { ...action, held: true, heldUntil: "ci-finishes", reason: `${ciRefusal(ci)}.`, ci };
+    if (ci === "pending") return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
     if (ci !== "success" && action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
     return action;
   });
@@ -289,12 +286,12 @@ export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold
 
 /**
  * `automatic` is the kinds the pr-triage role is granted on the repository; the run may not write the rest unattended.
- * `heldUntil` stays only on a Do the run would write on its own once CI finishes; one it cannot run, or held for a person, loses it.
+ * `ci` stays only on a Do the run would write on its own once CI allows it; one it cannot run, or held for a person, loses it.
  */
 export function holdDos(actions: SuggestedAction[], automatic: readonly ActionKind[]): SuggestedAction[] {
   return actions.map(function hold(action): SuggestedAction {
     if (!("effectId" in action)) return action;
-    const { heldUntil: _heldUntil, ...waiting } = action;
+    const { ci: _ci, ...waiting } = action;
     if (unrunnable(action) !== undefined) return waiting;
     if (automatic.includes(action.kind) && !alwaysHeld(action.list, action.kind)) return action;
     return { ...waiting, held: true };

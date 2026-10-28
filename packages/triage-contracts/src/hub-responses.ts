@@ -31,8 +31,8 @@ const DetailAction = type({
   "target?": "Record<string, unknown>",
   "skipped?": "boolean",
   "held?": "boolean",
-  /** CI still running on the head holds it, and the run after CI finishes decides it again. */
-  "heldUntil?": "'ci-finishes'",
+  /** The head's CI state that alone holds or skips it; while `pending`, the run after CI finishes decides it again. */
+  "ci?": "'pending' | 'failure' | 'cancelled' | 'none'",
   "status?": "string",
   "error?": "string",
 });

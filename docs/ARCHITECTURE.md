@@ -666,8 +666,8 @@ label off that head, so it never stands on a head not yet triaged.
 8. **execute**: runs the actions whose kind the `pr-triage` role holds on the
    repository. Every other action is held in the verdict (`held: true`). One
    the role may write, held only because CI is still running on the head, carries
-   `heldUntil: "ci-finishes"`, which the portal reads as running on its own once
-   CI finishes; any other hold waits for a person.
+   the CI state that holds it (`ci: "pending"`), which the portal reads as
+   running on its own once CI finishes; any other hold waits for a person.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
 `triage-do:<kind>:<owner>/<name>`), after the grant writer has followed that

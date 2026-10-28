@@ -65,6 +65,14 @@ const snapshot = (): PortalSnapshot => ({
 const queue = (approvals: HubApproval[], pulls: PullTriage[] = [decided], openPulls?: Parameters<typeof projectQueue>[2]) =>
   projectQueue(pulls, approvals, openPulls);
 
+describe("held actions", () => {
+  test("only a Do held while CI runs will run when CI finishes", () => {
+    const held = (effectId: string, ci: string) => ({ list: "pass", index: 0, effectId, kind: "labels", reason: "held", target: { labels: ["bug"] }, held: true, ci });
+    const [item] = queue([], [pull(8, { verdict: verdict("run-triage", "ready-monitoring", { actions: [held("running", "pending"), held("failed", "failure")] }) })]);
+    expect(item!.actions.map((action) => action.heldUntil)).toEqual(["ci-finishes", undefined]);
+  });
+});
+
 describe("approval projection", () => {
   test("a pending mirror approval needs a human", () => {
     const [item] = queue([approval("mirror")]);
