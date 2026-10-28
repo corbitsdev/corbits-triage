@@ -19,7 +19,8 @@ A workspace's listener and a pull request's manager.
   mails it the rules output; while they run the head waits. The pass that collects its report posts the judge's
   verdict as the judge made it while the rules still need the judge, and so does every later pass on that head once
   the verdict is decided, deploying no other judge. With code review, a pass then deploys the review and mails it the
-  head's request; the pass that collects its report mirrors the verdict and posts the review together, and a later
+  head's request, or deploys it with the judge once the rules gate opens when its `when` names every verdict; the
+  pass that collects its report mirrors the verdict and posts the review together, and a later
   pass on that head posts the stored review again without deploying another. A reviewer that could not be mailed,
   failed or ran past its one-hour deadline leaves the verdict to go up alone and is deployed again on the next event;
   a judge the release does not publish posts nothing. `done` stops a reviewer this run deployed that ran past its

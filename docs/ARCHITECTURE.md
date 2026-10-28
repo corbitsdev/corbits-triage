@@ -418,7 +418,10 @@ any other tenant or an unknown sender.
   a pass deploys it the same way (without one it declares no code-review
   asset, and the verdict goes up alone), mails it the request until the
   review's one-hour deadline, and still posts nothing while that review is
-  out. A pull request whose failed rules shut the rules gate, or that the
+  out. A pass that mails the judge deploys code review with it, once the
+  rules step's own results open the rules gate, unless the block's
+  `when.triage` leaves out a verdict the judge has still to decide or it is
+  a Review again; the review is still posted with the final verdict. A pull request whose failed rules shut the rules gate, or that the
   block's `for`, `when.triage` or `when.paths` leaves out, read from the rules
   step's facts and the verdict, is not reviewed; done reports why on the
   verdict as `codeReviewSkipped`, which the portal shows as Not reviewed. One

@@ -16,6 +16,7 @@ export const REVIEW_DEADLINE_MS = 60 * 60_000;
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "for?": "string[]", "triage?": "string[]", "paths?": "string[]", "again?": "string > 0" });
 type CodeReviewPart = typeof CodeReviewPart.infer;
 const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, evaluateRules: { output: "unknown" } });
+const EarlyInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: type({ "det?": { checks: "object[]" } }).array() } } });
 
 /** What scope reads of the rules step's pull request: the author and changed files it read, or that it could not read them. */
 const RuledItem = type({ error: "string" }).or({
@@ -123,6 +124,29 @@ export async function reviewScope(input: unknown): Promise<{ deploy: boolean; po
   return { deploy: own.length === 0, post: false, reviewed };
 }
 
+/**
+ * Whether a pass that mailed the judge deploys code review with it, rather than once the verdict is in: the
+ * policy turns it on, its `when` leaves out no verdict, which the judge has still to decide, the rules let it past, `for`
+ * and `when.paths` take the pull request in, the hub read the head's review request, the release publishes a code
+ * review for the host, and no review of the head is out or in. Its report is posted with the final verdict.
+ */
+export async function reviewEarly(input: unknown): Promise<{ deploy: boolean }> {
+  const parsed = EarlyInput(input);
+  if (parsed instanceof type.errors) throw new Error(`reviewEarly: ${parsed.summary}`);
+  const { taken, head, review, reviewFailed, reviewers } = parsed.take.output;
+  const part = CodeReviewPart(taken?.["codeReview"]);
+  const no = { deploy: false };
+  const byVerdict = part instanceof type.errors || (part.triage !== undefined && VERDICTS.some((verdict) => !part.triage!.includes(verdict)));
+  if (part instanceof type.errors || !part.on || part.again !== undefined || byVerdict) return no;
+  const item = ruledItem(parsed.rules.output.items);
+  const checks = parsed.rules.output.items[0]?.det?.checks;
+  if ("error" in item || !rulesGate(part.rules, checks).open || outOfScope(part, item, undefined) !== undefined) return no;
+  if (publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") === undefined) return no;
+  const reported = review !== undefined || reviewFailed !== undefined;
+  const own = reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);
+  return { deploy: !reported && !own && taken?.["codeReviewRequest"] !== undefined };
+}
+
 const DeployInput = type({ payload: "unknown", take: { output: TakeOutput } });
 
 /**
@@ -145,6 +169,13 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
 }
 
 const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mailReview: { output: { reply: "string" } } });
+const EarlyMailedInput = type({ deployEarlyReview: { output: { reviewer: Reviewer } }, mailEarlyReview: { output: { reply: "string" } } });
+
+function mailedReview(reviewer: Reviewer, reply: string): { reviewer?: Reviewer; post: boolean } {
+  const mailed = Mailed(reply);
+  if (mailed instanceof type.errors) throw new Error(`reviewMailed: ${mailed.summary}`);
+  return mailed.mailed ? { reviewer, post: false } : { post: true };
+}
 
 /**
  * The review becomes a reviewer to wait for once its mail went. A mail that failed by its deadline leaves the pass to
@@ -153,9 +184,14 @@ const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mai
 export async function reviewMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
   const parsed = MailedInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewMailed: ${parsed.summary}`);
-  const mailed = Mailed(parsed.mailReview.output.reply);
-  if (mailed instanceof type.errors) throw new Error(`reviewMailed: ${mailed.summary}`);
-  return mailed.mailed ? { reviewer: parsed.deployReview.output.reviewer, post: false } : { post: true };
+  return mailedReview(parsed.deployReview.output.reviewer, parsed.mailReview.output.reply);
+}
+
+/** `reviewMailed` for a review deployed with the judge. */
+export async function earlyReviewMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
+  const parsed = EarlyMailedInput(input);
+  if (parsed instanceof type.errors) throw new Error(`earlyReviewMailed: ${parsed.summary}`);
+  return mailedReview(parsed.deployEarlyReview.output.reviewer, parsed.mailEarlyReview.output.reply);
 }
 
 const PostInput = type({ payload: "unknown", take: { output: TakeOutput }, reviewScope: { output: { reviewed: "boolean" } } });

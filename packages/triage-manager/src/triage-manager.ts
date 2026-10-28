@@ -71,9 +71,18 @@ function judgeSteps(): Record<string, Primitive> {
     deployJudge: hubAction("deployJudge", { merge: [MAIL, stepsOf("take", "rules")] }, ["judging"]),
     mailJudge: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployJudge.output.mail" }, after: ["deployJudge"] }),
     judgeMailed: action({ handler: "judgeMailed", input: stepsOf("deployJudge", "mailJudge"), after: ["mailJudge"] }),
-    judgeSent: gate({ when: { from: "steps.judgeMailed.output.post" }, then: "evaluateRules", else: "doneJudging", after: ["judgeMailed"] }),
-    // A pass that mailed its judge records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
-    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed")] }, ["judgeSent"]),
+    judgeSent: gate({ when: { from: "steps.judgeMailed.output.post" }, then: "evaluateRules", else: "reviewEarly", after: ["judgeMailed"] }),
+    // Code review goes out with the judge once the rules gate opens, unless its `when` waits for the verdict; the pass
+    // that collects both reports posts the review with the final verdict.
+    reviewEarly: action({ handler: "reviewEarly", input: { merge: [MAIL, stepsOf("take", "rules")] }, after: ["judgeSent"] }),
+    earlyReviewing: gate({ when: { from: "steps.reviewEarly.output.deploy" }, then: "deployEarlyReview", else: "doneJudging", after: ["reviewEarly"] }),
+    deployEarlyReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["earlyReviewing"]),
+    mailEarlyReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployEarlyReview.output.mail" }, after: ["deployEarlyReview"] }),
+    earlyReviewMailed: action({ handler: "earlyReviewMailed", input: stepsOf("deployEarlyReview", "mailEarlyReview"), after: ["mailEarlyReview"] }),
+    // A pass that mailed its judge records it, and a review mailed with it, as reviewers; a skipped step is missing from
+    // every selector, so each branch has its own done.
+    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed")] }, ["earlyReviewing"]),
+    doneJudgingReview: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed", "earlyReviewMailed")] }, ["earlyReviewMailed"]),
     judgeWait: gate({ when: { from: "steps.judgeScope.output.post" }, then: "evaluateRules", else: "doneAwaiting", after: ["judging"] }),
   };
 }

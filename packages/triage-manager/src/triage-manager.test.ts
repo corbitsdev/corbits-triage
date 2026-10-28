@@ -885,21 +885,23 @@ async function firstJudgeMail(request = hubRequest(JUDGED)): Promise<{ content: 
 describe("triage-manager with a judge and code review", () => {
   beforeEach(() => publish({ github: { judge: JUDGE_RELEASE, codeReview: RELEASE } }));
 
-  test("posts the judge's verdict and the review together once both have reported, a finding failing the verdict and keeping the judge's words", async () => {
+  test("deploys code review with the judge once the rules gate opens, and posts the judge's verdict and the review together once both have reported, a finding failing the verdict and keeping the judge's words", async () => {
     const { writes, host } = githubHost();
     const mailed: unknown[] = [];
     const request = hubRequest(JUDGED, { ...CODE_REVIEW, ...REVIEW_REQUEST });
     const first = fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, first.hub, mailed)).ran).toContain("doneJudging");
-    expect(writes).toEqual([]);
+    const deployed = await runMail(github, wake(), host, first.hub, mailed);
+    expect(deployed.ran).toEqual(expect.arrayContaining(["deployJudge", "deployEarlyReview", "doneJudgingReview"]));
+    expect(mailed).toHaveLength(2);
+    expect(doneBody(first.calls)).toMatchObject({ wait: true, reviewers: [expect.objectContaining({ kind: "judge" }), expect.objectContaining({ kind: "code-review" })] });
     const verdict = await judgeVerdict(JSON.parse((mailed[0] as { content: string }).content).rules);
 
-    const second = fakeHub({ takes: [judgeReported(verdict, request)], dones: [ENDED] });
+    const second = fakeHub({ takes: [{ ...judgeReported(verdict, request), reviewers: [JUDGE, reviewer()] }], dones: [ENDED] });
     const again = await runMail(github, wake(), host, second.hub, mailed);
-    expect(again.ran).toContain("deployReview");
+    expect(again.ran).not.toContain("deployReview");
     expect(again.ran).not.toContain("mirrorRules");
     expect(writes).toEqual([]);
-    expect(second.calls[2]).toMatchObject({ body: { reviewers: [{ ...JUDGE, result: verdict }, expect.objectContaining({ kind: "code-review", runId: DEPLOYED })] } });
+    expect(doneBody(second.calls)).toMatchObject({ wait: true, reviewers: [{ ...JUDGE, result: verdict }, expect.objectContaining({ kind: "code-review", runId: DEPLOYED })] });
 
     const third = fakeHub({ takes: [{ ...reported({ result: REVIEW }, request), reviewers: [{ ...JUDGE, result: verdict }, reviewer()] }], dones: [ENDED] });
     const { ran } = await runMail(github, wake(), host, third.hub, mailed);

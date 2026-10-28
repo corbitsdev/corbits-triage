@@ -154,6 +154,7 @@ const DoneInput = type({
   "mirrorRules?": Output,
   "executeRules?": Output,
   "reviewMailed?": { output: { "reviewer?": Reviewer } },
+  "earlyReviewMailed?": { output: { "reviewer?": Reviewer } },
   "judgeMailed?": { output: { "reviewer?": Reviewer } },
 });
 
@@ -216,12 +217,12 @@ function lasting(reviewer: Reviewer, head: string): boolean {
  * a later pass on it posts them and deploys no other; a degraded, undecided, failed or late one is dropped, so the next
  * event deploys its reviewer again. A result too large to store is dropped. Plus one mailed now.
  */
-function reviewersAfter(take: TakeOutput, mailed: Reviewer | undefined): Reviewer[] {
+function reviewersAfter(take: TakeOutput, mailed: readonly Reviewer[]): Reviewer[] {
   const { head } = take;
   let current = remembered(take).filter(storable);
-  const waiting = current.some((reviewer) => reviewer.result === undefined) || (mailed !== undefined && mailed.result === undefined);
+  const waiting = current.some((reviewer) => reviewer.result === undefined) || mailed.some((reviewer) => reviewer.result === undefined);
   if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined || (head !== undefined && lasting(reviewer, head)));
-  return mailed ? [...current, mailed] : current;
+  return [...current, ...mailed];
 }
 
 /**
@@ -253,7 +254,7 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   if (parsed instanceof type.errors) throw new Error(`done: ${parsed.summary}`);
   if (parsed.take.output.refused) return { outcome: "refused" };
   const mail = managerMailOf(parsed.payload);
-  const mailed = parsed.judgeMailed?.output.reviewer ?? parsed.reviewMailed?.output.reviewer;
+  const mailed = [parsed.judgeMailed, parsed.earlyReviewMailed, parsed.reviewMailed].flatMap((step) => (step?.output.reviewer ? [step.output.reviewer] : []));
   const report = doneReport(parsed);
   const reviewers = reviewersAfter(parsed.take.output, mailed);
   const wait = awaiting(parsed, report, reviewers);
