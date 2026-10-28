@@ -297,7 +297,8 @@ export function paneStatus({ item, detail, handled, pack }: StatusInput): PaneSt
   const unsettled = unsettledText(item);
   if (unsettled === null) return line;
   const held = heldForYouText(item);
-  if (item.state === "stale" && held !== null) return { form: "you", tone: "you", text: `${upperFirst(held)} · ${unsettled}`, live: false };
+  // Neither a verdict Triage could not settle nor a pass on unchecked commits asks you anything but the held action.
+  if (held !== null && (item.state === "stale" || inboxAction(item) === "merge")) return { form: "you", tone: "you", text: `${upperFirst(held)} · ${unsettled}`, live: false };
   // Commits Triage has not checked are never merged, so a pass has nothing for you until Triage checks them.
   if (item.state !== "stale" && line.form === "you" && inboxAction(item) !== "merge") return { ...line, text: `${line.text} · ${unsettled}` };
   if (item.state !== "stale") return { ...line, form: "done", text: `${line.text} · ${unsettled} · Triage again` };

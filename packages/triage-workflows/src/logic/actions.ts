@@ -286,8 +286,10 @@ export function heldApprovals(actions: SuggestedAction[], approval: string | und
   });
 }
 
-/** `automatic` is the kinds the pr-triage role is granted on the repository; the run may not write the rest unattended. */
-/** `heldUntil` stays only on a Do the run would write on its own once CI finishes; one it cannot run, or held for a person, loses it. */
+/**
+ * `automatic` is the kinds the pr-triage role is granted on the repository; the run may not write the rest unattended.
+ * `heldUntil` stays only on a Do the run would write on its own once CI finishes; one it cannot run, or held for a person, loses it.
+ */
 export function holdDos(actions: SuggestedAction[], automatic: readonly ActionKind[]): SuggestedAction[] {
   return actions.map(function hold(action): SuggestedAction {
     if (!("effectId" in action)) return action;
