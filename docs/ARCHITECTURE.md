@@ -83,7 +83,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     tenant system sender, the same path cron uses, naming the host as
     `repoSource`. A workspace with no live listener runs nothing: the head
     fails saying Triage is not running on that host and that Settings →
-    Triage shows why. Every window is mailed when it closes, whatever the
+    Triage shows why. A head whose mail reached no listener, because the host
+    had none, the listener was still starting or the hub held no route to
+    it, is also marked `unrouted` and goes out again (see the reconciler).
+    Every window is mailed when it closes, whatever the
     head's CI: the pull request's manager waits for CI itself (see
     `triage-manager-github` below), and a window that sees a check finish
     reaches that manager as one more event.
@@ -345,6 +348,18 @@ any other tenant or an unknown sender.
   on: a listener as `listener_cancel_stuck`, which every reconcile pass logs
   again while stock has given up on it, and a replaced workflow once as
   `rollout_cancel_stuck` with its name.
+
+  Mail is addressed to a listener's run, and stock holds none for a run that
+  has gone, so a head whose mail reached no listener is held in its
+  triage-state row instead: the row fails with `unrouted`. The reconciler
+  queues an unrouted head on its first pass with a listener up, without
+  backoff, and those tries add nothing to the head's attempts. A coalescer
+  mail that reached no listener starts a pass at once, whose listener check
+  rolls a workspace left with none; a pass that left a head unrouted runs
+  again 15 seconds later; and a roll starts a pass as soon as its listener
+  runs, logging `workflow_release_live`, before it waits for the listeners it
+  replaces to stop. A pull request opened while its listener is replaced is
+  therefore mailed as soon as the new one runs.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which lives until its head
   has its final verdict, and the only workflow that writes to the pull request. It takes
