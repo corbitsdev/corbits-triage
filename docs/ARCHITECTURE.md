@@ -417,38 +417,48 @@ any other tenant or an unknown sender.
   that waits for CI, or the verdict it posted as its evaluate, mirror, execute
   and rules steps output it, with the facts the verdict keeps rather than the
   diff. Each branch that reports one of these has its own done step. A pass
-  asks done to `wait` while its head awaits CI, or a judge or code review it
-  mailed for that head has not reported. Done then answers `more` when an
+  asks done to `wait` only while a judge or code review it mailed for its
+  head is out and within its deadline. Done then answers `more` when an
   event is pending, and the next pass runs at once; `more` with `wait` after
   a pass that asked, and the next pass runs once 30 seconds have passed,
-  taking whatever arrived meanwhile; otherwise `ended`. So a manager ends
-  only once its head has its final verdict and the policy's actions ran or
-  were held: a check finishing, a reviewer's result or a new head reaches the
-  hub, which mails the live manager, and a new head's pass starts over. A
-  pull request with nothing outstanding has no manager. The hub keeps, on
-  the claim, whether each closed pass waited for CI, and answers take with
-  `waitingSince`, when the head's unbroken run of waiting passes began, and
-  `headSince`, when the head's first closed pass was taken. Until 2 minutes
-  after that, a pass sends `ciStarting`, and where CI green is on facts read a
-  head with no checks as checks pending ("checks have not started yet"), so
-  it waits for its CI to start; the pass at 2 minutes reads it again. Every
-  5 minutes of that wait a pass triages the head again with no event, which
-  settles a Bitbucket head, whose builds send no webhook, and a GitHub head
-  whose `check_run` never arrived. A pass whose head has waited 60 minutes is
-  triaged with `noWait`, so it is
-  decided with CI still running. A manager lives three hours from its claim
-  (`claimedAt`, which take answers), time for CI, the judge and code review
-  to each take their hour; a new head does not extend it. The pass after that
-  stops waiting (`stopped` on take): it takes every reviewer still out as past
-  its deadline and decides with `noWait`, and its verdict says what Triage
-  stopped waiting for and holds every Do for a person. The loop's pass count
-  is only a backstop. For up to three hours a waiting manager holds one of
-  the `TRIAGE_MAX_LOCAL_SIDECARS` local sidecars, and its judge and code
-  review take more. Past the cap, deployments go to the sandbox provisioner;
-  with none configured they wait on stock's placement retry and then fail,
-  and the pull request is tried again on its next event or reconcile pass. That is
-  the bound (CL-11587); nothing else limits waiting managers. A manager
-  waiting for CI is parked: the reconciler does not count it toward the
+  taking whatever arrived meanwhile; otherwise `ended`. A head that waits
+  only on the host (its CI, or mergeability) posts that it waits and its
+  manager ends, so no manager sits on a sidecar for CI; a reviewer's result
+  that lands while the head still waits on the host posts the waiting state
+  the same way, and the judgement stays on the reviewer for the pass after
+  CI. A check finishing, a reviewer's result or a new head reaches the hub,
+  which mails the live manager or has the listener deploy one, and a new
+  head's pass starts over. A pull request with nothing outstanding has no
+  manager. The hub keeps, on the claim, whether each closed pass waited for
+  CI, and answers take with `waitingSince`, when the head's unbroken run of
+  waiting passes began, and `headSince`, when the head's first closed pass
+  was taken. Until 2 minutes after that (`CI_START_MS`), a pass sends
+  `ciStarting`, and where CI green is on facts read a head with no checks as
+  checks pending ("checks have not started yet"), so it waits for its CI to
+  start. For a head whose manager ended to wait, the triage reconcile pass
+  reads the head's checks once per pass (`waiting_ci_read` logs how many)
+  and queues it again (`triage_requeued`, `reason: ci_settled`) once CI is no
+  longer pending, the head still has no checks past the start grace, or it
+  has waited 60 minutes (`CI_WAIT_MS`), without reading. That settles a
+  Bitbucket head, whose builds send no webhook, and a GitHub head whose
+  `check_run` never arrived. A pass whose head has waited 60 minutes is
+  triaged with `noWait`, so it is decided with CI still running. The portal's
+  Waiting on CI comes from the claim's last pass on the newest head, whether
+  or not its manager is up. A manager lives three hours from its claim
+  (`claimedAt`, which take answers); a new head does not extend it. Since a
+  manager ends while it waits only on CI, the clock bounds one its reviewers
+  keep alive, such as a judge or code review deployed again on each new
+  push. The pass after that stops waiting (`stopped` on take): it takes every
+  reviewer still out as past its deadline and decides with `noWait`, and its
+  verdict says what Triage stopped waiting for and holds every Do for a
+  person. The loop's pass count is only a backstop. A manager holds one of
+  the `TRIAGE_MAX_LOCAL_SIDECARS` local sidecars only while it runs a pass or
+  waits on a reviewer, and its judge and code review take more. Past the cap,
+  deployments go to the sandbox provisioner; with none configured they wait
+  on stock's placement retry and then fail, and the pull request is tried
+  again on its next event or reconcile pass. That is the bound (CL-11587). A
+  live manager waiting for CI
+  with a reviewer out is parked: the reconciler does not count it toward the
   tenant's in-flight slots, which only managers judging or reviewing hold.
   Once the passes end, fail or run out, or take finds another run holds the
   claim, the run's last step stops it through the stop-run route under a
