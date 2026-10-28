@@ -574,7 +574,7 @@ The row says **Key stored** or **No key**. With no key, its form is open below i
 
 #### Actions Triage takes on its own
 
-This card decides, for the whole workspace, whether a repository's policy file is enough for Triage to act. Owners and admins see the switch **Take the actions each policy file names without asking**; everyone else sees only which way it is set. It is on in a new workspace.
+This card decides, for the whole workspace, whether a repository's policy file is enough for Triage to act. Owners and admins see the switch **Take the actions each policy file names without asking**; everyone else sees only which way it is set. It is on in a new workspace, and off in one set up before Triage had this switch, until an owner or admin turns it on.
 
 - **On.** Triage takes every action an enabled repository's policy file names, such as Assign or Merge, on its own, on GitHub and Bitbucket Data Center alike. Once a change to the file is merged, Triage reads it within a few minutes and from then on does what it now names; an action taken out of the file goes back to waiting for you. Closing on Unsure, and merging on anything but Pass, still wait for you. A file Triage refuses changes nothing until it is fixed.
 - **Off.** Triage posts its verdict on its own, the comment and on GitHub its label, and every other action waits for you on Triage. A pull request that changes a policy file from Triage lists the actions that will wait, such as `assign` and `merge`.

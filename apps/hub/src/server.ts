@@ -116,7 +116,7 @@ import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, creat
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved, type TriageJob } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
+import { keepExistingWorkspacesAsking, prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
 import { githubRead } from "@corbits/github-tool";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 
@@ -350,6 +350,7 @@ const wakeManager = createManagerWake({
 });
 const wakeOverdue = createOverdueWake({ db: composition.db, wake: wakeManager, log: logJson });
 await archiveStoredPolicies(composition.db, composition.db, logJson);
+await keepExistingWorkspacesAsking(composition.db, logJson);
 mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
@@ -1009,6 +1010,7 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
           switchedOn = true;
           return grantEnabledKinds(tx, tenantId, repo, "github", now());
         },
+        now,
       }, tenantId, principalId, req);
       if (prepared instanceof Response) return prepared;
       // The pass reads the policy of the repository switched on, which grants what it uses under `policy` automation.

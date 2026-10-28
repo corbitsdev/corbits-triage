@@ -417,14 +417,14 @@ any roll that failed.
   start of this one and no longer run: a repository runs on its
   `.corbits-triage.yml` only. Before upgrading, move any you still need into
   that file on an earlier build, or write the file again afterwards.
-- What Triage does on its own now follows each policy file: an existing
-  workspace starts with **Take the actions each policy file names without
-  asking** on, so within one reconcile pass of the upgrade Triage takes every
-  action its enabled repositories' files name, and stops taking actions
-  allowed by hand that a file does not name. To keep every action but the
-  verdict waiting for a person, have an owner or admin turn it off under
-  Settings → Triage right after the first start; turning it off takes back
-  every action but the verdict.
+- What Triage does on its own can now follow each policy file, but an
+  existing workspace keeps asking: the first start of this build sets it to
+  ask, so **Take the actions each policy file names without asking** is off,
+  only the verdict is posted on its own, and actions allowed by hand stay
+  allowed. Once an owner or admin turns it on under Settings → Triage, Triage
+  takes every action its enabled repositories' files name within one
+  reconcile pass, and stops taking actions allowed by hand that a file does
+  not name. A workspace created after the upgrade starts with it on.
 - Earlier builds left tables the hub no longer uses; drop them if present:
   `DROP TABLE IF EXISTS corbits_triage_tenant_migration, corbits_triage_verdict_backfill, corbits_github_manifest_state;`
 - `bun run db:migrate` drops `corbits_triage.invitation`; invites still open then

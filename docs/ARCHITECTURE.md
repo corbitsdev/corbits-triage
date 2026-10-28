@@ -887,8 +887,12 @@ transaction advisory lock on its holder (`lockHolder`,
 row.
 
 What the role holds on a repository is decided by the policy file and the
-workspace's `corbitsTriage.automation`, `policy` (the default when absent) or
-`ask`, never by a list in the hub:
+workspace's `corbitsTriage.automation`, `policy` or `ask`, never by a list
+in the hub. The namespace's first write stamps `policy`, so a new workspace
+starts there; on boot, `keepExistingWorkspacesAsking` (`tenant-config.ts`)
+writes `ask` once into every namespace written before the setting existed, so
+those workspaces keep what was allowed by hand and nothing more until an owner
+switches:
 
 - **Enable.** Switching a repository on grants the role its posting kinds
   (`postingKinds`: comment, and labels where the host has labels) in the
@@ -919,8 +923,9 @@ workspace's `corbitsTriage.automation`, `policy` (the default when absent) or
   `policy` writes nothing itself; the next reconcile pass reads every enabled
   repository's policy and grants.
 - **Under `ask`** the hub writes no grant but posting on enable, and
-  switching from `policy` to `ask` takes back every kind but posting on each
-  enabled repository in the same write (`patchCorbitsTriage`). A policy pull request the hub opens lists the kinds its
+  switching from `policy` to `ask` through the tenant update takes back every
+  kind but posting on each enabled repository in the same write
+  (`prepareCorbitsTriagePatch`). A policy pull request the hub opens lists the kinds its
   file uses, posting aside, that the role does not hold, which will wait for
   a person.
 - **Switch off or remove.** Every write of the namespace

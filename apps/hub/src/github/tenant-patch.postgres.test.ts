@@ -1,14 +1,15 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { authorize } from "@intx/authz";
 import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createDB, createGrantStore, runMigrations, schema } from "@intx/db";
 import { asRecord } from "@corbits/common";
 import { bitbucketConnection } from "../bitbucket-datacenter/records.js";
 import { allowCreator } from "./admin-github-grant.js";
-import { patchCorbitsTriage, prepareCorbitsTriagePatch, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "./tenant-config.js";
+import { connectTriage, grantWanted } from "./automation.js";
+import { keepExistingWorkspacesAsking, patchCorbitsTriage, prepareCorbitsTriagePatch, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "./tenant-config.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const T = "tnt_patch";
@@ -60,6 +61,7 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
       async grantEnabled(_tx: unknown, repo: string) {
         granted.push(repo);
       },
+      now: () => new Date(),
     };
 
     async function storedNs(): Promise<CorbitsTriageNs> {
@@ -110,6 +112,18 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq(null)))).toEqual([400, "invalid_request"]);
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq([])))).toEqual([400, "invalid_request"]);
 
+    // Switching to ask takes back every kind a policy granted on an enabled repository but posting.
+    await db.transaction((tx) => connectTriage(tx, T, [], new Date()));
+    current = await store({ ...github, enabled: true }, bitbucket);
+    await db.transaction((tx) => grantWanted(tx, T, github.name, "github", ["merge"], new Date()));
+    async function roleGrants(): Promise<string[]> {
+      return (await db.select({ resource: schema.grant.resource }).from(schema.grant).where(and(eq(schema.grant.tenantId, T), isNotNull(schema.grant.roleId)))).map((row) => row.resource).sort();
+    }
+    expect(await roleGrants()).toEqual(["triage-do:comment:acme/widgets", "triage-do:labels:acme/widgets", "triage-do:merge:acme/widgets"]);
+    current = await patched({ ...current, automation: "ask" });
+    expect(await roleGrants()).toEqual(["triage-do:comment:acme/widgets", "triage-do:labels:acme/widgets"]);
+    current = await store(github, bitbucket);
+
     // The workspace's automation is set by name, and a patch that leaves it out keeps it.
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq({ ...current, automation: "always" })))).toEqual([400, "invalid_request"]);
     current = await patched({ ...current, automation: "ask" });
@@ -135,6 +149,54 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     expect(await storedNs()).toEqual(current);
     const removed = await patched({ ...current, repos: [kept] });
     expect(removed.repos).toEqual([kept]);
+  } finally {
+    await handle?.close();
+    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
+    await admin.close();
+  }
+}, 120_000);
+
+test("PostgreSQL: a workspace set up before automation existed is kept asking once, with its grants, and a new one starts under policy", async () => {
+  const database = `corbits_asking_${randomBytes(6).toString("hex")}`;
+  const admin = createDB(TEST_DB);
+  await admin.db.execute(sql.raw(`create database ${database}`));
+  const config = { ...TEST_DB, database };
+  let handle: ReturnType<typeof createDB> | undefined;
+  try {
+    await runMigrations(config, { schema: "public" });
+    handle = createDB(config);
+    const db = handle.db;
+    const repos: RepoRecord[] = [{ name: "acme/widgets", connected: true, installationId: 7, enabled: true }];
+    await db.insert(schema.tenant).values([
+      { id: "tnt_existing", name: "Existing", slug: "existing", domain: "existing.test", config: { corbitsTriage: { rev: 4, repos } } },
+      { id: "tnt_chosen", name: "Chosen", slug: "chosen", domain: "chosen.test", config: { corbitsTriage: { rev: 1, repos, automation: "policy" } } },
+      { id: "tnt_new", name: "New", slug: "new", domain: "new.test" },
+    ]);
+    await db.transaction(async function grantByHand(tx) {
+      await connectTriage(tx, "tnt_existing", [], new Date());
+      await grantWanted(tx, "tnt_existing", "acme/widgets", "github", ["merge"], new Date());
+    });
+    async function nsOf(tenantId: string): Promise<CorbitsTriageNs> {
+      const [row] = await db.select().from(schema.tenant).where(eq(schema.tenant.id, tenantId));
+      return triageNs(row?.config);
+    }
+    const logged: Array<Record<string, unknown>> = [];
+    function log(entry: Record<string, unknown>) {
+      logged.push(entry);
+    }
+
+    await keepExistingWorkspacesAsking(db, log);
+    await keepExistingWorkspacesAsking(db, log);
+
+    expect(await nsOf("tnt_existing")).toEqual({ rev: 5, repos, automation: "ask" });
+    expect(await nsOf("tnt_chosen")).toEqual({ rev: 1, repos, automation: "policy" });
+    expect(await nsOf("tnt_new")).toEqual({});
+    expect(logged).toEqual([{ level: "info", msg: "existing_workspaces_kept_asking", workspaces: 1 }]);
+    const kept = await db.select({ resource: schema.grant.resource }).from(schema.grant).where(and(eq(schema.grant.tenantId, "tnt_existing"), isNotNull(schema.grant.roleId)));
+    expect(kept.map((row) => row.resource).sort()).toEqual(["triage-do:comment:acme/widgets", "triage-do:labels:acme/widgets", "triage-do:merge:acme/widgets"]);
+
+    await patchCorbitsTriage(db, "tnt_new", (ns) => ({ ...ns, repos: [] }));
+    expect(await nsOf("tnt_new")).toEqual({ repos: [], automation: "policy", rev: 1 });
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

@@ -94,8 +94,8 @@ function switchedOff(before: CorbitsTriageNs, after: CorbitsTriageNs): string[] 
  * tenant is missing. Bumps `rev` so a concurrent portal PATCH can 409 instead
  * of clobbering install writes. A patch returning undefined writes nothing.
  * Every writer of the namespace comes through here, so a repository switched
- * off or removed loses what triage may do on it on its own in the same write,
- * and a switch to `ask` takes back every kind a policy granted but posting.
+ * off or removed loses what triage may do on it on its own in the same write.
+ * The namespace's first write is a new workspace's, which starts under `policy`.
  */
 export async function patchCorbitsTriage(
   db: DB["db"],
@@ -110,10 +110,8 @@ export async function patchCorbitsTriage(
     const patched = await patch(current, tx);
     if (patched === undefined) return current;
     for (const repo of switchedOff(current, patched)) await revokeRepoKinds(tx, tenantId, repo);
-    if (automationMode(current) === "policy" && automationMode(patched) === "ask") {
-      for (const record of repoRecords(patched).filter((each) => each.enabled === true)) await grantWanted(tx, tenantId, record.name, sourceOf(record), [], new Date());
-    }
-    const nextNs = { ...patched, rev: nsRev(current) + 1 };
+    const fresh = !(CONFIG_KEY in existing) && patched["automation"] === undefined;
+    const nextNs = { ...patched, ...(fresh && { automation: "policy" }), rev: nsRev(current) + 1 };
     await tx.update(schema.tenant)
       .set({ config: { ...existing, [CONFIG_KEY]: nextNs }, updatedAt: new Date() })
       .where(eq(schema.tenant.id, tenantId));
@@ -136,6 +134,26 @@ function renameLegacyFlag(row: LegacyRepoRecord): RepoRecord {
 
 function renameLegacyFlags(ns: CorbitsTriageNs): CorbitsTriageNs {
   return Array.isArray(ns.repos) ? { ...ns, repos: ns.repos.map(renameLegacyFlag) } : ns;
+}
+
+/**
+ * Workspaces set up before `automation` existed had every action but posting wait for a person unless allowed by hand,
+ * so they keep that under `ask`, grants included, until an owner switches. A namespace written since carries its mode,
+ * so after the first boot this finds none; a tenant with no namespace never connected a host and starts under `policy`.
+ */
+export async function keepExistingWorkspacesAsking(db: DB["db"], log: (entry: Record<string, unknown>) => void): Promise<void> {
+  const tenants = await db.select({ id: schema.tenant.id, config: schema.tenant.config }).from(schema.tenant);
+  let asking = 0;
+  for (const tenant of tenants) {
+    const ns = asRecord(tenant.config)?.[CONFIG_KEY];
+    if (!isRecord(ns) || ns["automation"] !== undefined) continue;
+    await patchCorbitsTriage(db, tenant.id, function keepAsking(current) {
+      if (current["automation"] !== undefined) return undefined;
+      asking += 1;
+      return { ...current, automation: "ask" };
+    });
+  }
+  if (asking > 0) log({ level: "info", msg: "existing_workspaces_kept_asking", workspaces: asking });
 }
 
 /** One-time rewrite of repo rows stored before `classificationAuthorized` was renamed to `enabled`. */
@@ -199,7 +217,7 @@ function patchedRepos(stored: RepoRecord[], patch: NonNullable<TriagePatch["repo
   });
 }
 
-type PatchDeps = GrantDeps & { grantEnabled: (tx: Tx, repo: string) => Promise<void> };
+type PatchDeps = GrantDeps & { grantEnabled: (tx: Tx, repo: string) => Promise<void>; now: () => Date };
 
 /** Each change needs the grant its own route needs: switching off or removing an enabled Bitbucket repository also removes the webhook, so it is refused here, as is switching one on. */
 async function changeRefusal(d: PatchDeps, tenantId: string, principalId: string, { before, after }: RepoChange): Promise<Response | undefined> {
@@ -271,8 +289,13 @@ export async function prepareCorbitsTriagePatch(
       if (after?.enabled === true && before.enabled !== true) await d.grantEnabled(tx, after.name);
     }
     const repos = patch.repos === undefined ? {} : { repos: changes.flatMap((change) => change.after ?? []) };
-    // Switching to `policy` writes no grant here: the next policy read of each enabled repository does.
-    return { ...current, ...repos, ...(patch.automation && { automation: patch.automation }) };
+    const next = { ...current, ...repos, ...(patch.automation && { automation: patch.automation }) };
+    // Switching to `ask` takes back every kind a policy granted but posting; switching to `policy` writes no grant
+    // here, the next policy read of each enabled repository does.
+    if (automationMode(current) === "policy" && automationMode(next) === "ask") {
+      for (const record of repoRecords(next).filter((each) => each.enabled === true)) await grantWanted(tx, tenantId, record.name, sourceOf(record), [], d.now());
+    }
+    return next;
   });
   if (conflicted) return conflict();
   return cloneWithBody(req, JSON.stringify(forwarded));
