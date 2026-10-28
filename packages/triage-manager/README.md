@@ -19,8 +19,9 @@ A workspace's listener and a pull request's manager.
   has its final verdict and the policy's actions ran or were held, so an idle pull request has no manager. With a
   published judge, a pass deploys [`@corbits/triage-judge`](../triage-judge) once the host's checks have finished and
   mails it the rules output; while they run the head waits. The pass that collects its report posts the judge's
-  verdict as the judge made it while the rules still need the judge, and so does every later pass on that head once
-  the verdict is decided, deploying no other judge. With code review, a pass then deploys the review and mails it the
+  verdict while the rules still need the judge, its judgement as the judge made it and its Dos made again from the
+  pass's facts, and so does every later pass on that head once the verdict is decided, deploying no other judge. A
+  manager that stopped waiting deploys no judge. With code review, a pass then deploys the review and mails it the
   head's request, or deploys it with the judge when it runs whatever the rules say and its `when` names every verdict; the
   pass that collects its report mirrors the verdict and posts the review together, and a later
   pass on that head posts the stored review again without deploying another. A reviewer that could not be mailed,

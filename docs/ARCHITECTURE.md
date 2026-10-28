@@ -426,14 +426,17 @@ any other tenant or an unknown sender.
   that release, mails it the rules output until the judge's one-hour deadline,
   and posts only the in-progress comment. While those checks run, the judge is held and the pass
   marks the head waiting, as a pass of deterministic rules does. The pass that
-  collects the judge's report posts and executes its verdict as the judge made
-  it, once that verdict names the pass's pull request, head and host; facts
-  and rules still run, and when they no longer need the judge (a failed hard
-  rule, a draft or a closed pull request) the pass's own verdict goes up
-  instead. A decided verdict, one that does not wait and that nothing on the
-  host can still change, stays on the judge's reviewer on the claim for its
-  head, so a later pass on that head posts it again, whatever else changed,
-  and deploys no other judge; a new head gets its own. A verdict the host's
+  collects the judge's report posts and executes its verdict, once that
+  verdict names the pass's pull request, head and host: its judgement as the
+  judge made it, with its Dos made again from the pass's facts
+  (`verdictOnFacts`), so CI that finished on the same head since decides
+  them. Facts and rules still run, and when they no longer need the judge (a
+  failed hard rule, a draft or a closed pull request) the pass's own verdict
+  goes up instead. A decided verdict, one that does not wait and whose
+  machine checks all confirmed, stays on the judge's reviewer on the claim
+  for its head, so a later pass on that head posts it again on its own facts
+  and deploys no other judge; a new head gets its own. A manager that stopped
+  waiting deploys no judge: it decides without one. A verdict the host's
   checks could still change, a degraded one or one over 256 KiB still goes up
   on the pass that collects it, and a failure or a missed deadline leaves the
   machine verdict to go up alone; none of them is kept, so the next event

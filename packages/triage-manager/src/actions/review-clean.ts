@@ -64,7 +64,7 @@ function uncleared({ taken, review, reviewers, head }: TakeOutput, checks: unkno
 }
 
 /** The verdict fields cleared reads, the rest kept as evaluate made them. */
-const ClearedVerdict = type({
+export const ClearedVerdict = type({
   number: "number", headSha: "string | null", verdict: type.enumerated(...VERDICTS), reason: "string", reasons: "string[]", feedback: "string", checks: "object[]", actions: "object[]",
   degraded: "string | null", "approvable?": "boolean", "closed?": "true",
 }).as<Verdict>();

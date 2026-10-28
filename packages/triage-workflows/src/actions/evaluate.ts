@@ -223,13 +223,22 @@ export function verdictWithFailure(it: Item, verdict: Verdict, failed: CheckResu
     const made = withFailure(verdict, failed, { author, det: it.det, reviewers });
     return { ...verdict, ...made, request: { ...verdict.request, comment: made.feedback } };
   }
+  return verdictFrom(it, withFailure(renderedOf(it, verdict), failed, { author, det: it.det, reviewers }));
+}
+
+/** What `verdict` rendered, without what verdictFrom made of it on `it`. */
+function renderedOf(it: Item, verdict: Verdict): RenderOutput {
   // verdictFrom sets these only when the new verdict has them, so the old ones must not carry over.
   const { actions, approvable: _approvable, changesWanted: _changesWanted, mark: _mark, closed: _closed, ...rendered } = verdict;
   const dropped = it.pack?.dropped;
   // verdictFrom closes the reasons with what reading the policy left out, and does so again.
   const reasons = dropped ? rendered.reasons.slice(0, rendered.reasons.length - dropped.length) : rendered.reasons;
-  const feedback = withoutDos(rendered.feedback, actions);
-  return verdictFrom(it, withFailure({ ...rendered, feedback, reasons }, failed, { author, det: it.det, reviewers }));
+  return { ...rendered, feedback: withoutDos(rendered.feedback, actions), reasons };
+}
+
+/** `verdict`, a judgement made on an earlier read of `it`'s head, on `it`'s current facts: its Dos are made again from them. */
+export function verdictOnFacts(it: Item, verdict: Verdict): Verdict {
+  return verdictFrom(it, renderedOf(it, verdict));
 }
 
 /** Takes the item's own chunk replies off the front of `replies` and `partReplies`. */

@@ -847,24 +847,34 @@ describe("triage-manager with a judge", () => {
     expect(hub.calls).toEqual([TAKE, DONE, END]);
   });
 
-  test.each([
-    ["an approve skipped until CI passes", { kind: "approve", list: "pass", index: 0, skipped: true, reason: "CI has not passed on this head.", ci: "pending" }],
-    ["a merge held for running CI", { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has not finished on this head.", ci: "pending" }],
-  ])("a stored verdict with %s is judged again, since CI on the same head can still change it", async (_name, action) => {
-    const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail()).content).rules);
-    const { host } = githubHost();
-    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED), reviewers: [{ ...JUDGE, result: { ...verdict, actions: [action] } }] }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).ran).toContain("deployJudge");
+  test("a stored verdict whose approve CI skipped is posted on the pass after CI turned green on the same head with its Dos made again, and the judge is not run again", async () => {
+    const pack: CheckPack = { ...JUDGED, actions: { ...JUDGED.actions, pass: [{ do: "approve" }] } };
+    const request = hubRequest(pack);
+    const red = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "completed", conclusion: "failure" }] });
+    const mailed: unknown[] = [];
+    expect((await runMail(github, wake(), red.host, fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] }).hub, mailed)).ran).toContain("deployJudge");
+    const verdict = await judgeVerdict(JSON.parse((mailed[0] as { content: string }).content).rules);
+    expect(verdict["actions"]).toEqual([expect.objectContaining({ kind: "approve", skipped: true, ci: "failure" })]);
+
+    const green = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "completed", conclusion: "success" }] });
+    const hub = fakeHub({ takes: [{ ...PASS, request, reviewers: [{ ...JUDGE, result: verdict }] }], dones: [ENDED] });
+    const { ran, outputs } = await runMail(github, wake(), green.host, hub.hub);
+    expect(ran).not.toContain("deployJudge");
+    expect((outputs["evaluateRules"] as { actions: unknown[] }).actions).toEqual([expect.objectContaining({ kind: "approve", effectId: expect.any(String) })]);
+    expect(green.writes).toContainEqual(POSTED_REVIEW);
   });
 
-  test.each([
-    ["a merge held for failed CI", { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has failed on this head.", ci: "failure" }],
-    ["a held Do that only names running CI in its reason", { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has not finished on this head." }],
-  ])("a stored verdict with %s is decided and not judged again", async (_name, action) => {
-    const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail()).content).rules);
-    const { host } = githubHost();
-    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED), reviewers: [{ ...JUDGE, result: { ...verdict, actions: [action] } }] }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).ran).not.toContain("deployJudge");
+  test("a manager whose clock runs out while CI runs on a judge policy deploys no judge, and posts its verdict with every Do held", async () => {
+    const pack: CheckPack = { ...JUDGED, checks: { ...JUDGED.checks, "ci-green": { enabled: true } }, actions: { ...JUDGED.actions, unsure: [{ do: "comment", target: { body: "Waiting" } }] } };
+    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
+    const old = new Date(Date.now() - 3 * 60 * 60_000 - 1_000).toISOString();
+    const hub = fakeHub({ takes: [{ ...IDLE, request: hubRequest(pack), waitingSince: old, claimedAt: old }], dones: [ENDED] });
+    const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
+    expect(ran).not.toContain("deployJudge");
+    const { actions } = outputs["cleared"] as { actions: { held?: true }[] };
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions.every((action) => action.held === true)).toBe(true);
+    expect(writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringContaining("Triage stopped waiting for CI to finish after 3 hours, so no action ran on its own.") } }));
   });
 
   test("a judge's verdict for another pull request fails the pass instead of being posted", async () => {
