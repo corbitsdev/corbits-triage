@@ -142,11 +142,11 @@ async function readContents(host: HostCall, tool: string, repo: string, sha: str
 }
 
 /** Each code-patterns rule's matches, run where the files are read so their text never leaves this step. */
-async function patternsOf(host: HostCall, tool: string, repo: string, item: { facts: PrFacts; pack: CheckPack }): Promise<Record<string, PatternsResult>> {
+async function patternsOf(host: HostCall, tool: string, repo: string, source: RepoSource, item: { facts: PrFacts; pack: CheckPack }): Promise<Record<string, PatternsResult>> {
   const rules = item.pack.custom.filter(isPatternsCheck).filter(customCheckEnabled);
-  const toRead = filesToRead(item.facts.files);
+  const toRead = filesToRead(item.facts.files, source);
   const contents = Array.isArray(toRead) ? await readContents(host, tool, repo, item.facts.headSha, toRead) : {};
-  return Object.fromEntries(rules.map((rule) => [rule.id, patternsResult(rule, item.facts.files, contents)]));
+  return Object.fromEntries(rules.map((rule) => [rule.id, patternsResult(rule, item.facts.files, contents, source)]));
 }
 
 /** An open pull request as the host lists it. */
@@ -370,7 +370,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
   if (!pack.custom.filter(isPatternsCheck).some(customCheckEnabled)) return items;
   const matched: RulesItem[] = [];
   for (const item of items) {
-    matched.push("facts" in item ? { ...item, facts: { ...item.facts, patterns: await patternsOf(host, tool("read_file"), repo, item) } } : item);
+    matched.push("facts" in item ? { ...item, facts: { ...item.facts, patterns: await patternsOf(host, tool("read_file"), repo, stamp.repoSource, item) } } : item);
   }
   return matched;
 }

@@ -556,9 +556,10 @@ label off that head, so it never stands on a head not yet triaged.
    partway and every later one are listed without patches. The judge's view of
    the diff has its own, smaller budget (`judgedFiles` in `logic/quality.ts`).
    A file without a patch, because the host sent none (GitHub omits it for a
-   very large or binary file) or the step passed that ceiling, is listed in
-   the evidence as not checked, saying which, and the rule runs on the rest;
-   with nothing else to check, or a file whose content was not read, or a rule
+   very large or binary file; a file GitHub only renamed has nothing to read
+   and is not listed) or the step passed that ceiling, is listed in the
+   evidence as not checked, saying which, and the rule runs on the rest; with
+   nothing else to check, or a file whose content was not read, or a rule
    ast-grep refuses, the rule is unconfirmed; `vendor/`, `dist/`, `build/` and
    `generated/` at the repository root and `node_modules/` anywhere are
    skipped and listed as skipped in the evidence, and a `?? 0` inside

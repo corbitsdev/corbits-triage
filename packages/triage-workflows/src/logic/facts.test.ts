@@ -116,7 +116,7 @@ test("a diff past the judge's budget is read whole for the pattern rules while t
 
   const pack = readCheckPack(readPolicyFile("rules:\n  - id: conventions\n    check: code-patterns\n    text: Conventions.\n    reason: Review time.\n    evidence: [maintainer-stated]\n    presets: [convention]\n", "acme/widgets"));
   const contents = Object.fromEntries(paths.map((path, index) => [path, `${lines(index).join("\n")}\n`]));
-  expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents)).toEqual({ matches: [`${paths.at(-1)}:201 Invented fallback \`?? 0\`; handle the missing value instead.`], skipped: [], checked: paths.length });
+  expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github")).toEqual({ matches: [`${paths.at(-1)}:201 Invented fallback \`?? 0\`; handle the missing value instead.`], skipped: [], checked: paths.length });
 
   const focused = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
   const { requests, focused: plan } = prepareQualityEvaluation({ ...NO_FACTS, repo: "acme/widgets", number: 8, title: "Add files", files: listed, paths }, focused);
@@ -137,7 +137,7 @@ describe("a diff past the code rules' ceiling", () => {
     const unread = listed.slice(whole);
     expect(unread).toEqual(hostFiles.slice(whole).map(({ patch: _patch, ...meta }) => ({ ...meta, patchUnread: true })));
     const contents = Object.fromEntries(listed.slice(0, whole).map((file) => [file.path, `${Array.from({ length: 200 }, () => line).join("\n")}\n`]));
-    expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents)).toEqual({
+    expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github")).toEqual({
       matches: [],
       skipped: unread.map((file) => `${file.path}: not checked, the pull request's diff is larger than Triage reads`),
       checked: whole,
