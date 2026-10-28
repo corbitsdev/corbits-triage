@@ -553,7 +553,8 @@ label off that head, so it never stands on a head not yet triaged.
    (`MAX_CODE_RULES_PATCH_CHARS`), since one sidecar holds every
    deployment's step outputs; the file that passes it partway and every
    later one are listed without patches. The judge's view of the diff has
-   its own, smaller budget (`judgedFiles` in `logic/quality.ts`). A file
+   its own budget, as much as its 64 requests hold (`judgedFiles` in
+   `logic/quality.ts`). A file
    without a patch, because the host sent none (GitHub omits it for a very
    large or binary file) or the diff passed that ceiling, is listed in the
    evidence as not checked, saying which, and the rule runs on the rest; with nothing else

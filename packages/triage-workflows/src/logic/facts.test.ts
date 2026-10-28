@@ -3,9 +3,8 @@ import { DEFAULT_REPO_POLICY, emptyPack, isPatternsCheck, readCheckPack, readPol
 import type { IssueComment, Review } from "@corbits/github-reads";
 import type { PrFileFacts } from "./checks.ts";
 import { addFilesPage, assembleItem, buildFacts, FIRST_FILES_PAGE, type FilesCursor, type FilesPage, type ListedFiles } from "./facts.ts";
-import { NO_FACTS } from "./item.ts";
 import { patternsResult } from "./patterns.ts";
-import { MAX_CODE_RULES_PATCH_CHARS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation } from "./quality.ts";
+import { MAX_CODE_RULES_PATCH_CHARS, MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.ts";
 
 test("buildFacts carries the author's trust tier", () => {
   const facts = buildFacts("acme/widgets", 1, { author: "alice", authorAssociation: "MEMBER", branch: "a" }, [], [], [], DEFAULT_REPO_POLICY);
@@ -103,7 +102,7 @@ function readPages(hostFiles: PrFileFacts[]): PrFileFacts[] {
   return listed.files;
 }
 
-test("a diff past the judge's budget is read whole for the pattern rules while the judge reads a bounded part", () => {
+test("a diff of several judge requests is read whole for the pattern rules", () => {
   const filler = Array.from({ length: 200 }, (_, line) => `const filler${line} = "${"x".repeat(30)}";`);
   const fallback = "const late = value ?? 0;";
   const paths = Array.from({ length: 40 }, (_, index) => `src/file${String(index).padStart(2, "0")}.ts`);
@@ -117,12 +116,6 @@ test("a diff past the judge's budget is read whole for the pattern rules while t
   const pack = readCheckPack(readPolicyFile("rules:\n  - id: conventions\n    check: code-patterns\n    text: Conventions.\n    reason: Review time.\n    evidence: [maintainer-stated]\n    presets: [convention]\n", "acme/widgets"));
   const contents = Object.fromEntries(paths.map((path, index) => [path, `${lines(index).join("\n")}\n`]));
   expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents)).toEqual({ matches: [`${paths.at(-1)}:201 Invented fallback \`?? 0\`; handle the missing value instead.`], skipped: [], checked: paths.length });
-
-  const focused = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
-  const { requests, focused: plan } = prepareQualityEvaluation({ ...NO_FACTS, repo: "acme/widgets", number: 8, title: "Add files", files: listed, paths }, focused);
-  const judged = requests.flatMap((request) => request.state.pullRequest.files.flatMap((file) => file.hunks)).join("").length;
-  expect(judged).toBeLessThanOrEqual(3 * MAX_SYSTEM_ONE_STATE_BYTES + 65_536);
-  expect(plan!.unread).toContain(paths.at(-1)!);
 });
 
 describe("a diff past the code rules' ceiling", () => {
