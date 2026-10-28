@@ -249,8 +249,11 @@ export type AuditEntry = typeof AuditEntry.infer;
 export const AuditLog = type({ entries: AuditEntry.array() });
 export type AuditLog = typeof AuditLog.infer;
 
-/** The repository's policy file on its default branch; `text` is absent when it is too large to read, `problem` is why triage does not run on it. */
-export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string" });
+/**
+ * The repository's policy file on its default branch; `text` is absent when it is too large to read, `problem` is why
+ * triage does not run on it. `pull` is the open policy pull request's copy of the file at its head `headSha`.
+ */
+export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string", "pull?": { text: "string", headSha: "string" } });
 export type PolicyFileStatus = typeof PolicyFileStatus.infer;
 
 const FileRefShape = type({ path: "string", sha: "string" });

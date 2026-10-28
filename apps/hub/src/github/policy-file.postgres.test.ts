@@ -30,6 +30,7 @@ const PUSHED = "acme/pushed";
 const BITBUCKET_PUSHED = "PROJ/pushed";
 const PATCHED = "acme/patched";
 const PATCH_LISTED = "acme/patch-listed";
+const PULL_READ = "acme/pull-read";
 const BOTH = "acme/both";
 const UNHEARD = "acme/unheard";
 const BITBUCKET_UNHEARD = "PROJ/unheard";
@@ -196,7 +197,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
+  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, PULL_READ, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -611,6 +612,35 @@ test("PostgreSQL: a repository with a policy file reads ok with its open policy 
   expect(opened).toMatchObject({ http: 200, status: "opened" });
   const { number, url } = opened as { number: number; url: string };
   expect(await upgradeOf(PATCH_LISTED)).toEqual({ repo: PATCH_LISTED, source: "github", upgrade: { state: "ok" }, pull: { url, number, headSha: "head-sha" } });
+});
+
+test("PostgreSQL: the policy file read carries the open policy pull request's copy beside the default branch's, and drops it once merged", async () => {
+  onMain(PULL_READ, YML, PATCH_FILE);
+  await policyFile.onPush(TENANT, PULL_READ, "github");
+  expect(await fileOf(PULL_READ)).not.toHaveProperty("pull");
+
+  expect(await patchOf({ repo: PULL_READ, changes: [{ kind: "rule", id: "focused", enabled: false }] })).toMatchObject({ http: 200, status: "opened" });
+  const branchText = files.get(`${PULL_READ}@${POLICY_BRANCH}/${YML}`)!.text!;
+  expect(branchText).not.toBe(PATCH_FILE);
+  expect(await fileOf(PULL_READ)).toMatchObject({ text: PATCH_FILE, pull: { text: branchText, headSha: "head-sha" } });
+
+  // A branch that cannot be read leaves the default branch's file to answer on its own.
+  readFails = true;
+  const res = await policyFile.fileRoute({ repo: PULL_READ }, MEMBER);
+  readFails = false;
+  expect(res.status).toBe(200);
+  const unread = ((await res.json()) as { file: unknown }).file;
+  expect(unread).toMatchObject({ text: PATCH_FILE });
+  expect(unread).not.toHaveProperty("pull");
+
+  onMain(PULL_READ, YML, branchText);
+  pulls.find((row) => row.repo === PULL_READ)!.open = false;
+  await policyFile.onPush(TENANT, PULL_READ, "github");
+  setSystemTime(new Date(Date.now() + 10_000));
+  const merged = await fileOf(PULL_READ);
+  setSystemTime();
+  expect(merged).toMatchObject({ text: branchText });
+  expect(merged).not.toHaveProperty("pull");
 });
 
 test("PostgreSQL: edited text is pushed to the default branch as one commit where its rules let the hub push, on both hosts, and refused where they do not or the file moved", async () => {
