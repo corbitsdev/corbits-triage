@@ -8,9 +8,9 @@ A workspace's listener and a pull request's manager.
   mail fails too, it is cancelled, and the pull request's next event, or the reconciler re-queuing its head, deploys
   another.
 - **Manager** (`triageManager`, `triage-manager-<host>`): one live run per pull request, which lives until its head has
-  its final verdict, and the only workflow that writes to the pull request. A mail starts a loop of passes: `take` claims the pull
-  request and its pending events; each held Do approved since runs as pr-triage runs an approval; then pr-triage's own
-  steps run on the newest mail the hub recorded for the head. A policy of only deterministic rules posts on that pass.
+  its final verdict or waits only on CI, and the only workflow that writes to the pull request. A mail starts a loop of passes: `take` claims the pull
+  request and its pending events; each held Do approved since runs through the shared approval step; then the shared
+  triage steps run on the newest mail the hub recorded for the head. A policy of only deterministic rules posts on that pass.
   One whose rules need the judge, or that asks for code review, posts once, after each of those has reported or given
   up. The next pass runs at once while an event is pending. While a judge or code review it mailed is out and within its
   deadline, the next runs 30 seconds later, taking what arrived meanwhile: a check finishing, a reviewer's result, or a

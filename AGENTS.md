@@ -23,11 +23,15 @@ Repository-wide rules. `apps/*` and some `packages/*` have their own AGENTS.md w
 - **The policy drives everything.** A repository's rules and actions live in its policy file, `.corbits-triage.yml` on its default branch, and nowhere else; under the workspace's `policy` automation that file also decides what Triage does on its own. Nothing repository-specific is written into workflow code.
 - **Workflows are deterministic.** Agents exist only where inference happens (packages/triage-workflows/AGENTS.md).
 - **Effects are idempotent** under their effect id, host writes included.
+- **One writer per pull request.** The manager is the only workflow that writes to a pull request, and it lives until its final post or until its head waits only on CI (docs/ARCHITECTURE.md, Lifecycle of a pull request).
+- **Three isolated parts.** Deterministic checks, the judge and code review each have their own limits; one part's limit never changes what another reads.
+- **One local sidecar per deployment.** The listener, each manager and each judge run in a local sidecar of their own, up to a capped number; past the cap a deployment goes to a sandbox, and code review always runs in one.
+- **Size is a risk signal**, never a hold: a crossed size limit labels a pull request and never makes it wait.
 - **Grants decide automation.** Whether an action runs on its own is decided from the workspace's role grants, never a hard-coded limit.
-- **Downstream work is another workflow.** Reviewing, fixing or cleaning up a pull request is a workflow of its own, started by mail or a signal from an action; never a step inside pr-triage.
+- **Downstream work is another workflow.** Reviewing, fixing or cleaning up a pull request is a workflow of its own, started by mail or a signal from an action; never a step inside the manager.
 - **API first.** Every custom hub route is described in `/openapi.json`. The portal and the extension wrap those routes and are never the only way to do anything.
 - **Credentials, grants and tenants are Interchange's.** Secrets live in the hub vault and reach sidecars at launch and rotation; never read them anywhere else, never persist them.
-- **Hosts.** GitHub and Bitbucket Data Center. A repository record carries `source` (absent = GitHub), every mail names it as `repoSource`, and each host has its own pr-triage package. A change to host behaviour covers both, or says why not.
+- **Hosts.** GitHub and Bitbucket Data Center. A repository record carries `source` (absent = GitHub), every mail names it as `repoSource`, and each host has its own listener, manager, judge and code review workflows. A change to host behaviour covers both, or says why not.
 
 ## Interchange reference
 

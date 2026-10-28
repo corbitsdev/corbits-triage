@@ -1,6 +1,6 @@
 # The decision model
 
-Triage answers its judged rules (focused, docs, duplicates-open-pull-request and custom model rules) and decides each pull request's verdict with a decision model: TypeSafe's Jev, a System One model. Every other rule is a hard rule over GitHub data. This page describes how Triage asks the model, how it reads the answers, the limits it works within, what it costs and how accurate it has measured.
+Triage answers its judged rules (focused, docs, duplicates-open-pull-request and custom model rules) and decides each pull request's verdict with a decision model: TypeSafe's Jev, a System One model. Every other rule is a hard rule over host data. This page describes how Triage asks the model, how it reads the answers, the limits it works within, what it costs and how accurate it has measured.
 
 TypeSafe's docs: [index (llms.txt)](https://docs.typesafe.ai/llms.txt), [System One](https://docs.typesafe.ai/concepts/system-one.md), [models and limits](https://docs.typesafe.ai/models.md), [primitives](https://docs.typesafe.ai/primitives.md), [confidence](https://docs.typesafe.ai/confidence.md), [jev-1.13 jagged edges](https://docs.typesafe.ai/model-jaggedness/jev-1.13.md).
 
