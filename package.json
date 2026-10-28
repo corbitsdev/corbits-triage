@@ -28,7 +28,10 @@
   "scripts": {
     "dev": "bun run db:migrate && bun --conditions=intx-src tooling/dev.ts",
     "db:migrate": "bun --conditions=intx-src apps/hub/src/migrate.ts",
-    "test": "bun --conditions=intx-src test --path-ignore-patterns='**/*.dom.test.tsx' ./apps/ ./packages/ ./tooling/ && bun --conditions=intx-src test --preload ./apps/web/src/lib/dom-preload.ts .dom.test",
+    "test": "bun run test:unit && bun run test:postgres && bun run test:dom",
+    "test:unit": "bun --conditions=intx-src test --path-ignore-patterns='**/*.dom.test.tsx' --path-ignore-patterns='**/*.postgres.test.ts' ./apps/ ./packages/ ./tooling/",
+    "test:postgres": "bun --conditions=intx-src test .postgres.test.ts",
+    "test:dom": "bun --conditions=intx-src test --preload ./apps/web/src/lib/dom-preload.ts .dom.test",
     "check": "bun tooling/exact-deps-check.ts && bun check --no-script -p tooling && bun check --no-script -p apps/web && bun check --no-script -p apps/extension && bun check --no-script -p apps/extension/tsconfig.background.json && bun check --no-script -p apps/extension/e2e && bun check --no-script -p apps/hub && bun check --no-script -p packages/triage-workflows && bun check --no-script -p packages/triage-manager && bun check --no-script -p packages/triage-judge && bun check --no-script -p packages/pr-code-review && bun check --no-script -p packages/pr-code-review-anthropic && bun check --no-script -p packages/provisioner-test && bun check --no-script -p packages/provisioner-template && bun check --no-script -p packages/provisioner-docker && bun check --no-script -p packages/provisioner-e2b && bun check --no-script -p packages/provisioner-railway && bun check --no-script -p packages/policy-check-action && bun check --no-script -p e2e && bun check --no-script -p tests/chain && bun build --conditions=intx-src --external @ast-grep/napi apps/hub/src/server.ts --target bun --outfile /dev/null",
     "test:chain": "bun --conditions=intx-src test tests/chain",
     "lint": "oxlint",

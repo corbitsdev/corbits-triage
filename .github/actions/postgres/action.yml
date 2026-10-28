@@ -1,0 +1,11 @@
+name: Postgres
+description: The runner image's Postgres 16, with the password and database the tests connect to.
+runs:
+  using: composite
+  steps:
+    # Starting the runner's own Postgres avoids Docker Hub pulls and their rate limits.
+    - run: |
+        sudo systemctl start postgresql.service
+        sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+        sudo -u postgres createdb interchange
+      shell: bash
