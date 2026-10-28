@@ -14,11 +14,6 @@ function starting(row: PolicyUpgradeRow): boolean {
   return row.upgrade?.state === "start";
 }
 
-/** The repositories whose policy pull request was listed before and is not now: merged or closed, so their file may differ. */
-function pullsClosed(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): string[] {
-  return before.filter((row) => row.pull && !now.some((next) => next.repo === row.repo && next.source === row.source && next.pull?.number === row.pull?.number)).map((row) => row.repo);
-}
-
 /** The repositories that had no policy file before and now have one. */
 function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): string[] {
   return before.filter((row) => starting(row) && now.some((next) => next.repo === row.repo && next.upgrade?.state === "ok")).map((row) => row.repo);
@@ -34,9 +29,8 @@ function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryCli
     const rows = await loadPolicyUpgrades(createHubTransport(), tenantId);
     const before = queryClient.getQueryData<Upgrades>(queryKey);
     const settled = newlySettled(before?.rows ?? [], rows);
-    // A merge on the host gives the repository its file or changes it, so its policy is read again.
-    const reread = [...new Set([...settled, ...pullsClosed(before?.rows ?? [], rows)])];
-    await Promise.all(reread.flatMap((repo) => [POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, repo] }))));
+    // A merge on the host gives the repository its file, so its policy is read again.
+    await Promise.all(settled.flatMap((repo) => [POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, repo] }))));
     return { rows, settled: [...(before?.settled ?? []), ...settled] };
   };
   // A merge on the host changes a repository's standing without the portal knowing, so each load reads it again, and
@@ -76,13 +70,8 @@ export function usePolicyUpgrades(): PolicyUpgradeRow[] {
 }
 
 /** The repository's standing when there is something to say: a file to start, or why it could not be read. */
-export function usePolicyUpgrade(repo: string, source: RepoSource): PolicyUpgradeRow | undefined {
-  return useUpgradeRows().find((row) => row.repo === repo && row.source === source && (row.error !== undefined || starting(row)));
-}
-
-/** The repository's open policy pull request, whether it adds the file or changes it. */
-export function usePolicyPull(repo: string, source: RepoSource): PolicyUpgradeRow["pull"] {
-  return useUpgradeRows().find((row) => row.repo === repo && row.source === source)?.pull;
+export function usePolicyUpgrade(repo: string): PolicyUpgradeRow | undefined {
+  return useUpgradeRows().find((row) => row.repo === repo && (row.error !== undefined || starting(row)));
 }
 
 /** Opening the pull request that adds the starter policy, and merging it; each is followed by reading every view of the policy again. */
