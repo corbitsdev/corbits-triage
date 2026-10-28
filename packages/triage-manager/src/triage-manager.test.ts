@@ -263,14 +263,12 @@ describe("triage-manager", () => {
     expect(doneBody(hub.calls)["wait"]).toBe(false);
   });
 
-  test("a head whose CI still runs gets the Waiting label, and the manager polls on while the hub says it waits", async () => {
+  test("a head whose CI still runs, with no reviewer out, gets the Waiting label and the in-progress comment, and its manager ends", async () => {
     const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
-    const waiting = { ...IDLE, waitingSince: new Date().toISOString() };
-    const hub = fakeHub({ takes: [PASS, waiting], dones: [{ outcome: "more", wait: true }, ENDED] });
-    const { passes, ran } = await runMail(github, wake(), host, hub.hub, [], true, hurried());
-    expect(passes).toBe(2);
-    expect(ran).toEqual(["approvals", "done", "paused", "poll", "ran", "take"]);
-    expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, true]);
+    const hub = fakeHub({ takes: [PASS], dones: [ENDED] });
+    const { passes } = await runMail(github, wake(), host, hub.hub);
+    expect(passes).toBe(1);
+    expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true }) } });
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
     expect(writes.filter((write) => write.path.endsWith("/comments"))).toEqual([inProgress("CI to finish")]);
   });
@@ -310,23 +308,30 @@ describe("triage-manager", () => {
     expect(((outputs["cleared"] as { actions: { held?: true }[] }).actions).every((action) => action.held === true && !("ci" in action))).toBe(true);
   });
 
-  test("a new head with no checks yet waits two minutes for its CI to start, then is read again and decided as having none", async () => {
+  test("a new head with no checks yet waits for its CI to start and its manager ends; one woken past the start grace decides it as having none", async () => {
     const { writes, host } = githubHost();
     const fresh = { ...PASS, headSince: undefined };
     const first = fakeHub({ takes: [fresh], dones: [ENDED] });
     await runMail(github, wake(), host, first.hub);
-    expect(doneBody(first.calls)).toMatchObject({ wait: true, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true, reason: expect.stringContaining("checks have not started yet") }) } });
+    expect(doneBody(first.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true, reason: expect.stringContaining("checks have not started yet") }) } });
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
     const since = new Date(Date.now() - 2 * 60_000 - 10_000).toISOString();
-    const later = fakeHub({ takes: [{ ...IDLE, waitingSince: since, headSince: since }], dones: [ENDED] });
+    const later = fakeHub({ takes: [{ ...PASS, waitingSince: since, headSince: since }], dones: [ENDED] });
     await runMail(github, wake(), host, later.hub);
     expect(doneBody(later.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "pass" }) } });
   });
 
-  test("a head waiting for CI is read again every five minutes without an event, so CI no host event reports still settles it", async () => {
+  test("an idle manager whose head waits on CI, with no reviewer out, triages nothing and ends", async () => {
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [{ ...IDLE, waitingSince: new Date(Date.now() - 5 * 60_000).toISOString() }], dones: [ENDED] });
+    expect((await runMail(github, wake(), host, hub.hub)).ran).not.toContain("rules");
+    expect(doneBody(hub.calls)["wait"]).toBe(false);
+  });
+
+  test("a manager woken for a head that waited on CI, once CI finished, decides it", async () => {
     const { writes, host } = githubHost();
     const waitingSince = new Date(Date.now() - 5 * 60_000 - 10_000).toISOString();
-    const hub = fakeHub({ takes: [{ ...IDLE, waitingSince }], dones: [ENDED] });
+    const hub = fakeHub({ takes: [{ ...PASS, waitingSince }], dones: [ENDED] });
     const { ran } = await runMail(github, wake(), host, hub.hub);
     expect(ran).toEqual(STAGE_1);
     expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "pass" }) } });
@@ -806,6 +811,16 @@ describe("triage-manager with a judge", () => {
     expect(mailed).toHaveLength(1);
   });
 
+  test("a manager whose judge is still out within its deadline stays up and polls, even while CI runs", async () => {
+    const { host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
+    const judging = { ...IDLE, request: hubRequest(JUDGED), reviewers: [JUDGE] };
+    const hub = fakeHub({ takes: [judging, judging], dones: [{ outcome: "more", wait: true }, ENDED] });
+    const { passes, ran } = await runMail(github, wake(), host, hub.hub, [], true, hurried());
+    expect(passes).toBe(2);
+    expect(ran).toContain("poll");
+    expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, true]);
+  });
+
   test("a pass that mailed its judge and answers more runs the next pass, which ends", async () => {
     const { host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }, IDLE], dones: [MORE, ENDED] });
@@ -864,7 +879,7 @@ describe("triage-manager with a judge", () => {
     expect(green.writes).toContainEqual(POSTED_REVIEW);
   });
 
-  test("a stored verdict on a head whose CI runs again on the same commit waits for CI instead of being posted, and the manager does not end", async () => {
+  test("a stored verdict on a head whose CI runs again on the same commit waits for CI instead of being posted, and the manager ends", async () => {
     const pack: CheckPack = { ...JUDGED, actions: { ...JUDGED.actions, pass: [{ do: "approve" }] } };
     const request = hubRequest(pack);
     const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail(request)).content).rules);
@@ -875,7 +890,20 @@ describe("triage-manager with a judge", () => {
     expect(outputs["evaluateRules"]).toMatchObject({ waiting: true });
     expect(writes).not.toContainEqual(JUDGE_POSTED);
     expect(writes).not.toContainEqual(POSTED_REVIEW);
-    expect(doneBody(hub.calls)["wait"]).toBe(true);
+    expect(doneBody(hub.calls)).toMatchObject({ wait: false, reviewers: [{ ...JUDGE, result: verdict }] });
+  });
+
+  test("a judge's report on a head whose CI started running again posts the waiting state and ends, keeping the judgement for the pass after CI", async () => {
+    const pack: CheckPack = { ...JUDGED, actions: { ...JUDGED.actions, pass: [{ do: "approve" }] } };
+    const request = hubRequest(pack);
+    const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail(request)).content).rules);
+    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "in_progress", conclusion: null }] });
+    const hub = fakeHub({ takes: [judgeReported(verdict, request)], dones: [ENDED] });
+    const { outputs } = await runMail(github, wake(), host, hub.hub);
+    expect(outputs["evaluateRules"]).toMatchObject({ waiting: true });
+    expect(writes).toContainEqual(inProgress("CI to finish"));
+    expect(writes).not.toContainEqual(JUDGE_POSTED);
+    expect(doneBody(hub.calls)).toMatchObject({ wait: false, reviewers: [{ ...JUDGE, result: verdict }] });
   });
 
   test("a manager whose clock runs out while CI runs on a judge policy deploys no judge, and posts its verdict with every Do held", async () => {
