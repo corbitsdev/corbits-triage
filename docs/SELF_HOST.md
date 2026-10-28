@@ -261,6 +261,9 @@ sign-in page, and an email and password sign-up is sent a link to verify its
 address, valid for an hour. Until it opens the link it sees only **Verify your
 email**, with **Resend link** (once a minute) and **Sign out**. Existing
 unverified accounts see the same screen once email is set up.
+With email set up, a workspace's owners and admins are also emailed when its
+pull requests stop reaching Triage, and again once they reach it
+(`TRIAGE_STALLED_AFTER_MS` under [Triage tuning](#triage-tuning)).
 
 | Variable | Value |
 | --- | --- |
@@ -290,6 +293,7 @@ All optional; the defaults suit most installs.
 | `TRIAGE_RECONCILE_INTERVAL_MS` | 300000 | How often the hub re-queues open pull requests whose latest commit has no verdict. |
 | `TRIAGE_MAX_IN_FLIGHT` | 5 | Pull request heads a workspace may have queued or running at once. |
 | `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
+| `TRIAGE_STALLED_AFTER_MS` | 300000 | How long a pull request may wait for Triage to start before the hub raises the workspace's alarm: the `triage_stalled` log line, a notice in the portal, and, with [email](#email) set up, one email to the workspace's owners and admins; `triage_stall_cleared` and a second email follow once Triage starts a pull request again. Checked on each reconcile pass. |
 | `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run, at most four times this after the first. A new commit, an opened, reopened or ready pull request, an approval or a change request waits only 3 seconds. Must stay below 150000. |
 
 ### Hub and sidecars

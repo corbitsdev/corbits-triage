@@ -509,6 +509,21 @@ any other tenant or an unknown sender.
   failed on that pass's head, which is retried with backoff; a recorded verdict settles its head as
   a pr-triage run's does. Triage again can queue a head again as soon as its
   manager has reported done, or went away, since it was queued.
+  The same pass watches each workspace's liveness (`createTriageLiveness`,
+  `apps/hub/src/triage-liveness.ts`). It reads when a manager last took a
+  pull request (the newest `claimedAt` or pass `takenAt` on the workspace's
+  claims), then the oldest pull request queued after that which still waits:
+  a pull request mail recorded that no pass has taken, or a triage state row
+  still `queued`, or failed because its mail found no listener or did not
+  go out. Once that one waited past `TRIAGE_STALLED_AFTER_MS` (five minutes
+  by default) the workspace is stalled: the hub logs `triage_stalled`, the
+  workflow versions route carries `stalled`, which the portal shows on every
+  page and in Settings → Triage, and with SMTP set up the workspace's owners
+  and admins with a verified address get one email. When a manager takes a
+  pull request again, the hub logs `triage_stall_cleared` and emails them
+  once more. Without SMTP the hub logs `triage_stall_not_emailed` once. The
+  alarm lives in process, so a restart on a stalled workspace raises it
+  again on its first pass.
   Approving a held Do of a manager's verdict reads the Do from the recorded
   verdict and sends it with the mirror request its pass kept; a Do the run's
   newer verdict no longer holds answers `verdict_superseded`.
