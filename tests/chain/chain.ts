@@ -1,6 +1,8 @@
 // The live chain from a webhook to the pull request: the hub, the listener, one manager per pull request and the judge,
 // each on a local sidecar, against a fake GitHub and a stub decision model. Each scenario is a test file of its own,
-// which starts this stack for itself, so scenarios run at once and none sees another's runs.
+// which starts this stack for itself, so scenarios run at once and none sees another's runs. Importing this module
+// registers the stack's hooks, so files must run isolated (`bun run test:chain`, or one file at a time): files that
+// share one module registry share the first file's stack.
 import { afterAll, beforeAll, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
