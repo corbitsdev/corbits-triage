@@ -22,7 +22,7 @@ function ModelGap({ show }: { show: boolean }) {
   if (!show) return null;
   return (
     <p className="help" role="status">
-      This policy needs a model before its judgement rules can run. <Link to="/code-review#decision-model">Add one on the Code review page</Link>.
+      This policy needs a model before its judgement rules can run. <Link to="/settings/triage">Add one in Settings</Link>.
     </p>
   );
 }

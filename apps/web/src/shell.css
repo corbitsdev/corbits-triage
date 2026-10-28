@@ -91,7 +91,7 @@
 :is(.inbox, .repos) .lh-top { display: flex; align-items: baseline; gap: 10px; }
 :is(.inbox, .repos) .lh-top h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 :is(.inbox, .repos) .lh-top .n { font: 700 13px var(--mono); }
-:is(.inbox, .repos, .code-review) .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); flex: none; }
+:is(.inbox, .repos) .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); flex: none; }
 :is(.inbox, .repos) .dot.ready { background: var(--green); }
 :is(.inbox, .repos) .dot.blocked { border-radius: 2px; background: var(--charcoal); }
 :is(.inbox, .repos) .dot.live { animation: live-pulse 1.4s ease-in-out infinite; }

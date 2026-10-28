@@ -41,18 +41,15 @@ How to use the portal, screen by screen, is in the
   the description, and folded rows for the linked issue, the changed files and
   the rules that passed (**Checked and fine**). A bar at the bottom offers the
   next step; merging from the portal is pinned to the commit Triage checked.
-  Without a decision model, a card at the top links to the Code review page to add one.
-- **Code review**: one triaged repository at a time, picked from a switcher
-  with search and the recent ones, its rules as switches under Checks, Judging
-  and Code review, and a form for a new judge rule. Changes collect in a tray
-  that previews them and opens one pull request against the policy file; the
-  page shows that pull request until it merges. Below, for every repository:
-  the decision model, the code review provider's key and where reviews run.
+  Without a decision model, a card at the top links to Settings → Triage to add one.
 - **Repositories**: per repository, the triage switch and **Triage open pull
-  requests again**, its policy file read back as sentences, the actions Triage
-  takes on its own, and outcomes before and after Triage.
-- **Settings**: Triage (sources, policy files, and whether Triage takes the
-  actions each policy file names on its own), people and invitations, the account,
+  requests again**, its policy file read back as sentences, where code review
+  runs when the server has no place for it (the policy file turns code review
+  on), the actions Triage takes on its own, and outcomes before and after
+  Triage.
+- **Settings**: Triage (sources, policy files, the decision model key, and
+  whether Triage takes the actions each policy file names on its own), Code review (the
+  provider's key and where reviews run), people and invitations, the account,
   and each host's listener version for support. Roles and grants change only through
   the hub routes.
 
@@ -434,7 +431,7 @@ most agreed-on first. It is separate from the verdict and optional.
 
 A repository's policy file turns it on with its `code-review` block, which
 also says whose pull requests (`for`) and which verdicts and paths (`when`) it
-reviews. It needs an Anthropic key saved on the Code review page, and each
+reviews. It needs an Anthropic key saved under Settings → Code review, and each
 reviewed commit is billed to that Anthropic account. A commit is reviewed once
 the rules that fail a pull request without the decision model have passed, or
 whatever they say with `when: { rules: any }`; drafts are not reviewed.
@@ -443,8 +440,9 @@ A diff over 100,000 characters is cut; the review says how much it read and
 names the files it left out.
 
 Each review checks out the pull request's code, so it runs in an isolated
-place of its own; while the server has none, the Code review page says so
-and lists the places this server knows and how to set each up ([provisioners](provisioners/README.md)).
+place of its own; while the server has none, the repository page links
+Settings → Code review, which lists the places this server knows and how to
+set each up ([provisioners](provisioners/README.md)).
 Findings show in the reading pane, and Triage posts the review with its
 verdict: on GitHub as one review from the Triage App, inline where the diff
 shows the lines; on Bitbucket Data Center as a comment per finding the diff

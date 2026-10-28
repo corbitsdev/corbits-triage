@@ -131,7 +131,7 @@ function Where() {
 test("a judgement policy with no saved model says it needs a model", async () => {
   await mountSwitch(recommendedPack(REPO), undefined);
   expect(document.body.textContent).toContain("needs a model");
-  expect(document.querySelector("a")?.getAttribute("href")).toBe("/code-review#decision-model");
+  expect(document.querySelector("a")?.getAttribute("href")).toBe("/settings/triage");
 });
 
 test("the same policy with a saved model shows no model prompt", async () => {

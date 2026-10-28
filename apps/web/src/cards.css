@@ -54,30 +54,3 @@
   .settings .sentence { flex-wrap: wrap; }
   .settings .sentence .txt { flex-basis: auto; }
 }
-
-/* Code review: one repository's rules as switches, the tray that opens their pull request, and the settings every repository shares */
-.code-review .repo-switch { width: fit-content; margin: 16px 0 4px; }
-.code-review [data-slot="command-palette-inline-field"] { display: flex; align-items: center; gap: 8px; }
-.code-review [data-slot="command-palette-inline-results"] { left: 0; right: auto; }
-.code-review .repo-switch-btn { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; font: inherit; font-size: 15px; color: inherit; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); cursor: pointer; }
-.code-review .repo-switch-btn:focus-visible { outline: 0; box-shadow: var(--focus); }
-.code-review [data-slot="command-palette-input"] { height: 38px; padding: 0 10px; font-size: 15px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
-.code-review [data-slot="command-palette-input"]:focus { border-color: var(--ink); box-shadow: var(--focus); }
-.code-review .rule { border-bottom: 1px solid var(--rule); }
-.code-review .rule .sentence { border-bottom: 0; }
-.code-review .rule.off .txt { color: var(--ink-mute); }
-.code-review .rule .help { margin: 0 0 10px; }
-.code-review .ask { display: grid; gap: 6px; margin: 0; padding: 0 0 12px; border: 0; font-size: 13px; }
-.code-review .ask label { display: flex; align-items: center; gap: 6px; }
-.code-review :is(.ask, .judge-form, .tray) .acts { display: flex; flex-wrap: wrap; gap: 8px; }
-.code-review .judge-form { display: grid; gap: 8px; margin-top: 16px; }
-.code-review .judge-form .preview { margin: 0; font-weight: 600; }
-.code-review .tray { position: sticky; bottom: 12px; z-index: 1; max-height: 45vh; overflow: auto; margin-top: 24px; padding: 14px 16px 16px; font-size: 14px; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
-.code-review .tray ul { margin: 8px 0; padding-left: 18px; }
-.code-review .tray .acts { margin-top: 12px; }
-.code-review .file-pair { margin-top: 8px; }
-.code-review .file-pair summary { cursor: pointer; font-size: 13px; }
-.code-review .file-text { max-height: 240px; margin: 4px 0 8px; padding: 8px; overflow: auto; white-space: pre-wrap; font: 12px/1.4 var(--mono); background: var(--fill); }
-.code-review .for-all { margin: 48px 0 0; font-size: 20px; }
-.code-review .on-fail { display: block; font-size: 12px; color: var(--ink-mute); }
-.code-review .txt .pending { margin-left: 8px; vertical-align: middle; }

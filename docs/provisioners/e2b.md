@@ -1,6 +1,6 @@
 # E2B provisioner
 
-`packages/provisioner-e2b` runs each sidecar in an [E2B](https://e2b.dev) sandbox of its own, a microVM in E2B's cloud, and declares `isolation:workload` and `network:outbound`. The hub registers it after [Docker](docker.md) when `E2B_API_KEY` is set, so it suits a hub with no Docker, such as one on Railway. In the Code review page's **Where it runs** it is **E2B sandboxes**; code review uses the first ready place in the order shown there, so E2B is used only when no Docker place is ready, and a review waits on E2B when E2B is full.
+`packages/provisioner-e2b` runs each sidecar in an [E2B](https://e2b.dev) sandbox of its own, a microVM in E2B's cloud, and declares `isolation:workload` and `network:outbound`. The hub registers it after [Docker](docker.md) when `E2B_API_KEY` is set, so it suits a hub with no Docker, such as one on Railway. In Settings → Code review → **Where it runs** it is **E2B sandboxes**; code review uses the first ready place in the order shown there, so E2B is used only when no Docker place is ready, and a review waits on E2B when E2B is full.
 
 ## Set up
 
@@ -20,7 +20,7 @@
    E2B_API_KEY=e2b_your_key
    ```
 
-5. Open the Code review page. **E2B sandboxes** says **Ready**, or **In use** when no Docker place comes before it. If it says **Failing**, the reason under it, shown to admins, says what to fix; the hub also logs it as `e2b_sidecars_off`. `e2b_sidecars_tended` says how many leftover sandboxes it removed.
+5. Open Settings → Code review. **E2B sandboxes** says **Ready**, or **In use** when no Docker place comes before it. If it says **Failing**, the reason under it, shown to admins, says what to fix; the hub also logs it as `e2b_sidecars_off`. `e2b_sidecars_tended` says how many leftover sandboxes it removed.
 
 ## Lifetime
 

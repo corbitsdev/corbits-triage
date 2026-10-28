@@ -13,7 +13,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useSession } from "../lib/session.tsx";
-import { CheckIcon, GearIcon, InboxIcon, RepoIcon, ReviewIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, GearIcon, InboxIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
   const { snapshot, warn } = usePortal();
@@ -121,7 +121,6 @@ function triageList(path: string): boolean {
 
 function roomOf(path: string, pullPage: boolean) {
   if (path.startsWith("/settings")) return "settings";
-  if (path.startsWith("/code-review")) return "review";
   if (path.startsWith("/repositories")) return "repos";
   if (pullPage) return "pr";
   if (triageList(path)) return "inbox";
@@ -139,8 +138,8 @@ export default function Layout({ children }: { children: ReactNode }) {
   const pullPage = path.startsWith("/triage/pr/") || path.startsWith("/prs/");
   const room = roomOf(path, pullPage);
   const triageActive = room === "inbox" || room === "pr";
-  // Only settings, code review and the pull request page sit in the stage card; every other page draws its own inset panels.
-  const ownPanels = room !== "settings" && room !== "review" && room !== "pr";
+  // Only settings and the pull request page sit in the stage card; every other page draws its own inset panels.
+  const ownPanels = room !== "settings" && room !== "pr";
   const stageClass = room === "pr" ? "stage has-sliver" : "stage";
 
   useEffect(function markBody() {
@@ -165,10 +164,6 @@ export default function Layout({ children }: { children: ReactNode }) {
           Triage
           {openPullsUnanswered ? null : <span className="n">{needsYou}</span>}
         </Link>
-        <Link className="nav-a" to="/code-review" aria-current={room === "review" ? "true" : undefined}>
-          <ReviewIcon />
-          Code review
-        </Link>
         <span className="grow" />
         <WorkspaceSwitcher />
         <UserBlock />
@@ -182,10 +177,6 @@ export default function Layout({ children }: { children: ReactNode }) {
         <NavLink to="/" className={triageActive ? "active" : undefined}>
           <InboxIcon />
           Triage
-        </NavLink>
-        <NavLink to="/code-review">
-          <ReviewIcon />
-          Review
         </NavLink>
         <NavLink to="/repositories">
           <RepoIcon />

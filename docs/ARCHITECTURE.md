@@ -225,9 +225,9 @@ GitHub, Bitbucket DC ──webhook──► Hub ◄──── portal (/api)
   stock's plugin registry selects for it under the workspace's placement
   policies, or null, and lists every place the hub's provisioner packages
   describe (`DOCKER_PLACE`, `DOCKER_REMOTE_PLACE`, `E2B_PLACE`, `RAILWAY_PLACE`) with the state the hub
-  found at boot, for the Code review page. The hub's own machine is never
+  found at boot, for Settings → Code review. The hub's own machine is never
   one. While it is null **Review again** refuses (`no_isolated_place`),
-  nothing is mailed, and the Code review page says a place is needed.
+  nothing is mailed, and the repository page links Settings → Code review.
 - **Portal** (`apps/web`): owns setup. It writes the tenant, credentials and
   inference offerings over stock hub routes. Its build bundles the workflow
   sources, which the hub publishes and deploys (see the listener below). It
@@ -898,7 +898,8 @@ operation has one implementation.
 A repository's policy file turns code review on with its `code-review` block,
 and **Review again** asks for one whatever the file says; both need a code
 review provider's key. A
-workspace runs one provider, the one whose key it stores on the Code review page
+workspace runs one provider, the one whose key it stores in Settings → Code
+review
 (`CODE_REVIEW_PROVIDERS` in `triage-contracts`, which lists Anthropic). The
 manager deploys the code review workflow in a sandbox and posts its result. The
 hub attaches the review request to a pull request mail whose `codeReview` is on, which the policy
@@ -920,18 +921,6 @@ folder. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file".
-
-The portal's Code review page edits a repository's policy file without its
-text: it reads the file through the policy and policy-file reads, keeps a
-person's switches as a list of `PolicyPatchChange`s in the page, previews them
-through `POST …/policy/patch` with `preview` and then the policy preview route
-on the file it returns, and opens one pull request with the batch through the
-same patch route. The open policy pull request comes from
-`GET …/policy/upgrades`, which the page polls until it merges, then reads the
-policy again. While it is open, the policy-file read carries that branch's file
-(`pull.text`); the page reads it through the policy preview route and shows its
-switches from it, since the patch route applies a batch to that branch, and
-marks each rule that differs from the default branch.
 
 Beside the model steps, one step runs a tool and keeps what it says, as structured
 findings (source, rule, path, line, message, severity, fix when the tool gives

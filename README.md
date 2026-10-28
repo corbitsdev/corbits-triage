@@ -9,7 +9,7 @@ identity, grants, credentials, runs and audit.
 
 Nothing runs by default. Setup asks for a host connection (a GitHub App or
 Bitbucket Data Center) and nothing else. A decision model is not a hub
-variable, and triage does not start until one is saved on the Code review page.
+variable, and triage does not start until one is saved in Settings.
 
 ## Get started
 
@@ -45,14 +45,12 @@ Or by hand:
 2. **Connect GitHub.** Sign up; the portal shows **Set up Triage**: create the
    GitHub App, choose repositories, then open Repositories
    ([Set up in the portal](docs/SELF_HOST.md#set-up-in-the-portal)). Setup does
-   not ask for a decision model. Save one on the **Code review** page
+   not ask for a decision model. Save one in Settings → Triage
    ([decision model](docs/DECISION_MODEL.md)); triage starts once it is saved.
 3. **Add a policy file.** Commit `.corbits-triage.yml` to the repository's
    default branch, press **Start a policy file** in the portal to open a pull
    request with starter rules, or give your coding agent the Configure Prompt
-   inside the repository. Change rules, judging and code review later from the
-   portal's **Code review** page, which opens a pull request for each batch.
-   The format is in
+   inside the repository. The format is in
    [Policy file](docs/PRODUCT.md#policy-file).
 
    **Configure Prompt**
