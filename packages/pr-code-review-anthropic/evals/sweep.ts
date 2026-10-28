@@ -138,18 +138,19 @@ export function scoreCutoff(replayed: readonly Replayed[], cutoff: Cutoff): Swee
   }
   const comments = scored.reduce((total, s) => total + s.posted.length, 0);
   const falseAlarms = scored.reduce((total, s) => total + s.score.falseAlarms, 0);
+  const judged = comments - scored.reduce((total, s) => total + s.score.ignored, 0);
   const caught = bugs.filter((bug) => bug.caught).length;
   const clean = scored.filter((s) => s.key.kind === "clean");
   return {
     cutoff,
     comments,
     falseAlarms,
-    precision: comments === 0 ? null : (comments - falseAlarms) / comments,
+    precision: judged === 0 ? null : (judged - falseAlarms) / judged,
     caught,
     bugs: bugs.length,
     recall: caught / bugs.length,
     byReach: Object.fromEntries(REACHES.map(reach)) as Record<Reach, string>,
-    cleanSilent: clean.filter((s) => s.posted.length === 0).length,
+    cleanSilent: clean.filter((s) => !s.score.flaggedClean).length,
     clean: clean.length,
     commentsPerPr: comments / scored.length,
     prsCommented: scored.filter((s) => s.posted.length > 0).length,

@@ -7,21 +7,6 @@
     {
       "id": "b1",
       "severity": "medium",
-      "category": "reliability",
-      "difficulty": "easy",
-      "sites": [
-        {
-          "path": "src/API/Services/DeviceMonitoringService.cs",
-          "start": 184,
-          "end": 187
-        }
-      ],
-      "reach": "diff",
-      "evidence": "OperationCanceledException is swallowed by the generic catch (Exception ex) block. When the cancellation token fires during SendPingAsync (e.g., on service shutdown), the exception is caught here, logged as a spurious 'Unexpected error pinging' warning, and false is returned. Cancellation is not propagated to the caller. A catch (OperationCanceledException) { throw; } clause should be added before the generic catch."
-    },
-    {
-      "id": "b2",
-      "severity": "medium",
       "category": "correctness",
       "difficulty": "hard",
       "sites": [
@@ -33,12 +18,26 @@
       ],
       "reach": "repo",
       "evidence": "Installing iputils-ping does not enable .NET's Ping.SendPingAsync() to work in a non-root container. .NET's Ping class creates ICMP sockets directly using the OS socket API; it never invokes the system ping binary. The iputils-ping package only provides the /bin/ping binary (which has a setuid bit). Whether non-root .NET ICMP works on Linux is determined by CAP_NET_RAW capability or the process GID falling within /proc/sys/net/ipv4/ping_group_range. The package installation is therefore ineffective for the stated purpose."
+    }
+  ],
+  "ignored": [
+    {
+      "id": "i1",
+      "severity": "medium",
+      "category": "reliability",
+      "sites": [
+        {
+          "path": "src/API/Services/DeviceMonitoringService.cs",
+          "start": 184,
+          "end": 187
+        }
+      ],
+      "evidence": "OperationCanceledException is swallowed by the generic catch (Exception ex) block. When the cancellation token fires during SendPingAsync (e.g., on service shutdown), the exception is caught here, logged as a spurious 'Unexpected error pinging' warning, and false is returned. Cancellation is not propagated to the caller. A catch (OperationCanceledException) { throw; } clause should be added before the generic catch."
     },
     {
-      "id": "b3",
+      "id": "i2",
       "severity": "low",
       "category": "documentation",
-      "difficulty": "hard",
       "sites": [
         {
           "path": "src/API/Services/DeviceMonitoringService.cs",
@@ -46,14 +45,12 @@
           "end": 182
         }
       ],
-      "reach": "repo",
       "evidence": "The PingException log message instructs operators to install 'iputils-ping', but that package does not fix .NET's ability to send ICMP from a non-root process (see Dockerfile finding). The actionable fix is adding CAP_NET_RAW capability to the container (cap_add: [NET_RAW] in docker-compose). This guidance will mislead operators who hit the PingException in production."
     },
     {
-      "id": "b4",
+      "id": "i3",
       "severity": "medium",
       "category": "reliability",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/API/Services/DeviceMonitoringService.cs",
@@ -61,14 +58,12 @@
           "end": 180
         }
       ],
-      "reach": "repo",
       "evidence": "After PlatformNotSupportedException is caught once and the single warning is emitted, every subsequent PingDeviceAsync call silently returns false for every device. All monitored devices will be marked offline with no further indication of why. Operators may not notice the single warning-level log entry, especially if it is buried in startup output. The service should either stop (since monitoring is fundamentally broken), or the log should repeat at a reduced rate so the problem remains visible."
     },
     {
-      "id": "b5",
+      "id": "i4",
       "severity": "medium",
       "category": "reliability",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "docker-compose.yaml",
@@ -76,14 +71,12 @@
           "end": 20
         }
       ],
-      "reach": "repo",
       "evidence": "The PR adds iputils-ping to the Dockerfile with the intent of enabling ICMP ping, but docker-compose.yaml has no cap_add: [NET_RAW] entry for the api service. The container runs as non-root appuser (via gosu). Without CAP_NET_RAW or a permissive ping_group_range kernel setting, .NET's Ping will still fail with a PingException (SocketException: Operation not permitted) on a default Linux host, making the entire feature non-functional in the deployed container."
     },
     {
-      "id": "b6",
+      "id": "i5",
       "severity": "low",
       "category": "testing",
-      "difficulty": "easy",
       "sites": [
         {
           "path": "src/API/Services/DeviceMonitoringService.cs",
@@ -91,7 +84,6 @@
           "end": 178
         }
       ],
-      "reach": "repo",
       "evidence": "The new unsupported-platform path and once-per-service-lifetime logging guard are not covered by the existing DeviceMonitoringService tests. Because ping behavior is instantiated directly, this branch can regress unnoticed; consider adding a testable abstraction or another way to exercise PlatformNotSupportedException and the Interlocked guard."
     }
   ],

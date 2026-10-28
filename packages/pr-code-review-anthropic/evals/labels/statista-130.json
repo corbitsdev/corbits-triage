@@ -1,0 +1,38 @@
+{
+  "id": "statista-130",
+  "source": "reviewbench",
+  "golden": "golden/Serapieum-of-alex_statista_130-31bd61f4.json",
+  "verdict": "clean",
+  "bugs": [],
+  "ignored": [],
+  "rejected": [
+    {
+      "was": "pyproject.toml:6-6: The license classifier 'License :: OSI Approved :: GNU General Public License v3 (GPLv3)' was changed to 'License :: OSI Approved :: MIT License'. However, the `license` field was changed from `GPL-3.0-or-later` to `MIT`. The classifier should be consistent with the license identifier. The correct SPDX identifier for the MIT license is just `MIT`, so the classifier should be `License :: OSI Approved :: MIT License` and the license field `license = \"MIT\"`. The text field for the license should be changed to file = \"LICENSE.md\" and the license key should be `license = \"MIT\"`.",
+      "why": "The finding claims inconsistency between the classifier and license field, but the PR already makes them consistent: `license = {text = \"MIT\"}` and `\"License :: OSI Approved :: MIT License\"` are fully aligned. The secondary suggestion to use `{file = \"LICENSE.md\"}` instead of `{text = \"MIT\"}` is a sub-threshold style preference — both forms are equally valid per PEP 621."
+    },
+    {
+      "was": "LICENSE.md:3-3: The copyright year is set to 2026, which is in the future. It should be the year of creation or last significant update. It is conventional to use the current year or a range of years (e.g., '2023-2024'). Using a future year might be legally problematic or simply a typo that should be corrected.",
+      "why": "The finding claims 2026 is a future year, but the current date is 2026-05-19, making 2026 the correct current year. The copyright year is accurate and not a typo."
+    },
+    {
+      "was": "docs/LICENSE.md:3-3: The copyright year is set to 2026, which is in the future. It should be the year of creation or last significant update. It is conventional to use the current year or a range of years (e.g., '2023-2024'). Using a future year might be legally problematic or simply a typo that should be corrected.",
+      "why": "Same as Finding 2 — the current date is 2026-05-19, so 2026 is the current year, not a future year. The copyright year is accurate."
+    },
+    {
+      "was": "pyproject.toml:21-21: The license classifier for GPLv3 was removed, but it's being replaced with a generic 'License :: OSI Approved :: MIT License'. The previous license was 'GPL-3.0-or-later', which is also reflected in the `license` key change. The new `license` key is just 'MIT'. While the classifier is technically correct, PyPI also supports a more specific classifier which could be used. However, the main issue is the inconsistency in `license` field which should be `license = \"MIT\"` and `license-files = [\"LICENSE.md\"]` instead of `{text = \"MIT\"}`.",
+      "why": "The finding claims inconsistency in the `license` field, but `license = {text = \"MIT\"}` and the classifier `\"License :: OSI Approved :: MIT License\"` are fully consistent. The suggestion to use `license = \"MIT\"` with `license-files = [\"LICENSE.md\"]` is a PEP 621 style alternative, not a correction of any inconsistency. Both `{text = \"MIT\"}` and `{file = \"LICENSE.md\"}` are valid per PEP 621; this is sub-threshold style preference."
+    },
+    {
+      "was": "pyproject.toml:7-7: The `license` identifier has been updated from `GPL-3.0-or-later` to `MIT`, but the broader context of this change has not been verified. If any external dependencies, contributors, or integrations were under the previous license, switching to MIT may conflict with their terms. A thorough audit of compatibility should be conducted.",
+      "why": "This is a generic boilerplate warning that could apply to any project changing licenses. It identifies no specific dependency, contributor, or integration that conflicts. All runtime dependencies (numpy, matplotlib, pandas, scikit-learn, scipy, loguru) are permissively licensed (BSD/MIT), so there is no concrete compatibility issue to address."
+    },
+    {
+      "was": "README.md:126-126: The license reference in the README has been updated to MIT. This change may require legal team review, especially if the project was previously distributed under GPL-3.0, as contributors may have contributed code under the assumption it would remain GPL-licensed. There is a risk of violating GPL contributors’ rights without explicit agreement.",
+      "why": "The finding raises a generic concern about relicensing with multiple contributors, but the git history shows this is effectively a single-author project (Mostafa Farrag, 247/272 commits; remaining are automated bots holding no copyright). The copyright holder is the one making this change, so there is no real contributor consent issue."
+    },
+    {
+      "was": "docs/LICENSE.md:1-21: The license file replacements eliminate the prior GNU General Public License content and replace it with the MIT license. This raises concerns about distribution and compliance with prior GPL terms, like conveying requirements for the source code. This transition might legally require consent from all previous contributors or stakeholders.",
+      "why": "Same basis as Finding 6: this is a generic legal concern about relicensing from GPL to MIT requiring contributor consent. The git history confirms this is a single-author project (Mostafa Farrag holds essentially all copyright; remaining commits are from automated bots with no copyright claims). The copyright holder is making this change themselves, so no third-party contributor consent is required."
+    }
+  ]
+}

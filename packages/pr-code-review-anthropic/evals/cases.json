@@ -1,5 +1,12 @@
 [
   {
+    "id": "cli-microsoft365-7191",
+    "repo": "pnp/cli-microsoft365",
+    "number": 7191,
+    "baseSha": "7182dbb5a5bbf283e890fa3774bbbd8d78573f59",
+    "headSha": "a44ec57153539d3b87c3d8fe819575574b2dee9e"
+  },
+  {
     "id": "crabtrap-15",
     "repo": "brexhq/CrabTrap",
     "number": 15,
@@ -35,6 +42,13 @@
     "headSha": "e7705d269ea374d49e7999bdb8bc42e9480a6b37"
   },
   {
+    "id": "statista-130",
+    "repo": "Serapieum-of-alex/statista",
+    "number": 130,
+    "baseSha": "39d775aed9c2f48cb7d2137c3a4ac8ca5cc22d71",
+    "headSha": "31bd61f4dbe9dae542ad9eda41b62d982d20da74"
+  },
+  {
     "id": "statswales-frontend-626",
     "repo": "Marvell-Consulting/statswales-frontend",
     "number": 626,
@@ -47,5 +61,12 @@
     "number": 135,
     "baseSha": "ea0385c7349bbaee04456c57bf0ec3f217d63532",
     "headSha": "16a54f0f85a9091f220418850eac6b4122782be5"
+  },
+  {
+    "id": "wspulse-client-ts-18",
+    "repo": "wspulse/client-ts",
+    "number": 18,
+    "baseSha": "bc83e29d0253c3544674d151a4fccefacb4b4703",
+    "headSha": "436a4dea148a3c23668c41d435849d21598e6367"
   }
 ]

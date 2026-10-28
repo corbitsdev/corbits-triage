@@ -6,21 +6,6 @@
   "bugs": [
     {
       "id": "b1",
-      "severity": "medium",
-      "category": "reliability",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "internal/admin/pg_audit_reader.go",
-          "start": 370,
-          "end": 395
-        }
-      ],
-      "reach": "repo",
-      "evidence": "The `query` method (called by both `QuerySummaries` and `Query`) creates its own `context.Background()` and ignores the request context passed by callers. `Count` correctly accepts and uses a `context.Context` parameter, so HTTP request cancellation and deadlines apply to it. But `QuerySummaries` runs outside any deadline: if a client disconnects mid-flight, the database query continues until completion, holding a pgxpool connection. Under load, this can exhaust the connection pool."
-    },
-    {
-      "id": "b2",
       "severity": "low",
       "category": "correctness",
       "difficulty": "medium",
@@ -35,7 +20,7 @@
       "evidence": "`Count` and `QuerySummaries` execute as two independent, non-transactional queries. Any row inserted between the two calls means `total` is understated relative to what `QuerySummaries` sees, causing `has_more` to read `false` on a page that is actually the last full page (one page boundary will appear to have no continuation). Conversely, rows deleted between the calls (e.g., by a retention job) make `total` overstated, so `has_more` stays `true` after the real last page, causing the client to request an empty next page. Wrapping both in a repeatable-read transaction or using a single query with a window function (`COUNT(*) OVER ()`) would fix this."
     },
     {
-      "id": "b3",
+      "id": "b2",
       "severity": "medium",
       "category": "correctness",
       "difficulty": "easy",
@@ -50,7 +35,7 @@
       "evidence": "When `QuerySummaries` fails (i.e., the pgx `Query` call returns an error), `query` returns `nil`. The handler converts `nil` to `[]types.AuditEntry{}` and responds HTTP 200 with `{\"entries\":[], \"total\": N, \"has_more\": true}` — an empty entry list paired with a positive total and `has_more: true`. The UI will show zero rows but keep the \"Load more\" button active, looping forever. The nil return from `query` signals a DB error and should be converted to a 500 response, the same way a `Count` error already is."
     },
     {
-      "id": "b4",
+      "id": "b3",
       "severity": "medium",
       "category": "correctness",
       "difficulty": "easy",
@@ -65,7 +50,7 @@
       "evidence": "`toggleExpanded` calls `setExpandedId(rowId)` unconditionally, then checks `if (!entry.id || ...)` and returns early without setting `detailLoading[detailKey]`. When `entry.id` is absent (falsy), the row opens in expanded state, but no fetch is started and no loading/error UI is shown. `detailEntry` falls back to the summary `entry`, so all payload fields (headers, body) render as \"(empty)\". A user who expands such a row sees silently missing data with no indication of failure. The guard should be evaluated before `setExpandedId`, or an error state should be set when `entry.id` is missing."
     },
     {
-      "id": "b5",
+      "id": "b4",
       "severity": "low",
       "category": "correctness",
       "difficulty": "medium",
@@ -80,37 +65,7 @@
       "evidence": "`loadMore` appends `data.entries` to the current `entries` array (which may include SSE-injected entries) but advances `offset` by `limit` based on the previous API offset, not the current list length. If N entries arrived via SSE since the last fetch, the next `loadMore` call fetches at `offset + limit` — covering the same DB positions as some of the SSE-injected entries — and `setEntries` appends them without deduplication. The audit table can show duplicate rows for any entry that arrived both via SSE push and via the paginated API response."
     },
     {
-      "id": "b6",
-      "severity": "low",
-      "category": "maintainability",
-      "difficulty": "easy",
-      "sites": [
-        {
-          "path": "web/src/api/client.ts",
-          "start": 74,
-          "end": 74
-        }
-      ],
-      "reach": "repo",
-      "evidence": "`has_more` is declared optional (`has_more?: boolean`) in `AuditResponse` but is never read anywhere. `useAuditLog` computes `hasMore` independently as `entries.length < total`. The server-computed `has_more` (based on the actual entries returned from the same batch as `total`) is more reliable than the client-side recomputation, especially after SSE events adjust `entries` and `total` asymmetrically. Either consume `data.has_more` in the hook or remove the field from the interface to avoid the false impression that it is used."
-    },
-    {
-      "id": "b7",
-      "severity": "low",
-      "category": "testing",
-      "difficulty": "easy",
-      "sites": [
-        {
-          "path": "internal/admin/audit_integration_test.go",
-          "start": 146,
-          "end": 225
-        }
-      ],
-      "reach": "diff",
-      "evidence": "`TestAuditList_OmitsPayloadsAndReturnsTotal` does not verify the `has_more` field under paginated conditions (e.g., inserting more entries than the requested limit). The test inserts exactly 1 entry and requests `limit=10`, so `has_more` is trivially `false`. A case where `total > limit` would exercise the pagination math and catch the TOCTOU and `has_more` computation bugs described above."
-    },
-    {
-      "id": "b8",
+      "id": "b5",
       "severity": "low",
       "category": "correctness",
       "difficulty": "medium",
@@ -125,67 +80,7 @@
       "evidence": "The table row uses `rowId` as its key, which is constructed from `request_id`, `timestamp`, and the row `index`. A key based on a non-stable `index` is an anti-pattern in React. If the list is re-sorted or filtered, this can lead to unpredictable UI behavior and state management issues because React will reuse components for different data items."
     },
     {
-      "id": "b9",
-      "severity": "low",
-      "category": "maintainability",
-      "difficulty": "easy",
-      "sites": [
-        {
-          "path": "internal/admin/api.go",
-          "start": 314,
-          "end": 315
-        }
-      ],
-      "reach": "repo",
-      "evidence": "Nil entries when returned are replaced by an empty slice but should log a warning or debug message to aid diagnostics when this fallback occurs."
-    },
-    {
-      "id": "b10",
-      "severity": "low",
-      "category": "testing",
-      "difficulty": "easy",
-      "sites": [
-        {
-          "path": "internal/admin/audit_integration_test.go",
-          "start": 70,
-          "end": 74
-        }
-      ],
-      "reach": "diff",
-      "evidence": "The test `TestAudit_QueryFilter_PolicyID` does not validate precise matching of policies by adding multiple entries for a single policy, leading to a less stringent test."
-    },
-    {
-      "id": "b11",
-      "severity": "medium",
-      "category": "performance",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "internal/admin/api.go",
-          "start": 325,
-          "end": 325
-        }
-      ],
-      "reach": "repo",
-      "evidence": "count queries are very expensive, we shouldn't use this here, it probably will start to timeout over time. see [this](https://wiki.postgresql.org/wiki/Slow_Counting)"
-    },
-    {
-      "id": "b12",
-      "severity": "medium",
-      "category": "performance",
-      "difficulty": "easy",
-      "sites": [
-        {
-          "path": "internal/admin/api.go",
-          "start": 340,
-          "end": 340
-        }
-      ],
-      "reach": "diff",
-      "evidence": "rather than doing this, I'll just always query `limit+1`, removing one from the entries when returning to the UI and this will be len(entries) > limit, avoids slow total query and prevents one postgres"
-    },
-    {
-      "id": "b13",
+      "id": "b6",
       "severity": "high",
       "category": "correctness",
       "difficulty": "hard",
@@ -200,7 +95,7 @@
       "evidence": "This new lazy-load call makes expanded rows depend on GET /admin/audit/{id}, but that handler currently returns 503 before calling GetEntry when evalStore is nil (api.go:1046-1048), and startAdminAPI only wires evalStore when an LLM judge is configured (cmd/gateway/main.go:223-224). In deployments with the LLM judge disabled, list rows no longer include payloads and expanding a row cannot load them, so request/response details become inaccessible. The detail GET path should not require the eval store, or it should be wired independently of the eval runner."
     },
     {
-      "id": "b14",
+      "id": "b7",
       "severity": "medium",
       "category": "correctness",
       "difficulty": "hard",
@@ -213,27 +108,91 @@
       ],
       "reach": "repo",
       "evidence": "Caching a fetched detail forever can leave expanded rows with stale response data. Streaming responses are inserted first and then updated later via UpdateResponse after the body is consumed (internal/proxy/handler.go:1696-1715, pg_audit_reader.go:196-222); if an admin expands the row before that update finishes, the empty/partial detail is stored in entryDetails and subsequent expansions skip refetching because of this guard. Consider invalidating/refetching details for rows that may still be updated, or adding a refresh path after loading completes."
+    }
+  ],
+  "ignored": [
+    {
+      "id": "i1",
+      "severity": "medium",
+      "category": "reliability",
+      "sites": [
+        {
+          "path": "internal/admin/pg_audit_reader.go",
+          "start": 370,
+          "end": 395
+        }
+      ],
+      "evidence": "The `query` method (called by both `QuerySummaries` and `Query`) creates its own `context.Background()` and ignores the request context passed by callers. `Count` correctly accepts and uses a `context.Context` parameter, so HTTP request cancellation and deadlines apply to it. But `QuerySummaries` runs outside any deadline: if a client disconnects mid-flight, the database query continues until completion, holding a pgxpool connection. Under load, this can exhaust the connection pool."
     },
     {
-      "id": "b15",
+      "id": "i2",
+      "severity": "low",
+      "category": "maintainability",
+      "sites": [
+        {
+          "path": "web/src/api/client.ts",
+          "start": 74,
+          "end": 74
+        }
+      ],
+      "evidence": "`has_more` is declared optional (`has_more?: boolean`) in `AuditResponse` but is never read anywhere. `useAuditLog` computes `hasMore` independently as `entries.length < total`. The server-computed `has_more` (based on the actual entries returned from the same batch as `total`) is more reliable than the client-side recomputation, especially after SSE events adjust `entries` and `total` asymmetrically. Either consume `data.has_more` in the hook or remove the field from the interface to avoid the false impression that it is used."
+    },
+    {
+      "id": "i3",
       "severity": "low",
       "category": "testing",
-      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "internal/admin/audit_integration_test.go",
+          "start": 146,
+          "end": 225
+        }
+      ],
+      "evidence": "`TestAuditList_OmitsPayloadsAndReturnsTotal` does not verify the `has_more` field under paginated conditions (e.g., inserting more entries than the requested limit). The test inserts exactly 1 entry and requests `limit=10`, so `has_more` is trivially `false`. A case where `total > limit` would exercise the pagination math and catch the TOCTOU and `has_more` computation bugs described above."
+    },
+    {
+      "id": "i4",
+      "severity": "low",
+      "category": "maintainability",
       "sites": [
         {
           "path": "internal/admin/api.go",
-          "start": 312,
-          "end": 314
+          "start": 314,
+          "end": 315
         }
       ],
-      "reach": "repo",
-      "evidence": "The new maxAuditLogLimit cap is not covered by the added audit endpoint tests. Existing tests in this file exercise audit list filtering and payload omission, but none verify that an excessive limit is clamped or that the response reports the capped limit, so a regression could silently re-enable very large list responses."
+      "evidence": "Nil entries when returned are replaced by an empty slice but should log a warning or debug message to aid diagnostics when this fallback occurs."
     },
     {
-      "id": "b16",
+      "id": "i5",
       "severity": "low",
       "category": "testing",
-      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "internal/admin/audit_integration_test.go",
+          "start": 70,
+          "end": 74
+        }
+      ],
+      "evidence": "The test `TestAudit_QueryFilter_PolicyID` does not validate precise matching of policies by adding multiple entries for a single policy, leading to a less stringent test."
+    },
+    {
+      "id": "i6",
+      "severity": "medium",
+      "category": "performance",
+      "sites": [
+        {
+          "path": "internal/admin/api.go",
+          "start": 325,
+          "end": 325
+        }
+      ],
+      "evidence": "count queries are very expensive, we shouldn't use this here, it probably will start to timeout over time. see [this](https://wiki.postgresql.org/wiki/Slow_Counting)"
+    },
+    {
+      "id": "i7",
+      "severity": "medium",
+      "category": "performance",
       "sites": [
         {
           "path": "internal/admin/api.go",
@@ -241,7 +200,32 @@
           "end": 340
         }
       ],
-      "reach": "repo",
+      "evidence": "rather than doing this, I'll just always query `limit+1`, removing one from the entries when returning to the UI and this will be len(entries) > limit, avoids slow total query and prevents one postgres"
+    },
+    {
+      "id": "i8",
+      "severity": "low",
+      "category": "testing",
+      "sites": [
+        {
+          "path": "internal/admin/api.go",
+          "start": 312,
+          "end": 314
+        }
+      ],
+      "evidence": "The new maxAuditLogLimit cap is not covered by the added audit endpoint tests. Existing tests in this file exercise audit list filtering and payload omission, but none verify that an excessive limit is clamped or that the response reports the capped limit, so a regression could silently re-enable very large list responses."
+    },
+    {
+      "id": "i9",
+      "severity": "low",
+      "category": "testing",
+      "sites": [
+        {
+          "path": "internal/admin/api.go",
+          "start": 340,
+          "end": 340
+        }
+      ],
       "evidence": "The new has_more metadata is only tested for the false case. Since this expression drives pagination, add coverage with more matching rows than the requested limit (or a nonzero offset) to verify it returns true when another page exists."
     }
   ],

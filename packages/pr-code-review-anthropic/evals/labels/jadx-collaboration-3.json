@@ -37,21 +37,6 @@
     {
       "id": "b3",
       "severity": "high",
-      "category": "reliability",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
-          "start": 550,
-          "end": 550
-        }
-      ],
-      "reach": "repo",
-      "evidence": "`projectToLocalRepository` (and its callee `getProjectRenames`/`getProjectComments`) reads `context!!.args.codeData.renames` and `.comments` directly on the background thread. `localRepositoryToProject` (dispatched to the EDT via `uiRun`) writes those same fields via `setProjectRenames`/`setProjectComments`. Since multiple background threads can exist simultaneously (finding #1 — no serialization), concurrent reads on a background thread and writes on the EDT to these unsynchronized mutable fields constitute a data race."
-    },
-    {
-      "id": "b4",
-      "severity": "high",
       "category": "correctness",
       "difficulty": "medium",
       "sites": [
@@ -65,22 +50,7 @@
       "evidence": "`uiRun` delegates to `SwingUtilities.invokeLater` (asynchronous). Scheduling `localRepositoryToProject` inside `uiRun` means `pull()` returns — and the background thread exits — before the project state has actually been updated. If a new pull is triggered immediately afterwards (which is possible because no serialization exists), `projectToLocalRepository` in the new pull reads stale project renames/comments from before the previous pull's EDT update ran. The same problem applies to the equivalent block at the end of `push()` (lines 645–648)."
     },
     {
-      "id": "b5",
-      "severity": "low",
-      "category": "reliability",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
-          "start": 61,
-          "end": 63
-        }
-      ],
-      "reach": "repo",
-      "evidence": "`showError` (and `showInfo`) dispatch dialogs asynchronously via `invokeLater`. The background thread returns immediately after scheduling the error dialog, so a subsequent pull or push can start (and potentially show its own error) before the first dialog has even appeared on screen. This causes out-of-order dialogs and means the user may see an error for an operation they no longer regard as current. Previously, `JOptionPane.showMessageDialog` was blocking; the new async dispatch removes that back-pressure without any replacement synchronisation point."
-    },
-    {
-      "id": "b6",
+      "id": "b4",
       "severity": "medium",
       "category": "correctness",
       "difficulty": "hard",
@@ -93,12 +63,39 @@
       ],
       "reach": "repo",
       "evidence": "In `push()`, `projectToLocalRepository(localRepository)` is called on the background thread at the top of the retry loop, reading `codeData.renames/comments`. However, the previous iteration's `writeRemoteRepository` and script have already updated the remote, and any pending `localRepositoryToProject` from a previous pull (dispatched asynchronously to the EDT) may not have run yet. This makes the `localRepository` snapshot built from project state inconsistent with what was last pushed to the remote, potentially re-introducing already-resolved renames into the next write."
+    }
+  ],
+  "ignored": [
+    {
+      "id": "i1",
+      "severity": "high",
+      "category": "reliability",
+      "sites": [
+        {
+          "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
+          "start": 550,
+          "end": 550
+        }
+      ],
+      "evidence": "`projectToLocalRepository` (and its callee `getProjectRenames`/`getProjectComments`) reads `context!!.args.codeData.renames` and `.comments` directly on the background thread. `localRepositoryToProject` (dispatched to the EDT via `uiRun`) writes those same fields via `setProjectRenames`/`setProjectComments`. Since multiple background threads can exist simultaneously (finding #1 — no serialization), concurrent reads on a background thread and writes on the EDT to these unsynchronized mutable fields constitute a data race."
     },
     {
-      "id": "b7",
+      "id": "i2",
+      "severity": "low",
+      "category": "reliability",
+      "sites": [
+        {
+          "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
+          "start": 61,
+          "end": 63
+        }
+      ],
+      "evidence": "`showError` (and `showInfo`) dispatch dialogs asynchronously via `invokeLater`. The background thread returns immediately after scheduling the error dialog, so a subsequent pull or push can start (and potentially show its own error) before the first dialog has even appeared on screen. This causes out-of-order dialogs and means the user may see an error for an operation they no longer regard as current. Previously, `JOptionPane.showMessageDialog` was blocking; the new async dispatch removes that back-pressure without any replacement synchronisation point."
+    },
+    {
+      "id": "i3",
       "severity": "low",
       "category": "testing",
-      "difficulty": "easy",
       "sites": [
         {
           "path": "src/test/kotlin/uk/oshawk/jadx/collaboration/PluginTest.kt",
@@ -106,14 +103,12 @@
           "end": 33
         }
       ],
-      "reach": "diff",
       "evidence": "`PluginMockery.pull` and `push` are still populated with the `{ kotlin.concurrent.thread { this.pull() } }` menu-action lambdas, but no test calls them any more — tests now invoke `plugin.pull()` / `plugin.push()` directly. Consequently, the tests never exercise the actual menu-triggered code path (which spawns a background thread), so any threading defect in that path, including the missing serialization, goes completely untested."
     },
     {
-      "id": "b8",
+      "id": "i4",
       "severity": "low",
       "category": "reliability",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
@@ -121,14 +116,12 @@
           "end": 45
         }
       ],
-      "reach": "repo",
       "evidence": "`kotlin.concurrent.thread` creates non-daemon threads by default, so a long-running script or blocked conflict dialog can keep the JVM alive after the UI is closed. The background worker should be daemonized or shut down explicitly to avoid shutdown stalls."
     },
     {
-      "id": "b9",
+      "id": "i5",
       "severity": "low",
       "category": "reliability",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/main/kotlin/uk/oshawk/jadx/collaboration/Plugin.kt",
@@ -136,7 +129,6 @@
           "end": 54
         }
       ],
-      "reach": "diff",
       "evidence": "These shortcut handlers also create non-daemon threads via `kotlin.concurrent.thread`, so a blocked pull/push triggered from the keyboard can prevent JVM shutdown. Use a daemon executor thread or ensure the worker is shut down with the plugin lifecycle."
     }
   ],

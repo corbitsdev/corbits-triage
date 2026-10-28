@@ -20,25 +20,31 @@ export const REACHES: readonly Reach[] = ["diff", "repo", "intent"];
 export interface CaseScore {
   caught: string[];
   falseAlarms: number;
+  /** Findings that caught no bug but hit a true finding that is not a bug. */
+  ignored: number;
   flaggedClean: boolean;
 }
 
 /**
- * Each finding, in order, catches the first bug it hits that no earlier finding caught. A finding that catches none is a
- * false alarm, so one defect split into several findings scores one bug and the rest as false alarms.
+ * Each finding, in order, catches the first bug it hits that no earlier finding caught. A finding that catches none is
+ * ignored when it hits a true finding that is not a bug, else a false alarm, so one defect split into several findings
+ * scores one bug and the rest as false alarms. A clean case is flagged by any false alarm.
  */
 export function scoreCase(key: CaseKey, findings: readonly Finding[]): CaseScore {
   const caught = new Set<string>();
   let falseAlarms = 0;
+  let ignored = 0;
   for (const finding of findings) {
     const bug = key.bugs.find((candidate) => !caught.has(candidate.id) && candidate.sites.some((site) => hits(finding, site)));
     if (bug) caught.add(bug.id);
+    else if (key.ignored.some((site) => hits(finding, site))) ignored++;
     else falseAlarms++;
   }
   return {
     caught: key.bugs.filter((bug) => caught.has(bug.id)).map((bug) => bug.id),
     falseAlarms,
-    flaggedClean: key.kind === "clean" && findings.length > 0,
+    ignored,
+    flaggedClean: key.kind === "clean" && falseAlarms > 0,
   };
 }
 

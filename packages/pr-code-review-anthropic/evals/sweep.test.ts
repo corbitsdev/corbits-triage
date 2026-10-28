@@ -4,7 +4,7 @@ import { parseFindings } from "@corbits/pr-code-review/findings";
 import type { CaseKey } from "./cases.js";
 import { commentsOf, KEEP_ALL, scoreCutoff, type SavedOutputs } from "./sweep.js";
 
-const KEY: CaseKey = { id: "c", kind: "defect", bugs: [{ id: "b1", reach: "diff", sites: [{ path: "src/a.ts", start: 10, end: 10 }] }] };
+const KEY: CaseKey = { id: "c", kind: "defect", bugs: [{ id: "b1", reach: "diff", sites: [{ path: "src/a.ts", start: 10, end: 10 }] }], ignored: [] };
 
 function reply(findings: object[]): { reply: string } {
   return { reply: `\`\`\`json\n${JSON.stringify({ findings })}\n\`\`\`` };

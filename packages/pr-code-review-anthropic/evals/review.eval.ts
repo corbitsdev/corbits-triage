@@ -214,6 +214,7 @@ function summary(results: readonly CaseResult[], keys: readonly CaseKey[]) {
     bugsCaught: ratio(bugs.filter(isCaught).length, bugs.length),
     ...Object.fromEntries(REACHES.map(caughtOfReach)),
     falseAlarms: sum(results, (r) => r.falseAlarms ?? 0),
+    ignored: sum(results, (r) => r.ignored ?? 0),
     cleanFlagged: ratio(results.filter((r) => r.flaggedClean).length, scored.filter((key) => key.kind === "clean").length),
     reanchored: sum(results, (r) => r.reanchored ?? 0),
     toolCalls: sum(results, (r) => r.tools?.length ?? 0),
@@ -484,13 +485,16 @@ function e2eStageRow(stage: Stage, results: readonly E2EResult[], keys: readonly
   }
   const findings = sum(results, (r) => r.stages[stage]?.findings.length ?? 0);
   const falseAlarms = sum(results, (r) => r.stages[stage]?.falseAlarms ?? 0);
+  const ignored = sum(results, (r) => r.stages[stage]?.ignored ?? 0);
+  const judged = findings - ignored;
   return {
     stage,
     bugsCaught: ratio(bugs.filter(isCaught).length, bugs.length),
     ...Object.fromEntries(REACHES.map(caughtOfReach)),
     findings,
     falseAlarms,
-    precision: percent(findings === 0 ? null : (findings - falseAlarms) / findings),
+    ignored,
+    precision: percent(judged === 0 ? null : (judged - falseAlarms) / judged),
     cleanFlagged: ratio(results.filter((r) => r.stages[stage]?.flaggedClean).length, scored.filter((key) => key.kind === "clean").length),
   };
 }
@@ -522,6 +526,7 @@ function stageTotals(stage: Stage, results: readonly E2EResult[], keys: readonly
     bugs: sum(scored, (key) => key.bugs.length),
     findings: sum(results, (r) => r.stages[stage]?.findings.length ?? 0),
     falseAlarms: sum(results, (r) => r.stages[stage]?.falseAlarms ?? 0),
+    ignored: sum(results, (r) => r.stages[stage]?.ignored ?? 0),
     cleanFlagged: results.filter((r) => r.stages[stage]?.flaggedClean).length,
     clean: scored.filter((key) => key.kind === "clean").length,
   }];
@@ -597,7 +602,7 @@ async function e2e(values: Record<string, unknown>) {
   const exhausted = results.filter((r) => r.budgetExhausted).length;
   const cost = totalCost(stepRows.map((r) => r.costUsd));
   const [, final] = stageTotals("final", results, cases);
-  console.log(`score: final review caught ${ratio(final.caught, final.bugs)} bugs (${percent(final.bugs === 0 ? null : final.caught / final.bugs)}), ${final.falseAlarms} false alarms`);
+  console.log(`score: final review caught ${ratio(final.caught, final.bugs)} bugs (${percent(final.bugs === 0 ? null : final.caught / final.bugs)}), ${final.falseAlarms} false alarms, ${final.ignored} on true findings that are not bugs`);
   console.log(`total ${cost === null ? "price unknown" : `$${cost.toFixed(4)}`}, ${Math.round(sum(results, (r) => r.wallMs) / 1000)}s, ${exhausted} budget exhausted; results: ${out}`);
   if (stamp) writeE2EBaseline(results, cases, source, stamp);
 }

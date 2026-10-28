@@ -36,36 +36,6 @@
     },
     {
       "id": "b3",
-      "severity": "medium",
-      "category": "reliability",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "src/server/handlers.ts",
-          "start": 90,
-          "end": 90
-        }
-      ],
-      "reach": "repo",
-      "evidence": "The production `CustomRulesEngine` is instantiated without an `onRuleError` callback. When the defense-in-depth guard in `executePattern` fires at runtime (e.g., an oversized or invalid pattern loaded from `.techdebtrc.json` bypassing `validatePattern`), the branch `if (this.onRuleError)` is false and the error is silently discarded. The MCP client receives an empty issues array for those rules with no indication that they were skipped, making the tool silently unreliable for config-loaded rules."
-    },
-    {
-      "id": "b4",
-      "severity": "low",
-      "category": "api-architecture",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "src/core/customRulesEngine.ts",
-          "start": 32,
-          "end": 32
-        }
-      ],
-      "reach": "repo",
-      "evidence": "ALLOWED_FLAGS_RE = /^[gimsuy]*$/ uses `*` (zero or more), so it accepts duplicate flag characters such as `'gg'`. Passing `'gg'` directly to `new RegExp()` throws a SyntaxError; the deduplication inside both `validatePattern` and `executePattern` silently masks this. The stated contract of `validatePattern` is that a passing result means the pattern is ready to use, but a caller who constructs `new RegExp(pattern.pattern, pattern.flags)` from a 'valid' result with duplicate flags will get a thrown exception. The regex should enforce uniqueness, e.g. `/^[gimsuy]{0,6}$/` with a uniqueness check."
-    },
-    {
-      "id": "b5",
       "severity": "low",
       "category": "correctness",
       "difficulty": "hard",
@@ -80,7 +50,7 @@
       "evidence": "When `pattern.flags` contains disallowed characters, `validatePattern` pushes a flags-error and then continues to compile the regex using normalized (stripped) flags. This means a pattern that is syntactically invalid only when combined with its declared flags (rare but possible with flag-specific syntax like `\\p{}` requiring `u`) will be compiled with `u` stripped and may not surface an 'Invalid regex pattern' error. The two validation concerns — flags and pattern — are tested independently rather than together, so the reported validity does not reflect the actual behavior at execution time when both flags and pattern interact."
     },
     {
-      "id": "b6",
+      "id": "b4",
       "severity": "low",
       "category": "security",
       "difficulty": "easy",
@@ -93,12 +63,39 @@
       ],
       "reach": "repo",
       "evidence": "The two new error messages `File not found: ${path}` and `Could not read file stats for: ${path}` embed the raw `path` value, which is typically an absolute filesystem path, in the MCP error response. The project's AGENTS.md security section states 'Use getRelativePath() in error messages returned to clients — never leak absolute filesystem paths' (Issue #129). These are new error paths introduced by this PR that do not follow that convention."
+    }
+  ],
+  "ignored": [
+    {
+      "id": "i1",
+      "severity": "medium",
+      "category": "reliability",
+      "sites": [
+        {
+          "path": "src/server/handlers.ts",
+          "start": 90,
+          "end": 90
+        }
+      ],
+      "evidence": "The production `CustomRulesEngine` is instantiated without an `onRuleError` callback. When the defense-in-depth guard in `executePattern` fires at runtime (e.g., an oversized or invalid pattern loaded from `.techdebtrc.json` bypassing `validatePattern`), the branch `if (this.onRuleError)` is false and the error is silently discarded. The MCP client receives an empty issues array for those rules with no indication that they were skipped, making the tool silently unreliable for config-loaded rules."
     },
     {
-      "id": "b7",
+      "id": "i2",
+      "severity": "low",
+      "category": "api-architecture",
+      "sites": [
+        {
+          "path": "src/core/customRulesEngine.ts",
+          "start": 32,
+          "end": 32
+        }
+      ],
+      "evidence": "ALLOWED_FLAGS_RE = /^[gimsuy]*$/ uses `*` (zero or more), so it accepts duplicate flag characters such as `'gg'`. Passing `'gg'` directly to `new RegExp()` throws a SyntaxError; the deduplication inside both `validatePattern` and `executePattern` silently masks this. The stated contract of `validatePattern` is that a passing result means the pattern is ready to use, but a caller who constructs `new RegExp(pattern.pattern, pattern.flags)` from a 'valid' result with duplicate flags will get a thrown exception. The regex should enforce uniqueness, e.g. `/^[gimsuy]{0,6}$/` with a uniqueness check."
+    },
+    {
+      "id": "i3",
       "severity": "low",
       "category": "maintainability",
-      "difficulty": "easy",
       "sites": [
         {
           "path": "src/core/customRulesEngine.ts",
@@ -106,14 +103,12 @@
           "end": 242
         }
       ],
-      "reach": "diff",
       "evidence": "The regex flag normalization logic (stripping invalid characters and deduplication) is duplicated between `validatePattern` (lines 235-242) and `executePattern` (lines 119-123). This logic should be extracted into a private helper function to avoid code duplication and ensure that validation and execution always use the identical flag processing rules."
     },
     {
-      "id": "b8",
+      "id": "i4",
       "severity": "low",
       "category": "testing",
-      "difficulty": "easy",
       "sites": [
         {
           "path": "src/server/handlers.ts",
@@ -121,14 +116,12 @@
           "end": 450
         }
       ],
-      "reach": "repo",
       "evidence": "The code handles a null return from `getFileStats` by throwing an `McpError`, but there is no corresponding test case to verify this error path. The new tests in `src/server/__tests__/handlers.test.ts` only cover the file size limit being exceeded and met, but not the case where file stats cannot be retrieved."
     },
     {
-      "id": "b9",
+      "id": "i5",
       "severity": "low",
       "category": "documentation",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "CHANGELOG.md",
@@ -136,7 +129,6 @@
           "end": 36
         }
       ],
-      "reach": "repo",
       "evidence": "This changelog overstates the security fix: limiting pattern length and flags does not prevent catastrophic-backtracking ReDoS for short patterns that are still executed synchronously. Please either implement an actual ReDoS mitigation before claiming prevention or reword this entry to accurately describe the narrower guards added."
     }
   ],

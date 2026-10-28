@@ -7,21 +7,6 @@
     {
       "id": "b1",
       "severity": "medium",
-      "category": "testing",
-      "difficulty": "medium",
-      "sites": [
-        {
-          "path": "tests-e2e/consumer/dataset-download.spec.ts",
-          "start": 184,
-          "end": 201
-        }
-      ],
-      "reach": "repo",
-      "evidence": "The new test uses `download.path()` to access the downloaded file, but this returns `null` when tests run against a remote browser (the common CI setup for Playwright). The rest of the e2e codebase consistently uses `download.saveAs(targetPath)` to write the file to a known path before reading it. In a remote browser environment this test will always fail at the `toBeTruthy()` assertion. The fix is to `saveAs` into `testInfo.outputDir` (as other helpers do) and read from there."
-    },
-    {
-      "id": "b2",
-      "severity": "medium",
       "category": "security",
       "difficulty": "medium",
       "sites": [
@@ -35,7 +20,7 @@
       "evidence": "The `language` parameter is typed as `string` but cast to `Locale` without any runtime validation. The GET handler in the controller constructs `download_language` directly from `req.query.download_language?.toString()` (consumer.ts:353), meaning a user can craft an arbitrary string into the `lang` query param and `Accept-Language` header sent to the backend. The parameter type should be narrowed to `Locale` at the method boundary, or runtime validation should be added in the GET handler (matching what the POST path already does via `downloadLanguageValidator()`)."
     },
     {
-      "id": "b3",
+      "id": "b2",
       "severity": "medium",
       "category": "security",
       "difficulty": "easy",
@@ -50,7 +35,7 @@
       "evidence": "Same `language: string` → `as Locale` unsafe cast as in `downloadPublishedData`. The unsanitised user-supplied `download_language` query param flows through the GET handler into this method. The parameter type should be `Locale`, not `string`, to match the actual constraint."
     },
     {
-      "id": "b4",
+      "id": "b3",
       "severity": "medium",
       "category": "security",
       "difficulty": "medium",
@@ -63,12 +48,26 @@
       ],
       "reach": "repo",
       "evidence": "Same `language: string` → `as Locale` unsafe cast in `downloadDatasetPreview`. The GET handler in `publish.ts` reads `req.query.download_language?.toString()` without validation and passes it here. The parameter type should be `Locale` to close the gap between the validated POST path and the unvalidated GET path."
+    }
+  ],
+  "ignored": [
+    {
+      "id": "i1",
+      "severity": "medium",
+      "category": "testing",
+      "sites": [
+        {
+          "path": "tests-e2e/consumer/dataset-download.spec.ts",
+          "start": 184,
+          "end": 201
+        }
+      ],
+      "evidence": "The new test uses `download.path()` to access the downloaded file, but this returns `null` when tests run against a remote browser (the common CI setup for Playwright). The rest of the e2e codebase consistently uses `download.saveAs(targetPath)` to write the file to a known path before reading it. In a remote browser environment this test will always fail at the `toBeTruthy()` assertion. The fix is to `saveAs` into `testInfo.outputDir` (as other helpers do) and read from there."
     },
     {
-      "id": "b5",
+      "id": "i2",
       "severity": "low",
       "category": "testing",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/publisher/services/publisher-api.ts",
@@ -76,14 +75,12 @@
           "end": 932
         }
       ],
-      "reach": "repo",
       "evidence": "The publisher preview download path now depends on this `lang` override, but there is no corresponding publisher-side regression coverage; the added e2e test only exercises consumer downloads, while the existing `tests/publisher-api.test.ts` suite covers other `PublisherApi` request construction. Add coverage that verifies preview downloads send the selected download language rather than the page language."
     },
     {
-      "id": "b6",
+      "id": "i3",
       "severity": "low",
       "category": "testing",
-      "difficulty": "medium",
       "sites": [
         {
           "path": "src/consumer/services/consumer-api.ts",
@@ -91,7 +88,6 @@
           "end": 241
         }
       ],
-      "reach": "repo",
       "evidence": "This pivot download path now relies on the selected language being passed through `fetch`, but the new regression test only downloads the non-pivot dataset path; the existing consumer pivot e2e tests do not exercise downloads. Add coverage for pivot downloads so this branch cannot keep using the page language unnoticed."
     }
   ],

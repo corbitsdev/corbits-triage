@@ -1,0 +1,50 @@
+{
+  "id": "cli-microsoft365-7191",
+  "source": "reviewbench",
+  "golden": "golden/pnp_cli-microsoft365_7191-a44ec571.json",
+  "verdict": "clean",
+  "bugs": [],
+  "ignored": [],
+  "rejected": [
+    {
+      "was": "docs/docs/cmd/external/connection/connection-add.mdx:46-51: ExternalConnection.ReadWrite.OwnedBy is an application-only permission in Microsoft Graph — it has no delegated authentication support. Listing it under the Delegated tab will mislead users into thinking they can use this command with delegated (user) credentials. The Delegated tab should either be removed or state that delegated access is not supported for this permission scope.",
+      "why": "The claim that ExternalConnection.ReadWrite.OwnedBy is application-only is factually incorrect. The project's own mock data (app-permission-list.mock.ts) shows two entries for this permission: one Application-scoped (origin: Application) and one delegated-scoped (with userConsentDescription/userConsentDisplayName and type: Admin). The permission supports delegated access with admin consent, making the Delegated tab entry accurate."
+    },
+    {
+      "was": "docs/docs/cmd/external/connection/connection-doctor.mdx:55-60: ExternalConnection.ReadWrite.OwnedBy is an application-only permission and should not be listed under Delegated. Additionally, the doctor command calls /v1.0/search/query (entityType=externalItem) and /v1.0/external/connections/{id}/items/{itemId}, which require ExternalItem.Read.All and ExternalItem.ReadWrite.OwnedBy respectively — neither is listed here, making the Permissions section incomplete for a command that touches multiple API surfaces.",
+      "why": "The finding makes two factually incorrect claims: (1) ExternalConnection.ReadWrite.OwnedBy is application-only — it has a delegated variant requiring admin consent, as shown in the project's own mock data; (2) 'neither [ExternalItem.Read.All and ExternalItem.ReadWrite.OwnedBy] is listed here' — the diff for connection-doctor.mdx explicitly includes ExternalItem.ReadWrite.OwnedBy alongside ExternalConnection.ReadWrite.OwnedBy in both tabs. The claim that neither permission is listed is directly contradicted by the diff."
+    },
+    {
+      "was": "docs/docs/cmd/external/connection/connection-doctor.mdx:52-70: The Permissions section only lists ExternalConnection.ReadWrite.OwnedBy, but connection-doctor also calls POST /v1.0/search/query (requires ExternalItem.Read.All) and GET /v1.0/external/connections/{id}/items/{itemId} (requires ExternalItem.ReadWrite.OwnedBy). Users following only this documentation will get 403 errors when the contentIngested check runs.",
+      "why": "The finding claims 'The Permissions section only lists ExternalConnection.ReadWrite.OwnedBy', but the PR diff for connection-doctor.mdx explicitly shows ExternalItem.ReadWrite.OwnedBy is listed alongside ExternalConnection.ReadWrite.OwnedBy in both tabs. The factual premise of the finding is directly contradicted by the diff."
+    },
+    {
+      "was": "docs/docs/cmd/external/connection/connection-list.mdx:28-39: connection-list is a read-only operation (GET /v1.0/external/connections). ExternalConnection.ReadWrite.OwnedBy overstates the required privilege; ExternalConnection.Read.All is sufficient and lower-privilege. Documenting only ReadWrite.OwnedBy misleads operators into granting broader write access than needed. Also, OwnedBy is application-only, so the Delegated tab is incorrect.",
+      "why": "The finding's key factual claim — 'OwnedBy is application-only, so the Delegated tab is incorrect' — is verifiably false. ExternalConnection.ReadWrite.OwnedBy supports delegated access with admin consent per the project's own mock data. The secondary claim about Read.All being lower-privilege is partially valid but the permission used (ReadWrite.OwnedBy) is consistent across all connection commands in the PR and is accepted by the API, making it a stylistic/philosophy choice rather than a concrete error."
+    },
+    {
+      "was": "docs/docs/cmd/external/connection/connection-get.mdx:36-47: connection-get is a read-only operation (GET /v1.0/external/connections/{id} or filtered list). ExternalConnection.ReadWrite.OwnedBy overstates the required privilege; ExternalConnection.Read.All is sufficient. Additionally, OwnedBy is application-only so listing it under Delegated is incorrect.",
+      "why": "The 'OwnedBy is application-only' claim is factually incorrect as verified repeatedly — ExternalConnection.ReadWrite.OwnedBy has a delegated admin-consent variant. The over-privilege concern (Read.All vs ReadWrite.OwnedBy for a GET-only operation) has marginal merit but is a stylistic consistency choice across all connection commands in this PR. The factual error undermines the finding."
+    },
+    {
+      "was": "docs/docs/cmd/external/connection/connection-remove.mdx:43-54: ExternalConnection.ReadWrite.OwnedBy is an application-only permission in Microsoft Graph. Listing it under the Delegated tab is incorrect and will mislead users attempting to run this command with delegated credentials.",
+      "why": "Identical claim to Finding 1, already verified as factually incorrect. ExternalConnection.ReadWrite.OwnedBy supports delegated access with admin consent, as demonstrated by the delegated entry (with userConsentDescription/adminConsentDescription) in the project's own app-permission-list.mock.ts. The Delegated tab is not incorrect."
+    },
+    {
+      "was": "docs/docs/cmd/external/connection/connection-schema-add.mdx:39-50: ExternalConnection.ReadWrite.OwnedBy is an application-only permission. It cannot be used with delegated authentication, so listing it in the Delegated tab is incorrect.",
+      "why": "Same factually incorrect claim repeated again: ExternalConnection.ReadWrite.OwnedBy is not application-only. It has a delegated variant with admin consent as confirmed by the project's own app-permission-list.mock.ts. The Delegated tab entry is not incorrect."
+    },
+    {
+      "was": "docs/docs/cmd/external/connection/connection-urltoitemresolver-add.mdx:38-49: ExternalConnection.ReadWrite.OwnedBy is an application-only permission. Listing it under the Delegated tab is incorrect; delegated access is not supported with this permission scope.",
+      "why": "Identical factually incorrect claim repeated again. ExternalConnection.ReadWrite.OwnedBy supports delegated access with admin consent as confirmed by the project's own app-permission-list.mock.ts. The Delegated tab is not incorrect."
+    },
+    {
+      "was": "docs/docs/cmd/external/item/item-add.mdx:64-69: ExternalItem.ReadWrite.OwnedBy is an application-only permission in Microsoft Graph — it has no delegated support. Listing it in the Delegated tab is incorrect and will mislead users trying to run this command with delegated credentials.",
+      "why": "ExternalItem.ReadWrite.OwnedBy is not application-only. The project's own app-permission-list.mock.ts has a delegated entry for this permission (line 6690) with adminConsentDescription, userConsentDescription, and type: Admin — confirming it supports delegated access with admin consent. The finding's factual premise is wrong."
+    },
+    {
+      "was": "docs/docs/cmd/external/connection/connection-doctor.mdx:23-23: The documentation for `external connection doctor` specifies `ExternalConnection.ReadWrite.OwnedBy` as the required permission. However, this command performs write operations related to the schema which require `ExternalConnection.ReadWrite.All`. The correct permission should be `ExternalConnection.ReadWrite.All`.",
+      "why": "The finding claims connection-doctor performs write operations requiring ExternalConnection.ReadWrite.All, but the source code (connection-doctor.ts) contains only GET requests (connection, schema, external item) and a POST to search/query (which is a search operation, not a write). There are no schema write operations whatsoever. The factual premise of the finding is wrong."
+    }
+  ]
+}

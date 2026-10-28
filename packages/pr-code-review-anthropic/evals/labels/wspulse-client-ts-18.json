@@ -1,0 +1,76 @@
+{
+  "id": "wspulse-client-ts-18",
+  "source": "reviewbench",
+  "golden": "golden/wspulse_client-ts_18-436a4dea.json",
+  "verdict": "clean",
+  "bugs": [],
+  "ignored": [
+    {
+      "id": "i1",
+      "severity": "low",
+      "category": "testing",
+      "sites": [
+        {
+          "path": "test/component/fake-clock.ts",
+          "start": 105,
+          "end": 105
+        }
+      ],
+      "evidence": "The `advance` method in `FakeClock` yields 10 times to flush the microtask queue. This is a fragile approach that relies on an arbitrary number of yields to handle chained `await` calls. It can fail if a promise chain is deeper than 10 levels, or it can be inefficient if fewer yields would suffice. A more robust solution would be to repeatedly yield until the microtask queue is actually empty, for example by using `setImmediate` in a loop in Node.js, or a similar pattern with `postMessage` in browsers."
+    }
+  ],
+  "rejected": [
+    {
+      "was": "test/component/fake-clock.ts:28-35: The `setTimeout` and `setInterval` implementations in `FakeClock` do not handle a delay of `0`. According to MDN, a delay of `0` (or any negative value) schedules the callback to be executed as soon as the stack is clear, similar to `queueMicrotask` but after it. In the current implementation, a delay of `0` would result in a deadline equal to the current time `this._now`. If `advance(0)` is not called, these timers will only fire during the next `advance()` call that moves time forward.",
+      "why": "No production code in client.ts uses a delay of 0 — all timer calls use positive values (5ms, 20s, 60s, 10s, and computed backoff values). The behavioral difference between real setTimeout(fn,0) and FakeClock with delay=0 is an expected, intentional design trade-off of a fake clock. Additionally, the claim is partially incorrect: advance(0) would fire 0-deadline timers because the loop condition is `nextDeadline > target` (strict greater-than), so equal deadlines fire."
+    },
+    {
+      "was": "src/clock.ts:8-8: The type for timer IDs in the `Clock` interface is `ReturnType<typeof setTimeout>`. This is an opaque type that can be either `number` (in Node.js) or a complex object (`Timeout` in Node.js, `number` in browsers). Using `any` or `unknown` might be more portable, but `ReturnType<...>` is more precise for a given environment. However, `FakeClock` casts this to `number`, which assumes a Node.js or browser-like environment and could be problematic if the underlying type changes or in different JS runtimes.",
+      "why": "FakeClock is self-contained test code: it assigns number IDs, casts them as ReturnType<typeof setTimeout> on return, and casts back to number on receipt — a self-consistent round-trip that never touches real timer APIs. The client.ts only stores and returns these handles; it never inspects or does arithmetic on them. The as unknown as double-cast is the standard TypeScript pattern for deliberate cross-type casting, not an accidental omission."
+    },
+    {
+      "was": "test/component/fake-clock.ts:40-42: The `clearTimeout` method in `FakeClock` only filters the `_timers` array. It does not prevent a callback from being fired if `clearTimeout` is called from within another timer callback that is part of the same batch being executed in `advance`. The `_clearedIds` set is used to prevent this, but `clearTimeout` does not add the ID to this set. `clearInterval` has the same issue.",
+      "why": "The finding is factually incorrect. Both clearTimeout (line 41) and clearInterval (line 60) do call this._clearedIds.add(id), exactly the mechanism the finding claims is missing. The advance() loop correctly uses _clearedIds to skip already-cancelled timers in the same-deadline batch."
+    },
+    {
+      "was": "src/client.ts:433-438: In the abortableDelay method, if the signal is already aborted right after the initial check but before adding the abort event listener, setTimeout will still start, potentially leading to unnecessary timer execution and resource usage.",
+      "why": "JavaScript is single-threaded. The Promise executor runs synchronously, so no other code can call AbortController.abort() between the signal.aborted check and the addEventListener call. There is no actual race condition possible in JavaScript's event loop model."
+    },
+    {
+      "was": "test/component/lifecycle.test.ts:91-100: In the test 'close() racing with transport drop fires onDisconnect exactly once', transport.injectClose() may race with client.close(), making the test's determinism vulnerable since FakeClock.advance isn't applied. This can result in nondeterministic failures in race conditions.",
+      "why": "JavaScript is single-threaded. transport.injectClose() and client.close() execute synchronously and sequentially in the same stack frame — there is no actual race condition possible. The test is deterministic by design: injectClose fires the onclose handler which calls shutdown(), then client.close() finds this.closed=true and no-ops. FakeClock is correctly used for the advance(50) guard at the end."
+    },
+    {
+      "was": "test/component/reconnect.test.ts:94-101: The 'reconnect with max retries' test advances time beyond two retry backoffs but does not verify intermediate states (e.g., whether retries are attempted at all). This reduces confidence in the correctness of retry progression during time advancement since FakeClock slews multiple intervals.",
+      "why": "The test implicitly validates retry count: the MockDialer has exactly 2 error entries, and the final RetriesExhaustedError assertion only fires after both dial attempts are consumed. If retries were miscounted, either MockDialer would throw 'no more results' or disconnected would never resolve. The finding's suggestion to add intermediate assertions is generic test improvement advice without a concrete bug scenario."
+    },
+    {
+      "was": "src/options.ts:283-296: The defaultClock in resolveOptions is hardcoded, but there is no check to validate if a passed _clock implements the Clock interface, risking runtime type errors if an incompatible object is mistakenly provided.",
+      "why": "The _clock option is @internal and stripped from .d.ts via stripInternal:true, making it invisible to external consumers. TypeScript enforces the Clock interface shape at compile time for any code within the repo that uses it. The described risk of runtime type errors from an incompatible object is negligible for internal test infrastructure that TypeScript already validates."
+    },
+    {
+      "was": "test/component/misc.test.ts:97-119: The 'pong timeout triggers ConnectionLostError' test in async contexts does not validate the exact timer behavior responsible for triggering pong deadlines after the FakeClock.advance(). This could miss nuanced cases of timer mismanagement.",
+      "why": "The finding is too vague to be actionable — it says 'could miss nuanced cases of timer mismanagement' without identifying any specific scenario where the test would pass despite a real bug. The test correctly uses FakeClock to deterministically fire the pong deadline at 150ms and asserts the correct error type. No concrete gap is identified."
+    },
+    {
+      "was": "test/component/basic.test.ts:58-62: The 'advance past the drain timer (5 ms)' comment in 'connects, sends a frame, receives echo' test does not explicitly verify FakeClock's timer order integrity. Tests must explicitly assert deterministic event ordering rather than assuming timer behavior by FakeClock.",
+      "why": "The test already explicitly asserts the timer's effect: expect(transport.sent.length).toBe(1) after clock.advance(10) verifies the drain timer fired and flushed the buffer. The finding provides no concrete scenario where this assertion would pass despite incorrect timer behavior. Checking 'timer order integrity' is not meaningful for a single-timer test case."
+    },
+    {
+      "was": "src/clock.ts:13-19: The Clock interface has minimal documentation on its expected use cases. It should more explicitly define contractual guarantees or constraints such as thread safety or atomicity, aiding developers implementing other variants like FakeClock.",
+      "why": "The finding prescribes documenting 'thread safety or atomicity' for a JavaScript interface — concepts that don't apply in JavaScript's single-threaded execution model. The interface is @internal with stripInternal:true, has no external consumers, and its existing JSDoc ('Test-injection only. Not exported from the public API.') is adequate for its purpose."
+    },
+    {
+      "was": "test/component/reconnect.test.ts:111-119: In 'close() during reconnect aborts loop' test, FakeClock.advance lacks precision when fast-forwarding through successive backoff timers that could potentially overlap in edge concurrency scenarios. Intermediate state assertions are absent to confirm proper abort steps.",
+      "why": "The finding is factually incorrect: clock.advance() is never called in this test. The test intentionally uses queueMicrotask to abort the reconnect loop before any FakeClock timer fires, so there are no 'successive backoff timers' to fast-forward. The premise of the entire finding is wrong."
+    },
+    {
+      "was": "test/component/callback.test.ts:102-111: The 'onDisconnect fires exactly once on transport drop' test has minimal assertions on timer interleaving conditions. This could lead to inadequate validation of timer callbacks being triggered/cleared correctly in FakeClock's logic.",
+      "why": "The finding is generic 'add more assertions' advice without identifying any concrete timer interleaving scenario relevant to this test. The test has no autoReconnect so there are no backoff timers; the disconnectCount===1 assertion directly validates the test's stated purpose. No specific failure mode where the current assertion passes despite incorrect behavior is identified."
+    },
+    {
+      "was": "test/component/basic.test.ts:118-118: [javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket] Insecure WebSocket Detected. WebSocket Secure (wss) should be used for all WebSocket connections.",
+      "why": "This is a generic static analysis rule firing on a ws://mock/ws string literal in test code that uses a MockDialer — no real network connection is ever made. The _dialer intercepts the call before any WebSocket is opened. The rule cannot distinguish test fixture strings from production URLs and has no security relevance here."
+    }
+  ]
+}

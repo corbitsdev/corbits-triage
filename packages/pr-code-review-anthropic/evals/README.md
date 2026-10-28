@@ -6,14 +6,15 @@ answer keys.
 
 ## Cases
 
-Seven pull requests from the 25-pull-request test set of
-[ReviewBench](https://github.com/review-bench/ReviewBench) (MIT), listed in its
-`corpus/test/test.json`, with answer keys converted from its `golden/` files.
+Ten pull requests from [ReviewBench](https://github.com/review-bench/ReviewBench)
+(MIT), with answer keys converted from its `golden/` files: seven from its
+25-pull-request test set, listed in its `corpus/test/test.json`, and three
+clean ones from its full corpus.
 The set is kept small and hard: the target is a score under 30% for the current
 reviewer at 25 to 50 cents a run.
 
-Selection rule, over the test set, leaving out pull requests that change more
-than 1,500 lines so a run stays cheap:
+Selection rule, over the test set unless stated, leaving out pull requests that
+change more than 1,500 lines so a run stays cheap:
 
 - Security: the three with the most high or medium security findings labelled
   true that need code outside the diff (`mcp-docker-29`,
@@ -22,16 +23,24 @@ than 1,500 lines so a run stays cheap:
   labelled true and `hard`, all needing code outside the diff; ties go to the
   smaller diff (`disaster-ninja-fe-1230`, `crabtrap-15`, `jadx-collaboration-3`,
   `landalf-88`).
+- Clean: every test-set pull request has true golden findings, so false alarms
+  are measured on three from outside the test set: the two in the corpus whose
+  golden findings are all false (`statista-130`, `cli-microsoft365-7191`) and
+  `wspulse-client-ts-18`, whose only true finding is a low testing one.
 
 - `cases.json`: each case's repository, pull request number and the base and
   head shas from its golden file's `pr`.
 - `labels/<id>.json`: the case's answer key, with `source: "reviewbench"` and
-  the `golden` file it came from. Every true-labelled golden finding is a bug:
-  its `sites` are the finding's file and `start_line` to `end_line` at head, its
-  `reach` is `diff` for `diff-only` and `repo` for the other `context_required`
-  values, its `evidence` is the finding's message, and its `severity`,
-  `category` and `difficulty` are kept. Every false-labelled finding is listed
-  under `rejected` with ReviewBench's reason.
+  the `golden` file it came from. Every true-labelled golden finding in the
+  `correctness` or `security` category is a bug: its `sites` are the finding's
+  file and `start_line` to `end_line` at head, its `reach` is `diff` for
+  `diff-only` and `repo` for the other `context_required` values, its
+  `evidence` is the finding's message, and its `severity`, `category` and
+  `difficulty` are kept. Other true-labelled findings (style, testing,
+  maintainability, documentation and the like) are listed under `ignored`, with
+  their sites. Every false-labelled finding is listed under `rejected` with
+  ReviewBench's reason. 37 bugs in all, 36 of them needing code outside the
+  diff.
 - `.cache/` (not in git): each pull request's title, description and diff,
   fetched once with `gh api`, with the title and description cleaned as the
   hub sends them (`<id>.shown.json`).
@@ -42,14 +51,16 @@ A bug is caught when a finding on its path overlaps any of its sites within
 three lines; findings are not matched on their message. Each bug is caught
 once: a finding that hits only bugs earlier findings already caught is a false
 alarm, so splitting one defect into several findings costs precision, as
-ReviewBench scores it. A finding that hits no bug is a false alarm too. A clean case is flagged when anything is
-reported on it. `--e2e` checks every finding, as every review does, and
-scores the finders' union, the consolidated findings (what the review posted
-before the check ran on every request), the ones the check confirmed, the
-final review, and the review's comments found by both finders and by one. A
-stage's precision is its findings that hit a bug over all its findings, so the
-consolidated and final rows give precision and recall without the check and
-with it from one run.
+ReviewBench scores it. A finding that catches no bug but hits an `ignored`
+finding's site is neither a catch nor a false alarm. Any other finding is a
+false alarm, and a clean case is flagged when it has one. `--e2e` checks every
+finding, as every review does, and scores the finders' union, the consolidated
+findings (what the review posted before the check ran on every request), the
+ones the check confirmed, the final review, and the review's comments found by
+both finders and by one. A stage's precision is its findings that caught a bug
+over its findings that caught a bug or were false alarms, so the consolidated
+and final rows give precision and recall without the check and with it from
+one run.
 
 ## Running
 
