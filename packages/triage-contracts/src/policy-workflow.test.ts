@@ -100,6 +100,24 @@ describe("policy file v4", () => {
     });
   });
 
+  test("a skipped security block leaves the approve and merge gate to the blocks that run", () => {
+    const actions = "actions:\n  pass: [{ do: approve }, { do: merge }]\n";
+    expect(checkPolicyFile(`${RULES}${ON}security: { on: true }\n${actions}`, REPO)).toMatchObject({
+      ok: true,
+      workflow: {
+        decide: [
+          { if: { triage: "pass", all: "clean" }, do: [{ do: "approve" }, { do: "merge" }] },
+          { if: { triage: "pass" }, do: [{ do: "nothing" }, { do: "nothing" }] },
+          { if: { triage: "fail" }, do: "nothing" },
+        ],
+      },
+    });
+    expect(checkPolicyFile(`${RULES}security: { on: true }\n${actions}`, REPO)).toMatchObject({
+      ok: true,
+      workflow: { decide: [{ if: { triage: "pass" }, do: [{ do: "approve" }, { do: "merge" }] }, { if: { triage: "fail" }, do: "nothing" }] },
+    });
+  });
+
   test("a file that extends another holds no v4 key, and reads with no decide", () => {
     expect(checkPolicyFile(`extends: acme/shared\n${RULES}actions:\n  fail: [{ do: close }]\n`, REPO)).toEqual(expect.objectContaining({ ok: true, workflow: {} }));
     expect(problems(`extends: acme/shared\n${RULES}code-review: { on: true }\ndecide:\n  - { if: { triage: fail }, do: close }\n`)).toEqual([

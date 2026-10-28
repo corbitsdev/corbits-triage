@@ -29,7 +29,7 @@ function check(root: string, path: string, isFile: boolean, repo: string): void 
   }
   const checked = checkPolicyFile(readFileSync(join(root, path), "utf8"), repo);
   if (checked.ok) {
-    for (const problem of checked.pending ?? []) console.log(annotation(path, problem, "warning"));
+    if (checked.pending) for (const problem of checked.pending) console.log(annotation(path, problem, "warning"));
     console.log(`${path} is valid.`);
     return;
   }
