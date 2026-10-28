@@ -312,6 +312,7 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
     [`rules:\n  - check: ci-green\n    text: CI passes.\n    evidence: [maintainer-stated]\n`, "Line 2: rules[0].reason must be"],
     [`checks: {}\n${manyKeys}\n`, "unknown keys: k0, k1, k2, k3, k4 and 2 more."],
     ["checks:\n  ci-gren:\n    enabled: true\n", "unknown checks: ci-gren."],
+    ["rules: []\ndeslop: { on: false }\n", "Line 2: `deslop`: security and deslop reviews are not available yet; remove the block."],
     [DIRECTORY, `${YML} is not a file.`],
     [aliasBomb(), "too large or uses aliases"],
     [`checks: {}\n#${"x".repeat(70 * 1024)}\n`, "too large or uses aliases"],
