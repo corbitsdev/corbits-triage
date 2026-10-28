@@ -446,7 +446,7 @@ rules:
   });
 
   test("a file without its patch, as on Bitbucket Data Center, an unread content or a broken rule never passes", () => {
-    const unpatched = { path: "src/a.ts", status: "modified", additions: 0, deletions: 0 };
+    const unpatched = { path: "src/a.ts", status: "modified", additions: 3, deletions: 0 };
     expect(filesToRead([unpatched], "github")).toEqual({ unread: "src/a.ts: the host sent no diff" });
     const past = (path: string) => ({ ...unpatched, path, patchUnread: true as const });
     expect(filesToRead([unpatched, past("src/b.ts"), past("src/c.ts")], "github")).toEqual({ unread: "src/a.ts: the host sent no diff; src/b.ts and 1 more: the pull request's diff is larger than Triage reads" });
@@ -470,9 +470,11 @@ rules:
     expect(passed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass", reason: "no code pattern matched; 1 file was not checked", evidence: [left] });
   });
 
-  test("a file GitHub only renamed is nothing to read, while a Data Center move without its patch stays unread", () => {
+  test("a file GitHub counts no lines of, renamed or with only its mode changed, is nothing to read, while a Data Center move without its patch stays unread", () => {
     const renamed = { path: "src/moved.ts", previousPath: "src/old.ts", status: "renamed", additions: 0, deletions: 0 };
-    expect(filesToRead([renamed, file], "github")).toEqual(["src/a.ts"]);
+    const mode = { path: "src/run.ts", status: "modified", additions: 0, deletions: 0 };
+    expect(filesToRead([renamed, mode, file], "github")).toEqual(["src/a.ts"]);
+    expect(filesToRead([mode], "github")).toEqual([]);
     expect(patternsResult(readCheckPack(readPolicyFile(FILE, "acme/widgets")).custom.find(isPatternsCheck)!, [renamed], {}, "github")).toEqual({ matches: [], skipped: [], checked: 1 });
     expect(filesToRead([renamed], "bitbucket-datacenter")).toEqual({ unread: "src/moved.ts: the host sent no diff" });
   });

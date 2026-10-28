@@ -557,12 +557,13 @@ label off that head, so it never stands on a head not yet triaged.
    listed without patches. The judge's view of the diff has its own, smaller
    budget (`judgedFiles` in `logic/quality.ts`). A file without a patch,
    because the host sent none (GitHub omits it for a very large or binary
-   file; a file GitHub only renamed has nothing to read and is not listed) or
-   the pull request passed that ceiling, is listed in the evidence as not
-   checked, saying which, and the rule runs on the rest; with nothing else to
-   check, or a file whose content was not read, or a rule ast-grep refuses,
-   the rule is unconfirmed; `vendor/`, `dist/`, `build/` and `generated/` at
-   the repository root and `node_modules/` anywhere are skipped and listed as
+   file; a file whose lines GitHub counts as unchanged, such as a rename or a
+   mode change, has nothing to read and is not listed) or the pull request
+   passed that ceiling, is listed in the evidence as not checked, saying
+   which, and the rule runs on the rest; with nothing else to check, or a file
+   whose content was not read, or a rule ast-grep refuses, the rule is
+   unconfirmed; `vendor/`, `dist/`, `build/` and `generated/` at the
+   repository root and `node_modules/` anywhere are skipped and listed as
    skipped in the evidence, and a `?? 0` inside arithmetic is a counter's real
    default. With such a rule on, the facts step reads each file whose patch
    adds lines at the head through the host's `read_file` (`whole`), ten at a

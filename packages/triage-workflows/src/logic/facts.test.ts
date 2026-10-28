@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPO_POLICY, emptyPack, isPatternsCheck, readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
 import type { IssueComment, Review } from "@corbits/github-reads";
+import type { EffectContext } from "@intx/workflow";
+import { rules } from "../actions/rules.ts";
 import type { PrFileFacts } from "./checks.ts";
 import { addFilesPage, assembleItem, buildFacts, FIRST_FILES_PAGE, type FilesCursor, type FilesPage, type ListedFiles } from "./facts.ts";
 import { NO_FACTS } from "./item.ts";
@@ -158,6 +160,20 @@ describe("a diff past the code rules' ceiling", () => {
     const file = { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
     expect(readPages([big, file])).toEqual([big, { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patchUnread: true }]);
     expect(readPages([file])).toEqual([file]);
+  });
+
+  test("keeps its marks through the step output, which the rules step reads as JSON rather than through fileFacts", async () => {
+    const filler = `+const filler = "${"x".repeat(1_000)}";`;
+    const big: PrFileFacts = { path: "src/big.ts", status: "added", additions: 2_000, deletions: 0, patch: ["@@ -0,0 +1,2000 @@", ...Array.from({ length: 2_000 }, () => filler)].join("\n") };
+    const listed = readPages([big, { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" }]);
+    const contents = { "src/big.ts": `${Array.from({ length: 2_000 }, () => filler.slice(1)).join("\n")}\n` };
+    const facts = { ...NO_FACTS, repo: "acme/widgets", number: 8, state: "open" as const, files: listed, patterns: { conventions: patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github") } };
+    const output = JSON.parse(JSON.stringify({ items: [{ facts, pack, automatic: [] }], batch: false }));
+    const ruled = await rules(output, {} as EffectContext, new AbortController().signal);
+    const item = ruled.items[0]!;
+    if (!("det" in item)) throw new Error("the item was not ruled");
+    expect(item.facts.files[1]).toMatchObject({ path: "src/a.ts", patchUnread: true });
+    expect(item.det.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass", evidence: ["src/a.ts: not checked, the pull request's diff is larger than Triage reads"] });
   });
 
   test("keeps no lockfile patch, so a lockfile neither counts nor rides in the output, and marks nothing when no patches were asked for", () => {

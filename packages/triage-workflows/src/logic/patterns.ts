@@ -52,12 +52,12 @@ function inScope(file: PrFileFacts): boolean {
  * and none is read past the code rules' ceiling.
  */
 function unpatched(file: PrFileFacts, source: RepoSource): boolean {
-  return inScope(file) && file.patch === undefined && !renamedOnly(file, source);
+  return inScope(file) && file.patch === undefined && !linesUnchanged(file, source);
 }
 
-/** GitHub sends no patch for a file it only renamed, so there is nothing to read; Data Center counts no lines to tell. */
-function renamedOnly(file: PrFileFacts, source: RepoSource): boolean {
-  return source === "github" && file.status === "renamed" && file.additions === 0 && file.deletions === 0;
+/** GitHub sends no patch for a file whose lines did not change, such as a rename or a mode change; Data Center counts no lines to tell. */
+function linesUnchanged(file: PrFileFacts, source: RepoSource): boolean {
+  return source === "github" && file.additions === 0 && file.deletions === 0;
 }
 
 function whyUnpatched(file: PrFileFacts): string {
