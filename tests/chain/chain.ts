@@ -24,6 +24,7 @@ export const PUSHED = `${OWNER}/pushed`;
 export const HELD = `${OWNER}/held`;
 export const ALWAYS = `${OWNER}/always`;
 export const WOKEN = `${OWNER}/woken`;
+export const REREAD = `${OWNER}/reread`;
 export const UNWOKEN = `${OWNER}/unwoken`;
 export const DISCONNECTED = `${OWNER}/disconnected`;
 export const UNSET = `${OWNER}/unset`;
@@ -79,11 +80,12 @@ export function chainStack() {
   beforeAll(async () => {
     github.addRepo(DETERMINISTIC, policy([MAX_FILES]));
     github.addRepo(JUDGED, policy([MAX_FILES, FOCUSED]));
-    github.addRepo(WAITING, policy([CI_GREEN]));
+    github.addRepo(WAITING, policy([MAX_FILES, FOCUSED, CI_GREEN]));
     github.addRepo(PUSHED, policy([MAX_FILES]));
     github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
     github.addRepo(ALWAYS, policy([MAX_FILES], REVIEW_ON_PASS));
     github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
+    github.addRepo(REREAD, policy([MAX_FILES, CI_GREEN]));
     github.addRepo(UNWOKEN, policy([MAX_FILES]));
     github.addRepo(DISCONNECTED, policy([MAX_FILES]));
     github.addRepo(UNSET, null);
@@ -179,7 +181,7 @@ export function chainStack() {
   }
 
   /** The claim once its manager's run is gone, whether done ended the claim or the run stopped without ending it. */
-  async function settled(repo: string, number: number, passes = 1): Promise<Claim> {
+  async function settled(repo: string, number: number, passes = 1, ms = SETTLE_MS): Promise<Claim> {
     return until(`${repo}#${number}'s manager to stop`, async function stopped() {
       const claim = await claimOf(repo, number);
       if (!claim || claim.history.length < passes) return undefined;
@@ -187,7 +189,7 @@ export function chainStack() {
       const runId = claim.runId ?? claim.history.at(-1)!.runId;
       const live = runs.some((run) => run.id === runId && isLiveDeployment(run.status));
       return live ? undefined : claim;
-    });
+    }, ms);
   }
 
   async function verdictsOf(repo: string, number: number): Promise<Record<string, unknown>[]> {
