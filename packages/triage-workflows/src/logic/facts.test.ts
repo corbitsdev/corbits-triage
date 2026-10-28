@@ -139,16 +139,11 @@ describe("a diff past the code rules' ceiling", () => {
     const unread = listed.slice(whole);
     expect(unread).toEqual(hostFiles.slice(whole).map(({ patch: _patch, ...meta }) => ({ ...meta, patchUnread: true })));
     const contents = Object.fromEntries(listed.slice(0, whole).map((file) => [file.path, `${Array.from({ length: 200 }, () => line).join("\n")}\n`]));
-    expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github")).toEqual({
-      matches: [],
-      skipped: unread.map((file) => `${file.path}: not checked, the pull request's diff is larger than Triage reads`),
-      checked: whole,
-      unpatched: hostFiles.length - whole,
-    });
+    expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github")).toEqual({ unread: `${unread[0]!.path} and ${unread.length - 1} more: the pull request's diff is larger than Triage reads` });
     return patch.length;
   }
 
-  test("keeps the file whose last page passes it, and lists the later files without patches for the pattern rules to name", () => {
+  test("keeps the file whose last page passes it, and lists the later files without patches, which leaves the pattern rules unconfirmed naming them", () => {
     const chars = ceilingCase(1_000, 10);
     expect(chars * 9.5).toBeLessThan(MAX_CODE_RULES_PATCH_CHARS);
     expect(chars * 10).toBeGreaterThan(MAX_CODE_RULES_PATCH_CHARS);
@@ -173,7 +168,7 @@ describe("a diff past the code rules' ceiling", () => {
     const item = ruled.items[0]!;
     if (!("det" in item)) throw new Error("the item was not ruled");
     expect(item.facts.files[1]).toMatchObject({ path: "src/a.ts", patchUnread: true });
-    expect(item.det.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass", evidence: ["src/a.ts: not checked, the pull request's diff is larger than Triage reads"] });
+    expect(item.det.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", reason: "code patterns could not be checked: src/a.ts: the pull request's diff is larger than Triage reads" });
   });
 
   test("keeps no lockfile patch, so a lockfile neither counts nor rides in the output, and marks nothing when no patches were asked for", () => {

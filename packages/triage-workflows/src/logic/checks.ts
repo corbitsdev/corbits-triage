@@ -642,10 +642,8 @@ function riskResult(facts: PrFacts, rules: CheckRules): CheckResult {
   return { ...base, result: "pass", ...(outcome === "label" && level !== "low" && { label: levelLabel("risk", level) }) };
 }
 
-function patternsReason(failed: boolean, found: { skipped: string[]; checked: number; unpatched?: number }): string {
+function patternsReason(failed: boolean, found: { skipped: string[]; checked: number }): string {
   if (failed) return "added code matches a code pattern";
-  if (found.unpatched === 1) return "no code pattern matched; 1 file was not checked";
-  if (found.unpatched) return `no code pattern matched; ${found.unpatched} files were not checked`;
   if (found.checked === 0 && found.skipped.length > 0) return "nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code";
   if (found.checked === 0) return "nothing checked: no TypeScript or JavaScript code added";
   return "no code pattern matched";

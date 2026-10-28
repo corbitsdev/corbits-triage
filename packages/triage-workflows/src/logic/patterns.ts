@@ -18,8 +18,7 @@ const GRAMMARS: Record<PatternExtension, Grammar> = {
   jsx: JAVASCRIPT,
 };
 
-/** `unpatched` counts the files in scope left out because they have no patch. */
-export type PatternsResult = { matches: string[]; skipped: string[]; checked: number; unpatched?: number } | { unread: string };
+export type PatternsResult = { matches: string[]; skipped: string[]; checked: number } | { unread: string };
 
 function presetRules(id: string): readonly PatternRule[] {
   const rules = PATTERN_PRESETS[id];
@@ -48,16 +47,16 @@ function inScope(file: PrFileFacts): boolean {
 }
 
 /**
- * A file in scope without a patch: GitHub sends none for a very large or binary file, Bitbucket Data Center for any,
- * and none is read past the code rules' ceiling.
+ * A file in scope that may add code but has no patch: GitHub sends none for a very large or binary file, Bitbucket
+ * Data Center for any, and none is read past the code rules' ceiling.
  */
 function unpatched(file: PrFileFacts, source: RepoSource): boolean {
-  return inScope(file) && file.patch === undefined && !linesUnchanged(file, source);
+  return inScope(file) && file.patch === undefined && !addsNothing(file, source);
 }
 
-/** GitHub sends no patch for a file whose lines did not change, such as a rename or a mode change; Data Center counts no lines to tell. */
-function linesUnchanged(file: PrFileFacts, source: RepoSource): boolean {
-  return source === "github" && file.additions === 0 && file.deletions === 0;
+/** GitHub counts the lines a file adds, so one it adds none to, such as a rename or a mode change, has nothing to check; Data Center counts none to tell. */
+function addsNothing(file: PrFileFacts, source: RepoSource): boolean {
+  return source === "github" && file.additions === 0;
 }
 
 function whyUnpatched(file: PrFileFacts): string {
@@ -81,8 +80,8 @@ function readPath(file: PrFileFacts): string {
 export const MAX_CONTENT_READS = 300;
 
 /**
- * The files whose content the rules need, or why they cannot be checked: files in scope came without a patch and none
- * other adds code, or more files than are read.
+ * The files whose content the rules need, or why they cannot be checked: files in scope have no patch and no other
+ * file adds code, or more files than are read.
  */
 export function filesToRead(files: readonly PrFileFacts[], source: RepoSource): string[] | { unread: string } {
   const toRead = files.filter((file) => inScope(file) && file.patch !== undefined && addedLines(file.patch).size > 0).map(readPath);
@@ -110,8 +109,8 @@ function fileMatches(file: PrFileFacts, patch: string, content: string, grammar:
 }
 
 /**
- * Matches on the lines a pull request adds; a file in scope whose content was not read leaves the rule unchecked, and
- * one without a patch is named as not checked.
+ * Matches on the lines a pull request adds. Without a match, a file in scope without its patch or content leaves the
+ * rule unchecked, naming the files, since a pass needs every file that adds code checked.
  */
 export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>>, source: RepoSource): PatternsResult {
   const toRead = filesToRead(files, source);
@@ -128,9 +127,10 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
     return { unread: error instanceof Error ? error.message : String(error) };
   }
   const missing = files.filter((file) => unpatched(file, source));
+  if (matches.length === 0 && missing.length > 0) return { unread: namedUnpatched(missing) };
   const skipped = [
     ...missing.map((file) => `${file.path}: not checked, ${whyUnpatched(file)}`),
     ...files.filter((file) => checkable(file) && isForeignPath(file.path)).map((file) => `${file.path}: skipped as vendored, built or installed code`),
   ];
-  return { matches, skipped, checked: files.filter(inScope).length - missing.length, ...(missing.length > 0 && { unpatched: missing.length }) };
+  return { matches, skipped, checked: files.filter(inScope).length - missing.length };
 }

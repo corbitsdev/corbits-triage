@@ -459,21 +459,22 @@ rules:
     expect(patterns([file], { "src/a.ts": content }, broken).checks.find((check) => check.check === "broken")).toMatchObject({ result: "unconfirmed" });
   });
 
-  test("a file the host sent no diff for is named as not checked, and every other file is checked", () => {
+  test("a match in a checked file fails, and without one a file that adds code the host sent no diff for leaves the rule unconfirmed", () => {
     const large = { path: "src/large.ts", status: "modified", additions: 9_000, deletions: 0 };
     const clean = { path: "src/b.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const b = 1;" };
     const left = "src/large.ts: not checked, the host sent no diff";
     expect(filesToRead([file, large, clean], "github")).toEqual(["src/a.ts", "src/b.ts"]);
     const failed = patterns([file, large], { "src/a.ts": content });
     expect(failed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: expect.arrayContaining([left]), skipped: [left] });
-    const passed = patterns([clean, large], { "src/b.ts": "const b = 1;\n" });
-    expect(passed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass", reason: "no code pattern matched; 1 file was not checked", evidence: [left] });
+    const unchecked = patterns([clean, large], { "src/b.ts": "const b = 1;\n" });
+    expect(unchecked.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", reason: "code patterns could not be checked: src/large.ts: the host sent no diff" });
   });
 
-  test("a file GitHub counts no lines of, renamed or with only its mode changed, is nothing to read, while a Data Center move without its patch stays unread", () => {
+  test("a file GitHub counts no added lines in, renamed, with only its mode changed or only lines removed, is nothing to read, while a Data Center move without its patch stays unread", () => {
     const renamed = { path: "src/moved.ts", previousPath: "src/old.ts", status: "renamed", additions: 0, deletions: 0 };
     const mode = { path: "src/run.ts", status: "modified", additions: 0, deletions: 0 };
-    expect(filesToRead([renamed, mode, file], "github")).toEqual(["src/a.ts"]);
+    const removed = { path: "src/trimmed.ts", status: "modified", additions: 0, deletions: 40 };
+    expect(filesToRead([renamed, mode, removed, file], "github")).toEqual(["src/a.ts"]);
     expect(filesToRead([mode], "github")).toEqual([]);
     expect(patternsResult(readCheckPack(readPolicyFile(FILE, "acme/widgets")).custom.find(isPatternsCheck)!, [renamed], {}, "github")).toEqual({ matches: [], skipped: [], checked: 1 });
     expect(filesToRead([renamed], "bitbucket-datacenter")).toEqual({ unread: "src/moved.ts: the host sent no diff" });
