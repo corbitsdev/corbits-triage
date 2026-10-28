@@ -5,8 +5,11 @@ import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, Glob, GRO
 import { RULE_GATES } from "./rules-gate.js";
 import { EVERYONE } from "./step-when.js";
 
-export const BLOCK_KINDS = ["code-review", "security", "deslop"] as const;
+export const BLOCK_KINDS = ["code-review"] as const;
 export type BlockKind = (typeof BLOCK_KINDS)[number];
+
+/** Keys kept for blocks no workflow runs yet; a file that sets one, or a `decide` condition on one, is refused. */
+export const RESERVED_BLOCKS = ["security", "deslop"] as const;
 
 export const PROVIDERS = ["anthropic", "openai", "xai", "google", "opencode", "custom"] as const;
 
@@ -26,21 +29,14 @@ const Count = type("number.integer").atLeast(1);
 
 export const blockCleanSchema = type({ "+": "reject", "below?": Severity });
 
-const BLOCK_WHEN = { "+": "reject", "triage?": Verdicts, "paths?": Globs } as const;
-
-const BLOCK_PROPS = {
+const CodeReviewSchema = type({
   "+": "reject",
   on: "boolean",
   "for?": GroupNames,
-  "when?": BLOCK_WHEN,
+  "when?": { "+": "reject", "triage?": Verdicts, "paths?": Globs, "rules?": type.enumerated(...RULE_GATES) },
   "clean?": blockCleanSchema,
   "provider?": type.enumerated(...PROVIDERS),
-} as const;
-
-const BlockSchema = type(BLOCK_PROPS);
-
-/** Only code review runs today, so only it takes `when.rules`. */
-const CodeReviewSchema = type({ ...BLOCK_PROPS, "when?": { ...BLOCK_WHEN, "rules?": type.enumerated(...RULE_GATES) } });
+});
 
 const PaceSchema = type({
   "+": "reject",
@@ -63,8 +59,6 @@ const DecideRuleSchema = type({
     "event?": type.enumerated(...POLICY_EVENTS).array().atLeastLength(1),
     "author?": GroupNames,
     "code-review?": BlockCondition,
-    "security?": BlockCondition,
-    "deslop?": BlockCondition,
   },
   do: decideDoSchema,
 });
@@ -72,14 +66,12 @@ const DecideRuleSchema = type({
 export const WORKFLOW_PROPS = {
   "groups?": type({ "[string]": fileGroupSchema }),
   "code-review?": CodeReviewSchema,
-  "security?": BlockSchema,
-  "deslop?": BlockSchema,
   "pace?": PaceSchema,
   "pauseLabel?": Label,
   "decide?": DecideRuleSchema.array(),
 } as const;
 
-export const WORKFLOW_KEYS = ["groups", ...BLOCK_KINDS, "pace", "pauseLabel", "decide"] as const;
+export const WORKFLOW_KEYS = ["groups", ...BLOCK_KINDS, ...RESERVED_BLOCKS, "pace", "pauseLabel", "decide"] as const;
 
 export const policyWorkflowSchema = type({ "+": "reject", ...WORKFLOW_PROPS });
 export type PolicyWorkflow = typeof policyWorkflowSchema.infer;
@@ -95,7 +87,7 @@ function shown(name: string): string {
   return name.length > NAME_MAX ? `${name.slice(0, NAME_MAX)}…` : name;
 }
 
-/** A path as the file spells it: `decide[1].if.security`. */
+/** A path as the file spells it: `decide[1].if.code-review`. */
 export function pathText(path: readonly PropertyKey[]): string {
   return path.map((key, at) => (typeof key === "number" ? `[${key}]` : `${at === 0 ? "" : "."}${shown(String(key))}`)).join("");
 }
@@ -179,21 +171,6 @@ function stepReferenceProblems(workflow: PolicyWorkflow, actions: WrittenActions
   return stepLists(workflow, actions).flatMap(([path, steps]) => steps.flatMap((step, at) => referenceProblems(namedGroups(step), [...path, at, "when", "author"], known)));
 }
 
-function providerProblems(workflow: PolicyWorkflow): PathProblem[] {
-  const named = BLOCK_KINDS.flatMap((kind) => {
-    const block = workflow[kind];
-    return block?.on && block.provider !== undefined ? [{ kind, provider: block.provider }] : [];
-  });
-  const first = named[0];
-  if (!first) return [];
-  return named
-    .filter(({ provider }) => provider !== first.provider)
-    .map(({ kind, provider }) => ({
-      message: `\`${kind}.provider\` is ${provider} but \`${first.kind}.provider\` is ${first.provider}; blocks that are on must name the same provider.`,
-      path: [kind, "provider"],
-    }));
-}
-
 export function kindsOf(written: DecideRule["do"]): string[] {
   return (Array.isArray(written) ? written : [written]).map((item) => (typeof item === "string" ? item : item.do));
 }
@@ -223,8 +200,7 @@ function ruleProblems(rule: DecideRule, at: number, workflow: PolicyWorkflow): P
 }
 
 /**
- * What the schema cannot say: group names, the groups blocks, rules and steps name, one provider, and approving only
- * what is clean. `actions` is the file's, as written.
+ * What the schema cannot say: group names, the groups blocks, rules and steps name, and approving only what is clean. `actions` is the file's, as written.
  */
 export function workflowProblems(workflow: PolicyWorkflow, actions: WrittenActions | undefined): PathProblem[] {
   // Only names that are valid groups are offered as what a mistyped name meant, so a long invalid name costs nothing.
@@ -236,7 +212,6 @@ export function workflowProblems(workflow: PolicyWorkflow, actions: WrittenActio
     ...BLOCK_KINDS.flatMap((kind) => referenceProblems(workflow[kind]?.for ?? [], [kind, "for"], known)),
     ...(workflow.decide ?? []).flatMap((rule, at) => referenceProblems(rule.if.author ?? [], ["decide", at, "if", "author"], known)),
     ...stepReferenceProblems(workflow, actions, known),
-    ...providerProblems(workflow),
     ...(workflow.decide ?? []).flatMap((rule, at) => ruleProblems(rule, at, workflow)),
   ];
 }

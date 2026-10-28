@@ -37,7 +37,7 @@ test("only a block on, or a decide other than the actions', needs the PR workflo
   const pack = { actions: defaultActions() };
   expect(prWorkflowKeys({ decide: decideOf(pack.actions, false) }, pack)).toBeUndefined();
   expect(prWorkflowKeys({ decide: DECIDE }, pack)).toEqual({ decide: DECIDE });
-  expect(prWorkflowKeys({ security: { on: true } }, pack)).toEqual({ security: { on: true } });
+  expect(prWorkflowKeys({ "code-review": { on: true } }, pack)).toEqual({ "code-review": { on: true } });
   expect(workflowPart({ "code-review": { on: true, for: ["maintainers"], when: { triage: "pass", paths: ["src/**"], rules: "any" }, clean: { below: "high" }, provider: "anthropic" }, decide: DECIDE })).toEqual({
     codeReview: { on: true, for: ["maintainers"], triage: ["pass"], rules: "any", paths: ["src/**"], clean: { below: "high" }, provider: "anthropic" },
     blocks: ["code-review"],

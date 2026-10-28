@@ -303,15 +303,14 @@ A repository's policy is `.corbits-triage.yml` at the root of its default
 branch (`.corbits-triage.yaml` when there is no `.yml`), so policy changes are
 reviewed like code. It lists `rules`, `actions` and `labels`, and may
 `extends` another repository's policy file. It may also
-hold the v4 keys `groups`, `code-review`, `security`, `deslop`, `pace`,
-`pauseLabel` and `decide`. Any other key is refused, naming
+hold the v4 keys `groups`, `code-review`, `pace`, `pauseLabel` and `decide`. Any other key is refused, naming
 the key it was likely meant to be. A step's `when.author` may name a group.
 On GitHub, a pull request carrying `pauseLabel` starts no run, and while the
 pull request cannot be read it is not triaged but retried, never run unpaused;
 through a long GitHub outage it waits out a bounded number of retries and is
 triaged on its next event. The `code-review` block runs a review whatever
-`provider` it names. `security`, `deslop` and `pace` are accepted and run nothing. `decide`
-is not carried out. A file that turns a block on, or writes its own `decide`,
+`provider` it names. `pace` is accepted and runs nothing. `decide`
+is not carried out. A file that turns `code-review` on, or writes its own `decide`,
 holds approve and merge for a person on Triage. `decide` replaces `actions`,
 so a file holds one or the other, and a file that uses `extends` holds none of
 these keys.
