@@ -21,7 +21,6 @@ export class TriageStoppedError extends NoLiveDeploymentError {
 }
 
 export class DeploymentNotReadyError extends Error {
-  readonly code = "deployment_not_ready";
   constructor() {
     super("The workflow deployment is still starting.");
   }

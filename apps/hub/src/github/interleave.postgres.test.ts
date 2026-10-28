@@ -7,6 +7,8 @@ import { createDB, runMigrations, schema } from "@intx/db";
 import { runArtifactMigrations } from "@corbits/artifacts";
 import type { CheckRun } from "@corbits/github-reads";
 import { emptyPack, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { createBacklogStart } from "./backlog-triage.js";
+import { ListenerUnroutedError } from "./deployment.js";
 import { createGithubPrTriage } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
 import { createTriageReconciler, createUnroutedTries } from "./triage-reconciler.js";
@@ -53,6 +55,7 @@ function route(store: TriageStateStore, deliver: Deliver) {
     managerRuns: noRuns,
     store,
     send: async ({ payload }) => deliver(payload),
+    retry() {},
     policy: DEFAULT_RECONCILE_POLICY,
     now: () => NOW,
     log: () => {},
@@ -140,5 +143,53 @@ test("PostgreSQL: a failed mail whose first restore is refused still puts the he
     expect(rows.find((row) => row.number === 8)).toEqual(FAILED);
     expect(rows.find((row) => row.number === 9)?.status).toBe("queued");
     expect((await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" })).status).toBe(202);
+  });
+}, 120_000);
+
+test("PostgreSQL: a backlog started while the listener is starting answers 202, and its open heads are queued and mailed once the listener is up", async () => {
+  await withStore(async (store) => {
+    let kicked = 0;
+    const start = createBacklogStart({
+      readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
+      async sendMail() {
+        throw new ListenerUnroutedError("github", DEPLOYMENT.address);
+      },
+      openHeads: async () => [{ number: 8, headSha: "abc123", draft: false }, { number: 10, headSha: "sha10", draft: false }, { number: 11, headSha: "sha11", draft: true }],
+      store,
+      policy: DEFAULT_RECONCILE_POLICY,
+      now: () => NOW,
+      retry() {
+        kicked += 1;
+      },
+      log: () => {},
+    });
+    const res = await start(TENANT, { name: REPO, connected: true, enabled: true });
+    expect({ status: res.status, body: await res.json() }).toEqual({ status: 202, body: { status: "started" } });
+    expect(kicked).toBe(1);
+    expect((await store.load(TENANT, REPO)).rows.map((row) => `${row.number}:${row.status}:${row.unrouted === true}`)).toEqual(["8:failed:true", "10:failed:true"]);
+
+    const mails: Array<{ items?: Array<{ prNumber: number }> }> = [];
+    await reconciler(store, [8, 10], async (payload) => {
+      mails.push(payload as never);
+    })();
+    expect(mails.flatMap((mail) => mail.items?.map((item) => item.prNumber) ?? [])).toEqual([8, 10]);
+    expect((await store.load(TENANT, REPO)).rows.map((row) => `${row.number}:${row.status}`)).toEqual(["8:queued", "10:queued"]);
+  });
+}, 120_000);
+
+test("PostgreSQL: a maintainer's triage request while the listener is starting answers 202 and the head is mailed once the listener is up", async () => {
+  await withStore(async (store) => {
+    const handle = route(store, async () => {
+      throw new ListenerUnroutedError("github", DEPLOYMENT.address);
+    });
+    const res = await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" });
+    expect({ status: res.status, body: await res.json() }).toEqual({ status: 202, body: { status: "queued", headSha: "abc123" } });
+    expect((await store.load(TENANT, REPO)).rows.map((row) => `${row.number}:${row.status}:${row.unrouted === true}`)).toEqual(["8:failed:true"]);
+
+    const mails: unknown[] = [];
+    await reconciler(store, [8], async (payload) => {
+      mails.push(payload);
+    })();
+    expect(mailsFor8(mails)).toBe(1);
   });
 }, 120_000);

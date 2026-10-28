@@ -5,6 +5,25 @@ import { checkPackName, emptyPack } from "@corbits/triage-contracts";
 const PACK = { ...emptyPack("octocat/hello"), checks: { "no-merge-conflicts": { enabled: true } } };
 import { createBacklogStart, createGithubBacklog } from "./backlog-triage.js";
 import { NoLiveDeploymentError } from "./deployment.js";
+import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
+
+/** A listener takes every backlog here, so no head is held. */
+const NOT_HELD = {
+  async openHeads(): Promise<never> {
+    throw new Error("no head is held");
+  },
+  store: {
+    async load(): Promise<never> {
+      throw new Error("no head is held");
+    },
+    async save(): Promise<never> {
+      throw new Error("no head is held");
+    },
+  },
+  policy: DEFAULT_RECONCILE_POLICY,
+  now: () => new Date(),
+  retry() {},
+};
 
 /** No deployment holds the credential in these tests. */
 async function noKeyPush(): Promise<void> {}
@@ -32,6 +51,7 @@ function backlog(repo: Record<string, unknown>, sent: unknown[], sendMail = asyn
       return { status: "ok", pack: PACK, automatic: ["labels"], source: SOURCE };
     },
     sendMail,
+    ...NOT_HELD,
     log() {},
   });
 }
@@ -60,6 +80,7 @@ test("a Bitbucket Data Center repository's backlog goes to its listener like a G
     async sendMail(_tenant, payload) {
       sent.push(payload);
     },
+    ...NOT_HELD,
     log() {},
   });
   const started = await start(MEMBER.tenantId, { name: "TRI/widgets", source: "bitbucket-datacenter", connected: true, enabled: true });

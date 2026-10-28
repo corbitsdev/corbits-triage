@@ -118,7 +118,7 @@ import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, creat
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved, type TriageJob } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { keepExistingWorkspacesAsking, prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
+import { keepExistingWorkspacesAsking, prepareCorbitsTriagePatch, tenantManager, type RepoRecord } from "./github/tenant-config.js";
 import { githubRead } from "@corbits/github-tool";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 
@@ -337,11 +337,7 @@ const toListener = createManagerIntake({
   withAppLogin: function appLoginOf(tenantId, payload) {
     return withAppLogin(composition.db, tenantId, payload);
   },
-  openHeads: async function openHeads(tenantId, record) {
-    const read = await tenantOpenHeads(tenantId);
-    if (!read) throw new Error("no active source credential");
-    return read(record);
-  },
+  openHeads: openHeadsOf,
   gate: function gateOf(tenantId, record, number, request) {
     return pauseGate(tenantId, record, number, request);
   },
@@ -704,6 +700,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
   return limits.length === 0 ? outcome : { ...outcome, retryAt: Math.min(...limits) };
 }
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
+const kickTriage = triageLoop.kick;
 const githubPrTriage = createGithubPrTriage({
   ...credentialDeps,
   authorize: authorizePortal,
@@ -717,6 +714,7 @@ const githubPrTriage = createGithubPrTriage({
   managerRuns,
   store: triageStateStore,
   send: sendTriageMail,
+  retry: kickTriage,
   policy: reconcilePolicy,
   now,
   log: logJson,
@@ -730,9 +728,12 @@ const githubHeldDos = createGithubHeldDos({
   passRequest: function managerPassRequest(tenantId, pr, runId, head) {
     return passRequest(composition.db, tenantId, pr, runId, head);
   },
+  store: triageStateStore,
+  policy: reconcilePolicy,
+  now,
+  retry: kickTriage,
   log: logJson,
 });
-const kickTriage = triageLoop.kick;
 const releaseDisconnected = createHostRelease({
   connectedSources: function connectedSourcesOf(tenantId) {
     return connectedSources(composition.db, tenantId);
@@ -787,9 +788,15 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number |
   if (due > 0) kickTriage();
   return due;
 }
+async function openHeadsOf(tenantId: string, record: RepoRecord) {
+  const read = await tenantOpenHeads(tenantId);
+  if (!read) throw new Error("no active source credential");
+  return read(record);
+}
 async function sendBacklogMail(tenantId: string, payload: unknown) {
   await sendToListener(tenantId, payload);
 }
+const backlogStartDeps = { readCheckPack, sendMail: sendBacklogMail, openHeads: openHeadsOf, store: triageStateStore, policy: reconcilePolicy, now, retry: kickTriage, log: logJson };
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
   db: credentialDeps.db,
@@ -801,7 +808,7 @@ const bridge = createBridgeHandler({
   recheckOpenPulls,
   refreshPolicyFile: policyFile.onPush,
   heard: repoActivity.heard,
-  startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
+  startBacklog: createBacklogStart(backlogStartDeps),
   repoChanged: repoReads.changed,
   installationChanged: function installationChanged(tenantId) {
     void renewGithubToken(tenantId);
@@ -879,9 +886,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   backlog: createGithubBacklog({
     ...credentialDeps,
     authorize: authorizePortal,
-    readCheckPack,
-    sendMail: sendBacklogMail,
-    log: logJson,
+    ...backlogStartDeps,
   }),
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,

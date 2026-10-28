@@ -37,8 +37,12 @@ export function createUnroutedTries() {
     return `${tenantId}\n${source}\n`;
   }
 
+  function repoOf(tenantId: string, source: RepoSource, repo: string): string {
+    return `${hostOf(tenantId, source)}${repo}\n`;
+  }
+
   function keyOf(tenantId: string, source: RepoSource, repo: string, number: number, headSha: string): string {
-    return `${hostOf(tenantId, source)}${repo}\n${runKey(number, headSha)}`;
+    return `${repoOf(tenantId, source, repo)}${runKey(number, headSha)}`;
   }
 
   return {
@@ -52,6 +56,11 @@ export function createUnroutedTries() {
     /** A listener took the head's mail. */
     took(tenantId: string, source: RepoSource, repo: string, number: number, headSha: string): void {
       tries.delete(keyOf(tenantId, source, repo, number, headSha));
+    },
+    /** Forgets the repository's heads but `held`, by run key: one closed, replaced by a new commit or mailed meanwhile. */
+    keep(tenantId: string, source: RepoSource, repo: string, held: ReadonlySet<string>): void {
+      const prefix = repoOf(tenantId, source, repo);
+      for (const key of tries.keys()) if (key.startsWith(prefix) && !held.has(key.slice(prefix.length))) tries.delete(key);
     },
     /** The host's listener runs, so each of its heads gets its short retries again. */
     reset(tenantId: string, source: RepoSource): void {
@@ -284,6 +293,9 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
 
   async function deliverRepo(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan): Promise<void> {
     const key = triageStateKey(repo.record);
+    const open = new Set(repo.prs.map((pr) => runKey(pr.number, pr.headSha)));
+    const held = repo.stored.rows.filter((row) => row.unrouted && open.has(headKey(row))).map(headKey);
+    deps.unroutedTries.keep(pass.tenantId, deps.source, repo.record.name, new Set(held));
     const claimed = await claim(pass.tenantId, key, repo.stored, plan);
     if (claimed === undefined) return;
     const headShaOf = (queued: QueuedPr) => claimed.rows.find((row) => row.number === queued.number)!.headSha;

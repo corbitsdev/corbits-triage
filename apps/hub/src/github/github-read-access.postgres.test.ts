@@ -6,11 +6,14 @@ import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { TRIAGE_ROLE, triageStopped, type ActionKind } from "@corbits/triage-contracts";
+import { TRIAGE_ROLE, triageStopped, type ActionKind, type PrTriageRow } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { guardedApp } from "../integrations/test-app.js";
 import { createAuditLog } from "../audit-log.js";
+import { ListenerUnroutedError } from "./deployment.js";
 import { createGithubHeldDos } from "./held-dos.js";
+import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
+import type { TriageStateStore } from "./triage-state-store.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createTenantOpenPrs } from "./tenant-open-heads.js";
 import { createGithubPrActions } from "./pr-actions.js";
@@ -106,6 +109,24 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
 }
 
 const deps = { db: handle.db, cipher, onKeyMoved: noKeyPush, authorize: authorizePortal, githubApiOrigin };
+/** Triage rows kept in memory, with the version the store would give each write. */
+function triageRows(): TriageStateStore & { rows: PrTriageRow[] } {
+  let version = 0;
+  const kept = {
+    rows: [] as PrTriageRow[],
+    async load() {
+      return { rows: kept.rows, version: version === 0 ? null : { artifactId: "art_state", version } };
+    },
+    async save(_tenantId: string, _repo: string, rows: PrTriageRow[]) {
+      kept.rows = rows;
+      version += 1;
+      return { artifactId: "art_state", version };
+    },
+  };
+  return kept;
+}
+/** The listener takes every approval here, so no head is held. */
+const NOT_HELD = { store: triageRows(), policy: DEFAULT_RECONCILE_POLICY, now: () => new Date(), retry() {} };
 const list = createTenantOpenPrs({ ...deps, tenantBitbucket: async () => undefined });
 const openPulls = createGithubOpenPulls({ ...deps, list, cache: createOpenPullsCache(() => new Date()) });
 const reads = createRepoReads(() => new Date());
@@ -341,6 +362,7 @@ test("PostgreSQL: approving a held Do needs its kind's grant and hands the liste
   let recorded: Array<Pick<VerdictRecord, "runId" | "degraded" | "runStatus">> = [];
   const heldDos = createGithubHeldDos({
     ...deps,
+    ...NOT_HELD,
     runReader: { async readRunEvents() { return events; } },
     verdicts: { async forPull() { return recorded as VerdictRecord[]; } },
     async toListener(_tenantId, payload) {
@@ -376,6 +398,38 @@ test("PostgreSQL: approving a held Do needs its kind's grant and hands the liste
   expect(await approve("usr_approver", ship)).toMatchObject({ status: 503, body: { error: { code: "service_not_running", message: triageStopped("github") } } });
 });
 
+test("PostgreSQL: a held Do approved while the listener is starting answers 202, and its head is queued for the reconciler to mail once the listener is up", async () => {
+  const target = { labels: ["api"] };
+  const tag = { list: "pass" as const, index: 0, kind: "labels" as const, target, held: true, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "labels", target }) };
+  const verdict = { repo: REPO, number: 8, headSha: HEAD, request: { repo: REPO, number: 8, labels: [], owned: [], comment: "" }, actions: [tag] };
+  const events = [{ seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } } }];
+  let kicked = 0;
+  const store = triageRows();
+  const heldDos = createGithubHeldDos({
+    ...deps,
+    ...NOT_HELD,
+    store,
+    retry() {
+      kicked += 1;
+    },
+    runReader: { async readRunEvents() { return events; } },
+    verdicts: { async forPull() { return [{ runId: "wfr_gap", degraded: null, runStatus: "completed" }] as VerdictRecord[]; } },
+    async toListener() {
+      throw new ListenerUnroutedError("github", "wfr_listener@tenant.example");
+    },
+    async passRequest() {
+      return undefined;
+    },
+    log() {},
+  });
+  await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_gap", tenantId: TENANT, name: "pr-triage", status: "stopped" });
+  await handle.db.insert(schema.workflowRun).values({ id: "wfr_gap", definitionId: "wfd_gap", anchorRunId: "wfr_gap", tenantId: TENANT, status: "completed" });
+  const res = await heldDos({ runId: "wfr_gap", repo: REPO, number: 8, effectId: tag.effectId, kind: "labels" }, member("usr_approver"));
+  expect({ status: res.status, body: await res.json() }).toEqual({ status: 202, body: { status: "sent" } });
+  expect(kicked).toBe(1);
+  expect(store.rows.map((row) => `${row.number}:${row.headSha}:${row.status}:${row.unrouted === true}`)).toEqual([`8:${HEAD}:failed:true`]);
+});
+
 test("PostgreSQL: a held Do of a verdict a manager reported is approved from the recorded verdict and the mirror request its pass kept, and goes to the listener; once the run's newer verdict replaced it, it is superseded", async () => {
   await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_manager", tenantId: TENANT, name: "triage-manager-github", status: "stopped" });
   await handle.db.insert(schema.workflowRun).values({ id: "wfr_manager", definitionId: "wfd_manager", anchorRunId: "wfr_manager", tenantId: TENANT, status: "running" });
@@ -387,6 +441,7 @@ test("PostgreSQL: a held Do of a verdict a manager reported is approved from the
   const listened: unknown[] = [];
   const heldDos = createGithubHeldDos({
     ...deps,
+    ...NOT_HELD,
     runReader: { async readRunEvents() { return [{ seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0 } }]; } },
     verdicts: { async forPull() { return recorded as VerdictRecord[]; } },
     async toListener(_tenantId, payload) {

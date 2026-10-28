@@ -22,7 +22,7 @@ export function undelivered(row: PrTriageRow, source: RepoSource): boolean {
 }
 
 /** The mail reached no listener: the host had none, or its listener took no mail. A manager that took none is an ordinary failure. */
-function reachedNoListener(err: unknown): boolean {
+export function reachedNoListener(err: unknown): boolean {
   return err instanceof TriageStoppedError || err instanceof ListenerUnroutedError;
 }
 
@@ -129,6 +129,15 @@ export async function failDelivery(store: TriageStateStore, head: QueuedHead, er
     return { ...row, status: "failed", error: deliveryFailure(err), undeliveredSince: row.undeliveredSince ?? row.queuedAt ?? at, ...(unrouted && { unrouted: true }), updatedAt: at };
   });
   return unrouted;
+}
+
+/**
+ * Holds a head a person asked for whose mail reached no listener: queued, then failed unrouted, so the reconciler mails
+ * it as soon as a listener is up. A head a run is on is left to that run.
+ */
+export async function holdHead(store: TriageStateStore, head: QueuedHead, err: unknown, now: Date, policy: ReconcilePolicy): Promise<void> {
+  const queued = await queueHead(store, head, now, (prior) => isRunningSince(prior, now, policy));
+  if (queued.status === "queued") await failDelivery(store, head, err, now);
 }
 
 /** Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; it keeps when its mail first did not. */

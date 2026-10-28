@@ -357,7 +357,16 @@ any other tenant or an unknown sender.
   mail a live manager did not take fails as usual. Before recording a pull
   request's event, the intake asks stock's router whether it routes the
   listener, when a pull request named has no manager up, so mail the
-  listener cannot take records nothing. The reconciler queues an unrouted
+  listener cannot take records nothing. A held Do's approval is the
+  exception: it is recorded all the same, since nothing a person did is
+  dropped and no row holds it, and the manager the listener later starts for
+  the head runs it. A request a person makes while the listener takes no
+  mail answers 202 and its heads are held the same way: Triage again holds
+  its head, backlog triage holds each open pull request's head, drafts left
+  out, and a held Do's approval holds the head it was made on. Each starts a
+  pass at once. The held head is triaged again when its mail goes out, on
+  the same head, so the judge's verdict for it is reused and the verdict
+  comment is replaced in place. The reconciler queues an unrouted
   head on its first pass with a listener up, without backoff, and those tries
   add nothing to the head's attempts. A coalescer mail that reached no
   listener starts a pass at once, whose listener check rolls a workspace
@@ -1195,7 +1204,8 @@ read it, and passes the rest of the request to stock.
   nothing: Triage again, Review again, a held Do's approval and backlog
   triage answer 503 `service_not_running`, and a webhook's head fails, each
   saying Triage is not running on that host and that Settings → Triage shows
-  why.
+  why. While the host's listener is starting or being replaced, Review again
+  answers the same 503; the others are held as above.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

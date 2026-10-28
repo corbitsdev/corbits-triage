@@ -227,8 +227,11 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     if (!address || typeof repo !== "string") return false;
     const record = await recordOf(tenantId, repo, source);
     const pulls = await pullsOf(tenantId, record, request);
-    // A pull request with no manager up is deployed by the listener, so mail the listener cannot take records nothing.
-    if (!(await deps.routable(address)) && (await withoutManager(tenantId, source, repo, pulls))) throw new ListenerUnroutedError(source, address);
+    // A pull request with no manager up is deployed by the listener, so mail the listener cannot take records nothing; its
+    // triage row holds it. A held Do's approval is recorded all the same, since no row holds what a person approved.
+    if (request["kind"] !== APPROVE_DO_KIND && !(await deps.routable(address)) && (await withoutManager(tenantId, source, repo, pulls))) {
+      throw new ListenerUnroutedError(source, address);
+    }
     const domain = domainOf(address);
     const start: Named[] = [];
     try {

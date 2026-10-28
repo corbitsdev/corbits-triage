@@ -494,6 +494,16 @@ describe("triage reconciler", () => {
     expect((await reconcile()).unrouted).toBe(true);
   });
 
+  test("a held head's short retries are forgotten once it is no longer held, as after the webhook's mail went out", async () => {
+    const sendErrors: Record<number, Error> = { 1: new ListenerUnroutedError("github", formatRunAddress("run_gone", DOMAIN)) };
+    const { reconcile, saved, unroutedTries } = harness({}, heads(1, 1), { sendErrors });
+    for (let pass = 0; pass < 20; pass += 1) await reconcile();
+    const { unrouted: _unrouted, ...row } = saved.get(REPO)!.find((candidate) => candidate.number === 1)!;
+    saved.set(REPO, [{ ...row, status: "queued", queuedAt: NOW.toISOString() }]);
+    await reconcile();
+    expect(unroutedTries.missed(TENANT_ID, "github", REPO, 1, "sha1")).toBe(1);
+  });
+
   test("queued heads that have not started hold the budget until their runs complete", async () => {
     const logs: Runs = { [REPO]: {} };
     const { reconcile, delivered, saved } = harness(logs, heads(1, 12));
