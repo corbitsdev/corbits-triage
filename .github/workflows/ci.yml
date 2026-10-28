@@ -39,12 +39,17 @@ jobs:
       fail-fast: false
       matrix:
         suite: [unit, postgres]
+        shard: [1/3, 2/3, 3/3]
+        include:
+          - suite: dom
+            shard: 1/1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - if: matrix.suite == 'postgres'
         uses: ./.github/actions/postgres
       - uses: ./.github/actions/setup
-      - run: bun run test:${{ matrix.suite }}
+      # Files run one at a time within a shard: run side by side on the runner's four cores, tests that time a subprocess or a parse fail.
+      - run: bun run test:${{ matrix.suite }} --shard=${{ matrix.shard }}
 
   chain:
     runs-on: ubuntu-24.04
