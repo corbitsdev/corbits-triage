@@ -153,3 +153,29 @@ test("PostgreSQL: a manager that went away mid-pass fails its pass's head, so th
     expect(plan.enqueue).toEqual([]);
   });
 }, 60_000);
+
+test("PostgreSQL: a manager up between passes awaits the reviewers on its head that have not reported before their deadline", async () => {
+  await withDatabase(async function awaiting(db) {
+    const now = new Date();
+    const managerRuns = createManagerRuns(db, createVerdictRecordStore(db), () => now);
+    await managerUp(db, "run_waits");
+    await mailed(db, pr7, "h1");
+    await take(db, TENANT, pr7, "run_waits");
+    const ahead = new Date(now.getTime() + 60 * MINUTE).toISOString();
+    const reviewer = { head: "h1", deployedBy: "run_waits", deadline: ahead };
+    await done(db, TENANT, pr7, "run_waits", [
+      { ...reviewer, kind: "code-review", runId: "run_review" },
+      { ...reviewer, kind: "judge", runId: "run_judge" },
+      { ...reviewer, kind: "judge", runId: "run_judge_old", head: "h0" },
+    ], { wait: true, report: { head: "h1" } });
+
+    const runs = await managerRuns(TENANT, [pr7]);
+    const [live] = runs.byRepo.get(REPO)?.get(runKey(7, "h1")) ?? [];
+    expect(live).toMatchObject({ runId: "run_waits", status: "running", awaiting: ["judge", "code-review"] });
+    expect(live?.passAt).toBeUndefined();
+
+    await done(db, TENANT, pr7, "run_waits", [{ ...reviewer, kind: "judge", runId: "run_judge", result: { verdict: "pass" } }, { ...reviewer, kind: "code-review", runId: "run_review", deadline: new Date(now.getTime() - MINUTE).toISOString() }], { wait: true });
+    const [after] = (await managerRuns(TENANT, [pr7])).byRepo.get(REPO)?.get(runKey(7, "h1")) ?? [];
+    expect(after?.awaiting).toBeUndefined();
+  });
+}, 60_000);

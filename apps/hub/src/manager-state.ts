@@ -7,7 +7,7 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
 import { triageSchema } from "./triage-db.js";
@@ -546,9 +546,14 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
 
 /**
  * A pull request a manager claimed: its closed passes; while its manager is up, that run, the head of the newest pull
- * request mail recorded and the pass it has open; and the pass a manager that went away left open.
+ * request mail recorded, the pass it has open and what its reviewers on that head have yet to report before their
+ * deadlines; and the pass a manager that went away left open.
  */
-export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass }; gone?: { runId: string; pass: Pass } };
+export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass; awaiting: AwaitedStage[] }; gone?: { runId: string; pass: Pass } };
+
+function awaitedOn(reviewers: readonly Reviewer[], head: string | undefined, now: Date): AwaitedStage[] {
+  return AWAITED_STAGES.filter((kind) => reviewers.some((reviewer) => reviewer.kind === kind && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime()));
+}
 
 /** The pull request's mails that name its head: its webhooks other than a held Do's approval. */
 function mails(tenantId: string, pr: PullRequestRef): SQL | undefined {
@@ -684,7 +689,7 @@ export async function managedPulls(db: DB["db"], tenantId: string, pulls: readon
         managed.push({ pr, history: claim.history, ...(claim.pass && { gone: { runId, pass: claim.pass } }) });
       } else {
         const head = await newestHead(tx, tenantId, pr);
-        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }), ...(claim.pass && { pass: claim.pass }) } });
+        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }), ...(claim.pass && { pass: claim.pass }), awaiting: awaitedOn(claim.reviewers, head, now) } });
       }
     }
     return managed;

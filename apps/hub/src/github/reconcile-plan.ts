@@ -1,6 +1,6 @@
 // Decides, from what the host and the managers' runs say now, which open pull
 // requests to queue again. Pure, so every recovery path is decided in one place.
-import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, type AwaitedStage, type PrTriageRow, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { CiState } from "@corbits/github-reads";
 import { MODEL_NOT_ASKED } from "@corbits/triage-workflows/logic/settled";
 
@@ -22,6 +22,8 @@ export type ObservedRun = {
   trigger?: string;
   /** When a running manager took the pass it has open; absent while it is up between passes, as while it waits on a reviewer. */
   passAt?: string;
+  /** What a running manager's reviewers on its head have yet to report. */
+  awaiting?: AwaitedStage[];
 };
 
 export type ReconcilePolicy = {

@@ -464,6 +464,9 @@ test("PostgreSQL: the same repository and number on both hosts come back separat
     const { passAt: _passAt, ...between } = live("run_bitbucket_live", "running", minutes(-1));
     managed = observed([["8@sha_live", [{ ...between, source: "bitbucket-datacenter" as const }]]]);
     expect((await get(`?repo=${REPO}&number=8&source=bitbucket-datacenter`)).pulls.map((pull) => pull.run)).toEqual([null]);
+    // One whose reviewers have yet to report is awaiting them.
+    managed = observed([["8@sha_live", [{ ...between, source: "bitbucket-datacenter" as const, awaiting: ["judge", "code-review"] }]]]);
+    expect((await get(`?repo=${REPO}&number=8&source=bitbucket-datacenter`)).pulls.map((pull) => pull.run)).toEqual([{ runId: "run_bitbucket_live", status: "awaiting", on: ["judge", "code-review"] }]);
 
     // A name only Bitbucket holds is found without naming its host.
     await db.insert(schema.workflowRun).values({ id: "run_bitbucket_only", definitionId: "wfd_bitbucket", anchorRunId: "run_bitbucket_only", tenantId: TENANT, status: "completed" });
