@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun scripts/build-workflows.ts && vite",
-    "build": "bun scripts/build-workflows.ts && bun check --no-script && vite build",
+    "build": "bun ../../tooling/require-bun.ts && bun scripts/build-workflows.ts && bun check --no-script && vite build",
     "preview": "vite preview",
     "workflows": "bun scripts/build-workflows.ts"
   },
