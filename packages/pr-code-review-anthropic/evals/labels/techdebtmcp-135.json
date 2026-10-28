@@ -1,0 +1,185 @@
+{
+  "id": "techdebtmcp-135",
+  "source": "reviewbench",
+  "golden": "golden/PierreJanineh_TechDebtMCP_135-16a54f0f.json",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "sites": [
+        {
+          "path": "src/server/handlers.ts",
+          "start": 438,
+          "end": 454
+        },
+        {
+          "path": "src/server/handlers.ts",
+          "start": 439,
+          "end": 448
+        }
+      ],
+      "reach": "repo",
+      "golden": [
+        {
+          "severity": "high",
+          "category": "security",
+          "difficulty": "easy",
+          "evidence": "The user-supplied `path` parameter is passed directly to `fileExists`, `getFileStats`, and `readFile` without validating via `path.isAbsolute()` or normalizing via `path.resolve()`. A malicious client can supply a relative traversal string like `../../../../etc/passwd` to read arbitrary files, bypassing the intent of the size guard entirely. The project's AGENTS.md explicitly mandates these checks before any filesystem operation (Issues #125, #126) and no such validation is present anywhere in the server directory."
+        },
+        {
+          "severity": "low",
+          "category": "security",
+          "difficulty": "easy",
+          "evidence": "The two new error messages `File not found: ${path}` and `Could not read file stats for: ${path}` embed the raw `path` value, which is typically an absolute filesystem path, in the MCP error response. The project's AGENTS.md security section states 'Use getRelativePath() in error messages returned to clients — never leak absolute filesystem paths' (Issue #129). These are new error paths introduced by this PR that do not follow that convention."
+        }
+      ]
+    },
+    {
+      "id": "b2",
+      "sites": [
+        {
+          "path": "src/core/customRulesEngine.ts",
+          "start": 32,
+          "end": 32
+        }
+      ],
+      "reach": "repo",
+      "golden": [
+        {
+          "severity": "medium",
+          "category": "correctness",
+          "difficulty": "easy",
+          "evidence": "ALLOWED_FLAGS_RE = /^[gimsuy]*$/ excludes the `d` flag (hasIndices), which is a valid ECMAScript 2022 flag supported since Node.js 16. The project declares `engines.node >= 18`, making `d` a fully valid flag on every supported runtime. Any user passing `flags: 'd'` to `add_custom_rule` or `validate_custom_pattern` gets an incorrect 'Invalid regex flags' rejection, and the flag is silently stripped at execution time, changing matching behavior without warning."
+        }
+      ]
+    },
+    {
+      "id": "b3",
+      "sites": [
+        {
+          "path": "src/core/customRulesEngine.ts",
+          "start": 255,
+          "end": 278
+        }
+      ],
+      "reach": "repo",
+      "golden": [
+        {
+          "severity": "low",
+          "category": "correctness",
+          "difficulty": "hard",
+          "evidence": "When `pattern.flags` contains disallowed characters, `validatePattern` pushes a flags-error and then continues to compile the regex using normalized (stripped) flags. This means a pattern that is syntactically invalid only when combined with its declared flags (rare but possible with flag-specific syntax like `\\p{}` requiring `u`) will be compiled with `u` stripped and may not surface an 'Invalid regex pattern' error. The two validation concerns — flags and pattern — are tested independently rather than together, so the reported validity does not reflect the actual behavior at execution time when both flags and pattern interact."
+        }
+      ]
+    }
+  ],
+  "ignored": [
+    {
+      "id": "i1",
+      "severity": "medium",
+      "category": "reliability",
+      "sites": [
+        {
+          "path": "src/server/handlers.ts",
+          "start": 90,
+          "end": 90
+        }
+      ],
+      "evidence": "The production `CustomRulesEngine` is instantiated without an `onRuleError` callback. When the defense-in-depth guard in `executePattern` fires at runtime (e.g., an oversized or invalid pattern loaded from `.techdebtrc.json` bypassing `validatePattern`), the branch `if (this.onRuleError)` is false and the error is silently discarded. The MCP client receives an empty issues array for those rules with no indication that they were skipped, making the tool silently unreliable for config-loaded rules."
+    },
+    {
+      "id": "i2",
+      "severity": "low",
+      "category": "api-architecture",
+      "sites": [
+        {
+          "path": "src/core/customRulesEngine.ts",
+          "start": 32,
+          "end": 32
+        }
+      ],
+      "evidence": "ALLOWED_FLAGS_RE = /^[gimsuy]*$/ uses `*` (zero or more), so it accepts duplicate flag characters such as `'gg'`. Passing `'gg'` directly to `new RegExp()` throws a SyntaxError; the deduplication inside both `validatePattern` and `executePattern` silently masks this. The stated contract of `validatePattern` is that a passing result means the pattern is ready to use, but a caller who constructs `new RegExp(pattern.pattern, pattern.flags)` from a 'valid' result with duplicate flags will get a thrown exception. The regex should enforce uniqueness, e.g. `/^[gimsuy]{0,6}$/` with a uniqueness check."
+    },
+    {
+      "id": "i3",
+      "severity": "low",
+      "category": "maintainability",
+      "sites": [
+        {
+          "path": "src/core/customRulesEngine.ts",
+          "start": 235,
+          "end": 242
+        }
+      ],
+      "evidence": "The regex flag normalization logic (stripping invalid characters and deduplication) is duplicated between `validatePattern` (lines 235-242) and `executePattern` (lines 119-123). This logic should be extracted into a private helper function to avoid code duplication and ensure that validation and execution always use the identical flag processing rules."
+    },
+    {
+      "id": "i4",
+      "severity": "low",
+      "category": "testing",
+      "sites": [
+        {
+          "path": "src/server/handlers.ts",
+          "start": 444,
+          "end": 450
+        }
+      ],
+      "evidence": "The code handles a null return from `getFileStats` by throwing an `McpError`, but there is no corresponding test case to verify this error path. The new tests in `src/server/__tests__/handlers.test.ts` only cover the file size limit being exceeded and met, but not the case where file stats cannot be retrieved."
+    },
+    {
+      "id": "i5",
+      "severity": "low",
+      "category": "documentation",
+      "sites": [
+        {
+          "path": "CHANGELOG.md",
+          "start": 36,
+          "end": 36
+        }
+      ],
+      "evidence": "This changelog overstates the security fix: limiting pattern length and flags does not prevent catastrophic-backtracking ReDoS for short patterns that are still executed synchronously. Please either implement an actual ReDoS mitigation before claiming prevention or reword this entry to accurately describe the narrower guards added."
+    }
+  ],
+  "rejected": [
+    {
+      "was": "src/server/handlers.ts:438-454: There is a TOCTOU (time-of-check/time-of-use) race across three separate filesystem calls: `fileExists`, `getFileStats`, and `readFile` all operate on the same user-supplied path independently. An attacker with filesystem access (e.g., via a symlink swap) can replace the checked file with a larger one between the `stats.size` guard and the actual `readFile` call, bypassing the MAX_FILE_SIZE_BYTES limit and feeding an unbounded string into every custom-rule regex.",
+      "why": "The TOCTOU race between getFileStats and readFile is technically real (the stat check was introduced by this PR), but the threat model for a local MCP server means exploiting this requires filesystem-level access on the developer's machine. Anyone with that access already has far more direct attack vectors, and the pre-existing path traversal (Finding 1) is a much simpler path to the same outcome. The TOCTOU window here is a few microseconds on a local file and is a generic pattern concern rather than a concrete exploitable vulnerability in this context."
+    },
+    {
+      "was": "src/core/customRulesEngine.ts:110-118: The defense-in-depth check for oversized patterns in `executePattern` silently returns an empty array of issues and calls `onRuleError`. This differs from how other invalid regex errors are handled (which throw). This silent failure could mask configuration problems if a rule bypasses validation. The behavior should be consistent, likely by throwing an error, or the silent failure should be explicitly documented if it's the intended design.",
+      "why": "The finding incorrectly claims other invalid regex errors in executePattern 'throw'. The catch block at lines 158-161 handles all exceptions the same way: call onRuleError if set, then return []. The oversized-pattern guard does the same thing from within the try block. Both paths are fully consistent in their behavior — the finding's stated inconsistency does not exist in the code."
+    },
+    {
+      "was": "src/core/__tests__/customRulesEngine.test.ts:358-358: In the test 'returns empty array and calls onRuleError for oversized patterns', the oversized rule is added to the `engineWithErrCb` instance, but it is executed against the `engine` instance from the parent scope, which doesn't have the error callback configured. The test likely passes by coincidence due to Jest's state but is logically incorrect. The `executeRules` call should be on `engineWithErrCb`.",
+      "why": "The claim is factually wrong. The actual test (at line 418, not 358) uses `engineWithErrCb.addRule(oversizedPattern)` on line 434 and `engineWithErrCb.executeRules(...)` on line 435 — both operations are on the same instance with the error callback. There is no use of the parent `engine` instance in this test."
+    },
+    {
+      "was": "src/core/customRulesEngine.ts:132-139: The `executePattern` method strips disallowed regex flag characters and defaults to 'g' when no valid flags remain, but fails to log or notify the user about the normalization. This may cause confusion if users expect their original flags to be applied.",
+      "why": "The flag stripping in executePattern is explicitly documented in the PR as intentional defense-in-depth for config-loaded rules. The user-facing validation path (validatePattern) already reports invalid flags. The finding amounts to a generic 'add logging for silent normalization' suggestion on private defensive code, without identifying a concrete bug or a scenario where the behavior contradicts a documented contract."
+    },
+    {
+      "was": "src/core/customRulesEngine.ts:342-352: The `validatePattern` static method does not log or return normalized flags to the caller when it removes disallowed characters. This lack of feedback could prevent users from understanding that their flags were adjusted.",
+      "why": "The finding's premise is incorrect. validatePattern does not silently remove disallowed flag characters — it explicitly pushes an error message ('Invalid regex flags: ...') and returns { valid: false } when flags contain disallowed characters. The internal normalization is only used to test whether the pattern itself compiles and is not applied to the returned result or exposed to the caller."
+    },
+    {
+      "was": "src/core/customRulesEngine.ts:155-161: In the loop within `matchLineIssues`, the regex `lastIndex` is manually adjusted without verifying global flag behavior. If multiple patterns use non-global regexes, behavior might be unexpected due to silent corrections.",
+      "why": "The finding incorrectly claims non-global regexes reach the lastIndex adjustment loop. The code has an explicit early return `if (!regex.global) { return this.matchSingleIssue(...); }` at the top of matchLineIssues. Non-global regexes never reach the loop. The lastIndex manipulation is correctly guarded and only applies to global regexes."
+    },
+    {
+      "was": "src/server/handlers.ts:344-357: The file size validation in `handleExecuteCustomRules` ensures files larger than 500,000 bytes are rejected, but the error message lacks the specific file size detected. Including it would improve debugging clarity.",
+      "why": "Factually correct that stats.size is absent from the error message, but this is a sub-threshold cosmetic enhancement suggestion. The current message already communicates the limit clearly. There is no project convention requiring actual values in error messages, no behavioral impact, and the suggestion is generic enough to apply to any similar size-guard in any codebase."
+    },
+    {
+      "was": "src/server/handlers.ts:170-172: The `dispatchTool` function defaults to throwing an `McpError` when the tool name is unrecognized. The error message uses interpolation but doesn't log available tool names, which would assist troubleshooting typos or configuration issues.",
+      "why": "This is a generic suggestion to include available tool names in an unrecognized-tool error message. It identifies no bug, violates no project convention, and has no functional impact. The same comment could be copy-pasted verbatim onto any switch-based dispatcher in any codebase. It is also unrelated to the PR's changes (ReDoS guards and file size cap)."
+    },
+    {
+      "was": "src/core/customRulesEngine.ts:153-153: [javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp] RegExp() called with a `pattern` function argument, this might allow an attacker to cause a Regular Expression Denial-of-Service (ReDoS) within your application as RegExP blocks the main thread. For this reason, it is recommended to use hardcoded regexes instead. If your regex is run on user-controlled input, consider performing input validation or use a regex checking/sanitization library such as https://www.npmjs.com/package/recheck to verify that the regex does not appear vulnerable to ReDoS.",
+      "why": "This is a generic static analysis template alert about non-literal RegExp construction. The PR was specifically written to address ReDoS (issue #127) and already implements length capping (MAX_PATTERN_LENGTH = 1000), flag allowlisting, and flag deduplication as mitigations at line 153. The tool alert names the specific line but applies the same boilerplate warning regardless of context — it does not demonstrate a concrete exploitable ReDoS vulnerability given the mitigations in place, and does not account for the guards already present in this exact code."
+    },
+    {
+      "was": "src/core/customRulesEngine.ts:272-272: [javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp] RegExp() called with a `pattern` function argument, this might allow an attacker to cause a Regular Expression Denial-of-Service (ReDoS) within your application as RegExP blocks the main thread. For this reason, it is recommended to use hardcoded regexes instead. If your regex is run on user-controlled input, consider performing input validation or use a regex checking/sanitization library such as https://www.npmjs.com/package/recheck to verify that the regex does not appear vulnerable to ReDoS.",
+      "why": "Identical generic static analysis template alert as Finding 17, applied to line 272 (the validatePattern compilation test). This call is explicitly a try/catch compilation check to detect invalid patterns — it never runs against user content, only constructs the regex to validate it throws or not. The PR already implements length capping and flag allowlisting as mitigations. The tool produces the same boilerplate warning regardless of context and demonstrates no concrete exploitable ReDoS path."
+    }
+  ]
+}
