@@ -4,11 +4,11 @@
 import type { DB } from "@intx/db";
 import { unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import { managedPulls, type PullRequestRef } from "../manager-state.js";
-import { runKey, type ObservedRun } from "./reconcile-plan.js";
+import { pullKey, runKey, type ObservedRun } from "./reconcile-plan.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 
-/** Runs by repository, then by `${number}@${headSha}`. */
-export type ObservedRuns = { byRepo: Map<string, Map<string, ObservedRun[]>> };
+/** Runs by repository, then by `${number}@${headSha}`; `roomless`, by `pullKey`, the pull requests whose last manager was refused for capacity. */
+export type ObservedRuns = { byRepo: Map<string, Map<string, ObservedRun[]>>; roomless: Set<string> };
 
 /** The runs of `pulls`' managers. */
 export type ManagerRuns = (tenantId: string, pulls: readonly PullRequestRef[]) => Promise<ObservedRuns>;
@@ -23,6 +23,7 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
     const pulls = await managedPulls(db, tenantId, asked);
     const recorded = await verdicts.ofRuns(tenantId, [...new Set(pulls.flatMap((pull) => pull.history.map((pass) => pass.runId)))], asked);
     const byRepo: ObservedRuns["byRepo"] = new Map();
+    const roomless = new Set<string>();
 
     function observed(repo: string, number: number, head: string, run: ObservedRun): void {
       const byHead = byRepo.get(repo) ?? new Map<string, ObservedRun[]>();
@@ -33,8 +34,9 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
       else byHead.set(key, [run]);
     }
 
-    for (const { pr, live, gone, waiting } of pulls) {
+    for (const { pr, live, gone, waiting, roomless: refused } of pulls) {
       const { source } = pr;
+      if (refused) roomless.add(pullKey(pr.repo, pr.number));
       // The hub checked the run is up, so it is running now and never stuck.
       if (live?.head !== undefined) observed(pr.repo, pr.number, live.head, { runId: live.runId, source, status: "running", startedAt: now().toISOString(), ...(live.pass && { passAt: live.pass.takenAt }), ...(live.awaiting.length > 0 && { awaiting: live.awaiting }), ...(live.waitingSince !== undefined && { waitingSince: live.waitingSince }) });
       // No manager is up while the head waits only on CI; the reconciler wakes one once CI settles.
@@ -44,6 +46,6 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
         observed(pr.repo, pr.number, verdict.headSha, { runId: verdict.runId, source, status: "completed", startedAt: verdict.startedAt.toISOString(), ...settlesBy(verdict), ...(verdict.trigger !== null && { trigger: verdict.trigger }) });
       }
     }
-    return { byRepo };
+    return { byRepo, roomless };
   };
 }

@@ -16,6 +16,9 @@ export const CI_START_MS = 2 * 60_000;
 export const PR_TRIAGE_STATUSES = ["new", "queued", "running", "triaged", "failed", "stale"] as const;
 export type PrTriageStatus = (typeof PR_TRIAGE_STATUSES)[number];
 
+/** A queued head's `error` while every provisioner refused its manager for capacity: it waits for a slot, so it is no failure and spends no attempt. */
+export const WAITING_FOR_CAPACITY = "waiting for capacity";
+
 /** Timestamps are ISO-8601. */
 export type PrTriageRow = {
   number: number;

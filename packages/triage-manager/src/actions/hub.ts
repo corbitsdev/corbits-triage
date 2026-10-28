@@ -82,6 +82,14 @@ export async function deploy(ctx: EffectContext, effectId: string, tenantId: str
   return answered(answer, `deploying ${workflow.packageName}`, Deployed).id;
 }
 
+const Noted = type({ noted: "boolean" });
+
+/** Tells the hub the run this listener deployed to manage `pullRequest`, under `effectId`, so the hub can tell when its placement waits for capacity. */
+export async function noteDeployed(ctx: EffectContext, effectId: string, tenantId: string, { source, repo, number }: PullRequest, runId: string): Promise<void> {
+  const answer = await callHub(ctx, effectId, tenantPath(tenantId, "/manager/deployed"), "POST", { source, repo, number, runId });
+  answered(answer, `noting manager ${runId}`, Noted);
+}
+
 /** Asks the hub to stop the run, this one or one it deployed; it is already ending when the hub answers 409. */
 export async function endRun(ctx: EffectContext, tenantId: string, runId: string): Promise<void> {
   const answer = await callHub(ctx, `end:${runId}`, tenantPath(tenantId, `/workflows/runs/${encodeURIComponent(runId)}`), "DELETE");

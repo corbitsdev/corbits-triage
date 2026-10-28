@@ -3,7 +3,7 @@ import { type } from "arktype";
 import { isFromTriageSender, repoSourceOf, TRIAGE_LISTENERS } from "@corbits/triage-contracts";
 import { Mailed, MailInput } from "../mail.js";
 import { publishedFor, TIMINGS } from "../release.js";
-import { deploy, endRun, mailOf, managedBy, manageMail } from "./hub.js";
+import { deploy, endRun, mailOf, managedBy, manageMail, noteDeployed } from "./hub.js";
 
 /** The hub's mail to a listener: the repository and, as a reconciler's mail does, the heads it names as `items`. */
 const ListenerMail = type({
@@ -15,8 +15,8 @@ const ListenerMail = type({
 });
 
 /**
- * Deploys a manager from the host's published release for each pull request the hub's mail names, and wakes it; the
- * manager reads what to do from the hub. Only the hub's mail moves the listener; a mail that names no pull request, or a
+ * Deploys a manager from the host's published release for each pull request the hub's mail names, tells the hub which
+ * run it deployed, and wakes it; the manager reads what to do from the hub. Only the hub's mail moves the listener; a mail that names no pull request, or a
  * listener published without a manager, fails the body.
  */
 export async function forward(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ mails: MailInput[] }> {
@@ -32,6 +32,7 @@ export async function forward(input: unknown, ctx: EffectContext, _signal: Abort
   for (const number of numbers) {
     const pullRequest = { source, repo: mail.repo, number };
     const runId = await deploy(ctx, `deploy:${number}`, mail.tenantId, release);
+    await noteDeployed(ctx, `deployed:${number}`, mail.tenantId, pullRequest, runId);
     mails.push({ tenantId: mail.tenantId, to: runId, content: manageMail(mail.tenantId, pullRequest), readyBy: new Date(Date.now() + TIMINGS.managerReadyMs).toISOString() });
   }
   return { mails };
@@ -68,6 +69,7 @@ export async function retry(input: unknown, ctx: EffectContext, _signal: AbortSi
     const release = publishedFor(source, "manager");
     if (!release) throw new Error(`${TRIAGE_LISTENERS[source]} needs the release's manager in release.json, which the hub publishes beside it`);
     const runId = await deploy(ctx, `redeploy:${pullRequest.number}`, tenantId, release);
+    await noteDeployed(ctx, `redeployed:${pullRequest.number}`, tenantId, pullRequest, runId);
     mails.push({ ...mail, to: runId, readyBy: new Date(Date.now() + TIMINGS.managerReadyMs).toISOString() });
   }
   return { mails };

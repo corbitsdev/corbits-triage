@@ -1,5 +1,5 @@
 import type { RepoSource } from "./repo-source.js";
-import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "./stage-result.js";
+import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "./stage-result.js";
 
 /** Each host's listener by its definition id, also its mail address: a workspace with one live routes pull requests to managers. */
 export const TRIAGE_LISTENERS: Record<RepoSource, string> = { github: "triage-listener-github", "bitbucket-datacenter": "triage-listener-bitbucket-datacenter" };
@@ -21,5 +21,6 @@ export const DEPLOYER_GRANTS: ReadonlyArray<{ resource: string; action: string }
   // The listener and the manager read the run they just deployed before mailing it; manage does not satisfy read.
   { resource: "workflow-run:*", action: "read" },
   { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION },
+  { resource: MANAGER_STATE_RESOURCE, action: MANAGER_DEPLOYED_ACTION },
   { resource: MANAGER_RESULT_RESOURCE, action: MANAGER_RESULT_ACTION },
 ];

@@ -9,11 +9,11 @@ import { createDB, createGrantStore, createRunTokenStore, runMigrations, schema 
 import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession } from "@intx/hub-api";
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
-import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, type RepoSource } from "@corbits/triage-contracts";
+import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import { createOverdueWake, createSupersede } from "./manager-intake.js";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
-import { passRequest, recordEvent, type PullRequestRef } from "./manager-state.js";
+import { askDeploy, managedPulls, passRequest, recordEvent, recordRefused, type PullRequestRef } from "./manager-state.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { migrateTriageTables } from "./triage-db.js";
@@ -24,6 +24,7 @@ const USER = { id: "usr_member", email: "member@manager.test", emailVerified: tr
 const SESSION = { id: "ses_member", userId: USER.id, token: "tok_member", expiresAt: new Date("2999-01-01"), createdAt: new Date(), updatedAt: new Date() };
 const GITHUB: PullRequestRef = { source: "github", repo: "acme/widgets", number: 7 };
 const BITBUCKET: PullRequestRef = { source: "bitbucket-datacenter", repo: "ACME/widgets", number: 7 };
+const OTHER_PULL: PullRequestRef = { source: "github", repo: "acme/widgets", number: 8 };
 const REVIEW = { summary: "No bugs.", comments: [], budgetExhausted: false };
 const OpenApi = type({ paths: "Record<string, Record<string, unknown>>" });
 const Operation = type({ requestBody: { content: { "application/json": { schema: "object" } } }, responses: { 200: { content: { "application/json": { schema: "object" } } }, 400: "object", 403: "object", 413: "object" } });
@@ -116,7 +117,8 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
 
 const STATE = { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION };
 const RESULT = { resource: MANAGER_RESULT_RESOURCE, action: MANAGER_RESULT_ACTION };
-type Grant = typeof STATE | typeof RESULT;
+const DEPLOYED = { resource: MANAGER_STATE_RESOURCE, action: MANAGER_DEPLOYED_ACTION };
+type Grant = typeof STATE | typeof RESULT | typeof DEPLOYED;
 
 async function allow(db: Db, principalId: string, { resource, action }: Grant): Promise<void> {
   await db.insert(schema.grant).values({ id: randomUUID(), tenantId: TENANT, principalId, resource, action, effect: "allow", origin: "creator" });
@@ -390,6 +392,71 @@ test("PostgreSQL: a reviewer reports only with the result grant, and the result 
     expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: true });
     expect((await post(app, "take", GITHUB, reviewer)).status).toBe(403);
     expect((await post(app, "done", { ...GITHUB, reviewers: [] }, reviewer)).status).toBe(403);
+  });
+}, 60_000);
+
+test("PostgreSQL: a listener names the manager it deployed, which a refusal for capacity marks roomless until it names another; only the deployed grant and a deployment of the host's manager are accepted", async () => {
+  await withDatabase(async function deployed(db) {
+    const app = buildHub(db);
+    const listener = bearer(await runWithToken(db, "run_listener", [DEPLOYED]));
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_manager_github", tenantId: TENANT, name: TRIAGE_MANAGERS.github, assetId: "ast_manager" });
+    for (const runId of ["run_first", "run_second"]) await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wfd_manager_github", tenantId: TENANT, status: "deployed" });
+    async function roomless(): Promise<boolean | undefined> {
+      const [pull] = await managedPulls(db, TENANT, [GITHUB]);
+      return pull?.roomless;
+    }
+    await askDeploy(db, TENANT, GITHUB);
+
+    expect(await (await post(app, "deployed", { ...GITHUB, runId: "run_first" }, listener)).json()).toEqual({ noted: true });
+    expect(await roomless()).toBeUndefined();
+    await recordRefused(db, TENANT, "run_first");
+    expect(await roomless()).toBe(true);
+    expect(await (await post(app, "deployed", { ...GITHUB, runId: "run_second" }, listener)).json()).toEqual({ noted: true });
+    expect(await roomless()).toBeUndefined();
+
+    expect((await post(app, "deployed", { ...GITHUB, runId: "run_second" }, manager)).status).toBe(403);
+    const notManager = await post(app, "deployed", { ...GITHUB, runId: "run_listener" }, listener);
+    expect(notManager.status).toBe(404);
+    expect(await errorCode(notManager)).toBe("not_manager");
+    expect((await post(app, "take", GITHUB, listener)).status).toBe(403);
+
+    await askDeploy(db, TENANT, OTHER_PULL);
+    const elsewhere = await post(app, "deployed", { ...OTHER_PULL, runId: "run_second" }, listener);
+    expect(elsewhere.status).toBe(409);
+    expect(await errorCode(elsewhere)).toBe("deployed_elsewhere");
+    await db.update(schema.workflowRun).set({ status: "completed" }).where(sql`${schema.workflowRun.id} = 'run_first'`);
+    const ended = await post(app, "deployed", { ...OTHER_PULL, runId: "run_first" }, listener);
+    expect(ended.status).toBe(409);
+    expect(await errorCode(ended)).toBe("run_ended");
+  });
+}, 60_000);
+
+test("PostgreSQL: a refusal for capacity before the listener names the run is read from its allocation, and the refused run taking the claim clears it", async () => {
+  await withDatabase(async function refusedFirst(db) {
+    const app = buildHub(db);
+    const listener = bearer(await runWithToken(db, "run_listener", [DEPLOYED]));
+    const placed = bearer(await runWithToken(db, "run_refused", [STATE]));
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_manager_github", tenantId: TENANT, name: TRIAGE_MANAGERS.github, assetId: "ast_manager" });
+    await db.update(schema.workflowRun).set({ definitionId: "wfd_manager_github" }).where(sql`${schema.workflowRun.id} = 'run_refused'`);
+    await db.insert(schema.sidecarAllocation).values({ id: "alc_refused", anchorRunId: "run_refused", tenantId: TENANT, provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest", maxDisconnectedMs: 60_000, status: "replacing", nextAttemptAt: new Date(), failureCode: "capacity_unavailable" });
+    async function claim(): Promise<Record<string, unknown>> {
+      const [row] = await db.execute<{ state: Record<string, unknown> }>(sql`SELECT state FROM corbits_triage.manager_state WHERE key = ${`mgr:github:${GITHUB.repo}#${GITHUB.number}`}`);
+      return row!.state;
+    }
+    await askDeploy(db, TENANT, GITHUB);
+    await recordRefused(db, TENANT, "run_refused");
+    expect(await claim()).not.toHaveProperty("refusedRunId");
+
+    expect(await (await post(app, "deployed", { ...GITHUB, runId: "run_refused" }, listener)).json()).toEqual({ noted: true });
+    expect(await claim()).toMatchObject({ deployedRunId: "run_refused", refusedRunId: "run_refused" });
+    const [pull] = await managedPulls(db, TENANT, [GITHUB]);
+    expect(pull?.roomless).toBe(true);
+
+    await webhook(db, GITHUB);
+    expect((await post(app, "take", GITHUB, placed)).status).toBe(200);
+    expect(await claim()).toMatchObject({ status: "live", runId: "run_refused", deployedRunId: "run_refused" });
+    expect(await claim()).not.toHaveProperty("refusedRunId");
   });
 }, 60_000);
 

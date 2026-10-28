@@ -1,4 +1,4 @@
-// The routes a pull request's manager run and its reviewers reach with their run token. The caller's run is the run
+// The routes a pull request's manager run, its reviewers and the listener that deploys it reach with their run token. The caller's run is the run
 // token's principal, never a field of the body, so a run can only take, finish or report as itself.
 import { type } from "arktype";
 import { and, eq } from "drizzle-orm";
@@ -10,23 +10,26 @@ import { describeRoute } from "hono-openapi";
 import { schema, type DB } from "@intx/db";
 import type { RequireGrant, RunTokenRoute, TenantEnv } from "@intx/hub-api";
 import { asRecord } from "@corbits/common";
-import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult, type RepoSource } from "@corbits/triage-contracts";
+import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
 import type { Tx } from "./github/admin-github-grant.js";
 import { recordApproved, replaceVerdict } from "./github/verdict-record-store.js";
 import { doResultsOf, eventOf, mirrorOutcomesOf, ruledOf, summaryOf, withResults } from "./github/verdict-row.js";
-import { done, EventState, PassState, recordResult, ReviewerState, take, type Closing, type PassReport, type PullRequestRef } from "./manager-state.js";
+import { workflowName } from "./github/deployment.js";
+import { done, EventState, PassState, recordDeployed, recordResult, ReviewerState, take, type Closing, type PassReport, type PullRequestRef } from "./manager-state.js";
 
 const TAKE_PATH = "/manager/take";
 const DONE_PATH = "/manager/done";
 const REVIEWER_RESULT_PATH = "/manager/reviewer-result";
+const DEPLOYED_PATH = "/manager/deployed";
 
 export const MANAGER_RUN_TOKEN_ROUTES: readonly RunTokenRoute[] = [
   { method: "POST", path: `/api/tenants/:tenantId${TAKE_PATH}` },
   { method: "POST", path: `/api/tenants/:tenantId${DONE_PATH}` },
   { method: "POST", path: `/api/tenants/:tenantId${REVIEWER_RESULT_PATH}` },
+  { method: "POST", path: `/api/tenants/:tenantId${DEPLOYED_PATH}` },
 ];
 
 const PullRequest = type({ source: type.enumerated(...REPO_SOURCES), repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" });
@@ -46,11 +49,13 @@ const Report = type({
 /** `approvals` is the pass's approved Dos as its approvals step ran them; `wait` that the pass's head still awaits CI or a reviewer. */
 const DoneBody = PullRequest.and({ reviewers: ReviewerState.array(), "wait?": "boolean", "report?": Report, "approvals?": { results: "Record<string, unknown>[]" } });
 const ReviewerResultBody = PullRequest.and(StageResult);
+const DeployedBody = PullRequest.and({ runId: "string > 0" });
 
 const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array(), "waitingSince?": "string", "headSince?": "string", claimedAt: "string" } as const;
 const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean", ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 const Recorded = type({ recorded: "boolean" });
+const Noted = type({ noted: "boolean" });
 
 const TAGS = ["manager"];
 const TOO_LARGE = `The body is over ${MAX_BODY_BYTES / 1024 / 1024} MiB.`;
@@ -116,6 +121,17 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
   });
   const granted = requireGrant(MANAGER_STATE_RESOURCE, MANAGER_STATE_ACTION);
   const reports = requireGrant(MANAGER_RESULT_RESOURCE, MANAGER_RESULT_ACTION);
+  const deploys = requireGrant(MANAGER_STATE_RESOURCE, MANAGER_DEPLOYED_ACTION);
+
+  /** `runId` as a deployment of the host's manager in the tenant, live or ended; undefined when it is none. */
+  async function managerOf(tenantId: string, source: RepoSource, runId: string): Promise<{ live: boolean } | undefined> {
+    const { workflowRun, workflowDefinition, workflowRunLaunchSpec } = schema;
+    const [run] = await db.select({ workflow: workflowName, status: workflowRun.status }).from(workflowRun)
+      .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
+      .leftJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
+      .where(and(eq(workflowRun.id, runId), eq(workflowRun.anchorRunId, runId), eq(workflowRun.tenantId, tenantId)));
+    return run?.workflow === TRIAGE_MANAGERS[source] ? { live: schema.isLiveWorkflowRunStatus(run.status) } : undefined;
+  }
 
   app.post(
     TAKE_PATH,
@@ -208,6 +224,36 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
         return failure(502, "wake_failed", "The result is recorded, but the pull request's manager could not be woken.");
       }
       return c.json({ recorded });
+    },
+  );
+
+  app.post(
+    DEPLOYED_PATH,
+    describeRoute({
+      summary: "Name the manager the listener deployed for the pull request",
+      description: "Run token only, for a listener granted `deployed` on `triage-manager:state`, which reaches no other manager route. Records `runId`, a live deployment of the host's manager in the tenant that no other pull request's claim names, as the pull request's newest deployed manager, so the hub can tell when every provisioner refused its placement for capacity and keep the head queued instead of failing it. `noted` is false when the hub never asked for a manager for the pull request.",
+      tags: TAGS,
+      responses: {
+        200: json("Whether the manager was recorded", Noted),
+        ...refusals,
+        403: json("Not a workflow run, or the run lacks `deployed` on `triage-manager:state`", Failure),
+        404: json("`not_manager`: `runId` is not a deployment of the host's manager in the tenant", Failure),
+        409: json("`run_ended`: the run already ended; `deployed_elsewhere`: another pull request's claim names the run", Failure),
+      },
+    }),
+    limited,
+    asRun,
+    deploys,
+    body(DeployedBody),
+    async function noteDeployed(c) {
+      const { runId, ...pr } = c.req.valid("json");
+      const tenantId = c.get("tenant").id;
+      const manager = await managerOf(tenantId, pr.source, runId);
+      if (!manager) return failure(404, "not_manager", "The run is not a deployment of the host's manager.");
+      if (!manager.live) return failure(409, "run_ended", "The run already ended.");
+      const outcome = await recordDeployed(db, tenantId, pr, runId);
+      if (outcome === "elsewhere") return failure(409, "deployed_elsewhere", "Another pull request's claim names the run.");
+      return c.json({ noted: outcome === "noted" });
     },
   );
 

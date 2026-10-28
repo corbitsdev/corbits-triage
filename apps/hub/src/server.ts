@@ -38,7 +38,7 @@ import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest } from "./manager-state.js";
+import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest, recordRefused } from "./manager-state.js";
 import { createTakeLedger, createTriageLiveness } from "./triage-liveness.js";
 import { setTimings } from "./timings.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
@@ -50,6 +50,7 @@ import { connectRailwaySidecars, sweepRailwaySidecarsOf, type RailwaySidecarProv
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { createPlacementChooser, localSidecarUsage } from "./sidecar/placement.js";
+import { noteRefusals } from "./sidecar/refusals.js";
 import { bootLocalSidecars } from "./sidecar/boot.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
@@ -187,14 +188,19 @@ if (typeof e2b === "string") logJson({ level: "info", msg: "e2b_sidecars_off", r
 const railwaySettings = railwaySandboxSettings(env);
 const railway = railwaySettings === undefined ? undefined : await connectRailwaySidecars({ railway: railwaySettings, database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
 if (typeof railway === "string") logJson({ level: "info", msg: "railway_sidecars_off", reason: railway });
+/** Runs only once stock places deployments, after the composition below exists. */
+async function recordPlacementRefused(tenantId: string, runId: string): Promise<void> {
+  await recordRefused(composition.db, tenantId, runId);
+}
+const localProvisioner = noteRefusals(local.provisioner, recordPlacementRefused, logJson);
 // First match wins: workflows and probes that require isolation:workload land on Docker, then E2B, then Railway, the rest on the hub host.
-const workloadProvisioners = [dockerUp, e2b, railway].filter((found) => found !== undefined && typeof found !== "string").map((found) => found.provisioner);
-const sidecarProvisioners = [local.provisioner, ...workloadProvisioners];
+const workloadProvisioners = [dockerUp, e2b, railway].filter((found) => found !== undefined && typeof found !== "string").map((found) => noteRefusals(found.provisioner, recordPlacementRefused, logJson));
+const sidecarProvisioners = [localProvisioner, ...workloadProvisioners];
 const codeReviewProbes = [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2b }, { guide: RAILWAY_PLACE, found: railway }];
 const noIsolatedPlace = isolatedPlaceBootWarning(workloadProvisioners.length > 0, codeReviewProbes.map((probe) => probe.guide));
 if (noIsolatedPlace) logJson(noIsolatedPlace);
 function placeDeployments(db: DB["db"]) {
-  return createPlacementChooser({ db, local: local.provisioner, maxSidecars: localSidecarCap });
+  return createPlacementChooser({ db, local: localProvisioner, maxSidecars: localSidecarCap });
 }
 
 let shuttingDown = false;
@@ -934,7 +940,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     },
     rollouts: workflowRollout.rollouts,
     sidecar: function sidecarUsage() {
-      return localSidecarUsage(composition.db, local.provisioner, localSidecarCap);
+      return localSidecarUsage(composition.db, localProvisioner, localSidecarCap);
     },
     stalled: triageLiveness.stalled,
   }),
