@@ -14,21 +14,21 @@ It needs no Triage account and no secrets, and works on pull requests from forks
 
 ```yaml
 on: pull_request
-permissions:
-  checks: read
-  contents: read
-  pull-requests: read
 jobs:
-  check:
+  corbits-triage-policy:
     runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: corbitsdev/corbits-triage/packages/policy-check-action@0aa2ba2ebeadc02530e15c222306c7baa9b4330c
+      - uses: corbitsdev/corbits-triage/packages/policy-check-action@844696731de693ac70876ddf37cca016b065f25f
 ```
 
-Pin both actions to a full commit SHA; for this Action, a commit from `main`. `github-token` defaults to the job's token. Locally, from here: `bun --conditions=intx-src src/main.ts <repository root> <owner/name>`;
+Pin both actions to a full commit SHA; for this Action, a commit from `main`. The check is named `<workflow name> / corbits-triage-policy`; a workflow written with the earlier job id, `check`, keeps reporting `Corbits Triage policy / check` until it is edited, and when that job is replaced, a branch protection rule or ruleset that requires the old name must be changed to the new one. `github-token` defaults to the job's token. Locally, from here: `bun --conditions=intx-src src/main.ts <repository root> <owner/name>`;
 with `GITHUB_EVENT_NAME=pull_request`, `GITHUB_EVENT_PATH`, `GITHUB_API_URL`, `GITHUB_TOKEN` and `GITHUB_STEP_SUMMARY` set it also runs the rules.
 
 ## Check locally

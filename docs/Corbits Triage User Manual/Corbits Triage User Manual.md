@@ -171,7 +171,7 @@ rules:
 
 A file written before rules carried reasons keeps working as it is.
 
-A coding agent can write the file for you with the skill in [`skills/corbits-triage-setup`](../../skills/corbits-triage-setup/SKILL.md). It looks at the repository, asks only what it can't tell, suggests the starter rules and any that fit, writes `.corbits-triage.yml` and checks it the same way Triage reads it. To use it, copy the `corbits-triage-setup` folder into your coding agent's skills folder, such as `.claude/skills/` in the repository for Claude Code or `.agents/skills/` for agents that read that path, then ask the agent to set up Corbits Triage.
+A coding agent can write the file for you with the skill in [`skills/corbits-triage-setup`](../../skills/corbits-triage-setup/SKILL.md). It reads your last 50 merged pull requests on GitHub and suggests rules from what the repository already does, each with the number behind it, such as size limits at the 90th percentile or a linked-issue rule when most pull requests name an issue. You pick which to keep; it suggests and never decides a stricter policy for you. On Bitbucket Data Center, or with no merged pull requests, the size limits stay at the starter's 30 files and 3,000 lines. It then writes or edits `.corbits-triage.yml` and checks it the same way Triage reads it. When nobody is there to answer, as in an agent run, it writes its suggestions and lists each one under **Waiting on you** in the pull request. To use it, copy the `corbits-triage-setup` folder into your coding agent's skills folder, such as `.claude/skills/` in the repository for Claude Code or `.agents/skills/` for agents that read that path, then ask the agent to set up Corbits Triage.
 
 A file can also start from another repository's policy with `extends: owner/name` (on Bitbucket, `PROJECT/slug`), and then set only what differs for this repository. This is useful when many repositories should follow the same rules: keep them in one repository's `.corbits-triage.yml` and extend it everywhere else. That repository must be connected to the same workspace, and its own file must not use `extends`. A change merged into it applies to every repository extending it from their next verdict.
 
@@ -200,21 +200,21 @@ On GitHub, a mistake in the file can be caught before it reaches the default bra
 ```yaml
 name: Corbits Triage policy
 on: pull_request
-permissions:
-  checks: read
-  contents: read
-  pull-requests: read
 jobs:
-  check:
+  corbits-triage-policy:
     runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: corbitsdev/corbits-triage/packages/policy-check-action@0aa2ba2ebeadc02530e15c222306c7baa9b4330c
+      - uses: corbitsdev/corbits-triage/packages/policy-check-action@844696731de693ac70876ddf37cca016b065f25f
 ```
 
-Each pull request then gets a **Corbits Triage policy / check** check. It reads the file exactly as Triage does and fails if Triage could not read it. Each problem is marked on its line in the pull request's **Files changed**, or on the file as a whole when it has no line.
+Each pull request then gets a **Corbits Triage policy / corbits-triage-policy** check, named after the workflow and the job. To run it from a workflow you already have, add the `corbits-triage-policy` job to it; the check is then named after that workflow. A workflow written with the earlier job id, `check`, keeps reporting **Corbits Triage policy / check** until you edit it; when you replace that job with this one, change a branch protection rule or ruleset that requires the old name to the new one. It reads the file exactly as Triage does and fails if Triage could not read it. Each problem is marked on its line in the pull request's **Files changed**, or on the file as a whole when it has no line.
 
 It also runs the rules that need no model, from the policy on the branch the pull request merges into, such as size, linked issue, merge conflicts and forbidden paths, against the pull request. Each failed rule shows as an error when its failure means Fail, and as a warning otherwise, and the run's summary lists every rule with its result and how many passed. Rules a model answers, such as **focused** or your own written rules, show as skipped, and so does **CI must pass before merge**, since the check is itself still running. A policy that uses `extends` is not checked, and one Triage cannot read shows a warning instead. The check fails when a rule whose failure means Fail fails. It only reads the pull request, never posts to it, and works on pull requests from forks. It needs no Triage account and no secrets, and sets up its own Bun for the job. Both actions are pinned to a full commit SHA, so the job only runs code you chose; to update the check, replace its SHA with a newer commit from `main`.
 
@@ -258,7 +258,7 @@ Each rule's `onFail` says what happens when it fails:
 
 - `fail`, the default for every rule but the size rules, regression risk, the judged duplicate rule, sensitive paths and risk: the verdict is **Fail** and the comment asks the author to fix it.
 - `ask`, the default for the judged duplicate rule, sensitive paths and risk: the verdict is **Unsure** and the comment lists the rule under **Asking a maintainer about:**, so the pull request waits for you in **Needs you** instead of on its author.
-- `label`, the default for the size rules and regression risk: the verdict does not change. When the rule fails, or the decision model can't tell, Triage adds its label to the pull request and a line under **Notes:** in its comment. Triage's comment and the reading pane leave a `label` rule out of their rule list; it shows only as a note and a label (on Bitbucket Data Center, only the note). The browser extension, the **Corbits Triage policy / check** check and the local check still list it. The label follows the rule: once the rule passes, such as a pull request cut back under its size limit, Triage takes the label off. The level labels of sensitive paths and risk (`sensitive: medium`, `sensitive: high`, `risk: medium` and `risk: high`) follow the level: when it changes or drops to low, Triage takes the old one off. A label the policy names for a rule follows that rule, even if a person added it; a label the policy does not name for a rule is never taken off. A label a `labels` step in the policy also names is left alone. The label is `size: large` for the size rules, `docs: check` for the docs rule, `sensitive: high` and `risk: high` for sensitive paths and risk, and the rule's id followed by `: check` for any other, such as `regression-risk: check`; `label:` names a different one, but not one starting `Triage:` or `rule: `, a verdict label, or a level label of sensitive paths or risk other than the rule's own, which Triage takes back itself; a `labels` step may not name a level label either. `onFail: label` suits rules that are hygiene rather than a gate, such as size limits an atomic change has to cross. A top-level `onFail` sets it for every rule in the file that does not set its own. The Policy section shows a rule that does not fail the pull request with what it does instead, such as "(on fail, labels size: large)".
+- `label`, the default for the size rules and regression risk: the verdict does not change. When the rule fails, or the decision model can't tell, Triage adds its label to the pull request and a line under **Notes:** in its comment. Triage's comment and the reading pane leave a `label` rule out of their rule list; it shows only as a note and a label (on Bitbucket Data Center, only the note). The browser extension, the **Corbits Triage policy / corbits-triage-policy** check and the local check still list it. The label follows the rule: once the rule passes, such as a pull request cut back under its size limit, Triage takes the label off. The level labels of sensitive paths and risk (`sensitive: medium`, `sensitive: high`, `risk: medium` and `risk: high`) follow the level: when it changes or drops to low, Triage takes the old one off. A label the policy names for a rule follows that rule, even if a person added it; a label the policy does not name for a rule is never taken off. A label a `labels` step in the policy also names is left alone. The label is `size: large` for the size rules, `docs: check` for the docs rule, `sensitive: high` and `risk: high` for sensitive paths and risk, and the rule's id followed by `: check` for any other, such as `regression-risk: check`; `label:` names a different one, but not one starting `Triage:` or `rule: `, a verdict label, or a level label of sensitive paths or risk other than the rule's own, which Triage takes back itself; a `labels` step may not name a level label either. `onFail: label` suits rules that are hygiene rather than a gate, such as size limits an atomic change has to cross. A top-level `onFail` sets it for every rule in the file that does not set its own. The Policy section shows a rule that does not fail the pull request with what it does instead, such as "(on fail, labels size: large)".
 
 To make a size limit block, give it `onFail: fail` or `onFail: ask`:
 
