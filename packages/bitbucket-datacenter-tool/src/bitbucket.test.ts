@@ -214,15 +214,19 @@ describe("findingThreadStates", () => {
 
   async function bb(path: string): Promise<Response> {
     const id = Number(path.slice(`${PR_PATH}/comments/`.length));
+    if (id === 15) return Response.json({ errors: [{ message: "Server error" }] }, { status: 500 });
     return id in THREADS ? Response.json(THREADS[id]) : Response.json({ errors: [{ message: "No comment" }] }, { status: 404 });
   }
 
-  test("reads a resolved, outdated, replied and untouched thread, a reply nested in Triage's own counting, and leaves a deleted comment out", async () => {
-    expect(await findingThreadStates(bb, "TRI/widgets", 1, [10, 11, 12, 13, 14])).toEqual([
-      { id: 10, state: "resolved", at: new Date(1_792_000_000_000).toISOString() },
-      { id: 11, state: "outdated" },
-      { id: 12, state: "replied", at: new Date(1_792_000_100_000).toISOString() },
-      { id: 13, state: "untouched" },
-    ]);
+  test("reads a resolved, outdated, replied and untouched thread, a reply nested in Triage's own counting, leaves a deleted comment out, and names only a comment it failed to read as unread", async () => {
+    expect(await findingThreadStates(bb, "TRI/widgets", 1, [10, 15, 11, 12, 13, 14])).toEqual({
+      threads: [
+        { id: 10, state: "resolved", at: new Date(1_792_000_000_000).toISOString() },
+        { id: 11, state: "outdated" },
+        { id: 12, state: "replied", at: new Date(1_792_000_100_000).toISOString() },
+        { id: 13, state: "untouched" },
+      ],
+      unread: `bitbucket GET ${PR_PATH}/comments/15 -> 500 Server error`,
+    });
   });
 });

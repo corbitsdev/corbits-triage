@@ -431,10 +431,17 @@ function findingsOf({ payload }: ManagerEvent): (typeof ReportedFindings.infer)[
   return reported instanceof type.errors ? [] : reported.result.comments;
 }
 
-/** The comments of findings reported on heads other than `head`, whose threads a pass on `head` reads. */
+/** How many threads a pass reads at most, so the reads stay bounded on a long-lived pull request. */
+const MAX_THREAD_READS = 100;
+
+/**
+ * The comments of findings reported on heads other than `head` whose threads are not yet resolved, which a pass on
+ * `head` reads: the newest findings' first, at most `MAX_THREAD_READS`.
+ */
 async function threadsBefore(tx: Tx, tenantId: string, pr: PullRequestRef, head: string): Promise<number[]> {
   const results = eventsOf(await codeReviewResults(tx, tenantId, pr));
-  return results.flatMap(({ event }) => (event.head === head ? [] : findingsOf(event).flatMap((finding) => (finding.thread ? [finding.thread.id] : []))));
+  const open = results.flatMap(({ event }) => (event.head === head ? [] : findingsOf(event).flatMap((finding) => (finding.thread && finding.thread.state !== "resolved" ? [finding.thread.id] : []))));
+  return [...new Set(open)].slice(-MAX_THREAD_READS);
 }
 
 /** The first pass on a head reads the threads of findings posted before it; the passes after it on that head read none. */

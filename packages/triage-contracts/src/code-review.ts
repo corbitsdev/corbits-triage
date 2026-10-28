@@ -100,5 +100,8 @@ export function findingSection(finding: CodeReviewComment): string {
  */
 export type SendCodeReviewInput = { repo: string; number: number; sha: string; reviewed?: string; summary: string; comments: CodeReviewComment[] };
 
-/** Each finding's inline comment on the host, in the order of the review's findings; null for one held in the summary. */
-export type SentThreads = { threads: (number | null)[] };
+/**
+ * Each finding's inline comment on the host, in the order of the review's findings; null for one held in the summary.
+ * `threads` is null, and `unread` says why, when the host wrote the review but its comments could not be read back.
+ */
+export type SentThreads = { threads: (number | null)[] | null; unread?: string };

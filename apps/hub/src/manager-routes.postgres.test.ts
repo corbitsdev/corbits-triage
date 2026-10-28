@@ -186,7 +186,7 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
   });
 }, 60_000);
 
-test("PostgreSQL: done keeps each posted finding's comment, the first pass on a newer head names them, and what became of their threads lands on their findings", async () => {
+test("PostgreSQL: done keeps each posted finding's comment, the first pass on a newer head names those not yet resolved, and what became of their threads lands on their findings", async () => {
   await withDatabase(async function threads(db) {
     const logged: Record<string, unknown>[] = [];
     function log(entry: Record<string, unknown>): void {
@@ -227,6 +227,10 @@ test("PostgreSQL: done keeps each posted finding's comment, the first pass on a 
 
     await recordEvent(db, TENANT, GITHUB, "again", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
     expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h2" }, threads: [] });
+    await post(app, "done", { ...GITHUB, reviewers: [] }, manager);
+
+    await recordEvent(db, TENANT, GITHUB, "pushed again", { type: "webhook", head: "h3", payload: { kind: "pr", headSha: "h3" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h3" }, threads: [502] });
   });
 }, 60_000);
 

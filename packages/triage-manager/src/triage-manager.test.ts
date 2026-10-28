@@ -478,7 +478,7 @@ describe("triage-manager with code review", () => {
 
   function thread(ids: number[], { isResolved = false, isOutdated = false, by = ids.map(() => "corbits") }: { isResolved?: boolean; isOutdated?: boolean; by?: string[] } = {}) {
     const comments = ids.map((databaseId, index) => ({ databaseId, createdAt: `2026-10-2${index}T00:00:00Z`, author: { login: by[index]! } }));
-    return { isResolved, isOutdated, comments: { nodes: comments } };
+    return { isResolved, isOutdated, opener: { nodes: comments.slice(0, 1) }, comments: { nodes: comments } };
   }
 
   test("posting a review tells the hub each finding's inline comment, under the run that reported it", async () => {
@@ -487,6 +487,20 @@ describe("triage-manager with code review", () => {
     await runMail(reviewed, wake(), host, hub.hub);
     expect(writes).toContainEqual(POSTED_REVIEW);
     expect(doneBody(hub.calls)["threadIds"]).toEqual({ runId: DEPLOYED, ids: [501] });
+  });
+
+  test("a review whose comments cannot be read back counts as posted, and tells the hub why it names no comments", async () => {
+    const { writes, host } = githubHost();
+    async function unreadable(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (/\/reviews\/\d+\/comments$/.test(url.pathname)) return Response.json({ message: "Server Error" }, { status: 502 });
+      return host(input, init);
+    }
+    const hub = fakeHub({ takes: [reported({ result: REVIEW }, ON)], dones: [ENDED] });
+    await runMail(reviewed, wake(), unreadable, hub.hub);
+    expect(writes).toContainEqual(POSTED_REVIEW);
+    expect(doneBody(hub.calls)).toMatchObject({ threadsUnread: expect.stringContaining("502") });
+    expect(doneBody(hub.calls)["threadIds"]).toBeUndefined();
   });
 
   test("the first pass on a newer head reads the threads take names and tells the hub what became of each", async () => {

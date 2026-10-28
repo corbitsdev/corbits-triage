@@ -7,11 +7,12 @@ import { managerMailOf } from "./hub.js";
 import { TakeOutput } from "./manager.js";
 
 const ThreadsInput = type({ payload: "unknown", take: { output: TakeOutput } });
-const Read = type({ threads: ThreadRead.array() });
+const Read = type({ threads: ThreadRead.array(), "unread?": "string" });
 
 /**
  * Reads what became of the threads of the findings posted on earlier heads, which take names on a pass for a newer
- * head, once for each head. A read the host refuses leaves the findings as they were last read, and says why for the hub to log.
+ * head, once for each head. A read the host refuses, whole or for some threads, leaves those findings as they were last
+ * read, and says why for the hub to log.
  */
 export async function findingThreads(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ reads: ThreadRead[]; unread?: string }> {
   const parsed = ThreadsInput(input);
@@ -26,5 +27,6 @@ export async function findingThreads(input: unknown, ctx: EffectContext, _signal
   }
   const result = await ctx.perform({ effectId: asked.id, capability: READ_PULL_REQUEST, run }) as ToolResult;
   if (result.isError) return { reads: [], unread: JSON.stringify(result.content) };
-  return { reads: Read.assert(result.content).threads };
+  const { threads: reads, unread } = Read.assert(result.content);
+  return { reads, ...(unread !== undefined && { unread }) };
 }

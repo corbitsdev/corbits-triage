@@ -179,7 +179,7 @@ const DoneInput = type({
   "reviewMailed?": { output: { "reviewer?": Reviewer } },
   "earlyReviewMailed?": { output: { "reviewer?": Reviewer } },
   "judgeMailed?": { output: { "reviewer?": Reviewer } },
-  "postReview?": { output: { "threads?": { runId: "string", ids: "(number | null)[]" } } },
+  "postReview?": { output: { "threads?": { runId: "string", ids: "(number | null)[]" }, "unread?": "string" } },
   "findingThreads?": { output: { reads: ThreadRead.array(), "unread?": "string" } },
 });
 
@@ -286,8 +286,8 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const wait = awaiting(parsed.take.output, reviewers);
   const posted = parsed.postReview?.output.threads;
   const reads = parsed.findingThreads?.output.reads;
-  const unread = parsed.findingThreads?.output.unread;
-  const body = { ...mail.pullRequest, reviewers, wait, ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }), ...(posted && { threadIds: posted }), ...(reads !== undefined && reads.length > 0 && { threads: reads }), ...(unread !== undefined && { threadsUnread: unread }) };
+  const unreads = [parsed.findingThreads?.output.unread, parsed.postReview?.output.unread].filter((why) => why !== undefined);
+  const body = { ...mail.pullRequest, reviewers, wait, ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }), ...(posted && { threadIds: posted }), ...(reads !== undefined && reads.length > 0 && { threads: reads }), ...(unreads.length > 0 && { threadsUnread: unreads.join("; ") }) };
   const answer = await asManager(ctx, mail, "done", body, Done);
   if (answer === undefined) return { outcome: "refused" };
   for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);

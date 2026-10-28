@@ -1019,16 +1019,22 @@ found before anything is written.
 The manager also records what became of each finding it posted inline. Its
 send returns, per finding, the host comment that holds it (on GitHub read back
 from that review's comments and matched by path and the exact text written for
-the finding; on Bitbucket Data Center the id each inline post returns), and done
+the finding against the diff at the head the review was posted on; on Bitbucket
+Data Center the id each inline post returns), and done
 keeps that id as `thread` on the finding in its reviewer-result row; ids that do
-not line up with the review's findings are logged and left out. The first pass
-on a newer head gets those ids from take, reads them in one `findingThreads`
+not line up with the review's findings are logged and left out. A GitHub
+read-back that fails leaves the ids unknown and is logged as
+`finding_threads_unread`; the review counts as posted, and a later send of it
+reads them again. The first pass on a newer head gets from take the ids of
+findings not yet resolved, the newest 100 at most, reads them in one `findingThreads`
 step through the host read tool (`finding_thread_states`: GitHub's GraphQL
 `reviewThreads`, Data Center's comment by id), and done writes each state on its
 finding: resolved, outdated, replied (by someone other than Triage) or
 untouched, with `at` only when the host names the time of the change (a reply's
 time on both hosts, a resolve's on Data Center). A read the host refuses is
-logged as `finding_threads_unread` and leaves the findings as they were. On Data
+logged as `finding_threads_unread` and leaves the findings as they were; on Data
+Center, where each comment is its own read, only the comments that failed stay
+unread. On Data
 Center the fields read (`threadResolved`, `threadResolvedDate`, `anchor.orphaned`,
 nested `comments`) follow its REST reference and have not been checked against a
 running instance. The portal shows it

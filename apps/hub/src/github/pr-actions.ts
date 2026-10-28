@@ -74,7 +74,7 @@ export async function sendReview(send: CodeReviewSender, body: CodeReviewSendBod
   const comments = completed.comments.map(({ thread: _thread, ...finding }) => finding);
   const sent = await send({ repo, number, sha: headSha, reviewed: completed.headSha, summary, comments });
   if ("skipped" in sent) return failure(409, "head_moved", "The pull request has new commits since this review. Review again, then send it.");
-  const { threads: _threads, ...answer } = sent;
+  const { threads: _threads, unread: _unread, ...answer } = sent;
   return answer;
 }
 

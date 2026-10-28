@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { errorText } from "@corbits/common";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
@@ -328,15 +329,30 @@ function threadReadOf(id: number, comment: ThreadComment): ThreadRead {
   return { id, state: "replied", at: new Date(Math.max(...answers.map((reply) => reply.createdDate))).toISOString() };
 }
 
-/** The state of the thread each comment of `ids` opened; a comment deleted since has none. */
-export async function findingThreadStates(bb: BitbucketFetch, repo: string, number: number, ids: readonly number[]): Promise<ThreadRead[]> {
-  const reads: ThreadRead[] = [];
+/** The state of the thread comment `id` opened, or undefined for a comment deleted since. */
+async function threadAt(bb: BitbucketFetch, repo: string, number: number, id: number): Promise<ThreadRead | undefined> {
+  const path = `${prPath(repo, number)}/comments/${id}`;
+  const res = await bb(path, { headers: { accept: "application/json" } });
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new Error(`bitbucket GET ${path} -> ${res.status} ${await errorMessage(res)}`.trimEnd());
+  return threadReadOf(id, await res.json() as ThreadComment);
+}
+
+/**
+ * The state of the thread each comment of `ids` opened; a comment deleted since has none. A comment that could not be
+ * read is named in `unread`, so one failure leaves only its own thread unread.
+ */
+export async function findingThreadStates(bb: BitbucketFetch, repo: string, number: number, ids: readonly number[]): Promise<{ threads: ThreadRead[]; unread?: string }> {
+  const threads: ThreadRead[] = [];
+  const failed: string[] = [];
   for (const id of ids) {
     if (!Number.isSafeInteger(id)) throw new Error(`comment id must be an integer, got ${id}`);
-    const res = await bb(`${prPath(repo, number)}/comments/${id}`, { headers: { accept: "application/json" } });
-    if (res.status === 404) continue;
-    if (!res.ok) throw new Error(`bitbucket GET ${prPath(repo, number)}/comments/${id} -> ${res.status} ${await errorMessage(res)}`.trimEnd());
-    reads.push(threadReadOf(id, await res.json() as ThreadComment));
+    try {
+      const read = await threadAt(bb, repo, number, id);
+      if (read) threads.push(read);
+    } catch (err) {
+      failed.push(errorText(err));
+    }
   }
-  return reads;
+  return { threads, ...(failed.length > 0 && { unread: failed.join("; ") }) };
 }

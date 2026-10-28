@@ -196,7 +196,7 @@ export async function earlyReviewMailed(input: unknown): Promise<{ reviewer?: Re
 }
 
 const PostInput = type({ payload: "unknown", take: { output: TakeOutput }, reviewScope: { output: { reviewed: "boolean" } } });
-const Sent = type({ skipped: "string" }).or({ threads: "(number | null)[]" });
+const Sent = type({ skipped: "string" }).or({ threads: "(number | null)[] | null", "unread?": "string" });
 
 /** This pass's report and the run that made it, or else the review an earlier pass stored. */
 function toPost(review: TakeOutput["review"], runId: string | undefined, stored: ReturnType<typeof storedReviewer>): ReturnType<typeof storedReviewer> {
@@ -207,9 +207,10 @@ function toPost(review: TakeOutput["review"], runId: string | undefined, stored:
 /**
  * Posts the code review reported on its head after the verdict: this pass's, or one an earlier pass stored when this
  * pass's rules still let code review past. The host writes nothing for a review already there. `threads` names each
- * finding's inline comment under the run that reported the review, for the hub to keep on its findings.
+ * finding's inline comment under the run that reported the review, for the hub to keep on its findings, or `unread`
+ * why the host could not read them back.
  */
-export async function postReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ posted: boolean; threads?: { runId: string; ids: (number | null)[] } }> {
+export async function postReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ posted: boolean; threads?: { runId: string; ids: (number | null)[] }; unread?: string }> {
   const parsed = PostInput(input);
   if (parsed instanceof type.errors) throw new Error(`postReview: ${parsed.summary}`);
   const { head, taken, reviewers, review, reviewRun } = parsed.take.output;
@@ -226,5 +227,6 @@ export async function postReview(input: unknown, ctx: EffectContext, _signal: Ab
   const sent = Sent.assert(result.content);
   // A review the host skipped, as one whose head moved on, names no comments.
   if ("skipped" in sent) return { posted: true };
+  if (sent.threads === null) return { posted: true, ...(sent.unread !== undefined && { unread: sent.unread }) };
   return { posted: true, threads: { runId: found.runId, ids: sent.threads } };
 }

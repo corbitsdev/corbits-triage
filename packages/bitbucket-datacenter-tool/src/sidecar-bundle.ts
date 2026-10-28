@@ -61,7 +61,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "bitbucket_datacenter_finding_thread_states",
-    description: "Say, for the thread each of the comments ids opened, whether it is resolved, outdated, replied to by someone other than the comment's author (with the reply's time), or untouched. A deleted comment is left out.",
+    description: "Say, for the thread each of the comments ids opened, whether it is resolved, outdated, replied to by someone other than the comment's author (with the reply's time), or untouched. A deleted comment is left out; one that could not be read is named in unread.",
     inputSchema: obj({ repo, number: { type: "integer" }, ids: { type: "array", items: { type: "integer" } } }),
   },
   {
@@ -182,7 +182,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
     case "bitbucket_datacenter_author_teams":
       return authorTeams(bb, { repo: a.repo, author: a.author, teams: a.teams });
     case "bitbucket_datacenter_finding_thread_states":
-      return { threads: await findingThreadStates(bb, a.repo, a.number, a.ids) };
+      return findingThreadStates(bb, a.repo, a.number, a.ids);
     case "bitbucket_datacenter_read_file":
       return readWindow(bb, reads, a);
     case "bitbucket_datacenter_mirror":
