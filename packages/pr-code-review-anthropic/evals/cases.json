@@ -4,69 +4,109 @@
     "repo": "pnp/cli-microsoft365",
     "number": 7191,
     "baseSha": "7182dbb5a5bbf283e890fa3774bbbd8d78573f59",
-    "headSha": "a44ec57153539d3b87c3d8fe819575574b2dee9e"
+    "headSha": "a44ec57153539d3b87c3d8fe819575574b2dee9e",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "pnp_cli-microsoft365_7191-a44ec571.json"
+    }
   },
   {
     "id": "crabtrap-15",
     "repo": "brexhq/CrabTrap",
     "number": 15,
     "baseSha": "b29930e93765700608313c0f0d32c4818734e158",
-    "headSha": "5ef0884c59b3ee1d5a986dd02686a8232570c80f"
+    "headSha": "5ef0884c59b3ee1d5a986dd02686a8232570c80f",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "brexhq_CrabTrap_15-5ef0884c.json"
+    }
   },
   {
     "id": "disaster-ninja-fe-1230",
     "repo": "konturio/disaster-ninja-fe",
     "number": 1230,
     "baseSha": "3c1900acccaae22cb69adb02dd8351f24fe4e8b5",
-    "headSha": "d169e9da6b816d04a9697359406cdf154b2f8067"
+    "headSha": "d169e9da6b816d04a9697359406cdf154b2f8067",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "konturio_disaster-ninja-fe_1230-d169e9da.json"
+    }
   },
   {
     "id": "healthstream-rag-34",
     "repo": "melroyanthony/healthstream-rag",
     "number": 34,
     "baseSha": "adfd09b776343d041eaa1109d06282867580084a",
-    "headSha": "a1d2b3e09cc4cb67477de2abc4ecfb429c37aa13"
+    "headSha": "a1d2b3e09cc4cb67477de2abc4ecfb429c37aa13",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "melroyanthony_healthstream-rag_34-a1d2b3e0.json"
+    }
   },
   {
     "id": "jadx-collaboration-3",
     "repo": "ardevd/jadx-collaboration",
     "number": 3,
     "baseSha": "a9627c7cd6695e2389a68033c3985a0809f2978e",
-    "headSha": "853179dcb73aed6afab52d11324ea3ff3eac8b8a"
+    "headSha": "853179dcb73aed6afab52d11324ea3ff3eac8b8a",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "ardevd_jadx-collaboration_3-853179dc.json"
+    }
   },
   {
     "id": "landalf-88",
     "repo": "renedierking/LANdalf",
     "number": 88,
     "baseSha": "cc81fa3dc87a8a50654c1279b3bdb2761e94f832",
-    "headSha": "bc1698f4dbc3a99dee0a6dcf7629813f2027682a"
+    "headSha": "bc1698f4dbc3a99dee0a6dcf7629813f2027682a",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "renedierking_LANdalf_88-bc1698f4.json"
+    }
   },
   {
     "id": "mcp-docker-29",
     "repo": "scottlz0310/Mcp-Docker",
     "number": 29,
     "baseSha": "63baf3dbbc10d271710706f56150dd8425dd4b4a",
-    "headSha": "e7705d269ea374d49e7999bdb8bc42e9480a6b37"
+    "headSha": "e7705d269ea374d49e7999bdb8bc42e9480a6b37",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "scottlz0310_Mcp-Docker_29-e7705d26.json"
+    }
   },
   {
     "id": "statswales-frontend-626",
     "repo": "Marvell-Consulting/statswales-frontend",
     "number": 626,
     "baseSha": "c1707c79a5a947cf7c6912af3ad00848c42a28e0",
-    "headSha": "30ba27a5f20318f12fe74f26059d8b62d62874e9"
+    "headSha": "30ba27a5f20318f12fe74f26059d8b62d62874e9",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "Marvell-Consulting_statswales-frontend_626-30ba27a5.json"
+    }
   },
   {
     "id": "techdebtmcp-135",
     "repo": "PierreJanineh/TechDebtMCP",
     "number": 135,
     "baseSha": "ea0385c7349bbaee04456c57bf0ec3f217d63532",
-    "headSha": "16a54f0f85a9091f220418850eac6b4122782be5"
+    "headSha": "16a54f0f85a9091f220418850eac6b4122782be5",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "PierreJanineh_TechDebtMCP_135-16a54f0f.json"
+    }
   },
   {
     "id": "wspulse-client-ts-18",
     "repo": "wspulse/client-ts",
     "number": 18,
     "baseSha": "bc83e29d0253c3544674d151a4fccefacb4b4703",
-    "headSha": "436a4dea148a3c23668c41d435849d21598e6367"
+    "headSha": "436a4dea148a3c23668c41d435849d21598e6367",
+    "reviewbench": {
+      "commit": "228f2a8d662c9c1c12d25757e23c52c9a6170d5a",
+      "golden": "wspulse_client-ts_18-436a4dea.json"
+    }
   }
 ]

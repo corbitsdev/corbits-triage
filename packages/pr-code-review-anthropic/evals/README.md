@@ -39,7 +39,8 @@ shas adds about 300.
   - `wspulse-client-ts-18`: its only true finding is a low testing one.
 
 - `cases.json`: each case's repository, pull request number and the base and
-  head shas from its golden file's `pr`.
+  head shas from its golden file's `pr`, and under `reviewbench` the
+  ReviewBench commit and golden file the case was built from.
 - `labels/<id>.json`: the case's answer key, with `source: "reviewbench"` and
   the `golden` file it came from.
   - `bugs`: the true-labelled golden findings in the `correctness` or
