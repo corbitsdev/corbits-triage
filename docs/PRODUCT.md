@@ -308,8 +308,7 @@ the key it was likely meant to be. A step's `when.author` may name a group.
 On GitHub, a pull request carrying `pauseLabel` starts no run, and while the
 pull request cannot be read it is not triaged but retried, never run unpaused;
 through a long GitHub outage it waits out a bounded number of retries and is
-triaged on its next event. The `code-review` block runs a review whatever
-`provider` it names. `pace` is accepted and runs nothing. `decide`
+triaged on its next event. Code review always runs on Anthropic with the workspace's Anthropic key; `provider` has no effect. `pace` is accepted and runs nothing. `decide`
 is not carried out. A file that turns `code-review` on, or writes its own `decide`,
 holds approve and merge for a person on Triage. `decide` replaces `actions`,
 so a file holds one or the other, and a file that uses `extends` holds none of
