@@ -1,7 +1,7 @@
 import { parse } from "@ast-grep/napi";
-import { isForeignPath, PATTERN_EXTENSIONS, PATTERN_PRESETS, type PatternExtension, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
+import { isForeignPath, PATTERN_EXTENSIONS, PATTERN_PRESETS, type PatternExtension, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck, type RepoSource } from "@corbits/triage-contracts";
 import type { PrFileFacts } from "./checks.js";
-import { addedLines, MAX_PATCH_INPUT_CHARS } from "./hunks.js";
+import { addedLines } from "./hunks.js";
 
 type Grammar = { language: PatternLanguage; lang: "TypeScript" | "Tsx" | "JavaScript" };
 
@@ -46,8 +46,33 @@ function inScope(file: PrFileFacts): boolean {
   return checkable(file) && !isForeignPath(file.path);
 }
 
-function wholePatch(file: PrFileFacts): string | undefined {
-  return file.patch === undefined || file.patchTruncated || file.patch.length > MAX_PATCH_INPUT_CHARS ? undefined : file.patch;
+/**
+ * A file in scope that may add code but has no patch: GitHub sends none for a very large or binary file, Bitbucket
+ * Data Center for any, and none is read past the code rules' ceiling.
+ */
+function unpatched(file: PrFileFacts, source: RepoSource): boolean {
+  return inScope(file) && file.patch === undefined && !addsNothing(file, source);
+}
+
+/** GitHub counts the lines a file adds, so one it adds none to, such as a rename or a mode change, has nothing to check; Data Center counts none to tell. */
+function addsNothing(file: PrFileFacts, source: RepoSource): boolean {
+  return source === "github" && file.additions === 0;
+}
+
+/** A file in scope the rules could not check, and why. */
+type Unchecked = { path: string; why: string };
+
+function withoutPatch(file: PrFileFacts): Unchecked {
+  return { path: file.path, why: file.patchUnread ? "the pull request's diff is larger than Triage reads" : "the host sent no diff" };
+}
+
+/** The files not checked, grouped by why: the first of each group named, the rest counted. */
+function namedUnchecked(unchecked: readonly Unchecked[]): string {
+  const groups = Map.groupBy(unchecked, (file) => file.why);
+  return [...groups].map(function group([why, grouped]) {
+    const more = grouped.length > 1 ? ` and ${grouped.length - 1} more` : "";
+    return `${grouped[0]!.path}${more}: ${why}`;
+  }).join("; ");
 }
 
 function readPath(file: PrFileFacts): string {
@@ -57,12 +82,14 @@ function readPath(file: PrFileFacts): string {
 /** The files one pull request reads the content of, GitHub's own diff limit, so one pull request's reads stay bounded. */
 export const MAX_CONTENT_READS = 300;
 
-/** The files whose content the rules need, or why they cannot be checked: a file in scope without its whole patch, or more files than are read. */
-export function filesToRead(files: readonly PrFileFacts[]): string[] | { unread: string } {
-  const scoped = files.filter(inScope);
-  const unpatched = scoped.find((file) => wholePatch(file) === undefined);
-  if (unpatched) return { unread: `${unpatched.path}: its patch was not read in full` };
-  const toRead = scoped.filter((file) => addedLines(wholePatch(file)!).size > 0).map(readPath);
+/**
+ * The files whose content the rules need, or why they cannot be checked: files in scope have no patch and no other
+ * file adds code, or more files than are read.
+ */
+export function filesToRead(files: readonly PrFileFacts[], source: RepoSource): string[] | { unread: string } {
+  const toRead = files.filter((file) => inScope(file) && file.patch !== undefined && addedLines(file.patch).size > 0).map(readPath);
+  const missing = files.filter((file) => unpatched(file, source));
+  if (toRead.length === 0 && missing.length > 0) return { unread: namedUnchecked(missing.map(withoutPatch)) };
   if (toRead.length > MAX_CONTENT_READS) return { unread: `${toRead.length} files with added code, more than the ${MAX_CONTENT_READS} read per pull request` };
   return toRead;
 }
@@ -84,23 +111,30 @@ function fileMatches(file: PrFileFacts, patch: string, content: string, grammar:
   return [...out];
 }
 
-/** Matches on the lines a pull request adds; a file in scope whose patch or content was not read leaves the rule unchecked. */
-export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>>): PatternsResult {
-  const toRead = filesToRead(files);
+/**
+ * Matches on the lines a pull request adds, in every file whose patch and content were read. Without a match, a file in
+ * scope without its patch or content leaves the rule unchecked, naming the files, since a pass needs every file that
+ * adds code checked.
+ */
+export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>>, source: RepoSource): PatternsResult {
+  const toRead = filesToRead(files, source);
   if (!Array.isArray(toRead)) return toRead;
   const matches: string[] = [];
+  const unchecked = files.filter((file) => unpatched(file, source)).map(withoutPatch);
   try {
     const rules = patternRules(check);
     for (const file of files.filter((candidate) => toRead.includes(readPath(candidate)))) {
       const content = contents[readPath(file)];
-      if (content === undefined) return { unread: `${file.path}: its content was not read` };
-      matches.push(...fileMatches(file, file.patch!, content, grammarOf(file.path)!, rules));
+      if (content === undefined) unchecked.push({ path: file.path, why: "its content was not read" });
+      else matches.push(...fileMatches(file, file.patch!, content, grammarOf(file.path)!, rules));
     }
   } catch (error) {
     return { unread: error instanceof Error ? error.message : String(error) };
   }
-  const skipped = files
-    .filter((file) => checkable(file) && isForeignPath(file.path))
-    .map((file) => `${file.path}: skipped as vendored, built or installed code`);
-  return { matches, skipped, checked: files.filter(inScope).length };
+  if (matches.length === 0 && unchecked.length > 0) return { unread: namedUnchecked(unchecked) };
+  const skipped = [
+    ...unchecked.map((file) => `${file.path}: not checked, ${file.why}`),
+    ...files.filter((file) => checkable(file) && isForeignPath(file.path)).map((file) => `${file.path}: skipped as vendored, built or installed code`),
+  ];
+  return { matches, skipped, checked: files.filter(inScope).length - unchecked.length };
 }

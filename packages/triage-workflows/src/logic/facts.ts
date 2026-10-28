@@ -1,10 +1,9 @@
 import { checkCancelled, checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
-import { authorAssociation, authorKindOf, catalogCheckEnabled, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { authorAssociation, authorKindOf, catalogCheckEnabled, isGeneratedPath, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { hiddenIn, hiddenMarkup, nothingRemoved, writtenDescription } from "./hidden-content.js";
-import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
+import { MAX_CODE_RULES_PATCH_CHARS } from "./quality.js";
 import { isRecord } from "@corbits/common";
-import { MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";
 
 export type RepoDocs = Pick<PrFacts, "docs" | "rules">;
 
@@ -95,23 +94,34 @@ export function buildFacts(
   };
 }
 
-// Patch text past three judge requests' worth is not read, so later pages leave patches out.
-const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
-
 export type FilesPage = { files: PrFileFacts[]; next?: number; patchNext?: number };
 
-export type FilesCursor = { offset: number; patchOffset?: number; patches: boolean };
+/** `ceiling` is set once the pull request's patch ceiling is reached, so the files listed without patches are marked unread. */
+export type FilesCursor = { offset: number; patchOffset?: number; patches: boolean; ceiling?: true };
 
+/** One pull request's files so far and the patch text they hold. */
 export type ListedFiles = { files: PrFileFacts[]; patchChars: number };
 
 export const FIRST_FILES_PAGE: FilesCursor = { offset: 0, patches: true };
 
+function unreadPatch({ patch: _patch, ...file }: PrFileFacts): PrFileFacts {
+  return { ...file, patchUnread: true };
+}
+
+/** No rule reads a lockfile's or other generated file's patch, so it is never kept. */
+function kept(file: PrFileFacts): PrFileFacts {
+  if (!isGeneratedPath(file.path)) return file;
+  const { patch: _patch, ...meta } = file;
+  return meta;
+}
+
 /**
  * Adds one page to `listed`, joining a patch continued from the previous page, and returns the next page's cursor,
- * none when every file is read, or why the pages cannot be read. A patch past the budget is left cut and marked so.
+ * none when every file is read, or why the pages cannot be read. Every patch is read whole until the pull request's
+ * ceiling; the file it falls in and every later one are listed without their patch and marked so.
  */
 export function addFilesPage(listed: ListedFiles, cursor: FilesCursor, page: FilesPage): FilesCursor | undefined | string {
-  let files = page.files;
+  let files = (cursor.ceiling ? page.files.map(unreadPatch) : page.files).map(kept);
   if (cursor.patchOffset !== undefined) {
     const continued = listed.files.at(-1);
     if (!continued || files[0]?.path !== continued.path) return `github_list_pr_files did not continue the patch at offset ${cursor.offset}`;
@@ -121,17 +131,19 @@ export function addFilesPage(listed: ListedFiles, cursor: FilesCursor, page: Fil
   }
   listed.files.push(...files);
   listed.patchChars += files.reduce((chars, file) => chars + (file.patch?.length ?? 0), 0);
-  const patches = listed.patchChars < MAX_PATCH_CHARS;
+  const patches = cursor.patches && listed.patchChars < MAX_CODE_RULES_PATCH_CHARS;
+  const next = { patches, ...((cursor.ceiling || cursor.patches !== patches) && { ceiling: true as const }) };
   if (page.next === undefined) return undefined;
   if (page.patchNext !== undefined) {
     if (page.next < cursor.offset || (page.next === cursor.offset && page.patchNext <= (cursor.patchOffset ?? 0))) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
     const cut = listed.files.at(-1)!;
-    if (patches && (cut.patch?.length ?? 0) < MAX_PATCH_INPUT_CHARS) return { offset: page.next, patchOffset: page.patchNext, patches };
-    cut.patchTruncated = true;
-    return { offset: page.next + 1, patches };
+    if (isGeneratedPath(cut.path)) return { offset: page.next + 1, ...next };
+    if (patches) return { offset: page.next, patchOffset: page.patchNext, ...next };
+    listed.files.push(unreadPatch(listed.files.pop()!));
+    return { offset: page.next + 1, ...next };
   }
   if (page.next <= cursor.offset) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
-  return { offset: page.next, patches };
+  return { offset: page.next, ...next };
 }
 
 /** Every changed file of a pull request, read page by page as the facts director reads them. */
@@ -171,7 +183,6 @@ export function fileFacts(value: unknown): PrFileFacts[] {
     ...(additions === undefined ? {} : { additions }),
     ...(deletions === undefined ? {} : { deletions }),
     ...(patch === undefined ? {} : { patch }),
-    ...(value.patchTruncated === true ? { patchTruncated: true as const } : {}),
   }];
 }
 

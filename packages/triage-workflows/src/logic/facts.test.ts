@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REPO_POLICY, emptyPack } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, emptyPack, isPatternsCheck, readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
 import type { IssueComment, Review } from "@corbits/github-reads";
-import { assembleItem, buildFacts } from "./facts.ts";
+import type { EffectContext } from "@intx/workflow";
+import { rules } from "../actions/rules.ts";
+import type { PrFileFacts } from "./checks.ts";
+import { addFilesPage, assembleItem, buildFacts, FIRST_FILES_PAGE, type FilesCursor, type FilesPage, type ListedFiles } from "./facts.ts";
+import { NO_FACTS } from "./item.ts";
+import { patternsResult } from "./patterns.ts";
+import { MAX_CODE_RULES_PATCH_CHARS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation } from "./quality.ts";
 
 test("buildFacts carries the author's trust tier", () => {
   const facts = buildFacts("acme/widgets", 1, { author: "alice", authorAssociation: "MEMBER", branch: "a" }, [], [], [], DEFAULT_REPO_POLICY);
@@ -79,5 +85,113 @@ describe("an answered review", () => {
 
   test("is not a bot's or a maintainer's comment, or one from before the request", () => {
     expect(answered([requested], [{ author: "ci[bot]", bot: true }, { author: "maya" }, { createdAt: "2026-10-01T09:00:00Z" }])).toBe(false);
+  });
+});
+
+/** Reads `hostFiles` as the host pages them: one file a page, each patch split across two pages, none when the cursor asks for none. */
+function readPages(hostFiles: PrFileFacts[], first: FilesCursor = FIRST_FILES_PAGE): PrFileFacts[] {
+  const listed: ListedFiles = { files: [], patchChars: 0 };
+  let cursor: FilesCursor | undefined | string = first;
+  while (cursor !== undefined) {
+    if (typeof cursor === "string") throw new Error(cursor);
+    const { patch, ...meta } = hostFiles[cursor.offset]!;
+    const next = cursor.offset + 1 < hostFiles.length ? { next: cursor.offset + 1 } : {};
+    let page: FilesPage = { files: [meta], ...next };
+    if (cursor.patches && patch !== undefined && cursor.patchOffset === undefined) page = { files: [{ ...meta, patch: patch.slice(0, Math.floor(patch.length / 2)) }], next: cursor.offset, patchNext: Math.floor(patch.length / 2) };
+    else if (cursor.patches && patch !== undefined) page = { files: [{ ...meta, patch: patch.slice(cursor.patchOffset) }], ...next };
+    cursor = addFilesPage(listed, cursor, page);
+  }
+  return listed.files;
+}
+
+test("a diff past the judge's budget is read whole for the pattern rules while the judge reads a bounded part", () => {
+  const filler = Array.from({ length: 200 }, (_, line) => `const filler${line} = "${"x".repeat(30)}";`);
+  const fallback = "const late = value ?? 0;";
+  const paths = Array.from({ length: 40 }, (_, index) => `src/file${String(index).padStart(2, "0")}.ts`);
+  const lines = (index: number) => (index === paths.length - 1 ? [...filler, fallback] : filler);
+  const patch = (index: number) => [`@@ -0,0 +1,${lines(index).length} @@`, ...lines(index).map((line) => `+${line}`)].join("\n");
+  const hostFiles: PrFileFacts[] = paths.map((path, index) => ({ path, status: "added", additions: lines(index).length, deletions: 0, patch: patch(index) }));
+  const listed = readPages(hostFiles);
+  expect(listed).toEqual(hostFiles);
+  expect(hostFiles.reduce((chars, file) => chars + file.patch!.length, 0)).toBeGreaterThan(3 * MAX_SYSTEM_ONE_STATE_BYTES);
+
+  const pack = readCheckPack(readPolicyFile("rules:\n  - id: conventions\n    check: code-patterns\n    text: Conventions.\n    reason: Review time.\n    evidence: [maintainer-stated]\n    presets: [convention]\n", "acme/widgets"));
+  const contents = Object.fromEntries(paths.map((path, index) => [path, `${lines(index).join("\n")}\n`]));
+  expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github")).toEqual({ matches: [`${paths.at(-1)}:201 Invented fallback \`?? 0\`; handle the missing value instead.`], skipped: [], checked: paths.length });
+
+  const focused = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
+  const { requests, focused: plan } = prepareQualityEvaluation({ ...NO_FACTS, repo: "acme/widgets", number: 8, title: "Add files", files: listed, paths }, focused);
+  const judged = requests.flatMap((request) => request.state.pullRequest.files.flatMap((file) => file.hunks)).join("").length;
+  expect(judged).toBeLessThanOrEqual(3 * MAX_SYSTEM_ONE_STATE_BYTES + 65_536);
+  expect(plan!.unread).toContain(paths.at(-1)!);
+});
+
+describe("a diff past the code rules' ceiling", () => {
+  const pack = readCheckPack(readPolicyFile("rules:\n  - id: conventions\n    check: code-patterns\n    text: Conventions.\n    reason: Review time.\n    evidence: [maintainer-stated]\n    presets: [convention]\n", "acme/widgets"));
+
+  function ceilingCase(filler: number, whole: number) {
+    const line = `const filler = "${"x".repeat(filler)}";`;
+    const patch = ["@@ -0,0 +1,200 @@", ...Array.from({ length: 200 }, () => `+${line}`)].join("\n");
+    const hostFiles: PrFileFacts[] = Array.from({ length: 12 }, (_, index) => ({ path: `src/big${String(index).padStart(2, "0")}.ts`, status: "added", additions: 200, deletions: 0, patch }));
+    const listed = readPages(hostFiles);
+    expect(listed.slice(0, whole)).toEqual(hostFiles.slice(0, whole));
+    const unread = listed.slice(whole);
+    expect(unread).toEqual(hostFiles.slice(whole).map(({ patch: _patch, ...meta }) => ({ ...meta, patchUnread: true })));
+    const contents = Object.fromEntries(listed.slice(0, whole).map((file) => [file.path, `${Array.from({ length: 200 }, () => line).join("\n")}\n`]));
+    expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github")).toEqual({ unread: `${unread[0]!.path} and ${unread.length - 1} more: the pull request's diff is larger than Triage reads` });
+    return patch.length;
+  }
+
+  test("keeps the file whose last page passes it, and lists the later files without patches, which leaves the pattern rules unconfirmed naming them", () => {
+    const chars = ceilingCase(1_000, 10);
+    expect(chars * 9.5).toBeLessThan(MAX_CODE_RULES_PATCH_CHARS);
+    expect(chars * 10).toBeGreaterThan(MAX_CODE_RULES_PATCH_CHARS);
+  });
+
+  test("is each pull request's own, so one read after another passed it still gets its patches", () => {
+    const filler = `+const filler = "${"x".repeat(1_000)}";`;
+    const big: PrFileFacts = { path: "src/big.ts", status: "added", additions: 2_000, deletions: 0, patch: ["@@ -0,0 +1,2000 @@", ...Array.from({ length: 2_000 }, () => filler)].join("\n") };
+    const file = { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
+    expect(readPages([big, file])).toEqual([big, { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patchUnread: true }]);
+    expect(readPages([file])).toEqual([file]);
+  });
+
+  test("keeps its marks through the step output, which the rules step reads as JSON rather than through fileFacts", async () => {
+    const filler = `+const filler = "${"x".repeat(1_000)}";`;
+    const big: PrFileFacts = { path: "src/big.ts", status: "added", additions: 2_000, deletions: 0, patch: ["@@ -0,0 +1,2000 @@", ...Array.from({ length: 2_000 }, () => filler)].join("\n") };
+    const listed = readPages([big, { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" }]);
+    const contents = { "src/big.ts": `${Array.from({ length: 2_000 }, () => filler.slice(1)).join("\n")}\n` };
+    const facts = { ...NO_FACTS, repo: "acme/widgets", number: 8, state: "open" as const, files: listed, patterns: { conventions: patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github") } };
+    const output = JSON.parse(JSON.stringify({ items: [{ facts, pack, automatic: [] }], batch: false }));
+    const ruled = await rules(output, {} as EffectContext, new AbortController().signal);
+    const item = ruled.items[0]!;
+    if (!("det" in item)) throw new Error("the item was not ruled");
+    expect(item.facts.files[1]).toMatchObject({ path: "src/a.ts", patchUnread: true });
+    expect(item.det.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", reason: "code patterns could not be checked: src/a.ts: the pull request's diff is larger than Triage reads" });
+  });
+
+  test("names a file the host sent no patch for by that cause, and only files it did not ask patches for by the ceiling", () => {
+    const filler = `+const filler = "${"x".repeat(1_000)}";`;
+    const omitted = { path: "src/omitted.ts", status: "modified", additions: 9_000, deletions: 0 };
+    const big: PrFileFacts = { path: "src/big.ts", status: "added", additions: 2_000, deletions: 0, patch: ["@@ -0,0 +1,2000 @@", ...Array.from({ length: 2_000 }, () => filler)].join("\n") };
+    const later = { path: "src/later.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
+    const listed = readPages([omitted, big, later]);
+    expect(listed).toEqual([omitted, big, { path: "src/later.ts", status: "added", additions: 1, deletions: 0, patchUnread: true }]);
+    const contents = { "src/big.ts": `${Array.from({ length: 2_000 }, () => filler.slice(1)).join("\n")}\n` };
+    expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github")).toEqual({ unread: "src/omitted.ts: the host sent no diff; src/later.ts: the pull request's diff is larger than Triage reads" });
+  });
+
+  test("keeps no lockfile patch, so a lockfile neither counts nor rides in the output, and marks nothing when no patches were asked for", () => {
+    const lock = { path: "bun.lock", status: "modified", additions: 1, deletions: 0, patch: `@@ -1 +1 @@\n+${"x".repeat(MAX_CODE_RULES_PATCH_CHARS)}` };
+    const { patch: _patch, ...lockMeta } = lock;
+    const file = { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
+    expect(readPages([lock, file, file])).toEqual([lockMeta, file, file]);
+    expect(readPages([lock, file], { offset: 0, patches: false })).toEqual([lock, file].map(({ patch: _unread, ...meta }) => meta));
+  });
+
+  test("drops the patch of a file it passes partway through", () => {
+    const chars = ceilingCase(1_040, 9);
+    expect(chars * 9).toBeLessThan(MAX_CODE_RULES_PATCH_CHARS);
+    expect(chars * 9.5).toBeGreaterThan(MAX_CODE_RULES_PATCH_CHARS);
   });
 });

@@ -679,7 +679,8 @@ function authorComment(ctx: RenderContext, checks: CheckResult[], verdict: Verdi
   }
   if (pending.length) {
     if (lines.length) lines.push("");
-    lines.push("Waiting on:", ...pending.map((c) => `- ${c.reason}${failureEvidence(c, ctx)}`));
+    // Rules held by the same unread input give the same line, so it is said once.
+    lines.push("Waiting on:", ...new Set(pending.map((c) => `- ${c.reason}${failureEvidence(c, ctx)}`)));
   }
   if (outageCount(checks) > 0) {
     if (lines.length) lines.push("");
@@ -705,7 +706,7 @@ function reasonOf(c: CheckResult, sources: Sources): string {
 function reasonsOf(det: DeterministicResult, model: CheckResult[]): string[] {
   const hard = det.checks.filter((c) => c.result === "fail" || (c.result === "unconfirmed" && c.check !== NOT_A_DRAFT));
   const soft = model.filter((c) => c.result === "fail" || unsure(c));
-  return [...hard.filter((c) => c.result === "fail"), ...hard.filter((c) => c.result !== "fail"), ...soft].map((c) => reasonOf(c, det.sources));
+  return [...new Set([...hard.filter((c) => c.result === "fail"), ...hard.filter((c) => c.result !== "fail"), ...soft].map((c) => reasonOf(c, det.sources)))];
 }
 
 type VerdictBase = Omit<RenderOutput, "nextAction" | "actor" | "feedback" | "checks" | "score" | "mirror" | "reasons" | "labels">;

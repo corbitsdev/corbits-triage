@@ -136,19 +136,19 @@ test("quality preflight refuses metadata that leaves too little room for files, 
   expect(subject.requests[0]!.state.pullRequest.commits).toEqual(["x".repeat(200)]);
   const crowded = prepareQualityEvaluation({ ...facts([{ path: "src/a.ts", patch }]), docs: { "README.md": "d".repeat(85_000) } }, SOURCES);
   expect(crowded).toMatchObject({ requests: [], judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ KB\)$/) });
-  const wide = prepareQualityEvaluation(facts(Array.from({ length: 40 }, (_, index) => ({ path: `src/wide${index}.ts`, patch: widePatch() }))), SOURCES);
+  const wide = prepareQualityEvaluation({ ...facts(Array.from({ length: 40 }, (_, index) => ({ path: `src/wide${index}.ts`, patch: widePatch() }))), docs: { "README.md": "d".repeat(78_000) } }, SOURCES);
   expect(wide).toMatchObject({ requests: [], judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ requests\)$/) });
 });
 
 test("quality preflight leaves a cut patch unread for focused even when its first hunk is read in pieces", () => {
-  const patch = ["@@ -0,0 +1,60 @@", ...Array.from({ length: 60 }, () => `+// ${"設".repeat(1_000)}`)].join("\n");
-  const { focused } = prepareQualityEvaluation(facts([{ path: "src/big.ts", additions: 60, deletions: 0, patch, patchTruncated: true }]), SOURCES);
+  const patch = ["@@ -0,0 +1,70 @@", ...Array.from({ length: 70 }, () => `+// ${"設".repeat(1_000)}`)].join("\n");
+  const { focused } = prepareQualityEvaluation(facts([{ path: "src/big.ts", additions: 70, deletions: 0, patch }]), SOURCES);
   expect(focused!.unread).toEqual(["src/big.ts"]);
 });
 
 test("quality preflight leaves a cut patch unread for docs even when its read part fits", () => {
   const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }] };
-  const { plan } = prepareQualityEvaluation(facts([{ path: "src/cut.ts", additions: 9_000, deletions: 0, patch: compactHunks(2), patchTruncated: true }]), sources);
+  const { plan } = prepareQualityEvaluation(facts([{ path: "src/cut.ts", additions: 1_400, deletions: 0, patch: compactHunks(1_400) }]), sources);
   expect(plan.docs!.unread).toEqual(["src/cut.ts"]);
 });
 

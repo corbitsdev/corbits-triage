@@ -1,6 +1,6 @@
 import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
 import { holdsOthersChanges, type DeterministicResult, type PrFacts, type PrFileFacts } from "./checks.js";
-import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
+import { boundedPath, hunkCitations, MAX_PATCH_INPUT_CHARS, patchHunks } from "./hunks.js";
 import { globMatch } from "./glob.js";
 import type { OpenPull } from "./duplicates.js";
 import type { BooleanQuestion, ChoiceQuestion, ScoreQuestion } from "@corbits/system-one";
@@ -182,9 +182,24 @@ const MIN_FILE_ROOM = 8 * 1024;
 const MAX_JUDGE_REQUESTS = 64;
 export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the decision model";
 
-/** Lockfiles say nothing the judge decides on, so it never reads them. */
-function judgedFiles(facts: PrFacts) {
-  return facts.files.filter((file) => !isGeneratedPath(file.path));
+// The judge reads patches up to three requests' worth; later files are sent without theirs.
+const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
+// The rules that run in code read this much patch text per pull request, apart from the judge's budget; one sidecar
+// holds every deployment's step outputs, so past it the pull request's later files are listed without their patches.
+export const MAX_CODE_RULES_PATCH_CHARS = 2_000_000;
+
+/** A changed file as the judge reads it: `patchTruncated` when its patch was cut at `MAX_PATCH_INPUT_CHARS`. */
+type JudgedFile = PrFileFacts & { patchTruncated?: true };
+
+/** Lockfiles say nothing the judge decides on, so it never reads them; the rest share the judge's patch budget. */
+function judgedFiles(facts: PrFacts): JudgedFile[] {
+  let chars = 0;
+  return facts.files.filter((file) => !isGeneratedPath(file.path)).map(function judged({ patch, ...file }): JudgedFile {
+    if (patch === undefined || chars >= MAX_PATCH_CHARS) return file;
+    const read = patch.slice(0, MAX_PATCH_INPUT_CHARS);
+    chars += read.length;
+    return { ...file, patch: read, ...(read.length < patch.length && { patchTruncated: true as const }) };
+  });
 }
 
 // Custom checks are the repository's own rules, so their requests carry its contribution rules and say where they are.
@@ -582,7 +597,7 @@ export function verdictRequest(facts: PrFacts, rules: PolicyRule[]): { request: 
   return { request: { state: { ...empty, pullRequest: { ...empty.pullRequest, files } }, questions: [VERDICT_QUESTION, INSTRUCTED_QUESTION] } };
 }
 
-function stateFile(file: PrFileFacts, hunks: string[]): StateFile {
+function stateFile(file: JudgedFile, hunks: string[]): StateFile {
   return { path: boundedPath(file.path), ...(file.status ? { status: file.status } : {}), hunks, ...(file.patchTruncated ? { truncated: true as const } : {}) };
 }
 

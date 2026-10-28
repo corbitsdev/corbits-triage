@@ -63,9 +63,9 @@ function hunkLines(hunk: Hunk): { added: number[]; removed: number[] } {
   return { added, removed };
 }
 
-/** The new file's line numbers, from 1, that the patch adds. */
+/** The new file's line numbers, from 1, that the whole patch adds. */
 export function addedLines(patch: string): Set<number> {
-  return new Set(hunksOf(readablePatch(patch)).flatMap((hunk) => hunkLines(hunk).added));
+  return new Set(hunksOf(safeText(patch)).flatMap((hunk) => hunkLines(hunk).added));
 }
 
 function citation(path: string, previousPath: string, hunk: Hunk): LineCitation {

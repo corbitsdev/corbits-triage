@@ -98,18 +98,20 @@ Two different numbers come out of the answers:
 | Requests per pull request | 64 (about 5.8 MB of state, $0.17 at most) | `MAX_JUDGE_REQUESTS` |
 | Repository docs | 24,000 bytes, default branch | `REPO_DOCS_MAX_BYTES` |
 | Contribution rules | 8,000 bytes, default branch | `REPO_RULES_MAX_BYTES` |
-| Patch read per file | 65,536 chars | `MAX_PATCH_INPUT_CHARS` |
-| Patch read per pull request | 270,000 chars | `MAX_PATCH_CHARS` |
+| Patch the judge reads per file | 65,536 chars | `MAX_PATCH_INPUT_CHARS` |
+| Patch the judge reads per pull request | 270,000 chars | `MAX_PATCH_CHARS` |
+| Patch the rules that run in code read per pull request | 2,000,000 chars | `MAX_CODE_RULES_PATCH_CHARS` |
+| Patch text in one facts step's output | 2,000,000 chars: one pull request per step, as the hub records backlog and catch-up mails per pull request and each manager reads its own | `MAX_CODE_RULES_PATCH_CHARS` × 1 |
 | GitHub tool page | 9,000 chars | `PR_FILES_PAGE_CHARS` |
 
 - **Docs.** Docs are read from the default branch in this order: root `README`, then `docs/`, then other root markdown, then nested markdown, each in path order. Reading stops at 24,000 bytes; a doc that crosses the cap is cut and later docs are not seen. The same docs are in every request's state.
 - **Contribution rules.** Read under their own 8,000-byte budget, in this order: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING` and `PULL_REQUEST_TEMPLATE` at the root, then `CONTRIBUTING` and `PULL_REQUEST_TEMPLATE` in `.github/` (including `PULL_REQUEST_TEMPLATE/`), then the same two in `docs/`. An `AGENTS.md` or `CLAUDE.md` inside a package stays an ordinary doc. Only requests that ask a custom rule carry them and give up room for them; requests that ask only built-in rules are unchanged.
 - **Request splitting.** Files fill each request's state in order up to the budget left after metadata and docs. A file too large for one request keeps its leading hunks there for every rule, and focused and docs read its remaining hunks in the next requests, docs asking about each part (any part needing docs fails it); a hunk too large for any request is cut at line ends across several. Each request asks only about the files it holds; whole-PR questions go in the first, and focused asks in each. If the title, body, commits, path list and docs leave less than 8 KB of the budget for files, nothing is asked and the model rules stay unconfirmed ("pull request too large for the decision model (N KB)", the size of that metadata). The same holds when the split needs more than 64 requests ("… (N requests)").
-- **Oversized patches.** A patch larger than one tool page is read across pages and joined. Reading stops at 65,536 chars for a file, which is then marked cut. Once the pull request's 270,000-char budget is spent, later files are listed without patches.
-- **Unread files.** A file with lines changed but no patch to read (GitHub left it out, the per-PR budget was spent, or not even its first hunk fits a request) is unread, and a rule that would ask about it stays unconfirmed. Treatment differs by rule:
+- **Oversized patches.** A patch larger than one tool page is read across pages and joined, and every patch is read whole for the rules that run in code until 2,000,000 chars of the pull request, each pull request in a backlog batch counting its own; lockfiles and other generated files are listed without their patch, so they do not count. The file that passes it partway and every later one are listed without patches. The judge reads 65,536 chars of a file, which is then marked cut. Once the judge's 270,000-char budget is spent, later files are sent to it without patches.
+- **Unread files.** A file with lines changed but no patch to read (GitHub left it out, the judge's budget was spent, or not even its first hunk fits a request) is unread, and a rule that would ask about it stays unconfirmed. Treatment differs by rule:
   - Docs reads a file too large for one request across requests as focused does. A file whose patch was cut while reading is asked about from the hunks that were read and is unread, so it can fail docs but never pass it. A changed doc file passes docs by rule regardless.
   - Scoped custom rules ask about a cut file (its patch cut while reading, or too large for one request) from the hunks that were read and treat it as unread.
-  - Focused reads every line of every patch it has. Its only unread files are those whose patch it does not have whole: GitHub left it out, the pull request's 270,000-char budget was spent, or the file passed 65,536 chars. Any unread file leaves focused unconfirmed, listing them, unless another slice already fails it.
+  - Focused reads every line of every patch it has. Its only unread files are those whose patch it does not have whole: GitHub left it out, the judge's 270,000-char budget was spent, or the file passed 65,536 chars. Any unread file leaves focused unconfirmed, listing them, unless another slice already fails it.
   - Binary files and pure renames have no lines and are never unread.
 
 ## Reused answers

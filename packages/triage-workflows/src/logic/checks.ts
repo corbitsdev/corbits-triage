@@ -55,8 +55,8 @@ export interface PrFileFacts {
   additions?: number;
   deletions?: number;
   patch?: string;
-  /** Past the patch budget. */
-  patchTruncated?: true;
+  /** Listed past the code rules' patch ceiling, so its patch was not read. */
+  patchUnread?: true;
 }
 
 export interface PrFacts {
