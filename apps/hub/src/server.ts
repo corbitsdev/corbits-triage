@@ -73,6 +73,7 @@ import { triageTenants } from "./deployer-role.js";
 import { bundleAt, bundled, type Publisher } from "./workflow-release/publish.js";
 import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers.js";
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
+import { createSystemWrites } from "./system-writes/writer.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
 import { createRolloutQueue, createWorkflowRollout, stopGivenUp, type DeployRequest } from "./workflow-release/rollout.js";
 import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcilePolicy } from "./env.js";
@@ -421,6 +422,7 @@ cronTicker = createCronTicker({
 });
 cronTicker.start();
 const automation = createAutomation({ db: composition.db });
+const systemWrites = createSystemWrites({ db: composition.db, principalKeyStore: composition.principalKeyStore });
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
@@ -565,7 +567,7 @@ async function deployListener(request: DeployRequest): Promise<string> {
 }
 async function workspacePublisher(tenantId: string): Promise<Publisher> {
   const { principalId } = await systemSenderOf(TRIAGE_PUBLISHER, tenantId);
-  await setUpPublisher(composition.db, tenantId, principalId, now());
+  await setUpPublisher(systemWrites, tenantId, principalId, now());
   return { tenantId, principalId };
 }
 // The portal build writes the workflows under its public files, which the hub serves from PORTAL_DIR once built.

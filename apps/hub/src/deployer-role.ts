@@ -4,10 +4,14 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { DEPLOYER_GRANTS, DEPLOYER_ROLE, TRIAGE_ROLE } from "@corbits/triage-contracts";
-import { allowRole, type Tx } from "./github/admin-github-grant.js";
+import { allowRole } from "./github/admin-github-grant.js";
+import { SETS_ROLE_GRANTS } from "./system-writes/tenant.js";
+import { check, type WriteTx } from "./system-writes/writer.js";
 
 /** The tenant's Deployer role holding exactly its grants, created when missing; grants it held before are dropped. */
-export async function ensureDeployerRole(tx: Tx, tenantId: string, stamp: Date): Promise<string> {
+export async function ensureDeployerRole(w: WriteTx, stamp: Date): Promise<string> {
+  for (const wanted of SETS_ROLE_GRANTS) check(w, wanted);
+  const { tx, tenantId } = w;
   const { grant, role } = schema;
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${tenantId}:${DEPLOYER_ROLE}`}))`);
   const [found] = await tx.select({ id: role.id }).from(role).where(and(eq(role.tenantId, tenantId), eq(role.name, DEPLOYER_ROLE), eq(role.isSystem, true)));

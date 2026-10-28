@@ -6,12 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { authorize } from "@intx/authz";
-import { generateKeyPair } from "@intx/crypto";
-import { createDB, createGrantStore, runMigrations, schema } from "@intx/db";
+import { createEnvKeyCredentialCipher, generateKeyPair } from "@intx/crypto";
+import { createDB, createGrantStore, createPrincipalKeyStore, runMigrations, schema } from "@intx/db";
 import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createAgentRepoStore, createAssetService, DEFAULT_ASSET_REF, type AssetService, type RepoStore } from "@intx/hub-sessions";
 import { DEPLOYER_GRANTS, REPO_SOURCES, type ModelInfo, type RepoSource, type SourceIndexEntry } from "@corbits/triage-contracts";
 import type { Bundle } from "./publish.js";
+import { createSystemWrites, type SystemWrites } from "../system-writes/writer.js";
 import { setUpPublisher } from "./publisher.js";
 import { createWorkspaceLock } from "./reads.js";
 import { createListenerWatch, releaseWriteOf } from "./triggers.js";
@@ -44,6 +45,7 @@ let database: string;
 let dataDir: string;
 let repoStore: RepoStore;
 let assets: AssetService;
+let writes: SystemWrites;
 
 beforeAll(async () => {
   database = `corbits_release_${randomBytes(6).toString("hex")}`;
@@ -55,6 +57,7 @@ beforeAll(async () => {
   dataDir = await mkdtemp(path.join(os.tmpdir(), "workflow-release-"));
   repoStore = createAgentRepoStore({ dataDir, signingKey: await generateKeyPair() }).repoStore;
   assets = createAssetService({ db: handle.db, repoStore });
+  writes = createSystemWrites({ db: handle.db, principalKeyStore: createPrincipalKeyStore({ db: handle.db, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)) }) });
 });
 
 afterAll(async () => {
@@ -72,6 +75,8 @@ async function workspace(name: string) {
   const tenantId = `tnt_${name}`;
   const principalId = `prn_${name}_publisher`;
   await db.insert(schema.tenant).values({ id: tenantId, name, slug: name, domain: `${name}.test` });
+  await db.insert(schema.role).values({ id: `rol_${name}_admin`, tenantId, name: "admin", isSystem: true });
+  await db.insert(schema.grant).values(["read", "create", "manage"].map((action) => ({ id: `grt_${name}_admin_${action}`, tenantId, roleId: `rol_${name}_admin`, resource: "*", action, effect: "allow" as const, origin: "system" as const })));
   await db.insert(schema.principal).values({ id: principalId, tenantId, kind: "user", refId: "triage-publisher", status: "active" });
   const fake = {
     models: [DECISION] as ModelInfo[],
@@ -88,7 +93,7 @@ async function workspace(name: string) {
   const rollout = createWorkflowRollout({
     db, assets, repoStore, bundle,
     async publisher(tenant) {
-      await setUpPublisher(db, tenant, principalId, new Date());
+      await setUpPublisher(writes, tenant, principalId, new Date());
       return { tenantId: tenant, principalId };
     },
     async models() {
