@@ -480,6 +480,15 @@ rules:
     expect(filesToRead([renamed], "bitbucket-datacenter")).toEqual({ unread: "src/moved.ts: the host sent no diff" });
   });
 
+  test("a match fails the rule even when another file's content was not read, in either order", () => {
+    const added = { path: "src/b.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const b = x ?? 0;" };
+    const left = "src/a.ts: not checked, its content was not read";
+    for (const files of [[file, added], [added, file]]) {
+      const result = patterns(files, { "src/b.ts": "const b = x ?? 0;\n" });
+      expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: expect.arrayContaining([left]) });
+    }
+  });
+
   test("an unknown preset is refused", () => {
     expect(() => readPolicyFile(FILE.replace("[convention]", "[nope]"), "acme/widgets")).toThrow();
   });

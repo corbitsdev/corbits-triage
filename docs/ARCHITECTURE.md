@@ -558,10 +558,10 @@ label off that head, so it never stands on a head not yet triaged.
    budget (`judgedFiles` in `logic/quality.ts`). A match in any checked file
    fails the rule. Without one, a file that adds code but has no patch,
    because the host sent none (GitHub omits it for a very large or binary
-   file) or the pull request passed that ceiling, leaves the rule unconfirmed,
-   naming the files and why; a file GitHub counts no added lines in, such as a
-   rename or a mode change, has nothing to check. A file whose content was not
-   read, or a rule ast-grep refuses, leaves the rule unconfirmed. `vendor/`,
+   file) or the pull request passed that ceiling, or whose content was not
+   read, leaves the rule unconfirmed, naming the files and why; a file GitHub
+   counts no added lines in, such as a rename or a mode change, has nothing to
+   check. A rule ast-grep refuses leaves the rule unconfirmed. `vendor/`,
    `dist/`, `build/` and `generated/` at the repository root and
    `node_modules/` anywhere are skipped and listed as skipped in the evidence,
    and a `?? 0` inside arithmetic is a counter's real default. With such a
