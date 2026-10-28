@@ -87,7 +87,7 @@ bun run lint
 
 Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` and ignore `DATABASE_URL`.
 
-`bun run test:chain` (`tests/chain/`) starts the hub on a database of its own, serving a portal build, sets up a workspace through the portal's routes, waits for the hub to start its listener, and sends GitHub's webhooks to it. GitHub and the decision model are local stand-ins, so it needs no account or key; its one sidecar is a local process, and it installs the workflows' native modules from the npm registry as a deploy does. Code review needs an isolated sidecar, which a local process is not, so it is not part of the chain test.
+`bun run test:chain` (`tests/chain/`) runs its files at once, one scenario each. Each file starts a hub on a database of its own, serving a portal build, sets up a workspace through the portal's routes, waits for the hub to start its listener, and sends GitHub's webhooks to it. GitHub and the decision model are local stand-ins, so it needs no account or key; each hub's one sidecar is a local process, and it installs the workflows' native modules from the npm registry as a deploy does. Code review needs an isolated sidecar, which a local process is not, so it is not part of the chain test.
 
 Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
