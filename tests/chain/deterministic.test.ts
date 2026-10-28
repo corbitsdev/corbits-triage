@@ -1,7 +1,9 @@
 // A policy of only deterministic rules, settled on the pass the pull request opens.
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
-import { DETERMINISTIC, isLiveDeployment, github, model, sha, pullOf, pushed, managers, settled, verdictsOf, comments, labelled, once } from "./chain.ts";
+import { chainStack, DETERMINISTIC, isLiveDeployment, sha, pullOf, comments, labelled, once } from "./chain.ts";
+
+const { github, model, pushed, managers, settled, verdictsOf } = chainStack();
 
 const deterministic = once(async function deterministic() {
   const head = sha("deterministic-1");

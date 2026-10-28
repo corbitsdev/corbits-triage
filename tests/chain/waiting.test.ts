@@ -2,7 +2,10 @@
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
 import { deliver } from "./stack.ts";
-import { WAITING, github, hub, workspace, sha, pullOf, pushed, settled, comments, labelled, once } from "./chain.ts";
+import { chainStack, WAITING, sha, pullOf, comments, labelled, once } from "./chain.ts";
+
+const chain = chainStack();
+const { github, pushed, settled } = chain;
 
 const waiting = once(async function waiting() {
   const head = sha("waiting-1");
@@ -12,7 +15,7 @@ const waiting = once(async function waiting() {
   const held = await settled(WAITING, 1);
   const whileWaiting = [...github.writesTo(WAITING, 1)];
   github.setChecks(WAITING, head, [{ name: "build", status: "completed", conclusion: "success" }]);
-  await deliver(hub, workspace, "check_run", {
+  await deliver(chain.hub, chain.workspace, "check_run", {
     action: "completed", installation: { id: 1 }, repository: { full_name: WAITING },
     check_run: { head_sha: head, status: "completed", conclusion: "success", pull_requests: [{ number: 1, head: { sha: head } }] },
   });

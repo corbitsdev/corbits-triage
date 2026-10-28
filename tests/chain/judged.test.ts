@@ -1,7 +1,9 @@
 // A policy whose rules need the judge.
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
-import { JUDGED, github, model, sha, pullOf, pushed, settled, verdictsOf, comments, labelled, once } from "./chain.ts";
+import { chainStack, JUDGED, sha, pullOf, comments, labelled, once } from "./chain.ts";
+
+const { github, model, pushed, settled, verdictsOf } = chainStack();
 
 const judged = once(async function judged() {
   const head = sha("judged-1");

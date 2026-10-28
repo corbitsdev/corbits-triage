@@ -2,7 +2,10 @@
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
 import { approveHeldDo } from "../../apps/web/src/lib/hub-api.ts";
-import { HELD, github, workspace, sha, pullOf, pushed, until, settled, verdictsOf, labelled, once } from "./chain.ts";
+import { chainStack, HELD, sha, pullOf, labelled, once } from "./chain.ts";
+
+const chain = chainStack();
+const { github, pushed, until, settled, verdictsOf } = chain;
 
 const approved = once(async function approved() {
   const head = sha("held-1");
@@ -26,7 +29,7 @@ test("a held Do approved through the hub runs once on the pull request", async (
   const { verdict } = await approved();
   // The verdict's one Do is the held assign, whose effect id its recorded Dos keep.
   const [held] = verdict!["dos"] as { effectId: string }[];
-  await approveHeldDo(workspace.transport, workspace.tenantId, { runId: String(verdict!["run_id"]), repo: HELD, number: 1, effectId: held!.effectId, kind: "assign" });
+  await approveHeldDo(chain.workspace.transport, chain.workspace.tenantId, { runId: String(verdict!["run_id"]), repo: HELD, number: 1, effectId: held!.effectId, kind: "assign" });
   await until("the assignment", () => github.writesTo(HELD, 1).find((write) => write.path.endsWith("/assignees")));
   await settled(HELD, 1, 2);
   expect(github.writesTo(HELD, 1).filter((write) => write.path.endsWith("/assignees"))).toEqual([expect.objectContaining({ method: "POST", body: { assignees: ["octocat"] } })]);

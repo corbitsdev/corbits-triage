@@ -1,6 +1,8 @@
 // Pushes while the manager is up and after it stopped.
 import { expect, test } from "bun:test";
-import { PUSHED, github, sha, pullOf, pushed, until, rows, claimOf, managers, settled, once } from "./chain.ts";
+import { chainStack, PUSHED, sha, pullOf, once } from "./chain.ts";
+
+const { github, pushed, until, rows, claimOf, managers, settled } = chainStack();
 
 const pushedAgain = once(async function pushedAgain() {
   const [first, second, third] = [sha("pushed-1"), sha("pushed-2"), sha("pushed-3")];

@@ -1,8 +1,6 @@
 // The live chain from a webhook to the pull request: the hub, the listener, one manager per pull request and the judge,
 // each on a local sidecar, against a fake GitHub and a stub decision model. Each scenario is a test file of its own,
-// which starts this stack for itself, so scenarios run at once and none sees another's runs. Importing this module
-// registers the stack's hooks, so files must run isolated (`bun run test:chain`, or one file at a time): files that
-// share one module registry share the first file's stack.
+// which starts this stack for itself with `chainStack()`, so scenarios run at once and none sees another's runs.
 import { afterAll, beforeAll, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +12,6 @@ import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
 import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
-setDefaultTimeout(20 * 60_000);
 
 const MANAGER = "triage-manager-github";
 export const SETTLE_MS = 90_000;
@@ -51,38 +48,6 @@ function decide(id: string, question: Question): Answer {
   return { type: "choice", choice: first!, probabilities: { [first!]: 0.96, ...Object.fromEntries(rest.map((option) => [option, 0.04 / rest.length])) }, confidence: 0.96 };
 }
 
-export const github = fakeGithub();
-export const model = stubModel(decide);
-const portalDir = mkdtempSync(join(tmpdir(), "corbits-chain-portal-"));
-let database: Database;
-export let hub: Hub;
-export let workspace: Workspace;
-
-beforeAll(async () => {
-  github.addRepo(DETERMINISTIC, policy([MAX_FILES]));
-  github.addRepo(JUDGED, policy([MAX_FILES, FOCUSED]));
-  github.addRepo(WAITING, policy([CI_GREEN]));
-  github.addRepo(PUSHED, policy([MAX_FILES]));
-  github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
-  github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
-  github.addRepo(UNWOKEN, policy([MAX_FILES]));
-  github.addRepo(DISCONNECTED, policy([MAX_FILES]));
-  const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
-  database = created;
-  hub = await startHub(database, github, portalDir);
-  workspace = await signUp(hub, database);
-  await setUpWorkspace(workspace, github, model.origin);
-  await listenerStarted(workspace);
-});
-
-afterAll(async () => {
-  await hub?.stop();
-  if (database) await dropDatabase(database);
-  github.stop();
-  model.stop();
-  rmSync(portalDir, { recursive: true, force: true });
-});
-
 export function sha(seed: string): string {
   return new Bun.CryptoHasher("sha1").update(seed).digest("hex");
 }
@@ -95,95 +60,150 @@ export function pullOf(number: number, head: string): Pull {
   };
 }
 
-/** GitHub's webhook for a pull request opened or pushed to, after the fake shows that head. */
-export async function pushed(repo: string, pull: Pull, action: "opened" | "synchronize" = "opened"): Promise<void> {
-  github.open(repo, pull);
-  await deliver(hub, workspace, "pull_request", {
-    action, installation: { id: 1 }, repository: { full_name: repo },
-    pull_request: { number: pull.number, state: "open", draft: false, head: { sha: pull.head }, user: { login: pull.author }, title: pull.title, body: pull.body },
-  });
-}
-
-type RunEvent = { type: string; body: Record<string, unknown> };
-
-/** Every event of every run of every deployment once, child runs included, which a deployment also lists, in order. */
-export async function eachRunEvent(visit: (runId: string, event: RunEvent) => void): Promise<void> {
-  const { transport, tenantId } = workspace;
-  const walked = new Set<string>();
-  async function walk(deploymentId: string, runId: string): Promise<void> {
-    if (walked.has(runId)) return;
-    walked.add(runId);
-    const { events } = await readWorkflowRunEvents(transport, tenantId, deploymentId, runId);
-    for (const event of events) {
-      const body = event.body as Record<string, unknown>;
-      visit(runId, { type: event.type, body });
-      if (event.type === "ChildSpawned") await walk(deploymentId, String(body["childRunId"]));
-    }
-  }
-  for (const deployment of await listWorkflowDeployments(transport, tenantId)) {
-    for (const run of await listWorkflowRuns(transport, tenantId, deployment.id)) await walk(deployment.id, run);
-  }
-}
-
-/** Every run of every deployment, step by step, for a failure message. */
-async function runEvents(): Promise<string> {
-  const lines: string[] = [];
-  let current: string | undefined;
-  await eachRunEvent(function dump(runId, { type, body }) {
-    if (runId !== current) lines.push(`== ${runId}`);
-    current = runId;
-    if (type.startsWith("Step") && type !== "StepStarted") lines.push(`${type} ${String(body["stepId"])} ${JSON.stringify(body["output"] ?? body["error"] ?? body["message"]).slice(0, 400)}`);
-    else if (type.startsWith("Run")) lines.push(type);
-  });
-  return lines.join("\n");
-}
-
-export async function until<T>(what: string, read: () => Promise<T | undefined> | T | undefined, ms = SETTLE_MS): Promise<T> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    const value = await read();
-    if (value !== undefined) return value;
-    await Bun.sleep(500);
-  }
-  throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}`);
-}
-
-export async function rows(query: string): Promise<Record<string, unknown>[]> {
-  const { db, close } = createDB(database.config);
-  try {
-    return [...await db.execute(sql.raw(query))] as Record<string, unknown>[];
-  } finally {
-    await close();
-  }
-}
-
 export type Claim = { status: "live" | "ended"; runId?: string; history: { head: string; runId: string; doneAt: string }[] };
 
-export async function claimOf(repo: string, number: number): Promise<Claim | undefined> {
-  const [row] = await rows(`select state from corbits_triage.manager_state where kind = 'claim' and key = 'mgr:github:${repo}#${number}'`);
-  return row?.["state"] as Claim | undefined;
-}
+/** This test file's stack, started before its tests and stopped after them; call it once, at the file's top level. */
+export function chainStack() {
+  setDefaultTimeout(20 * 60_000);
+  const github = fakeGithub();
+  const model = stubModel(decide);
+  const portalDir = mkdtempSync(join(tmpdir(), "corbits-chain-portal-"));
+  let database: Database;
+  let hub: Hub;
+  let workspace: Workspace;
 
-/** Every manager deployment's anchor run, oldest first. */
-export async function managers(): Promise<{ id: string; createdAt: Date; status: string }[]> {
-  const found = await rows(`select r.id, r.created_at, r.status from workflow_run r join workflow_definition d on d.id = r.definition_id left join workflow_run_launch_spec s on s.anchor_run_id = r.id where r.id = r.anchor_run_id and coalesce(s.frozen_approval_bundle -> 'projection' ->> 'id', d.name) = '${MANAGER}' order by r.created_at`);
-  return found.map((row) => ({ id: String(row["id"]), createdAt: new Date(String(row["created_at"])), status: String(row["status"]) }));
-}
-
-/** The claim once its manager's run is gone, whether done ended the claim or the run stopped without ending it. */
-export async function settled(repo: string, number: number, passes = 1): Promise<Claim> {
-  return until(`${repo}#${number}'s manager to stop`, async function stopped() {
-    const claim = await claimOf(repo, number);
-    if (!claim || claim.history.length < passes) return undefined;
-    const runs = await managers();
-    const runId = claim.runId ?? claim.history.at(-1)!.runId;
-    const live = runs.some((run) => run.id === runId && isLiveDeployment(run.status));
-    return live ? undefined : claim;
+  beforeAll(async () => {
+    github.addRepo(DETERMINISTIC, policy([MAX_FILES]));
+    github.addRepo(JUDGED, policy([MAX_FILES, FOCUSED]));
+    github.addRepo(WAITING, policy([CI_GREEN]));
+    github.addRepo(PUSHED, policy([MAX_FILES]));
+    github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
+    github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
+    github.addRepo(UNWOKEN, policy([MAX_FILES]));
+    github.addRepo(DISCONNECTED, policy([MAX_FILES]));
+    const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
+    database = created;
+    hub = await startHub(database, github, portalDir);
+    workspace = await signUp(hub, database);
+    await setUpWorkspace(workspace, github, model.origin);
+    await listenerStarted(workspace);
   });
-}
 
-export async function verdictsOf(repo: string, number: number): Promise<Record<string, unknown>[]> {
-  return rows(`select run_id, head_sha, state, run_status, dos, detail from corbits_triage.verdict where repo = '${repo}' and number = ${number} order by verdict_at`);
+  afterAll(async () => {
+    await hub?.stop();
+    if (database) await dropDatabase(database);
+    github.stop();
+    model.stop();
+    rmSync(portalDir, { recursive: true, force: true });
+  });
+
+  /** GitHub's webhook for a pull request opened or pushed to, after the fake shows that head. */
+  async function pushed(repo: string, pull: Pull, action: "opened" | "synchronize" = "opened"): Promise<void> {
+    github.open(repo, pull);
+    await deliver(hub, workspace, "pull_request", {
+      action, installation: { id: 1 }, repository: { full_name: repo },
+      pull_request: { number: pull.number, state: "open", draft: false, head: { sha: pull.head }, user: { login: pull.author }, title: pull.title, body: pull.body },
+    });
+  }
+
+  type RunEvent = { type: string; body: Record<string, unknown> };
+
+  /** Every event of every run of every deployment once, child runs included, which a deployment also lists, in order. */
+  async function eachRunEvent(visit: (runId: string, event: RunEvent) => void): Promise<void> {
+    const { transport, tenantId } = workspace;
+    const walked = new Set<string>();
+    async function walk(deploymentId: string, runId: string): Promise<void> {
+      if (walked.has(runId)) return;
+      walked.add(runId);
+      const { events } = await readWorkflowRunEvents(transport, tenantId, deploymentId, runId);
+      for (const event of events) {
+        const body = event.body as Record<string, unknown>;
+        visit(runId, { type: event.type, body });
+        if (event.type === "ChildSpawned") await walk(deploymentId, String(body["childRunId"]));
+      }
+    }
+    for (const deployment of await listWorkflowDeployments(transport, tenantId)) {
+      for (const run of await listWorkflowRuns(transport, tenantId, deployment.id)) await walk(deployment.id, run);
+    }
+  }
+
+  /** Every run of every deployment, step by step, for a failure message. */
+  async function runEvents(): Promise<string> {
+    const lines: string[] = [];
+    let current: string | undefined;
+    await eachRunEvent(function dump(runId, { type, body }) {
+      if (runId !== current) lines.push(`== ${runId}`);
+      current = runId;
+      if (type.startsWith("Step") && type !== "StepStarted") lines.push(`${type} ${String(body["stepId"])} ${JSON.stringify(body["output"] ?? body["error"] ?? body["message"]).slice(0, 400)}`);
+      else if (type.startsWith("Run")) lines.push(type);
+    });
+    return lines.join("\n");
+  }
+
+  async function until<T>(what: string, read: () => Promise<T | undefined> | T | undefined, ms = SETTLE_MS): Promise<T> {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const value = await read();
+      if (value !== undefined) return value;
+      await Bun.sleep(500);
+    }
+    throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}`);
+  }
+
+  async function rows(query: string): Promise<Record<string, unknown>[]> {
+    const { db, close } = createDB(database.config);
+    try {
+      return [...await db.execute(sql.raw(query))] as Record<string, unknown>[];
+    } finally {
+      await close();
+    }
+  }
+
+  async function claimOf(repo: string, number: number): Promise<Claim | undefined> {
+    const [row] = await rows(`select state from corbits_triage.manager_state where kind = 'claim' and key = 'mgr:github:${repo}#${number}'`);
+    return row?.["state"] as Claim | undefined;
+  }
+
+  /** Every manager deployment's anchor run, oldest first. */
+  async function managers(): Promise<{ id: string; createdAt: Date; status: string }[]> {
+    const found = await rows(`select r.id, r.created_at, r.status from workflow_run r join workflow_definition d on d.id = r.definition_id left join workflow_run_launch_spec s on s.anchor_run_id = r.id where r.id = r.anchor_run_id and coalesce(s.frozen_approval_bundle -> 'projection' ->> 'id', d.name) = '${MANAGER}' order by r.created_at`);
+    return found.map((row) => ({ id: String(row["id"]), createdAt: new Date(String(row["created_at"])), status: String(row["status"]) }));
+  }
+
+  /** The claim once its manager's run is gone, whether done ended the claim or the run stopped without ending it. */
+  async function settled(repo: string, number: number, passes = 1): Promise<Claim> {
+    return until(`${repo}#${number}'s manager to stop`, async function stopped() {
+      const claim = await claimOf(repo, number);
+      if (!claim || claim.history.length < passes) return undefined;
+      const runs = await managers();
+      const runId = claim.runId ?? claim.history.at(-1)!.runId;
+      const live = runs.some((run) => run.id === runId && isLiveDeployment(run.status));
+      return live ? undefined : claim;
+    });
+  }
+
+  async function verdictsOf(repo: string, number: number): Promise<Record<string, unknown>[]> {
+    return rows(`select run_id, head_sha, state, run_status, dos, detail from corbits_triage.verdict where repo = '${repo}' and number = ${number} order by verdict_at`);
+  }
+
+  return {
+    github,
+    model,
+    get hub(): Hub {
+      return hub;
+    },
+    get workspace(): Workspace {
+      return workspace;
+    },
+    pushed,
+    eachRunEvent,
+    until,
+    rows,
+    claimOf,
+    managers,
+    settled,
+    verdictsOf,
+  };
 }
 
 export function comments(writes: readonly Write[]): string[] {

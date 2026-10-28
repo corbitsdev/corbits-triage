@@ -1,7 +1,9 @@
 // A manager that ends while the judge is out, and the judge's report waking the next.
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
-import { WOKEN, isLiveDeployment, github, model, sha, pullOf, pushed, type Claim, managers, settled, verdictsOf, comments, labelled, once } from "./chain.ts";
+import { chainStack, WOKEN, isLiveDeployment, sha, pullOf, type Claim, comments, labelled, once } from "./chain.ts";
+
+const { github, model, pushed, managers, settled, verdictsOf } = chainStack();
 
 const woken = once(async function woken() {
   const head = sha("woken-1");

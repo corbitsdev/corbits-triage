@@ -2,7 +2,10 @@
 import { expect, test } from "bun:test";
 import { TRIAGE_LISTENERS, VERDICT_LABELS } from "@corbits/triage-contracts";
 import { RECONCILE_INTERVAL_MS } from "./stack.ts";
-import { SETTLE_MS, DISCONNECTED, isLiveDeployment, github, hub, sha, pullOf, pushed, until, rows, settled, comments, labelled, once } from "./chain.ts";
+import { chainStack, SETTLE_MS, DISCONNECTED, isLiveDeployment, sha, pullOf, comments, labelled, once } from "./chain.ts";
+
+const chain = chainStack();
+const { github, pushed, until, rows, settled } = chain;
 
 // The hub drops a silent sidecar's socket after stock's one-minute ping timeout, and the next reconcile pass checks it.
 const DISCONNECT_MS = 60_000 + 2 * RECONCILE_INTERVAL_MS + SETTLE_MS;
@@ -14,7 +17,7 @@ async function listeners(): Promise<{ id: string; status: string; pid: number }[
 }
 
 function logged(msg: string): Record<string, unknown>[] {
-  return hub.logs.filter((line) => line.includes(`"msg":"${msg}"`)).map((line) => JSON.parse(line) as Record<string, unknown>);
+  return chain.hub.logs.filter((line) => line.includes(`"msg":"${msg}"`)).map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 const disconnected = once(async function disconnected() {
