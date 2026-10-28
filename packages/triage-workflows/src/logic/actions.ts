@@ -202,7 +202,7 @@ function passedLabels(labelled: CheckResult[], labels: ReadonlyMap<string, strin
  * After the verdict's own steps, one labels Do adds the label of each labelling rule that did not pass, and each label a
  * rule that did not fail still adds. Nothing says who put a label on, so only labels the policy names are taken back:
  * a labelling rule's once it passes, and a level label of sensitive paths or risk that no longer applies. A label the
- * verdict's own labels steps add is theirs, so it is never taken back.
+ * verdict's own labels steps name is theirs, run or skipped, so it is never taken back.
  */
 function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string, stepLabels: ReadonlySet<string>): SuggestedAction[] {
   if (labelled === undefined) return [];
@@ -227,6 +227,9 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
   const stepLabels = new Set<string>();
   for (const [index, step] of steps.entries()) {
     if (step.do === "nothing") continue;
+    if (step.do === "labels" && step.target.from === "list") {
+      for (const label of step.target.labels) stepLabels.add(label.toLowerCase());
+    }
     const base = { list, index, kind: step.do };
     const holds = whenHolds(step.when, subject);
     if (holds.matches !== true) {
@@ -235,9 +238,6 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
     }
     try {
       const target = resolve(step, input);
-      if ("labels" in target) {
-        for (const label of target.labels) stepLabels.add(label.toLowerCase());
-      }
       const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: step.do, target });
       if (!satisfied(step.do, target, facts)) out.push({ ...base, effectId, target, reason });
     } catch (e) {

@@ -420,14 +420,17 @@ describe("pr-triage body", () => {
     expect((await triage(pack, { files: [FLAG], labels: ["needs-design"] })).verdict).toMatchObject({ actions: [] });
   });
 
-  test("a passed rule's label stays when a labels step on the verdict's list adds it", async () => {
+  test("a passed rule's label stays when a labels step on the verdict's list names it, run or skipped", async () => {
     const base = emptyPack(REPO);
+    const step: Step = { do: "labels", target: { from: "list", labels: ["needs-docs"] } };
     const pack: CheckPack = {
       ...base,
       checks: { "max-lines-changed-per-file": { enabled: true, onFail: "label", label: "needs-docs", maxFileLines: 1 } },
-      actions: { ...base.actions, pass: [{ do: "labels", target: { from: "list", labels: ["needs-docs"] } }] },
+      actions: { ...base.actions, pass: [step] },
     };
     expect((await triage(pack, { files: [FLAG], labels: ["needs-docs"] })).verdict).toMatchObject({ verdict: "pass", actions: [] });
+    const skipped: CheckPack = { ...pack, actions: { ...base.actions, pass: [{ ...step, when: { linkedIssue: false } }] } };
+    expect((await triage(skipped, { files: [FLAG], labels: ["needs-docs"] })).verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", skipped: true }] });
   });
 
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {
