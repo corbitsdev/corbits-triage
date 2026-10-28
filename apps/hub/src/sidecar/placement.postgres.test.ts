@@ -4,7 +4,8 @@ import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { SidecarProvisioner } from "@intx/hub-sessions";
-import { createPlacementChooser, localSidecarUsage, WAITING_FOR_SLOT } from "./placement.js";
+import { CAPACITY_UNAVAILABLE } from "./host-capacity.js";
+import { createPlacementChooser, localSidecarUsage } from "./placement.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_placement";
@@ -98,9 +99,9 @@ async function probing(db: Db, on: SidecarProvisioner, status: typeof schema.wor
   });
 }
 
-test("a deployment goes to the local sidecar until its active slots are taken, then to the first sandbox, which counts as overflow", async () => {
+test("a deployment gets a local sidecar until the cap is reached, then the first sandbox, which counts as overflow", async () => {
   await withDatabase(async function place(db) {
-    const choose = createPlacementChooser({ db, local, maxDeployments: 2 });
+    const choose = createPlacementChooser({ db, local, maxSidecars: 2 });
     await deployed(db, local, "allocated");
     await deployed(db, local, "released", { deploymentCleanupConfirmed: true });
     await deployed(db, local, "releasing", { deploymentCleanupConfirmed: true });
@@ -108,7 +109,7 @@ test("a deployment goes to the local sidecar until its active slots are taken, t
     await deployed(db, sandbox, "allocated", { requires: ["isolation:workload"] });
     expect(await choose([local, sandbox])).toBe(local);
 
-    // A copy the sidecar has not confirmed removing still holds its slot.
+    // A sidecar whose removal is not confirmed still holds its slot.
     await deployed(db, local, "releasing");
     expect(await choose([local, sandbox])).toBe(sandbox);
     expect(await choose([local])).toBe(local);
@@ -119,10 +120,10 @@ test("a deployment goes to the local sidecar until its active slots are taken, t
   });
 }, 120_000);
 
-test("placements side by side cannot both take the local sidecar's last slot, which frees once its pick is counted", async () => {
+test("placements side by side cannot both take the last local slot, which frees once its pick is counted", async () => {
   await withDatabase(async function race(db) {
     let clock = 0;
-    const choose = createPlacementChooser({ db, local, maxDeployments: 2, now: () => clock });
+    const choose = createPlacementChooser({ db, local, maxSidecars: 2, now: () => clock });
     await deployed(db, local, "allocated");
 
     const picks = await Promise.all([choose([local, sandbox]), choose([local, sandbox]), choose([local, sandbox])]);
@@ -133,9 +134,9 @@ test("placements side by side cannot both take the local sidecar's last slot, wh
   });
 }, 120_000);
 
-test("probes on the local sidecar take its slots, and placements waiting there for one are counted apart and still fill it", async () => {
+test("local probes take slots, and placements waiting for one are counted apart and still fill the cap", async () => {
   await withDatabase(async function shared(db) {
-    const choose = createPlacementChooser({ db, local, maxDeployments: 3 });
+    const choose = createPlacementChooser({ db, local, maxSidecars: 3 });
     await deployed(db, local, "allocated");
     await probing(db, local, "probing");
     await probing(db, local, "failed");
@@ -143,8 +144,8 @@ test("probes on the local sidecar take its slots, and placements waiting there f
     expect(await localSidecarUsage(db, local, 3)).toEqual({ active: 2, waiting: 0, cap: 3, overflow: 0 });
 
     // What stock writes for a placement refused for room while it waits to try again.
-    await deployed(db, local, "replacing", { failureCode: WAITING_FOR_SLOT, generation: 1, deploymentCleanupConfirmed: true });
-    await deployed(db, local, "failed", { failureCode: WAITING_FOR_SLOT });
+    await deployed(db, local, "replacing", { failureCode: CAPACITY_UNAVAILABLE, generation: 1, deploymentCleanupConfirmed: true });
+    await deployed(db, local, "failed", { failureCode: CAPACITY_UNAVAILABLE });
     expect(await localSidecarUsage(db, local, 3)).toEqual({ active: 2, waiting: 1, cap: 3, overflow: 0 });
     expect(await choose([local, sandbox])).toBe(sandbox);
   });

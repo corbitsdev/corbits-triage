@@ -71,7 +71,7 @@ import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
 import { createRolloutQueue, createWorkflowRollout, stopGivenUp, type DeployRequest } from "./workflow-release/rollout.js";
-import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, localSidecarMaxDeployments, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
@@ -159,7 +159,7 @@ await assertMigrated(database);
 
 const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
-const localSidecarCap = localSidecarMaxDeployments(env);
+const localSidecarCap = maxLocalSidecars(env);
 const local = createLocalProcessSidecarProvisioner({
   dataRoot: localSidecarDataRoot,
   ...(env.HUB_SIDECAR_STOP_TIMEOUT_MS !== undefined && { stopTimeoutMs: Number(env.HUB_SIDECAR_STOP_TIMEOUT_MS) }),
@@ -190,7 +190,7 @@ const codeReviewProbes = [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2
 const noIsolatedPlace = isolatedPlaceBootWarning(workloadProvisioners.length > 0, codeReviewProbes.map((probe) => probe.guide));
 if (noIsolatedPlace) logJson(noIsolatedPlace);
 function placeDeployments(db: DB["db"]) {
-  return createPlacementChooser({ db, local: local.provisioner, maxDeployments: localSidecarCap });
+  return createPlacementChooser({ db, local: local.provisioner, maxSidecars: localSidecarCap });
 }
 
 let shuttingDown = false;

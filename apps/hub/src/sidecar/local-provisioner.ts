@@ -267,6 +267,7 @@ export function createLocalProcessSidecarProvisioner({
     // Checked and counted in one turn, so ensures running side by side each see the others.
     const full = noRoom(await capacity.freeBytes());
     if (full !== undefined) {
+      log({ level: "warn", msg: "local_sidecar_refused", allocationId: request.allocationId, reason: full });
       return { kind: "rejected", code: CAPACITY_UNAVAILABLE, message: full, retryable: true };
     }
     reserved.add(request.allocationId);
