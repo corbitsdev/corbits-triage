@@ -420,7 +420,7 @@ describe("pr-triage body", () => {
     expect((await triage(pack, { files: [FLAG], labels: ["needs-design"] })).verdict).toMatchObject({ actions: [] });
   });
 
-  test("a passed rule's label stays when a labels step on any list names it, and a level label that no longer applies still comes off", async () => {
+  test("a passed rule's label stays when a labels step on any list names it, run or skipped", async () => {
     const base = emptyPack(REPO);
     const step: Step = { do: "labels", target: { from: "list", labels: ["needs-docs"] } };
     const pack: CheckPack = {
@@ -433,16 +433,6 @@ describe("pr-triage body", () => {
     expect((await triage(skipped, { files: [FLAG], labels: ["needs-docs"] })).verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", skipped: true }] });
     const onFail: CheckPack = { ...pack, actions: { ...base.actions, fail: [step] } };
     expect((await triage(onFail, { files: [FLAG], labels: ["needs-docs"] })).verdict).toMatchObject({ verdict: "pass", actions: [] });
-    const risk: CheckPack = {
-      ...pack,
-      checks: { ...pack.checks, risk: { enabled: true, onFail: "label" } },
-      actions: { ...base.actions, pass: [{ do: "labels", target: { from: "list", labels: ["risk: medium"] }, when: { linkedIssue: false } }] },
-    };
-    const tested = [FLAG, { ...FLAG, filename: "src/flag.test.ts" }];
-    expect((await triage(risk, { files: tested, labels: ["risk: medium"] })).verdict).toMatchObject({
-      verdict: "pass",
-      actions: [{ kind: "labels", skipped: true }, { kind: "labels", target: { labels: [], unlabel: ["risk: medium"] } }],
-    });
   });
 
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {

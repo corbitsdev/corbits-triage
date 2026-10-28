@@ -1405,12 +1405,29 @@ export function askRules(pack: CheckPack): string[] {
   return enabledRows(pack).filter(([, row]) => row.onFail === "ask").map(([id]) => id);
 }
 
-/** Triage takes back its verdict and `rule: …` labels, so a labelling rule adding one would fight it. */
+/** The sensitive-paths or risk rule whose level a label names, if it names one. */
+function levelLabelRule(label: string): LevelLabelRule | undefined {
+  const lower = label.toLowerCase();
+  return (Object.keys(LEVEL_LABELS) as LevelLabelRule[]).find((id) => RISK_MARKS.some((level) => levelLabel(id, level) === lower));
+}
+
+/**
+ * Triage takes back its verdict, `rule: …` and level labels, so a labelling rule adding one would fight it, and a labels
+ * step naming a level label would flip it on and off across runs. Sensitive paths and risk add their own level labels.
+ */
 export function refuseTriageLabels(pack: CheckPack): CheckPack {
   const verdictLabels = Object.values(pack.labels).map((label) => label.toLowerCase());
   for (const [id, label] of labelRules(pack)) {
     const lower = label.toLowerCase();
-    if (lower.startsWith("triage:") || lower.startsWith(RULE_LABEL_PREFIX) || verdictLabels.includes(lower)) throw new Error(`Rule ${id} label ${label} is one Triage takes back; name another.`);
+    const level = levelLabelRule(lower);
+    if (lower.startsWith("triage:") || lower.startsWith(RULE_LABEL_PREFIX) || verdictLabels.includes(lower) || (level !== undefined && level !== id)) throw new Error(`Rule ${id} label ${label} is one Triage takes back; name another.`);
+  }
+  for (const list of VERDICTS) {
+    for (const [i, step] of pack.actions[list].entries()) {
+      if (step.do !== "labels" || step.target.from !== "list") continue;
+      const level = step.target.labels.find((label) => levelLabelRule(label) !== undefined);
+      if (level !== undefined) throw new Error(`${STEP_WHERE[list]} ${i + 1} label ${level} is one Triage takes back; name another.`);
+    }
   }
   return pack;
 }
