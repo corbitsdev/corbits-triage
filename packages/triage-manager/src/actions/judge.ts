@@ -3,7 +3,7 @@ import { type } from "arktype";
 import { JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
 import { evaluate, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
-import { hostChecksPending } from "@corbits/triage-workflows/logic/render";
+import { waitsForHost } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
@@ -15,9 +15,9 @@ export const JUDGE_DEADLINE_MS = 60 * 60_000;
 
 const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: "object[]", batch: "boolean" } } });
 
-/** Whether an item's rules wait on the host's own checks, so its judge is held until they finish. */
-function waitingOnHost(items: readonly object[]): boolean {
-  return (items as Item[]).some((item) => item.det !== undefined && hostChecksPending(item.det, item.noWait));
+/** Whether an item waits on the host: CI the policy reads, or a rule the host has still to settle; its judge is held until then. */
+export function waitingOnHost(items: readonly object[]): boolean {
+  return (items as Item[]).some(waitsForHost);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { BUDGET_EXHAUSTED_NOTE, citationOf, citationUrl, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, notReviewedNote, render, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, notReviewedNote, render, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
@@ -123,8 +123,10 @@ export interface RenderInput {
   choice?: Record<VerdictChoice, number>;
   /** Why the verdict question could not be asked: the pull request is too large for it. */
   choiceRefused?: string;
-  /** The hub waits no longer for the host's checks, so a verdict is made while they are pending. */
+  /** The manager waits no longer for the host's checks, so a verdict is made while they are pending. */
   noWait?: true;
+  /** CI still runs on the head and the policy reads it outside its rules, through a step's CI condition, approve or merge. */
+  ciAwaited?: true;
 }
 
 export type Actor = "author" | "maintainer" | "system";
@@ -549,7 +551,19 @@ function hostPending(c: CheckResult): boolean {
   return HOST_CHECKS.has(c.check) && unsettledMachine(c) && c.output.kind === "could-not-check";
 }
 
-/** Whether a rule waits on the host's own checks, which the hub waits for unless it waits no longer (`noWait`). */
+const CI_RUNNING_REASON = "checks are still running";
+
+/** Whether the head's CI still runs while the policy reads CI: its CI green rule, or a step's CI condition, approve or merge. */
+export function ciAwaited(item: { facts: { checks: string }; pack?: CheckPack; noWait?: true }): boolean {
+  return item.noWait !== true && item.facts.checks === "pending" && item.pack !== undefined && dependsOnCi(item.pack);
+}
+
+/** Whether the verdict on an item waits for the host: CI the policy reads, or a rule the host has still to settle. */
+export function waitsForHost(item: { det?: Pick<DeterministicResult, "checks">; facts: { checks: string }; pack?: CheckPack; noWait?: true }): boolean {
+  return ciAwaited(item) || (item.det !== undefined && hostChecksPending(item.det, item.noWait));
+}
+
+/** Whether a rule waits on the host's own checks, which the manager waits for unless it waits no longer (`noWait`). */
 export function hostChecksPending(det: Pick<DeterministicResult, "checks">, noWait: boolean | undefined): boolean {
   return !noWait && det.checks.some(hostPending);
 }
@@ -812,7 +826,7 @@ export const INSTRUCTED_REASON = "the pull request tries to direct the decision 
  * the host's own checks waits for them instead of being Unsure, unless the hub waits no longer.
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, repo, repoSource, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait } = input;
+  const { author, repo, repoSource, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait, ciAwaited } = input;
   const evaluated = evaluateModel(input);
   const { deciding, labelled } = splitLabelled(det, evaluated.checks);
   const ctx = { author, repo, repoSource, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, stack: input.stack, labelled };
@@ -822,7 +836,8 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const hard = hardFailures(det.checks);
   if (hard.length > 0) return withChecks({ ...render(det.state), verdict: "fail", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
   const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
-  const waitsOnHost = !noWait && unconfirmed.length > 0 && unconfirmed.every(hostPending);
+  // Any rule the host has still to settle holds the verdict, whatever else could not be confirmed.
+  const waitsOnHost = !noWait && (ciAwaited === true || unconfirmed.some(hostPending));
   if (!det.needsJudgment) {
     if (waitsOnHost) return waitingOf(null);
     const verdict = withChecks({ ...render(det.state), verdict: "unsure", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
@@ -830,10 +845,10 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   }
   if (evaluated.instructed) return unsureOf(INSTRUCTED_REASON);
   // A judge held back for the host's checks has not decided anything yet, so the head waits for them.
-  if (judgeSkipped === true && hostChecksPending(det, noWait)) return waitingOf(null);
+  if (judgeSkipped === true && (ciAwaited === true || hostChecksPending(det, noWait))) return waitingOf(null);
   if (!decidesByModel(det)) {
-    if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
     if (waitsOnHost) return waitingOf(null);
+    if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
     if (flaggedReason) return unsureOf(flaggedReason);
     return unsureOf(RULES_UNSURE_REASON);
   }
@@ -841,7 +856,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, score, reasons, ctx);
   }
   function waitingOf(score: number | null): RenderOutput {
-    const reason = checks.filter(hostPending).map((c) => c.reason).join("; ");
+    const reason = checks.filter(hostPending).map((c) => c.reason).join("; ") || CI_RUNNING_REASON;
     return { ...unsureOf(reason, null, score), waiting: true, labels: [WAITING_LABEL], feedback: "" };
   }
   if (judgeSkipped === true) return unsureOf(NEEDS_JUDGE_REASON);

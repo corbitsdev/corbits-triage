@@ -884,10 +884,10 @@ describe("triage-manager with a judge", () => {
       { check: "conventions", kind: "machine", result: "unconfirmed", reason: unread, evidence: [], output: { kind: "could-not-check", reason: unread } },
     ];
     const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD };
-    const rules = { needsJudgment: true, items: [{ det: { checks } }] };
+    const rules = { needsJudgment: true, items: [{ facts: { checks: "success" }, det: { checks } }] };
     expect(await actions.judgeScope({ payload: wake(), take: { output: take }, rules: { output: rules } })).toEqual({ deploy: true, post: false });
     const running = [{ ...checks[0], result: "unconfirmed", output: { kind: "could-not-check", reason: "checks are still running" } }, checks[1]];
-    expect(await actions.judgeScope({ payload: wake(), take: { output: take }, rules: { output: { ...rules, items: [{ det: { checks: running } }] } } })).toEqual({ deploy: false, post: true });
+    expect(await actions.judgeScope({ payload: wake(), take: { output: take }, rules: { output: { ...rules, items: [{ facts: { checks: "pending" }, det: { checks: running } }] } } })).toEqual({ deploy: false, post: true });
   });
 
   test.each([

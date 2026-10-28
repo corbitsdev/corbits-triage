@@ -164,13 +164,11 @@ describe("focused rendering", () => {
     expect(focusedVerdict(focusedAnswer(0.5, 0.4), undefined, CHOICE.pass)).toMatchObject({ verdict: "unsure", reason: "the decision model passed it, but a rule could not be confirmed" });
   });
 
-  test("an unsure comment names every rule it could not confirm, running checks included, and the verdict keeps the decision model's probability", () => {
+  test("a rule the decision model left unsure waits while the host's checks still run, keeping the decision model's probability", () => {
     const running = { check: "ci-green", kind: "machine" as const, result: "unconfirmed" as const, reason: "checks are still running", evidence: ["build"], output: { kind: "could-not-check" as const, reason: "checks are still running" } };
     const det = { ...FOCUSED_DET, checks: [running] };
     const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(`${focusedAnswer(0.5, 0.4)}${NOT_INSTRUCTED}`), focused: focusedPlan({}).focused, choice: CHOICE.pass });
-    expect(verdict).toMatchObject({ verdict: "unsure", score: 0.8 });
-    expect(verdict.waiting).toBeUndefined();
-    expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}\n\nWaiting on:\n- checks are still running: \`build\``);
+    expect(verdict).toMatchObject({ verdict: "unsure", score: 0.8, waiting: true, feedback: "", reason: "checks are still running" });
   });
 
   test("a reason several rules share is said once in the comment and among the reasons", () => {
@@ -303,6 +301,16 @@ describe("focused rendering", () => {
     expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", mirror: true, humanGated: false, checks });
     expect(verdict.nextAction).toContain("Fix failing CI");
     expect(verdict.nextAction).toContain("Remove changes under vendor/generated.ts");
+  });
+
+  test("a rules-only policy waits for CI still running even with a rule Triage could not check itself, as code patterns on an unread patch", () => {
+    const unread = "code patterns could not be checked: src/flag.ts: its patch was not read in full";
+    const running = { check: "ci-green", kind: "machine" as const, result: "unconfirmed" as const, reason: "checks are still running", evidence: ["build"], output: { kind: "could-not-check" as const, reason: "checks are still running" } };
+    const patterns = { check: "conventions", kind: "machine" as const, result: "unconfirmed" as const, reason: unread, evidence: [], output: { kind: "could-not-check" as const, reason: unread } };
+    const det = { state: "awaiting-review" as const, reason: unread, findings: [], checks: [running, patterns], needsJudgment: false };
+    const input = { repoSource: "github" as const, author: "octocat", repo: "acme/widgets", headSha: "abc123", det };
+    expect(renderVerdict(input)).toMatchObject({ waiting: true, reason: "checks are still running" });
+    expect(renderVerdict({ ...input, det: { ...det, checks: [{ ...running, result: "pass" as const, output: { kind: "values" as const, values: { status: "passing" } } }, patterns] } }).waiting).toBeUndefined();
   });
 
   test("both size limits failing ask for one split", () => {

@@ -354,9 +354,10 @@ any other tenant or an unknown sender.
   approves nothing when there is nothing to run. A policy of only deterministic
   rules posts on this pass. One whose rules need the judge, or that asks for
   code review, posts once, after each of those has reported or given up: the machine
-  verdict, the judge's verdict and the code review together. A verdict whose
-  only unconfirmed rules are the host's (CI green pending, mergeability not
-  computed) waits: its pass writes only the waiting marker and records no
+  verdict, the judge's verdict and the code review together. A verdict with
+  any unconfirmed rule of the host's (CI green pending, mergeability not
+  computed), or whose policy reads CI through a step (a CI condition, approve
+  or merge, `dependsOnCi`) while CI runs, waits: its pass writes only the waiting marker and records no
   verdict. Where the role holds Comment, a pass that ends waiting writes the
   one triage comment as **Triage: In progress**, naming what the head waits
   for (CI, the judge, code review), through the same writer as the verdict's
@@ -623,8 +624,9 @@ label off that head, so it never stands on a head not yet triaged.
    whose conditions do not hold. While CI is pending every runnable action is
    held and an approve that may not stand is skipped; the completed
    `check_run` (or the reconciler's CI re-read) triages it again. A verdict
-   other than Fail whose only unconfirmed rules are the host's (CI green
-   pending, mergeability not computed) is `waiting` instead: no verdict, no
+   other than Fail with any unconfirmed rule of the host's (CI green pending,
+   mergeability not computed), whatever else is unconfirmed, or whose policy
+   reads CI (`dependsOnCi`) while it runs, is `waiting` instead: no verdict, no
    actions, the waiting marker as its mirror (`mark`). A rule Triage could
    not check for its own reasons, as code patterns in a patch it could not
    read in full, does not wait. The hub records no verdict for a waiting

@@ -714,15 +714,21 @@ describe("pr-triage body", () => {
     expect(github.reviews).toEqual([expect.objectContaining({ state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" })]);
   });
 
-  test.each<[string, (github: ReturnType<typeof fakeGithub>) => void, string]>([
-    ["a failing check", (github) => { github.pr.draft = true; }, ""],
-    ["pending CI", (github) => { github.pr.ci = "pending"; }, "CI has not passed on this head."],
-  ])("%s approves nothing", async (_, change, reason) => {
+  test("a failing check approves nothing", async () => {
     const { github, pack } = approving();
-    change(github);
+    github.pr.draft = true;
     const { dos, verdict } = await triage(pack, { github });
     expect(dos).toEqual([]);
-    expect((verdict as Verdict).actions).toEqual(reason ? [expect.objectContaining({ kind: "approve", skipped: true, reason })] : []);
+    expect((verdict as Verdict).actions).toEqual([]);
+    expect(github.reviews).toEqual([]);
+  });
+
+  test("a policy that approves waits for CI still running, though CI green is off, and approves nothing meanwhile", async () => {
+    const { github, pack } = approving();
+    github.pr.ci = "pending";
+    const { dos, verdict } = await triage(pack, { github });
+    expect(dos).toEqual([]);
+    expect(verdict).toMatchObject({ waiting: true, actions: [] });
     expect(github.reviews).toEqual([]);
   });
 
