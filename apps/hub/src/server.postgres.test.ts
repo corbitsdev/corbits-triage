@@ -737,6 +737,37 @@ function smtpSink() {
   return { url: `smtp://127.0.0.1:${server.port}`, sent: () => messages.map(parse), stop: () => server.stop(true) };
 }
 
+test("a person signs out only their own other sessions", async () => {
+  const origin = await startHub();
+  const email = `sessions-${crypto.randomUUID().slice(0, 8)}@example.com`;
+  const first = await signedIn(origin, email);
+  const signIn = await fetch(`${origin}/api/auth/sign-in/email`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin, "x-forwarded-for": "198.51.100.250" },
+    body: JSON.stringify({ email, password: "password-123456" }),
+  });
+  const second = { ...first, cookie: signIn.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ") };
+  const Sessions = type({ sessions: type({ id: "string", isCurrent: "boolean" }).array() });
+  async function sessionsOf(headers: Record<string, string>) {
+    return Sessions.assert(await (await fetch(`${origin}/api/integrations/sessions`, { headers })).json()).sessions;
+  }
+  async function revoke(headers: Record<string, string>, sessionId: string) {
+    return (await fetch(`${origin}/api/integrations/sessions/${sessionId}`, { method: "DELETE", headers })).status;
+  }
+
+  const listed = await sessionsOf(first);
+  expect(listed).toHaveLength(2);
+  const other = listed.find((session) => !session.isCurrent)!;
+  const stranger = await signedIn(origin);
+  const strangers = await sessionsOf(stranger);
+  expect(await revoke(first, strangers[0]!.id)).toBe(404);
+  expect(await sessionsOf(stranger)).toEqual(strangers);
+  expect(await revoke(first, "unknown")).toBe(404);
+  expect(await revoke(first, other.id)).toBe(204);
+  expect(await sessionsOf(first)).toEqual(listed.filter((session) => session.isCurrent));
+  expect((await fetch(`${origin}/api/me`, { headers: second })).status).toBe(401);
+}, 40_000);
+
 test("an invite joins only its verified invitee, by an emailed magic link or a copied link that signs nobody in", async () => {
   const smtp = smtpSink();
   const portal = "http://portal.test";
