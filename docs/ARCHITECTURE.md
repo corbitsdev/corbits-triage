@@ -769,8 +769,9 @@ label off that head, so it never stands on a head not yet triaged.
    without patches. The judge reads the same patches (`judgedFiles` in
    `logic/quality.ts`) across up to 64 first-round requests, plus the verdict
    request and at most 30 focused re-sends; a diff that needs more than 64 in
-   the first round leaves every judged rule Unsure as too large for the
-   decision model. A match in any checked file fails the rule. Without one, a
+   the first round sends the first 64, and the files only later requests hold
+   are unread, so the judged rules that ask about them are Unsure, naming them.
+   A match in any checked file fails the rule. Without one, a
    file that adds code but has no patch, because the host sent none (GitHub
    omits it for a very large or binary file) or the pull request passed that
    ceiling, or whose content was not read, leaves the rule unconfirmed, naming

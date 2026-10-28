@@ -402,11 +402,32 @@ function cutLine(line: string, room: number): string[] {
   return Array.from({ length: Math.ceil(chars.length / size) }, (_, index) => chars.slice(index * size, (index + 1) * size).join(""));
 }
 
+/** A request past the cap is not sent, so the files it holds are unread by every check that would have asked about them. */
+function leaveUnread({ questions }: JudgeRequest, plan: QualityPlan, focused: FocusedPlan | undefined) {
+  for (const { id } of questions) {
+    for (const filePlan of Object.values(plan)) {
+      const item = filePlan.asked[id];
+      if (item === undefined) continue;
+      delete filePlan.asked[id];
+      addUnread(filePlan.unread, [typeof item === "string" ? item : item.path]);
+    }
+    const slice = focused?.slices[id];
+    if (!focused || !slice) continue;
+    delete focused.slices[id];
+    addUnread(focused.unread, slice);
+  }
+}
+
+function addUnread(unread: string[], paths: string[]) {
+  for (const path of paths) if (!unread.includes(path)) unread.push(path);
+}
+
 /**
  * Splits one evaluation into System One requests, a pure function of the facts. Files fill each request's state in
  * order up to the budget. A file too large for one request keeps its leading hunks there, and focused reads the rest in
  * the next requests. The first request carries every whole-pull-request question, each request asks about the files it
- * holds, and focused asks once per request that holds any. Only metadata too large for one request is refused.
+ * holds, and focused asks once per request that holds any. Files past the request cap are unread. Only metadata too
+ * large for one request is refused.
  */
 export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicResult["sources"]): QualityEvaluation {
   const files = judgedFiles(facts);
@@ -556,10 +577,9 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     if (readsAll && fitted.hunks.length < hunks.length) addRest(read, fitted.hunks.length, file.path, position);
   }
   flush();
-  // Duplicates gives up its own request rather than push the others past the limit.
-  if (duplicates?.request && requests.length < MAX_JUDGE_REQUESTS) requests.push(duplicates.request);
-  else if (duplicates?.request) plan[DUPLICATES] = { changed: [], asked: {}, unread: [`${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length + 1} requests)`] };
-  if (requests.length > MAX_JUDGE_REQUESTS) return { plan, ...(focused && { focused }), requests: [], judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length} requests)` };
+  // Duplicates reads no diff, so it keeps its request and one more file request is left unread instead.
+  for (const unsent of requests.splice(MAX_JUDGE_REQUESTS - (duplicates?.request ? 1 : 0))) leaveUnread(unsent, plan, focused);
+  if (duplicates?.request) requests.push(duplicates.request);
   const ids = Object.keys(focused?.slices ?? {});
   // With no lines to read, such as only generated files changed, focused does not apply.
   if (!focused || ids.length + focused.unread.length === 0) return { plan, requests };

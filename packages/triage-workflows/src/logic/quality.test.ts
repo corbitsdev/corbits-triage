@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { patchHunks } from "./hunks.js";
 import { NO_FACTS } from "./item.js";
-import { focusedPartRequests, MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation, type JudgeRequest } from "./quality.js";
+import { focusedPartRequests, MAX_CODE_RULES_PATCH_CHARS, MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation, type JudgeRequest } from "./quality.js";
 
 const SOURCES = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
 
@@ -130,23 +130,31 @@ test("quality preflight lists only the changed paths that fit focused's share, w
   expect(Object.values(directories!).reduce((total, row) => total + row.files, 0)).toBe(100);
 });
 
-test("quality preflight refuses metadata that leaves too little room for files, and more requests than the cap, instead of asking thousands", () => {
+test("quality preflight refuses metadata that leaves too little room for files instead of asking thousands", () => {
   const patch = compactHunks(1);
   const subject = prepareQualityEvaluation({ ...facts([{ path: "src/a.ts", patch }]), commits: ["x".repeat(90_000)] }, SOURCES);
   expect(subject.requests[0]!.state.pullRequest.commits).toEqual(["x".repeat(200)]);
   const crowded = prepareQualityEvaluation({ ...facts([{ path: "src/a.ts", patch }]), docs: { "README.md": "d".repeat(85_000) } }, SOURCES);
   expect(crowded).toMatchObject({ requests: [], judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ KB\)$/) });
-  const wide = prepareQualityEvaluation({ ...facts(Array.from({ length: 40 }, (_, index) => ({ path: `src/wide${index}.ts`, patch: widePatch() }))), docs: { "README.md": "d".repeat(78_000) } }, SOURCES);
-  expect(wide).toMatchObject({ requests: [], judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ requests\)$/) });
 });
 
-test("quality preflight sends 64 requests and refuses the 65th, its only bound on the diff it reads", () => {
-  const halfRequest = (index: number) => ({ path: `src/half${index}.ts`, patch: `@@ -0,0 +1 @@\n+// ${"x".repeat(50_000)}` });
-  const atCap = prepareQualityEvaluation(facts(Array.from({ length: 64 }, (_, index) => halfRequest(index))), SOURCES);
-  expect(atCap.judgeError).toBeUndefined();
-  expect(atCap.requests).toHaveLength(64);
-  const pastCap = prepareQualityEvaluation(facts(Array.from({ length: 65 }, (_, index) => halfRequest(index))), SOURCES);
-  expect(pastCap).toMatchObject({ requests: [], judgeError: "pull request too large for the decision model (65 requests)" });
+test("quality preflight judges a diff under the facts ceiling that needs more than 64 requests, reading the first 63 plus the duplicates request and naming the rest unread", () => {
+  const files = Array.from({ length: 71 }, (_, index) => ({ path: `src/${"deeply/nested/".repeat(6)}module${index}.ts`, patch: `@@ -0,0 +1 @@\n+// ${"x".repeat(27_980)}` }));
+  expect(files.reduce((chars, file) => chars + file.patch.length, 0)).toBeLessThan(MAX_CODE_RULES_PATCH_CHARS);
+  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "pull-request" as const }, { id: "duplicates-open-pull-request" as const, group: "pull-request" as const }] };
+  const openPulls = { overlapping: [{ number: 7, title: "Move modules", paths: [files[0]!.path] }] };
+  const { requests, plan, focused, judgeError } = prepareQualityEvaluation({ ...facts(files), paths: files.map((file) => file.path), body: "b".repeat(8_000), docs: { "README.md": "d".repeat(24_000) }, openPulls }, sources);
+  expect(judgeError).toBeUndefined();
+  expect(requests).toHaveLength(64);
+  expect(requests.at(-1)!.state).toMatchObject({ repository: { openPullRequests: openPulls.overlapping } });
+  expect(plan["duplicates-open-pull-request"]).toEqual({ changed: [], asked: { "duplicates-open-pull-request-001": "#7" }, unread: [] });
+  const read = requests.flatMap((request) => request.state.pullRequest.files.map((file) => file.path));
+  const unread = files.map((file) => file.path).filter((path) => !read.includes(path));
+  expect(unread).toHaveLength(8);
+  expect(focused!.unread).toEqual(unread);
+  expect(Object.keys(focused!.slices)).toHaveLength(63);
+  expect(plan.docs!.unread).toEqual(unread);
+  expect(Object.values(plan.docs!.asked)).toEqual(read);
 });
 
 test("quality preflight leaves a cut patch unread for focused even when its first hunk is read in pieces", () => {
