@@ -80,7 +80,7 @@ async function until<T>(what: string, read: () => Promise<T | undefined>, ms = 1
   throw new Error(`Timed out waiting for ${what}.\n${hub.logs.slice(-80).join("\n")}`);
 }
 
-type Claim = { status: "live" | "ended"; runId?: string; history: { head: string; runId: string }[] };
+type Claim = { status: "live" | "ended"; runId?: string; starts: number; deployAskedAt?: string; history: { head: string; runId: string }[] };
 
 async function claimOf(repo: string): Promise<Claim | undefined> {
   const [row] = await rows(`select state from corbits_triage.manager_state where kind = 'claim' and key = 'mgr:github:${repo}#1'`);
@@ -101,7 +101,7 @@ test("with every local slot taken and no sandbox, a manager waits for one to fre
   });
   expect(waiting).toEqual({ failure_code: "capacity_unavailable" });
   expect(hub.logs.some((line) => line.includes('"msg":"local_sidecar_refused"') && line.includes("2 local sidecars already run"))).toBe(true);
-  expect(await claimOf(SECOND)).toBeUndefined();
+  expect(await claimOf(SECOND)).toMatchObject({ status: "ended", starts: 0, deployAskedAt: expect.any(String), history: [] });
 
   releaseFirst();
   const second = await until("the second manager to post its verdict", async () => {

@@ -88,7 +88,8 @@ type HubCall = { method: string; path: string; body?: unknown };
 type HubAnswer = Record<string, unknown> | typeof REFUSED;
 
 /** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route. */
-function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[] }) {
+/** `deployed`, the run ids the deploy route answers in turn, each after the last answering again. */
+function fakeHub({ takes, dones = [], deployed = [DEPLOYED] }: { takes: HubAnswer[]; dones?: HubAnswer[]; deployed?: string[] }) {
   const calls: HubCall[] = [];
   function answer(next: HubAnswer | undefined): Response {
     if (next === undefined) throw new Error("the hub was asked more than the test expects");
@@ -100,7 +101,7 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
     if (url.pathname === `${TENANT_PATH}/manager/take`) return answer(takes.shift());
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
     if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
-    if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: DEPLOYED }, { status: 201 });
+    if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: deployed.length > 1 ? deployed.shift() : deployed[0] }, { status: 201 });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });
   }
   return { hub, calls };
@@ -108,7 +109,7 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
 
 /** The host's credentials as triage-workflows wires them, plus the hub credential deploy binds to the hub actions. */
 function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init?: RequestInit) => Promise<Response>) {
-  const consumers = ["take", "done", "deployReview", "deployJudge", "forward", "unwoken", "stop"].map(actionConsumer);
+  const consumers = ["take", "done", "deployReview", "deployJudge", "forward", "unwoken", "retry", "unwokenAgain", "stop"].map(actionConsumer);
   const cell = delivered(bindings, [{ credentialId: "hub", providerKey: "http", origin: HUB_ORIGIN, secret: "run-token" }]);
   cell.current = { ...cell.current, bindings: [...cell.current.bindings, ...consumers.map((consumer) => ({ handle: HUB_CREDENTIAL_HANDLE, credentialId: "hub", consumer }))] };
   const hubGrants: GrantRule[] = consumers.map((tool, index) => ({ id: `hub-${index}`, resource: "credential:hub", action: "use", effect: "allow", origin: "system", conditions: { tool }, expiresAt: null, roleId: null, principalId: null }));
@@ -134,7 +135,8 @@ function hurried() {
  * Runs one mail's body; the mail agent's director runs its one tool, so the mail it would send is recorded and answered
  * `mailed` in the `{ reply, turn }` a live agent step outputs.
  */
-async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers = true, clock?: () => Date) {
+/** `delivers`, whether every wake mail goes, or whether each in turn does. */
+async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers: boolean | readonly boolean[] = true, clock?: () => Date) {
   const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the body is not inline");
   const { terminalStatus, outputs } = await runLocal(body.inline, {
@@ -143,7 +145,8 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
     invokeStep: async function mailAgent({ agent, input }) {
       if (!agent.id.startsWith("triage-mail")) throw new Error(`no agent but the mail agent runs, not ${agent.id}`);
       mailed.push(input);
-      const reply = JSON.stringify(delivers ? { mailed: true } : { mailed: false, error: "public key was not published by its readyBy" });
+      const goes = typeof delivers === "boolean" ? delivers : delivers[mailed.length - 1];
+      const reply = JSON.stringify(goes ? { mailed: true } : { mailed: false, error: "public key was not published by its readyBy" });
       return { output: { reply, turn: { role: "assistant", content: [{ type: "text", text: reply }] } } };
     },
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
@@ -263,14 +266,12 @@ describe("triage-manager", () => {
     expect(doneBody(hub.calls)["wait"]).toBe(false);
   });
 
-  test("a head whose CI still runs gets the Waiting label, and the manager polls on while the hub says it waits", async () => {
+  test("a head whose CI still runs, with no reviewer out, gets the Waiting label and the in-progress comment, and its manager ends", async () => {
     const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
-    const waiting = { ...IDLE, waitingSince: new Date().toISOString() };
-    const hub = fakeHub({ takes: [PASS, waiting], dones: [{ outcome: "more", wait: true }, ENDED] });
-    const { passes, ran } = await runMail(github, wake(), host, hub.hub, [], true, hurried());
-    expect(passes).toBe(2);
-    expect(ran).toEqual(["approvals", "done", "paused", "poll", "ran", "take"]);
-    expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, true]);
+    const hub = fakeHub({ takes: [PASS], dones: [ENDED] });
+    const { passes } = await runMail(github, wake(), host, hub.hub);
+    expect(passes).toBe(1);
+    expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true }) } });
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
     expect(writes.filter((write) => write.path.endsWith("/comments"))).toEqual([inProgress("CI to finish")]);
   });
@@ -310,23 +311,30 @@ describe("triage-manager", () => {
     expect(((outputs["cleared"] as { actions: { held?: true }[] }).actions).every((action) => action.held === true && !("ci" in action))).toBe(true);
   });
 
-  test("a new head with no checks yet waits two minutes for its CI to start, then is read again and decided as having none", async () => {
+  test("a new head with no checks yet waits for its CI to start and its manager ends; one woken past the start grace decides it as having none", async () => {
     const { writes, host } = githubHost();
     const fresh = { ...PASS, headSince: undefined };
     const first = fakeHub({ takes: [fresh], dones: [ENDED] });
     await runMail(github, wake(), host, first.hub);
-    expect(doneBody(first.calls)).toMatchObject({ wait: true, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true, reason: expect.stringContaining("checks have not started yet") }) } });
+    expect(doneBody(first.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true, reason: expect.stringContaining("checks have not started yet") }) } });
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
     const since = new Date(Date.now() - 2 * 60_000 - 10_000).toISOString();
-    const later = fakeHub({ takes: [{ ...IDLE, waitingSince: since, headSince: since }], dones: [ENDED] });
+    const later = fakeHub({ takes: [{ ...PASS, waitingSince: since, headSince: since }], dones: [ENDED] });
     await runMail(github, wake(), host, later.hub);
     expect(doneBody(later.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "pass" }) } });
   });
 
-  test("a head waiting for CI is read again every five minutes without an event, so CI no host event reports still settles it", async () => {
+  test("an idle manager whose head waits on CI, with no reviewer out, triages nothing and ends", async () => {
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [{ ...IDLE, waitingSince: new Date(Date.now() - 5 * 60_000).toISOString() }], dones: [ENDED] });
+    expect((await runMail(github, wake(), host, hub.hub)).ran).not.toContain("rules");
+    expect(doneBody(hub.calls)["wait"]).toBe(false);
+  });
+
+  test("a manager woken for a head that waited on CI, once CI finished, decides it", async () => {
     const { writes, host } = githubHost();
     const waitingSince = new Date(Date.now() - 5 * 60_000 - 10_000).toISOString();
-    const hub = fakeHub({ takes: [{ ...IDLE, waitingSince }], dones: [ENDED] });
+    const hub = fakeHub({ takes: [{ ...PASS, waitingSince }], dones: [ENDED] });
     const { ran } = await runMail(github, wake(), host, hub.hub);
     expect(ran).toEqual(STAGE_1);
     expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "pass" }) } });
@@ -806,6 +814,16 @@ describe("triage-manager with a judge", () => {
     expect(mailed).toHaveLength(1);
   });
 
+  test("a manager whose judge is still out within its deadline stays up and polls, even while CI runs", async () => {
+    const { host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
+    const judging = { ...IDLE, request: hubRequest(JUDGED), reviewers: [JUDGE] };
+    const hub = fakeHub({ takes: [judging, judging], dones: [{ outcome: "more", wait: true }, ENDED] });
+    const { passes, ran } = await runMail(github, wake(), host, hub.hub, [], true, hurried());
+    expect(passes).toBe(2);
+    expect(ran).toContain("poll");
+    expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, true]);
+  });
+
   test("a pass that mailed its judge and answers more runs the next pass, which ends", async () => {
     const { host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }, IDLE], dones: [MORE, ENDED] });
@@ -864,7 +882,7 @@ describe("triage-manager with a judge", () => {
     expect(green.writes).toContainEqual(POSTED_REVIEW);
   });
 
-  test("a stored verdict on a head whose CI runs again on the same commit waits for CI instead of being posted, and the manager does not end", async () => {
+  test("a stored verdict on a head whose CI runs again on the same commit waits for CI instead of being posted, and the manager ends", async () => {
     const pack: CheckPack = { ...JUDGED, actions: { ...JUDGED.actions, pass: [{ do: "approve" }] } };
     const request = hubRequest(pack);
     const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail(request)).content).rules);
@@ -875,7 +893,20 @@ describe("triage-manager with a judge", () => {
     expect(outputs["evaluateRules"]).toMatchObject({ waiting: true });
     expect(writes).not.toContainEqual(JUDGE_POSTED);
     expect(writes).not.toContainEqual(POSTED_REVIEW);
-    expect(doneBody(hub.calls)["wait"]).toBe(true);
+    expect(doneBody(hub.calls)).toMatchObject({ wait: false, reviewers: [{ ...JUDGE, result: verdict }] });
+  });
+
+  test("a judge's report on a head whose CI started running again posts the waiting state and ends, keeping the judgement for the pass after CI", async () => {
+    const pack: CheckPack = { ...JUDGED, actions: { ...JUDGED.actions, pass: [{ do: "approve" }] } };
+    const request = hubRequest(pack);
+    const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail(request)).content).rules);
+    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "in_progress", conclusion: null }] });
+    const hub = fakeHub({ takes: [judgeReported(verdict, request)], dones: [ENDED] });
+    const { outputs } = await runMail(github, wake(), host, hub.hub);
+    expect(outputs["evaluateRules"]).toMatchObject({ waiting: true });
+    expect(writes).toContainEqual(inProgress("CI to finish"));
+    expect(writes).not.toContainEqual(JUDGE_POSTED);
+    expect(doneBody(hub.calls)).toMatchObject({ wait: false, reviewers: [{ ...JUDGE, result: verdict }] });
   });
 
   test("a manager whose clock runs out while CI runs on a judge policy deploys no judge, and posts its verdict with every Do held", async () => {
@@ -1034,13 +1065,28 @@ describe("triage-listener", () => {
     ]);
   });
 
-  test("a manager whose wake mail did not go is cancelled once, and the listener deploys no other for it", async () => {
-    const hub = fakeHub({ takes: [] });
+  test("a manager whose wake mail did not go is cancelled, and the one the listener deploys in its place is woken", async () => {
+    const hub = fakeHub({ takes: [], deployed: [DEPLOYED, "run_again"] });
+    const mailed: unknown[] = [];
+    const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }] });
+    const { terminalStatus, outputs } = await runMail(listener, mail, githubHost().host, hub.hub, mailed, [false, true]);
+    expect(terminalStatus).toBe("completed");
+    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }, DEPLOY]);
+    expect((mailed as { to: string; content: string }[]).map((sent) => [sent.to, JSON.parse(sent.content)])).toEqual([
+      [DEPLOYED, JSON.parse(manageMail(TENANT, PULL))],
+      ["run_again", JSON.parse(manageMail(TENANT, PULL))],
+    ]);
+    expect(outputs["unwoken"]).toEqual({ cancelled: [{ runId: DEPLOYED, reason: expect.stringContaining("public key") }] });
+    expect(outputs["unwokenAgain"]).toEqual({ cancelled: [] });
+  });
+
+  test("a manager deployed in place of an unwoken one whose mail fails too is cancelled, and the listener deploys no third", async () => {
+    const hub = fakeHub({ takes: [], deployed: [DEPLOYED, "run_again"] });
     const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }] });
     const { terminalStatus, outputs } = await runMail(listener, mail, githubHost().host, hub.hub, [], false);
     expect(terminalStatus).toBe("completed");
-    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }]);
-    expect(outputs["unwoken"]).toEqual({ cancelled: [{ runId: DEPLOYED, reason: expect.stringContaining("public key") }] });
+    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }, DEPLOY, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/run_again` }]);
+    expect(outputs["unwokenAgain"]).toEqual({ cancelled: [{ runId: "run_again", reason: expect.stringContaining("public key") }] });
   });
 
   test("a mail that names no pull request, or is not from the hub, fails instead of being dropped", async () => {

@@ -5,13 +5,13 @@
 // live listener is left alone. A settled head whose verdict waited on CI is
 // queued again here once its CI finished, on hosts and pull requests whose CI
 // results send no webhook.
-import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
+import { CI_START_MS, CI_WAIT_MS, hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
 import { mailPayload, unreadablePayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { failDelivery } from "./triage-queue.js";
 import type { PolicyReader, ResolvedPack } from "./repo-policy.js";
-import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
+import { freeSlots, inFlight, planTenant, requeue, runKey, type ObservedRun, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks } from "@corbits/github-reads";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
@@ -120,6 +120,8 @@ function enabledRepos(config: unknown, source: RepoSource): EnabledRepo[] {
 }
 
 type Claimed = { rows: PrTriageRow[]; version: TriageStateVersion; enqueue: QueuedPr[] };
+/** A head whose manager ended to wait for its CI, ready to wake, with since when it has waited. */
+type Settled = { plan: RepoPlan; row: PrTriageRow; since: string };
 
 function headKey(row: Pick<PrTriageRow, "number" | "headSha">): string {
   return runKey(row.number, row.headSha);
@@ -145,6 +147,7 @@ function mergeRows(read: ReadonlyMap<string, PrTriageRow>, theirs: readonly PrTr
 }
 
 const BUILD_STATUS_CHANGED = "build_status_changed";
+const CI_SETTLED = "ci_settled";
 
 type BuildPoll = { polls: number; at: number };
 
@@ -243,6 +246,36 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       buildPolls.delete(key);
       requeue(plan, row, BUILD_STATUS_CHANGED, deps.now(), deps.policy);
     }
+  }
+
+  /**
+   * The heads whose manager ended to wait for their CI that a woken manager has something to decide on: CI no longer
+   * pending, no checks past the start grace, or the CI wait over. One read of the head's checks per head per pass.
+   */
+  async function settledWaiting(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan, runs: ReadonlyMap<string, ObservedRun[]> | undefined): Promise<Settled[]> {
+    const name = repo.record.name;
+    const now = deps.now();
+    const settled: Settled[] = [];
+    let read = 0;
+    for (const row of plan.rows.filter((candidate) => candidate.status === "triaged")) {
+      const since = runs?.get(runKey(row.number, row.headSha))?.find((run) => run.status === "completed" && run.waitingSince !== undefined)?.waitingSince;
+      if (since === undefined) continue;
+      const waited = now.getTime() - Date.parse(since);
+      if (waited < CI_WAIT_MS) {
+        read += 1;
+        let ci: ReturnType<typeof summarizeChecks>;
+        try {
+          ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
+        } catch (err) {
+          deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
+          continue;
+        }
+        if (ci === "pending" || (ci === "none" && waited < CI_START_MS)) continue;
+      }
+      settled.push({ plan, row, since });
+    }
+    if (read > 0) deps.log({ level: "info", msg: "waiting_ci_read", tenantId: pass.tenantId, repo: name, heads: read });
+    return settled;
   }
 
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
@@ -378,9 +411,24 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       now: deps.now(),
       policy: deps.policy,
     });
+    const polled: LoadedRepo[] = [];
+    const settled: Settled[] = [];
     for (const repo of loaded) {
       try {
         await pollBuilds(pass, repo, plans.get(repo.record.name)!);
+        settled.push(...(await settledWaiting(pass, repo, plans.get(repo.record.name)!, managed.byRepo.get(repo.record.name))));
+        polled.push(repo);
+      } catch (err) {
+        if (reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err)) failed = true;
+      }
+    }
+    // Woken heads take in-flight slots like new ones, longest waiting first; the rest wait for a later pass.
+    const now = deps.now();
+    for (const { plan, row } of settled.sort((a, b) => Date.parse(a.since) - Date.parse(b.since)).slice(0, freeSlots(plans, managed.byRepo, now, deps.policy))) {
+      requeue(plan, row, CI_SETTLED, now, deps.policy);
+    }
+    for (const repo of polled) {
+      try {
         await deliverRepo(pass, repo, plans.get(repo.record.name)!);
       } catch (err) {
         if (reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err)) failed = true;

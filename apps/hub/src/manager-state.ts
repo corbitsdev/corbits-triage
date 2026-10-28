@@ -7,7 +7,7 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, AWAITED_STAGES, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, MANAGER_READY_MS, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
 import { triageSchema } from "./triage-db.js";
@@ -32,6 +32,7 @@ const ClaimState = type({
   history: PassState.and({ runId: "string > 0", doneAt: "string.date.iso", "waiting?": "true", "request?": "Record<string, unknown>" }).array(),
   starts: "number.integer >= 0",
   "overdueWokenAt?": "string.date.iso",
+  "deployAskedAt?": "string.date.iso",
 });
 const EventPayload = type("Record<string, unknown>").narrow(function plainObject(value) {
   return !Array.isArray(value);
@@ -573,9 +574,69 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
 /**
  * A pull request a manager claimed: its closed passes; while its manager is up, that run, the head of the newest pull
  * request mail recorded, the pass it has open, since when it has waited for that head's CI and what its reviewers on
- * that head have yet to report before their deadlines; and the pass a manager that went away left open.
+ * that head have yet to report before their deadlines; the pass a manager that went away left open; and, once no
+ * manager is up, the newest head its last pass left waiting for CI, with that pass's run and since when it waited.
  */
-export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass; waitingSince?: string; awaiting: AwaitedStage[] }; gone?: { runId: string; pass: Pass } };
+export type ManagedPull = {
+  pr: PullRequestRef;
+  history: ClosedPass[];
+  live?: { runId: string; head?: string; pass?: Pass; waitingSince?: string; awaiting: AwaitedStage[] };
+  gone?: { runId: string; pass: Pass };
+  waiting?: { runId: string; head: string; since: string };
+};
+
+/** The newest head, when the last pass on it of an ended claim waited for its CI. */
+async function endedWaiting(tx: Tx, tenantId: string, pr: PullRequestRef, history: Claim["history"]): Promise<ManagedPull["waiting"]> {
+  const head = await newestHead(tx, tenantId, pr);
+  if (head === undefined) return undefined;
+  const since = waitingSince(history, head);
+  const last = history.findLast((pass) => pass.head === head);
+  return since === undefined || last === undefined ? undefined : { runId: last.runId, head, since };
+}
+
+/**
+ * How long an ask holds off the next: the listener's wake of the manager it deployed and of the one it deploys in its
+ * place when that wake fails, each waiting `MANAGER_READY_MS`, and stock's 30-second cancel grace between them.
+ */
+const DEPLOY_ASK_HOLD_MS = 2 * MANAGER_READY_MS + 30_000;
+
+/** Whether a manager the hub asked the listener for has not taken the claim yet and may still be starting. */
+function deploying(claim: Claim, now: Date): boolean {
+  if (claim.deployAskedAt === undefined) return false;
+  const asked = Date.parse(claim.deployAskedAt);
+  const taken = claim.starts > 0 && Date.parse(claim.claimedAt) >= asked;
+  return !taken && now.getTime() - asked < DEPLOY_ASK_HOLD_MS;
+}
+
+/**
+ * When the hub asked the listener to deploy a manager for the pull request, recorded on its claim, which a pull request
+ * no manager has taken yet gets with no start. Undefined while one asked for earlier is still on its way: the mail is
+ * recorded, and that manager takes it.
+ */
+export async function askDeploy(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
+  return db.transaction(async function asked(tx) {
+    const key = claimKey(pr);
+    const now = new Date();
+    const unstarted = { status: "ended" as const, claimId: randomUUID(), claimedAt: now.toISOString(), reviewers: [], history: [], starts: 0 };
+    await tx.insert(managerState).values({ tenantId, key, kind: "claim", state: claimOf(key, unstarted) }).onConflictDoNothing();
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) throw new Error(`manager_state ${key} vanished under its lock`);
+    if (deploying(claim, now)) return undefined;
+    const at = now.toISOString();
+    await writeClaim(tx, tenantId, pr, { ...claim, deployAskedAt: at });
+    return at;
+  });
+}
+
+/** Withdraws the ask made `at` once its mail to the listener failed, so the next mail asks again. */
+export async function withdrawDeploy(db: DB["db"], tenantId: string, pr: PullRequestRef, at: string): Promise<void> {
+  await db.transaction(async function withdrawn(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) return;
+    const { deployAskedAt, ...kept } = claim;
+    if (deployAskedAt === at) await writeClaim(tx, tenantId, pr, kept);
+  });
+}
 
 function awaitedOn(reviewers: readonly Reviewer[], head: string | undefined, now: Date): AwaitedStage[] {
   return AWAITED_STAGES.filter((kind) => reviewers.some((reviewer) => reviewer.kind === kind && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime()));
@@ -734,7 +795,8 @@ export async function managedPulls(db: DB["db"], tenantId: string, pulls: readon
       if (!pr) throw new Error(`manager_state ${key} is not a claim asked for`);
       const runId = claim.status === "live" ? claim.runId : undefined;
       if (runId === undefined) {
-        managed.push({ pr, history: claim.history });
+        const waiting = await endedWaiting(tx, tenantId, pr, claim.history);
+        managed.push({ pr, history: claim.history, ...(waiting && { waiting }) });
       } else if (await runGone(tx, runId, now)) {
         managed.push({ pr, history: claim.history, ...(claim.pass && { gone: { runId, pass: claim.pass } }) });
       } else {

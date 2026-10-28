@@ -21,7 +21,7 @@ export type ObservedRun = {
   passAt?: string;
   /** What a running manager's reviewers on its head have yet to report. */
   awaiting?: AwaitedStage[];
-  /** Since when a running manager has waited for its head's CI. */
+  /** Since when the head has waited for its CI: a running manager's, or the last pass of a manager that ended to wait. */
   waitingSince?: string;
 };
 
@@ -242,6 +242,18 @@ function runningHeads(runs: TenantPlanInput["runs"], now: Date, policy: Reconcil
     }
   }
   return busy;
+}
+
+/** The tenant's in-flight slots `plans` leave free: `maxInFlight` less the heads queued or running, a manager waiting for CI aside. */
+export function freeSlots(plans: ReadonlyMap<string, RepoPlan>, runs: TenantPlanInput["runs"], now: Date, policy: ReconcilePolicy): number {
+  const busy = runningHeads(runs, now, policy);
+  for (const [name, plan] of plans) {
+    for (const row of plan.rows) {
+      const key = runKey(row.number, row.headSha);
+      if (inFlight(row) && !parked(runs.get(name)?.get(key) ?? [])) busy.add(`${name} ${key}`);
+    }
+  }
+  return Math.max(policy.maxInFlight - busy.size, 0);
 }
 
 type Due = { repo: string; index: number; row: PrTriageRow };

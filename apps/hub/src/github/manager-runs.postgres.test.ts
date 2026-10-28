@@ -180,3 +180,22 @@ test("PostgreSQL: a manager up between passes awaits the reviewers on its head t
     expect(after?.awaiting).toBeUndefined();
   });
 }, 60_000);
+
+test("PostgreSQL: a head whose manager ended while it waited for CI shows as waiting with no run going, and is not mailed again", async () => {
+  await withDatabase(async function ended(db) {
+    const now = new Date();
+    const managerRuns = createManagerRuns(db, createVerdictRecordStore(db), () => now);
+    await managerUp(db, "run_waited");
+    await mailed(db, pr8, "h1");
+    await take(db, TENANT, pr8, "run_waited");
+    expect(await done(db, TENANT, pr8, "run_waited", [], { report: { head: "h1", waiting: true } })).toEqual({ outcome: "ended" });
+
+    const observed = await managerRuns(TENANT, [pr8]);
+    expect(observed.byRepo.get(REPO)?.get(runKey(8, "h1"))).toEqual([expect.objectContaining({ runId: "run_waited", status: "completed", waitingSince: expect.any(String) })]);
+    const firstSeenAt = new Date(now.getTime() - MINUTE).toISOString();
+    const row: PrTriageRow = { number: 8, headSha: "h1", status: "new", attempts: 0, firstSeenAt, updatedAt: firstSeenAt };
+    const plan = planTenant({ repos: [{ name: REPO, prs: [open(8, now)], rows: [row] }], runs: observed.byRepo, now, policy: DEFAULT_RECONCILE_POLICY }).get(REPO)!;
+    expect(plan.rows).toEqual([expect.objectContaining({ number: 8, status: "triaged", runId: "run_waited" })]);
+    expect(plan.enqueue).toEqual([]);
+  });
+}, 60_000);

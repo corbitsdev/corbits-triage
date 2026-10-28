@@ -10,7 +10,8 @@ import { deployGrants, type Release } from "./release.js";
 /**
  * A workspace's listener for one host under `id`, its mail address, which the hub mails the pull requests it records:
  * it deploys each one's manager from the host's published release and wakes it, and cancels a manager whose wake mail
- * did not go, so it is not left deployed. With `manager`, the release published as the definition loads, it declares the
+ * did not go, so it is not left deployed, then deploys and wakes one more for that pull request, cancelled in turn if
+ * its mail fails too. With `manager`, the release published as the definition loads, it declares the
  * grants to deploy that asset; without, none, and its body fails. It writes nothing to the pull request and holds no
  * grant on its state; a manager whose take finds another live one stops itself.
  */
@@ -30,6 +31,21 @@ export function triageListener({ id, manager }: { id: string; manager: Release |
         handler: "unwoken",
         input: { project: { from: "steps" }, fields: ["forward", "mail"] },
         after: ["mail"],
+        credentials: [HUB_CREDENTIAL_HANDLE],
+        effect: { requires: [HUB_WRITE] },
+      }),
+      retry: action({
+        handler: "retry",
+        input: { project: { from: "steps" }, fields: ["forward", "unwoken"] },
+        after: ["unwoken"],
+        credentials: [HUB_CREDENTIAL_HANDLE],
+        effect: { requires: [HUB_WRITE] },
+      }),
+      remail: map({ over: { from: "steps.retry.output.mails" }, step: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "trigger.payload" } }), after: ["retry"] }),
+      unwokenAgain: action({
+        handler: "unwokenAgain",
+        input: { project: { from: "steps" }, fields: ["retry", "remail"] },
+        after: ["remail"],
         credentials: [HUB_CREDENTIAL_HANDLE],
         effect: { requires: [HUB_WRITE] },
       }),

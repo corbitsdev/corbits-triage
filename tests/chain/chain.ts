@@ -161,7 +161,7 @@ export function chainStack(env: Record<string, string> = {}) {
       if (value !== undefined) return value;
       await Bun.sleep(500);
     }
-    throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}`);
+    throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}\nHub:\n${hub.logs.slice(-80).join("\n")}`);
   }
 
   async function rows(query: string): Promise<Record<string, unknown>[]> {

@@ -54,6 +54,7 @@ function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = p
   const logged: Record<string, unknown>[] = [];
   const cancelled: { runId: string; reason: string }[] = [];
   const refusing = new Set<string>();
+  const unroutable = { on: false };
   const { supersede, supersedeAll } = createSupersede({
     db,
     async cancel(_tenantId, runId, reason) {
@@ -71,13 +72,14 @@ function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = p
     withAppLogin: async (_tenantId, payload) => ({ ...payload, appLogin: "triage[bot]" }),
     async deliver(_tenantId, address, payload) {
       if (!routable) throw new RunUnavailableError("the listener is not running");
+      if (unroutable.on) throw new Error("the listener is unroutable");
       mailed.push({ address, payload });
     },
     supersede,
     gate,
     log: (entry) => logged.push(entry),
   });
-  return { toListener, mailed, logged, cancelled, refusing, supersedeAll };
+  return { toListener, mailed, logged, cancelled, refusing, unroutable, supersedeAll };
 }
 
 async function events(db: Db): Promise<{ key: string; state: { head: string; payload: Record<string, unknown> } }[]> {
@@ -114,7 +116,7 @@ test("PostgreSQL: a held Do's approval while the hub holds no route to the liste
   });
 }, 60_000);
 
-test("PostgreSQL: each pull request a mail names is recorded as its own event, a webhook once however often it is delivered and any other mail every time, and the listener is mailed the heads", async () => {
+test("PostgreSQL: each pull request a mail names is recorded as its own event, a webhook once however often it is delivered and any other mail every time, and the listener is asked once for the manager they wait for", async () => {
   await withDatabase(async function listener(db) {
     const { toListener, mailed } = stack(db, LISTENER);
     const webhook = mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h1", deliveryId: "d1" });
@@ -139,7 +141,7 @@ test("PostgreSQL: each pull request a mail names is recorded as its own event, a
     const item = recorded.find((row) => row.state.payload["kind"] === "pr" && row.state.payload["deliveryId"] === undefined)!;
     expect(item.state.payload).toMatchObject({ prNumber: 7, headSha: "h1", appLogin: "triage[bot]" });
     expect(item.state.payload).not.toHaveProperty("items");
-    expect(mailed.map((mail) => mail.address)).toEqual(Array(6).fill(LISTENER));
+    expect(mailed.map((mail) => mail.address)).toEqual([LISTENER]);
     expect(mailed[0]!.payload).toEqual({ kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] });
   });
 }, 60_000);
@@ -162,6 +164,38 @@ test("PostgreSQL: a pull request whose manager is up is mailed that manager, and
       { address: "run_mgr@intake.test", payload: { kind: "manage", tenantId: TENANT, repo: RECORD.name, repoSource: "github", prNumber: 7 } },
       { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 8, headSha: "h8" }] } },
     ]);
+  });
+}, 60_000);
+
+test("PostgreSQL: a mail for a pull request with no manager up asks the listener once until a manager takes it, then again, and a failed ask is asked again", async () => {
+  await withDatabase(async function onItsWay(db) {
+    await claimManager(db, "run_mgr", 7, "completed");
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = (state - 'runId') || '{"status":"ended"}' WHERE kind = 'claim'`);
+    const { toListener, mailed } = stack(db, LISTENER);
+    const asked = { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] } };
+    expect(await toListener(TENANT, mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h1" }))).toBe(true);
+    expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
+    expect(mailed).toEqual([asked]);
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || jsonb_build_object('claimedAt', ${new Date(Date.now() + 1000).toISOString()}::text) WHERE kind = 'claim'`);
+    expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
+    expect(mailed).toEqual([asked, asked]);
+
+    // A pull request no manager has taken yet asks once too.
+    const fresh = { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 8, headSha: "h8" }] } };
+    expect(await toListener(TENANT, requeued(8, "h8"))).toBe(true);
+    expect(await toListener(TENANT, requeued(8, "h8"))).toBe(true);
+    expect(mailed).toEqual([asked, asked, fresh]);
+  });
+}, 60_000);
+
+test("PostgreSQL: an ask whose mail to the listener failed is withdrawn, so the retry within the start grace mails the listener", async () => {
+  await withDatabase(async function retried(db) {
+    const { toListener, mailed, unroutable } = stack(db, LISTENER);
+    unroutable.on = true;
+    await expect(toListener(TENANT, requeued(7, "h1"))).rejects.toThrow("the listener is unroutable");
+    unroutable.on = false;
+    expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
+    expect(mailed).toEqual([{ address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] } }]);
   });
 }, 60_000);
 
@@ -249,7 +283,7 @@ test("PostgreSQL: the reconcile pass wakes a manager for a pull request whose re
 
     // A manager the wake started took the claim and went away before done; past the start grace the next pass wakes again.
     const earlier = new Date(Date.now() - 3 * 60_000);
-    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || ${JSON.stringify({ overdueWokenAt: earlier.toISOString(), claimedAt: new Date(earlier.getTime() + 1_000).toISOString() })}::jsonb WHERE key = ${`mgr:github:${RECORD.name}#7`}`);
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || ${JSON.stringify({ overdueWokenAt: earlier.toISOString(), deployAskedAt: earlier.toISOString(), claimedAt: new Date(earlier.getTime() + 1_000).toISOString() })}::jsonb WHERE key = ${`mgr:github:${RECORD.name}#7`}`);
     await wakeOverdue(TENANT);
     expect(mailed).toEqual([woken, woken]);
   });
@@ -337,7 +371,7 @@ test("PostgreSQL: every pull request a mail names passes the gate, whatever sent
     const recorded = await events(db);
     expect(recorded.map((row) => row.state.head)).toEqual(["h1", "h1"]);
     expect(recorded.every((row) => JSON.stringify(row.state.payload["automatic"]) === JSON.stringify(["comment"]))).toBe(true);
-    expect(mailed.flatMap((mail) => (mail.payload as { items: { prNumber: number }[] }).items.map((item) => item.prNumber))).toEqual([7, 7]);
+    expect(mailed.flatMap((mail) => (mail.payload as { items: { prNumber: number }[] }).items.map((item) => item.prNumber))).toEqual([7]);
   });
 }, 120_000);
 

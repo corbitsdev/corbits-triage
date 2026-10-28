@@ -11,7 +11,7 @@ import { APPROVE_DO_KIND, repoSourceOf, type RepoSource } from "@corbits/triage-
 import { reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import { DeploymentNotReadyError, ListenerUnroutedError, RunUnavailableError } from "./github/deployment.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
-import { dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, type PullRequestRef } from "./manager-state.js";
+import { askDeploy, dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, withdrawDeploy, type PullRequestRef } from "./manager-state.js";
 
 export type ManagerIntakeDeps = {
   db: DB["db"];
@@ -89,6 +89,18 @@ async function deployFor(deps: Delivery, tenantId: string, address: string, sour
   }
 }
 
+type Asked = { pr: PullRequestRef; number: number; head: string; at: string };
+
+/** Mails the listener the heads it was asked to deploy a manager for, withdrawing each ask when the mail fails so the next mail asks again. */
+async function deployAsked(deps: Delivery, tenantId: string, address: string, source: RepoSource, repo: string, asked: readonly Asked[]): Promise<void> {
+  try {
+    await deployFor(deps, tenantId, address, source, repo, asked);
+  } catch (err) {
+    for (const each of asked) await withdrawDeploy(deps.db, tenantId, each.pr, each.at);
+    throw err;
+  }
+}
+
 /**
  * Wakes the manager of a pull request whose reviewer result was recorded, as a host event does: its live manager is
  * mailed, or the listener deploys one. False when the workspace has no listener for the host.
@@ -97,7 +109,9 @@ export function createManagerWake(deps: Delivery & Pick<ManagerIntakeDeps, "list
   return async function wake(tenantId: string, pr: PullRequestRef, head: string): Promise<boolean> {
     const address = await deps.listener(tenantId, pr.source);
     if (!address) return false;
-    if (!(await mailedLive(deps, tenantId, domainOf(address), pr))) await deployFor(deps, tenantId, address, pr.source, pr.repo, [{ number: pr.number, head }]);
+    if (await mailedLive(deps, tenantId, domainOf(address), pr)) return true;
+    const at = await askDeploy(deps.db, tenantId, pr);
+    if (at !== undefined) await deployAsked(deps, tenantId, address, pr.source, pr.repo, [{ pr, number: pr.number, head, at }]);
     return true;
   };
 }
@@ -233,7 +247,7 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
       throw new ListenerUnroutedError(source, address);
     }
     const domain = domainOf(address);
-    const start: Named[] = [];
+    const start: Asked[] = [];
     try {
       for (const asked of pulls) {
         const request = await deps.gate(tenantId, record, asked.number, asked.request);
@@ -243,10 +257,12 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
         const pr = { source, repo, number: pull.number };
         await recordEvent(deps.db, tenantId, pr, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
         await deps.supersede(tenantId, pr);
-        if (!(await mailedLive(deps, tenantId, domain, pr))) start.push(pull);
+        if (await mailedLive(deps, tenantId, domain, pr)) continue;
+        const at = await askDeploy(deps.db, tenantId, pr);
+        if (at !== undefined) start.push({ pr, number: pull.number, head: pull.head, at });
       }
     } finally {
-      if (start.length > 0) await deployFor(deps, tenantId, address, source, repo, start);
+      if (start.length > 0) await deployAsked(deps, tenantId, address, source, repo, start);
     }
     return true;
   };

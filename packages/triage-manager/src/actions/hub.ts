@@ -32,9 +32,14 @@ export interface ManagerMail {
 
 export function managerMailOf(payload: unknown): ManagerMail {
   const { request, runId } = mailOf(payload);
+  return { ...managedBy(request), runId };
+}
+
+/** The tenant and pull request a manager's mail, as `manageMail` writes it, names. */
+export function managedBy(request: Record<string, unknown>): Omit<ManagerMail, "runId"> {
   const { kind, tenantId, repo, prNumber, repoSource } = request;
   if (kind !== MANAGE_KIND || typeof tenantId !== "string" || typeof repo !== "string" || typeof prNumber !== "number") throw new Error("the mail names no tenant, repository or pull request");
-  return { tenantId, runId, pullRequest: { source: repoSourceOf(repoSource), repo, number: prNumber } };
+  return { tenantId, pullRequest: { source: repoSourceOf(repoSource), repo, number: prNumber } };
 }
 
 /** The mail that wakes the manager of `pullRequest`. */
