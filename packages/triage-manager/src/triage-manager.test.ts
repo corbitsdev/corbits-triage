@@ -307,7 +307,7 @@ describe("triage-manager", () => {
     const { outputs } = await runMail(github, wake(), host, hub.hub);
     expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "unsure" }) } });
     expect(writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringContaining("Triage stopped waiting for CI to finish after 3 hours, so no action ran on its own.") } }));
-    expect(((outputs["cleared"] as { actions: { held?: true }[] }).actions).every((action) => action.held === true)).toBe(true);
+    expect(((outputs["cleared"] as { actions: { held?: true }[] }).actions).every((action) => action.held === true && !("ci" in action))).toBe(true);
   });
 
   test("a new head with no checks yet waits two minutes for its CI to start, then is read again and decided as having none", async () => {
@@ -887,7 +887,7 @@ describe("triage-manager with a judge", () => {
     expect(ran).not.toContain("deployJudge");
     const { actions } = outputs["cleared"] as { actions: { held?: true }[] };
     expect(actions.length).toBeGreaterThan(0);
-    expect(actions.every((action) => action.held === true)).toBe(true);
+    expect(actions.every((action) => action.held === true && !("ci" in action))).toBe(true);
     expect(writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringContaining("Triage stopped waiting for CI to finish after 3 hours, so no action ran on its own.") } }));
   });
 
