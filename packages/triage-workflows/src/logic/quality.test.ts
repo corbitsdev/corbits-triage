@@ -140,6 +140,15 @@ test("quality preflight refuses metadata that leaves too little room for files, 
   expect(wide).toMatchObject({ requests: [], judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ requests\)$/) });
 });
 
+test("quality preflight sends 64 requests and refuses the 65th, its only bound on the diff it reads", () => {
+  const halfRequest = (index: number) => ({ path: `src/half${index}.ts`, patch: `@@ -0,0 +1 @@\n+// ${"x".repeat(50_000)}` });
+  const atCap = prepareQualityEvaluation(facts(Array.from({ length: 64 }, (_, index) => halfRequest(index))), SOURCES);
+  expect(atCap.judgeError).toBeUndefined();
+  expect(atCap.requests).toHaveLength(64);
+  const pastCap = prepareQualityEvaluation(facts(Array.from({ length: 65 }, (_, index) => halfRequest(index))), SOURCES);
+  expect(pastCap).toMatchObject({ requests: [], judgeError: "pull request too large for the decision model (65 requests)" });
+});
+
 test("quality preflight leaves a cut patch unread for focused even when its first hunk is read in pieces", () => {
   const patch = ["@@ -0,0 +1,70 @@", ...Array.from({ length: 70 }, () => `+// ${"設".repeat(1_000)}`)].join("\n");
   const { focused } = prepareQualityEvaluation(facts([{ path: "src/big.ts", additions: 70, deletions: 0, patch }]), SOURCES);

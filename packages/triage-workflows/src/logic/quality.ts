@@ -178,26 +178,22 @@ export const MAX_SYSTEM_ONE_STATE_BYTES = 90_000;
 export const MAX_SYSTEM_ONE_QUESTIONS = 256;
 // Below this much room for files a hunk is cut into so many pieces that each costs a request of mostly metadata.
 const MIN_FILE_ROOM = 8 * 1024;
-// About 5.8 MB of state; the 270,000-char patch budget fills about five requests, 3,000 small files 24.
+// About 5.8 MB of state; 3,000 small files take 24.
 const MAX_JUDGE_REQUESTS = 64;
 export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the decision model";
 
-// The judge reads patches up to three requests' worth; later files are sent without theirs.
-const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
-// The rules that run in code read this much patch text per pull request, apart from the judge's budget; one sidecar
+// The facts step reads this much patch text per pull request, for the rules that run in code and the judge; one sidecar
 // holds every deployment's step outputs, so past it the pull request's later files are listed without their patches.
 export const MAX_CODE_RULES_PATCH_CHARS = 2_000_000;
 
 /** A changed file as the judge reads it: `patchTruncated` when its patch was cut at `MAX_PATCH_INPUT_CHARS`. */
 type JudgedFile = PrFileFacts & { patchTruncated?: true };
 
-/** Lockfiles say nothing the judge decides on, so it never reads them; the rest share the judge's patch budget. */
+/** Lockfiles say nothing the judge decides on, so it never reads them; the rest it reads as the facts step read them. */
 function judgedFiles(facts: PrFacts): JudgedFile[] {
-  let chars = 0;
   return facts.files.filter((file) => !isGeneratedPath(file.path)).map(function judged({ patch, ...file }): JudgedFile {
-    if (patch === undefined || chars >= MAX_PATCH_CHARS) return file;
+    if (patch === undefined) return file;
     const read = patch.slice(0, MAX_PATCH_INPUT_CHARS);
-    chars += read.length;
     return { ...file, patch: read, ...(read.length < patch.length && { patchTruncated: true as const }) };
   });
 }
