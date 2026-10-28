@@ -59,7 +59,7 @@ function observed(byHead: Array<[string, ObservedRun[]]>): ObservedRuns {
 const NO_RUNS: ObservedRuns = { byRepo: new Map() };
 
 /**
- * The managers' runs: #8's newest run failed after its verdict, #9 and #10 are still running, #7's waits for its CI, and #6's run failed early.
+ * The managers' runs: #8's newest run failed after its verdict, #9 and #10 are still running, #7's ended waiting for its CI, and #6's run failed early.
  * #4 of the repository GitHub could not list has a failed run.
  */
 const MANAGED: ObservedRuns = {
@@ -67,7 +67,7 @@ const MANAGED: ObservedRuns = {
     ...observed([
       ["8@sha_run_3", [live("run_3", "failed", minutes(9))]],
       ["9@sha9", [live("run_9", "running", minutes(-5), "pull_request:synchronize")]],
-      ["7@sha_waiting", [{ ...live("run_7", "running", minutes(-3)), waitingSince: minutes(-3).toISOString() }]],
+      ["7@sha_waiting", [{ ...live("run_7", "completed", minutes(-3)), waitingSince: minutes(-3).toISOString() }]],
       ["10@sha10", [live("run_10", "running", minutes(-120))]],
       ["6@sha6", [live("run_6", "failed", minutes(-3))]],
     ]).byRepo,

@@ -33,10 +33,12 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
       else byHead.set(key, [run]);
     }
 
-    for (const { pr, live, gone } of pulls) {
+    for (const { pr, live, gone, waiting } of pulls) {
       const { source } = pr;
       // The hub checked the run is up, so it is running now and never stuck.
       if (live?.head !== undefined) observed(pr.repo, pr.number, live.head, { runId: live.runId, source, status: "running", startedAt: now().toISOString(), ...(live.pass && { passAt: live.pass.takenAt }), ...(live.awaiting.length > 0 && { awaiting: live.awaiting }), ...(live.waitingSince !== undefined && { waitingSince: live.waitingSince }) });
+      // No manager is up while the head waits only on CI; the reconciler wakes one once CI settles.
+      if (waiting) observed(pr.repo, pr.number, waiting.head, { runId: waiting.runId, source, status: "completed", startedAt: waiting.since, waitingSince: waiting.since });
       if (gone) observed(pr.repo, pr.number, gone.pass.head, { runId: gone.runId, source, status: "failed", startedAt: gone.pass.takenAt });
       for (const verdict of recorded.filter((row) => row.repo === pr.repo && row.number === pr.number)) {
         observed(pr.repo, pr.number, verdict.headSha, { runId: verdict.runId, source, status: "completed", startedAt: verdict.startedAt.toISOString(), ...settlesBy(verdict), ...(verdict.trigger !== null && { trigger: verdict.trigger }) });
