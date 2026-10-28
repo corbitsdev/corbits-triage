@@ -79,6 +79,7 @@ const HubEnvSchema = type({
   "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
   "TRIAGE_MAX_LOCAL_SIDECARS?": positiveInteger,
   "TRIAGE_STALLED_AFTER_MS?": positiveInteger,
+  "TRIAGE_LIVENESS_INTERVAL_MS?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -274,6 +275,11 @@ export function triageReconcileIntervalMs(env: HubEnv): number {
 /** How long a workspace's pull request may wait for a manager before the hub raises its alarm. */
 export function triageStalledAfterMs(env: Pick<HubEnv, "TRIAGE_STALLED_AFTER_MS">): number {
   return numberOr(env.TRIAGE_STALLED_AFTER_MS, 5 * 60_000);
+}
+
+/** How often the hub checks whether each workspace's pull requests still reach a manager. */
+export function triageLivenessIntervalMs(env: Pick<HubEnv, "TRIAGE_LIVENESS_INTERVAL_MS">): number {
+  return numberOr(env.TRIAGE_LIVENESS_INTERVAL_MS, 60_000);
 }
 
 /** Heads the reconciler lets a tenant have queued or running at once. */

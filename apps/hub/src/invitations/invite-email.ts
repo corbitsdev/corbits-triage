@@ -1,4 +1,5 @@
 import { createTransport } from "nodemailer";
+import { HOST_FULL_NAMES } from "@corbits/triage-contracts";
 import type { EmailSettings } from "../env.js";
 import type { StallNotice } from "../triage-liveness.js";
 
@@ -48,14 +49,15 @@ export function createSmtpEmail(settings: EmailSettings): { invite: SendInviteEm
   }
   async function triageStall(notice: StallNotice & { link: string }) {
     const workspace = plainLine(notice.workspace);
+    const host = HOST_FULL_NAMES[notice.source];
     const since = new Date(notice.since).toUTCString();
     await transport.sendMail({
       from: settings.from,
       to: notice.to,
-      subject: notice.cleared ? `Triage is starting pull requests again in ${workspace}` : `Triage has stopped starting pull requests in ${workspace}`,
+      subject: notice.cleared ? `Triage is starting ${host} pull requests again in ${workspace}` : `Triage has stopped starting ${host} pull requests in ${workspace}`,
       text: notice.cleared
-        ? [`Triage is starting pull requests in ${workspace} again. Those that waited since ${since} are triaged now.`, `Triage settings: ${notice.link}`].join("\n\n")
-        : [`Pull requests in ${workspace} have waited since ${since} for Triage to start, so they have no verdict yet.`, `Triage settings: ${notice.link}`].join("\n\n"),
+        ? [`Triage is starting ${host} pull requests in ${workspace} again. Those that have waited since ${since} are tried again.`, `Triage settings: ${notice.link}`].join("\n\n")
+        : [`${host} pull requests in ${workspace} have waited since ${since} for Triage to start, so they have no verdict yet.`, `Triage settings: ${notice.link}`].join("\n\n"),
     });
   }
   return { invite, passwordReset, verifyEmail, triageStall };

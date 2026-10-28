@@ -38,7 +38,7 @@ import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest } from "./manager-state.js";
-import { createTriageLiveness } from "./triage-liveness.js";
+import { createTakeLedger, createTriageLiveness } from "./triage-liveness.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { archiveStoredPolicies } from "./stored-policies.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
@@ -72,7 +72,7 @@ import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
 import { createRolloutQueue, createWorkflowRollout, stopGivenUp, type DeployRequest } from "./workflow-release/rollout.js";
-import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageStalledAfterMs } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageLivenessIntervalMs, triageStalledAfterMs } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
@@ -200,6 +200,7 @@ let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let tokenLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
 let e2bTender: ReturnType<typeof setInterval> | undefined;
+let livenessTimer: ReturnType<typeof setInterval> | undefined;
 function logGithubCalls(): void {
   const line = githubUsage.flush();
   if (line) logJson(line);
@@ -213,6 +214,7 @@ async function shutdown(): Promise<void> {
   tokenLoop?.stop();
   coalescer?.stop();
   clearInterval(e2bTender);
+  clearInterval(livenessTimer);
   clearInterval(githubCallsLogger);
   try {
     await local.shutdown();
@@ -347,7 +349,8 @@ const wakeManager = createManagerWake({
 const wakeOverdue = createOverdueWake({ db: composition.db, wake: wakeManager, log: logJson });
 await archiveStoredPolicies(composition.db, composition.db, logJson);
 await keepExistingWorkspacesAsking(composition.db, logJson);
-mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede });
+const takes = createTakeLedger();
+mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede, taken: takes.note });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
     where: eq(schema.tenant.id, tenantId),
@@ -635,6 +638,7 @@ const triageSettingsLink = new URL("/settings/triage", inviteLinkOrigin(env)).hr
 const triageLiveness = createTriageLiveness({
   db: composition.db,
   store: triageStateStore,
+  takes,
   stalledAfterMs: triageStalledAfterMs(env),
   mail: smtp && async function mailStall(notice) {
     await smtp.triageStall({ ...notice, link: triageSettingsLink });
@@ -671,7 +675,6 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
     await watchListeners(tenant.id);
     await supersedeAll(tenant.id);
     await wakeOverdue(tenant.id);
-    await triageLiveness.watch(tenant);
   }
   await endNeverRan(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
   const outcomes: ReconcileOutcome[] = [];
@@ -1054,6 +1057,11 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
 
 triageLoop.start();
 tokenLoop.start();
+await takes.seed(composition.db);
+function checkLiveness(): void {
+  void triageLiveness.check(reconcileTenants);
+}
+livenessTimer = setInterval(checkLiveness, triageLivenessIntervalMs(env));
 
 /** Rolls every workspace onto a new build's release, as many at once as the queue allows. */
 async function rollWorkspaces(): Promise<void> {

@@ -9,7 +9,7 @@ import { createDB, createGrantStore, createRunTokenStore, runMigrations, schema 
 import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession } from "@intx/hub-api";
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
-import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
+import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, type RepoSource } from "@corbits/triage-contracts";
 import { createOverdueWake, createSupersede } from "./manager-intake.js";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
@@ -78,10 +78,12 @@ function waker(woken: Woken[] = [], listening = true) {
 
 async function unsuperseded(): Promise<void> {}
 
-type RouteOptions = { log?: (entry: Record<string, unknown>) => void; wake?: ReturnType<typeof waker>; supersede?: (tenantId: string, pr: PullRequestRef) => Promise<void> };
+function ignoreTake(): void {}
 
-function routeDeps(db: Db, { log = ignore, wake = waker(), supersede = unsuperseded }: RouteOptions = {}) {
-  return { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), log, wake, supersede };
+type RouteOptions = { log?: (entry: Record<string, unknown>) => void; wake?: ReturnType<typeof waker>; supersede?: (tenantId: string, pr: PullRequestRef) => Promise<void>; taken?: (tenantId: string, source: RepoSource, at: string) => void };
+
+function routeDeps(db: Db, { log = ignore, wake = waker(), supersede = unsuperseded, taken = ignoreTake }: RouteOptions = {}) {
+  return { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), log, wake, supersede, taken };
 }
 
 function buildHub(db: Db, deps: RouteOptions = {}) {
@@ -348,9 +350,10 @@ test("PostgreSQL: done records the verdict a pass posted as its run's on its hos
   });
 }, 60_000);
 
-test("PostgreSQL: a run the claim does not name, a session and a run without the grant are refused", async () => {
+test("PostgreSQL: a run the claim does not name, a session and a run without the grant are refused, and only a take answered is noted", async () => {
   await withDatabase(async function refusals(db) {
-    const app = buildHub(db);
+    const noted: string[] = [];
+    const app = buildHub(db, { taken: (tenantId, source) => noted.push(`${tenantId} ${source}`) });
     await allow(db, "prn_member", STATE);
     await allow(db, "prn_member", RESULT);
     const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
@@ -373,6 +376,7 @@ test("PostgreSQL: a run the claim does not name, a session and a run without the
       expect((await post(app, route, body, ungranted)).status).toBe(403);
     }
     expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", resumed: true, pass: { takes: 2 } });
+    expect(noted).toEqual([`${TENANT} github`, `${TENANT} github`]);
   });
 }, 60_000);
 
