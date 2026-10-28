@@ -24,8 +24,14 @@ export type CodeReviewComment = typeof CodeReviewComment.infer;
 /** A diff cut to its first `lines` of `of` lines for size, with the files it cut part-way or left out. */
 export const DiffCut = type({ lines: "number", of: "number", "unread?": "string[]" });
 
-/** What a code review run answers: its summary, its findings, whether its reader stopped early and how its diff was cut. */
-export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), budgetExhausted: "boolean", "cut?": DiffCut });
+/** A finding the review's check found not real, left out of the review with the check's reason. */
+const CodeReviewDropped = CodeReviewComment.and({ verdict: "'not_real'", reason: "string" });
+
+/**
+ * What a code review run answers: its summary, its findings, the findings its check dropped, whether its reader stopped
+ * early and how its diff was cut.
+ */
+export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean", "cut?": DiffCut });
 export type CodeReviewOutput = typeof CodeReviewOutput.infer;
 
 /** A finding's title as people read it, after its priority when it has one. */

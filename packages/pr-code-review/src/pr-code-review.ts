@@ -30,8 +30,8 @@ export interface CodeReviewPlace {
 
 /**
  * reviewInput → plan ‖ checkout (→ lint) → findDiff ‖ findRepo → candidates (fold exact duplicates) → consolidate (read the cited
- * lines at the head, group findings by defect) → checks (every group, by severity then agreement) → check (one call per group,
- * only when the request asks for it) → writeInput → write → review (the review to post).
+ * lines at the head, group findings by defect) → checks (every group, by severity then agreement) → check (one call per
+ * group) → writeInput (the groups it found real) → write → review (the review to post, and the groups the check dropped).
  * Each model step's effort comes from the request, else the profile; its model is the one the profile names for it.
  * Under a prefix, every action's input also carries it as `$prefix`, so the action finds its steps' outputs.
  */

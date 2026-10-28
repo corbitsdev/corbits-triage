@@ -9,11 +9,12 @@
 //   bun run eval:review -- --rescore <results-dir>   re-scores saved results without model calls
 //   bun run eval:review -- --rescore <e2e.json> [--out <file.json>]   sweeps posting cutoffs over a saved --e2e run without
 //   model calls (sweep.ts) and reports the loosest one at 85% precision and the precision/recall frontier.
-//   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--check] [--out <file.json>] [--baseline]
+//   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--out <file.json>] [--baseline]
 //   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write; each role defaults to its deployed model;
-//   runs the whole pr-code-review workflow on each case's head and scores the finders' union, the consolidated findings,
-//   the confirmed ones (all of them unless --check), the final review, and its comments found by both finders and by
-//   one, with each step's tokens, dollars and seconds. --baseline, over every case, also writes
+//   runs the whole pr-code-review workflow on each case's head, checking every finding as every review does, and
+//   scores the finders' union, the consolidated findings (what the review posted before the check), the ones the check
+//   confirmed, the final review, and its comments found by both finders and by one, with each stage's precision and
+//   each step's tokens, dollars and seconds. --baseline, over every case, also writes
 //   results/pr-code-review.baseline.json, refusing on a dirty working tree or when any case's repository is not public.
 //
 // Inference is native Anthropic when ANTHROPIC_API_KEY is set, else OpenCode Zen with OPENCODE_API_KEY.
@@ -323,7 +324,6 @@ interface E2EConfig {
   models: Partial<Record<Role, string>>;
   efforts: Record<Role, Effort>;
   budget?: number;
-  check: boolean;
 }
 
 function effortFlag(value: unknown, fallback: Effort): Effort {
@@ -347,7 +347,6 @@ function e2eConfig(values: Record<string, unknown>, provider: ProviderId): E2ECo
     models: Object.fromEntries(ROLES.flatMap(model)),
     efforts: Object.fromEntries(ROLES.map(effort)) as Record<Role, Effort>,
     ...(typeof values.budget === "string" && { budget: Number(values.budget) }),
-    check: values.check === true,
   };
 }
 
@@ -382,7 +381,7 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     step.ms += ms;
   }
   const head = headOf(testCase.id);
-  const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, checkout: { source: "github", ...head }, efforts: config.efforts, check: config.check, ...(config.budget && { budgets: { repoFinder: config.budget } }) };
+  const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, checkout: { source: "github", ...head }, efforts: config.efforts, ...(config.budget && { budgets: { repoFinder: config.budget } }) };
   const started = performance.now();
   const run = await runLocalWorkflow({
     workflow: prCodeReview({ sources: GITHUB }),
@@ -486,12 +485,15 @@ function e2eStageRow(stage: Stage, results: readonly E2EResult[], keys: readonly
     const ofReach = bugs.filter((bug) => bug.reach === reach);
     return [reach, ratio(ofReach.filter(isCaught).length, ofReach.length)];
   }
+  const findings = sum(results, (r) => r.stages[stage]?.findings.length ?? 0);
+  const falseAlarms = sum(results, (r) => r.stages[stage]?.falseAlarms ?? 0);
   return {
     stage,
     bugsCaught: ratio(bugs.filter(isCaught).length, bugs.length),
     ...Object.fromEntries(REACHES.map(caughtOfReach)),
-    findings: sum(results, (r) => r.stages[stage]?.findings.length ?? 0),
-    falseAlarms: sum(results, (r) => r.stages[stage]?.falseAlarms ?? 0),
+    findings,
+    falseAlarms,
+    precision: percent(findings === 0 ? null : (findings - falseAlarms) / findings),
     cleanFlagged: ratio(results.filter((r) => r.stages[stage]?.flaggedClean).length, scored.filter((key) => key.kind === "clean").length),
   };
 }
@@ -616,7 +618,6 @@ async function main() {
       budget: { type: "string" },
       e2e: { type: "boolean", default: false },
       baseline: { type: "boolean", default: false },
-      check: { type: "boolean", default: false },
       ...Object.fromEntries(Object.values(ROLE_FLAGS).flatMap((flag) => [[`${flag}-model`, { type: "string" }], [`${flag}-effort`, { type: "string" }]])),
     },
   });

@@ -41,7 +41,6 @@ export function posts(comment: Comment, cutoff: Cutoff): boolean {
 }
 
 export interface SavedOutputs {
-  reviewInput: { request: { check?: boolean } };
   findDiff: { reply: string };
   findRepo: { reply: string };
   candidates: { found: Candidate[]; kept: Candidate[] };
@@ -95,7 +94,8 @@ function isReal(output: { reply: string }): boolean {
 export function commentsOf(outputs: SavedOutputs): Comment[] {
   const { kept } = outputs.candidates;
   const ordered = orderedGroups(kept, JSON.parse(outputs.consolidate.reply) as Consolidated);
-  const reported = outputs.reviewInput.request.check ? ordered.filter((_, i) => outputs.check[i] !== undefined && isReal(outputs.check[i])) : ordered;
+  // A run saved before every finding was checked has no check outputs and reported every group.
+  const reported = outputs.check.length === 0 ? ordered : ordered.filter((_, i) => outputs.check[i] !== undefined && isReal(outputs.check[i]));
   const confidences = keptConfidences(outputs);
   function comment(posted: SavedOutputs["review"]["comments"][number], index: number): Comment {
     const entry = reported[index];

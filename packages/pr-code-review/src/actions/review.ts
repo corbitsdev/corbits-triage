@@ -14,7 +14,6 @@ const ReviewRequest = type({
   diff: "string",
   checkout: Checkout,
   "efforts?": { "plan?": Effort, "diffFinder?": Effort, "repoFinder?": Effort, "consolidate?": Effort, "check?": Effort, "write?": Effort },
-  "check?": "boolean",
   "budgets?": { "repoFinder?": "number.integer > 0" },
   /** The pull request's number, so a run can be found by it. */
   "number?": "number.integer > 0",
@@ -84,20 +83,24 @@ export interface Group {
   representative: number;
 }
 
-interface Verdict {
-  verdict: "real" | "not_real";
-  reason: string;
-}
+/** The check step's answer; its director refuses any other, so the step asks again. */
+export const Verdict = type({ verdict: "'real' | 'not_real'", reason: "string" });
+type Verdict = typeof Verdict.infer;
 
 interface Checks {
   findings: Reported[];
   checks: { text: string; inference: StepInference }[];
 }
 
+/** A finding the check found not real: left out of the review, kept with the check's verdict and reason. */
+interface Dropped extends Verdict {
+  finding: Reported;
+}
+
 interface WriteInput {
   budgetExhausted: boolean;
-  verdicts: Verdict[];
   findings: Reported[];
+  dropped: Dropped[];
   text: string;
   inference: StepInference;
 }
@@ -293,7 +296,7 @@ export function orderedGroups(kept: readonly Candidate[], { groups, sites, excer
   return joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
 }
 
-/** Every consolidated finding, ordered by severity then agreement, and one check of each when the request asks for the check. */
+/** Every consolidated finding, ordered by severity then agreement, and one check of each. */
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { kept } = stepOutput(steps, "candidates");
@@ -301,20 +304,22 @@ export async function checks(steps: Steps): Promise<Checks> {
   function check({ finding, excerpt }: (typeof ordered)[number]) {
     return { text: checkMessage(request, finding, excerpt), inference: inference.check };
   }
-  return { findings: ordered.map((o) => o.finding), checks: request.check ? ordered.map(check) : [] };
+  return { findings: ordered.map((o) => o.finding), checks: ordered.map(check) };
 }
 
-/** The findings to report, all of them or, when the request asks for the check, those it found real, and the write step's user message. */
+/** The findings the check found real, to report, those it found not real with its verdict and reason, and the write step's user message. */
 export async function writeInput(steps: Steps): Promise<WriteInput> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { budgetExhausted } = stepOutput(steps, "candidates");
   const { findings: checked } = stepOutput(steps, "checks");
   const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
-  const findings = request.check ? checked.filter((_, i) => verdicts[i]?.verdict === "real") : checked;
+  const judged = checked.map((finding, i) => ({ finding, ...verdicts[i]! }));
+  const findings = judged.flatMap((j) => (j.verdict === "real" ? [j.finding] : []));
+  const dropped = judged.filter((j) => j.verdict !== "real");
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nWrite the review.`;
-  return { budgetExhausted, verdicts, findings, text, inference: inference.write };
+  return { budgetExhausted, findings, dropped, text, inference: inference.write };
 }
 
 interface Written {
@@ -328,19 +333,27 @@ function ownWords({ title, defect, why, trigger, path, start }: Reported) {
   return { title: heading, body: [why, trigger].filter((part) => part !== undefined).join("\n\n") };
 }
 
+/** A finding as the review carries it, in the words given or else its finder's. */
+function commentOf(finding: Reported, { title, body }: { title: string; body: string }) {
+  const { path, start, end, agreement, priority, code, unverified } = finding;
+  return { path, start, end, title, body, ...(priority !== undefined && { priority }), ...(code !== undefined && { quoted: code }), agreement, ...(unverified && { unverified }) };
+}
+
 /**
  * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes, its
- * agreement and whether its lines went unread, and whether it stopped early. A finding the write step left without a
- * comment gets one in its finder's words.
+ * agreement and whether its lines went unread, whether it stopped early, and each finding the check dropped, in its
+ * finder's words with the check's verdict and reason. A finding the write step left without a comment gets one in its
+ * finder's words.
  */
 export async function review(steps: Steps) {
   const { request } = stepOutput(steps, "reviewInput");
-  const { findings, budgetExhausted } = stepOutput(steps, "writeInput");
+  const { findings, dropped, budgetExhausted } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
-    const { path, start, end, agreement, priority, code, unverified } = finding;
-    const { title, body } = written.comments.find((c) => c.finding === index) ?? ownWords(finding);
-    return { path, start, end, title, body, ...(priority !== undefined && { priority }), ...(code !== undefined && { quoted: code }), agreement, ...(unverified && { unverified }) };
+    return commentOf(finding, written.comments.find((c) => c.finding === index) ?? ownWords(finding));
   }
-  return { summary: written.summary, comments: findings.map(comment), budgetExhausted, ...(request.cut && { cut: request.cut }) };
+  function droppedOf({ finding, verdict, reason }: Dropped) {
+    return { ...commentOf(finding, ownWords(finding)), verdict, reason };
+  }
+  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, ...(request.cut && { cut: request.cut }) };
 }
