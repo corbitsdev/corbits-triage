@@ -32,6 +32,7 @@ const ClaimState = type({
   history: PassState.and({ runId: "string > 0", doneAt: "string.date.iso", "waiting?": "true", "request?": "Record<string, unknown>" }).array(),
   starts: "number.integer >= 0",
   "overdueWokenAt?": "string.date.iso",
+  "deployAskedAt?": "string.date.iso",
 });
 const EventPayload = type("Record<string, unknown>").narrow(function plainObject(value) {
   return !Array.isArray(value);
@@ -591,6 +592,28 @@ async function endedWaiting(tx: Tx, tenantId: string, pr: PullRequestRef, histor
   const since = waitingSince(history, head);
   const last = history.findLast((pass) => pass.head === head);
   return since === undefined || last === undefined ? undefined : { runId: last.runId, head, since };
+}
+
+/** Whether a manager the hub asked the listener for has not taken the claim yet and may still be starting. */
+function deploying(claim: Claim, now: Date): boolean {
+  if (claim.deployAskedAt === undefined) return false;
+  const asked = Date.parse(claim.deployAskedAt);
+  return asked > Date.parse(claim.claimedAt) && now.getTime() - asked < MANAGER_START_GRACE_MS;
+}
+
+/**
+ * Whether the listener is to deploy a manager for the pull request, recording on its claim that one was asked for.
+ * False while one asked for earlier is still on its way: the mail is recorded, and that manager takes it.
+ */
+export async function askDeploy(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<boolean> {
+  return db.transaction(async function asked(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) return true;
+    const now = new Date();
+    if (deploying(claim, now)) return false;
+    await writeClaim(tx, tenantId, pr, { ...claim, deployAskedAt: now.toISOString() });
+    return true;
+  });
 }
 
 function awaitedOn(reviewers: readonly Reviewer[], head: string | undefined, now: Date): AwaitedStage[] {

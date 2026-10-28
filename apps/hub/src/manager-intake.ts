@@ -11,7 +11,7 @@ import { APPROVE_DO_KIND, repoSourceOf, type RepoSource } from "@corbits/triage-
 import { reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import { DeploymentNotReadyError, ListenerUnroutedError, RunUnavailableError } from "./github/deployment.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
-import { dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, type PullRequestRef } from "./manager-state.js";
+import { askDeploy, dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, type PullRequestRef } from "./manager-state.js";
 
 export type ManagerIntakeDeps = {
   db: DB["db"];
@@ -97,7 +97,7 @@ export function createManagerWake(deps: Delivery & Pick<ManagerIntakeDeps, "list
   return async function wake(tenantId: string, pr: PullRequestRef, head: string): Promise<boolean> {
     const address = await deps.listener(tenantId, pr.source);
     if (!address) return false;
-    if (!(await mailedLive(deps, tenantId, domainOf(address), pr))) await deployFor(deps, tenantId, address, pr.source, pr.repo, [{ number: pr.number, head }]);
+    if (!(await mailedLive(deps, tenantId, domainOf(address), pr)) && (await askDeploy(deps.db, tenantId, pr))) await deployFor(deps, tenantId, address, pr.source, pr.repo, [{ number: pr.number, head }]);
     return true;
   };
 }
@@ -243,7 +243,7 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
         const pr = { source, repo, number: pull.number };
         await recordEvent(deps.db, tenantId, pr, pull.id, { type: "webhook", head: pull.head, payload: recorded as Record<string, unknown> });
         await deps.supersede(tenantId, pr);
-        if (!(await mailedLive(deps, tenantId, domain, pr))) start.push(pull);
+        if (!(await mailedLive(deps, tenantId, domain, pr)) && (await askDeploy(deps.db, tenantId, pr))) start.push(pull);
       }
     } finally {
       if (start.length > 0) await deployFor(deps, tenantId, address, source, repo, start);

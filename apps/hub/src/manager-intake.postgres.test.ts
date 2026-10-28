@@ -165,6 +165,21 @@ test("PostgreSQL: a pull request whose manager is up is mailed that manager, and
   });
 }, 60_000);
 
+test("PostgreSQL: a mail for a pull request whose manager ended asks the listener once until a manager takes it, then again", async () => {
+  await withDatabase(async function onItsWay(db) {
+    await claimManager(db, "run_mgr", 7, "completed");
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = (state - 'runId') || '{"status":"ended"}' WHERE kind = 'claim'`);
+    const { toListener, mailed } = stack(db, LISTENER);
+    const asked = { address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] } };
+    expect(await toListener(TENANT, mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h1" }))).toBe(true);
+    expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
+    expect(mailed).toEqual([asked]);
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || jsonb_build_object('claimedAt', ${new Date(Date.now() + 1000).toISOString()}::text) WHERE kind = 'claim'`);
+    expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
+    expect(mailed).toEqual([asked, asked]);
+  });
+}, 60_000);
+
 test("PostgreSQL: a reviewer's result wakes the pull request's live manager, or has the listener deploy one once its claim ended, and none without a listener", async () => {
   await withDatabase(async function wake(db) {
     await claimManager(db, "run_mgr", 7, "running");
@@ -249,7 +264,7 @@ test("PostgreSQL: the reconcile pass wakes a manager for a pull request whose re
 
     // A manager the wake started took the claim and went away before done; past the start grace the next pass wakes again.
     const earlier = new Date(Date.now() - 3 * 60_000);
-    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || ${JSON.stringify({ overdueWokenAt: earlier.toISOString(), claimedAt: new Date(earlier.getTime() + 1_000).toISOString() })}::jsonb WHERE key = ${`mgr:github:${RECORD.name}#7`}`);
+    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || ${JSON.stringify({ overdueWokenAt: earlier.toISOString(), deployAskedAt: earlier.toISOString(), claimedAt: new Date(earlier.getTime() + 1_000).toISOString() })}::jsonb WHERE key = ${`mgr:github:${RECORD.name}#7`}`);
     await wakeOverdue(TENANT);
     expect(mailed).toEqual([woken, woken]);
   });
