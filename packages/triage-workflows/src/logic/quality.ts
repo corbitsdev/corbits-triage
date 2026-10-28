@@ -178,26 +178,22 @@ export const MAX_SYSTEM_ONE_STATE_BYTES = 90_000;
 export const MAX_SYSTEM_ONE_QUESTIONS = 256;
 // Below this much room for files a hunk is cut into so many pieces that each costs a request of mostly metadata.
 const MIN_FILE_ROOM = 8 * 1024;
-// About 5.8 MB of state; the 270,000-char patch budget fills about five requests, 3,000 small files 24.
+// About 5.8 MB of state; 3,000 small files take 24.
 const MAX_JUDGE_REQUESTS = 64;
 export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the decision model";
 
-// The judge reads patches up to three requests' worth; later files are sent without theirs.
-const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
-// The rules that run in code read this much patch text per pull request, apart from the judge's budget; one sidecar
+// The facts step reads this much patch text per pull request, for the rules that run in code and the judge; one sidecar
 // holds every deployment's step outputs, so past it the pull request's later files are listed without their patches.
 export const MAX_CODE_RULES_PATCH_CHARS = 2_000_000;
 
 /** A changed file as the judge reads it: `patchTruncated` when its patch was cut at `MAX_PATCH_INPUT_CHARS`. */
 type JudgedFile = PrFileFacts & { patchTruncated?: true };
 
-/** Lockfiles say nothing the judge decides on, so it never reads them; the rest share the judge's patch budget. */
+/** Lockfiles say nothing the judge decides on, so it never reads them; the rest it reads as the facts step read them. */
 function judgedFiles(facts: PrFacts): JudgedFile[] {
-  let chars = 0;
   return facts.files.filter((file) => !isGeneratedPath(file.path)).map(function judged({ patch, ...file }): JudgedFile {
-    if (patch === undefined || chars >= MAX_PATCH_CHARS) return file;
+    if (patch === undefined) return file;
     const read = patch.slice(0, MAX_PATCH_INPUT_CHARS);
-    chars += read.length;
     return { ...file, patch: read, ...(read.length < patch.length && { patchTruncated: true as const }) };
   });
 }
@@ -406,11 +402,32 @@ function cutLine(line: string, room: number): string[] {
   return Array.from({ length: Math.ceil(chars.length / size) }, (_, index) => chars.slice(index * size, (index + 1) * size).join(""));
 }
 
+/** A request past the cap is not sent, so the files it holds are unread by every check that would have asked about them. */
+function leaveUnread({ questions }: JudgeRequest, plan: QualityPlan, focused: FocusedPlan | undefined) {
+  for (const { id } of questions) {
+    for (const filePlan of Object.values(plan)) {
+      const item = filePlan.asked[id];
+      if (item === undefined) continue;
+      delete filePlan.asked[id];
+      addUnread(filePlan.unread, [typeof item === "string" ? item : item.path]);
+    }
+    const slice = focused?.slices[id];
+    if (!focused || !slice) continue;
+    delete focused.slices[id];
+    addUnread(focused.unread, slice);
+  }
+}
+
+function addUnread(unread: string[], paths: string[]) {
+  for (const path of paths) if (!unread.includes(path)) unread.push(path);
+}
+
 /**
  * Splits one evaluation into System One requests, a pure function of the facts. Files fill each request's state in
  * order up to the budget. A file too large for one request keeps its leading hunks there, and focused reads the rest in
  * the next requests. The first request carries every whole-pull-request question, each request asks about the files it
- * holds, and focused asks once per request that holds any. Only metadata too large for one request is refused.
+ * holds, and focused asks once per request that holds any. Files past the request cap are unread. Only metadata too
+ * large for one request is refused.
  */
 export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicResult["sources"]): QualityEvaluation {
   const files = judgedFiles(facts);
@@ -560,10 +577,9 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     if (readsAll && fitted.hunks.length < hunks.length) addRest(read, fitted.hunks.length, file.path, position);
   }
   flush();
-  // Duplicates gives up its own request rather than push the others past the limit.
-  if (duplicates?.request && requests.length < MAX_JUDGE_REQUESTS) requests.push(duplicates.request);
-  else if (duplicates?.request) plan[DUPLICATES] = { changed: [], asked: {}, unread: [`${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length + 1} requests)`] };
-  if (requests.length > MAX_JUDGE_REQUESTS) return { plan, ...(focused && { focused }), requests: [], judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length} requests)` };
+  // Duplicates reads no diff, so it keeps its request and one more file request is left unread instead.
+  for (const unsent of requests.splice(MAX_JUDGE_REQUESTS - (duplicates?.request ? 1 : 0))) leaveUnread(unsent, plan, focused);
+  if (duplicates?.request) requests.push(duplicates.request);
   const ids = Object.keys(focused?.slices ?? {});
   // With no lines to read, such as only generated files changed, focused does not apply.
   if (!focused || ids.length + focused.unread.length === 0) return { plan, requests };
