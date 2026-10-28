@@ -448,6 +448,8 @@ rules:
   test("a file without its patch, as on Bitbucket Data Center, an unread content or a broken rule never passes", () => {
     const unpatched = { path: "src/a.ts", status: "modified", additions: 0, deletions: 0 };
     expect(filesToRead([unpatched])).toEqual({ unread: "src/a.ts: the host sent no diff" });
+    const past = (path: string) => ({ ...unpatched, path, patchUnread: true as const });
+    expect(filesToRead([unpatched, past("src/b.ts"), past("src/c.ts")])).toEqual({ unread: "src/a.ts: the host sent no diff; src/b.ts and 1 more: the pull request's diff is larger than Triage reads" });
     expect(patterns([unpatched], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check" } });
     expect(patterns([file], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
     const nested = patterns([{ ...file, path: "src/build/a.ts" }], {});

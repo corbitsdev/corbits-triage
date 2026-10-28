@@ -182,22 +182,19 @@ const MIN_FILE_ROOM = 8 * 1024;
 const MAX_JUDGE_REQUESTS = 64;
 export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the decision model";
 
-// The judge reads as much patch as its requests can hold; later files are sent without theirs.
-const MAX_PATCH_CHARS = MAX_JUDGE_REQUESTS * MAX_SYSTEM_ONE_STATE_BYTES;
-// The rules that run in code read this much patch text, apart from the judge's budget; one sidecar holds every
-// deployment's step outputs, so a diff past it is listed without its later patches.
+// The facts step reads this much patch text, shared by every pull request a backlog batch reads, for the rules that run
+// in code and the judge; one sidecar holds every deployment's step outputs, so past it the step lists files without their
+// patches.
 export const MAX_CODE_RULES_PATCH_CHARS = 2_000_000;
 
 /** A changed file as the judge reads it: `patchTruncated` when its patch was cut at `MAX_PATCH_INPUT_CHARS`. */
 type JudgedFile = PrFileFacts & { patchTruncated?: true };
 
-/** Lockfiles say nothing the judge decides on, so it never reads them; the rest share the judge's patch budget. */
+/** Lockfiles say nothing the judge decides on, so it never reads them; the rest it reads as the facts step read them. */
 function judgedFiles(facts: PrFacts): JudgedFile[] {
-  let chars = 0;
   return facts.files.filter((file) => !isGeneratedPath(file.path)).map(function judged({ patch, ...file }): JudgedFile {
-    if (patch === undefined || chars >= MAX_PATCH_CHARS) return file;
+    if (patch === undefined) return file;
     const read = patch.slice(0, MAX_PATCH_INPUT_CHARS);
-    chars += read.length;
     return { ...file, patch: read, ...(read.length < patch.length && { patchTruncated: true as const }) };
   });
 }

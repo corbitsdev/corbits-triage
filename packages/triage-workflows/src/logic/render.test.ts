@@ -173,6 +173,15 @@ describe("focused rendering", () => {
     expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}\n\nWaiting on:\n- checks are still running: \`build\``);
   });
 
+  test("a reason several rules share is said once in the comment and among the reasons", () => {
+    const reason = "code patterns could not be checked: src/a.ts: the host sent no diff";
+    const unread = (check: string) => ({ check, kind: "machine" as const, result: "unconfirmed" as const, reason, evidence: [], output: { kind: "could-not-check" as const, reason } });
+    const det = { ...FOCUSED_DET, checks: [unread("conventions"), unread("no-ternaries")] };
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(`${focusedAnswer(0.5, 0.4)}${NOT_INSTRUCTED}`), focused: focusedPlan({}).focused, choice: CHOICE.pass });
+    expect(verdict.reasons).toEqual([`Not confirmed: ${reason}`, "Not confirmed: makes one focused change"]);
+    expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}\n\nWaiting on:\n- ${reason}`);
+  });
+
   test.each([
     ["missing", ""],
     ["malformed", JSON.stringify({ id: "focused", type: "choice", choice: "one_thing", probabilities: { one_thing: 1 }, confidence: 2 })],
