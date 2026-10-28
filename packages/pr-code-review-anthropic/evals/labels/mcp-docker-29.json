@@ -1,0 +1,396 @@
+{
+  "id": "mcp-docker-29",
+  "source": "reviewbench",
+  "golden": "golden/scottlz0310_Mcp-Docker_29-e7705d26.json",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "severity": "medium",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/session.go",
+          "start": 111,
+          "end": 115
+        }
+      ],
+      "reach": "repo",
+      "evidence": "PKCE is not enforced. ExchangeCode only verifies the code_challenge when sess.CodeChallenge != \"\", but the /authorize handler never requires code_challenge to be present. An attacker who obtains an internal authorization code (e.g. via referrer header, browser history, or log inspection) can call /token with no code_verifier and receive the GitHub access token. The Discovery endpoint advertises PKCE S256 as supported but the implementation makes it purely opt-in. PKCE should be required on every flow."
+    },
+    {
+      "id": "b2",
+      "severity": "medium",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 173,
+          "end": 213
+        }
+      ],
+      "reach": "repo",
+      "evidence": "The /token endpoint performs no client_id validation. The comment claims GitHub validates client_id during code exchange, but that exchange happens at /callback, not at /token time. When /token is called, the internal code is already in the store and no outbound GitHub call is made. Combined with the missing PKCE enforcement, any party that obtains an internal code can present it to /token without supplying client_id and receive the GitHub access token. RFC 6749 §3.2.1 requires public clients to be identified at the token endpoint."
+    },
+    {
+      "id": "b3",
+      "severity": "low",
+      "category": "reliability",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 238,
+          "end": 238
+        }
+      ],
+      "reach": "diff",
+      "evidence": "io.ReadAll(resp.Body) in ValidateToken has no size limit. A misbehaving reverse proxy or a response from a compromised network path could stream an unbounded body, exhausting process memory. The same file already uses io.LimitReader correctly at line 275 in exchangeGitHubCode. This call should be wrapped with io.LimitReader(resp.Body, maxBytes) before ReadAll."
+    },
+    {
+      "id": "b4",
+      "severity": "medium",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/session.go",
+          "start": 57,
+          "end": 66
+        }
+      ],
+      "reach": "repo",
+      "evidence": "SaveSession adds entries to the sessions map with no upper bound on the total count. Any unauthenticated caller can flood /authorize with distinct state values to fill the map indefinitely. The janitor only runs every minute, so a sustained burst can consume substantial memory between sweeps. There is no session count cap, no per-IP rate limit, and no rejection when the store is full."
+    },
+    {
+      "id": "b5",
+      "severity": "low",
+      "category": "reliability",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/session.go",
+          "start": 44,
+          "end": 53
+        }
+      ],
+      "reach": "diff",
+      "evidence": "The janitor goroutine started in NewStore runs forever with no stop mechanism. There is no context, done channel, or ticker.Stop() call. Every Store created (including in tests) leaks a goroutine for the lifetime of the process. This prevents orderly shutdown and causes goroutine leaks in any test that creates a Handler."
+    },
+    {
+      "id": "b6",
+      "severity": "low",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 106,
+          "end": 109
+        }
+      ],
+      "reach": "repo",
+      "evidence": "The redirect_uri allowlist check uses parsedRedirect.Hostname(), which strips the port. This means any port on an allowed host is accepted: both http://localhost:8080/callback and http://localhost:9999/evil pass the check when \"localhost\" is in AllowedRedirectHosts. An attacker running any service on localhost (or any allowed host) can receive the authorization code redirect. The check should include the port, or restrict to specific full origins."
+    },
+    {
+      "id": "b7",
+      "severity": "low",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 75,
+          "end": 75
+        }
+      ],
+      "reach": "repo",
+      "evidence": "The state query parameter is accepted with no length limit and stored verbatim as a map key in SaveSession. An attacker can submit a multi-megabyte state value in a single request, inflating the session map entry far beyond a normal key size. Combined with the lack of a session count cap, this makes the memory exhaustion DoS cheaper to execute per request."
+    },
+    {
+      "id": "b8",
+      "severity": "low",
+      "category": "maintainability",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/Dockerfile",
+          "start": 13,
+          "end": 13
+        }
+      ],
+      "reach": "repo",
+      "evidence": "EXPOSE 8083 is hardcoded, but the port the server actually listens on is determined at runtime by the MCP_PORT environment variable. If MCP_PORT is set to any value other than 8083, the EXPOSE directive is wrong. Docker tooling that reads EXPOSE to discover the container's service port (e.g. `docker run -P`, some service mesh sidecars) will use 8083 regardless of the actual listening port. The Dockerfile should use a build arg or the EXPOSE should match the default in the entrypoint rather than a hardcoded literal."
+    },
+    {
+      "id": "b9",
+      "severity": "low",
+      "category": "maintainability",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/cmd/server/main.go",
+          "start": 13,
+          "end": 13
+        }
+      ],
+      "reach": "repo",
+      "evidence": "The project uses `github.com/scottlz0310/copilot-review-mcp` as the module path, but the repository is `scottlz0310/Mcp-Docker`. Go tooling relies on the module path matching the repository path. This should be `github.com/scottlz0310/Mcp-Docker/services/copilot-review-mcp` or a similar path that correctly reflects the repository structure."
+    },
+    {
+      "id": "b10",
+      "severity": "low",
+      "category": "maintainability",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 167,
+          "end": 173
+        }
+      ],
+      "reach": "diff",
+      "evidence": "In the `Callback` handler, the session is looked up via `lookupByCode` after the session is potentially modified by `CompleteCallback`. This re-lookup is unnecessary and potentially racy. `CompleteCallback` should return the `redirectURI` along with the `internalCode` so that the `Callback` function doesn't need to perform a second lookup."
+    },
+    {
+      "id": "b11",
+      "severity": "low",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 193,
+          "end": 198
+        }
+      ],
+      "reach": "repo",
+      "evidence": "Forwarding `err.Error()` from `ExchangeCode` directly into the `error_description` field leaks internal state to the client. In particular, the \"session not found or expired for state %q\" error from `session.go` will echo the client-supplied state value back in the response and the \"redirect_uri mismatch\" message can also be informative to attackers. Per RFC 6749 §5.2, `error_description` should be a human-readable explanation safe for the client, not an internal log message. Consider mapping internal errors to a generic message (e.g. \"authorization code is invalid or expired\") and keeping the detailed `err` only in the `slog.Warn` log line above."
+    },
+    {
+      "id": "b12",
+      "severity": "medium",
+      "category": "security",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/session.go",
+          "start": 99,
+          "end": 123
+        }
+      ],
+      "reach": "diff",
+      "evidence": "When `ExchangeCode` fails due to `redirect_uri` mismatch or PKCE verification failure, the authorization code is left in `s.codes` and remains valid until TTL expiry. RFC 6749 §10.5 and RFC 7636 §4.6 require that an authorization code be invalidated as soon as it has been used (or attempted) so an attacker who obtains the code cannot brute-force the `code_verifier`. Recommend deleting the entry from `s.codes` (and the matching session) on any validation failure, not only on success."
+    },
+    {
+      "id": "b13",
+      "severity": "medium",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 90,
+          "end": 94
+        }
+      ],
+      "reach": "repo",
+      "evidence": "The Discovery document advertises `code_challenge_methods_supported: [\"S256\"]`, but the `/authorize` and `/token` handlers treat PKCE as optional (no `code_challenge` parameter at `/authorize` results in `sess.CodeChallenge == \"\"`, and `ExchangeCode` then skips PKCE verification entirely). RFC 8414 / MCP clients (including Claude Desktop, per issue #28) will interpret the Discovery field as PKCE being mandatory. Either advertise that PKCE is optional, or enforce that `code_challenge` is required at `/authorize` (and `code_verifier` at `/token`) to match the advertised metadata."
+    },
+    {
+      "id": "b14",
+      "severity": "medium",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/session.go",
+          "start": 77,
+          "end": 96
+        }
+      ],
+      "reach": "repo",
+      "evidence": "`Callback` calls `CompleteCallback`, which leaves the original `s.sessions[state]` entry in place (it is only removed later when `/token` consumes the code). This allows the same `state` to be replayed against `/callback` — for example, if the redirect from GitHub is repeated by the browser — and each replay will issue a fresh internal code while overwriting `sess.InternalCode`, leaving orphan entries in `s.codes` that still reference the same underlying session. Consider invalidating the state on first successful callback (i.e. delete `s.sessions[state]` once an internal code has been issued) so a callback can be processed at most once."
+    },
+    {
+      "id": "b15",
+      "severity": "medium",
+      "category": "testing",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 46,
+          "end": 56
+        }
+      ],
+      "reach": "diff",
+      "evidence": "No tests are included in `services/copilot-review-mcp/` for the OAuth façade, although issue #28's DoD and \"テスト戦略\" section explicitly require unit/E2E tests for Discovery, the OAuth flow, PKCE verifier mismatch, token validation, and session TTL. Given that PKCE handling, session lifecycle, and Bearer token validation have several subtle security-relevant branches (PKCE optionality, redirect_uri validation, upstream-error mapping to 503), at least table-driven unit tests for `verifyPKCE`, `ExchangeCode`, `isAllowedRedirectHost`, and an `httptest`-based test for `/.well-known/...`, `/authorize`, `/token`, and the auth middleware would be valuable before this phase 1 lands."
+    },
+    {
+      "id": "b16",
+      "severity": "medium",
+      "category": "reliability",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 216,
+          "end": 251
+        }
+      ],
+      "reach": "repo",
+      "evidence": "`ValidateToken` caches by raw GitHub access token used as a map key, and `extractBearer` does not enforce any minimum entropy or shape. A misbehaving (or malicious) client repeatedly sending different invalid tokens cannot poison the cache (`CacheToken` is only called after a successful GitHub `/user` response), but each unique invalid token causes a synchronous outbound call to GitHub with no rate limiting or negative caching. Consider adding a short negative cache (or single-flight) for tokens that GitHub has rejected with 401/403, to bound the request amplification an unauthenticated caller can produce against `api.github.com`."
+    },
+    {
+      "id": "b17",
+      "severity": "medium",
+      "category": "api-architecture",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/cmd/server/main.go",
+          "start": 22,
+          "end": 29
+        }
+      ],
+      "reach": "repo",
+      "evidence": "The default `AllowedRedirectHosts` allowlist contains only `localhost` and `127.0.0.1`, and there is no configuration env var wired in `cmd/server/main.go` to extend it. This will reject any non-loopback MCP client `redirect_uri` (e.g. Claude Desktop installations using a custom scheme or a non-loopback host) with `invalid_request`, even though the issue/PR description targets such clients. Consider plumbing an env var (e.g. `ALLOWED_REDIRECT_HOSTS`) into `auth.Config.AllowedRedirectHosts` from `loadConfig`, or documenting that only loopback `redirect_uri`s are supported in phase 1."
+    },
+    {
+      "id": "b18",
+      "severity": "medium",
+      "category": "security",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 90,
+          "end": 94
+        }
+      ],
+      "reach": "repo",
+      "evidence": "PKCE is advertised in discovery but remains optional here: if a client omits `code_challenge`, the session is saved without one and `ExchangeCode` skips verifier validation. For this public OAuth façade, require `code_challenge` with S256 so intercepted internal authorization codes cannot be redeemed without a verifier."
+    },
+    {
+      "id": "b19",
+      "severity": "low",
+      "category": "security",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 74,
+          "end": 79
+        }
+      ],
+      "reach": "repo",
+      "evidence": "`client_id` is not read or checked on the authorization request, so any caller can create a session that will later be exchanged as this façade's configured GitHub OAuth app. In a single-client façade, validate the incoming `client_id` against the configured client and store it with the session for the `/token` check."
+    },
+    {
+      "id": "b20",
+      "severity": "medium",
+      "category": "reliability",
+      "difficulty": "easy",
+      "sites": [
+        {
+          "path": "docker-compose.yml",
+          "start": 58,
+          "end": 60
+        }
+      ],
+      "reach": "diff",
+      "evidence": "When `COPILOT_REVIEW_MCP_PORT` is overridden, the container listens and publishes that port, but `BASE_URL` still defaults to `http://localhost:8083`. Discovery and GitHub callback URLs will point at the wrong port unless the user also remembers to set `BASE_URL`; derive the default from the same port variable or document/enforce the coupling."
+    },
+    {
+      "id": "b21",
+      "severity": "low",
+      "category": "reliability",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/session.go",
+          "start": 91,
+          "end": 95
+        }
+      ],
+      "reach": "repo",
+      "evidence": "The internal authorization code inherits the original session expiry from `/authorize`; `CompleteCallback` does not extend or set a code-specific expiry when the code is issued. If the user completes GitHub login near the session TTL, the redirect back to the client can carry a code that expires immediately and `/token` will reject it."
+    },
+    {
+      "id": "b22",
+      "severity": "medium",
+      "category": "correctness",
+      "difficulty": "medium",
+      "sites": [
+        {
+          "path": "services/copilot-review-mcp/internal/auth/handler.go",
+          "start": 126,
+          "end": 132
+        }
+      ],
+      "reach": "repo",
+      "evidence": "GitHub OAuth error callbacks (for example `?error=access_denied&state=...` when the user denies consent) are treated as a generic missing-code 400 and are not redirected back to the original client redirect URI. That leaves the MCP client without the OAuth error response it needs to finish the flow; look up the session by state and redirect with the error parameters when GitHub returns an OAuth error."
+    }
+  ],
+  "rejected": [
+    {
+      "was": "services/copilot-review-mcp/internal/auth/session.go:154-172: The janitor goroutine in `NewStore` can cause data races. It locks `s.mu` and then `s.cache.mu`, while other methods like `CacheToken` lock `s.cache.mu` and HTTP handlers can indirectly lock `s.mu`. This inverted lock order can lead to deadlocks. To fix this, the janitor should not hold both locks simultaneously; it should clean up sessions and the token cache in two separate, sequential steps, releasing the first lock before acquiring the second.",
+      "why": "The finding's claim is incorrect. The janitor releases s.mu via s.mu.Unlock() before acquiring s.cache.mu — the two locks are never held simultaneously. The suggested fix (release first lock before acquiring second) is exactly what the code already does. No deadlock risk from lock ordering exists here."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/auth/handler.go:28-28: The `UpstreamError.IsUpstreamError` method should be a pointer receiver `(e *UpstreamError)` to correctly implement the `upstreamErrorer` interface. The middleware uses `errors.As` which requires the method to be on the pointer type when a pointer to the error is passed.",
+      "why": "The finding is factually incorrect. IsUpstreamError() is already defined with a pointer receiver: `func (e *UpstreamError) IsUpstreamError() bool`. All three methods on UpstreamError use pointer receivers, and errors are returned as *UpstreamError. The errors.As call in the middleware works correctly as-is."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/auth/handler.go:321-321: `lookupByCode` is defined on `*Store`, but it is only used by `Callback` which is a method on `*Handler`. `lookupByCode` should be a private method on `*Handler` instead of `*Store` to properly encapsulate the logic and avoid exposing `Store` internals unnecessarily.",
+      "why": "lookupByCode accesses s.mu and s.codes — Store's internal fields. Defining it on *Store is correct encapsulation. Moving it to *Handler would require Handler to directly access Store internals, which is worse encapsulation. Both types are in the same package anyway, and the method is already unexported."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/auth/handler.go:129-134: In the Authorize handler, the state parameter is saved to the session without being validated for its structure or uniqueness. An attacker could reuse an existing, valid state value to hijack an authorization process.",
+      "why": "The attack requires knowing the victim's randomly-generated state value, which should be an unguessable nonce per RFC 6749 §10.12. The finding doesn't demonstrate how an attacker would obtain a valid state — without that, the overwrite scenario is theoretical. The redirect_uri allowlist (localhost only) further limits the attack surface. The finding is too vague and speculative to qualify as a concrete exploitable vulnerability."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/auth/handler.go:191-200: In the Callback handler, the state value is only verified to exist in the in-memory store, but no additional checks are done to validate the authenticity of the state value. This could lead to replay attacks or unauthorized access if the state value is intercepted.",
+      "why": "The server-side store lookup (HasSession) IS the state authenticity check — it verifies the state was issued by this server at /authorize. No additional cryptographic validation is needed since the server controls both endpoints. The replay concern is neutralized by GitHub's one-time-use codes. The finding is generic and doesn't identify any concrete check that is missing."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/auth/handler.go:417-422: The exchangeGitHubCode function does not limit the number of retries for the HTTP request or have retry backoff. This could lead to excessive load on GitHub's API if transient errors occur.",
+      "why": "The referenced lines (417-422) don't exist in the 323-line file, making the finding factually mislocated. More importantly, adding retry logic to exchangeGitHubCode would be incorrect design: GitHub authorization codes are one-time-use tokens, so retrying a failed exchange would just re-submit an already-consumed or expired code. On transient errors, the correct behavior is to fail and restart the OAuth flow. The finding describes a harmful change."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/auth/session.go:128-134: Session tokens, both state and internalCode, are only stored in memory and are not encrypted or signed. This can lead to potential issues if tokens are accidentally exposed or accessed outside the application.",
+      "why": "In-memory session stores holding unencrypted tokens is the standard design for server-side session management. The tokens never leave the process memory as map values — they are only exposed via the API responses (code in redirect, token in /token response) which is correct by design. Encrypting or signing in-memory map values provides no security benefit since the same process that encrypts also decrypts. The finding restates a generic 'encrypt everything' principle without identifying a concrete attack path by which the in-memory values are exposed."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/auth/session.go:183-188: In the janitor method, expired sessions and token entries are deleted without any logging. This can make debugging issues related to session or token expiration more challenging.",
+      "why": "Logging every TTL-based eviction from a background janitor is not a standard practice and would generate noisy logs in normal operation. Session and token expiry is expected behavior, not an error condition requiring a log entry. The finding restates a generic 'add logging for debugging' best practice without identifying a specific debugging scenario unique to this codebase that would be enabled by such logging."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/middleware/auth.go:51-61: The custom error handling in the middleware for upstreamErrorer partially obscures the original error context. Ensuring the full original error information is logged at all times would help debugging.",
+      "why": "Both error paths log the full err value via slog structured logging. The upstream error path uses slog.Error with 'err', err which includes the wrapped original error accessible via Unwrap(). The finding claims error context is obscured but the code already logs the complete error object in both branches."
+    },
+    {
+      "was": "docker-compose.yml:47-50: The logging configuration limits log file sizes but does not provide a mechanism to collect or ship logs for centralized analysis. This can lead to loss of logs in production environments.",
+      "why": "The finding restates a generic best practice ('centralize your logs') without identifying any specific issue in this codebase. JSON-file logging with rotation is a standard Docker Compose configuration. Log shipping/aggregation is an operational infrastructure concern that is intentionally out of scope for a docker-compose.yml service definition — it would typically be handled by a separate log collector (Loki, ELK, etc.) at the infrastructure layer. The same comment could be copy-pasted onto any docker-compose.yml that uses json-file logging."
+    },
+    {
+      "was": "services/copilot-review-mcp/cmd/server/main.go:59-62: The health check endpoint does not perform any check beyond returning a static response. This may not accurately reflect the operational status of dependent services like GitHub API or the session store.",
+      "why": "A static health check returning {status: ok} is a common and often intentional design choice for liveness probes. Deep health checks that call external services like GitHub API can cause cascading failures, false negatives under load, and violate the separation between liveness and readiness probes. The docker-compose.yml also explicitly disables the healthcheck (disable: true) with a comment that health is validated host-side. This finding restates a generic 'health checks should be deep' best practice without identifying a concrete operational failure mode specific to this codebase."
+    },
+    {
+      "was": "services/copilot-review-mcp/internal/auth/handler.go:170-170: [go.lang.security.injection.open-redirect.open-redirect] An HTTP redirect was found to be crafted from user-input `r`. This can lead to open redirect vulnerabilities, potentially allowing attackers to redirect users to malicious web sites. It is recommend where possible to not allow user-input to craft the redirect URL. When user-input is necessary to craft the request, it is recommended to follow OWASP best practices to restrict the URL to domains in an allowlist.",
+      "why": "This is a static analysis tool alert that doesn't account for the allowlist validation already in place. The redirect_uri is validated at /authorize (must be http/https, host in AllowedRedirectHosts defaulting to localhost/127.0.0.1) before being stored in the session. The redirect at line 170 uses the pre-validated server-side session value, not raw request input. The tool's data flow tracing from r to the redirect is technically correct but ignores the intervening allowlist guard."
+    },
+    {
+      "was": "services/copilot-review-mcp/cmd/server/main.go:87-89: GitHub's OAuth `scope` request parameter is space-delimited, but the default here is comma-delimited (`repo,user`). That can be sent as a single invalid/unknown scope instead of requesting both `repo` and `user`, leaving the issued token without the intended permissions; default this to `repo user` while still accepting GitHub's comma-delimited response scope.",
+      "why": "GitHub's OAuth explicitly accepts both space-delimited and comma-delimited scope values. The default `repo,user` with a comma would be correctly parsed by GitHub as two separate scopes. The code comment `// e.g. \"repo,user\"` shows intentional comma-delimited usage. The finding's premise that comma-delimited scopes would result in 'a single invalid/unknown scope' is factually incorrect."
+    },
+    {
+      "was": "docker-compose.yml:58-60: This default passes `repo,user` through to GitHub's OAuth authorize URL, but GitHub expects requested scopes to be space-delimited. Use a space-delimited default (properly quoted in compose) so the OAuth app actually requests both intended scopes.",
+      "why": "Same factual claim as Finding 13: GitHub's OAuth explicitly accepts both comma and space-delimited scope values. The `repo,user` default will correctly result in both `repo` and `user` scopes being requested. The premise that comma-delimited scopes would not work is factually incorrect."
+    }
+  ]
+}

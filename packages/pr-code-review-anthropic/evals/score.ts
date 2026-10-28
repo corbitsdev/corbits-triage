@@ -1,5 +1,5 @@
 import { samePath, type Finding } from "@corbits/pr-code-review/findings";
-import type { Bug, CaseKey, Reach, Site } from "./cases.js";
+import type { CaseKey, Reach, Site } from "./cases.js";
 
 export { parseFindings, type Finding } from "@corbits/pr-code-review/findings";
 
@@ -23,17 +23,21 @@ export interface CaseScore {
   flaggedClean: boolean;
 }
 
-/** A bug is caught when any finding hits any of its sites; a finding that hits no bug is a false alarm. */
+/**
+ * Each finding, in order, catches the first bug it hits that no earlier finding caught. A finding that catches none is a
+ * false alarm, so one defect split into several findings scores one bug and the rest as false alarms.
+ */
 export function scoreCase(key: CaseKey, findings: readonly Finding[]): CaseScore {
-  function caughtBy(bug: Bug): boolean {
-    return findings.some((finding) => bug.sites.some((site) => hits(finding, site)));
-  }
-  function isAlarm(finding: Finding): boolean {
-    return !key.bugs.some((bug) => bug.sites.some((site) => hits(finding, site)));
+  const caught = new Set<string>();
+  let falseAlarms = 0;
+  for (const finding of findings) {
+    const bug = key.bugs.find((candidate) => !caught.has(candidate.id) && candidate.sites.some((site) => hits(finding, site)));
+    if (bug) caught.add(bug.id);
+    else falseAlarms++;
   }
   return {
-    caught: key.bugs.filter(caughtBy).map((bug) => bug.id),
-    falseAlarms: findings.filter(isAlarm).length,
+    caught: key.bugs.filter((bug) => caught.has(bug.id)).map((bug) => bug.id),
+    falseAlarms,
     flaggedClean: key.kind === "clean" && findings.length > 0,
   };
 }

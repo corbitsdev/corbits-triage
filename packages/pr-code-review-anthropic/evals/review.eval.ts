@@ -460,19 +460,16 @@ function sweep(file: string, out: string | undefined) {
   const replayed = run.results.map((result) => replayedOf(result, keyOf(keys, result.id)));
   const rows = cutoffs(replayed).map((cutoff) => scoreCutoff(replayed, cutoff));
   const all = scoreCutoff(replayed, KEEP_ALL);
-  const baseline = (JSON.parse(readFileSync(BASELINE, "utf8")) as { totals: { final: Record<string, number> } }).totals.final;
-  const matches = all.caught === baseline.caught && all.falseAlarms === baseline.falseAlarms && all.clean - all.cleanSilent === baseline.cleanFlagged;
   const chosen = loosest(rows, PRECISION_BAR);
   const best = frontier(rows);
   console.table([all].map(sweepRow));
-  console.log(`keeping every comment ${matches ? "matches" : "differs from"} the committed baseline's final review`);
   console.table(best.map(sweepRow));
   console.log(chosen ? `loosest at ${percent(PRECISION_BAR)} precision: ${cutoffLabel(chosen.cutoff)}` : `no cutoff reaches ${percent(PRECISION_BAR)} precision`);
   if (chosen) console.table([chosen].map(sweepRow));
   function labelled(row: SweepRow) {
     return { label: cutoffLabel(row.cutoff), ...row };
   }
-  if (out) writeFileSync(out, JSON.stringify({ file, bar: PRECISION_BAR, matchesBaseline: matches, keepAll: labelled(all), chosen: chosen && labelled(chosen), frontier: best.map(labelled), rows: rows.map(labelled) }, null, 2));
+  if (out) writeFileSync(out, JSON.stringify({ file, bar: PRECISION_BAR, keepAll: labelled(all), chosen: chosen && labelled(chosen), frontier: best.map(labelled), rows: rows.map(labelled) }, null, 2));
 }
 
 function e2eStageRow(stage: Stage, results: readonly E2EResult[], keys: readonly CaseKey[]) {
@@ -599,6 +596,8 @@ async function e2e(values: Record<string, unknown>) {
   console.table(stepRows);
   const exhausted = results.filter((r) => r.budgetExhausted).length;
   const cost = totalCost(stepRows.map((r) => r.costUsd));
+  const [, final] = stageTotals("final", results, cases);
+  console.log(`score: final review caught ${ratio(final.caught, final.bugs)} bugs (${percent(final.bugs === 0 ? null : final.caught / final.bugs)}), ${final.falseAlarms} false alarms`);
   console.log(`total ${cost === null ? "price unknown" : `$${cost.toFixed(4)}`}, ${Math.round(sum(results, (r) => r.wallMs) / 1000)}s, ${exhausted} budget exhausted; results: ${out}`);
   if (stamp) writeE2EBaseline(results, cases, source, stamp);
 }
