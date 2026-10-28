@@ -51,18 +51,64 @@ jobs:
       # Not --parallel: run side by side on the runner's four cores, tests that time a subprocess or a parse fail.
       - run: bun run test:${{ matrix.suite }} --shard=${{ matrix.shard }}
 
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      platform: ${{ steps.filter.outputs.platform }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            platform:
+              - 'apps/hub/**'
+              - 'apps/sidecar/**'
+              - 'apps/web/scripts/**'
+              - 'apps/web/src/lib/**'
+              - 'tooling/**'
+              - 'packages/**'
+              - 'tests/chain/**'
+              - 'vendor/**'
+              - 'bun.lock'
+              - 'package.json'
+              - '.github/workflows/ci.yml'
+              - '.github/actions/**'
+
+  # Every shard job reports so its required check is satisfied; the steps run only when platform code changed.
+  # Each shard lists its files: the slow scenarios are spread by measured time, which --shard cannot do.
   chain:
+    name: chain (${{ matrix.shard }})
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      RUN: ${{ github.event_name != 'pull_request' || needs.changes.outputs.platform == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1/5, 2/5, 3/5, 4/5, 5/5]
+        include:
+          - shard: 1/5
+            files: tests/chain/unwoken.test.ts
+          - shard: 2/5
+            files: tests/chain/woken.test.ts tests/chain/local-sidecars.test.ts tests/chain/deterministic.test.ts tests/chain/unset.test.ts
+          - shard: 3/5
+            files: tests/chain/disconnected.test.ts tests/chain/reread.test.ts tests/chain/judged.test.ts
+          - shard: 4/5
+            files: tests/chain/unrouted.test.ts tests/chain/held.test.ts tests/chain/waiting.test.ts
+          - shard: 5/5
+            files: tests/chain/pushed.test.ts tests/chain/sidecar-cap.test.ts tests/chain/always.test.ts
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/postgres
-      - uses: ./.github/actions/setup
-      - run: bun run test:chain --shard=${{ matrix.shard }}
+      - if: env.RUN == 'true'
+        uses: ./.github/actions/postgres
+      - if: env.RUN == 'true'
+        uses: ./.github/actions/setup
+      - if: env.RUN == 'true'
+        run: bun --conditions=intx-src test --parallel=2 ${{ matrix.files }}
 
   policy:
     if: github.event_name == 'pull_request'
