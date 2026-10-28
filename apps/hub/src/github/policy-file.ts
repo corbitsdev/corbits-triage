@@ -87,8 +87,8 @@ function hostFailed(record: RepoRecord, what: string, err: unknown): Response {
 }
 
 /**
- * A starter's open pull request, found in the shared listing so a workspace of repositories without rules costs no host
- * calls on each load. A member the listing refuses is not told of one; opening the pull request answers it.
+ * A repository's open policy pull request, found in the shared listing so a workspace costs no host calls per repository
+ * on each load. A member the listing refuses is not told of one; opening the pull request answers it.
  */
 export function listedPolicyPull(listing: OpenPullsRead | Response, repo: string, source: RepoSource): github.PolicyPull | undefined {
   if (listing instanceof Response) return undefined;
@@ -288,27 +288,23 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return bitbucketPull.proposePolicy(bb, record.name, await bitbucketBase(bb, record), change);
   }
 
-  async function opened(tenantId: string, record: RepoRecord, change: github.PolicyChange, msg = "policy_file_exported"): Promise<Response> {
+  async function opened(member: Member, record: RepoRecord, change: github.PolicyChange, msg = "policy_file_exported"): Promise<Response> {
+    const { tenantId } = member;
     const waiting = await deps.waitingKinds(tenantId, record.name, sourceOf(record), change.text);
     const body = waiting.length === 0 ? change.body : [change.body, "", waitingNote(waiting)].join("\n");
     const pull = await propose(tenantId, record, { ...change, body });
     deps.log({ level: "info", msg, tenantId, repo: record.name, number: pull.number });
-    return Response.json({ status: "opened", ...pull });
-  }
-
-  async function addFile(member: Member, record: RepoRecord, change: github.PolicyChange): Promise<Response> {
-    const response = await opened(member.tenantId, record, change);
-    // The listing is where the repository's standing finds the new pull request.
-    deps.changed(member.tenantId, record.name);
+    // The listing is where the repository's standing and the upgrades read find the new pull request.
+    deps.changed(tenantId, record.name);
     await deps.openPulls(member, true);
-    return response;
+    return Response.json({ status: "opened", ...pull });
   }
 
   /** An open pull request may already hold the maintainer's edits to the starter, so it is answered as it is. */
   async function startFile(member: Member, record: RepoRecord): Promise<Response> {
     const pull = await openPull(member.tenantId, record);
     if (pull) return Response.json({ status: "opened", ...pull });
-    return addFile(member, record, { path: POLICY_FILE_PATH, text: exportPolicyFile(starterPack(record.name)).text, title: ADD_TITLE, body: STARTER_BODY });
+    return opened(member, record, { path: POLICY_FILE_PATH, text: exportPolicyFile(starterPack(record.name)).text, title: ADD_TITLE, body: STARTER_BODY });
   }
 
   /** Why triage would refuse `text` as the repository's policy file, its `extends` resolved; undefined when it would run it. */
@@ -340,9 +336,9 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     const file = await freshFile(member.tenantId, record);
     if (file instanceof Response) return file;
     if ((file?.sha ?? null) !== sha) return fileMoved(file?.path ?? POLICY_FILE_PATH);
-    if (!file) return addFile(member, record, { path: POLICY_FILE_PATH, text, title: ADD_TITLE, body: CHOSEN_BODY, readSha: null });
+    if (!file) return opened(member, record, { path: POLICY_FILE_PATH, text, title: ADD_TITLE, body: CHOSEN_BODY, readSha: null });
     if (file.text === text) return failure(409, "policy_file_unchanged", `${file.path} already holds this text.`);
-    return addFile(member, record, { path: file.path, text, title: `chore: update the Corbits Triage rules in ${file.path}`, body: editedBody(file.path), readSha: file.sha });
+    return opened(member, record, { path: file.path, text, title: `chore: update the Corbits Triage rules in ${file.path}`, body: editedBody(file.path), readSha: file.sha });
   }
 
   /**
@@ -485,7 +481,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       // A batch that changes nothing writes nothing; a pull request for it alone would have no commits to show.
       if (!patched.changed) return Response.json({ before: found.text, after: found.text });
       if (preview === true) return Response.json({ before: found.text, after: patched.text });
-      return await opened(member.tenantId, record, {
+      return await opened(member, record, {
         path: found.path,
         text: patched.text,
         title: `chore: update the Corbits Triage rules in ${found.path}`,
@@ -510,16 +506,16 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     if (await sourceCredentialGrant(deps, member.principalId, member.tenantId, record, "read")) return undefined;
     const row = { repo: record.name, source: sourceOf(record) };
     try {
-      if ((await cached(member.tenantId, record, maxAgeOf(member.tenantId, record))).status !== "absent") return { ...row, upgrade: { state: "ok" } };
+      const state = (await cached(member.tenantId, record, maxAgeOf(member.tenantId, record))).status === "absent" ? "start" : "ok";
       const pull = listedPolicyPull(await listed(), record.name, row.source);
-      return { ...row, upgrade: { state: "start" }, ...(pull && { pull }) };
+      return { ...row, upgrade: { state }, ...(pull && { pull }) };
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_upgrade_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
       return { ...row, error: `Could not read ${record.name}'s policy from ${HOST_NAMES[row.source]}.` };
     }
   }
 
-  /** Whether each enabled repository the member may read has a policy file (`ok`) or still needs one (`start`). */
+  /** Whether each enabled repository the member may read has a policy file (`ok`) or still needs one (`start`), and its open policy pull request. */
   async function upgradesRoute(member: Member): Promise<Response> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, member.tenantId), columns: { config: true } });
     const records = repoRecords(triageNs(tenant?.config)).filter((record) => record.connected && record.enabled);
