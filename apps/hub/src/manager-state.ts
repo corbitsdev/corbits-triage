@@ -573,9 +573,25 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
 /**
  * A pull request a manager claimed: its closed passes; while its manager is up, that run, the head of the newest pull
  * request mail recorded, the pass it has open, since when it has waited for that head's CI and what its reviewers on
- * that head have yet to report before their deadlines; and the pass a manager that went away left open.
+ * that head have yet to report before their deadlines; the pass a manager that went away left open; and, once no
+ * manager is up, the newest head its last pass left waiting for CI, with that pass's run and since when it waited.
  */
-export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass; waitingSince?: string; awaiting: AwaitedStage[] }; gone?: { runId: string; pass: Pass } };
+export type ManagedPull = {
+  pr: PullRequestRef;
+  history: ClosedPass[];
+  live?: { runId: string; head?: string; pass?: Pass; waitingSince?: string; awaiting: AwaitedStage[] };
+  gone?: { runId: string; pass: Pass };
+  waiting?: { runId: string; head: string; since: string };
+};
+
+/** The newest head, when the last pass on it of an ended claim waited for its CI. */
+async function endedWaiting(tx: Tx, tenantId: string, pr: PullRequestRef, history: Claim["history"]): Promise<ManagedPull["waiting"]> {
+  const head = await newestHead(tx, tenantId, pr);
+  if (head === undefined) return undefined;
+  const since = waitingSince(history, head);
+  const last = history.findLast((pass) => pass.head === head);
+  return since === undefined || last === undefined ? undefined : { runId: last.runId, head, since };
+}
 
 function awaitedOn(reviewers: readonly Reviewer[], head: string | undefined, now: Date): AwaitedStage[] {
   return AWAITED_STAGES.filter((kind) => reviewers.some((reviewer) => reviewer.kind === kind && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime()));
@@ -734,7 +750,8 @@ export async function managedPulls(db: DB["db"], tenantId: string, pulls: readon
       if (!pr) throw new Error(`manager_state ${key} is not a claim asked for`);
       const runId = claim.status === "live" ? claim.runId : undefined;
       if (runId === undefined) {
-        managed.push({ pr, history: claim.history });
+        const waiting = await endedWaiting(tx, tenantId, pr, claim.history);
+        managed.push({ pr, history: claim.history, ...(waiting && { waiting }) });
       } else if (await runGone(tx, runId, now)) {
         managed.push({ pr, history: claim.history, ...(claim.pass && { gone: { runId, pass: claim.pass } }) });
       } else {

@@ -110,11 +110,12 @@ function livePulls(runs: ObservedRuns): Map<string, LivePull> {
   return byPull;
 }
 
-/** A manager waiting for its head's CI shows that; one up between passes runs nothing, so it is awaiting its reviewers or has none out; a running one counts from the pass it took. */
+/** A head waiting for its CI shows that, whether its manager is up or ended to wait; one up between passes runs nothing, so it is awaiting its reviewers or has none out; a running one counts from the pass it took. */
 function runOf(live: LivePull["runs"][number] | undefined, now: Date): Run | null {
-  if (!live || live.status === "completed") return null;
-  const { runId } = live;
+  if (!live) return null;
   if (live.waitingSince !== undefined) return { status: "waiting-ci", since: live.waitingSince, headSha: live.headSha };
+  if (live.status === "completed") return null;
+  const { runId } = live;
   if (live.status === "failed" || live.status === "cancelled") return { runId, startedAt: live.startedAt, status: live.status };
   if (live.passAt === undefined) return live.awaiting === undefined ? null : { runId, status: "awaiting", on: live.awaiting };
   const startedAt = live.passAt;
