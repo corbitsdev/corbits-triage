@@ -3,15 +3,22 @@
 // mail does not go out. Shared by the manual-run route and the webhook
 // coalescer.
 import { setTimeout as sleep } from "node:timers/promises";
-import type { PrTriageRow } from "@corbits/triage-contracts";
+import { triageStopped, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
 import { TriageStoppedError } from "./deployment.js";
 import { BASE_MOVED, type ReconcilePolicy } from "./reconcile-plan.js";
 import type { RepoRecord } from "./tenant-config.js";
 import { TriageStateConflictError, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
+const DELIVERY_FAILED = "delivery failed: ";
+
 /** Why a head's mail did not go out: the next step a person takes when Triage is stopped, else the error. */
 export function deliveryFailure(err: unknown): string {
-  return err instanceof TriageStoppedError ? err.message : `delivery failed: ${String(err)}`;
+  return err instanceof TriageStoppedError ? err.message : `${DELIVERY_FAILED}${String(err)}`;
+}
+
+/** A head marked failed because its mail did not go out, as `deliveryFailure` words it. */
+export function undelivered(row: PrTriageRow, source: RepoSource): boolean {
+  return row.status === "failed" && row.error !== undefined && (row.error === triageStopped(source) || row.error.startsWith(DELIVERY_FAILED));
 }
 
 /** A pull request mail for the host's listener. */

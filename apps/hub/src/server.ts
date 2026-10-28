@@ -347,7 +347,6 @@ const wakeManager = createManagerWake({
 const wakeOverdue = createOverdueWake({ db: composition.db, wake: wakeManager, log: logJson });
 await archiveStoredPolicies(composition.db, composition.db, logJson);
 await keepExistingWorkspacesAsking(composition.db, logJson);
-const triageLiveness = createTriageLiveness({ db: composition.db, stalledAfterMs: triageStalledAfterMs(env), now, log: logJson });
 mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
@@ -632,6 +631,7 @@ const githubOpenPulls = createGithubOpenPulls({
 });
 const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
 const reconcilePolicy = triageReconcilePolicy(env);
+const triageLiveness = createTriageLiveness({ db: composition.db, store: triageStateStore, stalledAfterMs: triageStalledAfterMs(env), now, log: logJson });
 
 /** One host's reconciler. */
 function reconcilerFor(source: RepoSource) {
@@ -661,7 +661,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
     await watchListeners(tenant.id);
     await supersedeAll(tenant.id);
     await wakeOverdue(tenant.id);
-    await triageLiveness.watch(tenant.id);
+    await triageLiveness.watch(tenant);
   }
   await endNeverRan(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
   const outcomes: ReconcileOutcome[] = [];

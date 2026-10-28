@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
+import { triageStopped, type PrTriageRow } from "@corbits/triage-contracts";
 import { recordEvent, take } from "./manager-state.js";
 import { createTriageLiveness } from "./triage-liveness.js";
 import { migrateTriageTables } from "./triage-db.js";
@@ -34,10 +35,13 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
   }
 }
 
-function stack(db: Db) {
+const TENANT_ROW = { id: TENANT, config: { corbitsTriage: { repos: [RECORD] } } };
+
+function stack(db: Db, rows: PrTriageRow[] = []) {
   let at = Date.now();
   const logged: Record<string, unknown>[] = [];
-  const liveness = createTriageLiveness({ db, stalledAfterMs: STALLED_AFTER_MS, now: () => new Date(at), log: (entry) => logged.push(entry) });
+  const store = { load: async () => ({ rows, version: null }) };
+  const liveness = createTriageLiveness({ db, store, stalledAfterMs: STALLED_AFTER_MS, now: () => new Date(at), log: (entry) => logged.push(entry) });
   return {
     liveness,
     logged,
@@ -54,17 +58,17 @@ test("a mail no manager takes raises the alarm once past the alarm age, and a ta
     await recordEvent(db, TENANT, PR, "d1", { type: "webhook", head: "h1", payload: { kind: "pr" } });
 
     advance(STALLED_AFTER_MS - 60_000);
-    await liveness.watch(TENANT);
+    await liveness.watch(TENANT_ROW);
     expect(alarms()).toEqual([]);
 
     advance(2 * 60_000);
-    await liveness.watch(TENANT);
-    await liveness.watch(TENANT);
+    await liveness.watch(TENANT_ROW);
+    await liveness.watch(TENANT_ROW);
     expect(alarms()).toEqual(["triage_stalled"]);
 
     expect((await take(db, TENANT, PR, "run_manager")).outcome).toBe("pass");
-    await liveness.watch(TENANT);
-    await liveness.watch(TENANT);
+    await liveness.watch(TENANT_ROW);
+    await liveness.watch(TENANT_ROW);
     expect(alarms()).toEqual(["triage_stalled", "triage_stall_cleared"]);
   });
 }, 60_000);
@@ -79,11 +83,32 @@ test("a mail no manager took before the last take neither raises the alarm nor h
     await recordEvent(db, TENANT, PR, "d1", { type: "webhook", head: "h1", payload: { kind: "pr" } });
 
     advance(STALLED_AFTER_MS - 60_000);
-    await liveness.watch(TENANT);
+    await liveness.watch(TENANT_ROW);
     expect(alarms()).toEqual([]);
 
     advance(2 * 60_000);
-    await liveness.watch(TENANT);
+    await liveness.watch(TENANT_ROW);
     expect(alarms()).toEqual(["triage_stalled"]);
+  });
+}, 60_000);
+
+test("a head whose mail found no listener raises the alarm, and a take clears it", async () => {
+  await withDatabase(async (db) => {
+    const queuedAt = new Date().toISOString();
+    const row: PrTriageRow = { number: 7, headSha: "h1", status: "failed", error: triageStopped("github"), attempts: 0, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt };
+    const { liveness, advance, alarms } = stack(db, [row]);
+    await new Promise((done) => setTimeout(done, 5));
+
+    advance(STALLED_AFTER_MS - 60_000);
+    await liveness.watch(TENANT_ROW);
+    expect(alarms()).toEqual([]);
+
+    advance(2 * 60_000);
+    await liveness.watch(TENANT_ROW);
+    expect(alarms()).toEqual(["triage_stalled"]);
+
+    expect((await take(db, TENANT, PR, "run_manager")).outcome).toBe("idle");
+    await liveness.watch(TENANT_ROW);
+    expect(alarms()).toEqual(["triage_stalled", "triage_stall_cleared"]);
   });
 }, 60_000);
