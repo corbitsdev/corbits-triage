@@ -16,7 +16,7 @@ import { doRefused, failure, type PortalCredentialDeps } from "./portal-credenti
 import type { Member } from "../integrations/app.js";
 import type { PullRequestRef } from "../manager-state.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
-import { DeploymentNotReadyError } from "./deployment.js";
+import { DeploymentNotReadyError, ListenerUnroutedError } from "./deployment.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
 
@@ -141,7 +141,7 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     } catch (err) {
       deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
-      const unroutable = isRunTriggerUnroutable(err);
+      const unroutable = err instanceof ListenerUnroutedError || isRunTriggerUnroutable(err);
       return failure(unroutable ? 503 : 502, unroutable ? "service_not_running" : "hub_unavailable", `Could not send the approval: ${errorText(err)}. Try again.`);
     }
     deps.log({ level: "info", msg: "held_do_approved", ...logged });

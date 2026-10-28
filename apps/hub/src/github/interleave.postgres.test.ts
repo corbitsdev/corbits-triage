@@ -9,7 +9,7 @@ import type { CheckRun } from "@corbits/github-reads";
 import { emptyPack, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { createGithubPrTriage } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
-import { createTriageReconciler } from "./triage-reconciler.js";
+import { createTriageReconciler, createUnroutedTries } from "./triage-reconciler.js";
 import { createTriageStateStore, type TriageStateStore } from "./triage-state-store.js";
 import type { ObservedRuns } from "./manager-runs.js";
 
@@ -72,6 +72,7 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver, 
     store,
     readCheckPack: async () => ({ status: "ok", pack, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
     send: async ({ payload }) => deliver(payload),
+    unroutedTries: createUnroutedTries(),
     policy: DEFAULT_RECONCILE_POLICY,
     now: () => NOW,
     log: () => {},

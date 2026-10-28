@@ -166,8 +166,9 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       await deps.sendMail({ ...head, record: latest.record, payload });
     } catch (err) {
       if (err instanceof GithubRateLimited) return drop(open, entry, "github_rate_limited");
-      deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
-      if (await failDelivery(deps.store, head, err, deps.now())) deps.retry();
+      const unrouted = await failDelivery(deps.store, head, err, deps.now());
+      deps.log({ level: unrouted ? "info" : "error", msg: "forward_failed", ...entry, error: String(err) });
+      if (unrouted) deps.retry();
       return;
     }
     deps.log({ level: "info", msg: "forwarded", ...entry, workflow: latest.workflow });

@@ -15,8 +15,9 @@ import { resolve } from "node:path";
 import { authorize } from "@intx/authz";
 import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type DB, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
-import { hexDecode } from "@intx/types";
+import { deriveWorkflowRunId, hexDecode } from "@intx/types";
 import { generateId } from "@intx/hub-common";
+import { SidecarIdentityValidationError } from "@intx/hub-sessions";
 import { eq } from "drizzle-orm";
 import { getPath } from "hono/utils/url";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
@@ -111,7 +112,7 @@ import { fileRefusal, previewRepoPolicy, readRepoPolicy } from "./github/repo-po
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { githubUsage } from "./github/github-usage.js";
-import { createTriageReconciler, type ReconcileOutcome } from "./github/triage-reconciler.js";
+import { createTriageReconciler, createUnroutedTries, type ReconcileOutcome } from "./github/triage-reconciler.js";
 import { createRepoActivity } from "./github/repo-activity.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
@@ -309,6 +310,16 @@ function liveListenerOf(tenantId: string, source: RepoSource): Promise<LiveDeplo
 async function listenerAddress(tenantId: string, source: RepoSource): Promise<string | undefined> {
   return (await liveListenerOf(tenantId, source))?.address;
 }
+/** Whether stock's router routes the listener's allocation generation now; one whose sidecar's identity could not be checked is left to the send. */
+async function listenerRoutable(address: string): Promise<boolean> {
+  const target = await deployedAllocation(composition.db, deriveWorkflowRunId(address));
+  if (!target) return false;
+  try {
+    return await composition.sidecarRouter.isAllocatedWorkflowActive(target);
+  } catch (error) {
+    return error instanceof SidecarIdentityValidationError;
+  }
+}
 const { supersede, supersedeAll } = createSupersede({
   db: composition.db,
   async cancel(tenantId, runId, reason) {
@@ -319,6 +330,7 @@ const { supersede, supersedeAll } = createSupersede({
 const toListener = createManagerIntake({
   db: composition.db,
   listener: listenerAddress,
+  routable: listenerRoutable,
   readPull: function readPull(tenantId, record, number) {
     return pullRequests.withDiff(tenantId, record, number);
   },
@@ -554,6 +566,7 @@ async function workspacePublisher(tenantId: string): Promise<Publisher> {
 }
 // The portal build writes the workflows under its public files, which the hub serves from PORTAL_DIR once built.
 const workflowBundleDir = resolve(env.PORTAL_DIR ?? resolve(ROOT, "apps/web/public"), "packages");
+const unroutedTries = createUnroutedTries();
 const workflowRollout = createWorkflowRollout({
   db: composition.db,
   assets: composition.assetService,
@@ -579,7 +592,8 @@ const workflowRollout = createWorkflowRollout({
   status(tenantId, runId) {
     return composition.workflowLifecycleService.getStatus(tenantId, runId);
   },
-  live() {
+  live(tenantId, source) {
+    unroutedTries.reset(tenantId, source);
     triageLoop?.kick();
   },
   lock: createWorkspaceLock(composition.db.$client),
@@ -664,6 +678,7 @@ function reconcilerFor(source: RepoSource) {
     store: triageStateStore,
     readCheckPack,
     send: sendTriageMail,
+    unroutedTries,
     policy: reconcilePolicy,
     now,
     log: logJson,

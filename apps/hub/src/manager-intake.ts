@@ -5,9 +5,11 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
+import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, repoSourceOf, type RepoSource } from "@corbits/triage-contracts";
 import { reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
+import { DeploymentNotReadyError, ListenerUnroutedError, RunUnavailableError } from "./github/deployment.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import { dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, type PullRequestRef } from "./manager-state.js";
 
@@ -15,6 +17,8 @@ export type ManagerIntakeDeps = {
   db: DB["db"];
   /** The address of the workspace's live listener for the host, if it has one. */
   listener: (tenantId: string, source: RepoSource) => Promise<string | undefined>;
+  /** Whether the hub routes mail to the listener at this address now. */
+  routable: (address: string) => Promise<boolean>;
   /** The pull request as its host shows it now, with its diff. */
   readPull: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
   /** The repository's open pull requests and their heads, which a backlog mail stands for. */
@@ -70,9 +74,19 @@ async function mailedLive(deps: Delivery, tenantId: string, domain: string, pr: 
   return true;
 }
 
-/** Mails the listener the heads of `repo` it deploys a manager for. */
+/** The listener took no mail, so none was sent. */
+function reachedNoListener(err: unknown): boolean {
+  return isRunTriggerUnroutable(err) || err instanceof DeploymentNotReadyError || err instanceof RunUnavailableError;
+}
+
+/** Mails the listener the heads of `repo` it deploys a manager for; mail the listener took none of fails as `ListenerUnroutedError`. */
 async function deployFor(deps: Delivery, tenantId: string, address: string, source: RepoSource, repo: string, heads: readonly { number: number; head: string }[]): Promise<void> {
-  await deps.deliver(tenantId, address, { kind: "pr", repo, ...(source !== "github" && { repoSource: source }), tenantId, items: heads.map((pull) => ({ prNumber: pull.number, headSha: pull.head })) });
+  try {
+    await deps.deliver(tenantId, address, { kind: "pr", repo, ...(source !== "github" && { repoSource: source }), tenantId, items: heads.map((pull) => ({ prNumber: pull.number, headSha: pull.head })) });
+  } catch (err) {
+    if (reachedNoListener(err)) throw new ListenerUnroutedError(source, address, err);
+    throw err;
+  }
 }
 
 /**
@@ -180,6 +194,14 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     return Array.isArray(items) ? itemsOf(request, items) : named(request, prNumber, headSha);
   }
 
+  /** Whether any of the pull requests has no manager up. */
+  async function withoutManager(tenantId: string, source: RepoSource, repo: string, pulls: readonly Named[]): Promise<boolean> {
+    for (const pull of pulls) {
+      if (!(await liveManager(deps.db, tenantId, { source, repo, number: pull.number }))) return true;
+    }
+    return false;
+  }
+
   /** The head's review request when the policy turns code review on; a head that moved gets its own at its own intake. */
   async function withReviewRequest(tenantId: string, record: RepoRecord, pull: Named): Promise<Record<string, unknown>> {
     const { request } = pull;
@@ -205,6 +227,8 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
     if (!address || typeof repo !== "string") return false;
     const record = await recordOf(tenantId, repo, source);
     const pulls = await pullsOf(tenantId, record, request);
+    // A pull request with no manager up is deployed by the listener, so mail the listener cannot take records nothing.
+    if (!(await deps.routable(address)) && (await withoutManager(tenantId, source, repo, pulls))) throw new ListenerUnroutedError(source, address);
     const domain = domainOf(address);
     const start: Named[] = [];
     try {

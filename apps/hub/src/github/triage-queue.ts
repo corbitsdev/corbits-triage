@@ -3,9 +3,8 @@
 // mail does not go out. Shared by the manual-run route and the webhook
 // coalescer.
 import { setTimeout as sleep } from "node:timers/promises";
-import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { triageStopped, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
-import { DeploymentNotReadyError, TriageStoppedError } from "./deployment.js";
+import { ListenerUnroutedError, TriageStoppedError } from "./deployment.js";
 import { BASE_MOVED, type ReconcilePolicy } from "./reconcile-plan.js";
 import type { RepoRecord } from "./tenant-config.js";
 import { TriageStateConflictError, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
@@ -22,9 +21,9 @@ export function undelivered(row: PrTriageRow, source: RepoSource): boolean {
   return row.status === "failed" && row.error !== undefined && (row.error === triageStopped(source) || row.error.startsWith(DELIVERY_FAILED));
 }
 
-/** The mail reached no run: the host had no listener, the listener was still starting, or the hub held no route to it. */
-function reachedNoRun(err: unknown): boolean {
-  return err instanceof TriageStoppedError || err instanceof DeploymentNotReadyError || isRunTriggerUnroutable(err);
+/** The mail reached no listener: the host had none, or its listener took no mail. A manager that took none is an ordinary failure. */
+function reachedNoListener(err: unknown): boolean {
+  return err instanceof TriageStoppedError || err instanceof ListenerUnroutedError;
 }
 
 /** A pull request mail for the host's listener. */
@@ -124,7 +123,7 @@ async function replaceQueued(store: TriageStateStore, head: QueuedHead, next: (r
  * up; true when it did.
  */
 export async function failDelivery(store: TriageStateStore, head: QueuedHead, err: unknown, now: Date): Promise<boolean> {
-  const unrouted = reachedNoRun(err);
+  const unrouted = reachedNoListener(err);
   await replaceQueued(store, head, function failed(row) {
     const at = now.toISOString();
     return { ...row, status: "failed", error: deliveryFailure(err), undeliveredSince: row.undeliveredSince ?? row.queuedAt ?? at, ...(unrouted && { unrouted: true }), updatedAt: at };
@@ -163,8 +162,10 @@ export async function markBaseMoved(store: TriageStateStore, tenantId: string, r
     if (state.rows.every((row) => row.number === except)) return 0;
     const rows = state.rows.map(function moved(row): PrTriageRow {
       if (row.number === except) return row;
-      if (!staled(row)) return { ...row, staleBefore: at, updatedAt: at };
-      return { ...row, status: "stale", attempts: 0, error: BASE_MOVED, staleBefore: at, updatedAt: at };
+      // The base move decides when each head goes out again, one held for a listener included.
+      const { unrouted: _unrouted, ...rest } = row;
+      if (!staled(row)) return { ...rest, staleBefore: at, updatedAt: at };
+      return { ...rest, status: "stale", attempts: 0, error: BASE_MOVED, staleBefore: at, updatedAt: at };
     });
     try {
       await store.save(tenantId, repo, rows, state.version);

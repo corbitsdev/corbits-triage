@@ -6,9 +6,9 @@ import { unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
-import type { LiveDeployment } from "./deployment.js";
+import { ListenerUnroutedError, type LiveDeployment } from "./deployment.js";
 import type { HostedVerdict } from "./verdict-record-store.js";
-import { createTriageReconciler, type ReconcileOutcome } from "./triage-reconciler.js";
+import { createTriageReconciler, createUnroutedTries, type ReconcileOutcome } from "./triage-reconciler.js";
 import { createReconcileLoop } from "./reconcile-loop.js";
 import { createRepoActivity, type RepoActivity } from "./repo-activity.js";
 import { GithubRateLimited } from "./github-usage.js";
@@ -116,6 +116,7 @@ function harness(runs: Runs | (() => Runs), prs: OpenPr[] | Record<string, OpenP
   const logged: Array<Record<string, unknown>> = [];
   const listings: string[] = [];
   const now = options.now ?? (() => NOW);
+  const unroutedTries = createUnroutedTries();
   const reconcile = createTriageReconciler({
     source: "github",
     tenants: async function tenants() {
@@ -152,6 +153,7 @@ function harness(runs: Runs | (() => Runs), prs: OpenPr[] | Record<string, OpenP
       if (refused) throw refused;
       delivered.push({ payload: payload as Record<string, unknown> });
     },
+    unroutedTries,
     policy: triageReconcilePolicy({ ...(options.maxInFlight !== undefined && { TRIAGE_MAX_IN_FLIGHT: options.maxInFlight }) }),
     now,
     log: (entry) => logged.push(entry),
@@ -172,7 +174,7 @@ function harness(runs: Runs | (() => Runs), prs: OpenPr[] | Record<string, OpenP
       },
     };
   }
-  return { reconcile, listings, delivered, saved, logged, store: store() };
+  return { reconcile, listings, delivered, saved, logged, unroutedTries, store: store() };
 }
 
 describe("triage reconciler", () => {
@@ -478,6 +480,18 @@ describe("triage reconciler", () => {
     await reconcile();
     expect(delivered.map((entry) => mailedNumbers([entry]))).toEqual([[2]]);
     expect(saved.get(REPO)?.find((row) => row.number === 1)).toMatchObject({ status: "failed", error: "delivery failed: Error: 502 Bad Gateway" });
+  });
+
+  test("a head whose mail reaches no listener asks for the short retry for 19 passes in a row, then logs once and waits for the ordinary pass until its listener runs", async () => {
+    const sendErrors: Record<number, Error> = { 1: new ListenerUnroutedError("github", formatRunAddress("run_gone", DOMAIN)) };
+    const { reconcile, saved, logged, unroutedTries } = harness({}, heads(1, 1), { sendErrors });
+    const outcomes: ReconcileOutcome[] = [];
+    for (let pass = 0; pass < 21; pass += 1) outcomes.push(await reconcile());
+    expect(outcomes.map((outcome) => outcome.unrouted === true)).toEqual([...Array<boolean>(19).fill(true), false, false]);
+    expect(logged.filter((entry) => entry["msg"] === "triage_unrouted_waiting")).toEqual([{ level: "warn", msg: "triage_unrouted_waiting", tenantId: TENANT_ID, repo: REPO, pr: 1, headSha: "sha1", tries: 20 }]);
+    expect(saved.get(REPO)?.find((row) => row.number === 1)).toMatchObject({ status: "failed", unrouted: true, attempts: 1 });
+    unroutedTries.reset(TENANT_ID, "github");
+    expect((await reconcile()).unrouted).toBe(true);
   });
 
   test("queued heads that have not started hold the budget until their runs complete", async () => {

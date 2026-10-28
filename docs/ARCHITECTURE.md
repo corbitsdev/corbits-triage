@@ -351,15 +351,27 @@ any other tenant or an unknown sender.
 
   Mail is addressed to a listener's run, and stock holds none for a run that
   has gone, so a head whose mail reached no listener is held in its
-  triage-state row instead: the row fails with `unrouted`. The reconciler
-  queues an unrouted head on its first pass with a listener up, without
-  backoff, and those tries add nothing to the head's attempts. A coalescer
-  mail that reached no listener starts a pass at once, whose listener check
-  rolls a workspace left with none; a pass that left a head unrouted runs
-  again 15 seconds later; and a roll starts a pass as soon as its listener
-  runs, logging `workflow_release_live`, before it waits for the listeners it
-  replaces to stop. A pull request opened while its listener is replaced is
-  therefore mailed as soon as the new one runs.
+  triage-state row instead: the row fails with `unrouted`. That is mail sent
+  when the host had no listener, or that its listener took none of because
+  it was still starting, stopping or gone, or the hub held no route to it;
+  mail a live manager did not take fails as usual. Before recording a pull
+  request's event, the intake asks stock's router whether it routes the
+  listener, when a pull request named has no manager up, so mail the
+  listener cannot take records nothing. The reconciler queues an unrouted
+  head on its first pass with a listener up, without backoff, and those tries
+  add nothing to the head's attempts. A coalescer mail that reached no
+  listener starts a pass at once, whose listener check rolls a workspace
+  left with none, and a pass whose mail for a head reached no listener runs
+  again 15 seconds later, for at most 20 passes in a row per head; past that
+  the head logs `triage_unrouted_waiting` once and waits for the ordinary
+  pass. A listener taking the head's mail, or a roll finding the host's
+  listener running, starts those 20 passes over. A roll starts a pass as
+  soon as its new listener runs, logging `workflow_release_live`, before it
+  waits for the listeners it replaces to stop, and also when it finds the
+  host's listener already current and running. A base branch move clears
+  `unrouted`, since it decides when each head goes out again. A pull request
+  opened while its listener is replaced is therefore mailed as soon as the
+  new one runs.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which lives until its head
   has its final verdict, and the only workflow that writes to the pull request. It takes

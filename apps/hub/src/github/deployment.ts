@@ -27,16 +27,37 @@ export class DeploymentNotReadyError extends Error {
   }
 }
 
+/** Interchange refused mail to a run that is stopping, ended or gone, so none was sent. */
+export class RunUnavailableError extends Error {}
+
+/** The host's listener took no mail: it was still starting, stopping or gone, or the hub held no route to it. Nothing was sent. */
+export class ListenerUnroutedError extends NoLiveDeploymentError {
+  constructor(source: RepoSource, address: string, cause?: unknown) {
+    super(TRIAGE_LISTENERS[source]);
+    this.message = cause === undefined ? `listener ${address} is not routable` : `listener ${address} took no mail: ${String(cause)}`;
+    this.cause = cause;
+  }
+}
+
+/** Run states Interchange refuses mail in. */
+const UNAVAILABLE_RUN_CODES = new Set(["workflow_run_stopping", "workflow_run_terminal"]);
+
 /** Interchange's sender gate refused the mail; a worker copied from a listener deployed before the gate keeps refusing until the listener is redeployed. */
 export class SenderRefusedError extends Error {
   readonly code = MAIL_ADMISSION_DENIED_CODE;
 }
 
-/** @corbits/webhooks 0.3.0 ignores `notReady` and routes the mail without grants; this fails it so the caller retries. Drop once the package handles it. */
+/**
+ * @corbits/webhooks 0.3.0 ignores `notReady` and routes the mail without grants; this fails it so the caller retries.
+ * Drop once the package handles it. A run Interchange refuses mail to as stopping, ended or gone fails as
+ * `RunUnavailableError`, since the package reports it only as a plain error.
+ */
 export function readyMaterializer(materialize: RunTriggerMaterialize): RunTriggerMaterialize {
   return async function materializeReady(args) {
     const grants = await materialize(args);
     if (grants.outcome === "notReady") throw new DeploymentNotReadyError();
+    if (grants.outcome === "skip") throw new RunUnavailableError(`${args.agentAddress} is not a live deployment`);
+    if (grants.outcome === "rejected" && UNAVAILABLE_RUN_CODES.has(grants.code)) throw new RunUnavailableError(grants.message);
     return grants;
   };
 }

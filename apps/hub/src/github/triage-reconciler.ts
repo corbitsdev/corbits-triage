@@ -23,6 +23,46 @@ import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore
 
 export type ReconcileTenant = { id: string; domain: string; config: unknown };
 
+/** Passes in a row, about five minutes of short retries, that a head whose mail reached no listener is retried after the short retry. */
+const UNROUTED_SHORT_TRIES = 20;
+
+/**
+ * How many passes in a row each head's mail reached no listener, in memory: a restart starts the short retries over.
+ * A head past `UNROUTED_SHORT_TRIES` waits for the ordinary pass until a listener takes its mail or a roll's listener runs.
+ */
+export function createUnroutedTries() {
+  const tries = new Map<string, number>();
+
+  function hostOf(tenantId: string, source: RepoSource): string {
+    return `${tenantId}\n${source}\n`;
+  }
+
+  function keyOf(tenantId: string, source: RepoSource, repo: string, number: number, headSha: string): string {
+    return `${hostOf(tenantId, source)}${repo}\n${runKey(number, headSha)}`;
+  }
+
+  return {
+    /** Counts a pass whose mail for the head reached no listener; how many in a row. */
+    missed(tenantId: string, source: RepoSource, repo: string, number: number, headSha: string): number {
+      const key = keyOf(tenantId, source, repo, number, headSha);
+      const count = (tries.get(key) ?? 0) + 1;
+      tries.set(key, count);
+      return count;
+    },
+    /** A listener took the head's mail. */
+    took(tenantId: string, source: RepoSource, repo: string, number: number, headSha: string): void {
+      tries.delete(keyOf(tenantId, source, repo, number, headSha));
+    },
+    /** The host's listener runs, so each of its heads gets its short retries again. */
+    reset(tenantId: string, source: RepoSource): void {
+      const host = hostOf(tenantId, source);
+      for (const key of tries.keys()) if (key.startsWith(host)) tries.delete(key);
+    },
+  };
+}
+
+export type UnroutedTries = ReturnType<typeof createUnroutedTries>;
+
 export type TriageReconcilerDeps = {
   /** The host whose repositories this reconciler brings to a triaged head. */
   source: RepoSource;
@@ -46,6 +86,7 @@ export type TriageReconcilerDeps = {
   store: TriageStateStore;
   readCheckPack: PolicyReader;
   send: (job: TriageJob) => Promise<void>;
+  unroutedTries: UnroutedTries;
   policy: ReconcilePolicy;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
@@ -112,7 +153,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   let limitedUntil: number | undefined;
   /** The limit last logged, so one limit is logged once rather than per repository per pass. */
   let loggedLimit: number | undefined;
-  /** Whether this pass left a head unrouted. */
+  /** Whether a head this pass mailed reached no listener and keeps its short retry. */
   let unrouted = false;
 
   /** False for a GitHub rate limit, which is noted for the pass's outcome rather than logged and retried. */
@@ -250,18 +291,26 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       const headSha = headShaOf(queued);
       const mailed = { items: [{ prNumber: queued.number, headSha }], ...(queued.noWait && { noWait: true }) };
       const payload = "pack" in repo ? mailPayload(repo.record, repo.policy, repo, mailed) : unreadablePayload(repo.record, repo.policy, repo, mailed);
+      const entry = { tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha };
       try {
         await deps.send({ tenantId: pass.tenantId, repo: key, number: queued.number, headSha, record: repo.record, payload });
       } catch (err) {
         if (err instanceof GithubRateLimited) throw err;
-        deps.log({ level: "error", msg: "forward_failed", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, error: String(err) });
-        if (await failDelivery(deps.store, { tenantId: pass.tenantId, repo: key, number: queued.number, headSha }, err, deps.now())) unrouted = true;
+        const missed = await failDelivery(deps.store, { tenantId: pass.tenantId, repo: key, number: queued.number, headSha }, err, deps.now());
+        deps.log({ level: missed ? "info" : "error", msg: "forward_failed", ...entry, error: String(err) });
+        if (missed) noteUnrouted(entry);
         continue;
       }
-      deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, reason: queued.reason });
+      deps.unroutedTries.took(pass.tenantId, deps.source, repo.record.name, queued.number, headSha);
+      deps.log({ level: "info", msg: "triage_requeued", ...entry, reason: queued.reason });
     }
-    // An unrouted head the in-flight limit kept back this pass.
-    if (claimed.rows.some((row) => row.unrouted)) unrouted = true;
+  }
+
+  /** Asks for the short retry while the head has tries left, and logs once when it falls back to the ordinary pass. */
+  function noteUnrouted(entry: { tenantId: string; repo: string; pr: number; headSha: string }): void {
+    const tries = deps.unroutedTries.missed(entry.tenantId, deps.source, entry.repo, entry.pr, entry.headSha);
+    if (tries < UNROUTED_SHORT_TRIES) unrouted = true;
+    if (tries === UNROUTED_SHORT_TRIES) deps.log({ level: "warn", msg: "triage_unrouted_waiting", ...entry, tries });
   }
 
   /** True when the pass is worth repeating soon: a repository's pass failed. */

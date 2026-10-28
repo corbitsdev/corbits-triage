@@ -68,7 +68,6 @@ function parseRow(raw: unknown): PrTriageRow | null {
   const undeliveredSince = optionalString(row.undeliveredSince);
   const staleBefore = optionalString(row.staleBefore);
   const error = optionalString(row.error);
-  if (row.unrouted !== undefined && row.unrouted !== true) return null;
   return {
     number,
     headSha,
