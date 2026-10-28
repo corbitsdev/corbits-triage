@@ -167,7 +167,7 @@ describe("focused rendering", () => {
   test("a rule the decision model left unsure waits while the host's checks still run, keeping the decision model's probability", () => {
     const running = { check: "ci-green", kind: "machine" as const, result: "unconfirmed" as const, reason: "checks are still running", evidence: ["build"], output: { kind: "could-not-check" as const, reason: "checks are still running" } };
     const det = { ...FOCUSED_DET, checks: [running] };
-    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(`${focusedAnswer(0.5, 0.4)}${NOT_INSTRUCTED}`), focused: focusedPlan({}).focused, choice: CHOICE.pass, hostAwaited: "checks are still running" });
+    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(`${focusedAnswer(0.5, 0.4)}${NOT_INSTRUCTED}`), focused: focusedPlan({}).focused, choice: CHOICE.pass, hostAwaited: "ci-pending" });
     expect(verdict).toMatchObject({ verdict: "unsure", score: 0.8, waiting: true, feedback: "", reason: "checks are still running" });
   });
 
@@ -403,7 +403,7 @@ describe("a policy without a decision-model rule", () => {
 
   test("passes without the model when every rule passes, and waits while CI is pending", () => {
     expect(renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("pass")]) })).toMatchObject({ verdict: "pass", score: null, reason: "every rule passed, and the policy has no decision-model rule" });
-    expect(renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("unconfirmed")]), hostAwaited: "checks are still running" })).toMatchObject({ waiting: true, degraded: null, reason: "checks are still running", labels: ["Triage: Waiting for CI"], feedback: "" });
+    expect(renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("unconfirmed")]), hostAwaited: "ci-pending" })).toMatchObject({ waiting: true, degraded: null, reason: "checks are still running", labels: ["Triage: Waiting for CI"], feedback: "" });
   });
 });
 

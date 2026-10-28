@@ -156,17 +156,20 @@ export const DEPLOYMENT_UNREADABLE = "This Triage deployment can't read the poli
 
 type CiRule = { status: string; reason: string; failed: boolean | null; names: (facts: PrFacts) => string[] };
 
+/** Why the CI green and no-merge-conflicts rules, and a verdict waiting on the host, are not confirmed yet. */
+export const CI_NOT_STARTED = "checks have not started yet";
+export const CI_RUNNING = "checks are still running";
+export const MERGEABILITY_UNKNOWN = "mergeability not yet computed";
+
 // `none` is a head with no check runs at all (skipped or neutral runs complete as success), so the repository has no
 // checks to wait for and the rule passes.
 const CI_RULE: Record<PrFacts["checks"], CiRule> = {
   success: { status: "passing", reason: "required checks are passing", failed: false, names: () => [] },
   failure: { status: "failing", reason: "required checks are failing", failed: true, names: (facts) => facts.failingChecks },
-  pending: { status: "pending", reason: "checks are still running", failed: null, names: (facts) => facts.pendingChecks },
+  pending: { status: "pending", reason: CI_RUNNING, failed: null, names: (facts) => facts.pendingChecks },
   cancelled: { status: "cancelled", reason: "checks were cancelled and need a re-run", failed: null, names: (facts) => facts.cancelledChecks },
   none: { status: "none", reason: "no checks configured", failed: false, names: () => [] },
 };
-
-const CI_NOT_STARTED = "checks have not started yet";
 
 const STATE_RANK: Record<WorkflowState, number> = {
   "ready-monitoring": 0,
@@ -445,7 +448,7 @@ function resultOf(failed: boolean | null): CheckResult["result"] {
 }
 
 function conflictReason(conflicted: boolean | null): string {
-  if (conflicted === null) return "mergeability not yet computed";
+  if (conflicted === null) return MERGEABILITY_UNKNOWN;
   return conflicted ? "merge conflicts with base" : "no merge conflicts";
 }
 
@@ -487,7 +490,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       kind: "values",
       values: { changesRequested: requested.length },
     });
-    if (on("no-merge-conflicts") && !findings.length && facts.mergeable === null) add("no-merge-conflicts", "stale-unknown", "mergeability not yet computed");
+    if (on("no-merge-conflicts") && !findings.length && facts.mergeable === null) add("no-merge-conflicts", "stale-unknown", MERGEABILITY_UNKNOWN);
     if (on("no-merge-conflicts")) {
       const conflicted = facts.mergeable === null ? null : !facts.mergeable;
       const reason = conflictReason(conflicted);

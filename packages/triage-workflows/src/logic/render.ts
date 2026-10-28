@@ -4,7 +4,7 @@ import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
-import { forMaintainer, hasModelChecks, holdsOthersChanges, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult, type PrFacts } from "./checks.js";
+import { CI_NOT_STARTED, CI_RUNNING, forMaintainer, hasModelChecks, holdsOthersChanges, MERGEABILITY_UNKNOWN, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult, type PrFacts } from "./checks.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, DOCS_CHOICES, DUPLICATE_LEVELS, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
@@ -124,7 +124,7 @@ export interface RenderInput {
   /** Why the verdict question could not be asked: the pull request is too large for it. */
   choiceRefused?: string;
   /** What the host has still to settle before the verdict, from `hostAwaited`. */
-  hostAwaited?: string;
+  hostAwaited?: HostAwaited;
 }
 
 export type Actor = "author" | "maintainer" | "system";
@@ -541,15 +541,20 @@ function unsettledMachine(c: CheckResult): boolean {
   return c.kind === "machine" && c.result === "unconfirmed";
 }
 
+/** What a head's verdict waits on the host for: CI that has not started or is still running, or mergeability. */
+export type HostAwaited = "ci-starting" | "ci-pending" | "mergeability";
+
+const HOST_AWAITED_TEXT: Record<HostAwaited, string> = { "ci-starting": CI_NOT_STARTED, "ci-pending": CI_RUNNING, mergeability: MERGEABILITY_UNKNOWN };
+
 /**
  * What the head's verdict waits on the host for, read from its facts: CI still running where the policy reads CI (its
  * CI green rule, or a step's CI condition, approve or merge), or mergeability not computed where it checks for
  * conflicts. Nothing once the manager waits no longer (`noWait`).
  */
-export function hostAwaited(item: { facts: Pick<PrFacts, "checks" | "pendingChecks" | "mergeable">; pack?: CheckPack; noWait?: true }): string | undefined {
+export function hostAwaited(item: { facts: Pick<PrFacts, "checks" | "pendingChecks" | "mergeable">; pack?: CheckPack; noWait?: true }): HostAwaited | undefined {
   if (item.noWait === true || item.pack === undefined) return undefined;
-  if (item.facts.checks === "pending" && dependsOnCi(item.pack)) return item.facts.pendingChecks.length === 0 ? "checks have not started yet" : "checks are still running";
-  if (item.facts.mergeable === null && catalogCheckEnabled(item.pack, "no-merge-conflicts")) return "mergeability not yet computed";
+  if (item.facts.checks === "pending" && dependsOnCi(item.pack)) return item.facts.pendingChecks.length === 0 ? "ci-starting" : "ci-pending";
+  if (item.facts.mergeable === null && catalogCheckEnabled(item.pack, "no-merge-conflicts")) return "mergeability";
   return undefined;
 }
 
@@ -811,7 +816,8 @@ export const INSTRUCTED_REASON = "the pull request tries to direct the decision 
  * the host's own checks waits for them instead of being Unsure, unless the hub waits no longer.
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, repo, repoSource, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, hostAwaited } = input;
+  const { author, repo, repoSource, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused } = input;
+  const awaited = input.hostAwaited === undefined ? undefined : HOST_AWAITED_TEXT[input.hostAwaited];
   const evaluated = evaluateModel(input);
   const { deciding, labelled } = splitLabelled(det, evaluated.checks);
   const ctx = { author, repo, repoSource, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, stack: input.stack, labelled };
@@ -822,15 +828,15 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   if (hard.length > 0) return withChecks({ ...render(det.state), verdict: "fail", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
   const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
   if (!det.needsJudgment) {
-    if (hostAwaited !== undefined) return waitingOf(hostAwaited, null);
+    if (awaited !== undefined) return waitingOf(awaited, null);
     const verdict = withChecks({ ...render(det.state), verdict: "unsure", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
     return { ...verdict, feedback: "" };
   }
   if (evaluated.instructed) return unsureOf(INSTRUCTED_REASON);
   // A judge held back for the host's checks has not decided anything yet, so the head waits for them.
-  if (judgeSkipped === true && hostAwaited !== undefined) return waitingOf(hostAwaited, null);
+  if (judgeSkipped === true && awaited !== undefined) return waitingOf(awaited, null);
   if (!decidesByModel(det)) {
-    if (hostAwaited !== undefined) return waitingOf(hostAwaited, null);
+    if (awaited !== undefined) return waitingOf(awaited, null);
     if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
     if (flaggedReason) return unsureOf(flaggedReason);
     return unsureOf(RULES_UNSURE_REASON);
@@ -849,10 +855,10 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   // A judged rule's own answer decides it, so nothing the pull request says to the verdict question can pass it.
   const failing = deciding.filter((check) => check.result === "fail" && !isFlagged(check)).map((check) => reasonOf(check, det.sources));
   if (failing.length) return withChecks({ ...render(VERDICT_STATES.fail), verdict: "fail", degraded: null, reason: failing.join("; ") }, checks, null, reasons, ctx);
-  if (flaggedReason) return hostAwaited === undefined ? unsureOf(flaggedReason) : waitingOf(hostAwaited, null);
+  if (flaggedReason) return awaited === undefined ? unsureOf(flaggedReason) : waitingOf(awaited, null);
   if (choice === undefined) return unsureOf(outage, "inference-outage");
   const decided = decide(choice);
-  if (decided !== "fail" && hostAwaited !== undefined) return waitingOf(hostAwaited, choice.pass);
+  if (decided !== "fail" && awaited !== undefined) return waitingOf(awaited, choice.pass);
   if (decided === "pass" && unconfirmed.length > 0) return unsureOf(UNCONFIRMED_REASON, null, choice.pass);
   return withChecks({ ...render(VERDICT_STATES[decided]), verdict: decided, degraded: null, reason: DECIDED_REASONS[decided] }, checks, choice.pass, reasons, ctx);
 }
