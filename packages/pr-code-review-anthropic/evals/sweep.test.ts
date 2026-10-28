@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { orderedGroups, type Candidate, type Group } from "@corbits/pr-code-review/actions/review";
-import { parseFindings } from "@corbits/pr-code-review/findings";
+import { parseFindings, type Site } from "@corbits/pr-code-review/findings";
 import type { CaseKey } from "./cases.js";
 import { commentsOf, KEEP_ALL, scoreCutoff, type SavedOutputs } from "./sweep.js";
 
@@ -16,11 +16,11 @@ function foundOf(output: { reply: string }, finder: "diff" | "repo"): Candidate[
   return parsed.findings.map((finding) => ({ ...finding, finders: [finder], reports: 1 }));
 }
 
-/** Saved outputs as the workflow writes them, from the finder replies, the kept candidates and the consolidate step's groups. */
-function saved(diff: object[], repo: object[], kept: Candidate[], groups: Group[]): SavedOutputs {
+/** Saved outputs as the workflow writes them, from the finder replies, the kept candidates, the consolidate step's groups and the sites it anchored them at. */
+function saved(diff: object[], repo: object[], kept: Candidate[], groups: Group[], sites: Site[] = kept.map(({ path, start, end }) => ({ path, start, end }))): SavedOutputs {
   const findDiff = reply(diff);
   const findRepo = reply(repo);
-  const consolidated = { groups, sites: kept.map(({ path, start, end }) => ({ path, start, end })), unreadFindings: [] };
+  const consolidated = { groups, sites, unreadFindings: [] };
   const findings = orderedGroups(kept, consolidated).map((o) => o.finding);
   return {
     findDiff,
@@ -51,12 +51,19 @@ test("each comment carries its group's top confidence and agreement, whatever sh
   ]);
 });
 
-test("findings at one site with one title keep their own groups' confidences", () => {
+test("findings anchored at one site with one title keep their own groups' confidences", () => {
   const twin = { path: "src/a.ts", start: 10, end: 10, title: "same words", priority: 2 };
-  const outputs = saved([{ ...twin, confidence: 0.9 }, { ...twin, confidence: 0.2 }], [], [{ ...twin, finders: ["diff"], reports: 1 }, { ...twin, finders: ["diff"], reports: 1 }], [
-    { defect: "", members: [0], representative: 0 },
-    { defect: "", members: [1], representative: 1 },
-  ]);
+  const shifted = { ...twin, start: 12, end: 12 };
+  const outputs = saved(
+    [{ ...twin, confidence: 0.9 }, { ...shifted, confidence: 0.2 }],
+    [],
+    [{ ...twin, finders: ["diff"], reports: 1 }, { ...shifted, finders: ["diff"], reports: 1 }],
+    [
+      { defect: "", members: [0], representative: 0 },
+      { defect: "", members: [1], representative: 1 },
+    ],
+    [twin, twin],
+  );
   expect(commentsOf(outputs).map((c) => c.confidence)).toEqual([0.9, 0.2]);
 });
 

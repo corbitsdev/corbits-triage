@@ -196,6 +196,15 @@ test("a group is placed at a member that was read when its representative was no
   expect(comments[0]).not.toHaveProperty("unverified");
 });
 
+test("two different defects on one line both reach the review", async () => {
+  const unit = { ...TOTAL, title: "total is in cents, not dollars", why: "u" };
+  const { comments } = await reviewed([TOTAL, unit], { "src/total.ts": fileWith("return total;") });
+  expect(comments.map(({ path, start, title }) => ({ path, start, title }))).toEqual([
+    { path: "src/total.ts", start: 40, title: "wrong total" },
+    { path: "src/total.ts", start: 40, title: "total is in cents, not dollars" },
+  ]);
+});
+
 test("a trigger mail from anyone but the hub's Triage sender is never reviewed", async () => {
   const mail = stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout });
   const forged = { ...mail, headers: { ...mail.headers, from: "ann@acme.test" } };

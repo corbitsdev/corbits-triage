@@ -30,8 +30,8 @@ never puts those names in a prompt.
 2. **findDiff** reads the diff; **findRepo** reads that folder within a token budget. They run in parallel. An answer
    with no findings list fails the finder's step; a repository finder that spent its budget before answering found
    nothing and the review says it stopped early.
-3. **candidates** folds exact duplicates (same file, overlapping lines, same first quoted line) and remembers which
-   finders reported each finding.
+3. **candidates** folds exact duplicates (same file, same lines, same title ignoring case and spacing) and remembers
+   which finders reported each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
    findings by defect. A group none of whose findings had a line of its file shown to the model is marked `unverified`.
 5. **check** verifies each group on every review: the finding, the diff hunks that change its lines, and the read
