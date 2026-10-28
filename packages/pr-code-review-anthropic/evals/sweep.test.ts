@@ -23,7 +23,6 @@ function saved(diff: object[], repo: object[], kept: Candidate[], groups: Group[
   const consolidated = { groups, sites: kept.map(({ path, start, end }) => ({ path, start, end })), excerpts: kept.map(() => ""), unreadFindings: [] };
   const findings = orderedGroups(kept, consolidated).map((o) => o.finding);
   return {
-    reviewInput: { request: {} },
     findDiff,
     findRepo,
     candidates: { found: [...foundOf(findDiff, "diff"), ...foundOf(findRepo, "repo")], kept },

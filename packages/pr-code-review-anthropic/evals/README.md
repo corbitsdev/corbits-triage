@@ -48,9 +48,13 @@ A clean case becomes a defect case only with a confirmed added bug.
 A bug is caught when a finding on its path overlaps any of its sites within
 three lines. A finding that hits no bug is a false alarm, so a complete key
 makes false alarms meaningful. A clean case is flagged when anything is
-reported on it. `--e2e` scores the finders' union, the consolidated findings,
-the confirmed ones (all of them unless `--check`), the final review, and the
-review's comments found by both finders and by one.
+reported on it. `--e2e` checks every finding, as every review does, and
+scores the finders' union, the consolidated findings (what the review posted
+before the check ran on every request), the ones the check confirmed, the
+final review, and the review's comments found by both finders and by one. A
+stage's precision is its findings that hit a bug over all its findings, so the
+consolidated and final rows give precision and recall without the check and
+with it from one run.
 
 ## Running
 
@@ -64,8 +68,7 @@ bun run eval:review -- --e2e --out e2e.json
 Each step runs on the model it is deployed with: Opus 5.5 for the diff
 finder, Haiku 5.5 for the rest. `--<role>-model` overrides one.
 
-`--cases a,b` runs a subset. `--check` turns the check step on, with
-`--check-model` and `--check-effort` for it. Other modes, listed at the top of
+`--cases a,b` runs a subset. Other modes, listed at the top of
 `review.eval.ts`: a finder alone with any prompt (`--prompt`) and rescoring
 saved finder runs (`--rescore`).
 

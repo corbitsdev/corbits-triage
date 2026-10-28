@@ -920,7 +920,11 @@ its tools are the host read bundle and repository reads confined to that
 folder. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
-GitHub show as "Not checked against the file".
+GitHub show as "Not checked against the file". The check step reads every
+consolidated group in one more model call each: the candidate, its quoted code
+and the file lines around it, answered real or not real with a reason. Only
+groups it finds real are written up and posted; the others stay in the
+reported result's `dropped`, each with the verdict and reason.
 
 Beside the model steps, one step runs a tool and keeps what it says, as structured
 findings (source, rule, path, line, message, severity, fix when the tool gives

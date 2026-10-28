@@ -36,7 +36,7 @@ function reply(value: unknown) {
 
 /** Every message the review builds for one pull request, its findings and the consolidate step's excerpts. */
 async function messages(request: { title: string; description: string; diff: string; cut?: { lines: number; of: number; unread: string[] } }, plan: string, finding: Record<string, unknown>, excerpt: string) {
-  const planned = await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", ...request, checkout, check: true }));
+  const planned = await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", ...request, checkout }));
   const reviewInput = { output: planned };
   const finders = await findersInput({ reviewInput, plan: reply(plan) });
   const folded = await candidates({ reviewInput, findDiff: reply({ findings: [finding] }), findRepo: reply({ findings: [] }) });
@@ -130,13 +130,13 @@ function readsFrom(files: Record<string, string[]>) {
   };
 }
 
-/** The review of one diff finder reply over `files`, the consolidate model replying `groups`. */
+/** The review of one diff finder reply over `files`, the consolidate model replying `groups` and the check finding each real. */
 async function reviewed(findings: unknown[], files: Record<string, string[]>, groups: unknown[] = []) {
   const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", title: "t", description: "d", checkout, diff: diffOf("src/a.ts", "x") })) };
   const folded = await candidates({ reviewInput, findDiff: reply({ findings }), findRepo: reply({ findings: [] }) });
   const consolidate = reply((await consolidated(folded.consolidate, readsFrom(files), groups)).replied);
   const checked = await checks({ reviewInput, candidates: { output: folded }, consolidate });
-  const written = await writeInput({ reviewInput, candidates: { output: folded }, checks: { output: checked }, check: { output: [] } });
+  const written = await writeInput({ reviewInput, candidates: { output: folded }, checks: { output: checked }, check: { output: checked.checks.map(() => reply({ verdict: "real", reason: "r" }).output) } });
   return review({ reviewInput, writeInput: { output: written }, write: reply({ summary: "One defect.", comments: [{ finding: 0, title: "wrong total", body: "b" }] }) });
 }
 

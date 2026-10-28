@@ -13,7 +13,7 @@ under `prefix`, as `codeReviewReviewer`, the review a pull request's manager dep
 
 The request is `{ kind: "code-review", title, description, diff, checkout }`. The title and description are as the host
 shows them, without hidden text. Optional fields are `number` (the pull request's), `efforts` per step,
-`budgets.repoFinder`, `check`, and `cut` (`{ lines, of, unread? }`) when the sender cut the diff for size, `unread`
+`budgets.repoFinder`, and `cut` (`{ lines, of, unread? }`) when the sender cut the diff for size, `unread`
 naming the files it cut part-way or left out; the review carries it and never puts those names in a prompt.
 
 ### Process
@@ -32,9 +32,11 @@ naming the files it cut part-way or left out; the review carries it and never pu
    finders reported each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
    findings by defect. A group none of whose findings had a line of its file shown to the model is marked `unverified`.
-5. **check** confirms each group, only when the request sets `check`.
-6. **write** comments on every group, most severe and most agreed-on first; each comment carries the code it quotes
-   and how many finders reported it.
+5. **check** reads each group's candidate, the code it quotes and the file lines around it in one model call per
+   group, on every review, and answers real or not real with a reason. A group it finds not real is
+   left out of the review and kept in its `dropped`, in its finder's words with the verdict and reason.
+6. **write** comments on every group left, most severe and most agreed-on first; each comment carries the code it
+   quotes and how many finders reported it.
 
 A failed model call fails its step, as does an answer that can't be read; every model step then tries again twice, 5
 and 10 seconds later. A step that fails for good fails the review, which shows as not finished.

@@ -37,6 +37,8 @@ const SHA = "0123456789abcdef0123456789abcdef01234567";
 const FILE = "export function add(a: number, b: number) {\n  return a - b;\n}\n";
 const DIFF = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,3 +1,3 @@\n export function add(a: number, b: number) {\n-  return a + b;\n+  return a - b;\n }\n";
 const FINDING = { path: "src/a.ts", start: 2, end: 2, priority: 1, confidence: 0.9, title: "add subtracts", why: "it uses -", trigger: "add(1, 1)", code: "  return a - b;" };
+/** A candidate the check step answers not real. */
+const PLANTED = { path: "src/a.ts", start: 1, end: 1, priority: 2, confidence: 0.6, title: "add is not exported", why: "callers cannot import it", trigger: "import { add }", code: "export function add(a: number, b: number) {" };
 
 let dir: string;
 let tarball: Uint8Array;
@@ -50,6 +52,10 @@ let repoFinderProse = false;
 let planRefused = false;
 /** How many of the write step's next answers are prose with no JSON. */
 let writeProse = 0;
+/** Whether both finders also report `PLANTED`. */
+let planted = false;
+/** How many of the check step's next answers name no verdict it knows. */
+let checkUnsure = 0;
 
 const allow: WorkflowAuthorizeFn = async function allow() {
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
@@ -89,8 +95,13 @@ function answer(body: MessagesRequest) {
     return [{ type: "text", text: "One defect: add subtracts." }];
   }
   if (system.includes("<tools>") && repoFinderProse) return [{ type: "text", text: "I read src/a.ts and ran out of budget before writing findings." }];
-  let text: unknown = { findings: [FINDING] };
+  let text: unknown = { findings: planted ? [FINDING, PLANTED] : [FINDING] };
   if (system.includes("<cited_code>")) text = { groups: [{ defect: "add subtracts", members: [0], representative: 0 }] };
+  if (sent.includes("Is this defect real?") && checkUnsure > 0) {
+    checkUnsure--;
+    return [{ type: "text", text: JSON.stringify({ verdict: "unsure" }) }];
+  }
+  if (sent.includes("Is this defect real?")) text = sent.includes(PLANTED.title) ? { verdict: "not_real", reason: "Line 1 exports add." } : { verdict: "real", reason: "Line 2 subtracts." };
   if (sent.includes("Plan the review")) text = { areas: [], outside_diff: [] };
   if (sent.includes("Write the review.")) text = { summary: "One defect.", comments: [{ finding: 0, title: "add subtracts", body: "Use +." }] };
   return [{ type: "text", text: JSON.stringify(text) }];
@@ -226,4 +237,28 @@ test("a write answer that isn't JSON fails its step, which asks again", async ()
   expect(attempts["code-review-write"]).toBe(2);
   expect(run.terminalStatus).toBe("completed");
   expect(run.outputs["review"]).toMatchObject({ summary: "One defect." });
+});
+
+test("a candidate the check answers not real is left out of the review and kept with the check's verdict and reason", async () => {
+  planted = true;
+  try {
+    const { run, attempts } = await review(join(dir, "data"));
+    expect(run.terminalStatus).toBe("completed");
+    expect(attempts["code-review-check"]).toBe(2);
+    expect(run.outputs["review"]).toMatchObject({
+      comments: [{ path: "src/a.ts", start: 2, title: "add subtracts" }],
+      dropped: [{ path: "src/a.ts", start: 1, title: "add is not exported", verdict: "not_real", reason: "Line 1 exports add." }],
+    });
+  } finally {
+    planted = false;
+  }
+});
+
+test("a check answer that is not a verdict and reason fails its step, which asks again", async () => {
+  checkUnsure = 1;
+  const { run, attempts } = await review(join(dir, "data"));
+  expect(checkUnsure).toBe(0);
+  expect(attempts["code-review-check"]).toBe(2);
+  expect(run.terminalStatus).toBe("completed");
+  expect(run.outputs["review"]).toMatchObject({ comments: [{ path: "src/a.ts", start: 2 }], dropped: [] });
 });
