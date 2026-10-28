@@ -5,19 +5,25 @@ import { authorize } from "@intx/authz";
 import { createGrantStore, createPrincipalStore, schema, type DB, type PrincipalKeyStore } from "@intx/db";
 import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { generateId } from "@intx/hub-common";
-import type { GrantStore } from "@intx/types/authz";
 import type { Tx } from "../github/admin-github-grant.js";
 
 /** The local part of the system principal the hub writes Interchange's records as; never a mail sender. */
 export const SYSTEM_WRITER = "triage-hub";
 
-/** An open transaction acting as a workspace's system writer; only `transaction` and `join` build one. */
+/** A resource and action stock's own route checks before the write. */
+export type Check = { readonly resource: string; readonly action: string };
+
+/** An open transaction acting as a workspace's system writer, cleared for the checks it declared. */
 export type WriteTx = {
   readonly tx: Tx;
   readonly tenantId: string;
   readonly principalId: string;
-  readonly grants: GrantStore;
+  readonly cleared: ReadonlySet<string>;
 };
+
+function keyOf({ resource, action }: Check): string {
+  return `${action} ${resource}`;
+}
 
 export class SystemWriteDenied extends Error {
   constructor(tenantId: string, resource: string, action: string) {
@@ -26,13 +32,9 @@ export class SystemWriteDenied extends Error {
   }
 }
 
-/**
- * Stock's grant store reads only through a top-level database, so the check takes its own pooled read while the
- * caller's transaction stays open. The system writer's grants are never written inside that transaction.
- */
-export async function check(w: WriteTx, resource: string, action: string): Promise<void> {
-  const result = await authorize(w.grants, w.principalId, w.tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY });
-  if (result.effect !== "allow") throw new SystemWriteDenied(w.tenantId, resource, action);
+/** Every write names its check; one its transaction did not declare up front is a defect in the caller. */
+export function check(w: WriteTx, wanted: Check): void {
+  if (!w.cleared.has(keyOf(wanted))) throw new Error(`The hub's write of ${wanted.action} ${wanted.resource} was not declared before its transaction.`);
 }
 
 export type SystemWrites = ReturnType<typeof createSystemWrites>;
@@ -40,19 +42,21 @@ export type SystemWrites = ReturnType<typeof createSystemWrites>;
 export function createSystemWrites({ db, principalKeyStore }: { db: DB["db"]; principalKeyStore: PrincipalKeyStore }) {
   const principals = createPrincipalStore(db, principalKeyStore);
   const grants = createGrantStore(db);
-  // The writer keeps its principal for the life of the process; taking admin away later refuses its writes.
   const writers = new Map<string, string>();
 
-  /** Mints the workspace's system writer and gives it stock's admin role, as stock tenant creation seats its owner. */
+  /** Mints the workspace's system writer holding stock's admin role, as stock tenant creation seats its owner; only once, so admin taken away stays away. */
   async function place(tenantId: string): Promise<string> {
     const { principal, principalRole, role } = schema;
     return db.transaction(async function placeWriter(tx) {
       const [admin] = await tx.select({ id: role.id }).from(role).where(and(eq(role.tenantId, tenantId), eq(role.name, "admin"), eq(role.isSystem, true)));
       if (!admin) throw new Error(`Workspace ${tenantId} has no system admin role.`);
       const created = await principals.createIfAbsent({ id: generateId("principal"), tenantId, kind: "user", refId: SYSTEM_WRITER, status: "active" }, tx);
-      const [found] = created ? [created] : await tx.select({ id: principal.id }).from(principal).where(and(eq(principal.tenantId, tenantId), eq(principal.kind, "user"), eq(principal.refId, SYSTEM_WRITER)));
+      if (created) {
+        await tx.insert(principalRole).values({ principalId: created.id, roleId: admin.id });
+        return created.id;
+      }
+      const [found] = await tx.select({ id: principal.id }).from(principal).where(and(eq(principal.tenantId, tenantId), eq(principal.kind, "user"), eq(principal.refId, SYSTEM_WRITER)));
       if (!found) throw new Error(`No ${SYSTEM_WRITER} principal in workspace ${tenantId}.`);
-      await tx.insert(principalRole).values({ principalId: found.id, roleId: admin.id }).onConflictDoNothing();
       return found.id;
     });
   }
@@ -65,15 +69,25 @@ export function createSystemWrites({ db, principalKeyStore }: { db: DB["db"]; pr
     return principalId;
   }
 
+  /**
+   * Stock's grant store reads only through the top-level database, so every check runs before the transaction
+   * opens, and no connection is held while a check waits for one.
+   */
+  async function clear(tenantId: string, checks: readonly Check[]): Promise<{ principalId: string; cleared: ReadonlySet<string> }> {
+    const principalId = await writerOf(tenantId);
+    for (const { resource, action } of checks) {
+      const result = await authorize(grants, principalId, tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY });
+      if (result.effect !== "allow") throw new SystemWriteDenied(tenantId, resource, action);
+    }
+    return { principalId, cleared: new Set(checks.map(keyOf)) };
+  }
+
   return {
-    async transaction<T>(tenantId: string, body: (w: WriteTx) => Promise<T>): Promise<T> {
-      const principalId = await writerOf(tenantId);
+    async transaction<T>(tenantId: string, checks: readonly Check[], body: (w: WriteTx) => Promise<T>): Promise<T> {
+      const { principalId, cleared } = await clear(tenantId, checks);
       return db.transaction(function write(tx) {
-        return body({ tx, tenantId, principalId, grants });
+        return body({ tx, tenantId, principalId, cleared });
       });
-    },
-    async join(tx: Tx, tenantId: string): Promise<WriteTx> {
-      return { tx, tenantId, principalId: await writerOf(tenantId), grants };
     },
   };
 }

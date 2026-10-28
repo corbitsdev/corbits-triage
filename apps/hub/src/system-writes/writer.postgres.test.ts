@@ -6,17 +6,17 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createPrincipalKeyStore, runMigrations, schema, type DB } from "@intx/db";
 import { DEPLOYER_ROLE } from "@corbits/triage-contracts";
 import { setUpPublisher } from "../workflow-release/publisher.js";
-import { assignRole, keepDeploymentsAlive } from "./tenant.js";
+import { assignRole, ASSIGNS_ROLE, keepDeploymentsAlive, managesTenant } from "./tenant.js";
 import { createSystemWrites, SYSTEM_WRITER, SystemWriteDenied } from "./writer.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const KEEP_DEPLOYED = { lifecycle: { maxLifetime: "36500d" } };
 
-async function withDatabase(body: (db: DB["db"]) => Promise<void>): Promise<void> {
+async function withDatabase(body: (db: DB["db"]) => Promise<void>, max?: number): Promise<void> {
   const database = `corbits_writer_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
   await admin.db.execute(sql.raw(`create database ${database}`));
-  const config = { ...TEST_DB, database };
+  const config = { ...TEST_DB, database, ...(max !== undefined && { max }) };
   let handle: ReturnType<typeof createDB> | undefined;
   try {
     await runMigrations(config, { schema: "public" });
@@ -65,7 +65,7 @@ test("PostgreSQL: each workspace's system writer is minted once under a race, wi
     const one = await workspace(db, "one");
     const two = await workspace(db, "two");
     const processes = [writesOn(db), writesOn(db)];
-    await Promise.all(processes.flatMap((writes) => [one, one, two].map((tenantId) => writes.transaction(tenantId, (w) => keepDeploymentsAlive(w, new Date())))));
+    await Promise.all(processes.flatMap((writes) => [one, one, two].map((tenantId) => writes.transaction(tenantId, [managesTenant(tenantId)], (w) => keepDeploymentsAlive(w, new Date())))));
 
     const [writerOne, ...extraOne] = await writersOf(db, one);
     const [writerTwo, ...extraTwo] = await writersOf(db, two);
@@ -80,29 +80,44 @@ test("PostgreSQL: each workspace's system writer is minted once under a race, wi
   });
 }, 60_000);
 
-test("PostgreSQL: the writer's writes land while it holds admin, and once admin is taken away nothing is written", async () => {
+test("PostgreSQL: the writer's writes land while it holds admin, and once admin is taken away nothing is written, even after a restart", async () => {
   await withDatabase(async function refused(db) {
     const writes = writesOn(db);
     const tenantId = await workspace(db, "held");
-    await writes.transaction(tenantId, (w) => assignRole(w, "prn_held_person", "rol_held_reviewer"));
+    await writes.transaction(tenantId, [ASSIGNS_ROLE], (w) => assignRole(w, "prn_held_person", "rol_held_reviewer"));
     expect(await rolesOf(db, "prn_held_person")).toEqual(["rol_held_reviewer"]);
 
     const [writer] = await writersOf(db, tenantId);
     await db.delete(schema.principalRole).where(eq(schema.principalRole.principalId, writer!.id));
     const before = await configOf(db, tenantId);
-    await expect(writes.transaction(tenantId, (w) => assignRole(w, "prn_held_person", "rol_held_admin"))).rejects.toThrow(SystemWriteDenied);
-    await expect(writes.transaction(tenantId, (w) => keepDeploymentsAlive(w, new Date()))).rejects.toThrow(SystemWriteDenied);
+    await expect(writes.transaction(tenantId, [ASSIGNS_ROLE], (w) => assignRole(w, "prn_held_person", "rol_held_admin"))).rejects.toThrow(SystemWriteDenied);
+    await expect(writes.transaction(tenantId, [managesTenant(tenantId)], (w) => keepDeploymentsAlive(w, new Date()))).rejects.toThrow(SystemWriteDenied);
     expect(await rolesOf(db, "prn_held_person")).toEqual(["rol_held_reviewer"]);
     expect(await configOf(db, tenantId)).toEqual(before);
+    const restarted = writesOn(db);
+    await expect(restarted.transaction(tenantId, [ASSIGNS_ROLE], (w) => assignRole(w, "prn_held_person", "rol_held_admin"))).rejects.toThrow(SystemWriteDenied);
+    expect(await rolesOf(db, writer!.id)).toEqual([]);
 
     const bare = "tnt_bare";
     await db.insert(schema.tenant).values({ id: bare, name: "bare", slug: "bare", domain: "bare.test", config: {} });
-    await expect(writes.transaction(bare, (w) => keepDeploymentsAlive(w, new Date()))).rejects.toThrow("no system admin role");
+    await expect(writes.transaction(bare, [managesTenant(bare)], (w) => keepDeploymentsAlive(w, new Date()))).rejects.toThrow("no system admin role");
     expect(await writersOf(db, bare)).toEqual([]);
   });
 }, 60_000);
 
-test("PostgreSQL: setting up the publisher again, alone or inside a caller's transaction, changes nothing", async () => {
+test("PostgreSQL: a write its transaction did not declare throws and changes nothing", async () => {
+  await withDatabase(async function undeclared(db) {
+    const writes = writesOn(db);
+    const tenantId = await workspace(db, "undeclared");
+    const before = await configOf(db, tenantId);
+    await expect(writes.transaction(tenantId, [], (w) => assignRole(w, "prn_undeclared_person", "rol_undeclared_reviewer"))).rejects.toThrow("not declared");
+    await expect(writes.transaction(tenantId, [], (w) => keepDeploymentsAlive(w, new Date()))).rejects.toThrow("not declared");
+    expect(await rolesOf(db, "prn_undeclared_person")).toEqual([]);
+    expect(await configOf(db, tenantId)).toEqual(before);
+  });
+}, 60_000);
+
+test("PostgreSQL: setting up the publisher again, or repeating its writes, changes nothing", async () => {
   await withDatabase(async function retried(db) {
     const writes = writesOn(db);
     const tenantId = await workspace(db, "retry");
@@ -111,8 +126,7 @@ test("PostgreSQL: setting up the publisher again, alone or inside a caller's tra
     const [deployer] = await db.select({ id: schema.role.id }).from(schema.role).where(and(eq(schema.role.tenantId, tenantId), eq(schema.role.name, DEPLOYER_ROLE)));
 
     await setUpPublisher(writes, tenantId, "prn_retry_person", new Date("2026-10-02T00:00:00Z"));
-    await db.transaction(async function callerTx(tx) {
-      const w = await writes.join(tx, tenantId);
+    await writes.transaction(tenantId, [ASSIGNS_ROLE, managesTenant(tenantId)], async function retry(w) {
       await assignRole(w, "prn_retry_person", deployer!.id);
       await keepDeploymentsAlive(w, new Date("2026-10-03T00:00:00Z"));
     });
@@ -121,4 +135,18 @@ test("PostgreSQL: setting up the publisher again, alone or inside a caller's tra
     expect(first?.config).toEqual(KEEP_DEPLOYED);
     expect(await rolesOf(db, "prn_retry_person")).toEqual([deployer!.id]);
   });
+}, 60_000);
+
+test("PostgreSQL: more writes at once than the pool has connections all finish, since no transaction waits on a check", async () => {
+  await withDatabase(async function crowded(db) {
+    const writes = writesOn(db);
+    const tenantId = await workspace(db, "crowd");
+    const people = Array.from({ length: 6 }, (_, index) => `prn_crowd_${index}`);
+    await db.insert(schema.principal).values(people.map((id) => ({ id, tenantId, kind: "user" as const, refId: id, status: "active" as const })));
+    await Promise.all(people.map((id) => writes.transaction(tenantId, [ASSIGNS_ROLE, managesTenant(tenantId)], async function crowdWrite(w) {
+      await assignRole(w, id, "rol_crowd_reviewer");
+      await keepDeploymentsAlive(w, new Date());
+    })));
+    for (const id of people) expect(await rolesOf(db, id)).toEqual(["rol_crowd_reviewer"]);
+  }, 2);
 }, 60_000);
