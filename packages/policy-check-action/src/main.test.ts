@@ -29,7 +29,7 @@ test("an invalid policy file fails with an annotation on each offending line, or
 test("a v4 file passes, and a mistake in a block is marked on its line", () => {
   const rules = "rules:\n  - check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [maintainer-stated]\n";
   expect(check(`${rules}code-review: { on: true, provider: anthropic }\ndecide:\n  - { if: { all: clean }, do: approve }\n`)).toEqual({ exitCode: 0, stdout: ".corbits-triage.yml is valid.\n" });
-  expect(check(`${rules}security:\n  on: true\n  when: { triage: maybe }\n`).stdout).toBe("::error file=.corbits-triage.yml,line=8::`security.when.triage` must be pass, fail or unsure, or a list of them.\n");
+  expect(check(`${rules}code-review:\n  on: true\n  when: { triage: maybe }\n`).stdout).toBe("::error file=.corbits-triage.yml,line=8::`code-review.when.triage` must be pass, fail or unsure, or a list of them.\n");
 }, 15_000);
 
 // The head fixtureGithub serves.

@@ -157,7 +157,7 @@ A change to how a rule is asked or decided states the eval's misses before and a
        evidence: ["acme/api#312"]
    ```
 
-   The file's blocks (`code-review`, `security`, `deslop`) and `decide` are read and checked but take no part in the verdict, which comes from `rules` alone. File- or hunk-scoped rules, and score and choose rules, are written in the older shape, which a policy file without `rules` or a v4 key is read in ([@corbits/triage-contracts](../packages/triage-contracts/README.md)). A file-scoped rule in `custom`:
+   The file's `code-review` block and `decide` are read and checked but take no part in the verdict, which comes from `rules` alone. File- or hunk-scoped rules, and score and choose rules, are written in the older shape, which a policy file without `rules` or a v4 key is read in ([@corbits/triage-contracts](../packages/triage-contracts/README.md)). A file-scoped rule in `custom`:
 
    ```json
    {

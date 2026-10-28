@@ -8,7 +8,7 @@ import { authorGroupsOf, whenHolds, type StepAuthor } from "./step-when.ts";
 
 const REPO = "acme/widgets";
 const RULES = "rules:\n  - check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [maintainer-stated]\n";
-const ON = "code-review: { on: true }\nsecurity: { on: true }\n";
+const ON = "code-review: { on: true }\n";
 const KINDS = "`approve`, `merge`, `close`, `request-changes`, `review`, `nothing`, `comment`, `request-review`, `assign` or `labels`";
 const STEP_KINDS = "`approve`, `merge`, `close`, `comment`, `request-changes`, `request-review`, `assign`, `labels` or `nothing`";
 const DURATION = "a duration of at least 1, such as 30s, 2m, 24h or 7d";
@@ -17,18 +17,13 @@ const V4 = `${RULES}groups:
   maintainers: { association: [OWNER, MEMBER, COLLABORATOR] }
   core: { teams: [acme/core], users: [octocat] }
 code-review: { on: true, for: [maintainers], provider: anthropic, when: { triage: pass, paths: ["!**/*.md", "!**/*.lock"] } }
-security:
-  on: true
-  when: { triage: [pass, unsure], paths: ["src/**"] }
-  clean: { below: medium }
-deslop: { on: false, provider: openai }
 pace: { debounce: 30s, maxWait: 2m, perHead: 1, cap: { runs: 5, per: 24h }, backoff: { pushes: 5, within: 10m, pause: 30m } }
 pauseLabel: "corbits: pause"
 decide:
   - { if: { triage: fail, event: [opened] }, do: [request-changes, { do: comment, target: { body: Fix the rules. }, when: { author: [core] } }] }
   - { if: { all: clean }, do: approve }
-  - { if: { author: [core], code-review: clean, security: [clean, skipped] }, do: merge }
-  - { if: { security: { findings: high } }, do: [{ do: request-review, target: { to: codeowners } }] }
+  - { if: { author: [core], code-review: [clean, skipped] }, do: merge }
+  - { if: { code-review: { findings: high } }, do: [{ do: request-review, target: { to: codeowners } }] }
 `;
 
 function problems(text: string) {
@@ -44,15 +39,13 @@ describe("policy file v4", () => {
     expect(checked.workflow).toEqual({
       groups: { maintainers: { association: ["OWNER", "MEMBER", "COLLABORATOR"] }, core: { teams: ["acme/core"], users: ["octocat"] } },
       "code-review": { on: true, for: ["maintainers"], provider: "anthropic", when: { triage: "pass", paths: ["!**/*.md", "!**/*.lock"] } },
-      security: { on: true, when: { triage: ["pass", "unsure"], paths: ["src/**"] }, clean: { below: "medium" } },
-      deslop: { on: false, provider: "openai" },
       pace: { debounce: "30s", maxWait: "2m", perHead: 1, cap: { runs: 5, per: "24h" }, backoff: { pushes: 5, within: "10m", pause: "30m" } },
       pauseLabel: "corbits: pause",
       decide: [
         { if: { triage: "fail", event: ["opened"] }, do: ["request-changes", { do: "comment", target: { body: "Fix the rules." }, when: { author: [{ group: "core" }] } }] },
         { if: { all: "clean" }, do: "approve" },
-        { if: { author: ["core"], "code-review": "clean", security: ["clean", "skipped"] }, do: "merge" },
-        { if: { security: { findings: "high" } }, do: [{ do: "request-review", target: { to: "codeowners" } }] },
+        { if: { author: ["core"], "code-review": ["clean", "skipped"] }, do: "merge" },
+        { if: { "code-review": { findings: "high" } }, do: [{ do: "request-review", target: { to: "codeowners" } }] },
       ],
     });
   });
@@ -117,8 +110,8 @@ describe("policy file v4", () => {
   test("a group name too long to be one is refused at once, never compared with the known names", () => {
     const name = "a".repeat(22_000);
     const started = performance.now();
-    expect(problems(`${RULES}groups: { ${name}: { users: [octocat] } }\nsecurity: { on: true, for: [${name}] }\n`).map((problem) => problem.message)).toEqual([
-      "`security.for` must be a list of group names, each lowercase words joined by hyphens, at most 64 characters.",
+    expect(problems(`${RULES}groups: { ${name}: { users: [octocat] } }\ncode-review: { on: true, for: [${name}] }\n`).map((problem) => problem.message)).toEqual([
+      "`code-review.for` must be a list of group names, each lowercase words joined by hyphens, at most 64 characters.",
     ]);
     expect(problems(`${RULES}groups: { ${name}: { users: [octocat] } }\n`).map((problem) => problem.message)).toEqual([
       `\`groups.${"a".repeat(80)}…\` must be named in lowercase words joined by hyphens, starting with a letter, at most 64 characters.`,
@@ -136,7 +129,7 @@ describe("policy file v4", () => {
     const name = "a".repeat(56_000);
     const references = Array.from({ length: 50 }, (_, at) => `g${at}`).join(", ");
     const started = performance.now();
-    const said = problems(`${RULES}groups: { ${name}: { users: [octocat] } }\nsecurity: { on: true, for: [${references}] }\n`);
+    const said = problems(`${RULES}groups: { ${name}: { users: [octocat] } }\ncode-review: { on: true, for: [${references}] }\n`);
     expect(performance.now() - started).toBeLessThan(200);
     expect(said).toHaveLength(51);
   });
@@ -158,27 +151,25 @@ describe("policy file v4", () => {
   });
 
   test.each([
-    [`${RULES}security: { on: true, when: { triage: maybe } }\n`, "`security.when.triage` must be pass, fail or unsure, or a list of them.", 6],
-    [`${RULES}security:\n  on: true\n  when:\n    paths: [src/**]\n    triage: [pass, maybe]\n`, "`security.when.triage` must be pass, fail or unsure, or a list of them.", 10],
-    [`${RULES}security: { on: true, when: { rules: any } }\n`, "`security.when.rules` is not a key; use triage or paths.", 6],
-    [`${RULES}security: { on: true, when: { paths: [] } }\n`, "`security.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
+    [`${RULES}code-review: { on: true, when: { triage: maybe } }\n`, "`code-review.when.triage` must be pass, fail or unsure, or a list of them.", 6],
+    [`${RULES}code-review:\n  on: true\n  when:\n    paths: [src/**]\n    triage: [pass, maybe]\n`, "`code-review.when.triage` must be pass, fail or unsure, or a list of them.", 10],
+    [`${RULES}code-review: { on: true, when: { paths: [] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}code-review: { on: true, when: { paths: ["src/**", "  !*.md"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}code-review: { on: true, when: { paths: ["src/**", "! *.md"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}code-review: { on: true, when: { paths: ["src/**", "*.md "] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}code-review: { on: true, when: { paths: ["src/**", "!"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
-    [`${RULES}security: { when: { triage: pass } }\n`, "`security.on` must be true or false.", 6],
-    [`${RULES}security: { onn: true }\n`, "`security.onn` is not a key; did you mean `security.on`?", 6],
-    [`${RULES}security: on\n`, "`security` must be a mapping of on, for, when, clean and provider.", 6],
+    [`${RULES}code-review: { when: { triage: pass } }\n`, "`code-review.on` must be true or false.", 6],
+    [`${RULES}code-review: { onn: true }\n`, "`code-review.onn` is not a key; did you mean `code-review.on`?", 6],
+    [`${RULES}code-review: on\n`, "`code-review` must be a mapping of on, for, when, clean and provider.", 6],
     [`${RULES}code-reveiw: { on: true }\n`, "`code-reveiw` is not a key; did you mean `code-review`?", 6],
-    [`${RULES}blocks: {}\n`, "`blocks` is not a key; use extends, onFail, rules, actions, labels, groups, code-review, security, deslop, pace, pauseLabel or decide.", 6],
-    [`${RULES}security: { on: true, whn: { triage: pass } }\n`, "`security.whn` is not a key; did you mean `security.when`?", 6],
-    [`${RULES}security: { on: true, clean: { below: severe } }\n`, "`security.clean.below` must be low, medium, high or critical.", 6],
-    [`${RULES}security: { on: true, clean: { minConfidence: 0.7 } }\n`, "`security.clean.minConfidence` is not available yet; remove it.", 6],
-    [`${RULES}security: { on: true, clean: { coverage: full } }\n`, "`security.clean.coverage` is not available yet; remove it.", 6],
-    [`${RULES}security: { on: true, provider: azure }\n`, "`security.provider` must be anthropic, openai, xai, google, opencode or custom.", 6],
-    [`${RULES}code-review: { on: true, provider: anthropic }\nsecurity: { on: true, provider: openai }\n`, "`security.provider` is openai but `code-review.provider` is anthropic; blocks that are on must name the same provider.", 7],
-    [`${RULES}security: { on: true, for: [maintainer] }\n`, "`security.for` names `maintainer`, which is not a group; did you mean `maintainers`?", 6],
-    [`${RULES}security: { on: true, for: [reviewers] }\n`, "`security.for` names `reviewers`, which is not a group; define it under groups.", 6],
+    [`${RULES}blocks: {}\n`, "`blocks` is not a key; use extends, onFail, rules, actions, labels, groups, code-review, pace, pauseLabel or decide.", 6],
+    [`${RULES}code-review: { on: true, whn: { triage: pass } }\n`, "`code-review.whn` is not a key; did you mean `code-review.when`?", 6],
+    [`${RULES}code-review: { on: true, clean: { below: severe } }\n`, "`code-review.clean.below` must be low, medium, high or critical.", 6],
+    [`${RULES}code-review: { on: true, clean: { minConfidence: 0.7 } }\n`, "`code-review.clean.minConfidence` is not available yet; remove it.", 6],
+    [`${RULES}code-review: { on: true, clean: { coverage: full } }\n`, "`code-review.clean.coverage` is not available yet; remove it.", 6],
+    [`${RULES}code-review: { on: true, provider: azure }\n`, "`code-review.provider` must be anthropic, openai, xai, google, opencode or custom.", 6],
+    [`${RULES}code-review: { on: true, for: [maintainer] }\n`, "`code-review.for` names `maintainer`, which is not a group; did you mean `maintainers`?", 6],
+    [`${RULES}code-review: { on: true, for: [reviewers] }\n`, "`code-review.for` names `reviewers`, which is not a group; define it under groups.", 6],
     [`${RULES}groups: { everyone: { association: [NONE] } }\n`, "`groups.everyone` is built in; name the group something else.", 6],
     [`${RULES}groups: { Core: { users: [octocat] } }\n`, "`groups.Core` must be named in lowercase words joined by hyphens, starting with a letter, at most 64 characters.", 6],
     [`${RULES}groups: { core: {} }\n`, "`groups.core` must set association, teams or users.", 6],
@@ -209,12 +200,14 @@ describe("policy file v4", () => {
     [`${RULES}decide:\n  - { if: { triage: pass }, do: [close, review] }\n`, "`decide[0].do` can't use `review` yet; use `request-review` or remove it.", 7],
     [`${RULES}decide:\n  - { if: { triage: [pass, maybe] }, do: approve }\n`, "`decide[0].if.triage` must be pass, fail or unsure, or a list of them.", 7],
     [`${RULES}decide:\n  - { if: { event: [pushed] }, do: approve }\n`, "`decide[0].if.event` must be a list of opened, updated, checks or ready.", 7],
-    [`${RULES}${ON}decide:\n  - { if: { code-review: done }, do: approve }\n`, "`decide[0].if.code-review` must be clean, findings, incomplete or skipped, a list of them, or { findings: <severity> } with a severity of low, medium, high or critical.", 9],
-    [`${RULES}${ON}decide:\n  - { if: { security: { findings: severe } }, do: review }\n`, "`decide[0].if.security` must be clean, findings, incomplete or skipped, a list of them, or { findings: <severity> } with a severity of low, medium, high or critical.", 9],
+    [`${RULES}${ON}decide:\n  - { if: { code-review: done }, do: approve }\n`, "`decide[0].if.code-review` must be clean, findings, incomplete or skipped, a list of them, or { findings: <severity> } with a severity of low, medium, high or critical.", 8],
     [`${RULES}decide:\n  - { if: { autor: [maintainers] }, do: approve }\n`, "`decide[0].if.autor` is not a key; did you mean `decide[0].if.author`?", 7],
     [`${RULES}decide:\n  - { if: { author: [maintainer] }, do: approve }\n`, "`decide[0].if.author` names `maintainer`, which is not a group; did you mean `maintainers`?", 7],
-    [`${RULES}deslop: { on: false }\ndecide:\n  - { if: { deslop: clean }, do: approve }\n`, "`decide[0].if.deslop`: `deslop` is not turned on in this file; set `deslop.on: true` or remove the condition.", 8],
-    [`${RULES}${ON}decide:\n  - if: { triage: pass }\n    do: approve\n  - if: { code-review: [clean, incomplete] }\n    do: [approve, merge]\n`, "`decide[1].if.code-review` can't match incomplete in a rule that approves or merges; incomplete is never clean.", 11],
+    [`${RULES}code-review: { on: false }\ndecide:\n  - { if: { code-review: clean }, do: approve }\n`, "`decide[0].if.code-review`: `code-review` is not turned on in this file; set `code-review.on: true` or remove the condition.", 8],
+    [`${RULES}security: { on: true }\n`, "`security`: security and deslop reviews are not available yet; remove the block.", 6],
+    [`${RULES}deslop: { on: false }\n`, "`deslop`: security and deslop reviews are not available yet; remove the block.", 6],
+    [`${RULES}${ON}decide:\n  - { if: { security: clean }, do: approve }\n`, "`decide[0].if.security`: security and deslop reviews are not available yet; remove the condition.", 8],
+    [`${RULES}${ON}decide:\n  - if: { triage: pass }\n    do: approve\n  - if: { code-review: [clean, incomplete] }\n    do: [approve, merge]\n`, "`decide[1].if.code-review` can't match incomplete in a rule that approves or merges; incomplete is never clean.", 10],
     [`${RULES}actions:\n  pass: [{ do: approve }]\ndecide:\n  - { if: { triage: pass }, do: approve }\n`, "`actions` and `decide` can't both be set; move the actions into decide.", 6],
     [`${RULES}actions:\n  pass: [{ do: aprove }]\n`, `\`actions.pass[0].do\` must be one of ${STEP_KINDS}; did you mean \`approve\`?`, 7],
     [`${RULES}actions:\n  fail:\n    - do: comment\n`, "`actions.fail[0]` `comment` needs a target; write `{ do: comment, target: { body: … } }`.", 8],

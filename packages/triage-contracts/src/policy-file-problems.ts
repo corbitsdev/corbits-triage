@@ -2,14 +2,15 @@
 // meant to be, and for a step, the kinds and targets it takes. `rules` keeps the schema's own messages.
 import { asRecord } from "@corbits/common";
 import { AUTHOR_KINDS, CI_STATES, DECIDE_KINDS, GROUP_NAME_MAX, LABEL_MAX, ON_FAILS, POLICY_EVENTS, STEP_KINDS, VERDICTS } from "./check-pack.js";
-import { BLOCK_KINDS, BLOCK_OUTCOMES, closest, pathText, PROVIDERS, SEVERITIES, type PathProblem } from "./policy-workflow.js";
+import { BLOCK_KINDS, BLOCK_OUTCOMES, closest, pathText, PROVIDERS, RESERVED_BLOCKS, SEVERITIES, type PathProblem } from "./policy-workflow.js";
 import { RULE_GATES } from "./rules-gate.js";
 
 const BLOCK = Symbol("block");
 const VERDICT = Symbol("verdict");
 const NAME = Symbol("name");
 const INDEX = Symbol("index");
-type Segment = string | typeof BLOCK | typeof VERDICT | typeof NAME | typeof INDEX;
+const RESERVED = Symbol("reserved");
+type Segment = string | typeof BLOCK | typeof VERDICT | typeof NAME | typeof INDEX | typeof RESERVED;
 type Pattern = readonly Segment[];
 
 /** A mapping's own message, from the keys the entries under it name. */
@@ -88,10 +89,22 @@ const NOT_YET: readonly Pattern[] = [
   [BLOCK, "clean", "coverage"],
 ];
 
+/** Where a block no workflow runs yet can be written, and what to remove. */
+const RESERVED_AT: ReadonlyArray<readonly [Pattern, string]> = [
+  [[RESERVED], "block"],
+  [["decide", INDEX, "if", RESERVED], "condition"],
+];
+
+function reservedProblem(path: readonly PropertyKey[]): Problem | undefined {
+  const found = RESERVED_AT.find(([pattern]) => matches(pattern, path));
+  return found && { message: `\`${pathText(path)}\`: security and deslop reviews are not available yet; remove the ${found[1]}.`, path };
+}
+
 function segmentMatches(segment: Segment, key: PropertyKey): boolean {
   if (segment === INDEX) return typeof key === "number";
   if (segment === NAME) return typeof key === "string";
   if (segment === BLOCK) return (BLOCK_KINDS as readonly PropertyKey[]).includes(key);
+  if (segment === RESERVED) return (RESERVED_BLOCKS as readonly PropertyKey[]).includes(key);
   if (segment === VERDICT) return (VERDICTS as readonly PropertyKey[]).includes(key);
   return segment === key;
 }
@@ -211,6 +224,8 @@ function errorProblems({ path, code, problem, message }: SchemaError, file: unkn
   const step = stepOf(path, file);
   if (step) return stepProblems(step, path.slice(step.root.length), code, problem, message);
   if (problem === "must be removed") {
+    const reserved = reservedProblem(path);
+    if (reserved) return [reserved];
     if (NOT_YET.some((pattern) => matches(pattern, path))) return [{ message: `\`${pathText(path)}\` is not available yet; remove it.`, path }];
     const allowed = keysAt(path.slice(0, -1));
     if (allowed.length > 0) return [unknownKey(path, allowed)];

@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { BLOCK_KINDS, blockCleanSchema, CodeReviewOutput, RULE_GATES, rulesGate, SEVERITIES, VERDICTS, type ActionKind } from "@corbits/triage-contracts";
+import { blockCleanSchema, CodeReviewOutput, RULE_GATES, rulesGate, SEVERITIES, VERDICTS, type ActionKind } from "@corbits/triage-contracts";
 import { verdictWithFailure } from "@corbits/triage-workflows/actions/evaluate";
 import type { CheckResult } from "@corbits/triage-workflows/logic/checks";
 import type { Item } from "@corbits/triage-workflows/logic/item";
@@ -7,7 +7,7 @@ import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render
 import { LIFETIME_MS, storedReview, TakeOutput } from "./manager.js";
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "clean?": blockCleanSchema });
-const BlocksPart = type({ blocks: type.enumerated(...BLOCK_KINDS).array(), codeReview: CodeReviewPart });
+const TakenPart = type({ codeReview: CodeReviewPart });
 
 /** Both say the pull request may land, so neither runs unattended past a code review that is not clean. */
 const HELD_KINDS: readonly ActionKind[] = ["approve", "merge"];
@@ -41,26 +41,20 @@ function hold<A extends object>(action: A, reason: string): A {
 }
 
 /**
- * Why the pass's verdict is not cleared while the policy turns a check on. Problems code review found on the head come
- * first, so another check that can't run yet never hides them; such a check holds approve and merge until it can.
- * Code review must have run on the head and be clean as its block's `clean` says; one the policy's `for` or `when` left
- * out counts as off, and one held back by failed or unsettled rules did not run. A review that failed or ran past its
- * deadline reported nothing.
+ * Why the pass's verdict is not cleared while the policy turns code review on. Code review must have run on the head and
+ * be clean as its block's `clean` says; one the policy's `for` or `when` left out counts as off, and one held back by
+ * failed or unsettled rules did not run. A review that failed or ran past its deadline reported nothing.
  */
 function uncleared({ taken, review, reviewers, head }: TakeOutput, checks: unknown, scope: Scope): Unclean | undefined {
-  const part = BlocksPart(taken);
+  const part = TakenPart(taken);
   if (part instanceof type.errors) return undefined;
-  const { blocks, codeReview } = part;
-  const waiting = blocks.filter((kind) => kind !== "code-review");
+  const { codeReview } = part;
   const leftOut = scope.skipped !== undefined && rulesGate(codeReview.rules, checks).open;
   const reviewing = codeReview.on && !leftOut;
-  const reported = review ?? (head === undefined ? undefined : storedReview(reviewers, head));
-  const unclean = reviewing && scope.reviewed ? uncleanBy(reported, codeReview.clean?.below) : undefined;
-  if (unclean && "found" in unclean) return unclean;
-  if (waiting.length > 0) return { held: `The policy's ${waiting.join(" and ")} check can't run yet.` };
   if (!reviewing) return undefined;
   if (!scope.reviewed) return { held: "Code review did not run on this head." };
-  return unclean;
+  const reported = review ?? (head === undefined ? undefined : storedReview(reviewers, head));
+  return uncleanBy(reported, codeReview.clean?.below);
 }
 
 /** The verdict fields cleared reads, the rest kept as evaluate made them. */

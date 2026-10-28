@@ -522,7 +522,7 @@ describe("conventional commits", () => {
 
 test("a v4 policy file runs only its rules, as the extension runs it", () => {
   const rules = "rules:\n  - check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [maintainer-stated]\n";
-  const blocks = "code-review: { on: true }\nsecurity: { on: true, when: { triage: pass } }\ndecide:\n  - { if: { all: clean }, do: approve }\n";
+  const blocks = "code-review: { on: true, when: { triage: pass } }\ndecide:\n  - { if: { all: clean }, do: approve }\n";
   const v4 = deriveState(noisy, undefined, readCheckPack(readPolicyFile(`${rules}${blocks}`, "acme/widgets")));
   expect(v4).toEqual(deriveState(noisy, undefined, readCheckPack(readPolicyFile(rules, "acme/widgets"))));
   expect(v4.findings.map((finding) => finding.check)).toEqual(["ci-green"]);
