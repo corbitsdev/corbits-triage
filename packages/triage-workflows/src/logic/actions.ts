@@ -193,15 +193,28 @@ function levelLabels(pack: CheckPack): Set<string> {
   return new Set(ids.flatMap((id) => RISK_MARKS.map((level) => levelLabel(id, level).toLowerCase())));
 }
 
+/** The labels the policy names for the labelling rules that passed on this head. */
+function passedLabels(labelled: CheckResult[], labels: ReadonlyMap<string, string>): string[] {
+  return labelled.filter((c) => c.result === "pass" && labels.has(c.check)).map((c) => labels.get(c.check)!.toLowerCase());
+}
+
+/** The labels the policy's labels steps name on any list, whether or not they run. */
+function stepLabels(pack: CheckPack): Set<string> {
+  const steps = VERDICTS.flatMap((list) => pack.actions[list]);
+  return new Set(steps.flatMap((step) => (step.do === "labels" && step.target.from === "list" ? step.target.labels : [])).map((label) => label.toLowerCase()));
+}
+
 /**
  * After the verdict's own steps, one labels Do adds the label of each labelling rule that did not pass, and each label a
- * rule that did not fail still adds. Nothing says who put a label on, so one is never taken back, as it may be a
- * person's, except a level label of sensitive paths or risk that no longer applies.
+ * rule that did not fail still adds. Nothing says who put a label on, so only labels the policy names are taken back:
+ * a labelling rule's once it passes, unless a labels step of the policy names it, and a level label of sensitive paths
+ * or risk that no longer applies.
  */
 function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string): SuggestedAction[] {
   if (labelled === undefined) return [];
   const labels = labelRules(pack);
-  const owned = levelLabels(pack);
+  const named = stepLabels(pack);
+  const owned = new Set([...levelLabels(pack), ...passedLabels(labelled, labels).filter((label) => !named.has(label))]);
   const target = derivedLabels([...new Set(labelled.flatMap((c) => addedLabels(c, labels)))], (label) => owned.has(label.toLowerCase()), facts);
   if (satisfied("labels", target, facts)) return [];
   const index = pack.actions[list].length;

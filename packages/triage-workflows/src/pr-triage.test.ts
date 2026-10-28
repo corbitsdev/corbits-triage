@@ -410,6 +410,31 @@ describe("pr-triage body", () => {
     expect((await triage(labelOnly, { files: [migration] })).verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", target: { labels: ["risk: high"] } }] });
   });
 
+  test("a size rule's label comes off once the pull request is back under the limit, and a person's labels stay", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "max-lines-changed-per-file": { enabled: true, onFail: "label", maxFileLines: 1 } } };
+    const over = await triage(pack, { files: [{ ...FLAG, additions: 2 }], labels: ["needs-design"] });
+    expect(over.verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", target: { labels: ["size: large"], unlabel: [] } }] });
+    const under = await triage(pack, { files: [FLAG], labels: ["needs-design", "Size: Large"] });
+    expect(under.verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", target: { labels: [], unlabel: ["Size: Large"] } }] });
+    expect(under.requests).toContainEqual({ method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Size%3A%20Large` });
+    expect((await triage(pack, { files: [FLAG], labels: ["needs-design"] })).verdict).toMatchObject({ actions: [] });
+  });
+
+  test("a passed rule's label stays when a labels step on any list names it, run or skipped", async () => {
+    const base = emptyPack(REPO);
+    const step: Step = { do: "labels", target: { from: "list", labels: ["needs-docs"] } };
+    const pack: CheckPack = {
+      ...base,
+      checks: { "max-lines-changed-per-file": { enabled: true, onFail: "label", label: "needs-docs", maxFileLines: 1 } },
+      actions: { ...base.actions, pass: [step] },
+    };
+    expect((await triage(pack, { files: [FLAG], labels: ["needs-docs"] })).verdict).toMatchObject({ verdict: "pass", actions: [] });
+    const skipped: CheckPack = { ...pack, actions: { ...base.actions, pass: [{ ...step, when: { linkedIssue: false } }] } };
+    expect((await triage(skipped, { files: [FLAG], labels: ["needs-docs"] })).verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", skipped: true }] });
+    const onFail: CheckPack = { ...pack, actions: { ...base.actions, fail: [step] } };
+    expect((await triage(onFail, { files: [FLAG], labels: ["needs-docs"] })).verdict).toMatchObject({ verdict: "pass", actions: [] });
+  });
+
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {
     const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, docs: { enabled: true, onFail: "label" } } });
     expect(path).toEqual(VERDICT_PATH);

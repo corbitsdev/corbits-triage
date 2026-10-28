@@ -11,7 +11,7 @@ Every rule has:
 - `reason`: one line on why the rule exists.
 - `evidence`: a list of `maintainer-stated`, pull request references (`"#44"`, `"owner/name#44"`) or `https://` links. Quote `#` references.
 - `enabled: false` (optional) keeps a rule written down but off.
-- `onFail` (optional) is what a failing rule does: `fail` (the default, except `label` for the size rules) fails the pull request for its author, `ask` makes it Unsure and leaves it to a maintainer, and `label` makes the rule label the pull request instead of deciding its verdict. A top-level `onFail` sets the default for every rule in the file. With `label`, when it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and never takes the label off. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `onFail: label` is refused, and so is one starting `Triage:` or `rule: ` or naming a verdict label.
+- `onFail` (optional) is what a failing rule does: `fail` (the default, except `label` for the size rules) fails the pull request for its author, `ask` makes it Unsure and leaves it to a maintainer, and `label` makes the rule label the pull request instead of deciding its verdict. A top-level `onFail` sets the default for every rule in the file. With `label`, when it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and takes the label off once the rule passes. A label a `labels` step in the policy also names is left alone. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `onFail: label` is refused, and so is one starting `Triage:` or `rule: `, naming a verdict label, or naming a level label of sensitive paths or risk (`sensitive: medium`, `risk: high`) other than the rule's own.
 
 The five `max-` rules are the size rules. Lockfiles are left out of their counts (on Bitbucket Data Center, out of the file count only).
 
@@ -90,7 +90,7 @@ actions:
 | --- | --- |
 | `approve`, `merge`, `close`, `request-changes`, `nothing` | none |
 | `comment` | `{ body: "text" }` |
-| `labels` | `{ from: list, labels: [name, …] }` or `{ from: rules }` (one `rule: <id>` label per failed rule) |
+| `labels` | `{ from: list, labels: [name, …] }` (no level label such as `risk: medium`) or `{ from: rules }` (one `rule: <id>` label per failed rule) |
 | `request-review` | `{ to: codeowners }`, `{ to: users, users: [login, …] }` or `{ to: teams, teams: [org/team, …] }` |
 | `assign` | as `request-review`, or `{ to: author }` |
 
