@@ -1025,8 +1025,9 @@ keeps that id as `thread` on the finding in its reviewer-result row; ids that do
 not line up with the review's findings are logged and left out. A GitHub
 read-back that fails leaves the ids unknown and is logged as
 `finding_threads_unread`; the review counts as posted, and a later send of it
-reads them again. The first pass on a newer head gets from take the ids of
-findings not yet resolved, the newest 100 at most, reads them in one `findingThreads`
+reads them again. The first pass on a newer head gets from take at most 100
+ids, the newest unresolved findings' first and then the newest resolved ones,
+so a reopened thread is seen, reads them in one `findingThreads`
 step through the host read tool (`finding_thread_states`: GitHub's GraphQL
 `reviewThreads`, Data Center's comment by id), and done writes each state on its
 finding: resolved, outdated, replied (by someone other than Triage) or

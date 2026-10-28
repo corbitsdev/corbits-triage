@@ -434,14 +434,22 @@ function findingsOf({ payload }: ManagerEvent): (typeof ReportedFindings.infer)[
 /** How many threads a pass reads at most, so the reads stay bounded on a long-lived pull request. */
 const MAX_THREAD_READS = 100;
 
+/** The newest `count` of `ids`, in their order. */
+function newest(ids: readonly number[], count: number): number[] {
+  return ids.slice(Math.max(0, ids.length - count));
+}
+
 /**
- * The comments of findings reported on heads other than `head` whose threads are not yet resolved, which a pass on
- * `head` reads: the newest findings' first, at most `MAX_THREAD_READS`.
+ * The comments of findings reported on heads other than `head`, which a pass on `head` reads, at most
+ * `MAX_THREAD_READS`: the newest of those not yet resolved, then the newest resolved ones, which a person can reopen.
  */
 async function threadsBefore(tx: Tx, tenantId: string, pr: PullRequestRef, head: string): Promise<number[]> {
   const results = eventsOf(await codeReviewResults(tx, tenantId, pr));
-  const open = results.flatMap(({ event }) => (event.head === head ? [] : findingsOf(event).flatMap((finding) => (finding.thread && finding.thread.state !== "resolved" ? [finding.thread.id] : []))));
-  return [...new Set(open)].slice(-MAX_THREAD_READS);
+  const threads = new Map(results.flatMap(({ event }) => (event.head === head ? [] : findingsOf(event).flatMap((finding) => (finding.thread ? [[finding.thread.id, finding.thread.state] as const] : [])))));
+  const ids = [...threads.keys()];
+  const open = newest(ids.filter((id) => threads.get(id) !== "resolved"), MAX_THREAD_READS);
+  const resolved = newest(ids.filter((id) => threads.get(id) === "resolved"), MAX_THREAD_READS - open.length);
+  return [...open, ...resolved];
 }
 
 /** The first pass on a head reads the threads of findings posted before it; the passes after it on that head read none. */

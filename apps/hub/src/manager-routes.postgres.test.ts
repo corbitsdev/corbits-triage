@@ -186,7 +186,7 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
   });
 }, 60_000);
 
-test("PostgreSQL: done keeps each posted finding's comment, the first pass on a newer head names those not yet resolved, and what became of their threads lands on their findings", async () => {
+test("PostgreSQL: done keeps each posted finding's comment, the first pass on a newer head names them, resolved ones last so a reopened thread is seen, and what became of their threads lands on their findings", async () => {
   await withDatabase(async function threads(db) {
     const logged: Record<string, unknown>[] = [];
     function log(entry: Record<string, unknown>): void {
@@ -230,7 +230,14 @@ test("PostgreSQL: done keeps each posted finding's comment, the first pass on a 
     await post(app, "done", { ...GITHUB, reviewers: [] }, manager);
 
     await recordEvent(db, TENANT, GITHUB, "pushed again", { type: "webhook", head: "h3", payload: { kind: "pr", headSha: "h3" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h3" }, threads: [502] });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h3" }, threads: [502, 501] });
+    await post(app, "done", { ...GITHUB, reviewers: [], threads: [{ id: 501, state: "resolved" }, { id: 502, state: "outdated" }] }, manager);
+    expect(await threadsShown()).toEqual([["a.ts", { state: "resolved" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "outdated" }]]);
+
+    await recordEvent(db, TENANT, GITHUB, "reopened", { type: "webhook", head: "h4", payload: { kind: "pr", headSha: "h4" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h4" }, threads: [502, 501] });
+    await post(app, "done", { ...GITHUB, reviewers: [], threads: [{ id: 501, state: "untouched" }, { id: 502, state: "outdated" }] }, manager);
+    expect(await threadsShown()).toEqual([["a.ts", { state: "untouched" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "outdated" }]]);
   });
 }, 60_000);
 
