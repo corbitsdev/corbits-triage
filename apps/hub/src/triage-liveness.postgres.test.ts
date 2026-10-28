@@ -86,10 +86,11 @@ function stack(db: Db, store = memoryStore([]), mails = true) {
     check: () => liveness.check(async () => [TENANT_ROW]),
     stalled: () => liveness.stalled(TENANT),
     alarms: () => logged.filter((entry) => entry["msg"] === "triage_stalled" || entry["msg"] === "triage_stall_cleared").map((entry) => `${String(entry["msg"])} ${String(entry["source"])}`),
-    /** A manager of the host takes a pull request, as the take route notes it. */
-    async took(pr: PullRequestRef) {
-      expect((await take(db, TENANT, pr, `run_${pr.source}_${pr.number}`)).outcome).not.toBe("refused");
-      takes.note(TENANT, pr.source, new Date().toISOString());
+    /** A manager of the host takes a pull request; the take route notes it only when it opens a pass. */
+    async took(pr: PullRequestRef, outcome: "pass" | "idle" = "pass") {
+      const taken = await take(db, TENANT, pr, `run_${pr.source}_${pr.number}`);
+      expect(taken.outcome).toBe(outcome);
+      if (taken.outcome === "pass") takes.note(TENANT, pr.source, taken.pass.takenAt);
     },
   };
 }
@@ -132,7 +133,8 @@ test("a mail no manager took before the last take, read back as the hub starts, 
     await mailOf({ ...PR, number: 8 }, "old", db);
     const hourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
     await db.execute(sql`update corbits_triage.manager_state set state = jsonb_set(state, '{receivedAt}', to_jsonb(${hourAgo}::text)) where key like 'evt:%:old'`);
-    expect((await take(db, TENANT, { ...PR, number: 9 }, "run_other")).outcome).toBe("idle");
+    await mailOf({ ...PR, number: 9 }, "taken", db);
+    expect((await take(db, TENANT, { ...PR, number: 9 }, "run_other")).outcome).toBe("pass");
     await hub.takes.seed(db);
     await mailOf(PR, "d1", db);
 
@@ -146,7 +148,7 @@ test("a mail no manager took before the last take, read back as the hub starts, 
   });
 }, 60_000);
 
-test("a head whose mail finds no listener stays stalled while the reconciler retries it, until a manager takes", async () => {
+test("a head whose mail finds no listener stays stalled while the reconciler retries it and other pull requests are taken, until a run of it is seen", async () => {
   await withDatabase(async (db) => {
     const queuedAt = new Date().toISOString();
     const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
@@ -171,9 +173,52 @@ test("a head whose mail finds no listener stays stalled while the reconciler ret
     expect(hub.alarms()).toEqual(["triage_stalled github"]);
     expect(hub.mailed.length).toBe(1);
 
-    await hub.took(PR);
+    await mailOf({ ...PR, number: 8 }, "d8", db);
+    await hub.took({ ...PR, number: 8 });
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github"]);
+
+    const running = [{ runId: "run_7", source: "github" as const, status: "running" as const, startedAt: hub.now().toISOString() }];
+    const seen = planTenant({ repos: [{ name: RECORD.name, prs: [{ number: 7, headSha: "h1", updatedAt: queuedAt, draft: false }], rows: store.rows() }], runs: new Map([[RECORD.name, new Map([["7@h1", running]])]]), now: hub.now(), policy: DEFAULT_RECONCILE_POLICY }).get(RECORD.name)!;
+    await store.save(TENANT, RECORD.name, seen.rows);
+    expect(store.rows()).toEqual([expect.not.objectContaining({ undeliveredSince: expect.anything() })]);
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
+  });
+}, 60_000);
+
+test("a head whose mail did not go out raises the alarm by its age alone, whatever its host's managers take meanwhile", async () => {
+  await withDatabase(async (db) => {
+    const queuedAt = new Date().toISOString();
+    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
+    const hub = stack(db, store);
+    await failHead(store, { tenantId: TENANT, repo: RECORD.name, number: 7, headSha: "h1" }, triageStopped("github"), new Date());
+    await new Promise((done) => setTimeout(done, 5));
+
+    hub.advance(60_000);
+    await hub.took({ ...PR, number: 8 }, "idle");
+    await mailOf({ ...PR, number: 9 }, "d9", db);
+    await hub.took({ ...PR, number: 9 });
+    await hub.check();
+    expect(hub.alarms()).toEqual([]);
+
+    hub.advance(STALLED_AFTER_MS);
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github"]);
+  });
+}, 60_000);
+
+test("an idle take does not clear a raised alarm", async () => {
+  await withDatabase(async (db) => {
+    const hub = stack(db);
+    await mailOf(PR, "d1", db);
+    hub.advance(STALLED_AFTER_MS + 60_000);
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github"]);
+
+    await hub.took({ ...PR, number: 8 }, "idle");
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github"]);
   });
 }, 60_000);
 
@@ -185,7 +230,9 @@ test("a host whose managers stop taking raises its own alarm while the other hos
 
     for (let pass = 0; pass < 4; pass++) {
       hub.advance(5 * 60_000);
-      await hub.took(BITBUCKET);
+      const pull = { ...BITBUCKET, number: BITBUCKET.number + pass };
+      await mailOf(pull, `b${pass}`, db);
+      await hub.took(pull);
       await hub.check();
     }
     expect(hub.alarms()).toEqual(["triage_stalled github"]);

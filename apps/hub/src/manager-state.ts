@@ -648,11 +648,11 @@ export async function recordOverdueWake(db: DB["db"], tenantId: string, pr: Pull
 
 const NewestTakes = type({ tenantId: "string", source: "string", at: "string" }).array();
 
-/** When a manager of each tenant and host last took a pull request: claimed it, or opened a pass. Read once, as the hub starts. */
+/** When a manager of each tenant and host last opened a pass on a pull request. Read once, as the hub starts. */
 export async function lastTakes(db: DB["db"]): Promise<{ tenantId: string; source: RepoSource; at: string }[]> {
   const rows = NewestTakes.assert(await db.execute(sql`
     SELECT ${managerState.tenantId} AS "tenantId", split_part(${managerState.key}, ':', 2) AS source, max(taken.at) AS at FROM ${managerState},
-    LATERAL (VALUES (${managerState.state}->>'claimedAt'), (${managerState.state}->'pass'->>'takenAt'), (${managerState.state}->'history'->-1->>'takenAt')) AS taken(at)
+    LATERAL (VALUES (${managerState.state}->'pass'->>'takenAt'), (${managerState.state}->'history'->-1->>'takenAt')) AS taken(at)
     WHERE ${managerState.kind} = 'claim' AND taken.at IS NOT NULL
     GROUP BY 1, 2`));
   return rows.flatMap(function known(row) {

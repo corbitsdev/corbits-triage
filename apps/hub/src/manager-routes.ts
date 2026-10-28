@@ -77,7 +77,7 @@ export type ManagerRoutesDeps = {
   wake: (tenantId: string, pr: PullRequestRef, head: string) => Promise<boolean>;
   /** Stops the pull request's reviewers on a head older than its newest and takes them off the claim; never throws. */
   supersede: (tenantId: string, pr: PullRequestRef) => Promise<void>;
-  /** Notes that a manager of the host took a pull request, so the hub knows its managers still run. */
+  /** Notes that a manager of the host opened a pass on a pull request, so the hub knows its managers still triage. */
   taken: (tenantId: string, source: RepoSource, at: string) => void;
 };
 
@@ -133,7 +133,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
       const pr = c.req.valid("json");
       const result = await take(db, c.get("tenant").id, pr, c.get("runId"));
       if (result.outcome === "refused") return refused();
-      taken(c.get("tenant").id, pr.source, new Date().toISOString());
+      if (result.outcome === "pass") taken(c.get("tenant").id, pr.source, result.pass.takenAt);
       return c.json(result);
     },
   );

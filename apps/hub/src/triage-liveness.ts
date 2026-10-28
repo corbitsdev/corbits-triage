@@ -1,10 +1,10 @@
 // Whether the pull requests a workspace's hub queued still reach a manager, host by host. Each check takes when a
-// manager of the host last took a pull request, then the oldest of its pull requests queued since that still waits: a
-// mail recorded that no manager has taken, or a head still queued or whose mail did not go out, from when it first did
-// not. Once that one waited past the alarm age, the host is stalled until one of its managers takes a pull request
-// again. Alarms and takes live in process: the hub runs as one replica, its takes are read back as it starts, and one
-// restarted on a stalled host raises the alarm again on its first check. Raising and clearing each email the
-// workspace's owners and admins once, when the hub sends email.
+// manager of the host last opened a pass, then the oldest of its pull requests that still waits: a mail recorded since
+// that no manager has taken, a head queued since, or a head whose mail did not go out, from when it first did not,
+// which no pass can have taken. Once that one waited past the alarm age, the host is stalled until one of its managers
+// opens a pass again and nothing waits that long. Alarms and takes live in process: the hub runs as one replica, its
+// takes are read back as it starts, and one restarted on a stalled host raises the alarm again on its first check.
+// Raising and clearing each email the workspace's owners and admins once, when the hub sends email.
 import { and, eq, inArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { REPO_SOURCES, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
@@ -25,7 +25,7 @@ function hostKey(tenantId: string, source: RepoSource): string {
   return `${tenantId}\n${source}`;
 }
 
-/** When a manager of each workspace and host last took a pull request, as the take route records it. */
+/** When a manager of each workspace and host last opened a pass on a pull request, as the take route records it. */
 export function createTakeLedger() {
   const takes = new Map<string, string>();
 
@@ -100,7 +100,10 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
     }
   }
 
-  /** When each pull request of each host queued after that host's last take began to wait. */
+  /**
+   * When each waiting pull request of each host began to wait: a mail or queued head since the host's last take, and
+   * any head whose mail did not go out, which no take can have picked up, until a run of it is seen.
+   */
   async function waiting(tenant: LivenessTenant): Promise<Map<RepoSource, number[]>> {
     const byHost = new Map<RepoSource, number[]>();
     for (const source of REPO_SOURCES) {
@@ -114,14 +117,15 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       const { rows } = await deps.store.load(tenant.id, triageStateKey(record));
       for (const row of rows) {
         const since = row.undeliveredSince ?? row.queuedAt;
-        if (since === undefined || (taken !== undefined && Date.parse(since) <= Date.parse(taken))) continue;
-        if (row.status === "queued" || undelivered(row, source)) byHost.get(source)?.push(Date.parse(since));
+        if (since === undefined || (row.status !== "queued" && !undelivered(row, source))) continue;
+        const unsent = row.undeliveredSince !== undefined || undelivered(row, source);
+        if (unsent || taken === undefined || Date.parse(since) > Date.parse(taken)) byHost.get(source)?.push(Date.parse(since));
       }
     }
     return byHost;
   }
 
-  /** Raises the host's alarm once it stalls, and clears it only once one of its managers took a pull request since. */
+  /** Raises the host's alarm once it stalls, and clears it only once one of its managers opened a pass since and none waits. */
   async function settle(tenantId: string, source: RepoSource, times: readonly number[]): Promise<void> {
     const key = hostKey(tenantId, source);
     const taken = deps.takes.last(tenantId, source);
