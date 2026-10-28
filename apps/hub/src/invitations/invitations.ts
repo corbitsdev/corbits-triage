@@ -180,6 +180,8 @@ export function createInvitations(deps: InvitationDeps) {
     if (!row) return failure(404, "not_found", "No open invite for this person.");
     const deleted = await deps.stockFetch(asCaller(req, "DELETE", `/api/tenants/${encodeURIComponent(tenantId)}/principals/${encodeURIComponent(invitedId)}`));
     if (!deleted.ok) return deleted;
+    // One guarded statement, so a verification, account or invite landing meanwhile keeps the user. better-auth's
+    // adapter deletes a user by id only, so it cannot hold these guards at delete time.
     await db.delete(schema.user).where(and(
       eq(schema.user.id, row.userId),
       eq(schema.user.emailVerified, false),
@@ -218,7 +220,7 @@ export function createInvitations(deps: InvitationDeps) {
     if (!await callerIsHubOwner(principalId)) return failure(403, "forbidden", "Only whoever runs this Triage may verify an address.");
     const [row] = await unverifiedPeople(tenantId, targetId);
     if (!row) return failure(404, "not_found", "No one in this workspace with an unverified address has this id.");
-    await db.update(schema.user).set({ emailVerified: true, updatedAt: deps.now() }).where(eq(schema.user.id, row.userId));
+    await (await deps.auth.$context).internalAdapter.updateUser(row.userId, { emailVerified: true, updatedAt: deps.now() });
     deps.log({ level: "info", msg: "email_marked_verified", tenantId, byPrincipalId: principalId, principalId: targetId, userId: row.userId });
     return new Response(null, { status: 204 });
   }

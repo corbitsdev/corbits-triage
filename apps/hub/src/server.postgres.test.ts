@@ -737,6 +737,52 @@ function smtpSink() {
   return { url: `smtp://127.0.0.1:${server.port}`, sent: () => messages.map(parse), stop: () => server.stop(true) };
 }
 
+test("a person signs out only their own other sessions", async () => {
+  const origin = await startHub();
+  const email = `sessions-${crypto.randomUUID().slice(0, 8)}@example.com`;
+  const first = await signedIn(origin, email);
+  async function signInAgain(ip: string) {
+    return fetch(`${origin}/api/auth/sign-in/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, "x-forwarded-for": ip },
+      body: JSON.stringify({ email, password: "password-123456" }),
+    });
+  }
+  const signIn = await signInAgain("198.51.100.250");
+  const second = { ...first, cookie: signIn.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ") };
+  const Sessions = type({ sessions: type({ id: "string", isCurrent: "boolean" }).array() });
+  async function sessionsOf(headers: Record<string, string>) {
+    return Sessions.assert(await (await fetch(`${origin}/api/integrations/sessions`, { headers })).json()).sessions;
+  }
+  async function revoke(headers: Record<string, string>, sessionId: string) {
+    return (await fetch(`${origin}/api/integrations/sessions/${sessionId}`, { method: "DELETE", headers })).status;
+  }
+
+  const listed = await sessionsOf(first);
+  expect(listed).toHaveLength(2);
+  const other = listed.find((session) => !session.isCurrent)!;
+  const stranger = await signedIn(origin);
+  const strangers = await sessionsOf(stranger);
+  expect(await revoke(first, strangers[0]!.id)).toBe(404);
+  expect(await sessionsOf(stranger)).toEqual(strangers);
+  expect(await revoke(first, "unknown")).toBe(404);
+  expect(await revoke(first, other.id)).toBe(204);
+  expect(await sessionsOf(first)).toEqual(listed.filter((session) => session.isCurrent));
+  expect((await fetch(`${origin}/api/me`, { headers: second })).status).toBe(401);
+
+  // An expired sign-in is no longer listed, and its owner can still remove it.
+  await signInAgain("198.51.100.251");
+  const expired = (await sessionsOf(first)).find((session) => !session.isCurrent)!;
+  const { db, close } = createDB(DATABASE);
+  try {
+    await db.update(schema.session).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(schema.session.id, expired.id));
+    expect(await revoke(first, expired.id)).toBe(204);
+    expect(await db.select({ id: schema.session.id }).from(schema.session).where(eq(schema.session.id, expired.id))).toEqual([]);
+  } finally {
+    await close();
+  }
+}, 40_000);
+
 test("an invite joins only its verified invitee, by an emailed magic link or a copied link that signs nobody in", async () => {
   const smtp = smtpSink();
   const portal = "http://portal.test";
@@ -745,7 +791,7 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
   const noEmailOutput: string[] = [];
   const noEmail = await startHub({ PORTAL_ORIGIN: portal }, temporaryDirectory(), noEmailOutput);
   const emailOf = (name: string) => `${name}-${crypto.randomUUID().slice(0, 8)}@example.com`;
-  const [boss, ann, bob, cat, dee, eve, fay, gil, bounce] = ["boss", "ann", "bob", "cat", "dee", "eve", "fay", "gil", "bounce"].map(emailOf) as [string, string, string, string, string, string, string, string, string];
+  const [boss, ann, bob, cat, dee, eve, fay, gil, hal, bounce] = ["boss", "ann", "bob", "cat", "dee", "eve", "fay", "gil", "hal", "bounce"].map(emailOf) as [string, string, string, string, string, string, string, string, string, string];
   const owner = await signedIn(origin, boss);
   const tenantId = await createTenant(origin, owner);
   const otherTenantId = await createTenant(origin, owner);
@@ -791,13 +837,13 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     async function withdraw(principalId: string) {
       return (await fetch(`${origin}/api/integrations/invitations/${tenantId}/${principalId}`, { method: "DELETE", headers: owner })).status;
     }
-    async function resetPassword(email: string, password: string, ip: string) {
+    async function resetPassword(email: string, password: string, ip: string, status = 200) {
       const headers = { "content-type": "application/json", origin, "x-forwarded-for": ip };
       const asked = await fetch(`${origin}/api/auth/request-password-reset`, { method: "POST", headers, body: JSON.stringify({ email, redirectTo: `${portal}/reset-password` }) });
       expect(asked.status).toBe(200);
       const token = /reset-password\/([^?\s]+)/.exec(mailedLinks(email, /http\S+reset-password\S+/).at(-1)!)![1]!;
       const reset = await fetch(`${origin}/api/auth/reset-password`, { method: "POST", headers, body: JSON.stringify({ token, newPassword: password }) });
-      expect(reset.status).toBe(200);
+      expect(reset.status).toBe(status);
     }
     async function passwordSignIn(email: string, password: string, ip: string) {
       return (await fetch(`${origin}/api/auth/sign-in/email`, { method: "POST", headers: { "content-type": "application/json", origin, "x-forwarded-for": ip }, body: JSON.stringify({ email, password }) })).status;
@@ -848,7 +894,21 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
 
     // A reset proves the mailbox too, so an invitee who sets a password before following the link can accept, and keeps it.
     expect(await invite(origin, gil)).toMatchObject({ status: 201 });
+    const [gilUser] = await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, gil));
+    const stuck = crypto.randomUUID();
+    await db.insert(schema.account).values([
+      { id: crypto.randomUUID(), userId: gilUser!.id, providerId: "google", accountId: "squatted" },
+      { id: stuck, userId: gilUser!.id, providerId: "github", accountId: "squatted" },
+    ]);
+    // A reset that fails partway leaves the address unverified, so the next reset finishes the cleanup.
+    await db.execute(sql.raw(`CREATE FUNCTION fail_account_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'transient'; END $$`));
+    await db.execute(sql.raw(`CREATE TRIGGER fail_account_delete BEFORE DELETE ON account FOR EACH ROW WHEN (OLD.id = '${stuck}') EXECUTE FUNCTION fail_account_delete()`));
+    await resetPassword(gil, "password-777776", "198.51.100.215", 500);
+    await db.execute(sql.raw("DROP TRIGGER fail_account_delete ON account"));
+    await db.execute(sql.raw("DROP FUNCTION fail_account_delete()"));
+    expect(await db.select({ emailVerified: schema.user.emailVerified }).from(schema.user).where(eq(schema.user.id, gilUser!.id))).toEqual([{ emailVerified: false }]);
     await resetPassword(gil, "password-777777", "198.51.100.212");
+    expect(await db.select({ providerId: schema.account.providerId }).from(schema.account).where(eq(schema.account.userId, gilUser!.id))).toEqual([{ providerId: "credential" }]);
     const gilSignIn = await fetch(`${origin}/api/auth/sign-in/email`, { method: "POST", headers: { "content-type": "application/json", origin, "x-forwarded-for": "198.51.100.213" }, body: JSON.stringify({ email: gil, password: "password-777777" }) });
     const gilHeaders = { "content-type": "application/json", origin, cookie: gilSignIn.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ") };
     expect(await accept(gilHeaders)).toEqual({ status: 200, body: { tenantId } });
@@ -877,6 +937,11 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     expect(await statusOf(eve)).toBeUndefined();
     expect(await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, eve))).toEqual([]);
     await signedIn(origin, eve);
+    // An address another workspace's invite still holds is kept.
+    const elsewhereInvite = await fetch(`${origin}/api/integrations/invitations/${otherTenantId}`, { method: "POST", headers: { ...owner, origin }, body: JSON.stringify({ email: hal, roleId: await memberRole(otherTenantId) }) });
+    expect(elsewhereInvite.status).toBe(201);
+    expect(await withdraw(Sent.assert((await invite(origin, hal)).body).principalId)).toBe(204);
+    expect(await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, hal))).toHaveLength(1);
 
     // Withdrawing does not reset what an address was sent, so inviting and withdrawing in a loop stops.
     for (let sent = 0; sent < 5; sent++) expect(await withdraw(Sent.assert((await invite(origin, fay)).body).principalId)).toBe(204);

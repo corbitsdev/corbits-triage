@@ -976,7 +976,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     now,
     log: logJson,
   }),
-  sessions: createSessions(composition.db),
+  sessions: createSessions(composition.db, composition.auth),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them
 // through routeRequest, past the stock logger, which would log the callback's
