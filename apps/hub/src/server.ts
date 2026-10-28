@@ -47,7 +47,7 @@ import { connectRailwaySidecars, sweepRailwaySidecarsOf, type RailwaySidecarProv
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { createPlacementChooser, localSidecarUsage } from "./sidecar/placement.js";
-import { restoreLocalSidecars } from "./sidecar/restore.js";
+import { bootLocalSidecars } from "./sidecar/boot.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
@@ -166,17 +166,12 @@ const local = createLocalProcessSidecarProvisioner({
   spawnSidecar: createSpawnLocalSidecar({
     interchangeDir: V,
     credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
-    maxActiveDeployments: localSidecarCap,
     processEnv: childProcessEnv(env),
   }),
-  manifests: createLocalSidecarManifestStore({
-    dataRoot: localSidecarDataRoot,
-    cipher: credentialCipher,
-    log: logJson,
-  }),
+  manifests: createLocalSidecarManifestStore({ dataRoot: localSidecarDataRoot, log: logJson }),
   capacity: createHostCapacity({ cgroupRoot: "/sys/fs/cgroup", meminfo: "/proc/meminfo" }),
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
-  onAccepted: notePlaced,
+  maxSidecars: localSidecarCap,
   log: logJson,
 });
 const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
@@ -250,6 +245,7 @@ const composition = await createInterchangeHub({
 });
 const stock = composition.server;
 composition.sidecarRouter.events.on("sidecar.allocated.connected", notePlaced);
+composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
 
 /** The hub's credentials, and the push that takes back from sidecars an App key a read moved to the hub. */
 const credentialDeps = {
@@ -264,7 +260,7 @@ const movedAppKeys: string[] = [];
 for (const tenantId of await githubTenants(composition.db)) {
   if (await moveAppKey(credentialDeps, tenantId)) movedAppKeys.push(tenantId);
 }
-await restoreLocalSidecars(composition.db, local);
+await bootLocalSidecars(composition.db, local);
 if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
 async function tendE2b(sidecars: E2bSidecarProvisioner): Promise<void> {
   try {
