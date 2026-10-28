@@ -152,7 +152,7 @@ the pre-deploy command. Railway Sandboxes need `SANDBOX_REPOSITORY` and
 2. Set the [required variables](#required) and any optional ones.
 3. Run the [migrations](#migrations) before each start or upgrade.
 4. Give the platform a drain time longer than `HUB_SIDECAR_STOP_TIMEOUT_MS`
-   (default 25 seconds), the most the local sidecar takes to stop.
+   (default 25 seconds), the most a local sidecar takes to stop.
 5. Terminate TLS in front of the hub.
 
 Sign-in and email rate limits count each caller by address. On Railway the
@@ -360,8 +360,8 @@ The hub still publishes the workflows bundled in its own image's
 
 ## Where sidecars run
 
-Triage runs in one sidecar, a child process on the hub's machine; it needs
-nothing more. Code review needs a sidecar of its own, so it runs only once an
+Triage runs in sidecars that are child processes on the hub's machine, one
+per deployment; it needs nothing more. Code review needs a sidecar of its own, so it runs only once an
 isolated place is set up.
 Settings → Code review → **Where it runs** lists every place this server
 offers, with the `.env` lines and guide for each; code review uses the first
