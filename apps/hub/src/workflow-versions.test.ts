@@ -50,8 +50,10 @@ function db() {
   } as never;
 }
 
-function handler() {
-  return createWorkflowVersions({ db: db(), up: async (anchorRunId) => anchorRunId !== "run_source", launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId] ?? null) as never }, rollouts: (tenantId) => (tenantId === TENANT_ID ? [ROLLOUT] : []), sidecar: async () => SIDECAR });
+const STALLED = { since: CREATED_AT.toISOString(), lastTakeAt: "2026-10-09T11:00:00.000Z" };
+
+function handler(stalled?: typeof STALLED) {
+  return createWorkflowVersions({ db: db(), up: async (anchorRunId) => anchorRunId !== "run_source", launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId] ?? null) as never }, rollouts: (tenantId) => (tenantId === TENANT_ID ? [ROLLOUT] : []), sidecar: async () => SIDECAR, stalled: (tenantId) => (tenantId === TENANT_ID ? stalled : undefined) });
 }
 
 describe("createWorkflowVersions", () => {
@@ -66,6 +68,10 @@ describe("createWorkflowVersions", () => {
       rollouts: [ROLLOUT],
       sidecar: SIDECAR,
     });
+  });
+
+  test("names since when the workspace's pull requests wait for a manager while it is stalled", async () => {
+    expect(await (await handler(STALLED)({ tenantId: TENANT_ID, principalId: "member-1" })).json()).toMatchObject({ stalled: STALLED });
   });
 
   test("refuses a member without the workflow read grant with 403", async () => {

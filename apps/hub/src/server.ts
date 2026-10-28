@@ -895,6 +895,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     sidecar: function sidecarUsage() {
       return localSidecarUsage(composition.db, local.provisioner, localSidecarCap);
     },
+    stalled: triageLiveness.stalled,
   }),
   codeReviewPlace: createCodeReviewPlace({ authorize: authorizePortal, place: placeCodeReview, probes: codeReviewProbes }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, place: placeCodeReview, readCheckPack, readHead: pullRequests.head, send: sendToListener }),

@@ -68,5 +68,9 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
     }
   }
 
-  return { watch };
+  function stalled(tenantId: string): Stalled | undefined {
+    return alarms.get(tenantId);
+  }
+
+  return { watch, stalled };
 }

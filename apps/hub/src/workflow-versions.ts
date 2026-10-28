@@ -17,6 +17,7 @@ export type WorkflowVersionsDeps = {
   rollouts: (tenantId: string) => DeployedVersions["rollouts"];
   /** The hub's local sidecar: what it runs, its cap, and what overflowed to a sandbox. */
   sidecar: () => Promise<DeployedVersions["sidecar"]>;
+  stalled: (tenantId: string) => DeployedVersions["stalled"];
 };
 
 export function sourceOf(bundle: FrozenApprovalBundle): DeployedVersions["deployments"][number]["source"] {
@@ -41,6 +42,7 @@ export function createWorkflowVersions(deps: WorkflowVersionsDeps) {
         source: spec ? sourceOf(spec.frozenApprovalBundle) : null,
       });
     }
-    return Response.json({ deployments, rollouts: deps.rollouts(tenantId), sidecar: await deps.sidecar() } satisfies DeployedVersions);
+    const stalled = deps.stalled(tenantId);
+    return Response.json({ deployments, rollouts: deps.rollouts(tenantId), sidecar: await deps.sidecar(), ...(stalled && { stalled }) } satisfies DeployedVersions);
   };
 }
