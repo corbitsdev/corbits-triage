@@ -1464,7 +1464,8 @@ textarea { min-height: 88px; resize: vertical; }
   padding: 0.25rem;
 }
 
-.newer-portal {
+.newer-portal,
+.triage-stalled {
   position: fixed;
   top: 1.25rem;
   left: 16px;
@@ -1481,4 +1482,9 @@ textarea { min-height: 88px; resize: vertical; }
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   font-size: 0.875rem;
+}
+
+.triage-stalled {
+  z-index: 50;
+  border-color: var(--danger);
 }

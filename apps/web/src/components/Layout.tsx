@@ -13,6 +13,8 @@ import { usePortal } from "../lib/portal.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useSession } from "../lib/session.tsx";
+import { useTriageStalled } from "../lib/tenant-entities.ts";
+import { TriageStalledNotice } from "./TriageStalledNotice.tsx";
 import { CheckIcon, GearIcon, InboxIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
@@ -134,6 +136,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
   const needsYou = useMemo(() => needsYouCount(open, enabled), [open, enabled]);
   const openPullsUnanswered = useOpenPullsUnanswered();
+  const stalled = useTriageStalled();
   const path = location.pathname;
   const pullPage = path.startsWith("/triage/pr/") || path.startsWith("/prs/");
   const room = roomOf(path, pullPage);
@@ -173,6 +176,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           {children}
         </div>
       )}
+      <TriageStalledNotice stalled={stalled} />
       <nav className="mobile-nav" aria-label="Mobile">
         <NavLink to="/" className={triageActive ? "active" : undefined}>
           <InboxIcon />
