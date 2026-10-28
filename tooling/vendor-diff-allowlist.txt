@@ -6,14 +6,9 @@
 # Lines starting with `#` and blank lines are ignored. Keep entries
 # justified: each must cite the tracking issue for its upstream resolution.
 #
-# Composite pin: stock b1ca01f0d9bc2eb203e95b1780a6f685c5da8215 plus the
+# Composite pin: stock 19d89be64de634ea6e0ecfbfa7036d3ced6f8bef plus the
 # allowlisted deltas below. Full rationale is in vendor/interchange/VENDORED.md.
 #
-# Upstream PR #193 step-env director threading: the step env and spawned-child
-# deps resolve the closure's own directors. Remove when upstream's step env
-# loads the closure registry.
-packages/workflow-host/src/child/substrate-factory.ts
-
 # CL-10210 local carry: consume a replayed signal mail the run already
 # recorded instead of wedging the deployment inbox. Not upstream yet.
 # Remove when re-pinning to a stock commit that fixes it.

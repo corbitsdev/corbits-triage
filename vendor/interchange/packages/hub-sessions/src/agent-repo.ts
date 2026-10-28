@@ -6,7 +6,7 @@ import { createRepoStore } from "./repo-store";
 import type {
   AuthorizeFn,
   LocalRepoStore,
-  NewlyTerminalRun,
+  PreparedReceivePack,
   RepoId,
 } from "./repo-store";
 import {
@@ -85,9 +85,17 @@ export type AgentRepoStore = {
   ): Promise<void>;
 
   /**
-   * Receive and store a workflow-run pack from a sidecar. Indexes the
-   * pack objects and updates the ref without materializing a working
-   * tree.
+   * Stage and validate a workflow-run pack from a sidecar, and return the
+   * prepared receive. The validation holds no repo lock, so a caller can
+   * take a lock of its own around `commit()` alone. `commit()` takes the
+   * repo lock, publishes the pack, and moves the ref without materializing
+   * a working tree.
+   *
+   * The sidecar's pushes can land out of order, so a pack whose tip the
+   * ref already holds (its tip or a first-parent ancestor) changes
+   * nothing: prepare or `commit()` answers `already_applied`, and the ref
+   * keeps the newer tip. Any other pack goes through the usual receive
+   * checks, and one on a new line of history is not rejected for that.
    *
    * `repoId.kind` must be `"workflow-run"`. Stamps a
    * `WorkflowRunSupervisorPrincipal` whose `anchorRunId` equals
@@ -96,16 +104,16 @@ export type AgentRepoStore = {
    * sidecar-originated run-event commits (the supervisor lives on the
    * sidecar and is the actual signer of the run events).
    *
-   * Returns the runs the pack drove terminal, surfaced from the
-   * substrate's per-commit validation so a caller can flip the run's
-   * DB state without re-deriving terminal-ness.
+   * An applied `commit()` returns the runs the pack drove terminal,
+   * surfaced from the substrate's per-commit validation so a caller can
+   * flip the run's DB state without re-deriving terminal-ness.
    */
-  receiveWorkflowRunPack(
+  prepareWorkflowRunPack(
     repoId: RepoId,
     pack: Uint8Array,
     ref: string,
     commitSha: string,
-  ): Promise<NewlyTerminalRun[]>;
+  ): Promise<PreparedReceivePack>;
 
   /** Raw 32-byte Ed25519 public key used to sign deploy commits. */
   getSigningPublicKey(): Uint8Array;
@@ -196,6 +204,30 @@ export function createAgentRepoStore(config: {
 
   const hub: AgentStateHubPrincipal = { kind: "hub" };
 
+  async function prepareWorkflowRunPack(
+    incomingRepoId: RepoId,
+    pack: Uint8Array,
+    ref: string,
+    commitSha: string,
+  ): Promise<PreparedReceivePack> {
+    if (incomingRepoId.kind !== "workflow-run") {
+      throw new Error(
+        `AgentRepoStore.prepareWorkflowRunPack requires repoId.kind === "workflow-run", got ${JSON.stringify(incomingRepoId.kind)}`,
+      );
+    }
+    const principal: WorkflowRunSupervisorPrincipal = {
+      kind: "supervisor",
+      anchorRunId: incomingRepoId.id,
+    };
+    return store.prepareReceivePack(
+      principal,
+      incomingRepoId,
+      ref,
+      pack,
+      commitSha,
+    );
+  }
+
   function repoId(agentId: string): RepoId {
     return { kind: "agent-state", id: agentId };
   }
@@ -254,26 +286,7 @@ export function createAgentRepoStore(config: {
       );
     },
 
-    async receiveWorkflowRunPack(incomingRepoId, pack, ref, commitSha) {
-      if (incomingRepoId.kind !== "workflow-run") {
-        throw new Error(
-          `AgentRepoStore.receiveWorkflowRunPack requires repoId.kind === "workflow-run", got ${JSON.stringify(incomingRepoId.kind)}`,
-        );
-      }
-      const principal: WorkflowRunSupervisorPrincipal = {
-        kind: "supervisor",
-        anchorRunId: incomingRepoId.id,
-      };
-      const expectedOldSha = await store.resolveRef(hub, incomingRepoId, ref);
-      return store.receivePack(
-        principal,
-        incomingRepoId,
-        ref,
-        pack,
-        commitSha,
-        expectedOldSha,
-      );
-    },
+    prepareWorkflowRunPack,
 
     getSigningPublicKey() {
       return signingKey.publicKey;

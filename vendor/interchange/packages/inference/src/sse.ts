@@ -7,58 +7,59 @@
 // the iteration.
 //
 // The parser buffers incomplete lines across chunk boundaries so split chunks
-// are handled correctly regardless of where chunk boundaries fall.
-
-const decoder = new TextDecoder();
+// are handled correctly regardless of where chunk boundaries fall. A final
+// line without a terminator is parsed by the same rules at end of stream.
 
 export async function* parseSSE(
   stream: ReadableStream<Uint8Array>,
 ): AsyncIterable<string> {
   const reader = stream.getReader();
-  let buffer = "";
+  // One decoder per stream: a streaming decoder holds the incomplete UTF-8
+  // sequence at the end of a read, so a shared one splices bytes across
+  // concurrent streams.
+  const decoder = new TextDecoder();
+  // Fragments of the line still waiting for its newline, joined once when
+  // it arrives so a large field spread over many reads is not rescanned
+  // or recopied on every read.
+  const fragments: string[] = [];
 
   try {
     while (true) {
       const { done, value } = await reader.read();
 
       if (done) {
-        // Flush any remaining content in the buffer as a final line.
-        if (buffer.length > 0) {
-          const payload = extractDataPayload(buffer);
-          if (payload !== null) {
-            yield payload;
-          }
+        fragments.push(decoder.decode());
+        const payload = parseLine(fragments.join(""));
+        if (payload !== null && payload !== DONE) {
+          yield payload;
         }
-        break;
+        return;
       }
 
-      buffer += decoder.decode(value, { stream: true });
-
-      // Process all complete lines (lines terminated by \n).
-      // A line ending in \r\n counts as terminated at the \n.
+      const text = decoder.decode(value, { stream: true });
+      let start = 0;
       let newlineIndex: number;
-      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-        const rawLine = buffer.slice(0, newlineIndex);
-        buffer = buffer.slice(newlineIndex + 1);
-
-        // Strip trailing \r for CRLF line endings.
-        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-
-        // Blank lines and comment lines are ignored.
-        if (line === "" || line.startsWith(":")) {
-          continue;
+      while ((newlineIndex = text.indexOf("\n", start)) !== -1) {
+        const tail = text.slice(start, newlineIndex);
+        start = newlineIndex + 1;
+        let line = tail;
+        if (fragments.length > 0) {
+          fragments.push(tail);
+          line = fragments.join("");
+          fragments.length = 0;
         }
 
-        const payload = extractDataPayload(line);
+        const payload = parseLine(line);
         if (payload === null) {
           continue;
         }
-
-        if (payload === "[DONE]") {
+        if (payload === DONE) {
           return;
         }
-
         yield payload;
+      }
+      if (start < text.length) {
+        fragments.push(text.slice(start));
       }
     }
   } finally {
@@ -66,11 +67,16 @@ export async function* parseSSE(
   }
 }
 
-function extractDataPayload(line: string): string | null {
-  if (line.startsWith("data:")) {
-    // The spec allows an optional space after the colon.
-    const raw = line.slice(5);
-    return raw.startsWith(" ") ? raw.slice(1) : raw;
+const DONE = "[DONE]";
+
+// Returns the data payload of one line, or null for blank lines, comments,
+// and non-data fields. A trailing \r from a CRLF ending is dropped.
+function parseLine(rawLine: string): string | null {
+  const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+  if (!line.startsWith("data:")) {
+    return null;
   }
-  return null;
+  // The spec allows an optional space after the colon.
+  const raw = line.slice(5);
+  return raw.startsWith(" ") ? raw.slice(1) : raw;
 }

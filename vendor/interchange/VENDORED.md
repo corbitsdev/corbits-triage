@@ -3,11 +3,10 @@
 ## Baseline
 
 - Upstream: <https://github.com/faremeter/interchange>
-- Stock ref: `b1ca01f0d9bc2eb203e95b1780a6f685c5da8215`
-- Composite pin: stock `b1ca01f0` (`v0.5.0-67`) plus the
-  step-env director threading from PR #193, the local CL-10210 carry, the
-  INTR-666 adaptive-thinking model ids and Anthropic structured outputs, the
-  host run-token routes, and the deployer's manage grant. Do not treat any
+- Stock ref: `19d89be64de634ea6e0ecfbfa7036d3ced6f8bef`
+- Composite pin: stock `19d89be6` (`v0.5.0-103`) plus the local CL-10210
+  carry, the INTR-666 adaptive-thinking model ids and Anthropic structured
+  outputs, the host run-token routes, and the deployer's manage grant. Do not treat any
   delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
@@ -31,35 +30,6 @@ re-vendor whose excluded paths change updates `tooling/vendor-diff-pruned.txt`.
 
 ## Allowed deltas
 
-### Step-env director threading (upstream PR #193)
-
-Required because `@corbits/triage-workflows` ships its director through its
-own `interchange.directors`. Stock loads that registry into the
-run-child's runtime env, but `createSidecarStepBuildEnv` still hardcodes
-`createDefaultDirectorRegistry()`, so every step naming
-`@corbits/triage-workflows/triage` fails at build with
-`UnknownDirectorIdError`. Stock `c19d327b` moved the file's credential
-wiring into `credentials-backed-authorize.ts` and `action-credentials.ts`;
-the carry was re-applied by hand and is unchanged in substance. Stock
-`b1ca01f0` changed only unrelated lines of the file and the carry applies
-unchanged. The carry resolves the step env's registry from
-`closurePackageDir` (memoised, built-ins when absent) and passes the same
-closure registry to spawned-child deps, whose grant cap otherwise drops the
-`director:` grant of every onTrigger body step (kept for consistency with the
-approved snapshot; not re-gated at runtime on this pin). It takes only this threading
-from upstream PR #193 (head `5293dc28`, open); not its dependency-package
-director loading or namespace changes. `tooling/vendor-health.test.ts`
-asserts the step env resolves the director.
-
-Allowed files:
-
-- `packages/workflow-host/src/child/substrate-factory.ts`
-
-Upstream reference: <https://github.com/faremeter/interchange/pull/193>.
-
-Remove when upstream's step env loads the closure
-registry.
-
 ### Consume signal mail the run already recorded (CL-10210)
 
 Local carry, not upstream. A signal mail can stay in `processing/` after the
@@ -73,9 +43,9 @@ records as a `SignalReceived`, without redelivering it or dropping the run's
 input channel. `hasRecordedSignal` reads the run's event log for that check.
 Stock `cb0bdfb4` stops the child appending a duplicate `SignalReceived`, but
 `dispatchOne` still redelivers the mail and waits for the run to park, which
-a dropped duplicate does not do, so the carry stays. The three source files
-are unchanged upstream between `cd02c313` and `b1ca01f0`, so the carry applies
-to them as-is.
+a dropped duplicate does not do, so the carry stays. Stock `19d89be6` changed
+`workflow-run-kind.ts` and `supervisor.ts` in unrelated places, and the carry
+applies to them unchanged.
 
 The check also counts the mail a run's `RunStarted` records as its
 `consumedMessageId`. A long-lived onTrigger run consumes its first trigger
@@ -197,15 +167,16 @@ Remove when stock grants the deployer `manage` on the run it deployed.
 
 ## Dropped deltas
 
+- Step-env director threading (PR #193 / INTR-581): stock `19d89be6` contains
+  `401a8a58` (`Resolve referenced directors from workflow package slots`) and
+  `4649da4e` (`Require a director registry for step and child environments`),
+  so the step env and spawned-child deps resolve the closure's directors and
+  `substrate-factory.ts` is stock again. The chain tests cover the built
+  workflow packages' directors end to end.
 - INTR-583 (operator-registered model-provider keys): stock `9ae47143`
   contains `5185df1a` (`Accept operator-registered provider plugins in the
   model catalog`), the merged form of `44170ebb`; the catalog files and
   `parse-row.test.ts` are stock again.
-- The rest of PR #193 / INTR-581 (dependency-package directors, owned-id
-  namespace checks, the definition-scoped loader): stock already loaded the
-  workflow package's own `interchange.directors` into the runtime env, which
-  is all `@corbits/triage-workflows` needs. Only the step-env threading above
-  is still carried.
 - CL-10178 (run-scoped onTrigger body run ids): stock `74c57b39` contains
   `ff4539ed` and `786c5039`, which mint `<runId>__<stepId>__<eventIndex>` and
   resume bodies recorded under the old `<stepId>__<eventIndex>` id.
@@ -242,5 +213,5 @@ individually in `tooling/vendor-diff-allowlist.txt`.
 
 The health command enables `intx-src`, runs the catalog, tool-packaging,
 workflow-deploy, and workflow-definition-loader suites, and runs
-`tooling/vendor-health.test.ts` against this repository's real custom
-workflow.
+`tooling/vendor-health.test.ts`, which checks the operator model-provider key
+against the vendored catalog.

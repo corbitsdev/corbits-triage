@@ -9,9 +9,12 @@ import type { KeyPair } from "@intx/types/runtime";
 import { waitUntil } from "@intx/types/testing";
 import { createRepoStore } from "./store";
 import { workflowAuthorize, workflowKindHandler } from "../workflow-kind";
+import { RepoRemovedDuringReceiveError } from "./types";
 import type {
   AuthorizeFn,
   KindHandler,
+  NewlyTerminalRun,
+  PackCommitResult,
   Principal,
   RepoAction,
   RepoId,
@@ -113,6 +116,43 @@ function asRefUpdated(event: unknown): RefUpdatedEvent {
     throw new Error(`event is not RefUpdatedEvent: ${JSON.stringify(event)}`);
   }
   return event;
+}
+
+// The real `readCommit`, bound before any test spies on it, so a spy
+// left behind by a test that timed out cannot make a later mock call
+// itself. Each gated mock also matches only its own test's repository,
+// so such a spy gates no later test.
+const gitReadCommit = git.readCommit.bind(git);
+
+// Runs every queued microtask, so code that continues with no I/O after
+// an awaited step has run up to its next I/O.
+function drainMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+// A one-shot gate: `reached` resolves when the gated step arrives, and
+// the step waits until `release()`.
+function gate(): {
+  reached: Promise<void>;
+  arrive: () => Promise<void>;
+  release: () => void;
+} {
+  let markReached: () => void = () => undefined;
+  const reached = new Promise<void>((resolve) => {
+    markReached = resolve;
+  });
+  let release: () => void = () => undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    reached,
+    arrive: () => {
+      markReached();
+      return released;
+    },
+    release,
+  };
 }
 
 describe("RepoStore", () => {
@@ -678,6 +718,165 @@ describe("RepoStore", () => {
     },
   );
 
+  test("a subscriber seeding during an update's ref write gives the update its own seq", async () => {
+    const dataDir = await makeTempDir("repo-store-seed-window-");
+    // The lock map is shared by every store in the process, so this
+    // test's own repo id keeps a gate it leaves held from blocking
+    // other tests.
+    const raceRepoId: RepoId = { kind: "agent-state", id: "seed-window" };
+    const before = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    for (const message of ["v1", "v2"])
+      await before.writeTree(principal, raceRepoId, REF, {
+        files: { "a.md": message },
+        message,
+      });
+    // A new store over the same data, as after a restart, has no seq
+    // cached, so the subscriber below seeds one.
+    const hold = gate();
+    let holding = false;
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: {
+        "agent-state": {
+          ...createTestHandler(),
+          async onRefUpdated() {
+            if (holding) await hold.arrive();
+          },
+        },
+      },
+      authorize: allowAll,
+    });
+    const dir = store.getRepoDir(raceRepoId);
+    const root = (await git.log({ fs, dir, ref: REF })).at(-1)?.oid;
+    if (root === undefined) throw new Error("Missing root commit");
+
+    // The update moves the ref, then waits in onRefUpdated, before it
+    // computes its seq.
+    holding = true;
+    const write = store.writeTree(principal, raceRepoId, REF, {
+      files: { "a.md": "v3" },
+      message: "v3",
+    });
+    await hold.reached;
+    holding = false;
+
+    // The subscriber's seed walks the moved ref to its root meanwhile.
+    let markWalked: () => void = () => undefined;
+    const walked = new Promise<void>((resolve) => {
+      markWalked = resolve;
+    });
+    const spy = spyOn(git, "readCommit").mockImplementation(async (args) => {
+      const result = await gitReadCommit(args);
+      if (args.dir === dir && args.oid === root) markWalked();
+      return result;
+    });
+    const ac = new AbortController();
+    const stream = store.subscribe(principal, raceRepoId, REF, {
+      from: "head",
+      signal: ac.signal,
+    });
+    try {
+      const first = stream.next();
+      await walked;
+      spy.mockRestore();
+      await drainMicrotasks();
+      hold.release();
+      const { commitSha } = await write;
+      const a = await first;
+      const second = stream.next();
+      await store.writeTree(principal, raceRepoId, REF, {
+        files: { "a.md": "v4" },
+        message: "v4",
+      });
+      const b = await second;
+      if (a.done || b.done) throw new Error("Missing update");
+      expect(asRefUpdated(a.value.event).newSha).toBe(commitSha);
+      expect(a.value.seq).toBe(3);
+      expect(b.value.seq).toBe(4);
+    } finally {
+      spy.mockRestore();
+      hold.release();
+      ac.abort();
+    }
+  });
+
+  test("a subscriber seeding its seq while an update lands keeps later seqs in step", async () => {
+    const dataDir = await makeTempDir("repo-store-seed-race-");
+    // The lock map is shared by every store in the process, so this
+    // test's own repo id keeps a gate it leaves held from blocking
+    // other tests.
+    const raceRepoId: RepoId = { kind: "agent-state", id: "seed-race" };
+    const before = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    for (const message of ["v1", "v2"])
+      await before.writeTree(principal, raceRepoId, REF, {
+        files: { "a.md": message },
+        message,
+      });
+    // A new store over the same data, as after a restart, has no seq
+    // cached, so the subscriber below seeds one.
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    const dir = store.getRepoDir(raceRepoId);
+    const root = (await git.log({ fs, dir, ref: REF })).at(-1)?.oid;
+    if (root === undefined) throw new Error("Missing root commit");
+
+    // The seed reads the history up to its root, then waits until a
+    // concurrent update has computed and cached its own seq.
+    const hold = gate();
+    let held = false;
+    const spy = spyOn(git, "readCommit").mockImplementation(async (args) => {
+      const result = await gitReadCommit(args);
+      if (args.dir === dir && args.oid === root && !held) {
+        held = true;
+        await hold.arrive();
+      }
+      return result;
+    });
+    const ac = new AbortController();
+    const stream = store.subscribe(principal, raceRepoId, REF, {
+      from: "head",
+      signal: ac.signal,
+    });
+    try {
+      const first = stream.next();
+      await hold.reached;
+      await store.writeTree(principal, raceRepoId, REF, {
+        files: { "a.md": "v3" },
+        message: "v3",
+      });
+      hold.release();
+      const a = await first;
+      const second = stream.next();
+      await store.writeTree(principal, raceRepoId, REF, {
+        files: { "a.md": "v4" },
+        message: "v4",
+      });
+      const b = await second;
+      if (a.done || b.done) throw new Error("Missing update");
+      expect(a.value.seq).toBe(3);
+      expect(b.value.seq).toBe(4);
+    } finally {
+      spy.mockRestore();
+      hold.release();
+      ac.abort();
+    }
+  });
+
   test("writeTree on an existing ref advances from that ref", async () => {
     const dataDir = await makeTempDir("repo-store-advance-");
     const handler = createTestHandler();
@@ -1202,6 +1401,81 @@ describe("RepoStore", () => {
     await expect(
       store.receivePack(principal, repoId, REF, packfile, commitSha, null),
     ).rejects.toThrow(/^path_violation: symlink at deep\/link is not allowed/);
+    expect(await store.resolveRef(principal, repoId, REF)).toBeNull();
+  });
+
+  test("receivePack rejects a pushed tree that repeats an entry name and does not advance the ref", async () => {
+    // A repeated name lets a name lookup and a scan resolve different
+    // entries, so validation could check one while a reader serves the
+    // other. The handler accepts everything, so only the admission gate
+    // can reject.
+    const buildDir = await makeTempDir("repeated-name-build-");
+    await git.init({ fs, dir: buildDir, defaultBranch: "main" });
+    const firstOid = await git.writeBlob({
+      fs,
+      dir: buildDir,
+      blob: new TextEncoder().encode("first\n"),
+    });
+    const secondOid = await git.writeBlob({
+      fs,
+      dir: buildDir,
+      blob: new TextEncoder().encode("second\n"),
+    });
+    const subTreeOid = await git.writeTree({
+      fs,
+      dir: buildDir,
+      tree: [
+        { mode: "100644", path: "a.md", oid: firstOid, type: "blob" },
+        { mode: "100644", path: "a.md", oid: secondOid, type: "blob" },
+      ],
+    });
+    const rootTreeOid = await git.writeTree({
+      fs,
+      dir: buildDir,
+      tree: [{ mode: "040000", path: "deploy", oid: subTreeOid, type: "tree" }],
+    });
+    const commitSha = await git.writeCommit({
+      fs,
+      dir: buildDir,
+      commit: {
+        tree: rootTreeOid,
+        parent: [],
+        message: "repeated name",
+        author: {
+          name: "t",
+          email: "t@t.dev",
+          timestamp: 0,
+          timezoneOffset: 0,
+        },
+        committer: {
+          name: "t",
+          email: "t@t.dev",
+          timestamp: 0,
+          timezoneOffset: 0,
+        },
+      },
+    });
+    const { packfile } = await git.packObjects({
+      fs,
+      dir: buildDir,
+      oids: [commitSha, rootTreeOid, subTreeOid, firstOid, secondOid],
+    });
+    if (packfile === undefined) {
+      throw new Error("repeated name: packObjects returned no packfile");
+    }
+
+    const storeDir = await makeTempDir("repeated-name-store-");
+    const store = createRepoStore({
+      dataDir: storeDir,
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    await expect(
+      store.receivePack(principal, repoId, REF, packfile, commitSha, null),
+    ).rejects.toThrow(
+      /^path_violation: repeated name at deploy\/a\.md is not allowed/,
+    );
     expect(await store.resolveRef(principal, repoId, REF)).toBeNull();
   });
 
@@ -2565,6 +2839,343 @@ describe("RepoStore", () => {
     acB.abort();
   });
 
+  test("live seqs count from the oldest commit of a history that ends in a missing parent", async () => {
+    const source = createRepoStore({
+      dataDir: await makeTempDir("repo-store-dangling-src-"),
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    await source.writeTree(principal, repoId, REF, {
+      files: { "a.md": "v1" },
+      message: "v1",
+    });
+    const { commitSha } = await source.writeTree(principal, repoId, REF, {
+      files: { "a.md": "v2" },
+      message: "v2",
+    });
+    // The pack carries the tip only, so the target cannot read its
+    // parent.
+    const { pack } = await source.createPack(principal, repoId, REF);
+    const store = createRepoStore({
+      dataDir: await makeTempDir("repo-store-dangling-tgt-"),
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    await store.receivePack(principal, repoId, REF, pack, commitSha, null);
+
+    const ac = new AbortController();
+    const stream = store.subscribe(principal, repoId, REF, {
+      from: "head",
+      signal: ac.signal,
+    });
+    const readCommit = spyOn(git, "readCommit");
+    const seqs: number[] = [];
+    const reads: number[] = [];
+    try {
+      for (const message of ["v3", "v4", "v5", "v6"]) {
+        const next = stream.next();
+        const before = readCommit.mock.calls.length;
+        await store.writeTree(principal, repoId, REF, {
+          files: { "a.md": message },
+          message,
+        });
+        reads.push(readCommit.mock.calls.length - before);
+        const entry = await next;
+        if (entry.done) throw new Error("Missing update");
+        seqs.push(entry.value.seq);
+      }
+      expect(seqs).toEqual([1, 2, 3, 4]);
+      // After the first update caches a seq, each update reads the same
+      // number of commits however long the history grows.
+      expect(new Set(reads.slice(1)).size).toBe(1);
+    } finally {
+      ac.abort();
+      readCommit.mockRestore();
+    }
+  });
+
+  test("live seqs advance across received tips whose parents are missing", async () => {
+    const source = createRepoStore({
+      dataDir: await makeTempDir("repo-store-gap-src-"),
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    const write = (message: string) =>
+      source.writeTree(principal, repoId, REF, {
+        files: { "a.md": message },
+        message,
+      });
+    await write("v1");
+    const { commitSha: first } = await write("v2");
+    const store = createRepoStore({
+      dataDir: await makeTempDir("repo-store-gap-tgt-"),
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    // Each pack carries its tip only, and the source writes two commits
+    // between packs, so every received tip's parent is missing.
+    const firstPack = await source.createPack(principal, repoId, REF);
+    await store.receivePack(
+      principal,
+      repoId,
+      REF,
+      firstPack.pack,
+      first,
+      null,
+    );
+
+    const ac = new AbortController();
+    const stream = store.subscribe(principal, repoId, REF, {
+      from: "head",
+      signal: ac.signal,
+    });
+    try {
+      const seqs: number[] = [];
+      let old = first;
+      for (const [skipped, message] of [
+        ["v3", "v4"],
+        ["v5", "v6"],
+        ["v7", "v8"],
+      ] as const) {
+        await write(skipped);
+        const { commitSha } = await write(message);
+        const { pack } = await source.createPack(principal, repoId, REF);
+        const next = stream.next();
+        await store.receivePack(principal, repoId, REF, pack, commitSha, old);
+        old = commitSha;
+        const entry = await next;
+        if (entry.done) throw new Error("Missing update");
+        seqs.push(entry.value.seq);
+      }
+      const [base] = seqs;
+      if (base === undefined) throw new Error("Missing seq");
+      expect(seqs).toEqual([base, base + 1, base + 2]);
+    } finally {
+      ac.abort();
+    }
+  });
+
+  test("a replay subscriber on a history that ends in a missing parent seeds its seq outside the lock", async () => {
+    const source = createRepoStore({
+      dataDir: await makeTempDir("repo-store-dangling-replay-src-"),
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    const { commitSha: missing } = await source.writeTree(
+      principal,
+      repoId,
+      REF,
+      { files: { "a.md": "v1" }, message: "v1" },
+    );
+    const { commitSha } = await source.writeTree(principal, repoId, REF, {
+      files: { "a.md": "v2" },
+      message: "v2",
+    });
+    const { pack } = await source.createPack(principal, repoId, REF);
+    const dataDir = await makeTempDir("repo-store-dangling-replay-tgt-");
+    const target = () =>
+      createRepoStore({
+        dataDir,
+        signingKey,
+        handlers: { "agent-state": createTestHandler() },
+        authorize: allowAll,
+      });
+    await target().receivePack(principal, repoId, REF, pack, commitSha, null);
+    // A new store over the same data, as after a restart, has no seq
+    // cached, so the subscriber below seeds one.
+    const store = target();
+    const dir = store.getRepoDir(repoId);
+
+    // The replay has no entries, so the seed walks the readable history
+    // and stops at the missing parent.
+    let markWalked: () => void = () => undefined;
+    const walked = new Promise<void>((resolve) => {
+      markWalked = resolve;
+    });
+    const readCommit = spyOn(git, "readCommit").mockImplementation(
+      async (args) => {
+        try {
+          return await gitReadCommit(args);
+        } finally {
+          if (args.dir === dir && args.oid === missing) markWalked();
+        }
+      },
+    );
+    const ac = new AbortController();
+    try {
+      const stream = store.subscribe(principal, repoId, REF, {
+        from: { seq: 0 },
+        signal: ac.signal,
+      });
+      const first = stream.next();
+      await walked;
+      await drainMicrotasks();
+      const seqs: number[] = [];
+      const reads: number[] = [];
+      for (const [message, next] of [
+        ["v3", first],
+        ["v4", null],
+      ] as const) {
+        const pending = next ?? stream.next();
+        const before = readCommit.mock.calls.length;
+        await store.writeTree(principal, repoId, REF, {
+          files: { "a.md": message },
+          message,
+        });
+        reads.push(readCommit.mock.calls.length - before);
+        const entry = await pending;
+        if (entry.done) throw new Error("Missing update");
+        seqs.push(entry.value.seq);
+      }
+      expect(seqs).toEqual([1, 2]);
+      expect(reads[0]).toBe(reads[1]);
+    } finally {
+      ac.abort();
+      readCommit.mockRestore();
+    }
+  });
+
+  test("a subscriber on a kind that GC reclaims does not seed its seq with no lock", async () => {
+    const dataDir = await makeTempDir("repo-store-gc-seed-");
+    const gcStore = () =>
+      createRepoStore({
+        dataDir,
+        signingKey,
+        handlers: { "agent-state": createTestHandler() },
+        authorize: allowAll,
+        gc: {
+          kinds: ["agent-state"],
+          retention: "keep-history",
+          packThreshold: 1000,
+          looseThreshold: 1e6,
+          warnBytes: 1e12,
+        },
+      });
+    const before = gcStore();
+    for (const message of ["v1", "v2", "v3"])
+      await before.writeTree(principal, repoId, REF, {
+        files: { "a.md": message },
+        message,
+      });
+    // A new store over the same data, as after a restart, has no seq
+    // cached, so the subscriber below would seed one.
+    const store = gcStore();
+    const dir = store.getRepoDir(repoId);
+
+    // A seed would first resolve the ref, and that call starts within
+    // the microtasks after the first `next()`.
+    const resolveRef = spyOn(git, "resolveRef");
+    const ac = new AbortController();
+    try {
+      const stream = store.subscribe(principal, repoId, REF, {
+        from: "head",
+        signal: ac.signal,
+      });
+      const next = stream.next();
+      await drainMicrotasks();
+      expect(
+        resolveRef.mock.calls.filter(
+          ([args]) => args.dir === dir && args.ref === REF,
+        ),
+      ).toHaveLength(0);
+
+      await store.writeTree(principal, repoId, REF, {
+        files: { "a.md": "v4" },
+        message: "v4",
+      });
+      const entry = await next;
+      if (entry.done) throw new Error("Missing update");
+      const history = await git.log({ fs, dir, ref: REF });
+      expect(entry.value.seq).toBe(history.length - 1);
+    } finally {
+      ac.abort();
+      resolveRef.mockRestore();
+    }
+  });
+
+  test("a subscriber after updates with no subscriber seeds its seq outside the lock", async () => {
+    const dataDir = await makeTempDir("repo-store-forget-");
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    const write = (message: string) =>
+      store.writeTree(principal, repoId, REF, {
+        files: { "a.md": message },
+        message,
+      });
+    await write("v1");
+
+    // A subscriber that sees one update leaves a seq cached for the ref.
+    const earlier = new AbortController();
+    const earlierStream = store.subscribe(principal, repoId, REF, {
+      from: "head",
+      signal: earlier.signal,
+    });
+    try {
+      const earlierNext = earlierStream.next();
+      await write("v2");
+      expect((await earlierNext).done).toBe(false);
+    } finally {
+      earlier.abort();
+    }
+    for (let i = 3; i <= 20; i++) await write(`v${String(i)}`);
+
+    // The next subscriber's seed walks the history to its root with no
+    // lock. Had an entry for v2 stayed cached, the seed would skip, and
+    // the first update below would walk back to v2 under the lock.
+    const dir = store.getRepoDir(repoId);
+    const root = (await git.log({ fs, dir, ref: REF })).at(-1)?.oid;
+    if (root === undefined) throw new Error("Missing root commit");
+    let markWalked: () => void = () => undefined;
+    const walked = new Promise<void>((resolve) => {
+      markWalked = resolve;
+    });
+    const readCommit = spyOn(git, "readCommit").mockImplementation(
+      async (args) => {
+        const result = await gitReadCommit(args);
+        if (args.dir === dir && args.oid === root) markWalked();
+        return result;
+      },
+    );
+    const ac = new AbortController();
+    try {
+      const stream = store.subscribe(principal, repoId, REF, {
+        from: "head",
+        signal: ac.signal,
+      });
+      const first = stream.next();
+      await walked;
+      await drainMicrotasks();
+      const seqs: number[] = [];
+      const reads: number[] = [];
+      for (const [message, next] of [
+        ["v21", first],
+        ["v22", null],
+      ] as const) {
+        const pending = next ?? stream.next();
+        const before = readCommit.mock.calls.length;
+        await write(message);
+        reads.push(readCommit.mock.calls.length - before);
+        const entry = await pending;
+        if (entry.done) throw new Error("Missing update");
+        seqs.push(entry.value.seq);
+      }
+      expect(seqs).toEqual([21, 22]);
+      expect(reads[0]).toBe(reads[1]);
+    } finally {
+      ac.abort();
+      readCommit.mockRestore();
+    }
+  });
+
   test("subscribe authorize denial throws immediately", async () => {
     const dataDir = await makeTempDir("repo-store-sub-deny-");
     const handler = createTestHandler();
@@ -3171,5 +3782,2343 @@ describe("RepoStore", () => {
     await expect(
       store.openCommittedReadsAtCommit(principal, repoId, commitSha),
     ).rejects.toThrow("authorize_denied: no committed reads");
+  });
+});
+
+describe("RepoStore pack receive reads", () => {
+  // More git calls than the store's per-repo cache budget (8192 calls
+  // between rebuilds), so one receive of this many reads would cross a
+  // rebuild if the receive took the cache per call.
+  const READS_OVER_BUDGET = 8300;
+
+  // A handler that reads one blob `count` times in each validatePush, so
+  // a test controls how many git calls a receive makes.
+  function readingHandler(
+    kind: RepoId["kind"],
+    count: number,
+    onRefUpdated: () => void = () => undefined,
+  ): KindHandler {
+    return {
+      kind,
+      directoryPrefix: "repos-under-test",
+      async validatePush({ readBlob }): Promise<ValidatePushResult> {
+        for (let i = 0; i < count; i++) {
+          await readBlob("deploy/payload.txt");
+        }
+        return { ok: true };
+      },
+      onRefUpdated,
+    };
+  }
+
+  async function sourcePack(id: RepoId): Promise<{
+    pack: Uint8Array;
+    commitSha: string;
+  }> {
+    const sourceStore = createRepoStore({
+      dataDir: await makeTempDir("repo-store-reads-source-"),
+      signingKey,
+      handlers: { [id.kind]: { ...createTestHandler(), kind: id.kind } },
+      authorize: allowAll,
+    });
+    const { commitSha } = await sourceStore.writeTree(principal, id, REF, {
+      files: { "deploy/payload.txt": "payload" },
+      message: "payload",
+    });
+    const { pack } = await sourceStore.createPack(principal, id, REF);
+    return { pack, commitSha };
+  }
+
+  async function receivingStore(
+    prefix: string,
+    id: RepoId,
+    count: number,
+    onRefUpdated?: () => void,
+  ): Promise<{ store: ReturnType<typeof createRepoStore>; repoDir: string }> {
+    const dataDir = await makeTempDir(prefix);
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: { [id.kind]: readingHandler(id.kind, count, onRefUpdated) },
+      authorize: allowAll,
+    });
+    await store.initRepo(id);
+    return {
+      store,
+      repoDir: path.join(dataDir, "repos-under-test", id.id),
+    };
+  }
+
+  // The pack file a read in `repoDir` loads, by the name it has in
+  // objects/pack, or null for any other file. A receive reads a pack
+  // from its staging path until it publishes it, so a staged path maps
+  // to the published name: one pack counts under one name, staged or
+  // published.
+  function packFileOf(repoDir: string, target: string): string | null {
+    const objectsDir = path.join(repoDir, ".git", "objects");
+    const packDir = path.join(objectsDir, "pack") + path.sep;
+    if (
+      target.startsWith(packDir) &&
+      (target.endsWith(".idx") || target.endsWith(".pack"))
+    ) {
+      return target;
+    }
+    const stagingDir = path.join(objectsDir, "pack-staging") + path.sep;
+    if (!target.startsWith(stagingDir)) return null;
+    const [transferId, file] = target
+      .substring(stagingDir.length)
+      .split(path.sep);
+    if (
+      transferId === undefined ||
+      (file !== "pack.idx" && file !== "pack.pack")
+    )
+      return null;
+    return `${packDir}pack-recv-${transferId}${path.extname(file)}`;
+  }
+
+  // Record, in order, the pack file each pack read in `repoDir` loads
+  // while `fn` runs. isomorphic-git reads a pack file only when its cache
+  // has no entry for that pack. The receive's own index of a staged pack
+  // also reads the pack once, which is not a cache load, so reads during
+  // `git.indexPack` are left out. `fn` gets the loads so far.
+  async function recordPackLoads(
+    repoDir: string,
+    fn: (loadsSoFar: () => string[]) => Promise<unknown>,
+  ): Promise<string[]> {
+    // Ranges of readFile calls made while an index runs.
+    const indexingCalls: [number, number][] = [];
+    const readFileSpy = spyOn(fs.promises, "readFile");
+    const originalIndexPack = git.indexPack.bind(git);
+    const indexPackSpy = spyOn(git, "indexPack").mockImplementation(
+      async (args) => {
+        const start = readFileSpy.mock.calls.length;
+        try {
+          return await originalIndexPack(args);
+        } finally {
+          indexingCalls.push([start, readFileSpy.mock.calls.length]);
+        }
+      },
+    );
+    const loadsSoFar = (): string[] =>
+      readFileSpy.mock.calls.flatMap(([target], i) => {
+        const name = packFileOf(repoDir, String(target));
+        const indexing = indexingCalls.some(
+          ([start, end]) => i >= start && i < end,
+        );
+        return name === null || indexing ? [] : [name];
+      });
+    try {
+      await fn(loadsSoFar);
+      return loadsSoFar();
+    } finally {
+      readFileSpy.mockRestore();
+      indexPackSpy.mockRestore();
+    }
+  }
+
+  function countLoads(loads: readonly string[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const name of loads) counts.set(name, (counts.get(name) ?? 0) + 1);
+    return counts;
+  }
+
+  // Count the loads of each .idx and .pack file in `repoDir` while `fn`
+  // runs.
+  async function countPackLoads(
+    repoDir: string,
+    fn: () => Promise<unknown>,
+  ): Promise<Map<string, number>> {
+    return countLoads(await recordPackLoads(repoDir, fn));
+  }
+
+  async function readPayload(
+    store: ReturnType<typeof createRepoStore>,
+    id: RepoId,
+  ): Promise<string> {
+    const committed = await store.openCommittedReads(principal, id, REF);
+    if (committed === null) throw new Error("expected committed reads");
+    const payload = (await committed.listDir("deploy")).find(
+      (e) => e.name === "payload.txt",
+    );
+    if (payload === undefined) throw new Error("expected deploy/payload.txt");
+    return new TextDecoder().decode(await committed.readBlobByOid(payload.oid));
+  }
+
+  test("one receive's validation loads each pack once although its reads pass the cache budget", async () => {
+    const { pack, commitSha } = await sourcePack(repoId);
+    // The ref update comes after the validation, which ends with the
+    // charge of its reads to the budget.
+    let loadsSoFar: () => string[] = () => [];
+    let loadsAtRefUpdate: string[] = [];
+    const { store, repoDir } = await receivingStore(
+      "repo-store-reads-budget-",
+      repoId,
+      READS_OVER_BUDGET,
+      () => {
+        loadsAtRefUpdate = loadsSoFar();
+      },
+    );
+
+    await recordPackLoads(repoDir, async (soFar) => {
+      loadsSoFar = soFar;
+      await store.receivePack(principal, repoId, REF, pack, commitSha, null);
+    });
+
+    const loads = countLoads(loadsAtRefUpdate);
+    const names = [...loads.keys()];
+    expect(names.some((n) => n.endsWith(".idx"))).toBe(true);
+    expect(names.some((n) => n.endsWith(".pack"))).toBe(true);
+    for (const [name, count] of loads) {
+      expect({ name, count }).toEqual({ name, count: 1 });
+    }
+  });
+
+  test("a receive keeps the cache, so a read after it loads no pack", async () => {
+    const { pack, commitSha } = await sourcePack(repoId);
+    const { store, repoDir } = await receivingStore(
+      "repo-store-reads-kept-",
+      repoId,
+      1,
+    );
+    await store.receivePack(principal, repoId, REF, pack, commitSha, null);
+
+    const loads = await countPackLoads(repoDir, () =>
+      readPayload(store, repoId),
+    );
+    expect([...loads.entries()]).toEqual([]);
+  });
+
+  test("a receive charges its validation reads to the cache budget, so a later read rebuilds the cache", async () => {
+    const { pack, commitSha } = await sourcePack(repoId);
+    const { store, repoDir } = await receivingStore(
+      "repo-store-reads-charged-",
+      repoId,
+      READS_OVER_BUDGET,
+    );
+
+    // The validation loads the pack once and spends more calls than the
+    // budget, so the first read after it rebuilds the cache and loads
+    // the pack index again, whether that read is the receive's own ref
+    // update or the read below.
+    const loads = await countPackLoads(repoDir, async () => {
+      await store.receivePack(principal, repoId, REF, pack, commitSha, null);
+      await readPayload(store, repoId);
+    });
+    const idxLoads = [...loads.entries()].filter(([n]) => n.endsWith(".idx"));
+    expect(idxLoads.length).toBeGreaterThan(0);
+    for (const [name, count] of idxLoads) {
+      expect({ name, count }).toEqual({ name, count: 2 });
+    }
+  });
+
+  test("a prepared receive keeps the cache, so a read after its commit loads no pack", async () => {
+    // prepareReceivePack accepts only the workflow-run kind.
+    const runRepoId: RepoId = { kind: "workflow-run", id: "subject" };
+    const { pack, commitSha } = await sourcePack(runRepoId);
+    const { store, repoDir } = await receivingStore(
+      "repo-store-reads-prepared-kept-",
+      runRepoId,
+      1,
+    );
+    const prepared = await store.prepareReceivePack(
+      principal,
+      runRepoId,
+      REF,
+      pack,
+      commitSha,
+    );
+    if (prepared.kind !== "prepared") throw new Error("expected prepared");
+    expect((await prepared.commit()).kind).toBe("applied");
+
+    const loads = await countPackLoads(repoDir, () =>
+      readPayload(store, runRepoId),
+    );
+    expect([...loads.entries()]).toEqual([]);
+  });
+
+  test("a rejected receive still charges its reads to the budget", async () => {
+    const sourceStore = createRepoStore({
+      dataDir: await makeTempDir("repo-store-reads-rejected-source-"),
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    const first = await sourceStore.writeTree(principal, repoId, REF, {
+      files: { "deploy/payload.txt": "payload 0" },
+      message: "payload 0",
+    });
+    const firstPack = await sourceStore.createPack(principal, repoId, REF);
+    const second = await sourceStore.writeTree(principal, repoId, REF, {
+      files: { "deploy/payload.txt": "payload 1" },
+      message: "payload 1",
+    });
+    const secondPack = await sourceStore.createPack(principal, repoId, REF);
+
+    let reads = 1;
+    let accept = true;
+    const dataDir = await makeTempDir("repo-store-reads-rejected-");
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: {
+        "agent-state": {
+          kind: "agent-state",
+          directoryPrefix: "repos-under-test",
+          async validatePush({ readBlob }): Promise<ValidatePushResult> {
+            for (let i = 0; i < reads; i++) {
+              await readBlob("deploy/payload.txt");
+            }
+            return accept ? { ok: true } : { ok: false, reason: "rejected" };
+          },
+          onRefUpdated() {
+            return;
+          },
+        },
+      },
+      authorize: allowAll,
+    });
+    await store.initRepo(repoId);
+    await store.receivePack(
+      principal,
+      repoId,
+      REF,
+      firstPack.pack,
+      first.commitSha,
+      null,
+    );
+
+    reads = READS_OVER_BUDGET;
+    accept = false;
+    await expect(
+      store.receivePack(
+        principal,
+        repoId,
+        REF,
+        secondPack.pack,
+        second.commitSha,
+        first.commitSha,
+      ),
+    ).rejects.toThrow("rejected");
+
+    // The rejected receive spent more calls than the budget, so the
+    // next read rebuilds the cache and loads the pack index again.
+    let payload: string | undefined;
+    const loads = await countPackLoads(
+      path.join(dataDir, "repos-under-test", repoId.id),
+      async () => {
+        payload = await readPayload(store, repoId);
+      },
+    );
+    expect(payload).toBe("payload 0");
+    expect([...loads.keys()].some((n) => n.endsWith(".idx"))).toBe(true);
+  });
+
+  test("reads stay correct across GC repacks between receives", async () => {
+    const RECEIVES = 6;
+    const sourceStore = createRepoStore({
+      dataDir: await makeTempDir("repo-store-reads-gc-source-"),
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+
+    const priors: (string | null)[] = [];
+    const dataDir = await makeTempDir("repo-store-reads-gc-");
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: {
+        "agent-state": {
+          kind: "agent-state",
+          directoryPrefix: "repos-under-test",
+          async validatePush({
+            readBlob,
+            priorReadBlob,
+          }): Promise<ValidatePushResult> {
+            await readBlob("deploy/payload.txt");
+            const prior = await priorReadBlob("deploy/payload.txt");
+            priors.push(
+              prior === null ? null : new TextDecoder().decode(prior),
+            );
+            return { ok: true };
+          },
+          onRefUpdated() {
+            return;
+          },
+        },
+      },
+      authorize: allowAll,
+      // A low pack threshold makes the receives repack several times,
+      // so later receives read objects from a GC pack.
+      gc: {
+        kinds: ["agent-state"],
+        packThreshold: 2,
+        looseThreshold: 1e6,
+        warnBytes: 1e12,
+        retention: "keep-history",
+      },
+    });
+    await store.initRepo(repoId);
+
+    let tip: string | null = null;
+    for (let i = 0; i < RECEIVES; i++) {
+      const { commitSha } = await sourceStore.writeTree(
+        principal,
+        repoId,
+        REF,
+        {
+          files: { "deploy/payload.txt": `payload ${String(i)}` },
+          message: `payload ${String(i)}`,
+        },
+      );
+      const { pack } = await sourceStore.createPack(principal, repoId, REF);
+      await store.receivePack(principal, repoId, REF, pack, commitSha, tip);
+      tip = commitSha;
+      expect(await readPayload(store, repoId)).toBe(`payload ${String(i)}`);
+    }
+
+    expect(priors).toEqual([
+      null,
+      ...Array.from({ length: RECEIVES - 1 }, (_, i) => `payload ${String(i)}`),
+    ]);
+    const packNames = await fs.promises.readdir(
+      path.join(
+        dataDir,
+        "repos-under-test",
+        repoId.id,
+        ".git",
+        "objects",
+        "pack",
+      ),
+    );
+    // A GC repack publishes its pack under the transfer id `gc-<uuid>`.
+    expect(packNames.some((n) => n.startsWith("pack-recv-gc-"))).toBe(true);
+  });
+
+  test("a multi-commit receive parses each commit and tree a bounded number of times", async () => {
+    // Each commit adds one file to `deploy/`, and validation reads every
+    // file on both sides. Without a memo, each path read parses the root
+    // and `deploy/` trees again, so the parses grow as the square of the
+    // commit count.
+    const COMMITS = 24;
+    const srcDir = await makeTempDir("repo-store-reads-memo-src-");
+    await git.init({ fs, dir: srcDir, defaultBranch: "test" });
+    const shas: string[] = [];
+    for (let i = 0; i < COMMITS; i++) {
+      const rel = `deploy/f${String(i)}.txt`;
+      await fs.promises.mkdir(path.join(srcDir, "deploy"), {
+        recursive: true,
+      });
+      await fs.promises.writeFile(path.join(srcDir, rel), `body ${String(i)}`);
+      await git.add({ fs, dir: srcDir, filepath: rel });
+      shas.push(
+        await git.commit({
+          fs,
+          dir: srcDir,
+          message: `commit ${String(i)}`,
+          author: { name: "t", email: "t@t.dev" },
+          ref: REF,
+        }),
+      );
+    }
+    const tip = shas.at(-1);
+    if (tip === undefined) throw new Error("unreachable");
+    const oids = new Set<string>();
+    for (const sha of shas) {
+      for (const oid of await collectReachableObjects(srcDir, sha)) {
+        oids.add(oid);
+      }
+    }
+    const { packfile } = await git.packObjects({
+      fs,
+      dir: srcDir,
+      oids: [...oids],
+    });
+    if (packfile === undefined) throw new Error("no packfile");
+
+    let validated = 0;
+    const store = createRepoStore({
+      dataDir: await makeTempDir("repo-store-reads-memo-tgt-"),
+      signingKey,
+      handlers: {
+        "agent-state": {
+          kind: "agent-state",
+          directoryPrefix: "repos-under-test",
+          async validatePush({
+            listDir,
+            readBlob,
+            priorReadBlob,
+          }): Promise<ValidatePushResult> {
+            validated += 1;
+            for (const name of await listDir("deploy")) {
+              await readBlob(`deploy/${name}`);
+              await priorReadBlob(`deploy/${name}`);
+            }
+            return { ok: true };
+          },
+          onRefUpdated() {
+            return;
+          },
+        },
+      },
+      authorize: allowAll,
+    });
+
+    const readTree = spyOn(git, "readTree");
+    const readCommit = spyOn(git, "readCommit");
+    try {
+      await store.receivePack(principal, repoId, REF, packfile, tip, null);
+      expect(validated).toBe(COMMITS);
+      // Per commit: its root and `deploy/` trees, and its commit read by
+      // the walk and by validation. A few more reads come from the tip
+      // checks in the pack receive.
+      expect(readTree.mock.calls.length).toBeLessThanOrEqual(2 * COMMITS + 4);
+      expect(readCommit.mock.calls.length).toBeLessThanOrEqual(2 * COMMITS + 4);
+    } finally {
+      readTree.mockRestore();
+      readCommit.mockRestore();
+    }
+  });
+
+  test("a receive resolves each path in a wide directory with one lookup, not a scan", async () => {
+    // Validation reads every blob of one wide directory by path. A scan
+    // of the directory per path reads about WIDE^2 / 2 tree entries; a
+    // lookup by name reads each entry a fixed number of times.
+    const WIDE = 2000;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < WIDE; i++) {
+      files[`wide/f${String(i)}.txt`] = `body ${String(i)}`;
+    }
+    const sourceStore = createRepoStore({
+      dataDir: await makeTempDir("repo-store-reads-wide-source-"),
+      signingKey,
+      handlers: { "agent-state": createTestHandler() },
+      authorize: allowAll,
+    });
+    const { commitSha } = await sourceStore.writeTree(principal, repoId, REF, {
+      files,
+      message: "wide",
+    });
+    const { pack } = await sourceStore.createPack(principal, repoId, REF);
+
+    let read = 0;
+    const store = createRepoStore({
+      dataDir: await makeTempDir("repo-store-reads-wide-target-"),
+      signingKey,
+      handlers: {
+        "agent-state": {
+          kind: "agent-state",
+          directoryPrefix: "repos-under-test",
+          async validatePush({
+            listDir,
+            readBlob,
+          }): Promise<ValidatePushResult> {
+            for (const name of await listDir("wide")) {
+              await readBlob(`wide/${name}`);
+              read += 1;
+            }
+            return { ok: true };
+          },
+          onRefUpdated() {
+            return;
+          },
+        },
+      },
+      authorize: allowAll,
+    });
+    await store.initRepo(repoId);
+
+    // Count each access to an entry of a tree that git.readTree returns.
+    let entryReads = 0;
+    const readTree = git.readTree.bind(git);
+    const spy = spyOn(git, "readTree").mockImplementation(async (args) => {
+      const result = await readTree(args);
+      const counted = new Proxy(result.tree, {
+        get(target, key, receiver) {
+          if (typeof key === "string" && /^[0-9]+$/.test(key)) entryReads += 1;
+          return Reflect.get(target, key, receiver) as unknown;
+        },
+      });
+      return { ...result, tree: counted };
+    });
+    try {
+      await store.receivePack(principal, repoId, REF, pack, commitSha, null);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(read).toBe(WIDE);
+    // The wide tree is read once, then indexed by name and listed a few
+    // times; a scan per path would read about 2,000,000 entries.
+    expect(entryReads).toBeLessThanOrEqual(6 * WIDE);
+  });
+
+  test("a received pack's validatePush gets the same listDirOids as a writeTree of the same tree", async () => {
+    const listedPaths = ["", "deploy", "deploy/sub", "absent"];
+    type Listing = { name: string; oid: string; type: string }[];
+
+    function listingHandler(out: Map<string, Listing>): KindHandler {
+      return {
+        kind: "agent-state",
+        directoryPrefix: "repos-under-test",
+        async validatePush({ listDirOids }): Promise<ValidatePushResult> {
+          for (const p of listedPaths) out.set(p, await listDirOids(p));
+          return { ok: true };
+        },
+        onRefUpdated() {
+          return;
+        },
+      };
+    }
+
+    const written = new Map<string, Listing>();
+    const sourceStore = createRepoStore({
+      dataDir: await makeTempDir("repo-store-listing-source-"),
+      signingKey,
+      handlers: { "agent-state": listingHandler(written) },
+      authorize: allowAll,
+    });
+    const { commitSha } = await sourceStore.writeTree(principal, repoId, REF, {
+      files: {
+        "top.txt": "top",
+        "deploy/a.txt": "a",
+        "deploy/sub/b.txt": "b",
+      },
+      message: "listing",
+    });
+    const { pack } = await sourceStore.createPack(principal, repoId, REF);
+
+    const received = new Map<string, Listing>();
+    const targetStore = createRepoStore({
+      dataDir: await makeTempDir("repo-store-listing-target-"),
+      signingKey,
+      handlers: { "agent-state": listingHandler(received) },
+      authorize: allowAll,
+    });
+    await targetStore.receivePack(
+      principal,
+      repoId,
+      REF,
+      pack,
+      commitSha,
+      null,
+    );
+
+    expect(received).toEqual(written);
+    expect(
+      received.get("deploy")?.map((e) => ({ name: e.name, type: e.type })),
+    ).toEqual([
+      { name: "a.txt", type: "blob" },
+      { name: "sub", type: "tree" },
+    ]);
+    expect(received.get("deploy/sub")?.map((e) => e.name)).toEqual(["b.txt"]);
+    expect(received.get("absent")).toEqual([]);
+  });
+});
+
+describe("RepoStore prepared pack receive", () => {
+  // prepareReceivePack accepts only the workflow-run kind.
+  const repoId: RepoId = { kind: "workflow-run", id: "subject" };
+  const decoder = new TextDecoder();
+
+  function runOf(content: string): NewlyTerminalRun {
+    return { runId: content, status: "completed", terminalEventJson: "{}" };
+  }
+
+  // A pack that carries every commit, tree and blob from the root up to
+  // `tip`, so a receive validates each commit against its own parent.
+  async function historyPack(dir: string, tip: string): Promise<Uint8Array> {
+    const oids = new Set<string>();
+    for (const entry of await git.log({ fs, dir, ref: tip })) {
+      for (const oid of await collectReachableObjects(dir, entry.oid)) {
+        oids.add(oid);
+      }
+    }
+    const { packfile } = await git.packObjects({ fs, dir, oids: [...oids] });
+    if (packfile === undefined) throw new Error("packObjects");
+    return packfile;
+  }
+
+  // Commits on one line of `REF`, each setting `deploy/a.md` to one of
+  // `contents`.
+  async function sourceLine(contents: readonly string[]): Promise<{
+    commits: string[];
+    packAt: (commitSha: string) => Promise<Uint8Array>;
+  }> {
+    const dataDir = await makeTempDir("repo-store-prepared-source-");
+    const source = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: {
+        "workflow-run": { ...createTestHandler(), kind: "workflow-run" },
+      },
+      authorize: allowAll,
+    });
+    const commits: string[] = [];
+    for (const content of contents) {
+      const { commitSha } = await source.writeTree(principal, repoId, REF, {
+        files: { "deploy/a.md": content },
+        message: content,
+      });
+      commits.push(commitSha);
+    }
+    const dir = path.join(dataDir, "repos-under-test", repoId.id);
+    return { commits, packAt: (commitSha) => historyPack(dir, commitSha) };
+  }
+
+  // Holds the validation of the commit whose `deploy/a.md` is `content`
+  // until the test releases it, once. `release(false)` makes that
+  // validation reject.
+  function holdAt(content: string): {
+    reached: Promise<void>;
+    release: (accept: boolean) => void;
+    check: (text: string) => Promise<boolean>;
+  } {
+    let markReached: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => {
+      markReached = resolve;
+    });
+    let release: (accept: boolean) => void = () => undefined;
+    const released = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    let armed = true;
+    return {
+      reached,
+      release,
+      async check(text) {
+        if (!armed || text !== content) return true;
+        armed = false;
+        markReached();
+        return released;
+      },
+    };
+  }
+
+  // A handler that reports one run per commit, named by the commit's
+  // `deploy/a.md`. A commit without `deploy/a.md` carries no run. The
+  // source line's genesis is such a commit, and a pack carries it when
+  // it differs from the target's genesis: each store writes its own,
+  // and the two match only when written in the same second.
+  function runsHandler(
+    check: (text: string) => Promise<boolean> = async () => true,
+  ): TestHandler {
+    const onRefUpdatedCalls: RefUpdateRecord[] = [];
+    return {
+      kind: "workflow-run",
+      directoryPrefix: "repos-under-test",
+      async validatePush({ listDir, readBlob }): Promise<ValidatePushResult> {
+        if (!(await listDir("deploy")).includes("a.md")) {
+          return { ok: true, newlyTerminalRuns: [] };
+        }
+        const text = decoder.decode(await readBlob("deploy/a.md"));
+        if (!(await check(text))) {
+          return { ok: false, reason: `rejected ${text}` };
+        }
+        return { ok: true, newlyTerminalRuns: [runOf(text)] };
+      },
+      onRefUpdated(args) {
+        onRefUpdatedCalls.push(args);
+      },
+      onRefUpdatedCalls,
+    };
+  }
+
+  async function targetStore(handler: KindHandler): Promise<{
+    store: ReturnType<typeof createRepoStore>;
+    dataDir: string;
+    repoDirOf: (id: RepoId) => string;
+  }> {
+    const dataDir = await makeTempDir("repo-store-prepared-target-");
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: { "workflow-run": handler },
+      authorize: allowAll,
+    });
+    return {
+      store,
+      dataDir,
+      repoDirOf: (id) => path.join(dataDir, "repos-under-test", id.id),
+    };
+  }
+
+  async function prepare(
+    store: ReturnType<typeof createRepoStore>,
+    id: RepoId,
+    pack: Uint8Array,
+    commitSha: string,
+  ): Promise<{
+    commit: () => Promise<PackCommitResult>;
+    discard: () => Promise<void>;
+  }> {
+    const prepared = await store.prepareReceivePack(
+      principal,
+      id,
+      REF,
+      pack,
+      commitSha,
+    );
+    if (prepared.kind !== "prepared") throw new Error("expected prepared");
+    return prepared;
+  }
+
+  async function receivedPacks(repoDir: string): Promise<string[]> {
+    const entries = await fs.promises
+      .readdir(path.join(repoDir, ".git", "objects", "pack"))
+      .catch(() => []);
+    return entries
+      .filter((e) => e.startsWith("pack-recv-") && e.endsWith(".pack"))
+      .sort();
+  }
+
+  async function stagedPacks(repoDir: string): Promise<string[]> {
+    return fs.promises
+      .readdir(path.join(repoDir, ".git", "objects", "pack-staging"))
+      .catch(() => []);
+  }
+
+  test("prepare then commit moves the ref and returns each commit's runs", async () => {
+    const line = await sourceLine(["v1", "v2"]);
+    const [, tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const handler = runsHandler();
+    const { store, repoDirOf } = await targetStore(handler);
+
+    const prepared = await prepare(store, repoId, await line.packAt(tip), tip);
+    expect(await store.resolveRef(principal, repoId, REF)).toBeNull();
+    expect(await receivedPacks(repoDirOf(repoId))).toEqual([]);
+
+    expect(await prepared.commit()).toEqual({
+      kind: "applied",
+      newlyTerminalRuns: [runOf("v1"), runOf("v2")],
+    });
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(tip);
+    expect(handler.onRefUpdatedCalls).toEqual([
+      { repoId, ref: REF, oldSha: null, newSha: tip },
+    ]);
+    expect(await receivedPacks(repoDirOf(repoId))).toHaveLength(1);
+    expect(await stagedPacks(repoDirOf(repoId))).toEqual([]);
+    await expect(prepared.commit()).rejects.toThrow(/already committed/);
+  });
+
+  test("a pack whose objects exist only in staging validates", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    let repoDir = "";
+    let unpublishedRead: unknown = null;
+    const handler = runsHandler(async () => {
+      // The validation reads the pack, yet a reader of the repo's own
+      // files cannot find its commit.
+      unpublishedRead = await git
+        .readCommit({ fs, dir: repoDir, oid: tip })
+        .then(
+          () => "found",
+          (err: unknown) => err,
+        );
+      return true;
+    });
+    const target = await targetStore(handler);
+    repoDir = target.repoDirOf(repoId);
+
+    const prepared = await prepare(
+      target.store,
+      repoId,
+      await line.packAt(tip),
+      tip,
+    );
+
+    expect(unpublishedRead).toBeInstanceOf(Error);
+    expect(await receivedPacks(repoDir)).toEqual([]);
+    expect(await stagedPacks(repoDir)).toHaveLength(1);
+    expect((await prepared.commit()).kind).toBe("applied");
+    expect((await git.readCommit({ fs, dir: repoDir, oid: tip })).oid).toBe(
+      tip,
+    );
+  });
+
+  test("a prepare whose validation rejects the pack discards the staged pack", async () => {
+    const line = await sourceLine(["v1", "v2"]);
+    const [first, tip] = line.commits;
+    if (first === undefined || tip === undefined) throw new Error("line");
+    const { store, repoDirOf } = await targetStore(
+      runsHandler(async (text) => text !== "v2"),
+    );
+    await (
+      await prepare(store, repoId, await line.packAt(first), first)
+    ).commit();
+    const repoDir = repoDirOf(repoId);
+    const published = await receivedPacks(repoDir);
+
+    await expect(
+      store.prepareReceivePack(
+        principal,
+        repoId,
+        REF,
+        await line.packAt(tip),
+        tip,
+      ),
+    ).rejects.toThrow(/^path_violation: .*rejected v2/);
+
+    expect(await stagedPacks(repoDir)).toEqual([]);
+    expect(await receivedPacks(repoDir)).toEqual(published);
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(first);
+  });
+
+  test("while one prepare validates, another repo's commit and the same repo's one-call receive proceed", async () => {
+    const line = await sourceLine(["v1", "v2"]);
+    const [first, tip] = line.commits;
+    if (first === undefined || tip === undefined) throw new Error("line");
+    const hold = holdAt("v2");
+    const { store } = await targetStore(runsHandler(hold.check));
+    const other: RepoId = { kind: "workflow-run", id: "other" };
+
+    const preparing = store.prepareReceivePack(
+      principal,
+      repoId,
+      REF,
+      await line.packAt(tip),
+      tip,
+    );
+    await hold.reached;
+
+    // Neither of these can finish while the held validation keeps a
+    // lock they need; the lane timeout reports a hang.
+    const otherPrepared = await prepare(
+      store,
+      other,
+      await line.packAt(tip),
+      tip,
+    );
+    expect((await otherPrepared.commit()).kind).toBe("applied");
+    await store.receivePack(
+      principal,
+      repoId,
+      REF,
+      await line.packAt(first),
+      first,
+      null,
+    );
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(first);
+
+    hold.release(true);
+    const prepared = await preparing;
+    if (prepared.kind !== "prepared") throw new Error("expected prepared");
+    expect(await prepared.commit()).toEqual({
+      kind: "applied",
+      newlyTerminalRuns: [runOf("v2")],
+    });
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(tip);
+    expect(await store.resolveRef(principal, other, REF)).toBe(tip);
+  });
+
+  test("a ref moved to a commit in the prepared chain gets the rest and only the later runs", async () => {
+    const line = await sourceLine(["v1", "v2", "v3"]);
+    const [, middle, tip] = line.commits;
+    if (middle === undefined || tip === undefined) throw new Error("line");
+    const handler = runsHandler();
+    const { store } = await targetStore(handler);
+
+    const prepared = await prepare(store, repoId, await line.packAt(tip), tip);
+    await store.receivePack(
+      principal,
+      repoId,
+      REF,
+      await line.packAt(middle),
+      middle,
+      null,
+    );
+
+    expect(await prepared.commit()).toEqual({
+      kind: "applied",
+      newlyTerminalRuns: [runOf("v3")],
+    });
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(tip);
+    expect(handler.onRefUpdatedCalls.at(-1)).toEqual({
+      repoId,
+      ref: REF,
+      oldSha: middle,
+      newSha: tip,
+    });
+  });
+
+  test("a ref moved to a descendant of the pack tip answers already_applied", async () => {
+    const line = await sourceLine(["v1", "v2", "v3"]);
+    const [, middle, tip] = line.commits;
+    if (middle === undefined || tip === undefined) throw new Error("line");
+    const handler = runsHandler();
+    const { store, repoDirOf } = await targetStore(handler);
+
+    const prepared = await prepare(
+      store,
+      repoId,
+      await line.packAt(middle),
+      middle,
+    );
+    await store.receivePack(
+      principal,
+      repoId,
+      REF,
+      await line.packAt(tip),
+      tip,
+      null,
+    );
+    const packsBefore = await receivedPacks(repoDirOf(repoId));
+    const updatesBefore = handler.onRefUpdatedCalls.length;
+
+    expect(await prepared.commit()).toEqual({ kind: "already_applied" });
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(tip);
+    expect(await receivedPacks(repoDirOf(repoId))).toEqual(packsBefore);
+    expect(await stagedPacks(repoDirOf(repoId))).toEqual([]);
+    expect(handler.onRefUpdatedCalls).toHaveLength(updatesBefore);
+  });
+
+  test("a ref moved to an unrelated commit gets the pack tip and every run", async () => {
+    const line = await sourceLine(["v1", "v2"]);
+    const unrelated = await sourceLine(["u1"]);
+    const [, tip] = line.commits;
+    const [otherTip] = unrelated.commits;
+    if (tip === undefined || otherTip === undefined) throw new Error("line");
+    const { store } = await targetStore(runsHandler());
+
+    const prepared = await prepare(store, repoId, await line.packAt(tip), tip);
+    await store.receivePack(
+      principal,
+      repoId,
+      REF,
+      await unrelated.packAt(otherTip),
+      otherTip,
+      null,
+    );
+
+    expect(await prepared.commit()).toEqual({
+      kind: "applied",
+      newlyTerminalRuns: [runOf("v1"), runOf("v2")],
+    });
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(tip);
+  });
+
+  test("discard leaves no staged pack and nothing in objects/pack", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const { store, repoDirOf } = await targetStore(runsHandler());
+
+    const prepared = await prepare(store, repoId, await line.packAt(tip), tip);
+    expect(await stagedPacks(repoDirOf(repoId))).toHaveLength(1);
+    await prepared.discard();
+    await prepared.discard();
+
+    expect(await stagedPacks(repoDirOf(repoId))).toEqual([]);
+    expect(await receivedPacks(repoDirOf(repoId))).toEqual([]);
+    expect(await store.resolveRef(principal, repoId, REF)).toBeNull();
+    await expect(prepared.commit()).rejects.toThrow(/already discarded/);
+  });
+
+  test("a discard called in the same tick as commit does nothing", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const { store, repoDirOf } = await targetStore(runsHandler());
+
+    const prepared = await prepare(store, repoId, await line.packAt(tip), tip);
+    const committing = prepared.commit();
+    await prepared.discard();
+
+    expect(await committing).toEqual({
+      kind: "applied",
+      newlyTerminalRuns: [runOf("v1")],
+    });
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(tip);
+    expect(await receivedPacks(repoDirOf(repoId))).toHaveLength(1);
+    expect(await stagedPacks(repoDirOf(repoId))).toEqual([]);
+  });
+
+  test("two prepares of one pack commit once and then answer already_applied", async () => {
+    const line = await sourceLine(["v1", "v2"]);
+    const [, tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const handler = runsHandler();
+    const { store, repoDirOf } = await targetStore(handler);
+    const pack = await line.packAt(tip);
+
+    const a = await prepare(store, repoId, pack, tip);
+    const b = await prepare(store, repoId, pack, tip);
+
+    expect(await a.commit()).toEqual({
+      kind: "applied",
+      newlyTerminalRuns: [runOf("v1"), runOf("v2")],
+    });
+    expect(await b.commit()).toEqual({ kind: "already_applied" });
+    expect(await store.resolveRef(principal, repoId, REF)).toBe(tip);
+    expect(handler.onRefUpdatedCalls).toEqual([
+      { repoId, ref: REF, oldSha: null, newSha: tip },
+    ]);
+    expect(await receivedPacks(repoDirOf(repoId))).toHaveLength(1);
+    expect(await stagedPacks(repoDirOf(repoId))).toEqual([]);
+  });
+
+  test("a commit after removeRepo and initRepo reports the removed repo", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const { store, repoDirOf } = await targetStore(runsHandler());
+
+    const prepared = await prepare(store, repoId, await line.packAt(tip), tip);
+    await store.removeRepo(repoId);
+    await store.initRepo(repoId);
+
+    await expect(prepared.commit()).rejects.toBeInstanceOf(
+      RepoRemovedDuringReceiveError,
+    );
+    expect(await store.resolveRef(principal, repoId, REF)).toBeNull();
+    expect(await receivedPacks(repoDirOf(repoId))).toEqual([]);
+    expect(await stagedPacks(repoDirOf(repoId))).toEqual([]);
+  });
+
+  test("a validation that fails after removeRepo reports the removed repo and recreates nothing", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const hold = holdAt("v1");
+    const { store, repoDirOf } = await targetStore(runsHandler(hold.check));
+
+    const preparing = store.prepareReceivePack(
+      principal,
+      repoId,
+      REF,
+      await line.packAt(tip),
+      tip,
+    );
+    await hold.reached;
+    // removeRepo takes the repo lock, so it finishing proves the
+    // validation holds none.
+    await store.removeRepo(repoId);
+    hold.release(false);
+
+    await expect(preparing).rejects.toBeInstanceOf(
+      RepoRemovedDuringReceiveError,
+    );
+    await expect(fs.promises.access(repoDirOf(repoId))).rejects.toThrow();
+  });
+
+  test("a validation that passes after removeRepo fails its commit and recreates nothing", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const hold = holdAt("v1");
+    const { store, repoDirOf } = await targetStore(runsHandler(hold.check));
+
+    const preparing = store.prepareReceivePack(
+      principal,
+      repoId,
+      REF,
+      await line.packAt(tip),
+      tip,
+    );
+    await hold.reached;
+    await store.removeRepo(repoId);
+    hold.release(true);
+
+    // The pack may still read from the cache after its files are gone, so
+    // the validation can pass; the commit then finds the repo removed.
+    const outcome = await preparing
+      .then(async (prepared) =>
+        prepared.kind === "prepared" ? prepared.commit() : prepared,
+      )
+      .catch((err: unknown) => err);
+    expect(outcome).toBeInstanceOf(RepoRemovedDuringReceiveError);
+    await expect(fs.promises.access(repoDirOf(repoId))).rejects.toThrow();
+  });
+
+  test("removeRepo during a stage waits for it and succeeds", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const { store, repoDirOf } = await targetStore(runsHandler());
+    const pack = await line.packAt(tip);
+
+    const originalIndexPack = git.indexPack.bind(git);
+    let markIndexing: () => void = () => undefined;
+    const indexing = new Promise<void>((resolve) => {
+      markIndexing = resolve;
+    });
+    let releaseIndexing: () => void = () => undefined;
+    const indexingReleased = new Promise<void>((resolve) => {
+      releaseIndexing = resolve;
+    });
+    const indexPackSpy = spyOn(git, "indexPack").mockImplementation(
+      async (args) => {
+        markIndexing();
+        await indexingReleased;
+        return originalIndexPack(args);
+      },
+    );
+    try {
+      const preparing = store.prepareReceivePack(
+        principal,
+        repoId,
+        REF,
+        pack,
+        tip,
+      );
+      await indexing;
+      const removing = store.removeRepo(repoId);
+      releaseIndexing();
+
+      await removing;
+      const outcome = await preparing
+        .then(async (prepared) =>
+          prepared.kind === "prepared" ? prepared.commit() : prepared,
+        )
+        .catch((err: unknown) => err);
+      expect(outcome).toBeInstanceOf(RepoRemovedDuringReceiveError);
+      await expect(fs.promises.access(repoDirOf(repoId))).rejects.toThrow();
+    } finally {
+      releaseIndexing();
+      indexPackSpy.mockRestore();
+    }
+  });
+
+  // Holds removeRepo's removal of `repoDir` until the test releases it.
+  // `touchedStaging` tells if a staged pack under `repoDir` was touched
+  // while the removal was held. A staged pack removal starts with an
+  // lstat of its dir.
+  function holdRepoRemoval(repoDir: string): {
+    reached: Promise<void>;
+    release: () => void;
+    touchedStaging: () => boolean;
+    restore: () => void;
+  } {
+    const stagingRoot = path.join(repoDir, ".git", "objects", "pack-staging");
+    let markReached: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => {
+      markReached = resolve;
+    });
+    let releaseRemoval: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    const lstatSpy = spyOn(fs.promises, "lstat");
+    let heldFrom: number | null = null;
+    let heldTo: number | null = null;
+    const rm = fs.promises.rm.bind(fs.promises);
+    const rmSpy = spyOn(fs.promises, "rm").mockImplementation(
+      async (target, options) => {
+        if (target === repoDir) {
+          heldFrom = lstatSpy.mock.calls.length;
+          markReached();
+          await released;
+          heldTo = lstatSpy.mock.calls.length;
+        }
+        return rm(target, options);
+      },
+    );
+    return {
+      reached,
+      release: releaseRemoval,
+      touchedStaging: () =>
+        heldFrom !== null &&
+        lstatSpy.mock.calls
+          .slice(heldFrom, heldTo ?? undefined)
+          .some(([target]) => String(target).startsWith(stagingRoot)),
+      restore: () => {
+        releaseRemoval();
+        rmSpy.mockRestore();
+        lstatSpy.mockRestore();
+      },
+    };
+  }
+
+  test("the discard of a failed validation waits for removeRepo", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const hold = holdAt("v1");
+    const { store, repoDirOf } = await targetStore(runsHandler(hold.check));
+    const pack = await line.packAt(tip);
+
+    const removal = holdRepoRemoval(repoDirOf(repoId));
+    try {
+      const preparing = store.prepareReceivePack(
+        principal,
+        repoId,
+        REF,
+        pack,
+        tip,
+      );
+      await hold.reached;
+      const removing = store.removeRepo(repoId);
+      await removal.reached;
+      hold.release(false);
+      // A staged pack removal that does not wait for the repo lock
+      // starts within the drained microtasks: no I/O comes before it.
+      await drainMicrotasks();
+      removal.release();
+
+      await removing;
+      await expect(preparing).rejects.toBeInstanceOf(
+        RepoRemovedDuringReceiveError,
+      );
+      expect(removal.touchedStaging()).toBe(false);
+      await expect(fs.promises.access(repoDirOf(repoId))).rejects.toThrow();
+    } finally {
+      removal.restore();
+    }
+  });
+
+  test("discard waits for removeRepo", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const { store, repoDirOf } = await targetStore(runsHandler());
+    const prepared = await prepare(store, repoId, await line.packAt(tip), tip);
+
+    const removal = holdRepoRemoval(repoDirOf(repoId));
+    try {
+      const removing = store.removeRepo(repoId);
+      await removal.reached;
+      const discarding = prepared.discard();
+      await drainMicrotasks();
+      removal.release();
+
+      await removing;
+      await discarding;
+      expect(removal.touchedStaging()).toBe(false);
+      await expect(fs.promises.access(repoDirOf(repoId))).rejects.toThrow();
+    } finally {
+      removal.restore();
+    }
+  });
+
+  test("the first receive for a repo in a process removes leftover staged packs", async () => {
+    const line = await sourceLine(["v1", "v2"]);
+    const [first, tip] = line.commits;
+    if (first === undefined || tip === undefined) throw new Error("line");
+    const { store, repoDirOf } = await targetStore(runsHandler());
+    const stagingRoot = path.join(
+      repoDirOf(repoId),
+      ".git",
+      "objects",
+      "pack-staging",
+    );
+    await store.initRepo(repoId);
+    await fs.promises.mkdir(path.join(stagingRoot, "left-by-crash"), {
+      recursive: true,
+    });
+    await fs.promises.writeFile(
+      path.join(stagingRoot, "left-by-crash", "pack.pack"),
+      "partial",
+    );
+
+    await store.receivePack(
+      principal,
+      repoId,
+      REF,
+      await line.packAt(first),
+      first,
+      null,
+    );
+    expect(await stagedPacks(repoDirOf(repoId))).toEqual([]);
+
+    // A later receive leaves staged packs alone: in this process they
+    // can belong to a receive in flight.
+    await fs.promises.mkdir(path.join(stagingRoot, "in-flight"));
+    await store.receivePack(
+      principal,
+      repoId,
+      REF,
+      await line.packAt(tip),
+      tip,
+      first,
+    );
+    expect(await stagedPacks(repoDirOf(repoId))).toEqual(["in-flight"]);
+  });
+
+  test.each([
+    ["non_fast_forward", "stale"],
+    ["sha_mismatch", "bogus"],
+    ["path_violation", "rejected"],
+  ] as const)(
+    "a %s rejection on the one-call path never puts the pack in objects/pack",
+    async (prefix, variant) => {
+      const line = await sourceLine(["v1", "v2"]);
+      const [first, tip] = line.commits;
+      if (first === undefined || tip === undefined) throw new Error("line");
+      const { store, repoDirOf } = await targetStore(
+        runsHandler(async (text) => !(variant === "rejected" && text === "v2")),
+      );
+      await store.receivePack(
+        principal,
+        repoId,
+        REF,
+        await line.packAt(first),
+        first,
+        null,
+      );
+      const packDir = path.join(repoDirOf(repoId), ".git", "objects", "pack");
+      const packsBefore = await receivedPacks(repoDirOf(repoId));
+
+      const renameSpy = spyOn(fs.promises, "rename");
+      try {
+        await expect(
+          store.receivePack(
+            principal,
+            repoId,
+            REF,
+            await line.packAt(tip),
+            variant === "bogus" ? "0".repeat(40) : tip,
+            variant === "stale" ? null : first,
+          ),
+        ).rejects.toThrow(new RegExp(`^${prefix}:`));
+        const intoPackDir = renameSpy.mock.calls.filter(([, to]) =>
+          String(to).startsWith(packDir),
+        );
+        expect(intoPackDir).toEqual([]);
+      } finally {
+        renameSpy.mockRestore();
+      }
+      expect(await receivedPacks(repoDirOf(repoId))).toEqual(packsBefore);
+      expect(await stagedPacks(repoDirOf(repoId))).toEqual([]);
+      expect(await store.resolveRef(principal, repoId, REF)).toBe(first);
+    },
+  );
+
+  test("two first receives for a fresh repo leave the genesis branch at the pack tip", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    // The pack's history carries the source's genesis, which has no
+    // `deploy/a.md`, so the handler accepts every commit.
+    const { store, repoDirOf } = await targetStore({
+      ...createTestHandler(),
+      kind: "workflow-run",
+    });
+    const dir = path.resolve(repoDirOf(repoId));
+    const main = "refs/heads/main";
+    const pack = await line.packAt(tip);
+
+    // A receive as the Hub runs it: init the repo, then prepare and
+    // commit the pack outside that init.
+    async function receive(
+      commitSha: string,
+    ): Promise<PackCommitResult["kind"]> {
+      await store.initRepo(repoId);
+      const prepared = await store.prepareReceivePack(
+        principal,
+        repoId,
+        main,
+        pack,
+        commitSha,
+      );
+      if (prepared.kind !== "prepared") return prepared.kind;
+      return (await prepared.commit()).kind;
+    }
+
+    // Holds the first genesis commit of the target repo, after its
+    // `git.init` and `git.add`, until the test releases it.
+    const originalCommit = git.commit.bind(git);
+    let markGenesisHeld: () => void = () => undefined;
+    const genesisHeld = new Promise<void>((resolve) => {
+      markGenesisHeld = resolve;
+    });
+    let releaseGenesis: () => void = () => undefined;
+    const genesisReleased = new Promise<void>((resolve) => {
+      releaseGenesis = resolve;
+    });
+    let armed = true;
+    const commitSpy = spyOn(git, "commit").mockImplementation(async (args) => {
+      if (armed && args.dir === dir) {
+        armed = false;
+        markGenesisHeld();
+        await genesisReleased;
+      }
+      return originalCommit(args);
+    });
+    const mkdirSpy = spyOn(fs.promises, "mkdir");
+    const repoDirMkdirs = () =>
+      mkdirSpy.mock.calls.filter(([p]) => p === dir).length;
+
+    let first: Promise<PackCommitResult["kind"]> | undefined;
+    let second: Promise<PackCommitResult["kind"]> | undefined;
+    try {
+      first = receive(tip);
+      await genesisHeld;
+      const mkdirsAtHold = repoDirMkdirs();
+      second = receive(tip);
+      // No await separates this check from the call above. An init
+      // that takes the repo lock queues on it synchronously and
+      // touches no file. An init without the lock calls its first
+      // `mkdir` of the repo dir synchronously, before its first
+      // pending await, so the count would already be higher.
+      expect(repoDirMkdirs()).toBe(mkdirsAtHold);
+      releaseGenesis();
+
+      expect((await Promise.all([first, second])).sort()).toEqual([
+        "already_applied",
+        "applied",
+      ]);
+      expect(await store.resolveRef(principal, repoId, main)).toBe(tip);
+    } finally {
+      releaseGenesis();
+      await Promise.allSettled([first, second]);
+      commitSpy.mockRestore();
+      mkdirSpy.mockRestore();
+    }
+  });
+
+  test("prepareReceivePack refuses a kind that GC reclaims", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const store = createRepoStore({
+      dataDir: await makeTempDir("repo-store-prepared-gc-"),
+      signingKey,
+      handlers: { "workflow-run": runsHandler() },
+      authorize: allowAll,
+      gc: {
+        kinds: ["workflow-run"],
+        retention: "keep-history",
+        packThreshold: 1000,
+        looseThreshold: 1000,
+        warnBytes: Number.MAX_SAFE_INTEGER,
+      },
+    });
+
+    await expect(
+      store.prepareReceivePack(
+        principal,
+        repoId,
+        REF,
+        await line.packAt(tip),
+        tip,
+      ),
+    ).rejects.toThrow(/reclaimed by GC/);
+  });
+
+  test("a receive with no subscriber reads no ref history under the lock", async () => {
+    const line = await sourceLine(
+      Array.from({ length: 12 }, (_, i) => `v${String(i + 1)}`),
+    );
+    const middle = line.commits[9];
+    const tip = line.commits.at(-1);
+    if (middle === undefined || tip === undefined) throw new Error("line");
+    const { store: before, dataDir } = await targetStore(runsHandler());
+    await (
+      await prepare(before, repoId, await line.packAt(middle), middle)
+    ).commit();
+
+    // A new store over the same data, as after a restart, has no seq
+    // cached. The commit step of a prepared receive holds the lock and
+    // moves the ref; with no subscriber it reads no commit.
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: { "workflow-run": runsHandler() },
+      authorize: allowAll,
+    });
+    const prepared = await prepare(store, repoId, await line.packAt(tip), tip);
+    const readCommit = spyOn(git, "readCommit");
+    const ac = new AbortController();
+    try {
+      await prepared.commit();
+      expect(readCommit).toHaveBeenCalledTimes(0);
+
+      // A subscriber seeds its seq by walking the history through the
+      // same spy, so the zero count above is not a spy that sees nothing.
+      const stream = store.subscribe(principal, repoId, REF, {
+        from: "head",
+        signal: ac.signal,
+      });
+      const next = stream.next();
+      await store.writeTree(principal, repoId, REF, {
+        files: { "deploy/a.md": "v13" },
+        message: "v13",
+      });
+      expect((await next).done).toBe(false);
+      expect(readCommit.mock.calls.length).toBeGreaterThanOrEqual(12);
+    } finally {
+      ac.abort();
+      readCommit.mockRestore();
+    }
+  });
+
+  test("a subscriber after updates with no subscriber gets the seq of the ref's history", async () => {
+    const line = await sourceLine(["v1", "v2", "v3", "v4", "v5", "v6", "v7"]);
+    const [first, second] = line.commits;
+    const tip = line.commits.at(-1);
+    if (first === undefined || second === undefined || tip === undefined) {
+      throw new Error("line");
+    }
+    const { store, repoDirOf } = await targetStore(runsHandler());
+    await (
+      await prepare(store, repoId, await line.packAt(first), first)
+    ).commit();
+
+    // A subscriber that sees one update leaves a seq cached for the ref.
+    const earlier = new AbortController();
+    const earlierStream = store.subscribe(principal, repoId, REF, {
+      from: "head",
+      signal: earlier.signal,
+    });
+    try {
+      const earlierNext = earlierStream.next();
+      await (
+        await prepare(store, repoId, await line.packAt(second), second)
+      ).commit();
+      expect((await earlierNext).done).toBe(false);
+    } finally {
+      earlier.abort();
+    }
+
+    // One receive of five commits with no subscriber.
+    await (await prepare(store, repoId, await line.packAt(tip), tip)).commit();
+
+    const ac = new AbortController();
+    const stream = store.subscribe(principal, repoId, REF, {
+      from: "head",
+      signal: ac.signal,
+    });
+    try {
+      const next = stream.next();
+      await store.writeTree(principal, repoId, REF, {
+        files: { "deploy/a.md": "v8" },
+        message: "v8",
+      });
+      const entry = await next;
+      if (entry.done) throw new Error("Missing update");
+      const history = await git.log({ fs, dir: repoDirOf(repoId), ref: REF });
+      expect(entry.value.seq).toBe(history.length - 1);
+    } finally {
+      ac.abort();
+    }
+  });
+
+  // The seq a `from: { seq: 0 }` replay of `REF` gives `commitSha`.
+  async function replayedSeq(
+    store: ReturnType<typeof createRepoStore>,
+    commitSha: string,
+  ): Promise<number> {
+    const ac = new AbortController();
+    const replay = store.subscribe(principal, repoId, REF, {
+      from: { seq: 0 },
+      signal: ac.signal,
+    });
+    try {
+      for (;;) {
+        const entry = await replay.next();
+        if (entry.done) throw new Error(`replay ended before ${commitSha}`);
+        if (asRefUpdated(entry.value.event).newSha === commitSha) {
+          return entry.value.seq;
+        }
+      }
+    } finally {
+      ac.abort();
+    }
+  }
+
+  test("a live subscriber's seq after a receive of many commits matches the replay", async () => {
+    const line = await sourceLine(
+      Array.from({ length: 11 }, (_, i) => `v${String(i + 1)}`),
+    );
+    const [first] = line.commits;
+    const middle = line.commits[5];
+    const tip = line.commits.at(-1);
+    if (first === undefined || middle === undefined || tip === undefined) {
+      throw new Error("line");
+    }
+    const { store } = await targetStore(runsHandler());
+    await (
+      await prepare(store, repoId, await line.packAt(first), first)
+    ).commit();
+    const ac = new AbortController();
+    const live = store.subscribe(principal, repoId, REF, {
+      from: "head",
+      signal: ac.signal,
+    });
+    try {
+      const firstNext = live.next();
+      await (
+        await prepare(store, repoId, await line.packAt(middle), middle)
+      ).commit();
+      const a = await firstNext;
+      if (a.done) throw new Error("Missing update");
+      expect(a.value.seq).toBe(await replayedSeq(store, middle));
+
+      // The cached seq of the previous tip bounds the next walk to the
+      // commits this receive adds.
+      const pack = await line.packAt(tip);
+      const secondNext = live.next();
+      const log = spyOn(git, "log");
+      try {
+        await (await prepare(store, repoId, pack, tip)).commit();
+        expect(log).toHaveBeenCalledTimes(0);
+      } finally {
+        log.mockRestore();
+      }
+      const b = await secondNext;
+      if (b.done) throw new Error("Missing update");
+      expect(b.value.seq).toBe(await replayedSeq(store, tip));
+      expect(b.value.seq - a.value.seq).toBe(5);
+    } finally {
+      ac.abort();
+    }
+  });
+
+  test("a live subscriber's seq after a receive that replaces the ref's line matches the replay", async () => {
+    const lineA = await sourceLine(["a1", "a2", "a3"]);
+    const lineB = await sourceLine(
+      Array.from({ length: 8 }, (_, i) => `b${String(i + 1)}`),
+    );
+    const tipA = lineA.commits.at(-1);
+    const tipB = lineB.commits.at(-1);
+    if (tipA === undefined || tipB === undefined) throw new Error("line");
+    const { store } = await targetStore(runsHandler());
+    await (
+      await prepare(store, repoId, await lineA.packAt(tipA), tipA)
+    ).commit();
+    const ac = new AbortController();
+    const live = store.subscribe(principal, repoId, REF, {
+      from: "head",
+      signal: ac.signal,
+    });
+    try {
+      const next = live.next();
+      await (
+        await prepare(store, repoId, await lineB.packAt(tipB), tipB)
+      ).commit();
+      const entry = await next;
+      if (entry.done) throw new Error("Missing update");
+      expect(asRefUpdated(entry.value.event).newSha).toBe(tipB);
+      expect(entry.value.seq).toBe(await replayedSeq(store, tipB));
+    } finally {
+      ac.abort();
+    }
+  });
+
+  test("a replay subscriber continues the replay's seqs after a receive of many commits", async () => {
+    const line = await sourceLine(["v1", "v2", "v3", "v4", "v5"]);
+    const [first] = line.commits;
+    const tip = line.commits.at(-1);
+    if (first === undefined || tip === undefined) throw new Error("line");
+    const { store, repoDirOf } = await targetStore(runsHandler());
+    await (
+      await prepare(store, repoId, await line.packAt(first), first)
+    ).commit();
+    const earlier = new AbortController();
+    const earlierStream = store.subscribe(principal, repoId, REF, {
+      from: "head",
+      signal: earlier.signal,
+    });
+    const ac = new AbortController();
+    try {
+      const earlierNext = earlierStream.next();
+      await (
+        await prepare(store, repoId, await line.packAt(tip), tip)
+      ).commit();
+      const earlierEntry = await earlierNext;
+      if (earlierEntry.done) throw new Error("Missing update");
+
+      const history = await git.log({ fs, dir: repoDirOf(repoId), ref: REF });
+      expect(earlierEntry.value.seq).toBe(history.length - 1);
+      const replay = store.subscribe(principal, repoId, REF, {
+        from: { seq: 0 },
+        signal: ac.signal,
+      });
+      const seqs: number[] = [];
+      for (const _entry of history) {
+        const entry = await replay.next();
+        if (entry.done) throw new Error("Missing replay entry");
+        seqs.push(entry.value.seq);
+      }
+      const liveNext = replay.next();
+      await store.writeTree(principal, repoId, REF, {
+        files: { "deploy/a.md": "v6" },
+        message: "v6",
+      });
+      const live = await liveNext;
+      if (live.done) throw new Error("Missing update");
+      seqs.push(live.value.seq);
+      expect(seqs).toEqual(
+        Array.from({ length: history.length + 1 }, (_, i) => i),
+      );
+    } finally {
+      earlier.abort();
+      ac.abort();
+    }
+  });
+
+  // A store over `dataDir` whose workflow-run handler counts the
+  // commits it validates, by their `deploy/a.md`, and can hold a ref
+  // update in onRefUpdated while it holds the repo lock.
+  function countingStore(
+    dataDir: string,
+    gc?: Parameters<typeof createRepoStore>[0]["gc"],
+  ): {
+    store: ReturnType<typeof createRepoStore>;
+    validated: string[];
+    holdNextUpdate: () => ReturnType<typeof gate>;
+  } {
+    const validated: string[] = [];
+    let hold: ReturnType<typeof gate> | null = null;
+    const store = createRepoStore({
+      dataDir,
+      signingKey,
+      handlers: {
+        "workflow-run": {
+          ...runsHandler(async (text) => {
+            validated.push(text);
+            return true;
+          }),
+          async onRefUpdated() {
+            const held = hold;
+            hold = null;
+            if (held !== null) await held.arrive();
+          },
+        },
+      },
+      authorize: allowAll,
+      ...(gc === undefined ? {} : { gc }),
+    });
+    return {
+      store,
+      validated,
+      holdNextUpdate: () => {
+        hold = gate();
+        return hold;
+      },
+    };
+  }
+
+  // A line of `contents` whose first `receivedCount` commits a new
+  // target receives, and the target's data dir, for a new store over it
+  // as after a restart, with no existing-commit set.
+  async function restartedTarget(
+    contents: readonly string[],
+    receivedCount: number,
+    id: RepoId = repoId,
+  ): Promise<{
+    line: Awaited<ReturnType<typeof sourceLine>>;
+    dataDir: string;
+    repoDir: string;
+  }> {
+    const line = await sourceLine(contents);
+    const received = line.commits[receivedCount - 1];
+    if (received === undefined) throw new Error("line");
+    const { store, dataDir, repoDirOf } = await targetStore(runsHandler());
+    await (
+      await prepare(store, id, await line.packAt(received), received)
+    ).commit();
+    return { line, dataDir, repoDir: repoDirOf(id) };
+  }
+
+  test("a receive into a repo with no existing-commit set scans the history before it takes the lock", async () => {
+    const contents = Array.from({ length: 32 }, (_, i) => `v${String(i + 1)}`);
+    // The test holds the repo lock, and the lock map is shared by every
+    // store in the process, so the test's own repo id keeps a lock it
+    // leaves held from blocking other tests.
+    const scanRepoId: RepoId = { kind: "workflow-run", id: "scan-before-lock" };
+    const { line, dataDir, repoDir } = await restartedTarget(
+      contents,
+      30,
+      scanRepoId,
+    );
+    const history = await git.log({ fs, dir: repoDir, ref: REF });
+    const received = line.commits[29];
+    const tip = line.commits.at(-1);
+    if (received === undefined || tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store, validated, holdNextUpdate } = countingStore(dataDir);
+    const OTHER = "refs/heads/other";
+
+    // One write holds the repo lock; a second waits for it.
+    const held = holdNextUpdate();
+    const first = store.writeTree(principal, scanRepoId, OTHER, {
+      files: { "deploy/a.md": "w1" },
+      message: "w1",
+    });
+    await held.reached;
+    const second = store.writeTree(principal, scanRepoId, OTHER, {
+      files: { "deploy/a.md": "w2" },
+      message: "w2",
+    });
+
+    // The scan reads the tip of the ref after it has resolved every
+    // branch tip (the branches scan in name order, and `test` sorts
+    // last). It arrives there while the write holds the lock, so the
+    // scan runs with no lock, and it saw the other ref before the
+    // second write moved it.
+    const scan = gate();
+    let gated = false;
+    const readCommit = spyOn(git, "readCommit").mockImplementation(
+      async (args) => {
+        const result = await gitReadCommit(args);
+        if (args.dir === repoDir && args.oid === received && !gated) {
+          gated = true;
+          await scan.arrive();
+        }
+        return result;
+      },
+    );
+    let preparing: ReturnType<typeof prepare> | null = null;
+    try {
+      preparing = prepare(store, scanRepoId, pack, tip);
+      await scan.reached;
+      held.release();
+      await first;
+      const { commitSha: w2 } = await second;
+      // The writes validate their own commits.
+      expect(validated).toEqual(["w1", "w2"]);
+      validated.length = 0;
+      scan.release();
+      const prepared = await preparing;
+      await prepared.commit();
+      expect(validated).toEqual(["v31", "v32"]);
+      // The scan reads each commit once; a second, locked scan would
+      // read the whole history again.
+      expect(readCommit.mock.calls.length).toBeLessThan(2 * history.length);
+
+      // The scan did not see the second write's commit. The locked
+      // step adds it from the other ref's moved tip, so a receive of
+      // that commit validates nothing.
+      validated.length = 0;
+      const w2Pack = await historyPack(repoDir, w2);
+      await (await prepare(store, scanRepoId, w2Pack, w2)).commit();
+      expect(validated).toEqual([]);
+    } finally {
+      readCommit.mockRestore();
+      scan.release();
+      held.release();
+      await Promise.allSettled([first, second]);
+      // A discard after a commit does nothing.
+      await (await preparing?.catch(() => null))?.discard();
+    }
+  });
+
+  test("a scan of a repo removed during it is not used for the repo created again", async () => {
+    const contents = Array.from({ length: 12 }, (_, i) => `v${String(i + 1)}`);
+    const { line, dataDir, repoDir } = await restartedTarget(contents, 10);
+    const [oldest] = line.commits;
+    const tip = line.commits.at(-1);
+    if (oldest === undefined || tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store, validated } = countingStore(dataDir);
+
+    // The scan has read the ref's history when it reads the line's
+    // oldest commit. The repository is removed and created again
+    // before the scan returns, so the scan ends on the new repository.
+    const scan = gate();
+    let gated = false;
+    const readCommit = spyOn(git, "readCommit").mockImplementation(
+      async (args) => {
+        const result = await gitReadCommit(args);
+        if (args.dir === repoDir && args.oid === oldest && !gated) {
+          gated = true;
+          await scan.arrive();
+        }
+        return result;
+      },
+    );
+    let preparing: ReturnType<typeof prepare> | null = null;
+    try {
+      preparing = prepare(store, repoId, pack, tip);
+      await scan.reached;
+      await store.removeRepo(repoId);
+      await store.initRepo(repoId);
+      scan.release();
+      await (await preparing).commit();
+      expect(validated).toEqual(contents);
+    } finally {
+      readCommit.mockRestore();
+      scan.release();
+      // A discard after a commit does nothing.
+      await (await preparing?.catch(() => null))?.discard();
+    }
+  });
+
+  test("receives that start together on a repo with no existing-commit set share one scan", async () => {
+    const contents = Array.from({ length: 62 }, (_, i) => `v${String(i + 1)}`);
+    const { line, dataDir, repoDir } = await restartedTarget(contents, 60);
+    const history = await git.log({ fs, dir: repoDir, ref: REF });
+    const tip = line.commits.at(-1);
+    if (tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store } = countingStore(dataDir);
+
+    const readCommit = spyOn(git, "readCommit");
+    const preparing = Array.from({ length: 4 }, () =>
+      prepare(store, repoId, pack, tip),
+    );
+    try {
+      await Promise.all(preparing);
+      const reads = readCommit.mock.calls.filter(
+        ([args]) => args.dir === repoDir,
+      ).length;
+      // One scan reads the history once; each receive adds a few reads
+      // for its own two commits.
+      expect(reads).toBeLessThan(2 * history.length);
+    } finally {
+      readCommit.mockRestore();
+      for (const result of await Promise.allSettled(preparing)) {
+        if (result.status === "fulfilled") await result.value.discard();
+      }
+    }
+  });
+
+  test("a receive that starts after the scan ends, while the lock is held, uses that scan", async () => {
+    const contents = Array.from({ length: 62 }, (_, i) => `v${String(i + 1)}`);
+    // The test holds the repo lock, so it uses its own repo id.
+    const lateRepoId: RepoId = { kind: "workflow-run", id: "late-scan" };
+    const { line, dataDir, repoDir } = await restartedTarget(
+      contents,
+      60,
+      lateRepoId,
+    );
+    const history = await git.log({ fs, dir: repoDir, ref: REF });
+    const tip = line.commits.at(-1);
+    if (tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store, holdNextUpdate } = countingStore(dataDir);
+
+    const held = holdNextUpdate();
+    const write = store.writeTree(principal, lateRepoId, "refs/heads/other", {
+      files: { "deploy/a.md": "w1" },
+      message: "w1",
+    });
+    await held.reached;
+
+    // The scan lists tags last; after that it returns with no more I/O.
+    const listTags = git.listTags.bind(git);
+    let markListed: () => void = () => undefined;
+    const listed = new Promise<void>((resolve) => {
+      markListed = resolve;
+    });
+    const tagsSpy = spyOn(git, "listTags").mockImplementation(async (args) => {
+      const result = await listTags(args);
+      if (args.dir === repoDir) markListed();
+      return result;
+    });
+    const readCommit = spyOn(git, "readCommit");
+    const preparing: ReturnType<typeof prepare>[] = [];
+    try {
+      preparing.push(prepare(store, lateRepoId, pack, tip));
+      await listed;
+      tagsSpy.mockRestore();
+      await drainMicrotasks();
+      // The first receive's scan has ended, and the receive waits for
+      // the lock. A second receive starts now.
+      preparing.push(prepare(store, lateRepoId, pack, tip));
+      await drainMicrotasks();
+      held.release();
+      await write;
+      await Promise.all(preparing);
+      const reads = readCommit.mock.calls.filter(
+        ([args]) => args.dir === repoDir,
+      ).length;
+      expect(reads).toBeLessThan(2 * history.length);
+    } finally {
+      tagsSpy.mockRestore();
+      readCommit.mockRestore();
+      held.release();
+      await Promise.allSettled([write]);
+      for (const result of await Promise.allSettled(preparing)) {
+        if (result.status === "fulfilled") await result.value.discard();
+      }
+    }
+  });
+
+  test("a receive whose locked step fails leaves a shared scan whole for the next receive", async () => {
+    const contents = Array.from({ length: 12 }, (_, i) => `v${String(i + 1)}`);
+    // The test holds the repo lock, so it uses its own repo id.
+    const failRepoId: RepoId = { kind: "workflow-run", id: "shared-scan" };
+    const { line, dataDir, repoDir } = await restartedTarget(
+      contents,
+      10,
+      failRepoId,
+    );
+    const received = line.commits[9];
+    const tip = line.commits.at(-1);
+    if (received === undefined || tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store, validated, holdNextUpdate } = countingStore(dataDir);
+    const OTHER = "refs/heads/other";
+
+    // A write holds the lock while the scan runs, and two more writes
+    // move the other ref past what the scan saw.
+    const held = holdNextUpdate();
+    const writes = [
+      store.writeTree(principal, failRepoId, OTHER, {
+        files: { "deploy/a.md": "w1" },
+        message: "w1",
+      }),
+    ];
+    await held.reached;
+    for (const message of ["w2", "w3"]) {
+      writes.push(
+        store.writeTree(principal, failRepoId, OTHER, {
+          files: { "deploy/a.md": message },
+          message,
+        }),
+      );
+    }
+
+    // Both receives wait for one scan, held at the ref's tip. Once the
+    // writes land, the first receive's locked step fails to read w2.
+    const scan = gate();
+    let gated = false;
+    let failOid: string | null = null;
+    const readCommit = spyOn(git, "readCommit").mockImplementation(
+      async (args) => {
+        if (args.dir === repoDir && args.oid === failOid) {
+          failOid = null;
+          throw new Error("transient read failure");
+        }
+        const result = await gitReadCommit(args);
+        if (args.dir === repoDir && args.oid === received && !gated) {
+          gated = true;
+          await scan.arrive();
+        }
+        return result;
+      },
+    );
+    const preparing = [
+      prepare(store, failRepoId, pack, tip),
+      prepare(store, failRepoId, pack, tip),
+    ];
+    try {
+      await scan.reached;
+      held.release();
+      const [, w2] = await Promise.all(writes);
+      if (w2 === undefined) throw new Error("writes");
+      failOid = w2.commitSha;
+      scan.release();
+      const [first, second] = await Promise.allSettled(preparing);
+      expect(first?.status).toBe("rejected");
+      if (second?.status !== "fulfilled") throw new Error("second receive");
+      await second.value.commit();
+
+      // The second receive's set holds w2, so a receive of w2 validates
+      // nothing.
+      validated.length = 0;
+      const w2Pack = await historyPack(repoDir, w2.commitSha);
+      await (await prepare(store, failRepoId, w2Pack, w2.commitSha)).commit();
+      expect(validated).toEqual([]);
+    } finally {
+      readCommit.mockRestore();
+      scan.release();
+      held.release();
+      await Promise.allSettled(writes);
+      for (const result of await Promise.allSettled(preparing)) {
+        // A discard after a commit does nothing.
+        if (result.status === "fulfilled") await result.value.discard();
+      }
+    }
+  });
+
+  test("a scan before the lock leaves the locked step its git cache", async () => {
+    const contents = Array.from({ length: 32 }, (_, i) => `v${String(i + 1)}`);
+    const { line, dataDir, repoDir } = await restartedTarget(contents, 30);
+    const received = line.commits[29];
+    const tip = line.commits.at(-1);
+    if (received === undefined || tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store } = countingStore(dataDir);
+
+    // The store rebuilds a dir's git cache once the cache has served
+    // 8192 calls, and each read below charges one. The scan's reads
+    // take the count past that, so a scan charged before the lock
+    // would make the locked step start from an empty cache.
+    for (let i = 0; i < 8192 - 10; i++) {
+      await store.openCommittedReadsAtCommit(principal, repoId, received);
+    }
+    const readCommit = spyOn(git, "readCommit");
+    try {
+      await (await prepare(store, repoId, pack, tip)).discard();
+      const reads = readCommit.mock.calls
+        .filter(([args]) => args.dir === repoDir)
+        .map(([args]) => args);
+      const scanCache = reads[0]?.cache;
+      // The first read of the pack tip is the locked step's walk.
+      const lockedCache = reads.find((args) => args.oid === tip)?.cache;
+      expect(scanCache).toBeDefined();
+      expect(lockedCache).toBe(scanCache);
+    } finally {
+      readCommit.mockRestore();
+    }
+  });
+
+  test("a one-call receive into a repo with no existing-commit set scans the history before it takes the lock", async () => {
+    const contents = Array.from({ length: 12 }, (_, i) => `v${String(i + 1)}`);
+    // The test holds the repo lock, so it uses its own repo id.
+    const oneCallRepoId: RepoId = { kind: "workflow-run", id: "one-call" };
+    const { line, dataDir, repoDir } = await restartedTarget(
+      contents,
+      10,
+      oneCallRepoId,
+    );
+    const received = line.commits[9];
+    const tip = line.commits.at(-1);
+    if (received === undefined || tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store, validated, holdNextUpdate } = countingStore(dataDir);
+
+    const held = holdNextUpdate();
+    const write = store.writeTree(
+      principal,
+      oneCallRepoId,
+      "refs/heads/other",
+      {
+        files: { "deploy/a.md": "w1" },
+        message: "w1",
+      },
+    );
+    await held.reached;
+
+    // The scan reads the received tip while the write holds the lock.
+    const scan = gate();
+    let gated = false;
+    const readCommit = spyOn(git, "readCommit").mockImplementation(
+      async (args) => {
+        const result = await gitReadCommit(args);
+        if (args.dir === repoDir && args.oid === received && !gated) {
+          gated = true;
+          await scan.arrive();
+        }
+        return result;
+      },
+    );
+    let receiving: Promise<unknown> | null = null;
+    try {
+      receiving = store.receivePack(
+        principal,
+        oneCallRepoId,
+        REF,
+        pack,
+        tip,
+        received,
+      );
+      await scan.reached;
+      scan.release();
+      held.release();
+      await write;
+      validated.length = 0;
+      await receiving;
+      expect(validated).toEqual(["v11", "v12"]);
+      expect(await store.resolveRef(principal, oneCallRepoId, REF)).toBe(tip);
+    } finally {
+      readCommit.mockRestore();
+      scan.release();
+      held.release();
+      await Promise.allSettled([write, receiving]);
+    }
+  });
+
+  test("a receive into a kind that GC reclaims scans its existing commits only under the lock", async () => {
+    const contents = Array.from({ length: 6 }, (_, i) => `v${String(i + 1)}`);
+    // The test holds the repo lock, so it uses its own repo id.
+    const gcRepoId: RepoId = { kind: "workflow-run", id: "gc-kind" };
+    const { line, dataDir, repoDir } = await restartedTarget(
+      contents,
+      4,
+      gcRepoId,
+    );
+    const received = line.commits[3];
+    const tip = line.commits.at(-1);
+    if (received === undefined || tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store, validated, holdNextUpdate } = countingStore(dataDir, {
+      kinds: ["workflow-run"],
+      retention: "keep-history",
+      packThreshold: 1000,
+      looseThreshold: 1000,
+      warnBytes: Number.MAX_SAFE_INTEGER,
+    });
+
+    const held = holdNextUpdate();
+    const write = store.writeTree(principal, gcRepoId, "refs/heads/other", {
+      files: { "deploy/a.md": "w1" },
+      message: "w1",
+    });
+    await held.reached;
+
+    // A scan with no lock first checks that the repository exists, and
+    // that check starts within the microtasks after the receive starts.
+    const gitDir = path.join(repoDir, ".git");
+    const stat = spyOn(fs.promises, "stat");
+    let receiving: Promise<unknown> | null = null;
+    try {
+      receiving = store.receivePack(
+        principal,
+        gcRepoId,
+        REF,
+        pack,
+        tip,
+        received,
+      );
+      await drainMicrotasks();
+      expect(
+        stat.mock.calls.filter(([target]) => target === gitDir),
+      ).toHaveLength(0);
+      held.release();
+      await write;
+      validated.length = 0;
+      await receiving;
+      expect(validated).toEqual(["v5", "v6"]);
+    } finally {
+      stat.mockRestore();
+      held.release();
+      await Promise.allSettled([write, receiving]);
+    }
+  });
+
+  test("a receive whose scan before the lock fails scans under the lock", async () => {
+    const contents = Array.from({ length: 6 }, (_, i) => `v${String(i + 1)}`);
+    const { line, dataDir, repoDir } = await restartedTarget(contents, 4);
+    const tip = line.commits.at(-1);
+    if (tip === undefined) throw new Error("line");
+    const pack = await line.packAt(tip);
+    const { store, validated } = countingStore(dataDir);
+
+    let failed = false;
+    const readCommit = spyOn(git, "readCommit").mockImplementation(
+      async (args) => {
+        if (args.dir === repoDir && !failed) {
+          failed = true;
+          throw new Error("scan read failed");
+        }
+        return gitReadCommit(args);
+      },
+    );
+    try {
+      await (await prepare(store, repoId, pack, tip)).commit();
+      expect(failed).toBe(true);
+      expect(validated).toEqual(["v5", "v6"]);
+      expect(await store.resolveRef(principal, repoId, REF)).toBe(tip);
+    } finally {
+      readCommit.mockRestore();
+    }
+  });
+
+  test("prepareReceivePack refuses a kind other than workflow-run", async () => {
+    const line = await sourceLine(["v1"]);
+    const [tip] = line.commits;
+    if (tip === undefined) throw new Error("line");
+    const skillRepoId: RepoId = { kind: "skill", id: "subject" };
+    const store = createRepoStore({
+      dataDir: await makeTempDir("repo-store-prepared-kind-"),
+      signingKey,
+      handlers: { skill: { ...runsHandler(), kind: "skill" } },
+      authorize: allowAll,
+    });
+
+    await expect(
+      store.prepareReceivePack(
+        principal,
+        skillRepoId,
+        REF,
+        await line.packAt(tip),
+        tip,
+      ),
+    ).rejects.toThrow(/kind skill is not workflow-run/);
   });
 });

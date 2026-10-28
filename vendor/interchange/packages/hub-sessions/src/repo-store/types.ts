@@ -292,16 +292,26 @@ export interface KindHandler {
    * prior commit's tree (git trees are content-addressed, so the listing
    * already carries the OID). A handler that validates a large retained
    * subtree by its per-commit delta uses it to prove a retained entry is
-   * byte-unchanged by OID equality instead of re-reading the blob. It is
-   * `undefined` when no prior commit exists.
+   * byte-unchanged by OID equality instead of re-reading the blob. It
+   * returns an empty array in the same cases as `priorListDir`.
    *
    * `listDirOids` is the prospective-side mirror of `priorListDirOids`:
    * each child entry's OID read straight from the prospective tree's
    * listing, so a handler comparing a retained subtree by OID gets the
-   * prospective OID without re-reading and hashing every entry's bytes.
-   * It is `undefined` on paths that do not surface it (a hand-built
-   * validatePush in a test), in which case the handler falls back to
-   * hashing the prospective bytes.
+   * prospective OID without re-reading the entry's bytes.
+   *
+   * Both listings carry each entry's `type`. A handler that needs a blob
+   * at a path treats an entry of another type as absent, as
+   * `priorReadBlob` does, because a tree can carry the same OID on both
+   * sides.
+   *
+   * `validationScope` identifies a set of validatePush calls whose
+   * results a handler may share. A pack receive passes one object for
+   * every commit of the pack, and a write passes a new object. A handler
+   * may key a cache of parsed blobs on it (for example in a `WeakMap`),
+   * so a blob that many commits of one pack carry is parsed once. Such a
+   * cache must key each entry by the blob's OID, because the bytes at a
+   * path change between commits.
    */
   validatePush: (args: {
     repoId: RepoId;
@@ -310,13 +320,12 @@ export interface KindHandler {
     topLevelTreePaths: string[];
     readBlob: (path: string) => Promise<Uint8Array>;
     listDir: (path: string) => Promise<string[]>;
-    listDirOids?: (path: string) => Promise<{ name: string; oid: string }[]>;
+    listDirOids: (path: string) => Promise<CommittedTreeEntry[]>;
     priorReadBlob: (path: string) => Promise<Uint8Array | null>;
     priorListDir: (path: string) => Promise<string[]>;
-    priorListDirOids?: (
-      path: string,
-    ) => Promise<{ name: string; oid: string }[]>;
+    priorListDirOids: (path: string) => Promise<CommittedTreeEntry[]>;
     changedPathPrefixes?: ReadonlySet<string> | undefined;
+    validationScope: object;
   }) => Promise<ValidatePushResult> | ValidatePushResult;
   /**
    * Fired after a successful ref update from any operation. `oldSha`
@@ -331,7 +340,8 @@ export interface KindHandler {
 }
 
 /**
- * A single child entry returned by `CommittedReads.listDir`. `name` is
+ * A single child entry returned by `CommittedReads.listDir` and by the
+ * `listDirOids` and `priorListDirOids` closures of `validatePush`. `name` is
  * the entry's own path segment (no parent prefix); `oid` is its git
  * object id; `type` is the git tree-entry kind. `oid` lets a consumer
  * read a blob's bytes via `readBlobByOid` without re-resolving the path,
@@ -450,6 +460,9 @@ export interface RepoStore {
    * row, deactivate its principal) without re-deriving terminal-ness
    * from the committed path shape. Empty for kinds and packs that
    * produce none.
+   *
+   * The pack is validated before it enters the repo's pack directory, so
+   * a rejected pack is never visible to any reader.
    */
   receivePack(
     principal: Principal,
@@ -566,8 +579,13 @@ export interface RepoStore {
    * `{ seq, event }` entries: one per commit on the ref. `seq` is
    * zero-indexed at the ref's root commit and counts ancestors
    * walking forward to HEAD, so the same commit always carries the
-   * same `seq` across restarts. The emitted `event` is the
-   * substrate-level commit descriptor; consumers that need richer
+   * same `seq` across restarts. A history with a missing parent (a
+   * pack that carries only its tip, or history GC removed) replays no
+   * entries. Its live `seq` advances by the readable commits each
+   * update adds while the ref has a subscriber, and starts again from
+   * 0 at the oldest readable commit after a restart or after an update
+   * with no subscriber. The emitted `event` is
+   * the substrate-level commit descriptor; consumers that need richer
    * shapes layer their own decoding on top.
    *
    * Cancellation: when `opts.signal` aborts, the iterator ends
@@ -618,3 +636,46 @@ export type RepoStoreSubscribeEvent = {
   readonly oldSha: string | null;
   readonly newSha: string;
 };
+
+/**
+ * The outcome of a prepared receive's `commit()`. `already_applied`
+ * means the ref already held the pack's tip, so nothing changed.
+ */
+export type PackCommitResult =
+  | { readonly kind: "already_applied" }
+  | {
+      readonly kind: "applied";
+      readonly newlyTerminalRuns: NewlyTerminalRun[];
+    };
+
+/**
+ * A pack that `prepareReceivePack` staged and validated. `commit()`
+ * publishes it and moves the ref; `discard()` removes it.
+ * `already_applied` means the ref already held the pack's tip when the
+ * receive began, so nothing was staged.
+ */
+export type PreparedReceivePack =
+  | { readonly kind: "already_applied" }
+  | {
+      readonly kind: "prepared";
+      commit(): Promise<PackCommitResult>;
+      discard(): Promise<void>;
+    };
+
+/**
+ * A prepared receive found that its repository was removed after the
+ * pack was staged. The pack is not at fault, and the error lets a caller
+ * tell this case apart from a fault in the pack.
+ */
+export class RepoRemovedDuringReceiveError extends Error {
+  readonly repoId: RepoId;
+
+  constructor(repoId: RepoId, options?: ErrorOptions) {
+    super(
+      `repo_removed: ${repoId.kind}/${repoId.id} was removed during a pack receive`,
+      options,
+    );
+    this.name = "RepoRemovedDuringReceiveError";
+    this.repoId = repoId;
+  }
+}
