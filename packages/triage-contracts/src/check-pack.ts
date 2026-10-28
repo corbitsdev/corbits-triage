@@ -637,7 +637,7 @@ const TRACKER_SET = new Set<string>(ISSUE_TRACKERS);
 
 export const CHECK_PACK_TITLE_PREFIX = "check-pack/";
 
-/** GitHub's saved rules are titled by name alone; another host's are prefixed with the host. */
+/** What a triage mail names a repository's policy by, as stored policies were titled: GitHub's by name alone, another host's prefixed with the host. */
 export function checkPackName(repo: string, source: RepoSource): string {
   const clean = asRepo(repo);
   if (!clean) throw new Error("Repository must be owner/name.");

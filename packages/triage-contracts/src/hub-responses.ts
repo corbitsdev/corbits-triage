@@ -247,15 +247,13 @@ export type AuditEntry = typeof AuditEntry.infer;
 export const AuditLog = type({ entries: AuditEntry.array() });
 export type AuditLog = typeof AuditLog.infer;
 
-const ArtifactRefShape = type({ id: "string", version: "number" });
-
 /** The repository's policy file on its default branch; `text` is absent when it is too large to read, `problem` is why triage does not run on it. */
 export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string" });
 export type PolicyFileStatus = typeof PolicyFileStatus.infer;
 
 const FileRefShape = type({ path: "string", sha: "string" });
 
-export const PolicySourceShape = type({ "repo?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) });
+export const PolicySourceShape = type({ "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) });
 
 const ActionKinds = type.enumerated(...ACTION_KINDS).array();
 

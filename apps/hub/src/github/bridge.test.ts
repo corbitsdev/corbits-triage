@@ -115,7 +115,7 @@ function packsFor(repos: string[], pack = rulePack): BridgeDeps["readCheckPack"]
   const packs = new Map(repos.map((repo) => [repo, pack(repo)]));
   return async function readCheckPack(_tenant, repo) {
     const pack = packs.get(repo);
-    return pack ? { status: "ok", pack, automatic: [], source: { repo: { id: "art_pack", version: 1 } } } : { status: "missing" };
+    return pack ? { status: "ok", pack, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } } : { status: "missing" };
   };
 }
 
@@ -740,7 +740,7 @@ test("mailPayload mails the pack whole as `pack`, as `checkPack` only the steps 
     custom: [score],
     actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, when: { author: ["FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"] } }, { do: "labels", target: { from: "rules" } }] },
   };
-  const source = { repo: { id: "art_pack", version: 3 } };
+  const source = { file: { path: ".corbits-triage.yml", sha: "art_pack-3" } };
   const mail = mailPayload({ name: "octocat/hello" }, repoPolicy({ enabled: true }), { pack, automatic: [], source }, {});
   expect(mail.policy.source).toEqual(source);
   expect(mail.pack).toBe(pack);

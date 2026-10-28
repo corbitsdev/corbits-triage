@@ -1,10 +1,15 @@
 import { type } from "arktype";
 import type { VerdictWord } from "./check-pack.js";
 import { VERDICT_NAMES } from "./policy-export.js";
-import type { ArtifactRef, PolicyFileRef, PolicySource } from "./resolve-policy.js";
+import type { PolicyFileRef, PolicySource } from "./resolve-policy.js";
 
-/** What a Triage comment was written for, kept in its marker so a later run can tell what changed. */
-export type TriageHeader = { head: string; policy: PolicySource | null; verdict: string };
+type ArtifactRef = { id: string; version: number };
+
+/**
+ * What a Triage comment was written for, kept in its marker so a later run can tell what changed. `repo` is the stored
+ * policy a comment written before the policy file was the only policy names, so the comment that replaces it says so.
+ */
+export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string };
 
 /** One of Triage's marked comments as a host lists it, oldest first. */
 export type MarkedComment = { id: number; body: string; updatedAt?: string };
@@ -80,7 +85,7 @@ function sameRef(a: ArtifactRef | undefined, b: ArtifactRef | undefined): boolea
   return a?.id === b?.id && a?.version === b?.version;
 }
 
-function samePolicy(a: PolicySource | null, b: PolicySource | null): boolean {
+function samePolicy(a: TriageHeader["policy"], b: TriageHeader["policy"]): boolean {
   return sameRef(a?.repo, b?.repo) && a?.file?.sha === b?.file?.sha && a?.sharedFile?.sha === b?.sharedFile?.sha;
 }
 

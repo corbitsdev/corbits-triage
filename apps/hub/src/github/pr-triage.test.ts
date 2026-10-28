@@ -71,7 +71,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
       return true;
     },
     pullHead: async (_tenantId, _record, number) => (number === 8 ? "abc123" : undefined),
-    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
     listener: async () => LISTENER,
     managerRuns: observed([]),
     store: stored([], s.saved),

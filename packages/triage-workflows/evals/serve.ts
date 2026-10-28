@@ -53,7 +53,7 @@ export function fixtureGithub(pr: Snapshot, templates: Readonly<Record<string, r
 
 /** The mail the hub's bridge sends when a pull request opens, as stock hands it to the run, with `extra` beside its request's own fields and `automatic` the kinds triage may run unattended. */
 export function triggerMail(pr: Pick<Snapshot, "repo" | "number">, pack: CheckPack, extra: Record<string, unknown> = {}, automatic: ActionKind[] = []) {
-  const request = mailPayload({ name: pr.repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic, source: { repo: { id: "eval", version: 1 } } }, { ...extra, prNumber: pr.number, headSha: HEAD, events: ["opened"] });
+  const request = mailPayload({ name: pr.repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic, source: { file: { path: ".corbits-triage.yml", sha: "eval-1" } } }, { ...extra, prNumber: pr.number, headSha: HEAD, events: ["opened"] });
   return {
     headers: { from: `${TRIAGE_MAIL_SENDER}@${DOMAIN}`, to: [`${PR_TRIAGE_ADDRESS}@${DOMAIN}`] },
     rawHeaders: {},

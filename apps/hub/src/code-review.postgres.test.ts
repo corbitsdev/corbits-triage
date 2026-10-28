@@ -72,7 +72,7 @@ test("PostgreSQL: code review runs again only with an isolated place to run and 
       db,
       authorize: async () => true,
       place,
-      readCheckPack: async () => ({ status: "ok" as const, pack: { ...emptyPack("acme/widgets"), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
+      readCheckPack: async () => ({ status: "ok" as const, pack: { ...emptyPack("acme/widgets"), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
       async readHead() {
         const next = heads.shift()!;
         if (next instanceof Error) throw next;

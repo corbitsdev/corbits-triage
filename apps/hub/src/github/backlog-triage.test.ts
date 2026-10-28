@@ -11,7 +11,7 @@ async function noKeyPush(): Promise<void> {}
 
 const REPO = "acme/widgets";
 const MEMBER = { tenantId: "tenant-1", principalId: "member-1" };
-const SOURCE = { repo: { id: "art_pack", version: 2 } };
+const SOURCE = { file: { path: ".corbits-triage.yml", sha: "art_pack-2" } };
 
 function backlog(repo: Record<string, unknown>, sent: unknown[], sendMail = async function send(_tenant: string, payload: unknown) {
   sent.push(payload);

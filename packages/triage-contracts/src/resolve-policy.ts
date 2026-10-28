@@ -12,16 +12,14 @@ import {
   type SharedPolicy,
 } from "./check-pack.js";
 
-export type ArtifactRef = { id: string; version: number };
-
 /** `sha` is the file's blob on the default branch. */
 export type PolicyFileRef = { path: string; sha: string };
 
 /** The policy file of the repository a policy file extends. */
 export type SharedFileRef = PolicyFileRef & { repo: string };
 
-/** What a policy was read from: the repository's policy file, which may extend another repository's file, or else its stored policy. */
-export type PolicySource = { repo?: ArtifactRef; file?: PolicyFileRef; sharedFile?: SharedFileRef };
+/** What a policy was read from: the repository's policy file, which may extend another repository's file. */
+export type PolicySource = { file?: PolicyFileRef; sharedFile?: SharedFileRef };
 
 /**
  * A repository's policy over the shared policy it extends. The shared policy holds wherever the repository is silent:
