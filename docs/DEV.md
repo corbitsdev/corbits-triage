@@ -89,6 +89,8 @@ Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` a
 
 `bun run test:chain` (`tests/chain/`) runs its files two at a time, one scenario each, each isolated from the others. Each file starts a hub on a database of its own, serving a portal build, sets up a workspace through the portal's routes, waits for the hub to start its listener, and sends GitHub's webhooks to it. GitHub and the decision model are local stand-ins, so it needs no account or key; each hub's sidecars are local processes, and it installs the workflows' native modules from the npm registry as a deploy does. Code review needs an isolated sidecar, which a local process is not, so it is not part of the chain test.
 
+In CI the chain runs in five shards, each with its own list of files in `.github/workflows/ci.yml`; a new chain file must be added to one. A pull request that changes none of `apps/hub`, `apps/sidecar`, `packages/`, `tests/chain/`, `vendor/`, the lockfile, the root `package.json` or the CI workflow and setup actions skips the chain; every push to `main` runs it.
+
 Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
 ## Check a change locally
