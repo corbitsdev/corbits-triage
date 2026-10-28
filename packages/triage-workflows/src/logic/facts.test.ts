@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPO_POLICY, emptyPack, isPatternsCheck, readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
 import type { IssueComment, Review } from "@corbits/github-reads";
 import type { PrFileFacts } from "./checks.ts";
-import { addFilesPage, assembleItem, buildFacts, FIRST_FILES_PAGE, type FilesCursor, type FilesPage, type PatchesRead } from "./facts.ts";
+import { addFilesPage, assembleItem, buildFacts, FIRST_FILES_PAGE, type FilesCursor, type FilesPage, type ListedFiles } from "./facts.ts";
 import { NO_FACTS } from "./item.ts";
 import { patternsResult } from "./patterns.ts";
 import { MAX_CODE_RULES_PATCH_CHARS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation } from "./quality.ts";
@@ -87,8 +87,8 @@ describe("an answered review", () => {
 });
 
 /** Reads `hostFiles` as the host pages them: one file a page, each patch split across two pages, none when the cursor asks for none. */
-function readPages(hostFiles: PrFileFacts[], first: FilesCursor = FIRST_FILES_PAGE, read: PatchesRead = { chars: 0 }): PrFileFacts[] {
-  const listed: PrFileFacts[] = [];
+function readPages(hostFiles: PrFileFacts[], first: FilesCursor = FIRST_FILES_PAGE): PrFileFacts[] {
+  const listed: ListedFiles = { files: [], patchChars: 0 };
   let cursor: FilesCursor | undefined | string = first;
   while (cursor !== undefined) {
     if (typeof cursor === "string") throw new Error(cursor);
@@ -98,9 +98,9 @@ function readPages(hostFiles: PrFileFacts[], first: FilesCursor = FIRST_FILES_PA
     let page: FilesPage = { files: [meta], ...next };
     if (cursor.patches && cursor.patchOffset === undefined) page = { files: [{ ...meta, patch: patch!.slice(0, half) }], next: cursor.offset, patchNext: half };
     else if (cursor.patches) page = { files: [{ ...meta, patch: patch!.slice(cursor.patchOffset) }], ...next };
-    cursor = addFilesPage(listed, read, cursor, page);
+    cursor = addFilesPage(listed, cursor, page);
   }
-  return listed;
+  return listed.files;
 }
 
 test("a diff past the judge's budget is read whole for the pattern rules while the judge reads a bounded part", () => {
@@ -152,18 +152,20 @@ describe("a diff past the code rules' ceiling", () => {
     expect(chars * 10).toBeGreaterThan(MAX_CODE_RULES_PATCH_CHARS);
   });
 
-  test("is shared by every pull request the step reads, so one read after it is reached gets no patches", () => {
-    const read: PatchesRead = { chars: MAX_CODE_RULES_PATCH_CHARS };
+  test("is each pull request's own, so one read after another passed it still gets its patches", () => {
+    const filler = `+const filler = "${"x".repeat(1_000)}";`;
+    const big: PrFileFacts = { path: "src/big.ts", status: "added", additions: 2_000, deletions: 0, patch: ["@@ -0,0 +1,2000 @@", ...Array.from({ length: 2_000 }, () => filler)].join("\n") };
     const file = { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
-    const listed = readPages([file, { ...file, path: "src/b.ts" }], FIRST_FILES_PAGE, read);
-    expect(listed).toEqual(["src/a.ts", "src/b.ts"].map((path) => ({ path, status: "added", additions: 1, deletions: 0, patchUnread: true })));
+    expect(readPages([big, file])).toEqual([big, { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patchUnread: true }]);
+    expect(readPages([file])).toEqual([file]);
   });
 
-  test("leaves lockfiles out of the count, and marks nothing when the step asked for no patches", () => {
+  test("keeps no lockfile patch, so a lockfile neither counts nor rides in the output, and marks nothing when no patches were asked for", () => {
     const lock = { path: "bun.lock", status: "modified", additions: 1, deletions: 0, patch: `@@ -1 +1 @@\n+${"x".repeat(MAX_CODE_RULES_PATCH_CHARS)}` };
+    const { patch: _patch, ...lockMeta } = lock;
     const file = { path: "src/a.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
-    expect(readPages([lock, file, file])).toEqual([lock, file, file]);
-    expect(readPages([lock, file], { offset: 0, patches: false })).toEqual([lock, file].map(({ patch: _patch, ...meta }) => meta));
+    expect(readPages([lock, file, file])).toEqual([lockMeta, file, file]);
+    expect(readPages([lock, file], { offset: 0, patches: false })).toEqual([lock, file].map(({ patch: _unread, ...meta }) => meta));
   });
 
   test("drops the patch of a file it passes partway through", () => {

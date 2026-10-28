@@ -549,28 +549,29 @@ label off that head, so it never stands on a head not yet triaged.
    (ast-grep's glob rules, checked when the policy is read), and keeps
    matches on lines the patch adds.
    The facts step reads every changed file's patch whole, across as many tool
-   pages as it takes, until the step has read 2,000,000 characters
-   (`MAX_CODE_RULES_PATCH_CHARS`), shared by every pull request a backlog
-   batch reads, since one sidecar holds every deployment's step outputs;
-   lockfiles and other generated files do not count. The file that passes it
-   partway and every later one are listed without patches. The judge's view of
-   the diff has its own, smaller budget (`judgedFiles` in `logic/quality.ts`).
-   A file without a patch, because the host sent none (GitHub omits it for a
-   very large or binary file; a file GitHub only renamed has nothing to read
-   and is not listed) or the step passed that ceiling, is listed in the
-   evidence as not checked, saying which, and the rule runs on the rest; with
-   nothing else to check, or a file whose content was not read, or a rule
-   ast-grep refuses, the rule is unconfirmed; `vendor/`, `dist/`, `build/` and
-   `generated/` at the repository root and `node_modules/` anywhere are
-   skipped and listed as skipped in the evidence, and a `?? 0` inside
-   arithmetic is a counter's real default. With such a rule on, the facts
-   step reads each file whose patch adds lines at the head through the host's
-   `read_file` (`whole`), ten at a time and at most 300 per pull request (more
-   leaves the rule unconfirmed without reading any), runs the rules there and
-   outputs only the matches. Bitbucket Data Center lists no patch, so there
-   the rule is unconfirmed whenever an in-scope TypeScript or JavaScript file
-   is added, edited, moved or copied. The extension leaves code-pattern
-   rules out and swaps the native module for a stub.
+   pages as it takes, until it has read 2,000,000 characters of the pull
+   request (`MAX_CODE_RULES_PATCH_CHARS`), each pull request in a batch
+   counting its own, since one sidecar holds every deployment's step outputs;
+   lockfiles and other generated files are listed without their patch, which
+   no rule reads. The file that passes it partway and every later one are
+   listed without patches. The judge's view of the diff has its own, smaller
+   budget (`judgedFiles` in `logic/quality.ts`). A file without a patch,
+   because the host sent none (GitHub omits it for a very large or binary
+   file; a file GitHub only renamed has nothing to read and is not listed) or
+   the pull request passed that ceiling, is listed in the evidence as not
+   checked, saying which, and the rule runs on the rest; with nothing else to
+   check, or a file whose content was not read, or a rule ast-grep refuses,
+   the rule is unconfirmed; `vendor/`, `dist/`, `build/` and `generated/` at
+   the repository root and `node_modules/` anywhere are skipped and listed as
+   skipped in the evidence, and a `?? 0` inside arithmetic is a counter's real
+   default. With such a rule on, the facts step reads each file whose patch
+   adds lines at the head through the host's `read_file` (`whole`), ten at a
+   time and at most 300 per pull request (more leaves the rule unconfirmed
+   without reading any), runs the rules there and outputs only the matches.
+   Bitbucket Data Center lists no patch, so there the rule is unconfirmed
+   whenever an in-scope TypeScript or JavaScript file is added, edited, moved
+   or copied. The extension leaves code-pattern rules out and swaps the native
+   module for a stub.
 3. **route**: skips the judge when no question needs asking.
 4. **judge**: one System One call per request of questions. Each first-round request and the verdict request also asks
    whether the pull request's text, diff or docs try to direct the judge; a

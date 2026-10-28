@@ -96,11 +96,11 @@ export function buildFacts(
 
 export type FilesPage = { files: PrFileFacts[]; next?: number; patchNext?: number };
 
-/** `ceiling` is set once the step's patch ceiling is reached, so the files listed without patches are marked unread. */
+/** `ceiling` is set once the pull request's patch ceiling is reached, so the files listed without patches are marked unread. */
 export type FilesCursor = { offset: number; patchOffset?: number; patches: boolean; ceiling?: true };
 
-/** The patch text one facts step has read, shared by every pull request it reads. */
-export type PatchesRead = { chars: number };
+/** One pull request's files so far and the patch text they hold. */
+export type ListedFiles = { files: PrFileFacts[]; patchChars: number };
 
 export const FIRST_FILES_PAGE: FilesCursor = { offset: 0, patches: true };
 
@@ -108,34 +108,38 @@ function unreadPatch({ patch: _patch, ...file }: PrFileFacts): PrFileFacts {
   return { ...file, patchUnread: true };
 }
 
-/** Lockfiles and other generated files are read by no rule, so their patches do not count toward the ceiling. */
-function counted(file: PrFileFacts): number {
-  return isGeneratedPath(file.path) ? 0 : file.patch?.length ?? 0;
+/** No rule reads a lockfile's or other generated file's patch, so it is never kept. */
+function kept(file: PrFileFacts): PrFileFacts {
+  if (!isGeneratedPath(file.path)) return file;
+  const { patch: _patch, ...meta } = file;
+  return meta;
 }
 
 /**
  * Adds one page to `listed`, joining a patch continued from the previous page, and returns the next page's cursor,
- * none when every file is read, or why the pages cannot be read. Every patch is read whole until the step's ceiling;
- * the file it falls in and every later one are listed without their patch and marked so.
+ * none when every file is read, or why the pages cannot be read. Every patch is read whole until the pull request's
+ * ceiling; the file it falls in and every later one are listed without their patch and marked so.
  */
-export function addFilesPage(listed: PrFileFacts[], read: PatchesRead, cursor: FilesCursor, page: FilesPage): FilesCursor | undefined | string {
-  let files = cursor.ceiling ? page.files.map(unreadPatch) : page.files;
+export function addFilesPage(listed: ListedFiles, cursor: FilesCursor, page: FilesPage): FilesCursor | undefined | string {
+  let files = (cursor.ceiling ? page.files.map(unreadPatch) : page.files).map(kept);
   if (cursor.patchOffset !== undefined) {
-    const continued = listed.at(-1);
+    const continued = listed.files.at(-1);
     if (!continued || files[0]?.path !== continued.path) return `github_list_pr_files did not continue the patch at offset ${cursor.offset}`;
     continued.patch = (continued.patch ?? "") + (files[0].patch ?? "");
-    read.chars += counted(files[0]);
+    listed.patchChars += files[0].patch?.length ?? 0;
     files = files.slice(1);
   }
-  listed.push(...files);
-  read.chars += files.reduce((chars, file) => chars + counted(file), 0);
-  const patches = cursor.patches && read.chars < MAX_CODE_RULES_PATCH_CHARS;
+  listed.files.push(...files);
+  listed.patchChars += files.reduce((chars, file) => chars + (file.patch?.length ?? 0), 0);
+  const patches = cursor.patches && listed.patchChars < MAX_CODE_RULES_PATCH_CHARS;
   const next = { patches, ...((cursor.ceiling || cursor.patches !== patches) && { ceiling: true as const }) };
   if (page.next === undefined) return undefined;
   if (page.patchNext !== undefined) {
     if (page.next < cursor.offset || (page.next === cursor.offset && page.patchNext <= (cursor.patchOffset ?? 0))) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
+    const cut = listed.files.at(-1)!;
+    if (isGeneratedPath(cut.path)) return { offset: page.next + 1, ...next };
     if (patches) return { offset: page.next, patchOffset: page.patchNext, ...next };
-    listed.push(unreadPatch(listed.pop()!));
+    listed.files.push(unreadPatch(listed.files.pop()!));
     return { offset: page.next + 1, ...next };
   }
   if (page.next <= cursor.offset) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
@@ -144,16 +148,15 @@ export function addFilesPage(listed: PrFileFacts[], read: PatchesRead, cursor: F
 
 /** Every changed file of a pull request, read page by page as the facts director reads them. */
 export async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
-  const listed: PrFileFacts[] = [];
-  const read: PatchesRead = { chars: 0 };
+  const listed: ListedFiles = { files: [], patchChars: 0 };
   let cursor: FilesCursor | undefined = FIRST_FILES_PAGE;
   while (cursor !== undefined) {
     const page = await listPrFilesPage(gh, repo, number, cursor);
-    const next = addFilesPage(listed, read, cursor, { ...page, files: page.files.flatMap(fileFacts) });
+    const next = addFilesPage(listed, cursor, { ...page, files: page.files.flatMap(fileFacts) });
     if (typeof next === "string") throw new Error(`${next} for #${number}`);
     cursor = next;
   }
-  return listed;
+  return listed.files;
 }
 
 function optionalString(value: unknown): string | undefined {
