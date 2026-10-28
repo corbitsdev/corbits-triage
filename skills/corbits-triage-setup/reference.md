@@ -161,11 +161,13 @@ rules:
   - check: max-files-changed
     text: Flag pull requests over 30 files changed.
     max: 30
+    onFail: label
     reason: Large pull requests are hard to review.
     evidence: [maintainer-stated]
   - check: max-lines-changed
     text: Flag pull requests over 3,000 lines changed.
     max: 3000
+    onFail: label
     reason: Large pull requests are hard to review.
     evidence: [maintainer-stated]
   - check: no-merge-conflicts
