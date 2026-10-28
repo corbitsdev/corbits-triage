@@ -4,7 +4,7 @@
 // coalescer.
 import { setTimeout as sleep } from "node:timers/promises";
 import { triageStopped, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
-import { TriageStoppedError } from "./deployment.js";
+import { ListenerUnroutedError, TriageStoppedError } from "./deployment.js";
 import { BASE_MOVED, type ReconcilePolicy } from "./reconcile-plan.js";
 import type { RepoRecord } from "./tenant-config.js";
 import { TriageStateConflictError, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
@@ -19,6 +19,11 @@ export function deliveryFailure(err: unknown): string {
 /** A head marked failed because its mail did not go out, as `deliveryFailure` words it. */
 export function undelivered(row: PrTriageRow, source: RepoSource): boolean {
   return row.status === "failed" && row.error !== undefined && (row.error === triageStopped(source) || row.error.startsWith(DELIVERY_FAILED));
+}
+
+/** The mail reached no listener: the host had none, or its listener took no mail. A manager that took none is an ordinary failure. */
+export function reachedNoListener(err: unknown): boolean {
+  return err instanceof TriageStoppedError || err instanceof ListenerUnroutedError;
 }
 
 /** A pull request mail for the host's listener. */
@@ -54,7 +59,7 @@ export function isRunningSince(row: PrTriageRow | undefined, now: Date, policy: 
 function queuedAgain(prior: PrTriageRow | undefined, number: number, headSha: string, at: string): PrTriageRow {
   if (prior === undefined) return { number, headSha, status: "queued", attempts: 0, firstSeenAt: at, queuedAt: at, updatedAt: at };
   // The last run and version stay named so the plan can tell this head from one it has never seen.
-  const { error: _error, ...rest } = prior;
+  const { error: _error, unrouted: _unrouted, ...rest } = prior;
   return { ...rest, status: "queued", queuedAt: at, updatedAt: at };
 }
 
@@ -112,6 +117,29 @@ async function replaceQueued(store: TriageStateStore, head: QueuedHead, next: (r
   throw new TriageStateConflictError(head.repo);
 }
 
+/**
+ * Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; it keeps when its
+ * mail first did not. Mail that reached no run leaves the head unrouted, so it goes out again as soon as a listener is
+ * up; true when it did.
+ */
+export async function failDelivery(store: TriageStateStore, head: QueuedHead, err: unknown, now: Date): Promise<boolean> {
+  const unrouted = reachedNoListener(err);
+  await replaceQueued(store, head, function failed(row) {
+    const at = now.toISOString();
+    return { ...row, status: "failed", error: deliveryFailure(err), undeliveredSince: row.undeliveredSince ?? row.queuedAt ?? at, ...(unrouted && { unrouted: true }), updatedAt: at };
+  });
+  return unrouted;
+}
+
+/**
+ * Holds a head a person asked for whose mail reached no listener: queued, then failed unrouted, so the reconciler mails
+ * it as soon as a listener is up. A head a run is on is left to that run.
+ */
+export async function holdHead(store: TriageStateStore, head: QueuedHead, err: unknown, now: Date, policy: ReconcilePolicy): Promise<void> {
+  const queued = await queueHead(store, head, now, (prior) => isRunningSince(prior, now, policy));
+  if (queued.status === "queued") await failDelivery(store, head, err, now);
+}
+
 /** Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; it keeps when its mail first did not. */
 export function failHead(store: TriageStateStore, head: QueuedHead, error: string, now: Date): Promise<void> {
   return replaceQueued(store, head, function failed(row) {
@@ -143,8 +171,10 @@ export async function markBaseMoved(store: TriageStateStore, tenantId: string, r
     if (state.rows.every((row) => row.number === except)) return 0;
     const rows = state.rows.map(function moved(row): PrTriageRow {
       if (row.number === except) return row;
-      if (!staled(row)) return { ...row, staleBefore: at, updatedAt: at };
-      return { ...row, status: "stale", attempts: 0, error: BASE_MOVED, staleBefore: at, updatedAt: at };
+      // The base move decides when each head goes out again, one held for a listener included.
+      const { unrouted: _unrouted, ...rest } = row;
+      if (!staled(row)) return { ...rest, staleBefore: at, updatedAt: at };
+      return { ...rest, status: "stale", attempts: 0, error: BASE_MOVED, staleBefore: at, updatedAt: at };
     });
     try {
       await store.save(tenantId, repo, rows, state.version);

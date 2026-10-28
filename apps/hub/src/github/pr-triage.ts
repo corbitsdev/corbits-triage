@@ -18,7 +18,7 @@ import { isStuck, runKey, type ObservedRun, type ReconcilePolicy } from "./recon
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { LiveDeployment } from "./deployment.js";
 import type { ObservedRuns } from "./manager-runs.js";
-import { isQueuedSince, isRunningSince, queueHead, restoreHead } from "./triage-queue.js";
+import { failDelivery, isQueuedSince, isRunningSince, queueHead, reachedNoListener, restoreHead } from "./triage-queue.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 
 export const GITHUB_PR_TRIAGE_PATH = "/api/integrations/github-triage";
@@ -34,6 +34,8 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   managerRuns: ManagerRuns;
   store: TriageStateStore;
   send: (job: TriageJob) => Promise<void>;
+  /** Asks the reconciler for a pass soon. */
+  retry: () => void;
   policy: ReconcilePolicy;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
@@ -120,6 +122,13 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     try {
       await deps.send({ ...head, record, payload: mailPayload(record, policy, pack, { prNumber: number, headSha, noWait: true }) });
     } catch (err) {
+      if (reachedNoListener(err)) {
+        // The head stays queued for the reconciler, which mails it once a listener is up.
+        await failDelivery(deps.store, head, err, now);
+        deps.retry();
+        deps.log({ level: "info", msg: "triage_request_held", tenantId, principalId, repo, pr: number, headSha, error: String(err) });
+        return Response.json({ status: "queued", headSha }, { status: 202 });
+      }
       deps.log({ level: "error", msg: "triage_request_failed", tenantId, repo, pr: number, headSha, error: String(err) });
       try {
         await restoreHead(deps.store, head, queued.remembered);

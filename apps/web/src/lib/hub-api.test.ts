@@ -10,7 +10,6 @@ import {
   removeRepository,
   saveRepoSettings,
   startBacklogTriage,
-  untilDeploymentReady,
   patchAppConfig,
   type HubApproval,
   type Membership,
@@ -456,66 +455,25 @@ describe("repository policy config", () => {
   });
 });
 
-describe("deployment not ready", () => {
-  function notReady() {
-    return new ApiError(409, "deployment_not_ready", "The workflow deployment is still starting.");
-  }
-
-  function harness(answers: ApiError[]) {
-    const posted: string[] = [];
-    const waits: string[] = [];
-    const slept: number[] = [];
+describe("backlog start", () => {
+  function transport(answer: ApiError | undefined, posted: string[]): Transport {
     function unsubscribe() {}
-    function subscribe() {
-      return unsubscribe;
-    }
-    const transport: Transport = {
+    return {
       async fetch(method, path) {
         posted.push(`${method} ${path}`);
-        const refused = answers.shift();
-        if (refused) throw refused;
+        if (answer) throw answer;
         return { status: "started" } as never;
       },
-      subscribe,
+      subscribe: () => unsubscribe,
     };
-    async function request() {
-      return startBacklogTriage(transport, "tenant", "acme/widgets");
-    }
-    function onWait() {
-      waits.push("waiting");
-    }
-    async function sleep(ms: number) {
-      slept.push(ms);
-    }
-    function run() {
-      return untilDeploymentReady(request, onWait, sleep);
-    }
-    return { posted, waits, slept, run };
   }
 
-  test("a trigger refused while the deployment is not ready is retried with backoff and announced once", async () => {
-    const { posted, waits, slept, run } = harness([notReady()]);
-    await run();
-    expect(posted).toHaveLength(2);
-    expect(waits).toEqual(["waiting"]);
-    expect(slept).toEqual([1_000]);
-  });
-
-  test("another conflict is thrown without a retry", async () => {
-    const conflict = new ApiError(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
-    const { posted, waits, run } = harness([conflict]);
-    await expect(run()).rejects.toBe(conflict);
-    expect(posted).toHaveLength(1);
-    expect(waits).toEqual([]);
-  });
-
-  test("once the budget is spent the last refusal is thrown", async () => {
-    const last = notReady();
-    const { posted, waits, slept, run } = harness([notReady(), notReady(), notReady(), notReady(), last]);
-    await expect(run()).rejects.toBe(last);
-    expect(posted).toHaveLength(5);
-    expect(waits).toEqual(["waiting"]);
-    expect(slept).toEqual([1_000, 2_000, 4_000, 8_000]);
+  test("is one request: the hub holds the heads while the listener is starting, so the portal neither waits nor retries", async () => {
+    const posted: string[] = [];
+    await startBacklogTriage(transport(undefined, posted), "tenant", "acme/widgets");
+    const stopped = new ApiError(503, "service_not_running", "Triage is not running.");
+    await expect(startBacklogTriage(transport(stopped, posted), "tenant", "acme/widgets")).rejects.toBe(stopped);
+    expect(posted).toEqual(["POST /api/integrations/github-triage/tenant/backlog", "POST /api/integrations/github-triage/tenant/backlog"]);
   });
 });
 

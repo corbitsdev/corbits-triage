@@ -83,7 +83,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     tenant system sender, the same path cron uses, naming the host as
     `repoSource`. A workspace with no live listener runs nothing: the head
     fails saying Triage is not running on that host and that Settings →
-    Triage shows why. Every window is mailed when it closes, whatever the
+    Triage shows why. A head whose mail reached no listener, because the host
+    had none, the listener was still starting or the hub held no route to
+    it, is also marked `unrouted` and goes out again (see the reconciler).
+    Every window is mailed when it closes, whatever the
     head's CI: the pull request's manager waits for CI itself (see
     `triage-manager-github` below), and a window that sees a check finish
     reaches that manager as one more event.
@@ -345,6 +348,39 @@ any other tenant or an unknown sender.
   on: a listener as `listener_cancel_stuck`, which every reconcile pass logs
   again while stock has given up on it, and a replaced workflow once as
   `rollout_cancel_stuck` with its name.
+
+  Mail is addressed to a listener's run, and stock holds none for a run that
+  has gone, so a head whose mail reached no listener is held in its
+  triage-state row instead: the row fails with `unrouted`. That is mail sent
+  when the host had no listener, or that its listener took none of because
+  it was still starting, stopping or gone, or the hub held no route to it;
+  mail a live manager did not take fails as usual. Before recording a pull
+  request's event, the intake asks stock's router whether it routes the
+  listener, when a pull request named has no manager up, so mail the
+  listener cannot take records nothing. A held Do's approval is the
+  exception: it is recorded all the same, since nothing a person did is
+  dropped and no row holds it, and the manager the listener later starts for
+  the head runs it. A request a person makes while the listener takes no
+  mail answers 202 and its heads are held the same way: Triage again holds
+  its head, backlog triage holds each open pull request's head, drafts left
+  out, and a held Do's approval holds the head it was made on. Each starts a
+  pass at once. The held head is triaged again when its mail goes out, on
+  the same head, so the judge's verdict for it is reused and the verdict
+  comment is replaced in place. The reconciler queues an unrouted
+  head on its first pass with a listener up, without backoff, and those tries
+  add nothing to the head's attempts. A coalescer mail that reached no
+  listener starts a pass at once, whose listener check rolls a workspace
+  left with none, and a pass whose mail for a head reached no listener runs
+  again 15 seconds later, for at most 20 passes in a row per head; past that
+  the head logs `triage_unrouted_waiting` once and waits for the ordinary
+  pass. A listener taking the head's mail, or a roll finding the host's
+  listener running, starts those 20 passes over. A roll starts a pass as
+  soon as its new listener runs, logging `workflow_release_live`, before it
+  waits for the listeners it replaces to stop, and also when it finds the
+  host's listener already current and running. A base branch move clears
+  `unrouted`, since it decides when each head goes out again. A pull request
+  opened while its listener is replaced is therefore mailed as soon as the
+  new one runs.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which lives until its head
   has its final verdict, and the only workflow that writes to the pull request. It takes
@@ -1168,7 +1204,8 @@ read it, and passes the rest of the request to stock.
   nothing: Triage again, Review again, a held Do's approval and backlog
   triage answer 503 `service_not_running`, and a webhook's head fails, each
   saying Triage is not running on that host and that Settings → Triage shows
-  why.
+  why. While the host's listener is starting or being replaced, Review again
+  answers the same 503; the others are held as above.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

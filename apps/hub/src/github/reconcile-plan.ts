@@ -113,7 +113,7 @@ type Observation = { status: PrTriageRow["status"]; run?: ObservedRun; runId?: s
 function withStatus(row: PrTriageRow, { status, run, runId = run?.runId, error }: Observation, now: string): PrTriageRow {
   if (row.status === status && row.runId === runId && row.error === error) return row;
   // Every status observed here follows a mail that went out.
-  const { runId: _run, error: _error, undeliveredSince: _undelivered, ...rest } = row;
+  const { runId: _run, error: _error, undeliveredSince: _undelivered, unrouted: _unrouted, ...rest } = row;
   return {
     ...rest,
     status,
@@ -206,6 +206,8 @@ function uncapped(row: PrTriageRow, now: Date, policy: ReconcilePolicy): PrTriag
 function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): boolean {
   if (row.status === "stale") return row.queuedAt === undefined || now.getTime() - ms(row.queuedAt) >= policy.baseMoveWindowMs;
   if (row.status === "new") return now.getTime() - ms(pr.updatedAt) >= policy.webhookGraceMs;
+  // Mail that reached no listener says nothing about the head, so it goes out again on the first pass a listener is up.
+  if (row.status === "failed" && row.unrouted) return true;
   if (row.status !== "failed" || row.attempts >= policy.maxAttempts) return false;
   const last = row.queuedAt === undefined ? -Infinity : ms(row.queuedAt);
   const verdict = runs.find((run) => run.runId === row.runId);
@@ -289,10 +291,11 @@ export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<s
   }
   for (const { repo, index, row } of due.sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0))) {
     const plan = plans.get(repo)!;
-    const { runId: _run, error: _error, ...rest } = row;
-    plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
+    const { runId: _run, error: _error, unrouted, ...rest } = row;
+    const attempts = unrouted ? row.attempts : row.attempts + 1;
+    plan.rows[index] = { ...rest, status: "queued", attempts, queuedAt: at, updatedAt: at };
     const reason = row.error ?? "never triaged";
-    const noWait = decideNow(row.attempts + 1, policy);
+    const noWait = decideNow(attempts, policy);
     plan.enqueue.push({ number: row.number, reason, ...(noWait && { noWait }) });
   }
   return plans;

@@ -29,6 +29,7 @@ export const REREAD = `${OWNER}/reread`;
 export const UNWOKEN = `${OWNER}/unwoken`;
 export const DISCONNECTED = `${OWNER}/disconnected`;
 export const UNSET = `${OWNER}/unset`;
+export const UNROUTED = `${OWNER}/unrouted`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -68,8 +69,8 @@ export function pullOf(number: number, head: string): Pull {
 
 export type Claim = { status: "live" | "ended"; runId?: string; history: { head: string; runId: string; doneAt: string }[] };
 
-/** This test file's stack, started before its tests and stopped after them; call it once, at the file's top level. */
-export function chainStack() {
+/** This test file's stack, started before its tests and stopped after them; call it once, at the file's top level. `env` overrides the hub's. */
+export function chainStack(env: Record<string, string> = {}) {
   setDefaultTimeout(20 * 60_000);
   const github = fakeGithub();
   const model = stubModel(decide);
@@ -90,9 +91,10 @@ export function chainStack() {
     github.addRepo(UNWOKEN, policy([MAX_FILES]));
     github.addRepo(DISCONNECTED, policy([MAX_FILES]));
     github.addRepo(UNSET, null);
+    github.addRepo(UNROUTED, policy([MAX_FILES]));
     const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
     database = created;
-    hub = await startHub(database, github, portalDir);
+    hub = await startHub(database, github, portalDir, env);
     workspace = await signUp(hub, database);
     // Until a scenario switches it to policy, only posting runs on its own, so a Do in a policy is held.
     await saveAutomationMode(workspace.transport, workspace.tenantId, "ask");

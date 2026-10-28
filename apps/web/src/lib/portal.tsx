@@ -21,8 +21,6 @@ import {
   startBacklogTriage,
   githubPrAction,
   triagePullRequest as requestPullRequestTriage,
-  untilDeploymentReady,
-  WAITING_FOR_WORKFLOW,
   type InvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
@@ -246,22 +244,14 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const waitForWorkflow = useCallback(function waitForWorkflow() {
-    notify(WAITING_FOR_WORKFLOW);
-  }, [notify]);
-
   const runBacklog = useCallback(
     async function runBacklog(repo: string, message = "Backlog triage started.") {
       const current = requireSnapshot();
-      const transport = createHubTransport();
-      async function start() {
-        return startBacklogTriage(transport, current.workspace.tenantId, repo);
-      }
-      await untilDeploymentReady(start, waitForWorkflow);
+      await startBacklogTriage(createHubTransport(), current.workspace.tenantId, repo);
       notify(message);
       refresh();
     },
-    [notify, refresh, requireSnapshot, waitForWorkflow],
+    [notify, refresh, requireSnapshot],
   );
 
   const triagePullRequest = useCallback(

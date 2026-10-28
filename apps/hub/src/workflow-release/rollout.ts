@@ -37,6 +37,8 @@ type RolloutDeps = PublishDeps & {
   cancel: (tenantId: string, runId: string) => Promise<void>;
   /** Stock's lifecycle status of the deployment; null once it is gone. */
   status: (tenantId: string, runId: string) => Promise<RunStop | null>;
+  /** A host's listener runs, so mail that reached no listener can go out to it now. */
+  live: (tenantId: string, source: RepoSource) => void;
   /** Takes the workspace's lock across hub processes; undefined while another holds it. */
   lock: (tenantId: string) => Promise<Unlock | undefined>;
   sleep: (ms: number) => Promise<void>;
@@ -171,11 +173,16 @@ export function createWorkflowRollout(deps: RolloutDeps) {
     // deploy that listener, so it neither waits on it nor stops it.
     if (!redeploy && newest && runsRelease(newest, listener)) {
       await settle(tenantId, source, newest.runId, "workflow_release_current");
-      return (await deps.state(newest.runId)) === "live";
+      if ((await deps.state(newest.runId)) !== "live") return false;
+      deps.live(tenantId, source);
+      return true;
     }
     const runId = await deps.deploy({ ...publisher, assetId: listener.assetId, commitSha: listener.commitSha, packageName: chain.packageName, entry: chain.entry, offerings });
     deps.log({ level: "info", msg: "workflow_release_deployed", tenantId, source, deployment: runId, assetId: listener.assetId, commitSha: listener.commitSha });
     await waitUntilStarted(tenantId, runId);
+    // The listener a roll replaces is no longer mailed once this one runs, so mail waits only on this one starting.
+    deps.log({ level: "info", msg: "workflow_release_live", tenantId, source, deployment: runId });
+    deps.live(tenantId, source);
     await settle(tenantId, source, runId, "workflow_release_rolled");
     return true;
   }

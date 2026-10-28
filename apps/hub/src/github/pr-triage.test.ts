@@ -78,6 +78,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
     send: async ({ payload }) => {
       s.delivered.push({ payload });
     },
+    retry() {},
     policy: DEFAULT_RECONCILE_POLICY,
     now: () => NOW,
     log: () => {},

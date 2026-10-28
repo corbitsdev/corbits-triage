@@ -8,6 +8,7 @@ import type { PullRequestToReview } from "./pull-request-reader.js";
 import { mailPayload } from "./github/bridge.js";
 import { createPauseGate } from "./github/pr-workflow.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
+import { ListenerUnroutedError, RunUnavailableError } from "./github/deployment.js";
 import { recordEvent } from "./manager-state.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -48,7 +49,7 @@ async function passed(_tenantId: string, _record: unknown, _number: number, requ
 
 const OPEN = [{ number: 7, headSha: "h1", draft: false }, { number: 9, headSha: "h9", draft: true }];
 
-function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = passed, open = OPEN) {
+function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = passed, open = OPEN, routable = true) {
   const mailed: { address: string; payload: unknown }[] = [];
   const logged: Record<string, unknown>[] = [];
   const cancelled: { runId: string; reason: string }[] = [];
@@ -64,10 +65,12 @@ function stack(db: Db, listener: string | undefined, pull = PULL, gate: Gate = p
   const toListener = createManagerIntake({
     db,
     listener: async () => listener,
+    routable: async () => routable,
     readPull: async () => pull,
     openHeads: async () => open,
     withAppLogin: async (_tenantId, payload) => ({ ...payload, appLogin: "triage[bot]" }),
     async deliver(_tenantId, address, payload) {
+      if (!routable) throw new RunUnavailableError("the listener is not running");
       mailed.push({ address, payload });
     },
     supersede,
@@ -91,6 +94,23 @@ test("PostgreSQL: a workspace without a listener records nothing and mails nothi
     const { toListener, mailed } = stack(db, undefined);
     expect(await toListener(TENANT, mailPayload(RECORD, POLICY, STORED, { prNumber: 7, headSha: "h1" }))).toBe(false);
     expect({ events: (await events(db)).length, mailed }).toEqual({ events: 0, mailed: [] });
+  });
+}, 60_000);
+
+test("PostgreSQL: mail for a pull request with no manager up, while the hub holds no route to the listener, records and mails nothing", async () => {
+  await withDatabase(async function unrouted(db) {
+    const { toListener, mailed } = stack(db, LISTENER, PULL, passed, OPEN, false);
+    await expect(toListener(TENANT, requeued(7, "h1"))).rejects.toBeInstanceOf(ListenerUnroutedError);
+    expect({ events: (await events(db)).length, mailed }).toEqual({ events: 0, mailed: [] });
+  });
+}, 60_000);
+
+test("PostgreSQL: a held Do's approval while the hub holds no route to the listener is recorded, so the manager the listener later starts for the head runs it", async () => {
+  await withDatabase(async function approvedInGap(db) {
+    const { toListener, mailed } = stack(db, LISTENER, PULL, passed, OPEN, false);
+    const approval = { kind: APPROVE_DO_KIND, runId: "run_m", principalId: "prn_a", list: "pass", index: 0, request: { repo: RECORD.name, number: 7 }, step: { effectId: "e1", headSha: "h1" } };
+    await expect(toListener(TENANT, approval)).rejects.toBeInstanceOf(ListenerUnroutedError);
+    expect({ events: (await events(db)).map((row) => `${row.state.head} ${String(row.state.payload["kind"])}`), mailed }).toEqual({ events: ["h1 approve-do"], mailed: [] });
   });
 }, 60_000);
 

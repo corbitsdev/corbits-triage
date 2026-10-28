@@ -448,6 +448,5 @@ any roll that failed.
 - Run one hub replica: its triage queue lives in memory.
 - Deleting a principal that still owns a credential is refused (Interchange
   migration 0101).
-- A trigger right after a deploy or restart can answer `409
-  deployment_not_ready` until the deployment has resolved its credentials;
-  retry it.
+- A code review requested while the listener is starting or being replaced
+  answers `503 service_not_running`; retry it once the listener is up.

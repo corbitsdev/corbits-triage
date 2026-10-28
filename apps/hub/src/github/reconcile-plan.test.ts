@@ -102,6 +102,13 @@ describe("reconcile plan", () => {
     expect(status(capped, 1)).toMatchObject({ status: "failed", attempts: policy.maxAttempts });
   });
 
+  test("a head whose mail reached no listener goes out again at once, without backoff or spending an attempt", () => {
+    const unrouted = row(1, { status: "failed", attempts: policy.maxAttempts, error: "delivery failed: run mail not routable", unrouted: true, queuedAt: at(0).toISOString() });
+    const retried = plan([pr(1)], [unrouted], at(0));
+    expect(enqueued(retried)).toEqual([1]);
+    expect(status(retried, 1)).toEqual({ ...row(1, {}), status: "queued", attempts: policy.maxAttempts, queuedAt: at(0).toISOString(), updatedAt: at(0).toISOString() });
+  });
+
   test("a head's last attempt is decided even while the host's checks are pending", () => {
     const failed = (attempts: number) => row(1, { status: "failed", attempts, error: "unconfirmed checks: no-merge-conflicts", firstSeenAt: at(0).toISOString(), queuedAt: at(0).toISOString() });
     expect(plan([pr(1)], [failed(policy.maxAttempts - 2)], at(41)).enqueue).toEqual([{ number: 1, reason: "unconfirmed checks: no-merge-conflicts" }]);

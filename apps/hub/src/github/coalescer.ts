@@ -22,7 +22,7 @@ import { GithubRateLimited } from "./github-usage.js";
 import type { PrMail } from "./normalize.js";
 import { triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
-import { deliveryFailure, failHead, queueHead, restoreHead, type QueuedHead, type Remembered } from "./triage-queue.js";
+import { failDelivery, failHead, queueHead, restoreHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 import { createKeyedSerial } from "../keyed-serial.js";
 
@@ -57,6 +57,8 @@ export type Accepted = "queued" | "coalesced";
 export type CoalescerDeps = {
   store: TriageStateStore;
   sendMail: (job: TriageJob) => Promise<unknown>;
+  /** Asks the reconciler for a pass soon, after a head's mail reached no listener. */
+  retry: () => void;
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   window: CoalesceWindow;
   setTimer: SetTimer;
@@ -164,8 +166,9 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       await deps.sendMail({ ...head, record: latest.record, payload });
     } catch (err) {
       if (err instanceof GithubRateLimited) return drop(open, entry, "github_rate_limited");
-      deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
-      await failHead(deps.store, head, deliveryFailure(err), deps.now());
+      const unrouted = await failDelivery(deps.store, head, err, deps.now());
+      deps.log({ level: unrouted ? "info" : "error", msg: "forward_failed", ...entry, error: String(err) });
+      if (unrouted) deps.retry();
       return;
     }
     deps.log({ level: "info", msg: "forwarded", ...entry, workflow: latest.workflow });

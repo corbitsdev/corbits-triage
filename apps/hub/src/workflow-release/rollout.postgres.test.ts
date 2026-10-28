@@ -114,6 +114,7 @@ async function workspace(name: string) {
       const run = fake.runs.find((row) => row.runId === runId);
       if (run) run.cancelling = true;
     },
+    live() {},
     async status(_tenant, runId) {
       if (fake.statusFails > 0) {
         fake.statusFails -= 1;

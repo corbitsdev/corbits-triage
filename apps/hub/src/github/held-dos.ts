@@ -4,7 +4,6 @@
 // the pull request's manager writes it at most once under its effect id.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
-import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { ACTION_KINDS, AGENT_DO, APPROVE_DO_KIND, DoList, repoPolicy, triageStopped, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
@@ -16,8 +15,11 @@ import { doRefused, failure, type PortalCredentialDeps } from "./portal-credenti
 import type { Member } from "../integrations/app.js";
 import type { PullRequestRef } from "../manager-state.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
-import { DeploymentNotReadyError } from "./deployment.js";
-import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
+import { ListenerUnroutedError } from "./deployment.js";
+import type { ReconcilePolicy } from "./reconcile-plan.js";
+import { holdHead } from "./triage-queue.js";
+import type { TriageStateStore } from "./triage-state-store.js";
+import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
 
 export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
@@ -45,6 +47,12 @@ export type GithubHeldDosDeps = PortalCredentialDeps & {
   toListener: (tenantId: string, payload: unknown) => Promise<boolean>;
   /** The mirror request a manager's pass kept with the verdict it posted on the head. */
   passRequest: (tenantId: string, pr: PullRequestRef, runId: string, head: string) => Promise<Record<string, unknown> | undefined>;
+  /** Holds the head of an approval its listener took no mail for, which the reconciler mails once one is up. */
+  store: TriageStateStore;
+  policy: ReconcilePolicy;
+  now: () => Date;
+  /** Asks the reconciler for a pass soon. */
+  retry: () => void;
   log: (entry: Record<string, unknown>) => void;
 };
 
@@ -139,10 +147,14 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     try {
       if (!(await deps.toListener(tenantId, mailed))) return failure(503, "service_not_running", triageStopped(repoSource));
     } catch (err) {
-      deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
-      if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
-      const unroutable = isRunTriggerUnroutable(err);
-      return failure(unroutable ? 503 : 502, unroutable ? "service_not_running" : "hub_unavailable", `Could not send the approval: ${errorText(err)}. Try again.`);
+      if (!(err instanceof ListenerUnroutedError)) {
+        deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
+        return failure(502, "hub_unavailable", `Could not send the approval: ${errorText(err)}. Try again.`);
+      }
+      // The approval is recorded; the head goes out with it once a listener is up.
+      await holdHead(deps.store, { tenantId, repo: triageStateKey(record), number, headSha: approval.step.headSha }, err, deps.now(), deps.policy);
+      deps.retry();
+      deps.log({ level: "info", msg: "held_do_approval_held", ...logged, error: String(err) });
     }
     deps.log({ level: "info", msg: "held_do_approved", ...logged });
     return Response.json({ status: "sent", ...(warning && { warning }) }, { status: 202 });

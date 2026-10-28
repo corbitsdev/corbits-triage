@@ -747,36 +747,6 @@ export function currentDeployment(deployments: readonly DeployedWorkflow[], work
   return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling);
 }
 
-export const WAITING_FOR_WORKFLOW = "Waiting for the workflow to be ready…";
-
-// A deployment answers 409 `deployment_not_ready` until it records its credential resolution, seconds after it is deployed.
-const NOT_READY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000];
-
-function isDeploymentNotReady(cause: unknown): boolean {
-  return cause instanceof ApiError && cause.status === 409 && cause.code === "deployment_not_ready";
-}
-
-function pause(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export async function untilDeploymentReady<T>(
-  attempt: () => Promise<T>,
-  onWait: () => void,
-  sleep: (ms: number) => Promise<void> = pause,
-): Promise<T> {
-  for (const [index, ms] of NOT_READY_BACKOFF_MS.entries()) {
-    try {
-      return await attempt();
-    } catch (cause) {
-      if (!isDeploymentNotReady(cause)) throw cause;
-    }
-    if (index === 0) onWait();
-    await sleep(ms);
-  }
-  return attempt();
-}
-
 export async function startBacklogTriage(transport: Transport, tenantId: string, repo: string): Promise<void> {
   const clean = validateRepo(repo);
   BacklogStarted.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/backlog`, { repo: clean }));

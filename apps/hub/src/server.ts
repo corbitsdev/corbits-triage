@@ -15,8 +15,9 @@ import { resolve } from "node:path";
 import { authorize } from "@intx/authz";
 import { createGrantStore, createWorkflowRunLaunchSpecStore, resolveSenderPrincipal, schema, type DB, type ResolvedSenderPrincipal } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
-import { hexDecode } from "@intx/types";
+import { deriveWorkflowRunId, hexDecode } from "@intx/types";
 import { generateId } from "@intx/hub-common";
+import { SidecarIdentityValidationError } from "@intx/hub-sessions";
 import { eq } from "drizzle-orm";
 import { getPath } from "hono/utils/url";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
@@ -111,13 +112,13 @@ import { fileRefusal, previewRepoPolicy, readRepoPolicy } from "./github/repo-po
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { githubUsage } from "./github/github-usage.js";
-import { createTriageReconciler, type ReconcileOutcome } from "./github/triage-reconciler.js";
+import { createTriageReconciler, createUnroutedTries, type ReconcileOutcome } from "./github/triage-reconciler.js";
 import { createRepoActivity } from "./github/repo-activity.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved, type TriageJob } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { keepExistingWorkspacesAsking, prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
+import { keepExistingWorkspacesAsking, prepareCorbitsTriagePatch, tenantManager, type RepoRecord } from "./github/tenant-config.js";
 import { githubRead } from "@corbits/github-tool";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 
@@ -309,6 +310,16 @@ function liveListenerOf(tenantId: string, source: RepoSource): Promise<LiveDeplo
 async function listenerAddress(tenantId: string, source: RepoSource): Promise<string | undefined> {
   return (await liveListenerOf(tenantId, source))?.address;
 }
+/** Whether stock's router routes the listener's allocation generation now; one whose sidecar's identity could not be checked is left to the send. */
+async function listenerRoutable(address: string): Promise<boolean> {
+  const target = await deployedAllocation(composition.db, deriveWorkflowRunId(address));
+  if (!target) return false;
+  try {
+    return await composition.sidecarRouter.isAllocatedWorkflowActive(target);
+  } catch (error) {
+    return error instanceof SidecarIdentityValidationError;
+  }
+}
 const { supersede, supersedeAll } = createSupersede({
   db: composition.db,
   async cancel(tenantId, runId, reason) {
@@ -319,17 +330,14 @@ const { supersede, supersedeAll } = createSupersede({
 const toListener = createManagerIntake({
   db: composition.db,
   listener: listenerAddress,
+  routable: listenerRoutable,
   readPull: function readPull(tenantId, record, number) {
     return pullRequests.withDiff(tenantId, record, number);
   },
   withAppLogin: function appLoginOf(tenantId, payload) {
     return withAppLogin(composition.db, tenantId, payload);
   },
-  openHeads: async function openHeads(tenantId, record) {
-    const read = await tenantOpenHeads(tenantId);
-    if (!read) throw new Error("no active source credential");
-    return read(record);
-  },
+  openHeads: openHeadsOf,
   gate: function gateOf(tenantId, record, number, request) {
     return pauseGate(tenantId, record, number, request);
   },
@@ -554,6 +562,7 @@ async function workspacePublisher(tenantId: string): Promise<Publisher> {
 }
 // The portal build writes the workflows under its public files, which the hub serves from PORTAL_DIR once built.
 const workflowBundleDir = resolve(env.PORTAL_DIR ?? resolve(ROOT, "apps/web/public"), "packages");
+const unroutedTries = createUnroutedTries();
 const workflowRollout = createWorkflowRollout({
   db: composition.db,
   assets: composition.assetService,
@@ -578,6 +587,10 @@ const workflowRollout = createWorkflowRollout({
   },
   status(tenantId, runId) {
     return composition.workflowLifecycleService.getStatus(tenantId, runId);
+  },
+  live(tenantId, source) {
+    unroutedTries.reset(tenantId, source);
+    triageLoop?.kick();
   },
   lock: createWorkspaceLock(composition.db.$client),
   sleep: Bun.sleep,
@@ -661,6 +674,7 @@ function reconcilerFor(source: RepoSource) {
     store: triageStateStore,
     readCheckPack,
     send: sendTriageMail,
+    unroutedTries,
     policy: reconcilePolicy,
     now,
     log: logJson,
@@ -680,10 +694,13 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
   const outcomes: ReconcileOutcome[] = [];
   for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);
+  const unrouted = outcomes.some((outcome) => outcome.unrouted);
   const limits = outcomes.flatMap((outcome) => outcome.retryAt ?? []);
-  return limits.length === 0 ? { retry } : { retry, retryAt: Math.min(...limits) };
+  const outcome: ReconcileOutcome = { retry, ...(unrouted && { unrouted: true }) };
+  return limits.length === 0 ? outcome : { ...outcome, retryAt: Math.min(...limits) };
 }
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
+const kickTriage = triageLoop.kick;
 const githubPrTriage = createGithubPrTriage({
   ...credentialDeps,
   authorize: authorizePortal,
@@ -697,6 +714,7 @@ const githubPrTriage = createGithubPrTriage({
   managerRuns,
   store: triageStateStore,
   send: sendTriageMail,
+  retry: kickTriage,
   policy: reconcilePolicy,
   now,
   log: logJson,
@@ -710,9 +728,12 @@ const githubHeldDos = createGithubHeldDos({
   passRequest: function managerPassRequest(tenantId, pr, runId, head) {
     return passRequest(composition.db, tenantId, pr, runId, head);
   },
+  store: triageStateStore,
+  policy: reconcilePolicy,
+  now,
+  retry: kickTriage,
   log: logJson,
 });
-const kickTriage = triageLoop.kick;
 const releaseDisconnected = createHostRelease({
   connectedSources: function connectedSourcesOf(tenantId) {
     return connectedSources(composition.db, tenantId);
@@ -755,6 +776,7 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
 coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendTriageMail,
+  retry: kickTriage,
   openHeadFor: tenantOpenHead,
   window: triageCoalesceWindow(env, reconcilePolicy),
   setTimer,
@@ -766,9 +788,15 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number |
   if (due > 0) kickTriage();
   return due;
 }
+async function openHeadsOf(tenantId: string, record: RepoRecord) {
+  const read = await tenantOpenHeads(tenantId);
+  if (!read) throw new Error("no active source credential");
+  return read(record);
+}
 async function sendBacklogMail(tenantId: string, payload: unknown) {
   await sendToListener(tenantId, payload);
 }
+const backlogStartDeps = { readCheckPack, sendMail: sendBacklogMail, openHeads: openHeadsOf, store: triageStateStore, policy: reconcilePolicy, now, retry: kickTriage, log: logJson };
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
   db: credentialDeps.db,
@@ -780,7 +808,7 @@ const bridge = createBridgeHandler({
   recheckOpenPulls,
   refreshPolicyFile: policyFile.onPush,
   heard: repoActivity.heard,
-  startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
+  startBacklog: createBacklogStart(backlogStartDeps),
   repoChanged: repoReads.changed,
   installationChanged: function installationChanged(tenantId) {
     void renewGithubToken(tenantId);
@@ -858,9 +886,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   backlog: createGithubBacklog({
     ...credentialDeps,
     authorize: authorizePortal,
-    readCheckPack,
-    sendMail: sendBacklogMail,
-    log: logJson,
+    ...backlogStartDeps,
   }),
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,
