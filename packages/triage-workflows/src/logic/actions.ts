@@ -198,16 +198,23 @@ function passedLabels(labelled: CheckResult[], labels: ReadonlyMap<string, strin
   return labelled.filter((c) => c.result === "pass" && labels.has(c.check)).map((c) => labels.get(c.check)!.toLowerCase());
 }
 
+/** The labels the policy's labels steps name on any list, whether or not they run. */
+function stepLabels(pack: CheckPack): Set<string> {
+  const steps = VERDICTS.flatMap((list) => pack.actions[list]);
+  return new Set(steps.flatMap((step) => (step.do === "labels" && step.target.from === "list" ? step.target.labels : [])).map((label) => label.toLowerCase()));
+}
+
 /**
  * After the verdict's own steps, one labels Do adds the label of each labelling rule that did not pass, and each label a
  * rule that did not fail still adds. Nothing says who put a label on, so only labels the policy names are taken back:
- * a labelling rule's once it passes, and a level label of sensitive paths or risk that no longer applies. A label the
- * verdict's own labels steps name is theirs, run or skipped, so it is never taken back.
+ * a labelling rule's once it passes, unless a labels step of the policy names it, and a level label of sensitive paths
+ * or risk that no longer applies.
  */
-function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string, stepLabels: ReadonlySet<string>): SuggestedAction[] {
+function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string): SuggestedAction[] {
   if (labelled === undefined) return [];
   const labels = labelRules(pack);
-  const owned = new Set([...levelLabels(pack), ...passedLabels(labelled, labels)].filter((label) => !stepLabels.has(label)));
+  const named = stepLabels(pack);
+  const owned = new Set([...levelLabels(pack), ...passedLabels(labelled, labels).filter((label) => !named.has(label))]);
   const target = derivedLabels([...new Set(labelled.flatMap((c) => addedLabels(c, labels)))], (label) => owned.has(label.toLowerCase()), facts);
   if (satisfied("labels", target, facts)) return [];
   const index = pack.actions[list].length;
@@ -224,12 +231,8 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
   const { verdict: list, reason, facts } = input;
   const subject = stepSubject(facts, input.pack);
   const out: SuggestedAction[] = [];
-  const stepLabels = new Set<string>();
   for (const [index, step] of steps.entries()) {
     if (step.do === "nothing") continue;
-    if (step.do === "labels" && step.target.from === "list") {
-      for (const label of step.target.labels) stepLabels.add(label.toLowerCase());
-    }
     const base = { list, index, kind: step.do };
     const holds = whenHolds(step.when, subject);
     if (holds.matches !== true) {
@@ -244,7 +247,7 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
       out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
     }
   }
-  return [...out, ...labelDo(input, reason, stepLabels)];
+  return [...out, ...labelDo(input, reason)];
 }
 
 /** The Dos of the verdict's list on this head. */
