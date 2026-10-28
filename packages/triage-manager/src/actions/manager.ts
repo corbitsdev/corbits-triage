@@ -144,7 +144,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   if (answer === undefined) return { ...nothing, refused: true, reviewers: [] };
   const { request, waitingSince, headSince, claimedAt } = answer;
   const head = answer.outcome === "pass" ? answer.pass.head : request?.["headSha"];
-  if (typeof head !== "string") return { ...nothing, reviewers };
+  if (typeof head !== "string") return { ...nothing, reviewers: answer.reviewers };
   const events = answer.outcome === "pass" ? answer.events : [];
   const mails = events.filter(({ event }) => event.type === "webhook").map(({ event }) => event);
   const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);

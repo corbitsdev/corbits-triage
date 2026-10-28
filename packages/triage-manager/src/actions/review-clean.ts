@@ -125,7 +125,7 @@ export async function cleared(input: unknown): Promise<Verdict> {
  */
 function stoppedWaiting(verdict: Verdict, stopped: NonNullable<TakeOutput["stopped"]>): Verdict {
   const note = `Triage stopped waiting for ${awaitsText(stopped)} after ${LIFETIME_MS / (60 * 60_000)} hours, so no action ran on its own.`;
-  const actions = verdict.actions.map((action) => ({ ...action, held: true, reason: note }));
+  const actions = verdict.actions.map((action) => ("effectId" in action ? { ...action, held: true as const, reason: note } : action));
   const feedback = verdict.feedback ? `${verdict.feedback}\n\n${note}` : note;
   const request = verdict.request && { ...verdict.request, comment: verdict.request.comment ? `${verdict.request.comment}\n\n${note}` : note };
   return { ...verdict, actions, feedback, reasons: [...verdict.reasons, note], ...(request && { request }), ...(verdict.approvable !== undefined && { approvable: false }) };
