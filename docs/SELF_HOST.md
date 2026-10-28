@@ -291,6 +291,11 @@ All optional; the defaults suit most installs.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `TRIAGE_RECONCILE_INTERVAL_MS` | 300000 | How often the hub re-queues open pull requests whose latest commit has no verdict. |
+| `TRIAGE_RECONCILE_RETRY_MS` | 15000 | How soon a pass that could not reach a host's listener tries again, doubling up to two minutes. |
+| `TRIAGE_MANAGER_READY_MS` | 120000 | How long Triage waits for a pull request's just-started manager to come up before it starts another in its place. |
+| `TRIAGE_MANAGER_START_GRACE_MS` | 120000 | How long a just-started manager may take to come up and still keep its pull request. |
+| `TRIAGE_MANAGER_POLL_MS` | 30000 | How often a pull request's manager checks again while it waits for CI, the decision model or code review. |
+| `TRIAGE_WAKE_POLL_MS` | 2000 | How often Triage checks whether a just-started manager has come up. |
 | `TRIAGE_MAX_IN_FLIGHT` | 5 | Pull request heads a workspace may have queued or running at once. |
 | `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
 | `TRIAGE_STALLED_AFTER_MS` | 300000 | How long a pull request may wait for Triage to start before the hub raises the alarm for its host in that workspace: the `triage_stalled` log line, a notice in the portal, and, with [email](#email) set up, one email to the workspace's owners and admins; `triage_stall_cleared` and a second email follow once Triage starts a pull request on that host again. The alarm fires within this time plus one `TRIAGE_LIVENESS_INTERVAL_MS`. |

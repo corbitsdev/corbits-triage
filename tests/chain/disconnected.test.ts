@@ -1,14 +1,15 @@
 // A listener whose sidecar stops answering.
 import { expect, test } from "bun:test";
 import { TRIAGE_LISTENERS, VERDICT_LABELS } from "@corbits/triage-contracts";
-import { RECONCILE_INTERVAL_MS } from "./stack.ts";
+import { TIMINGS } from "./stack.ts";
 import { chainStack, SETTLE_MS, DISCONNECTED, isLiveDeployment, sha, pullOf, comments, labelled, once } from "./chain.ts";
 
 const chain = chainStack();
 const { github, pushed, until, rows, settled } = chain;
 
 // The hub drops a silent sidecar's socket after stock's one-minute ping timeout, and the next reconcile pass checks it.
-const DISCONNECT_MS = 60_000 + 2 * RECONCILE_INTERVAL_MS + SETTLE_MS;
+// That timeout is the one real wait left: a sidecar pings on stock's own 30-second interval, which nothing here shortens.
+const DISCONNECT_MS = 60_000 + 2 * TIMINGS.reconcileIntervalMs + SETTLE_MS;
 
 /** Every GitHub listener deployment's anchor run, oldest first, and the pid of the local sidecar it runs on. */
 async function listeners(): Promise<{ id: string; status: string; pid: number }[]> {

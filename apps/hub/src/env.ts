@@ -73,13 +73,18 @@ const HubEnvSchema = type({
   "RAILWAY_GIT_REPO_OWNER?": "string",
   "RAILWAY_GIT_REPO_NAME?": "string",
   "RAILWAY_ENVIRONMENT_ID?": "string",
+  "TRIAGE_MANAGER_READY_MS?": positiveInteger,
+  "TRIAGE_MANAGER_START_GRACE_MS?": positiveInteger,
+  "TRIAGE_MANAGER_POLL_MS?": positiveInteger,
+  "TRIAGE_WAKE_POLL_MS?": positiveInteger,
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
+  "TRIAGE_RECONCILE_RETRY_MS?": positiveInteger,
+  "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
+  "TRIAGE_LIVENESS_INTERVAL_MS?": positiveInteger,
+  "TRIAGE_STALLED_AFTER_MS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
   "TRIAGE_CAPPED_RETRY_MS?": positiveInteger,
-  "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
   "TRIAGE_MAX_LOCAL_SIDECARS?": positiveInteger,
-  "TRIAGE_STALLED_AFTER_MS?": positiveInteger,
-  "TRIAGE_LIVENESS_INTERVAL_MS?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -268,20 +273,6 @@ export function migrationEnv(db: DatabaseConfig): Record<string, string> {
   };
 }
 
-export function triageReconcileIntervalMs(env: HubEnv): number {
-  return env.TRIAGE_RECONCILE_INTERVAL_MS === undefined ? 5 * 60_000 : Number(env.TRIAGE_RECONCILE_INTERVAL_MS);
-}
-
-/** How long a workspace's pull request may wait for a manager before the hub raises its alarm. */
-export function triageStalledAfterMs(env: Pick<HubEnv, "TRIAGE_STALLED_AFTER_MS">): number {
-  return numberOr(env.TRIAGE_STALLED_AFTER_MS, 5 * 60_000);
-}
-
-/** How often the hub checks whether each workspace's pull requests still reach a manager. */
-export function triageLivenessIntervalMs(env: Pick<HubEnv, "TRIAGE_LIVENESS_INTERVAL_MS">): number {
-  return numberOr(env.TRIAGE_LIVENESS_INTERVAL_MS, 60_000);
-}
-
 /** Heads the reconciler lets a tenant have queued or running at once. */
 export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" | "TRIAGE_CAPPED_RETRY_MS">): ReconcilePolicy {
   return {
@@ -302,8 +293,7 @@ const COALESCE_BURST_MS = 3_000;
  * A pull request's webhook events go out as one mail once none arrived for the quiet period, or at most four quiet periods after the first; the window must close before the reconciler gives up on its queued head.
  * A new commit or a newly opened pull request waits only for the burst, long enough to take in the review requests, labels and assignees GitHub delivers with it within a second or so.
  */
-export function triageCoalesceWindow(env: HubEnv, policy: ReconcilePolicy): CoalesceWindow {
-  const quietMs = numberOr(env.TRIAGE_COALESCE_QUIET_MS, 30_000);
+export function triageCoalesceWindow(quietMs: number, policy: ReconcilePolicy): CoalesceWindow {
   if (4 * quietMs >= policy.unstartedAfterMs) {
     throw new Error(`TRIAGE_COALESCE_QUIET_MS must be below ${policy.unstartedAfterMs / 4}: four times it must stay under the ${policy.unstartedAfterMs} ms a queued head may wait to start`);
   }

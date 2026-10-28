@@ -1,9 +1,18 @@
 // A manager that waits for the judge it mailed, and the judge's report reaching it through the hub.
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
-import { chainStack, WOKEN, SETTLE_MS, isLiveDeployment, sha, pullOf, type Claim, comments, labelled, once } from "./chain.ts";
+import { chainStack, WOKEN, isLiveDeployment, sha, pullOf, type Claim, comments, labelled, once } from "./chain.ts";
 
-const { github, model, pushed, until, claimOf, managers, settled, verdictsOf } = chainStack();
+const { github, model, pushed, eachRunEvent, until, claimOf, managers, settled, verdictsOf } = chainStack();
+
+/** The passes every manager took, each one take. */
+async function takes(): Promise<number> {
+  let taken = 0;
+  await eachRunEvent(function count(_runId, { type, body }) {
+    if (type === "StepCompleted" && body["stepId"] === "take") taken += 1;
+  });
+  return taken;
+}
 
 const woken = once(async function woken() {
   const head = sha("woken-1");
@@ -17,7 +26,8 @@ const woken = once(async function woken() {
       const claim = await claimOf(WOKEN, 1);
       return claim?.status === "live" && claim.history.length > 0 ? claim : undefined;
     });
-    await Bun.sleep(SETTLE_MS / 2);
+    const polled = await takes() + 1;
+    await until("the manager to poll again with its judge still out", async () => (await takes()) >= polled || undefined);
   } finally {
     release();
   }

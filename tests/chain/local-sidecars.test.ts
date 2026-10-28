@@ -8,7 +8,8 @@ import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { stubModel } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { once } from "./chain.ts";
+import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 setDefaultTimeout(10 * 60_000);
 
@@ -79,7 +80,7 @@ async function until<T>(what: string, read: () => Promise<T | undefined>, ms = 1
   while (Date.now() < deadline) {
     const value = await read();
     if (value !== undefined) return value;
-    await Bun.sleep(500);
+    await Bun.sleep(POLL_MS);
   }
   throw new Error(`Timed out waiting for ${what}.\n${hub.logs.slice(-80).join("\n")}`);
 }
@@ -95,7 +96,7 @@ async function claimOf(repo: string): Promise<Claim | undefined> {
   return row?.["state"] as Claim | undefined;
 }
 
-test("the listener and two live managers each run in a sidecar of their own, and a released manager's sidecar is gone", async () => {
+const managed = once(async function managed() {
   const releaseFirst = github.hold(FIRST, 1);
   const releaseSecond = github.hold(SECOND, 1);
   await pushed(FIRST, sha("first-1"));
@@ -108,12 +109,8 @@ test("the listener and two live managers each run in a sidecar of their own, and
     const claim = await claimOf(SECOND);
     return claim?.status === "live" ? claim : undefined;
   });
-  expect(first.runId).not.toBe(second.runId);
-
   const live = await rows(`select a.id, a.sidecar_id, r.status, coalesce(s.frozen_approval_bundle -> 'projection' ->> 'id', d.name) as workflow from sidecar_allocation a join workflow_run r on r.id = a.anchor_run_id join workflow_definition d on d.id = r.definition_id left join workflow_run_launch_spec s on s.anchor_run_id = r.id where a.status = 'allocated'`);
-  expect(live.filter((row) => row["status"] === "running").map((row) => row["workflow"]).sort()).toEqual(["triage-listener-github", "triage-manager-github", "triage-manager-github"]);
-  expect(new Set(live.map((row) => row["sidecar_id"])).size).toBe(live.length);
-  expect(manifests().sort()).toEqual(live.map((row) => `${String(row["id"])}.json`).sort());
+  const liveManifests = manifests();
 
   await pushed(FIRST, sha("first-2"), "synchronize");
   await until("the first push's second head to be recorded", async () => {
@@ -130,21 +127,38 @@ test("the listener and two live managers each run in a sidecar of their own, and
     const claim = await claimOf(SECOND);
     return claim !== undefined && claim.history.length >= 1 ? claim : undefined;
   });
-  expect(firstDone.history.map((pass) => pass.runId)).toEqual([first.runId!, first.runId!]);
-  expect(firstDone.history.at(-1)!.head).toBe(sha("first-2"));
-  expect(secondDone.history).toEqual([expect.objectContaining({ head: sha("second-1"), runId: second.runId })]);
-  expect(github.pull(FIRST, 1).comments.map((comment) => comment.body)).toContainEqual(expect.stringContaining("**Triage: Pass**"));
-  expect(github.pull(SECOND, 1).comments.map((comment) => comment.body)).toEqual([expect.stringContaining("**Triage: Pass**")]);
   const managerAllocations = live.filter((row) => row["workflow"] === "triage-manager-github").map((row) => `'${String(row["id"])}'`).join(",");
   const released = await until("both managers' allocations to be released", async () => {
     const found = await rows(`select status, deployment_cleanup_confirmed from sidecar_allocation where id in (${managerAllocations})`);
     return found.every((row) => row["status"] === "released") ? found : undefined;
   });
-  expect(released).toEqual([{ status: "released", deployment_cleanup_confirmed: true }, { status: "released", deployment_cleanup_confirmed: true }]);
-  const listenerRow = live.find((row) => row["workflow"] === "triage-listener-github")!;
-  expect(manifests()).toEqual([`${String(listenerRow["id"])}.json`]);
+  const listenerId = String(live.find((row) => row["workflow"] === "triage-listener-github")!["id"]);
+  const listener = await rows(`select a.status, r.status as run from sidecar_allocation a join workflow_run r on r.id = a.anchor_run_id where a.id = '${listenerId}'`);
   const dataDirs = readdirSync(join(hub.dataDir, "local-sidecars")).filter((name) => name !== "manifests");
-  expect(dataDirs).toEqual([expect.stringMatching(new RegExp(`^${String(listenerRow["id"])}-`))]);
-  const listener = await rows(`select a.status, r.status as run from sidecar_allocation a join workflow_run r on r.id = a.anchor_run_id where a.id = '${String(listenerRow["id"])}'`);
+  return { first, second, live, liveManifests, firstDone, secondDone, released, listenerId, listener, manifests: manifests(), dataDirs };
+});
+
+test("the listener and two live managers each run in a sidecar of their own", async () => {
+  const { first, second, live, liveManifests } = await managed();
+  expect(first.runId).not.toBe(second.runId);
+  expect(live.filter((row) => row["status"] === "running").map((row) => row["workflow"]).sort()).toEqual(["triage-listener-github", "triage-manager-github", "triage-manager-github"]);
+  expect(new Set(live.map((row) => row["sidecar_id"])).size).toBe(live.length);
+  expect(liveManifests.sort()).toEqual(live.map((row) => `${String(row["id"])}.json`).sort());
+});
+
+test("each manager receives only its own pull request's mail", async () => {
+  const { first, second, firstDone, secondDone } = await managed();
+  expect(firstDone.history.map((pass) => pass.runId)).toEqual([first.runId!, first.runId!]);
+  expect(firstDone.history.at(-1)!.head).toBe(sha("first-2"));
+  expect(secondDone.history).toEqual([expect.objectContaining({ head: sha("second-1"), runId: second.runId })]);
+  expect(github.pull(FIRST, 1).comments.map((comment) => comment.body)).toContainEqual(expect.stringContaining("**Triage: Pass**"));
+  expect(github.pull(SECOND, 1).comments.map((comment) => comment.body)).toEqual([expect.stringContaining("**Triage: Pass**")]);
+});
+
+test("a released manager's sidecar is stopped and removed, and the listener's runs on", async () => {
+  const { released, listenerId, listener, manifests: left, dataDirs } = await managed();
+  expect(released).toEqual([{ status: "released", deployment_cleanup_confirmed: true }, { status: "released", deployment_cleanup_confirmed: true }]);
+  expect(left).toEqual([`${listenerId}.json`]);
+  expect(dataDirs).toEqual([expect.stringMatching(new RegExp(`^${listenerId}-`))]);
   expect(listener).toEqual([{ status: "allocated", run: "running" }]);
 });

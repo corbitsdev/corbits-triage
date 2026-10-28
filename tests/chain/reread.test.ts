@@ -1,7 +1,7 @@
 // A head whose CI finishes with no event: its manager ended while it waited, and the hub's reconcile pass wakes the next.
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
-import { RECONCILE_INTERVAL_MS } from "./stack.ts";
+import { TIMINGS } from "./stack.ts";
 import { chainStack, REREAD, SETTLE_MS, isLiveDeployment, sha, pullOf, once } from "./chain.ts";
 
 const { github, pushed, until, managers, settled, verdictsOf } = chainStack();
@@ -16,7 +16,7 @@ const reread = once(async function reread() {
   const whileWaiting = { comments: github.pull(REREAD, 1).comments.map((comment) => comment.body), claim: ended, managers: (await managers()).slice(before) };
   // CI finishes with no check_run, as on a host whose builds send no webhook.
   github.setChecks(REREAD, head, [{ name: "build", status: "completed", conclusion: "success" }]);
-  const claim = await settled(REREAD, 1, ended.history.length + 1, 2 * RECONCILE_INTERVAL_MS + SETTLE_MS);
+  const claim = await settled(REREAD, 1, ended.history.length + 1, 2 * TIMINGS.reconcileIntervalMs + SETTLE_MS);
   return { head, whileWaiting, claim, deployed: (await managers()).slice(before), pull: github.pull(REREAD, 1) };
 });
 

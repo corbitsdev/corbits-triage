@@ -61,6 +61,7 @@ Check these for a stock route or primitive before touching the hub, sidecars or 
 - Tests beside the code are fast and offline; anything that runs real services lives in `e2e/`.
 - The one exception is `tests/chain/`: it starts the real hub and local sidecars but reaches no outside service (a fake GitHub and a stub decision model), and CI runs it as its own job, `bun run test:chain`.
 - Never read `process.env` in tests.
+- A failed chain shard is read, never rerun.
 - A change to how a workflow judges or reviews states its package's eval result before and after.
 
 ## Docs

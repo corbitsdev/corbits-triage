@@ -1,0 +1,4 @@
+{
+  "jsPlugins": ["./lint.mjs"],
+  "rules": { "chain/no-real-sleep": "error" }
+}

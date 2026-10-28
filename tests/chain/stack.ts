@@ -9,7 +9,7 @@ import { createDB, schema } from "@intx/db";
 import { ApiError, type Transport } from "@intx/hub-client";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { packWorkflows } from "../../apps/web/scripts/build-workflows.ts";
-import { DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, TRIAGE_LISTENERS } from "@corbits/triage-contracts";
+import { DECISION_MODEL_ALIAS, DEFAULT_TIMINGS, INFERENCE_PROVIDER, TIMING_VARIABLES, TRIAGE_LISTENERS, type Timings } from "@corbits/triage-contracts";
 import { currentDeployment, INFERENCE_CREDENTIAL_NAME, patchAppConfig, readDeployedVersions } from "../../apps/web/src/lib/hub-api.ts";
 import { connectGithubApp } from "../../apps/web/src/lib/github-manifest.ts";
 import type { FakeGithub } from "./github.ts";
@@ -27,8 +27,30 @@ const SECRETS = {
 export const HOOK_SECRET = "chain-hook-secret";
 const READY_MS = 60_000;
 const LISTENER_START_MS = 10 * 60_000;
-/** The reconcile pass, short so a scenario waits on it for seconds rather than the default five minutes. */
-export const RECONCILE_INTERVAL_MS = 15_000;
+/** How long a stopped hub may take to exit before it is killed. */
+const STOP_MS = 30_000;
+/** How often the harness reads the state it waits on. */
+export const POLL_MS = 100;
+
+/**
+ * The waits the hub, listener and manager run on in the chain, short so a scenario waits on the state it names rather
+ * than on production windows. A manager must still reach its sidecar inside `managerReadyMs` and `managerStartGraceMs`,
+ * which takes half a minute on a loaded machine.
+ */
+export const TIMINGS: Timings = {
+  ...DEFAULT_TIMINGS,
+  managerReadyMs: 60_000,
+  managerStartGraceMs: 60_000,
+  managerPollMs: 1_000,
+  wakePollMs: 100,
+  reconcileIntervalMs: 15_000,
+  reconcileRetryMs: 1_000,
+  coalesceQuietMs: 500,
+};
+
+function timingEnv(timings: Timings): Record<string, string> {
+  return Object.fromEntries(Object.entries(TIMING_VARIABLES).map(([key, variable]) => [variable, String(timings[key as keyof Timings])]));
+}
 
 export type Database = { name: string; url: string; config: typeof ADMIN_DB };
 
@@ -91,8 +113,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
       PORT: String(port),
       BETTER_AUTH_BASE_URL: origin,
       GITHUB_API_ORIGIN: github.origin,
-      TRIAGE_COALESCE_QUIET_MS: "500",
-      TRIAGE_RECONCILE_INTERVAL_MS: String(RECONCILE_INTERVAL_MS),
+      ...timingEnv(TIMINGS),
       // Every sidecar a local process, as on a hub without Docker, so each reaches the fake GitHub and model on loopback.
       DOCKER_HOST: "unix:///nonexistent/docker.sock",
       ...env,
@@ -105,7 +126,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   void collect(child.stderr, logs);
   async function stop(): Promise<void> {
     child.kill("SIGTERM");
-    await Promise.race([child.exited, Bun.sleep(30_000)]);
+    await Promise.race([child.exited, Bun.sleep(STOP_MS)]);
     if (child.exitCode === null) child.kill("SIGKILL");
     rmSync(dataDir, { recursive: true, force: true });
   }
@@ -116,7 +137,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
     } catch {
       // Still binding its socket.
     }
-    await Bun.sleep(200);
+    await Bun.sleep(POLL_MS);
   }
   await stop();
   throw new Error(`The hub did not start:\n${logs.join("\n")}`);
@@ -217,13 +238,13 @@ export async function listenerStarted(workspace: Workspace): Promise<void> {
     const failed = versions.rollouts.find((rollout) => rollout.error !== undefined);
     if (failed) throw new Error(`The hub could not roll ${failed.source}: ${failed.error}`);
     if (currentDeployment(versions.deployments, TRIAGE_LISTENERS.github)?.live && versions.rollouts.length > 0) return;
-    await Bun.sleep(1_000);
+    await Bun.sleep(POLL_MS);
   }
   throw new Error("The hub did not start the GitHub listener.");
 }
 
-/** A webhook delivery GitHub would send, signed with the App's secret. */
-export async function deliver(hub: Hub, workspace: Workspace, event: string, payload: unknown): Promise<void> {
+/** A webhook delivery GitHub would send, signed with the App's secret; the hub's answer names what it did with it. */
+export async function deliver(hub: Hub, workspace: Workspace, event: string, payload: unknown): Promise<string> {
   const body = JSON.stringify(payload);
   const res = await fetch(`${hub.origin}/api/hooks/${workspace.tenantId}/github-hook`, {
     method: "POST",
@@ -236,4 +257,5 @@ export async function deliver(hub: Hub, workspace: Workspace, event: string, pay
     body,
   });
   if (res.status !== 202) throw new Error(`The hub refused a ${event} delivery: ${res.status} ${await res.text()}`);
+  return ((await res.json()) as { status: string }).status;
 }

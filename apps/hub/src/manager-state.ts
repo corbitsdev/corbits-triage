@@ -7,9 +7,10 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, AWAITED_STAGES, MANAGER_READY_MS, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
+import { timings } from "./timings.js";
 import { triageSchema } from "./triage-db.js";
 import { START_DEADLINE_MS } from "./workflow-release/rollout.js";
 
@@ -191,12 +192,6 @@ export async function recordResult(db: DB["db"], tenantId: string, pr: PullReque
 }
 
 /**
- * How long a just-deployed manager may have no sidecar and still hold the pull request, and a just-deployed listener
- * still count as live. The listener waits this long for a manager to start.
- */
-const MANAGER_START_GRACE_MS = 2 * 60_000;
-
-/**
  * How long a manager or judge may sit on its sidecar without its first mail starting it. Both are deployed with that
  * mail, so one still waiting is stuck. A listener is exempt: it stays deployed until its first pull request arrives.
  */
@@ -270,7 +265,7 @@ type UpRule = { readonly graceMs?: number; readonly startedByMail: boolean };
  * A running run; one on its sidecar, unless it is started by its mail and sat there past `NEVER_RAN_MS`; or one
  * deployed inside the startup window.
  */
-function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = MANAGER_START_GRACE_MS, startedByMail }: UpRule): boolean {
+function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = timings().managerStartGraceMs, startedByMail }: UpRule): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
   if (run.status === "running") return true;
   if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < NEVER_RAN_MS;
@@ -596,16 +591,18 @@ async function endedWaiting(tx: Tx, tenantId: string, pr: PullRequestRef, histor
 
 /**
  * How long an ask holds off the next: the listener's wake of the manager it deployed and of the one it deploys in its
- * place when that wake fails, each waiting `MANAGER_READY_MS`, and stock's 30-second cancel grace between them.
+ * place when that wake fails, each waiting `managerReadyMs`, and stock's 30-second cancel grace between them.
  */
-const DEPLOY_ASK_HOLD_MS = 2 * MANAGER_READY_MS + 30_000;
+function deployAskHoldMs(): number {
+  return 2 * timings().managerReadyMs + 30_000;
+}
 
 /** Whether a manager the hub asked the listener for has not taken the claim yet and may still be starting. */
 function deploying(claim: Claim, now: Date): boolean {
   if (claim.deployAskedAt === undefined) return false;
   const asked = Date.parse(claim.deployAskedAt);
   const taken = claim.starts > 0 && Date.parse(claim.claimedAt) >= asked;
-  return !taken && now.getTime() - asked < DEPLOY_ASK_HOLD_MS;
+  return !taken && now.getTime() - asked < deployAskHoldMs();
 }
 
 /**
@@ -694,7 +691,7 @@ const OVERDUE_UNSTARTED_GRACE_MS = 30 * 60_000;
 function recentlyWoken(claim: Claim, now: Date): boolean {
   if (claim.overdueWokenAt === undefined) return false;
   const woken = Date.parse(claim.overdueWokenAt);
-  const grace = Date.parse(claim.claimedAt) >= woken ? MANAGER_START_GRACE_MS : OVERDUE_UNSTARTED_GRACE_MS;
+  const grace = Date.parse(claim.claimedAt) >= woken ? timings().managerStartGraceMs : OVERDUE_UNSTARTED_GRACE_MS;
   return now.getTime() - woken < grace;
 }
 
@@ -767,7 +764,7 @@ export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr
     const head = await newestHead(db, tenantId, pr);
     const result = unread.get(key);
     if (result !== undefined) {
-      if (now.getTime() - Date.parse(result.receivedAt) >= MANAGER_START_GRACE_MS) overdue.push({ pr, head: head ?? result.head });
+      if (now.getTime() - Date.parse(result.receivedAt) >= timings().managerStartGraceMs) overdue.push({ pr, head: head ?? result.head });
       continue;
     }
     if (head === undefined) continue;

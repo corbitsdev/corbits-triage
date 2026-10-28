@@ -12,11 +12,11 @@ import { parseTriageState, triageStateName, type PrTriageRow } from "@corbits/tr
 import { saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
-
+import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 const MANAGER = "triage-manager-github";
-// Every deployment starts a sidecar process of its own, and a judged pull request starts two in turn.
+// The deadline on a manager settling: every deployment starts a sidecar process of its own, and a judged pull request
+// starts two in turn.
 export const SETTLE_MS = 150_000;
 
 export const DETERMINISTIC = `${OWNER}/deterministic`;
@@ -77,6 +77,7 @@ export function chainStack(env: Record<string, string> = {}) {
   const model = stubModel(decide);
   const portalDir = mkdtempSync(join(tmpdir(), "corbits-chain-portal-"));
   let database: Database;
+  let handle: ReturnType<typeof createDB>;
   let hub: Hub;
   let workspace: Workspace;
 
@@ -95,6 +96,7 @@ export function chainStack(env: Record<string, string> = {}) {
     github.addRepo(UNROUTED, policy([MAX_FILES]));
     const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
     database = created;
+    handle = createDB(database.config);
     hub = await startHub(database, github, portalDir, env);
     workspace = await signUp(hub, database);
     // Until a scenario switches it to policy, only posting runs on its own, so a Do in a policy is held.
@@ -105,16 +107,17 @@ export function chainStack(env: Record<string, string> = {}) {
 
   afterAll(async () => {
     await hub?.stop();
+    await handle?.close();
     if (database) await dropDatabase(database);
     github.stop();
     model.stop();
     rmSync(portalDir, { recursive: true, force: true });
   });
 
-  /** GitHub's webhook for a pull request opened or pushed to, after the fake shows that head. */
-  async function pushed(repo: string, pull: Pull, action: "opened" | "synchronize" = "opened"): Promise<void> {
+  /** GitHub's webhook for a pull request opened or pushed to, after the fake shows that head; the hub's answer to it. */
+  async function pushed(repo: string, pull: Pull, action: "opened" | "synchronize" = "opened"): Promise<string> {
     github.open(repo, pull);
-    await deliver(hub, workspace, "pull_request", {
+    return deliver(hub, workspace, "pull_request", {
       action, installation: { id: 1 }, repository: { full_name: repo },
       pull_request: { number: pull.number, state: "open", draft: false, head: { sha: pull.head }, user: { login: pull.author }, title: pull.title, body: pull.body },
     });
@@ -159,18 +162,13 @@ export function chainStack(env: Record<string, string> = {}) {
     while (Date.now() < deadline) {
       const value = await read();
       if (value !== undefined) return value;
-      await Bun.sleep(500);
+      await Bun.sleep(POLL_MS);
     }
     throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}\nHub:\n${hub.logs.slice(-80).join("\n")}`);
   }
 
   async function rows(query: string): Promise<Record<string, unknown>[]> {
-    const { db, close } = createDB(database.config);
-    try {
-      return [...await db.execute(sql.raw(query))] as Record<string, unknown>[];
-    } finally {
-      await close();
-    }
+    return [...await handle.db.execute(sql.raw(query))] as Record<string, unknown>[];
   }
 
   async function claimOf(repo: string, number: number): Promise<Claim | undefined> {
