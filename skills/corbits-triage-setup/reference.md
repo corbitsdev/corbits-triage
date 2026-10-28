@@ -28,19 +28,21 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | `max-deletions` | `max:` whole number ≥ 1 (required) | no | Fails over `max` lines deleted. |
 | `no-merge-conflicts` | none | no | Fails when the pull request conflicts with its base. |
 | `ci-green` | none | no | Fails when checks fail; unconfirmed while they run or when one was cancelled or went stale; a skipped check passes; passes when there are no checks. Only the newest run of each check counts. |
-| `linked-issue` | `tracker:` `github`, `linear` or `either` (optional, default `either`) | no | Fails unless the title, description, a commit or the branch name references an issue. `github` reads `#123`, GitHub issue links and branches like `123-title`; `linear` reads any key like `ABC-123` (so Jira keys match too), Linear links and branches like `abc-123-title` in any case. |
+| `linked-issue` | `tracker:` `github`, `linear` or `either` (optional, default `either`); `off` is refused in the file, so leave the rule out or set `enabled: false` instead | no | Fails unless the title, description, a commit or the branch name references an issue. `github` reads `#123`, GitHub issue links and branches like `123-title`; `linear` reads any key like `ABC-123` (so Jira keys match too), Linear links and branches like `abc-123-title` in any case. |
 | `no-forbidden-paths` | `paths:` list of 1–50 globs (required) | no | Fails when any changed file matches; for every author, maintainers too. `*` stays within a folder, `**` crosses folders, and `**/` also matches no folder. |
 | `conventional-commits` | `types:` list of words (optional, default `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `ci`, `build`, `style`, `revert`); `fields:` `title`, `commits` or both (optional, default both) | no | Fails unless the title and each commit's first line (first 100 commits) start `type: `, `type(scope): ` or `type!: ` with a listed type, in any case. Merges and `Revert "…"` commits are skipped. |
 | `hidden-content` | none | no | Fails when the title, description, a commit message or a changed path hides text: invisible, tag or bidi override characters, or a link with no visible content. On GitHub, also hidden markup in the description that speaks to a model, other than the repository's pull request template. |
 | `regression-risk` | `hotFileFixes:` whole number ≥ 1 (optional, default 4); `migrations:` list of 1–50 globs (optional, default `**/migrations/**`, `**/*.sql`) | no | Fails when a changed file (not a test, Markdown doc or lockfile) has at least `hotFileFixes` commits in the last 30 days whose subject starts with a `fix`, `bugfix`, `hotfix` or `revert` type (`fix:`, `fix(scope):`, `Revert "…"`); merges and body text don't count. Also fails when a changed file matches `migrations`. A history that can't be read in full, or a pull request changing more than 300 such files, leaves the rule unconfirmed. Default `onFail` is `label`. |
-| `sensitive-paths` | `groups:` map of group name (lowercase words joined by hyphens) to `{ level: high or medium, paths: list of 1–50 globs }` (optional, default `schema`, `auth` high; `ci`, `locks` medium); `failAt:`, `labelAt:` `medium` or `high` (optional, default `high` and `medium`) | no | Fails when a changed file matches a group at `failAt` or above, globs as in `no-forbidden-paths`; below that, from `labelAt`, passes and labels `sensitive: <level>`. Evidence names each group with up to five files. Defaults: `schema` `**/migrations/**`, `**/*.sql`; `auth` `**/auth/**`, `**/secrets/**`; `ci` `.github/**`, `**/Dockerfile`, `**/railway.json`, `**/railway.toml`; `locks` `**/bun.lock`, `**/package-lock.json`, `**/yarn.lock`, `**/pnpm-lock.yaml`. Default `onFail` is `ask`. |
+| `sensitive-paths` | `groups:` map of group name (lowercase words joined by hyphens) to `{ level: high or medium, paths: list of 1–50 globs }` (optional, default `schema`, `auth` high; `ci`, `locks` medium); `failAt:`, `labelAt:` `medium` or `high` (optional, default `high` and `medium`) | no | Fails when a changed file matches a group at `failAt` or above, globs as in `no-forbidden-paths`; below that, from `labelAt`, passes and labels `sensitive: <level>`. Evidence names each group with up to five files. Defaults: `schema` `**/migrations/**`, `**/*.sql`; `auth` `**/auth/**`, `**/secrets/**`; `ci` `.github/**`, `**/Dockerfile`, `**/railway.json`, `**/railway.toml`; `locks` `**/bun.lock`, `**/package-lock.json`, `**/yarn.lock`, `**/pnpm-lock.yaml`; writing `groups` replaces all four, so list each one to keep. Default `onFail` is `ask`. |
 | `risk` | `medium:`, `high:` a number of signals from 1 to 5, or a list of signals where a nested list needs all of its own (optional, default `1` and `[[size, no-tests]]`); `failAt:`, `labelAt:` `medium` or `high` (optional, default `high` and `medium`) | no | Rates the pull request low, medium or high from five signals: `sensitive` (a medium `sensitive-paths` group, default groups if unset; a high group makes it high on its own unless `sensitive-paths` is on), `size` (over the `max-files-changed` or `max-lines-changed` limit, default 30 and 3,000), `no-tests` (source code in a common language changed, not `*.d.ts`, `docs/` or `examples/`, and no test file, `e2e/`, `cypress/` or `__snapshots__/` file), `hot-files` (a file `regression-risk` counts as hot) and `first-time` (a first-time contributor; never on Bitbucket Data Center). Fails at `failAt`; below it, from `labelAt`, passes and labels `risk: <level>`. Unconfirmed when unread history could make a file hot and the rule fail. Default `onFail` is `ask`. |
+| `no-duplicate` | none | no | Fails when an earlier open pull request on the same base branch, drafts left out, has the same diff or the same commits, and names it. |
+| `duplicates-open-pull-request` | none | yes | The decision model checks the change is not already made by another open pull request on the same base branch that shares a changed path or title words with it. Default `onFail` is `ask`. |
 | `focused` | none | yes | The decision model checks the change is focused on one thing. |
 | `docs` | none | yes | The decision model checks docs are updated when behaviour changes. |
 
 ### Rules of your own
 
-At most 8 in total. `id` is lowercase letters, digits and single hyphens, at most 64 characters; it must not be a rule id Triage uses (the check names a clash), start with `docs-` or `focused-`, or end in `-file`, `-hunk` or `-slice` followed by numbers.
+At most 8 in total. `id` is lowercase letters, digits and single hyphens, at most 64 characters; it must not be a rule id Triage uses (the check names a clash), start with `docs-`, `focused-` or `duplicates-open-pull-request-`, or end in `-file`, `-hunk` or `-slice` followed by numbers.
 
 - `check: model` (needs a model): `text` is a statement the decision model answers yes or no about the whole pull request; the rule fails on no. Example `text`: `The title says what changed.`
 - `check: text` (no model): fails on a phrase match, case ignored. A phrase matches anywhere in the field; there is no prefix or pattern match. A `contains` rule on `description` also reads the description's hidden parts (HTML comments and link addresses); `not-contains` reads only what a reader sees.
@@ -51,26 +53,47 @@ At most 8 in total. `id` is lowercase letters, digits and single hyphens, at mos
   - `presets: [convention]` (TypeScript and JavaScript): invented `?? 0`/`?? []` fallbacks outside tests, nested ternaries, immediately invoked functions, `.then`/`.catch`/`.finally` chains, empty `catch` blocks, suppression comments.
   - `patterns`: ast-grep rules with `id`, `language` (`typescript` or `javascript`), `message`, `rule` (an ast-grep rule object), and optional `files` (only these paths) and `ignores` (not these). Globs are strings from the repository root, by ast-grep's rules: `*` crosses folders; write `[^a]`, never `[!a]`. Patterns may share an `id` across languages. A pattern replaces a preset's with the same `id` in both languages; to keep checking JavaScript, add a `language: javascript` pattern under the same id.
 
-A model rule costs one model request per pull request and needs a decision model set up in Corbits Triage (Settings → Triage → Decision model).
+A model rule, like the built-in `focused`, `docs` and `duplicates-open-pull-request`, costs model requests on every pull request and needs a decision model set up in Corbits Triage (Settings → Triage → Decision model).
 
 ### When to add
 
-Start from the four starter rules (SKILL.md step 3). Add an extra only when the repository shows a reason:
+The starter file is the baseline. Each extra fits when the repository shows its signal; SKILL.md step 1 measures most of them:
 
 | Signal | Extra rule |
 | --- | --- |
-| Issue links or `ABC-123` keys in most commits or branches (not squash-merge `(#123)` suffixes) | `linked-issue`: `github` for `#123`, `linear` for `ABC-123` keys from any tracker, `either` for both |
-| Vendored or generated folders that pull requests should never touch | `no-forbidden-paths` listing them |
-| Commits mostly follow conventional commits | `conventional-commits`; add `types` only when the history uses a type outside the default list, and `fields: [title]` when pull requests are squash-merged |
+| Most merged pull requests link an issue with a closing keyword (`Closes #12`), an issue link or a key like `ABC-123` | `linked-issue`, with `tracker` set to the kind they use: `github`, `linear`, or `either` for both |
+| Most pull request titles follow conventional commits | `conventional-commits`; about half suggests `onFail: label` or leaving it out |
+| Vendored or generated folders that are checked in and that no merged pull request changed, and a person confirms | `no-forbidden-paths` listing them; when pull requests do change them, a `sensitive-paths` group instead |
+| The history uses a commit type outside the default list | `types` on `conventional-commits`, listing the whole default list plus each extra type the history uses, since `types` replaces the default list |
+| Pull requests are squash-merged, or their titles are conventional but most commits are not | `fields: [title]` on `conventional-commits` |
 | The user wants to hear when a pull request hides text from reviewers | `hidden-content` with `onFail: ask` |
-| The user bars tool attribution | `no-tool-attribution` below. Add the user's tool trailers to its phrases; never a bare `Co-Authored-By:`, which also fails human co-authors. |
-| The user names TypeScript or JavaScript code conventions | `code-patterns`: `presets: [convention]`, plus patterns for what the preset lacks |
+| Some merged pull requests carry AI attribution (SKILL.md step 1 counts them), or the maintainer bars it | `no-ai-attribution`, with any other tool trailers they name added to its phrases. Its phrases name AI tools only, so a person's `Co-Authored-By:` line passes, and its `onFail: ask` makes a match Unsure for a maintainer rather than failing it. |
+| The maintainer wants added TypeScript or JavaScript kept to the convention preset; never suggested from language alone | `conventions` (the `convention` preset), with `onFail: label` so it flags rather than fails; or, for invented fallbacks alone, `invented-fallbacks` instead, never both, since the preset already flags them |
+| The user names TypeScript or JavaScript code conventions the preset lacks | A `code-patterns` rule of patterns, in the shape of `invented-fallbacks` |
+| Pull requests for the same change are opened more than once | `no-duplicate` |
+| The maintainer wants added TypeScript to use no `any` type; never suggested from language alone | `no-any` below; its `onFail: ask` makes such a pull request Unsure for a maintainer to accept, rather than failing it |
 | A decision model is set up and pull requests often mix changes | `focused` |
 | A decision model is set up and the repository keeps user docs beside its code | `docs` |
+| A decision model is set up and contributors often open overlapping pull requests | `duplicates-open-pull-request` |
 
 `no-forbidden-paths` fails maintainers too, so never list `.github/**` or another path the team edits on purpose unless the user asks.
 
 When the user wants a rule to flag pull requests without failing them, such as a docs reminder, add `onFail: label` to it; size rules do this already. When they want a person to decide instead of the author fixing it, use `onFail: ask`. When they want a size limit to block, give it `onFail: fail` or `onFail: ask`.
+
+To add a group to `sensitive-paths`, change the starter's rule. Writing `groups` replaces the default groups, `schema`, `auth`, `ci` and `locks`, so list each one to keep:
+
+```yaml
+  - check: sensitive-paths
+    text: "Flag changes to sensitive paths: schema, auth, infra, ci, locks."
+    groups:
+      schema: { level: high, paths: ["**/migrations/**", "**/*.sql"] }
+      auth: { level: high, paths: ["**/auth/**", "**/secrets/**"] }
+      infra: { level: high, paths: ["terraform/**"] }
+      ci: { level: medium, paths: [".github/**", "**/Dockerfile", "**/railway.json", "**/railway.toml"] }
+      locks: { level: medium, paths: ["**/bun.lock", "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml"] }
+    reason: Schema, auth, infrastructure, CI and lockfile changes reach beyond what the diff shows.
+    evidence: [maintainer-stated]
+```
 
 ## Actions
 
@@ -79,9 +102,30 @@ Optional. Without `actions`, Triage only posts its comment and verdict label (a 
 ```yaml
 actions:
   on: [opened, updated, checks, ready]   # optional; this is the default
+  pass:
+    - do: approve
+      when: { author: [{ users: [<login>] }] }
+    - do: request-review
+      target: { to: users, users: [<login>] }
+      when: { author: [external] }
+  fail:
+    - do: request-changes
   unsure:
     - do: request-review
       target: { to: codeowners }
+```
+
+`<login>` stands for a maintainer's login.
+
+Only when `linked-issue` is on, and the maintainer wants it, Fail can close a pull request that names no issue and ask for changes on the rest. Its `fail` list replaces the one above:
+
+```yaml
+actions:
+  fail:
+    - do: close
+      when: { linkedIssue: false }
+    - do: request-changes
+      when: { linkedIssue: true }
 ```
 
 `on` takes any of `opened`, `updated`, `checks`, `ready`.
@@ -192,63 +236,235 @@ rules:
 
 ```yaml
   - check: linked-issue
-    text: Require a linked issue from GitHub.
-    tracker: github
+    text: Require a linked issue from Linear.
+    tracker: linear
     reason: Every change is tracked in an issue.
+    evidence: [maintainer-stated]
+  - check: conventional-commits
+    text: Titles follow Conventional Commits.
+    fields: [title]
+    reason: Pull requests are squash-merged, so the title becomes the commit.
     evidence: [maintainer-stated]
   - check: no-forbidden-paths
     text: Never accept changes to vendor/**.
     paths: ["vendor/**"]
     reason: Generated or vendored code is changed by its own process.
     evidence: [maintainer-stated]
-  - check: conventional-commits
-    text: Require a conventional commit title and messages.
-    reason: The repository's commits follow conventional commits.
+  - check: no-duplicate
+    text: Flag a pull request whose diff or commits match another open one.
+    reason: Two pull requests for the same change waste a review; the earlier one stays.
     evidence: [maintainer-stated]
-  - id: no-tool-attribution
+  - check: duplicates-open-pull-request
+    text: Ask when a pull request overlaps another open one.
+    reason: A near duplicate needs a person to pick which one goes on.
+    evidence: [maintainer-stated]
+  - id: no-ai-attribution
     check: text
-    text: Descriptions and commits carry no tool attribution.
-    fields: [description, commits]
+    text: Titles, descriptions and commits carry no AI attribution.
+    fields: [title, description, commits]
     failWhen: contains
-    phrases: ["Generated with"]
-    reason: Tool-generated trailers don't belong in descriptions or commits.
-    evidence: [maintainer-stated]
-  - id: title-says-what-changed
-    check: model
-    text: The title says what changed.
-    reason: Reviewers pick pull requests from their titles.
+    phrases:
+      - "noreply@anthropic.com"
+      - "Co-Authored-By: Claude"
+      - "Co-Authored-By: GitHub Copilot"
+      - "Co-Authored-By: Copilot"
+      - "Co-Authored-By: ChatGPT"
+      - "Co-Authored-By: Cursor"
+      - "Co-Authored-By: Codex"
+      - "Co-Authored-By: Gemini"
+      - "Claude-Session:"
+      - "claude.ai/code/session"
+      - "Generated with Claude"
+      - "Generated with [Claude"
+    onFail: ask
+    reason: No AI co-author lines, session trailers or links, or generated-with footers.
     evidence: [maintainer-stated]
   - id: conventions
     check: code-patterns
-    text: Added code follows our conventions.
+    text: Added code follows the repository's conventions.
     presets: [convention]
-    patterns:
-      - id: no-console
-        language: typescript
-        message: Remove console logging.
-        ignores: ["scripts/**"]
-        rule: { pattern: "console.log($$$ARGS)" }
-    reason: Review time goes to design, not style.
+    onFail: label
+    reason: Keeps added code free of invented fallbacks, nested ternaries, IIFEs and promise chains.
     evidence: [maintainer-stated]
+  - id: invented-fallbacks
+    check: code-patterns
+    text: Added code handles a missing value instead of inventing an empty one.
+    patterns:
+      - id: more-invented-fallbacks
+        language: typescript
+        message: Invented fallback (an empty string, || [] or || 0); handle the missing value instead.
+        ignores:
+          [
+            "**/*.{test,spec}.*",
+            "**/{test,tests,Tests,__tests__}/**",
+            "**/*.*{Test,Tests}/**",
+          ]
+        rule:
+          any:
+            - pattern: $X || []
+            - all:
+                - any:
+                    - pattern: $X ?? ""
+                    - pattern: $X ?? ''
+                    - pattern: $X ?? ``
+                    - pattern: $X || ""
+                    - pattern: $X || ''
+                    - pattern: $X || ``
+                - not:
+                    any:
+                      - inside: { kind: template_substitution }
+                      - inside:
+                          {
+                            kind: binary_expression,
+                            has: { field: operator, regex: '^\+$' },
+                          }
+                      - inside:
+                          {
+                            kind: parenthesized_expression,
+                            inside:
+                              {
+                                kind: binary_expression,
+                                has: { field: operator, regex: '^\+$' },
+                              },
+                          }
+                      - has: { field: left, kind: subscript_expression }
+                      - has:
+                          {
+                            field: left,
+                            kind: call_expression,
+                            has:
+                              {
+                                field: function,
+                                regex: '\.(at|get|getAttribute)$',
+                              },
+                          }
+            - all:
+                - pattern: $X || 0
+                - not:
+                    any:
+                      - inside:
+                          {
+                            kind: binary_expression,
+                            has: { field: operator, regex: "^[-+*/%]$" },
+                          }
+                      - inside:
+                          {
+                            kind: parenthesized_expression,
+                            inside:
+                              {
+                                kind: binary_expression,
+                                has: { field: operator, regex: "^[-+*/%]$" },
+                              },
+                          }
+                      - inside: { kind: augmented_assignment_expression }
+      - id: more-invented-fallbacks
+        language: javascript
+        message: Invented fallback (an empty string, || [] or || 0); handle the missing value instead.
+        ignores:
+          [
+            "**/*.{test,spec}.*",
+            "**/{test,tests,Tests,__tests__}/**",
+            "**/*.*{Test,Tests}/**",
+          ]
+        rule:
+          any:
+            - pattern: $X || []
+            - all:
+                - any:
+                    - pattern: $X ?? ""
+                    - pattern: $X ?? ''
+                    - pattern: $X ?? ``
+                    - pattern: $X || ""
+                    - pattern: $X || ''
+                    - pattern: $X || ``
+                - not:
+                    any:
+                      - inside: { kind: template_substitution }
+                      - inside:
+                          {
+                            kind: binary_expression,
+                            has: { field: operator, regex: '^\+$' },
+                          }
+                      - inside:
+                          {
+                            kind: parenthesized_expression,
+                            inside:
+                              {
+                                kind: binary_expression,
+                                has: { field: operator, regex: '^\+$' },
+                              },
+                          }
+                      - has: { field: left, kind: subscript_expression }
+                      - has:
+                          {
+                            field: left,
+                            kind: call_expression,
+                            has:
+                              {
+                                field: function,
+                                regex: '\.(at|get|getAttribute)$',
+                              },
+                          }
+            - all:
+                - pattern: $X || 0
+                - not:
+                    any:
+                      - inside:
+                          {
+                            kind: binary_expression,
+                            has: { field: operator, regex: "^[-+*/%]$" },
+                          }
+                      - inside:
+                          {
+                            kind: parenthesized_expression,
+                            inside:
+                              {
+                                kind: binary_expression,
+                                has: { field: operator, regex: "^[-+*/%]$" },
+                              },
+                          }
+                      - inside: { kind: augmented_assignment_expression }
+    onFail: label
+    reason: A fallback belongs only where a real default exists.
+    evidence:
+      - maintainer-stated
+  - id: no-any
+    check: code-patterns
+    text: Added code uses no any type.
+    patterns:
+      - id: no-any
+        language: typescript
+        message: "`any` turns type checking off; name the type, or take unknown and narrow it."
+        ignores:
+          [
+            "**/*.{test,spec}.*",
+            "**/{test,tests,Tests,__tests__}/**",
+            "**/*.*{Test,Tests}/**",
+          ]
+        rule: { kind: predefined_type, regex: "^any$" }
+    onFail: ask
+    reason: An any type hides the mistakes type checking is there to catch.
+    evidence:
+      - maintainer-stated
 ```
 
 ## Pull request check (GitHub)
 
-`.github/workflows/corbits-triage-policy.yml`:
+Pin the policy-check action to the commit below. When a workflow's only event is `pull_request` and nothing could skip it for a pull request changing only `.corbits-triage.yml` (no `paths`, `paths-ignore`, `branches` or `types` filter, no workflow-level or job-level `if`, no other condition), add the `corbits-triage-policy` job to its `jobs`; otherwise, or when in doubt, write the whole file as `.github/workflows/corbits-triage-policy.yml`. When a workflow already uses this action, under any job id, leave it as it is. The check appears on each pull request as `<workflow name> / corbits-triage-policy`. A workflow written with the earlier job id, `check`, keeps reporting `Corbits Triage policy / check` until someone edits it; when that job is replaced with this one, change a branch protection rule or ruleset that requires the old name to the new one:
 
 ```yaml
 name: Corbits Triage policy
 on: pull_request
-permissions:
-  checks: read
-  contents: read
-  pull-requests: read
 jobs:
-  check:
+  corbits-triage-policy:
     runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: corbitsdev/corbits-triage/packages/policy-check-action@0aa2ba2ebeadc02530e15c222306c7baa9b4330c
+      - uses: corbitsdev/corbits-triage/packages/policy-check-action@844696731de693ac70876ddf37cca016b065f25f
 ```
