@@ -631,7 +631,17 @@ const githubOpenPulls = createGithubOpenPulls({
 });
 const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
 const reconcilePolicy = triageReconcilePolicy(env);
-const triageLiveness = createTriageLiveness({ db: composition.db, store: triageStateStore, stalledAfterMs: triageStalledAfterMs(env), now, log: logJson });
+const triageSettingsLink = new URL("/settings/triage", inviteLinkOrigin(env)).href;
+const triageLiveness = createTriageLiveness({
+  db: composition.db,
+  store: triageStateStore,
+  stalledAfterMs: triageStalledAfterMs(env),
+  mail: smtp && async function mailStall(notice) {
+    await smtp.triageStall({ ...notice, link: triageSettingsLink });
+  },
+  now,
+  log: logJson,
+});
 
 /** One host's reconciler. */
 function reconcilerFor(source: RepoSource) {
