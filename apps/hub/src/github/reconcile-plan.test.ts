@@ -187,6 +187,15 @@ describe("reconcile plan", () => {
     expect(passes.flat().sort((a, b) => a - b)).toEqual(prs.map((open) => open.number));
   });
 
+  test("a manager waiting for its head's CI holds no in-flight slot, and one judging or reviewing does", () => {
+    const prs = [1, 2, 3].map((number) => pr(number));
+    const queued = row(1, { status: "queued", attempts: 1, queuedAt: at(0).toISOString() });
+    const working = run("run_1", "running", 1);
+    const waiting = { ...working, waitingSince: at(1).toISOString() };
+    expect(enqueued(plan(prs, [queued], at(2), [[pr(1), [waiting]]], 2))).toEqual([2, 3]);
+    expect(enqueued(plan(prs, [queued], at(2), [[pr(1), [working]]], 2))).toEqual([2]);
+  });
+
   test("never-triaged heads are queued before heads due again, even when they were seen later", () => {
     const stale = [1, 2, 3, 4].map((number) => row(number, { status: "failed", attempts: 1, firstSeenAt: at(-100 + number).toISOString(), queuedAt: at(-90).toISOString(), error: "degraded: facts interrupted: abort" }));
     const result = plan([pr(5), pr(6), pr(7), ...stale.map((row) => pr(row.number))], stale, at(0), [], policy.maxInFlight);

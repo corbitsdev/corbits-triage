@@ -221,6 +221,11 @@ export function inFlight(row: Pick<PrTriageRow, "status">): boolean {
   return row.status === "queued" || row.status === "running";
 }
 
+/** A manager waiting for its head's CI is parked, not working, so it holds none of the tenant's in-flight slots. */
+function parked(observed: readonly ObservedRun[]): boolean {
+  return observed.some((run) => run.status === "running" && run.waitingSince !== undefined);
+}
+
 /**
  * Heads the deployment is still running, by repository and run key: the slot is
  * held whether or not the head is still open, its pull request still enabled
@@ -230,7 +235,7 @@ function runningHeads(runs: TenantPlanInput["runs"], now: Date, policy: Reconcil
   const busy = new Set<string>();
   for (const [repo, byHead] of runs) {
     for (const [key, observed] of byHead) {
-      if (observed.some((run) => run.status === "running" && !isStuck(run, now, policy))) busy.add(`${repo} ${key}`);
+      if (!parked(observed) && observed.some((run) => run.status === "running" && !isStuck(run, now, policy))) busy.add(`${repo} ${key}`);
     }
   }
   return busy;
@@ -260,7 +265,7 @@ export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: D
   plan.enqueue.push({ number: row.number, reason, ...(decideNow(row.attempts, policy) && { noWait: true }) });
 }
 
-/** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running. */
+/** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running, a manager waiting for CI aside. */
 export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<string, RepoPlan> {
   const at = now.toISOString();
   const plans = new Map<string, RepoPlan>();
@@ -275,7 +280,7 @@ export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<s
       const current = fresh(pr, byHead.get(key), at);
       const runsOfHead = observed?.get(key) ?? [];
       const row = uncapped(observe(current, runsOfHead, now, policy), now, policy);
-      if (inFlight(row)) busy.add(`${name} ${key}`);
+      if (inFlight(row) && !parked(runsOfHead)) busy.add(`${name} ${key}`);
       if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row });
       next.push(row);
     }
