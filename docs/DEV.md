@@ -4,7 +4,7 @@ Runs the hub (`apps/hub`, :3000) and portal (`apps/web`, :5173) against a local 
 
 ## 1. Prerequisites
 
-- Bun 1.4.4+, the version CI runs (`bun run check` needs `bun check`)
+- Bun 1.4.4+, the version CI runs. `bun run check` and the portal build need `bun check`, which older Bun lacks; on one older than 1.4.3 they stop with `bun check needs Bun 1.4.3 or newer`, and `bun upgrade` fixes it
 - Postgres 15+ (Homebrew or Docker)
 - A GitHub account that can create GitHub Apps and own a sandbox repository
 
