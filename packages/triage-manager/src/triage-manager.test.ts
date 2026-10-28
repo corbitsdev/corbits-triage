@@ -273,6 +273,31 @@ describe("triage-manager", () => {
     expect(writes.filter((write) => write.path.endsWith("/comments"))).toEqual([inProgress("CI to finish")]);
   });
 
+  test("the in-progress comment keeps the header of the verdict it replaces, so the next verdict still says what changed since it", async () => {
+    const before = "0ld0".repeat(10);
+    const comment = { id: 1, user: { login: REQUEST["appLogin"] }, body: `<!-- corbits-triage ${JSON.stringify({ head: before, policy: null, verdict: "pass" })} -->\n**Triage: Pass**` };
+    function commented(checkRuns: object[]) {
+      const { writes, host } = githubHost(HEAD, { checkRuns });
+      async function withComment(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+        const url = new URL(input instanceof Request ? input.url : input);
+        if (url.pathname === `/repos/${PR.repo}/issues/${PR.number}/comments` && (init?.method ?? "GET") === "GET") return Response.json([comment]);
+        if (url.pathname.startsWith(`/repos/${PR.repo}/compare/`)) return Response.json({ ahead_by: 2, commits: [] });
+        if (url.pathname === `/repos/${PR.repo}/pulls` && (init?.method ?? "GET") === "GET") return Response.json([]);
+        if (url.pathname === `/repos/${PR.repo}/issues/comments/1` && init?.method === "PATCH") comment.body = (JSON.parse(String(init.body)) as { body: string }).body;
+        return host(input, init);
+      }
+      return { writes, host: withComment };
+    }
+    const waiting = commented([{ name: "build", status: "in_progress", conclusion: null }]);
+    await runMail(github, wake(), waiting.host, fakeHub({ takes: [PASS], dones: [ENDED] }).hub);
+    expect(comment.body).toStartWith(`<!-- corbits-triage ${JSON.stringify({ head: before, policy: null, verdict: "pass" })} -->\n**Triage: In progress**`);
+
+    const failed = commented([{ name: "build", status: "completed", conclusion: "failure" }]);
+    await runMail(github, wake(), failed.host, fakeHub({ takes: [PASS], dones: [ENDED] }).hub);
+    expect(comment.body).toContain("**Triage: Fail**");
+    expect(comment.body).toContain(`Changed since the last verdict (Pass at \`${before.slice(0, 7)}\`): 2 new commits.`);
+  });
+
   test("a new head with no checks yet waits two minutes for its CI to start, then is read again and decided as having none", async () => {
     const { writes, host } = githubHost();
     const fresh = { ...PASS, headSince: undefined };

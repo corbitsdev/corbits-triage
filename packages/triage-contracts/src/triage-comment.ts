@@ -164,6 +164,15 @@ export async function upsertMarked(host: CommentHost, body: string, current: Mar
 }
 
 /**
+ * Edits the current comment to `text` without a verdict of its own, as while a verdict is in progress. The comment keeps
+ * the header of the verdict it held, so the verdict that replaces it still says what changed since that one.
+ */
+export async function writeUnheadedComment(host: CommentHost, markers: MarkerFormat, plainMarker: string, current: MarkedComment[], text: string): Promise<WrittenComment> {
+  const kept = current[0] && markers.headerOf(current[0].body);
+  return upsertMarked(host, `${kept ? markers.current(kept) : plainMarker}\n${text}`, current);
+}
+
+/**
  * Writes nothing when Triage's own comment already says this for this head, policy versions and verdict; supersedes it
  * when only the rules changed the verdict on the same head; otherwise edits it in place. `own` holds only comments
  * Triage itself wrote, so a copied marker never decides what Triage writes. The earlier comment is marked superseded

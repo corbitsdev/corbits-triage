@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
 
@@ -147,7 +147,7 @@ function markedComment(comment: Comment): MarkedComment {
 
 /**
  * Only the token user's comments are read: an admin token could edit anyone's, and a copied marker must never decide
- * what Triage writes. Without a header the current comment is edited whatever it said before.
+ * what Triage writes. Without a header the current comment is edited whatever it said before, keeping its verdict's header.
  */
 async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; number: number; body: string; header?: TriageHeader; branch: string | undefined }, user: TokenUser): Promise<WrittenComment> {
   const { repo, number, header, branch } = input;
@@ -156,7 +156,7 @@ async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; num
   const comments = own.map(markedComment);
   if (header) return writeHeadedComment(host, LINK_REFERENCE_MARKERS, comments, header, input.body);
   const current = comments.filter((c) => !LINK_REFERENCE_MARKERS.isSuperseded(c.body));
-  return upsertMarked(host, `${LINK_REFERENCE_MARKER}\n${input.body}`, current);
+  return writeUnheadedComment(host, LINK_REFERENCE_MARKERS, LINK_REFERENCE_MARKER, current, input.body);
 }
 
 async function deleteTriageComments(bb: BitbucketFetch, repo: string, number: number, user: TokenUser) {
