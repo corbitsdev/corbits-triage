@@ -201,12 +201,13 @@ function passedLabels(labelled: CheckResult[], labels: ReadonlyMap<string, strin
 /**
  * After the verdict's own steps, one labels Do adds the label of each labelling rule that did not pass, and each label a
  * rule that did not fail still adds. Nothing says who put a label on, so only labels the policy names are taken back:
- * a labelling rule's once it passes, and a level label of sensitive paths or risk that no longer applies.
+ * a labelling rule's once it passes, and a level label of sensitive paths or risk that no longer applies. A label the
+ * verdict's own labels steps add is theirs, so it is never taken back.
  */
-function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string): SuggestedAction[] {
+function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string, stepLabels: ReadonlySet<string>): SuggestedAction[] {
   if (labelled === undefined) return [];
   const labels = labelRules(pack);
-  const owned = new Set([...levelLabels(pack), ...passedLabels(labelled, labels)]);
+  const owned = new Set([...levelLabels(pack), ...passedLabels(labelled, labels)].filter((label) => !stepLabels.has(label)));
   const target = derivedLabels([...new Set(labelled.flatMap((c) => addedLabels(c, labels)))], (label) => owned.has(label.toLowerCase()), facts);
   if (satisfied("labels", target, facts)) return [];
   const index = pack.actions[list].length;
@@ -223,6 +224,7 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
   const { verdict: list, reason, facts } = input;
   const subject = stepSubject(facts, input.pack);
   const out: SuggestedAction[] = [];
+  const stepLabels = new Set<string>();
   for (const [index, step] of steps.entries()) {
     if (step.do === "nothing") continue;
     const base = { list, index, kind: step.do };
@@ -233,13 +235,14 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
     }
     try {
       const target = resolve(step, input);
+      if ("labels" in target) for (const label of target.labels) stepLabels.add(label.toLowerCase());
       const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: step.do, target });
       if (!satisfied(step.do, target, facts)) out.push({ ...base, effectId, target, reason });
     } catch (e) {
       out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
     }
   }
-  return [...out, ...labelDo(input, reason)];
+  return [...out, ...labelDo(input, reason, stepLabels)];
 }
 
 /** The Dos of the verdict's list on this head. */

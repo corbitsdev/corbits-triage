@@ -420,6 +420,16 @@ describe("pr-triage body", () => {
     expect((await triage(pack, { files: [FLAG], labels: ["needs-design"] })).verdict).toMatchObject({ actions: [] });
   });
 
+  test("a passed rule's label stays when a labels step on the verdict's list adds it", async () => {
+    const base = emptyPack(REPO);
+    const pack: CheckPack = {
+      ...base,
+      checks: { "max-lines-changed-per-file": { enabled: true, onFail: "label", label: "needs-docs", maxFileLines: 1 } },
+      actions: { ...base.actions, pass: [{ do: "labels", target: { from: "list", labels: ["needs-docs"] } }] },
+    };
+    expect((await triage(pack, { files: [FLAG], labels: ["needs-docs"] })).verdict).toMatchObject({ verdict: "pass", actions: [] });
+  });
+
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {
     const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, docs: { enabled: true, onFail: "label" } } });
     expect(path).toEqual(VERDICT_PATH);
