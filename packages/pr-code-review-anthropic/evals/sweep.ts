@@ -2,7 +2,7 @@
 // features from the saved step outputs (top finder confidence, finder agreement, priority), every cutoff is applied and
 // what is left is scored with scoreCase, as the e2e stages are.
 import { BUDGET_EXHAUSTED } from "@corbits/pr-code-review/actions/checkout";
-import { orderedGroups, sameCode, type Candidate, type Consolidated } from "@corbits/pr-code-review/actions/review";
+import { orderedGroups, isDuplicate, type Candidate, type Consolidated } from "@corbits/pr-code-review/actions/review";
 import { findingOf, firstFindingsList, type Finding } from "@corbits/pr-code-review/findings";
 import type { CaseKey, Reach } from "./cases.js";
 import { REACHES, scoreCase } from "./score.js";
@@ -72,7 +72,7 @@ function keptConfidences(outputs: SavedOutputs): (number | undefined)[] {
   if (confidences.length !== found.length) throw new Error(`the finder replies yield ${confidences.length} findings, the saved candidates ${found.length}`);
   const top: (number | undefined)[] = [];
   for (const [i, candidate] of found.entries()) {
-    const folded = kept.slice(0, top.length).findIndex((k) => sameCode(k, candidate));
+    const folded = kept.slice(0, top.length).findIndex((k) => isDuplicate(k, candidate));
     const index = folded === -1 ? top.push(undefined) - 1 : folded;
     const confidence = confidences[i];
     const best = top[index];

@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { hunksAt } from "@corbits/common/diff-files";
 import { isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
-import { changedFiles, parseFindings, quotedLine, samePath, type Finding, type Site } from "../findings.js";
+import { changedFiles, parseFindings, samePath, type Finding, type Site } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
 import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
@@ -181,16 +181,35 @@ function findingsOf(output: unknown, finder: Finder): Candidate[] {
   return parsed.findings.map((finding) => ({ ...finding, finders: [finder], reports: 1 }));
 }
 
-export function sameCode(a: Finding, b: Finding): boolean {
-  const quoted = quotedLine(a);
-  return quoted !== undefined && quoted === quotedLine(b) && samePath(a.path, b.path) && a.start <= b.end && a.end >= b.start;
+function spaced(text: string | undefined): string | undefined {
+  return text?.trim().replace(/\s+/g, " ") || undefined;
 }
 
-/** The candidates with each exact duplicate (same file, overlapping lines, same first quoted line) folded into the first. */
+function normalized(text: string | undefined): string | undefined {
+  return spaced(text)?.toLowerCase();
+}
+
+/**
+ * Same file and lines, and the same title ignoring case and spacing. Two untitled findings compare their explanations
+ * instead, and their quoted lines ignoring spacing when both quote one.
+ */
+export function isDuplicate(a: Finding, b: Finding): boolean {
+  if (!samePath(a.path, b.path) || a.start !== b.start || a.end !== b.end) return false;
+  const title = normalized(a.title);
+  if (title !== normalized(b.title)) return false;
+  if (title !== undefined) return true;
+  const why = normalized(a.why);
+  if (why === undefined || why !== normalized(b.why)) return false;
+  const code = spaced(a.code);
+  const other = spaced(b.code);
+  return code === undefined || other === undefined || code === other;
+}
+
+/** The candidates with each exact duplicate folded into the first. */
 function withoutDuplicates(found: readonly Candidate[]): Candidate[] {
   const kept: Candidate[] = [];
   for (const candidate of found) {
-    const index = kept.findIndex((k) => sameCode(k, candidate));
+    const index = kept.findIndex((k) => isDuplicate(k, candidate));
     if (index === -1) {
       kept.push(candidate);
       continue;
@@ -227,26 +246,6 @@ function groupsOf(groups: readonly Group[], count: number): Group[] {
   }
   for (let i = 0; i < count; i++) if (!seen.has(i)) valid.push({ defect: "", members: [i], representative: i });
   return valid;
-}
-
-function overlapsAt(a: Group, b: Group, at: readonly Finding[]): boolean {
-  return a.members.some((i) => b.members.some((j) => sameCode(at[i]!, at[j]!)));
-}
-
-/** The groups with any that hold the same first quoted line at overlapping anchored lines joined into the first of them. */
-function joinedAtAnchors(groups: readonly Group[], kept: readonly Candidate[], sites: readonly Site[]): Group[] {
-  const at = kept.map((candidate, i) => ({ ...candidate, ...sites[i]! }));
-  let joined: Group[] = [];
-  for (const group of groups) {
-    const matching = joined.filter((other) => overlapsAt(other, group, at));
-    if (matching.length === 0) {
-      joined.push(group);
-      continue;
-    }
-    const members = [...matching.flatMap((other) => other.members), ...group.members];
-    joined = [...joined.filter((other) => !matching.includes(other)), { ...matching[0]!, members }];
-  }
-  return joined;
 }
 
 /** The group with a member whose lines were read as its representative, when its own were not and one was. */
@@ -298,7 +297,7 @@ export function orderedGroups(kept: readonly Candidate[], { groups, sites, unrea
     const finding = reportedOf(group, kept, sites);
     return { group, finding: unreadFindings.includes(group.representative) ? { ...finding, unverified: true as const } : finding };
   }
-  return joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
+  return groupsOf(groups, kept.length).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
 }
 
 /**
