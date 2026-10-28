@@ -19,8 +19,9 @@ const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, ru
  * The verdict the pass posts. When its rules need the judge and the judge reported a verdict for its head, that
  * verdict, after checking that its repository, number, head and host, and its comment's repository and number, are the
  * pass's: its judgement as the judge made it, and its Dos made again from the pass's facts, which may have changed on
- * the same head since, as when CI finished. Otherwise pr-triage's evaluate of the rules output, the judge held back
- * while the host's checks run or once the manager stopped waiting, so the head waits for them or is decided without it.
+ * the same head since, as when CI finished. While the host's checks run, even with a verdict reported, and once the
+ * manager stopped waiting with none, pr-triage's evaluate of the rules output with the judge held back, so the head
+ * waits for them or is decided without it. Otherwise that evaluate as it is.
  */
 export async function verdict(input: unknown, ctx: EffectContext, signal: AbortSignal): Promise<JudgeVerdict | EvaluateOutput> {
   const parsed = VerdictInput(input);
@@ -33,13 +34,19 @@ export async function verdict(input: unknown, ctx: EffectContext, signal: AbortS
     const matches = repo === pullRequest.repo && number === pullRequest.number && judged.headSha === parsed.take.output.head
       && request.repo === pullRequest.repo && request.number === pullRequest.number && repoSourceOf(judged.repoSource) === repoSourceOf(pullRequest.source);
     if (!matches) throw new Error(`verdict: the judge's verdict names ${repo}#${number} at ${judged.headSha}, not the pass's pull request and head`);
+  }
+  const unjudged = { ...rules, items: rules.items.map((item) => ({ ...item, judgeSkipped: true })) };
+  // A head waiting on the host again, as when its CI runs again on the same commit, waits before any judgement is posted.
+  if (rules.needsJudgment && waitingOnHost(rules.items)) return evaluate(unjudged, ctx, signal);
+  if (rules.needsJudgment && judged) {
+    const { number } = judged;
     const item = rules.items.find(({ facts }) => facts.number === number && facts.headSha === judged.headSha);
     const stored = ClearedVerdict(judged);
     if (stored instanceof type.errors) throw new Error(`verdict: ${stored.summary}`);
     // Rules that read past the judge's head have no facts for it, so its verdict stands as the judge made it.
     return item ? verdictOnFacts(item, stored) : judged;
   }
-  if (rules.needsJudgment && (waitingOnHost(rules.items) || parsed.take.output.stopped !== undefined)) return evaluate({ ...rules, items: rules.items.map((item) => ({ ...item, judgeSkipped: true })) }, ctx, signal);
+  if (rules.needsJudgment && parsed.take.output.stopped !== undefined) return evaluate(unjudged, ctx, signal);
   return evaluate(rules, ctx, signal);
 }
 

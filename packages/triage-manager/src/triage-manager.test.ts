@@ -864,6 +864,20 @@ describe("triage-manager with a judge", () => {
     expect(green.writes).toContainEqual(POSTED_REVIEW);
   });
 
+  test("a stored verdict on a head whose CI runs again on the same commit waits for CI instead of being posted, and the manager does not end", async () => {
+    const pack: CheckPack = { ...JUDGED, actions: { ...JUDGED.actions, pass: [{ do: "approve" }] } };
+    const request = hubRequest(pack);
+    const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail(request)).content).rules);
+    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "in_progress", conclusion: null }] });
+    const hub = fakeHub({ takes: [{ ...PASS, request, reviewers: [{ ...JUDGE, result: verdict }] }], dones: [ENDED] });
+    const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
+    expect(ran).not.toContain("deployJudge");
+    expect(outputs["evaluateRules"]).toMatchObject({ waiting: true });
+    expect(writes).not.toContainEqual(JUDGE_POSTED);
+    expect(writes).not.toContainEqual(POSTED_REVIEW);
+    expect(doneBody(hub.calls)["wait"]).toBe(true);
+  });
+
   test("a manager whose clock runs out while CI runs on a judge policy deploys no judge, and posts its verdict with every Do held", async () => {
     const pack: CheckPack = { ...JUDGED, checks: { ...JUDGED.checks, "ci-green": { enabled: true } }, actions: { ...JUDGED.actions, unsure: [{ do: "comment", target: { body: "Waiting" } }] } };
     const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
