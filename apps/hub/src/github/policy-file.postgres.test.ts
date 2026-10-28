@@ -29,6 +29,7 @@ const CHOSEN_RACED = "acme/chosen-raced";
 const PUSHED = "acme/pushed";
 const BITBUCKET_PUSHED = "PROJ/pushed";
 const PATCHED = "acme/patched";
+const PATCH_LISTED = "acme/patch-listed";
 const BOTH = "acme/both";
 const UNHEARD = "acme/unheard";
 const BITBUCKET_UNHEARD = "PROJ/unheard";
@@ -195,7 +196,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, STARTER, PATCHED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
+  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -368,7 +369,10 @@ test("PostgreSQL: a repository with no policy file runs nothing and is offered a
   const read = await readPack(STARTER);
   expect(read).toMatchObject({ status: "ok", source: { file: { path: YML } } });
   expect(read.status === "ok" && read.pack.checks["max-files-changed"]).toMatchObject({ enabled: true, maxFiles: 40 });
+  // The merged pull request leaves the upgrades read once the shared listing is listed again.
+  setSystemTime(new Date(Date.now() + 10_000));
   expect(await upgradeOf(STARTER)).toEqual({ repo: STARTER, source: "github", upgrade: { state: "ok" } });
+  setSystemTime();
   expect(await exportOf(STARTER)).toMatchObject({ http: 409, error: { code: "policy_file_present" } });
 }, 60_000);
 
@@ -596,6 +600,17 @@ test("PostgreSQL: a batch of policy edits opens one pull request, a preview writ
   const body = pulls.find((row) => row.repo === PATCHED)!.body;
   expect(body).toContain("Turns off code review.");
   expect(body.indexOf("Turns off code review.")).toBeLessThan(body.lastIndexOf("Turns off `focused`."));
+});
+
+test("PostgreSQL: a repository with a policy file reads ok with its open policy pull request, which a patch shows at once", async () => {
+  onMain(PATCH_LISTED, YML, PATCH_FILE);
+  await policyFile.onPush(TENANT, PATCH_LISTED, "github");
+  expect(await upgradeOf(PATCH_LISTED)).toEqual({ repo: PATCH_LISTED, source: "github", upgrade: { state: "ok" } });
+
+  const opened = await patchOf({ repo: PATCH_LISTED, changes: [{ kind: "rule", id: "focused", enabled: false }] });
+  expect(opened).toMatchObject({ http: 200, status: "opened" });
+  const { number, url } = opened as { number: number; url: string };
+  expect(await upgradeOf(PATCH_LISTED)).toEqual({ repo: PATCH_LISTED, source: "github", upgrade: { state: "ok" }, pull: { url, number, headSha: "head-sha" } });
 });
 
 test("PostgreSQL: edited text is pushed to the default branch as one commit where its rules let the hub push, on both hosts, and refused where they do not or the file moved", async () => {

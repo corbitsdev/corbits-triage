@@ -54,7 +54,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     it once it is the file, merge risks included; writes nothing),
     `POST /api/integrations/policy/validate` (open, reads only its body),
     `GET …/policy/upgrades` (`start` or `ok` per enabled repository, each
-    naming its host as `source`) and `POST …/policy/export`, which opens one
+    naming its host as `source` and, in either state, its open policy pull
+    request as `pull`) and `POST …/policy/export`, which opens one
     pull request on `corbits-triage/policy`: without `text`, the starter
     policy for a repository with no file (asking again answers the open
     one); with `text`, the edited file at its own path, refused while a
