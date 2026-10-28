@@ -20,24 +20,26 @@
 //      adapters (RepoStore, BlobSubstrate, StepInvoker, SpawnChild)
 //      and the substrate-shaped seams (signal channel; scheduler is a
 //      host-process singleton supplied by the binary).
-//   3. Discover any in-flight runs via the workflow-run repo's `runs/`
+//   3. Read the supervisor's first control frame, `authority.set`, and
+//      take the run's grants snapshot and credential material from it.
+//   4. Discover any in-flight runs via the workflow-run repo's `runs/`
 //      subdirectory and call `runtimeRun` with `resumeFromEvents` for
 //      each one whose log lacks a terminal event.
-//   4. Emit `ready` on the control channel.
-//   5. Loop on control-channel frames:
+//   5. Emit `ready` on the control channel.
+//   6. Loop on control-channel frames:
 //        - `trigger.fired` -> first-fire the deployment's top-level run via
 //          `runtimeRun` (the supervisor only sends this for an absent log).
+//        - `authority.set` -> replace the snapshot and the material.
 //        - `grants-updated` -> replace the credentialsSnapshot.
 //        - `drain` -> forward to the drain controller (no-op here).
 //        - `shutdown` -> stop accepting new triggers and exit the
 //          loop.
 //
 // The `WorkflowAuthorize` closure evaluates grants against the active
-// `credentialsSnapshot`. The snapshot's initial value can arrive in
-// the spawn-time env bootstrap (multi-step deploys whose host wires
-// the snapshot up-front) or via the first `grants-updated` control
-// frame; the closure re-reads the closure-local snapshot on every
-// invocation so a live update applies to subsequent steps without
+// `credentialsSnapshot`. Its initial value arrives in the first
+// `authority.set` frame, before any resumed run executes, and later
+// frames replace it; the closure re-reads the closure-local snapshot on
+// every invocation so a live update applies to subsequent steps without
 // reconstructing the env.
 //
 // The DrainController is wired here against the production
@@ -117,12 +119,14 @@ import {
 } from "../adapters/spawn-child";
 import {
   createControlChannelSender,
+  holdControlChannelSender,
   type ControlChannelSender,
+  type HeldControlChannelSender,
   type NdjsonReader,
   type NdjsonWriter,
 } from "../ipc/control-sender";
 import { receiveControlChannel } from "../ipc/control-receiver";
-import type { ControlPayload } from "../ipc/control-payloads";
+import type { AuthoritySetData, ControlPayload } from "../ipc/control-payloads";
 import {
   createEventChannelSender,
   type FrameWriter,
@@ -131,7 +135,10 @@ import type { EventPayload } from "../ipc/event-channel";
 import { runBodyThenCleanup } from "../run-body-then-cleanup";
 import { createWorkflowHostSignalChannel } from "../seams/signal-channel";
 import type { CredentialsSnapshot } from "../supervisor/credentials";
-import { hashGrants } from "../supervisor/credentials";
+import {
+  fromCredentialsSnapshotPayload,
+  hashGrants,
+} from "../supervisor/credentials";
 
 import type { SpawnTimeEnv } from "./env-bootstrap";
 import { loadVerifiedWorkflowDefinitionFromClosure } from "./verified-definition-loader";
@@ -397,13 +404,6 @@ export interface RunWorkflowChildBindings {
   /** Optional id generator override; production wires a monotonic one. */
   newId?: (prefix: string) => string;
   /**
-   * Optional bootstrap credentialsSnapshot. The host's production
-   * wiring supplies this for multi-step deploys whose snapshot is
-   * baked at spawn time; tests can pre-seed it directly. Absent
-   * value defers to the first `grants-updated` control frame.
-   */
-  initialCredentialsSnapshot?: CredentialsSnapshot;
-  /**
    * Bootstrap per-step inference-source table (keyed by stepId), parsed
    * from the spawn env by the host's substrate factory. Seeds the
    * mutable `sourcesRef` the build path reads. Absent value defers to an
@@ -411,15 +411,6 @@ export interface RunWorkflowChildBindings {
    * rather than resolving a default.
    */
   initialSources?: Record<string, InferenceSource[]>;
-  /**
-   * Bootstrap credential material for the deployment's binding consumers and
-   * inference sources, decrypted hub-side and delivered on the deploy frame so
-   * it is resident before any step runs. Seeds the mutable
-   * `credentialMaterialRef` the gated capability reads. Absent when the
-   * deployment binds no credentials; a later `credentials-updated` control
-   * frame refreshes it on rotation.
-   */
-  initialCredentialMaterial?: CredentialDelivery;
   /**
    * Optional override for the child's Ed25519 keypair factory. The
    * child mints a fresh keypair at startup, holds the private half
@@ -468,9 +459,11 @@ export interface RunWorkflowChildOpts {
    * The process-shaped wrapper `runWorkflowChildFromProcessEnv`
    * supplies a pre-built sender so the same Ed25519-signed surface is
    * shared with the pack-push bridge it constructs against the
-   * substrate factory.
+   * substrate factory. The sender holds every frame until the child has
+   * sent `ready` and `resumed.runs`, so a due timer or a resumed run that
+   * writes during startup cannot send ahead of them.
    */
-  upstreamSender?: ControlChannelSender;
+  upstreamSender?: HeldControlChannelSender;
   /**
    * Optional substrate-write bridge whose `handleMergeRequest` and
    * `handleWriteResponse` the child's control loop invokes when the
@@ -566,6 +559,24 @@ export interface RunWorkflowChildResult {
   finalCredentialsSnapshot: CredentialsSnapshot | null;
 }
 
+// Replace the run's grants snapshot and credential material with an
+// `authority.set` frame's. A replace, not a merge: the frame carries the
+// supervisor's merged mirror of every credential producer. A frame with no
+// snapshot keeps the current one.
+function applyAuthority(
+  data: AuthoritySetData,
+  credentialsRef: CredentialsSnapshotRef,
+  credentialMaterialRef: CredentialMaterialRef,
+): void {
+  if (data.snapshot !== undefined) {
+    credentialsRef.current =
+      data.snapshot === null
+        ? null
+        : fromCredentialsSnapshotPayload(data.snapshot);
+  }
+  credentialMaterialRef.current = data.delivery;
+}
+
 /**
  * Run the workflow-process child. Resolves once the control channel
  * emits `shutdown` (or ends without a frame, in which case the loop
@@ -574,15 +585,13 @@ export interface RunWorkflowChildResult {
 export async function runWorkflowChild(
   opts: RunWorkflowChildOpts,
 ): Promise<RunWorkflowChildResult> {
-  const credentialsRef: CredentialsSnapshotRef = {
-    current: opts.bindings.initialCredentialsSnapshot ?? null,
-  };
+  // Both refs are set from the supervisor's first `authority.set` frame,
+  // which the child reads before it resumes any run.
+  const credentialsRef: CredentialsSnapshotRef = { current: null };
   const sourcesRef: SourcesSnapshotRef = {
     current: opts.bindings.initialSources ?? {},
   };
-  const credentialMaterialRef: CredentialMaterialRef = {
-    current: opts.bindings.initialCredentialMaterial ?? null,
-  };
+  const credentialMaterialRef: CredentialMaterialRef = { current: null };
   // The per-run credential wiring the top-level step invoker carries to the
   // substrate: the live material cell and a resolver for a step's grants from
   // the same credentials snapshot `authorize` reads. Built once over the two
@@ -700,15 +709,19 @@ export async function runWorkflowChild(
     }
   }
 
-  // Directors resolve from the pinned closure so a custom director authored in
-  // the workflow's own package runs. Loading directors OUTSIDE the
+  // Directors resolve from referenced ids against the workflow package and
+  // its direct node_modules slots. Loading directors OUTSIDE the
   // definition-hash re-verify is safe: the approved hash pins each director's
   // id + config (which director runs cannot change post-approval) and the
   // closure's SRI pins its module bytes. Folding directors into the hash would
   // be redundant, so it is deliberately not done -- see
   // `loadWorkflowDirectorRegistryFromClosure`.
+  // The PRE-rewrite verified definition: the capability walk approves the
+  // director refs inline bodies carry, so the id set must be collected
+  // before onTrigger/childWorkflow bodies lift to `{ ref }` placeholders.
   const directors = await loadWorkflowDirectorRegistryFromClosure({
     packageDir: opts.env.closurePackageDir,
+    definition: verifiedDefinition,
   });
 
   // Loop `while`/`carry` functions resolve from the pinned closure's
@@ -836,11 +849,40 @@ export async function runWorkflowChild(
   // `complete` promise without re-deriving the sender lazily.
   const upstreamSender =
     opts.upstreamSender ??
-    createControlChannelSender({
-      privateKeySeed: childKeyPair.privateKey,
-      channelId: opts.env.channelId,
-      writer: opts.controlWriter,
-    });
+    holdControlChannelSender(
+      createControlChannelSender({
+        privateKeySeed: childKeyPair.privateKey,
+        channelId: opts.env.channelId,
+        writer: opts.controlWriter,
+      }),
+    );
+
+  // Control channel. The receiver iterator yields one verified payload
+  // per call; any signature/channelId/seq violation crashes the
+  // receiver via `onCrash` and ends the iterator. Its first frame is the
+  // supervisor's `authority.set`, read here before any run resumes so a
+  // resumed run's first step has the run's grants and credential
+  // material. The control loop below keeps reading the same iterator.
+  const iter = receiveControlChannel({
+    publicKey: opts.env.hostPublicKey,
+    channelId: opts.env.channelId,
+    reader: opts.controlReader,
+    onCrash: (reason) => {
+      logger.error`workflow-child control channel crash: ${reason}`;
+    },
+  });
+  const first = await iter.next();
+  if (first.done === true) {
+    throw new Error(
+      "workflow-child: the control channel ended before the supervisor's authority.set frame",
+    );
+  }
+  if (first.value.type !== "authority.set") {
+    throw new Error(
+      `workflow-child: the first control frame must be authority.set, got ${first.value.type}`,
+    );
+  }
+  applyAuthority(first.value.data, credentialsRef, credentialMaterialRef);
 
   // Self-discovery before announcing `ready`. The runtime body must
   // see every in-flight run before the supervisor starts forwarding
@@ -933,34 +975,33 @@ export async function runWorkflowChild(
   // signed by the child's own private key; the `ready` payload
   // publishes the matching public half so the supervisor can verify
   // every subsequent upstream frame.
-  await upstreamSender.send({
-    type: "ready",
-    data: {
-      childPid: process.pid,
-      childPublicKey: hexEncode(childKeyPair.publicKey),
-    },
-  });
+  //
+  // The supervisor accepts `ready` only as the first frame, and seeds its
+  // cohort tracking from `resumed.runs` before it reads anything else. A
+  // due timer or a resumed run can send during startup, so the sender holds
+  // their frames until both of these are out.
+  try {
+    await upstreamSender.sendNow({
+      type: "ready",
+      data: {
+        childPid: process.pid,
+        childPublicKey: hexEncode(childKeyPair.publicKey),
+      },
+    });
 
-  // Report self-discovered runs so the supervisor seeds its cohort
-  // tracking before the dispatch loop starts.
-  await upstreamSender.send({
-    type: "resumed.runs",
-    data: { runIds: resumedRunIds },
-  });
+    // Report self-discovered runs so the supervisor seeds its cohort
+    // tracking before the dispatch loop starts.
+    await upstreamSender.sendNow({
+      type: "resumed.runs",
+      data: { runIds: resumedRunIds },
+    });
+  } catch (cause) {
+    upstreamSender.fail(cause);
+    throw cause;
+  }
+  upstreamSender.open();
 
   const triggeredRunIds: string[] = [];
-
-  // Control-loop. The receiver iterator yields one verified payload
-  // per call; any signature/channelId/seq violation crashes the
-  // receiver via `onCrash` and ends the iterator.
-  const iter = receiveControlChannel({
-    publicKey: opts.env.hostPublicKey,
-    channelId: opts.env.channelId,
-    reader: opts.controlReader,
-    onCrash: (reason) => {
-      logger.error`workflow-child control channel crash: ${reason}`;
-    },
-  });
 
   // Resolve the mailbox watch registry the control loop routes `mailbox.notify`
   // frames to. Production wires it on the bindings (the substrate factory builds
@@ -1214,6 +1255,14 @@ async function handleControlPayload(
       ctx.triggeredRunIds.push(payload.data.runId);
       return false;
     }
+    case "authority.set": {
+      applyAuthority(
+        payload.data,
+        ctx.credentialsRef,
+        ctx.credentialMaterialRef,
+      );
+      return false;
+    }
     case "grants-updated": {
       // The supervisor pushes the fresh snapshot inline. Replace the
       // closure-local snapshot reference so every subsequent
@@ -1224,14 +1273,7 @@ async function handleControlPayload(
       // mismatch against the snapshot's per-step contentHash crashes
       // the child rather than silently honoring a desynchronized
       // push.
-      const snapshot: CredentialsSnapshot = {
-        steps: payload.data.snapshot.steps.map((s) => ({
-          stepId: s.stepId,
-          address: s.address,
-          grants: s.grants,
-          contentHash: s.contentHash,
-        })),
-      };
+      const snapshot = fromCredentialsSnapshotPayload(payload.data.snapshot);
       if (payload.data.stepHashes !== undefined) {
         for (const step of snapshot.steps) {
           const expected = payload.data.stepHashes[step.stepId];

@@ -102,6 +102,7 @@ import {
   deleteWorkflowRunRecord,
   markWorkflowRunRecord,
   scanWorkflowRunRecords,
+  updateWorkflowRunRecordCredentials,
   updateWorkflowRunRecordSources,
   withWorkflowRunRecord,
   writeWorkflowRunRecord,
@@ -472,8 +473,9 @@ export type AssembleRunCredentialsSnapshotOpts = {
 };
 
 /**
- * Resolve a run's credentials snapshot for the `onRunStart` grants
- * barrier from its per-run grants file.
+ * Resolve a run's credentials snapshot from its per-run grants file, for
+ * the `onRunStart` grants barrier and for a new child's `authority.set`
+ * frame.
  *
  * Every legitimate run birth path writes `runs/<runId>/grants.json` in
  * the deployment's workflow-run repo before the run dispatches -- the
@@ -483,26 +485,22 @@ export type AssembleRunCredentialsSnapshotOpts = {
  * per-run file IS the run's snapshot: the run's single flat grant set is
  * applied uniformly across every step, keyed on each step's address.
  *
- * A missing file is therefore not an internal run inheriting deploy-time
- * grants -- it is a run that reached its barrier with no grants written,
- * so it FAILS CLOSED here rather than running under-authorized. A file
- * that exists but is malformed also throws (via `readRunGrants`), for the
- * same reason: the file's presence implies a grants frame was delivered,
- * so a structural failure is a boundary bug, not a default.
+ * A missing file resolves to null: the run has no grants yet. It is not
+ * an internal run inheriting deploy-time grants, so the barrier fails the
+ * run closed and a new child starts with no snapshot. A file that exists
+ * but is malformed throws (via `readRunGrants`): the file's presence
+ * implies a grants frame was delivered, so a structural failure is a
+ * boundary bug, not a default.
  */
 export async function assembleRunCredentialsSnapshot(
   opts: AssembleRunCredentialsSnapshotOpts,
-): Promise<CredentialsSnapshot> {
+): Promise<CredentialsSnapshot | null> {
   const runGrants = await readRunGrants({
     repoStore: opts.repoStore,
     anchorRunId: opts.anchorRunId,
     runId: opts.runId,
   });
-  if (runGrants === undefined) {
-    throw new Error(
-      `sidecar onRunStart: run ${opts.runId} has no grants file at ${runGrantsPath(opts.runId)}; refusing to start the run under-authorized`,
-    );
-  }
+  if (runGrants === undefined) return null;
   const contentHash = await hashGrants(runGrants);
   const steps: CredentialsSnapshotStep[] = opts.stepOrder.map((stepId) => ({
     stepId,
@@ -531,8 +529,9 @@ export type CreateSidecarWorkflowSupervisorOpts = {
   runId: string;
   /**
    * Decrypted credential material for the deployment's binding consumers and
-   * inference sources (from the deploy frame). Delivered to the child on the
-   * pre-trigger barrier. Absent when the deployment binds no credentials.
+   * inference sources (from the deploy frame). Delivered to each new child in
+   * its first `authority.set` and re-sent on the pre-trigger barrier. Absent
+   * when the deployment binds no credentials.
    */
   credentialDelivery?: CredentialDelivery;
   /**
@@ -655,15 +654,17 @@ export type SidecarWorkflowSupervisor = {
   /** Snapshot accessor that proxies the supervisor's credentials view. */
   getCredentialsSnapshot(): CredentialsSnapshot | null;
   /**
-   * The per-run grants barrier the supervisor awaits before firing a run's
-   * trigger. Rejects for a poisoned run (its `run.grants` write failed) and
-   * otherwise resolves the run's credentials snapshot. Exposed so the barrier
-   * can be exercised without driving a full spawn.
+   * The per-run grants source the supervisor reads before firing a run's
+   * trigger and for each new child's `authority.set` frame. Rejects for a
+   * poisoned run (its `run.grants` write failed), resolves null for a run
+   * with no grants file yet, and otherwise resolves the run's credentials
+   * snapshot. Exposed so the barrier can be exercised without driving a full
+   * spawn.
    */
   onRunStart(args: {
     runId: string;
     anchorRunId: string;
-  }): Promise<CredentialsSnapshot>;
+  }): Promise<CredentialsSnapshot | null>;
   /**
    * Refuse further outbound mail and wait for the sends already started. The
    * undeploy and the stop call it once the supervisor has shut down, so
@@ -1201,6 +1202,12 @@ export function createSidecarDeployRouter<
    * it.
    */
   updateWorkflowRunRecordSources?: typeof updateWorkflowRunRecordSources;
+  /**
+   * Run-record credentials updater, injectable so a test can fail the seal of
+   * a credentials update. Defaults to the real
+   * `updateWorkflowRunRecordCredentials`; production never overrides it.
+   */
+  updateWorkflowRunRecordCredentials?: typeof updateWorkflowRunRecordCredentials;
   /** Create the closure cache shared by all deployments on this sidecar. */
   createWorkflowCache: (args: { rootDir: string; maxBytes: number }) => TCache;
   /**
@@ -1339,6 +1346,9 @@ export function createSidecarDeployRouter<
   }
   const persistWorkflowRunSources =
     deps.updateWorkflowRunRecordSources ?? updateWorkflowRunRecordSources;
+  const persistWorkflowRunCredentials =
+    deps.updateWorkflowRunRecordCredentials ??
+    updateWorkflowRunRecordCredentials;
   const applyClosure = deps.applyFrozenWorkflowClosure;
   const multistepSpawner = deps.multistepSubprocessSpawner;
   const { maxActiveDeployments, maxRetainedDeployments } = deps;
@@ -1681,8 +1691,9 @@ export function createSidecarDeployRouter<
     bodySources: WorkflowRunRecord["bodySources"];
     /**
      * The run's unified credential-material cell (inference + binding secrets,
-     * plus credential bindings). Persisted sealed in the record and delivered
-     * to the child on the pre-trigger barrier; the child resolves both its
+     * plus credential bindings). Persisted sealed in the record, delivered to
+     * each new child in its first `authority.set`, and re-sent on the
+     * pre-trigger barrier; the child resolves both its
      * inference sources and its binding consumers from it by `credentialId`.
      * `undefined` when the deployment binds no credentials and its sources need
      * none.
@@ -1856,7 +1867,7 @@ export function createSidecarDeployRouter<
     // The run's credential material rides on `spec.credentials`: the sidecar now
     // holds a cipher and seals it into the record, so both the live deploy and
     // the boot-restore path carry it here (restore unseals it from the record),
-    // and it is delivered to the child on the pre-trigger barrier.
+    // and it is delivered to each new child in its first `authority.set`.
     const credentialDelivery = spec.credentials;
     // Fail loud unless the caller holds the address for this spawn. The deploy
     // and boot restore paths both refuse an address already held before they
@@ -2288,8 +2299,24 @@ export function createSidecarDeployRouter<
       // warm single-step ones): the material cell is per-child and read by
       // every step's tool capabilities. The handler hands the delivery to the
       // supervisor's `deliverCredentials`, which sends a `credentials-updated`
-      // control frame to the child where the material cell is swapped. No
-      // durable persist -- credential material never touches disk.
+      // control frame to the child and advances the supervisor's mirror.
+      //
+      // It then seals the mirror into the run record, so a restart restores
+      // the latest material and Hub tokens, and a revoke stays revoked. The
+      // delivery goes first: the live child must not wait on a disk write. A
+      // failed seal throws, so the Hub sees the update fail, while the child
+      // and the mirror already hold it; the next update seals the whole
+      // mirror again. A `run.grants` frame whose credentials fail here drops
+      // its grants. An update that leaves the mirror as it was writes nothing.
+      // A failed seal can still have replaced the record before it failed,
+      // so after one the record's content is unknown and the next update
+      // writes even when the mirror matches the last confirmed seal.
+      // Updates for one deployment run one at a time on the link's
+      // per-address frame lane, as the sources handler above relies on.
+      // Skipped when no data dir was wired, matching the restore guard.
+      let sealedCredentials: string | undefined = JSON.stringify(
+        wired.supervisor.credentialDelivery(),
+      );
       deps.multistepCredentialsRouter?.register(
         spec.agentAddress,
         async (args) => {
@@ -2297,6 +2324,23 @@ export function createSidecarDeployRouter<
             delivery: args.delivery,
             ...(args.revoke !== undefined ? { revoke: args.revoke } : {}),
           });
+          if (stepStateDataDir === undefined) return;
+          const mirror = wired.supervisor.credentialDelivery();
+          const serialized = JSON.stringify(mirror);
+          if (mirror === null || serialized === sealedCredentials) return;
+          try {
+            await persistWorkflowRunCredentials(
+              stepStateDataDir,
+              runId,
+              spec.generation,
+              mirror,
+              deps.credentialCipher,
+            );
+          } catch (cause) {
+            sealedCredentials = undefined;
+            throw cause;
+          }
+          sealedCredentials = serialized;
         },
       );
       routersRegistered = true;
@@ -3068,11 +3112,12 @@ export function createSidecarDeployRouter<
               // falls back to that deployment's on-disk plaintext file for the
               // missing bodies.
               bodySources: record.bodySources,
-              // The record's credential-material cell, unsealed by the boot
-              // scan and re-delivered to the child on the pre-trigger barrier
-              // so an offline restart restores both inference and tool
-              // credentials without the hub. `undefined` when the deployment
-              // bound none.
+              // The record's credential-material cell: the latest delivery the
+              // deployment received before the restart, unsealed by the boot
+              // scan. It seeds the supervisor's mirror, so the restored child's
+              // first `authority.set` carries the inference and tool
+              // credentials and Hub tokens without the hub. `undefined` when
+              // the deployment has none.
               credentials: record.credentials,
               // The hub-approved wire hash the original deploy persisted, so
               // the restore re-spawn carries the same `DEFINITION_HASH` rather
@@ -3252,22 +3297,21 @@ export function createSidecarWorkflowSupervisor(
     kind: "supervisor",
     anchorRunId: opts.runId,
   };
-  // Per-run grants sink. The supervisor awaits this and pushes the
-  // resulting snapshot to the child before the run's `trigger.fire`; a
-  // throw propagates and the dispatch barrier fails the run rather than
-  // firing the trigger against absent grants. The snapshot is the run's
-  // own per-run grants file, which every legitimate birth path writes
-  // before dispatch (see `assembleRunCredentialsSnapshot`).
+  // Per-run grants source. The supervisor pushes its snapshot to the
+  // child before the run's `trigger.fire`, where a null or a throw fails
+  // the run rather than firing the trigger against absent grants, and in
+  // every new child's `authority.set` frame. The snapshot is the run's own
+  // per-run grants file, which every legitimate birth path writes before
+  // dispatch (see `assembleRunCredentialsSnapshot`).
   const onRunStart = (args: {
     runId: string;
     anchorRunId: string;
-  }): Promise<CredentialsSnapshot> => {
+  }): Promise<CredentialsSnapshot | null> => {
     // Fail closed on a run whose `run.grants` write was recorded as failed:
-    // its per-run grants file never landed. This is the known-failed-write
-    // case, distinct from the general absent-file backstop in
-    // `assembleRunCredentialsSnapshot` -- both fail the run closed, but this
-    // one names the recorded write failure specifically so a poisoned run's
-    // diagnostics point at the failed push rather than a generic absence.
+    // its per-run grants file never landed. A run with no file at all
+    // resolves null below, which the supervisor's barrier fails closed; this
+    // case names the recorded write failure so a poisoned run's diagnostics
+    // point at the failed push rather than a generic absence.
     if (opts.isRunPoisoned?.(args.runId) === true) {
       return Promise.reject(
         new Error(

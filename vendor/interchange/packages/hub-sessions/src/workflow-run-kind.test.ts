@@ -2,7 +2,7 @@ import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import git from "isomorphic-git";
+import git, { type TreeEntry } from "isomorphic-git";
 import { generateKeyPair } from "@intx/crypto";
 import { collectReachableObjects } from "@intx/storage-isogit/node";
 import type { KeyPair } from "@intx/types/runtime";
@@ -35,46 +35,14 @@ import {
 } from "./workflow-run-kind";
 import { createRepoStore } from "./repo-store";
 import type { KindHandler, Principal, RepoId } from "./repo-store";
+import { validatePushArgs } from "./repo-store/validate-push.test-helpers";
+import {
+  authorCommit,
+  authorExactTree,
+  packOids,
+} from "./workflow-run-kind.test-helpers";
 
 const REF = "refs/heads/events";
-
-function makeReadBlob(
-  files: Record<string, string>,
-): (path: string) => Promise<Uint8Array> {
-  return async (path) => {
-    const body = files[path];
-    if (body === undefined) {
-      throw new Error(`readBlob: ${path} not found`);
-    }
-    return new TextEncoder().encode(body);
-  };
-}
-
-function makeListDir(
-  files: Record<string, string>,
-): (path: string) => Promise<string[]> {
-  return async (path) => {
-    const prefix = path === "" ? "" : `${path}/`;
-    const names = new Set<string>();
-    for (const p of Object.keys(files)) {
-      if (prefix !== "" && !p.startsWith(prefix)) continue;
-      const rest = p.slice(prefix.length);
-      if (rest.length === 0) continue;
-      const slash = rest.indexOf("/");
-      names.add(slash === -1 ? rest : rest.substring(0, slash));
-    }
-    return Array.from(names);
-  };
-}
-
-function topLevels(files: Record<string, string>): string[] {
-  const names = new Set<string>();
-  for (const p of Object.keys(files)) {
-    const slash = p.indexOf("/");
-    names.add(slash === -1 ? p : p.substring(0, slash));
-  }
-  return Array.from(names);
-}
 
 function uniqueRepoId(prefix: string): RepoId {
   const id = `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -96,8 +64,6 @@ const WORKFLOW_PROCESS_PRINCIPAL_SHAPE = {
   anchorRunId: "test-deployment",
 };
 const WORKFLOW_PROCESS_PRINCIPAL: Principal = WORKFLOW_PROCESS_PRINCIPAL_SHAPE;
-const noPriorBlob = async (): Promise<Uint8Array | null> => null;
-const noPriorDir = async (): Promise<string[]> => [];
 
 type ValidateOpts = {
   ref?: string;
@@ -110,36 +76,16 @@ async function validate(
   files: Record<string, string>,
   opts: ValidateOpts = {},
 ) {
-  const repoId = uniqueRepoId("wfr");
-  const ref = opts.ref ?? REF;
-  const principal = opts.principal ?? HUB_PRINCIPAL;
-  const priorReadBlob =
-    opts.priorFiles === undefined
-      ? noPriorBlob
-      : makePriorReadBlob(opts.priorFiles);
-  const priorListDir =
-    opts.priorFiles === undefined ? noPriorDir : makeListDir(opts.priorFiles);
-  return workflowRunKindHandler.validatePush({
-    repoId,
-    ref,
-    principal,
-    topLevelTreePaths: topLevels(files),
-    readBlob: makeReadBlob(files),
-    listDir: makeListDir(files),
-    priorReadBlob,
-    priorListDir,
-    changedPathPrefixes: opts.changedPathPrefixes,
-  });
-}
-
-function makePriorReadBlob(
-  files: Record<string, string>,
-): (path: string) => Promise<Uint8Array | null> {
-  return async (path) => {
-    const body = files[path];
-    if (body === undefined) return null;
-    return new TextEncoder().encode(body);
-  };
+  return workflowRunKindHandler.validatePush(
+    validatePushArgs({
+      repoId: uniqueRepoId("wfr"),
+      ref: opts.ref ?? REF,
+      principal: opts.principal ?? HUB_PRINCIPAL,
+      files,
+      priorFiles: opts.priorFiles,
+      changedPathPrefixes: opts.changedPathPrefixes,
+    }),
+  );
 }
 
 describe("workflowRunKindHandler metadata", () => {
@@ -653,6 +599,56 @@ describe("workflowRunKindHandler.validatePush — compaction (events.jsonl)", ()
     expect(mutated.ok).toBe(false);
   });
 
+  test("rejects an events.jsonl that is a tree on both sides", async () => {
+    // A tree has no bytes to hold immutable, so the sealed-file check
+    // must not pass it as a newly added blob.
+    const r = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [`${combinedPath}/a`]: "y" },
+      {
+        priorFiles: {
+          [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+          [`${combinedPath}/a`]: "x",
+        },
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toContain(`combined event log ${combinedPath}`);
+    expect(r.reason).toContain("is a tree");
+  });
+
+  test("rejects a sealed events.jsonl that the new commit replaces with a tree", async () => {
+    const r = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [`${combinedPath}/a`]: "x" },
+      {
+        priorFiles: {
+          [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+          [combinedPath]: fold(e0, e1),
+        },
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toContain(`combined event log ${combinedPath}`);
+    expect(r.reason).toContain("in the prospective tree");
+  });
+
+  test("rejects an events.jsonl blob where the prior commit held a tree", async () => {
+    const r = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [combinedPath]: fold(e0, e1) },
+      {
+        priorFiles: {
+          [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+          [`${combinedPath}/a`]: "x",
+        },
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toContain(`combined event log ${combinedPath}`);
+    expect(r.reason).toContain("in the prior tree");
+  });
+
   test("rejects a freshly-sealed run with no terminal event", async () => {
     const r = await validate({
       [WORKFLOW_RUN_GITIGNORE_PATH]: "",
@@ -682,15 +678,6 @@ describe("workflowRunKindHandler.validatePush — compaction (events.jsonl)", ()
     // fold) must be rejected. The string-based `validate` harness cannot
     // express this, so drive the handler with raw bytes.
     const enc = new TextEncoder();
-    const prospectiveKeys: Record<string, string> = {
-      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
-      [combinedPath]: "",
-    };
-    const priorKeys: Record<string, string> = {
-      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
-      [`${eventsDir}/0.json`]: "",
-      [`${eventsDir}/1.json`]: "",
-    };
     const priorBytes: Record<string, Uint8Array> = {
       [WORKFLOW_RUN_GITIGNORE_PATH]: enc.encode(""),
       [`${eventsDir}/0.json`]: enc.encode(e0),
@@ -702,21 +689,15 @@ describe("workflowRunKindHandler.validatePush — compaction (events.jsonl)", ()
       [WORKFLOW_RUN_GITIGNORE_PATH]: enc.encode(""),
       [combinedPath]: bomFold,
     };
-    const r = await workflowRunKindHandler.validatePush({
-      repoId: uniqueRepoId("wfr"),
-      ref: REF,
-      principal: HUB_PRINCIPAL,
-      topLevelTreePaths: topLevels(prospectiveKeys),
-      readBlob: async (p) => {
-        const b = prospectiveBytes[p];
-        if (b === undefined) throw new Error(`readBlob: ${p} not found`);
-        return b;
-      },
-      listDir: makeListDir(prospectiveKeys),
-      priorReadBlob: async (p) => priorBytes[p] ?? null,
-      priorListDir: makeListDir(priorKeys),
-      changedPathPrefixes: undefined,
-    });
+    const r = await workflowRunKindHandler.validatePush(
+      validatePushArgs({
+        repoId: uniqueRepoId("wfr"),
+        ref: REF,
+        principal: HUB_PRINCIPAL,
+        files: prospectiveBytes,
+        priorFiles: priorBytes,
+      }),
+    );
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("unreachable");
     expect(r.reason).toMatch(/does not fold its prior events verbatim/);
@@ -1136,10 +1117,64 @@ describe("workflowRunKindHandler.validatePush — CancelRequested principal-vs-o
 });
 
 describe("workflowRunKindHandler.validatePush — append-only via prior-tree", () => {
-  // The handler reads the parent commit's tree via `priorReadBlob`
-  // and rejects any event path whose prospective bytes diverge from
-  // the prior bytes. These cases pin that append-only boundary at
-  // `validatePush`.
+  // The handler compares each event's blob OID with the OID at the same
+  // path in the parent commit's tree, and rejects any event path whose
+  // prospective bytes diverge from the prior bytes. These cases pin
+  // that append-only boundary at `validatePush`.
+
+  test("an event path that the prior tree holds as a tree counts as absent", async () => {
+    // The prior tree has no event bytes at `1.json`, as `priorReadBlob`
+    // returns null for a tree, so the prospective event is newly added:
+    // it neither diverges nor throws, and its terminal event is new.
+    const seq0 = eventBody(0, "RunStarted");
+    const prior = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: seq0,
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/1.json/nested`]: "nested",
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: seq0,
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/1.json`]: eventBody(
+        1,
+        "RunCompleted",
+      ),
+    };
+    const r = await validate(prospective, { priorFiles: prior });
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    expect(r.newlyTerminalRuns).toEqual([
+      {
+        runId: "run-x",
+        status: "completed",
+        terminalEventJson: eventBody(1, "RunCompleted"),
+      },
+    ]);
+  });
+
+  test("rejects a prior event that the new commit replaces with a tree", async () => {
+    const eventPath = `${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`;
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${eventPath}/nested`]: "nested",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/1.json`]: eventBody(
+          1,
+          "StepStarted",
+        ),
+      },
+      {
+        priorFiles: {
+          [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+          [eventPath]: eventBody(0, "RunStarted"),
+        },
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /event runs\/run-x\/events\/0\.json bytes diverge from the prior tree \(a tree vs blob OID [0-9a-f]{40}\)/,
+    );
+  });
 
   test("rejects a prospective tree that mutates the bytes of an event present in the prior tree", async () => {
     const prior = {
@@ -1297,6 +1332,17 @@ describe("workflowRunKindHandler.validatePush — blobs subtree", () => {
     );
   });
 
+  test("rejects a prior blob that the new commit replaces with a tree", async () => {
+    const prior = blobsTree("run-a", { [BLOB_KEY_A]: "original-bytes" });
+    const prospective = blobsTree("run-a", { [`${BLOB_KEY_A}/nested`]: "x" });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /blob runs\/run-a\/blobs\/[0-9a-f]{64} bytes diverge from the prior tree \(a tree vs blob OID [0-9a-f]{40}\)/,
+    );
+  });
+
   test("accepts an idempotent re-write of an existing blob with identical bytes", async () => {
     const bytes = "stable-bytes";
     const prior = blobsTree("run-a", { [BLOB_KEY_A]: bytes });
@@ -1311,6 +1357,20 @@ describe("workflowRunKindHandler.validatePush — blobs subtree", () => {
       [BLOB_KEY_A]: "first-bytes",
       [BLOB_KEY_B]: "second-bytes",
     });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("a prior tree at a blob path counts as absent, so the blob is newly added", async () => {
+    // The prior tree holds no bytes at the path, as `priorReadBlob`
+    // returns null for a tree, so the prospective blob has nothing to
+    // diverge from.
+    const prior = {
+      ...blobsTree("run-a", {}),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_BLOBS_DIR}/${BLOB_KEY_A}/nested`]:
+        "nested-bytes",
+    };
+    const prospective = blobsTree("run-a", { [BLOB_KEY_A]: "payload-bytes" });
     const r = await validate(prospective, { priorFiles: prior });
     expect(r.ok).toBe(true);
   });
@@ -1833,16 +1893,14 @@ describe("workflowRunKindHandler.validatePush — workflow-process path-scope fa
         { consumedMessageId: "msg-1" },
       ),
     };
-    const result = await workflowRunKindHandler.validatePush({
-      repoId: uniqueRepoId("wfr"),
-      ref: REF,
-      principal,
-      topLevelTreePaths: topLevels(events),
-      readBlob: makeReadBlob(events),
-      listDir: makeListDir(events),
-      priorReadBlob: noPriorBlob,
-      priorListDir: noPriorDir,
-    });
+    const result = await workflowRunKindHandler.validatePush(
+      validatePushArgs({
+        repoId: uniqueRepoId("wfr"),
+        ref: REF,
+        principal,
+        files: events,
+      }),
+    );
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.reason).toMatch(/workflow-process principal is malformed/);
@@ -3806,77 +3864,6 @@ describe("workflowRunKindHandler — scoped vs validate-all byte-identity", () =
 // no other test exercises. These author commits directly into a source
 // git repo, pack them, and receivePack into the real scoped handler.
 describe("workflow-run substrate — pack-path per-run scope completeness", () => {
-  // Author a commit whose tree adds `files` on top of the index left by
-  // `parent`, parented on `parent`. receivePack validates the tree via
-  // validatePush, not the commit signature, so an unsigned source commit
-  // is sufficient.
-  async function authorCommit(
-    dir: string,
-    files: Record<string, string>,
-    parent: string[],
-    message: string,
-  ): Promise<string> {
-    for (const [rel, body] of Object.entries(files)) {
-      const full = path.join(dir, rel);
-      await fs.promises.mkdir(path.dirname(full), { recursive: true });
-      await fs.promises.writeFile(full, body);
-      await git.add({ fs, dir, filepath: rel });
-    }
-    return git.commit({
-      fs,
-      dir,
-      message,
-      author: { name: "probe", email: "probe@example.com" },
-      parent,
-      ref: REF,
-    });
-  }
-
-  // Author a commit whose tree is EXACTLY `files`: every currently
-  // tracked path is removed first, so paths absent from `files` are
-  // dropped. This is how a run deletion is expressed.
-  async function authorExactTree(
-    dir: string,
-    files: Record<string, string>,
-    parent: string[],
-    message: string,
-  ): Promise<string> {
-    const tracked = await git.listFiles({ fs, dir });
-    for (const rel of tracked) {
-      await git.remove({ fs, dir, filepath: rel });
-      await fs.promises.rm(path.join(dir, rel), { force: true });
-    }
-    for (const [rel, body] of Object.entries(files)) {
-      const full = path.join(dir, rel);
-      await fs.promises.mkdir(path.dirname(full), { recursive: true });
-      await fs.promises.writeFile(full, body);
-      await git.add({ fs, dir, filepath: rel });
-    }
-    return git.commit({
-      fs,
-      dir,
-      message,
-      author: { name: "probe", email: "probe@example.com" },
-      parent,
-      ref: REF,
-    });
-  }
-
-  async function packOids(dir: string, shas: string[]): Promise<Uint8Array> {
-    const oids = Array.from(
-      new Set(
-        (
-          await Promise.all(shas.map((s) => collectReachableObjects(dir, s)))
-        ).flat(),
-      ),
-    );
-    const packResult = await git.packObjects({ fs, dir, oids, write: false });
-    if (packResult.packfile === undefined) {
-      throw new Error("git.packObjects returned no packfile");
-    }
-    return packResult.packfile;
-  }
-
   function makeTargetStore() {
     const repoId: RepoId = {
       kind: "workflow-run",
@@ -3890,8 +3877,15 @@ describe("workflow-run substrate — pack-path per-run scope completeness", () =
     // changed run), the scoped walk would skip it and accept the gap.
     const srcDir = await makeClaimCheckTempDir("wfr-multirun-src-");
     await git.init({ fs, dir: srcDir, defaultBranch: "events" });
-    const genesis = await authorCommit(srcDir, { ".gitignore": "" }, [], "g");
+    const genesis = await authorCommit(
+      REF,
+      srcDir,
+      { ".gitignore": "" },
+      [],
+      "g",
+    );
     const tip = await authorCommit(
+      REF,
       srcDir,
       {
         ".gitignore": "",
@@ -3939,8 +3933,15 @@ describe("workflow-run substrate — pack-path per-run scope completeness", () =
   test("a valid two-run pack commit is accepted (scope does not over-reject)", async () => {
     const srcDir = await makeClaimCheckTempDir("wfr-multirun-ok-src-");
     await git.init({ fs, dir: srcDir, defaultBranch: "events" });
-    const genesis = await authorCommit(srcDir, { ".gitignore": "" }, [], "g");
+    const genesis = await authorCommit(
+      REF,
+      srcDir,
+      { ".gitignore": "" },
+      [],
+      "g",
+    );
     const tip = await authorCommit(
+      REF,
       srcDir,
       {
         ".gitignore": "",
@@ -3979,12 +3980,13 @@ describe("workflow-run substrate — pack-path per-run scope completeness", () =
     // computeChangedPathPrefixes flags run-a (its subtree OID went
     // present->absent), putting it in scope so the deletion-direction
     // guard fires. The scoped prospective walk lists the now-absent
-    // run-a as empty -- via buildCommitTreeClosures.listDir returning []
+    // run-a as empty -- via buildTreeReadClosures.listDir returning []
     // for a missing dir -- and skips it, so the rejection surfaces as the
     // clean append-only path_violation rather than a raw substrate throw.
     const srcDir = await makeClaimCheckTempDir("wfr-drop-src-");
     await git.init({ fs, dir: srcDir, defaultBranch: "events" });
     const parent = await authorExactTree(
+      REF,
       srcDir,
       {
         ".gitignore": "",
@@ -4001,6 +4003,7 @@ describe("workflow-run substrate — pack-path per-run scope completeness", () =
       "two runs",
     );
     const tip = await authorExactTree(
+      REF,
       srcDir,
       {
         ".gitignore": "",
@@ -4053,6 +4056,102 @@ describe("workflow-run substrate — pack-path per-run scope completeness", () =
     // The clean contract reason, not a raw "is not a directory" throw.
     expect(reason).toContain("append-only");
     expect(reason).not.toContain("is not a directory");
+  });
+
+  test("a tree kept at a mail part path is rejected although its OID is unchanged", async () => {
+    // The pack path hands the handler tree listings with OIDs. An empty
+    // tree at a mail part path lists as empty, as a blob does, so the
+    // structural walk admits it. When the next commit keeps it, the
+    // immutability check must refuse the tree instead of passing it as a
+    // byte-unchanged blob by its equal OID.
+    type TreeSpec = { [name: string]: string | TreeSpec };
+    async function writeSpecTree(dir: string, spec: TreeSpec): Promise<string> {
+      const entries: TreeEntry[] = [];
+      for (const [name, value] of Object.entries(spec)) {
+        if (typeof value === "string") {
+          const oid = await git.writeBlob({
+            fs,
+            dir,
+            blob: new TextEncoder().encode(value),
+          });
+          entries.push({ mode: "100644", path: name, oid, type: "blob" });
+        } else {
+          const oid = await writeSpecTree(dir, value);
+          entries.push({ mode: "040000", path: name, oid, type: "tree" });
+        }
+      }
+      return git.writeTree({ fs, dir, tree: entries });
+    }
+    async function commitSpec(
+      dir: string,
+      spec: TreeSpec,
+      parent: string[],
+    ): Promise<string> {
+      return git.commit({
+        fs,
+        dir,
+        message: "spec",
+        author: { name: "probe", email: "probe@example.com" },
+        tree: await writeSpecTree(dir, spec),
+        parent,
+        ref: REF,
+      });
+    }
+
+    const segment = encodeURIComponent("<msg-1@host>");
+    const runA = (events: TreeSpec): TreeSpec => ({
+      ".gitignore": "",
+      [WORKFLOW_RUN_RUNS_PREFIX]: {
+        "run-a": {
+          events,
+          [WORKFLOW_RUN_PARTS_DIR]: { [segment]: { "0-photo.png": {} } },
+        },
+      },
+    });
+    const srcDir = await makeClaimCheckTempDir("wfr-tree-part-src-");
+    await git.init({ fs, dir: srcDir, defaultBranch: "events" });
+    const parent = await commitSpec(
+      srcDir,
+      runA({ "0.json": eventBody(0, "RunStarted") }),
+      [],
+    );
+    const tip = await commitSpec(
+      srcDir,
+      runA({
+        "0.json": eventBody(0, "RunStarted"),
+        "1.json": eventBody(1, "StepCompleted"),
+      }),
+      [parent],
+    );
+
+    const store = createRepoStore({
+      dataDir: await makeClaimCheckTempDir("wfr-tree-part-tgt-"),
+      signingKey: claimCheckSigningKey,
+      handlers: { "workflow-run": workflowRunKindHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    const { repoId } = makeTargetStore();
+    await store.initRepo(repoId);
+    await store.receivePack(
+      HUB_PRINCIPAL,
+      repoId,
+      REF,
+      await packOids(srcDir, [parent]),
+      parent,
+      null,
+    );
+
+    await expect(
+      store.receivePack(
+        HUB_PRINCIPAL,
+        repoId,
+        REF,
+        await packOids(srcDir, [tip]),
+        tip,
+        parent,
+      ),
+    ).rejects.toThrow(/tree listing has no OID .*runs\/run-a\/parts\//);
+    expect(await store.resolveRef(HUB_PRINCIPAL, repoId, REF)).toBe(parent);
   });
 });
 

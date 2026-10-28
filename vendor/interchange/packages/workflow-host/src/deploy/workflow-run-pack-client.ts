@@ -543,13 +543,13 @@ export function createMultistepSourcesRouter(): MultistepSourcesRouter {
  * against the `MultistepCredentialsRouter` after a supervisor's `spawn`
  * succeeds. The handler hands the delivery to the supervisor's
  * `deliverCredentials`, which sends a `credentials-updated` control IPC frame
- * to the workflow-process child, where the material cell is swapped in place.
+ * to the workflow-process child, where the material cell is swapped in place,
+ * and then seals the supervisor's merged delivery into the run record so a
+ * restart restores it.
  *
  * Unlike sources rotation, this registers for ANY deployment (single- or
  * multi-step): the material cell is per-child and read by every step's tool
- * capabilities, so there is no single-warm-agent restriction. There is no
- * durable persist -- credential material never touches disk (it is re-resolved
- * by the hub on reconnect).
+ * capabilities, so there is no single-warm-agent restriction.
  */
 export type MultistepCredentialsHandler = (args: {
   delivery: CredentialDelivery;
@@ -638,9 +638,10 @@ export function createMultistepCredentialsRouter(): MultistepCredentialsRouter {
  * commit's parent against its existing-commits set; as long as the
  * pack carries the full chain from prior acked tip to current tip,
  * every intermediate commit is validated by the receiver. Coalescing
- * multiple local commits into one network push therefore preserves
- * the receive-time CAS invariant while collapsing N hub round-trips
- * into 1.
+ * multiple local commits into one network push therefore keeps every
+ * commit transition validated, while collapsing N hub round-trips
+ * into 1. The hub keeps the newest tip this store sent: a push of a
+ * tip the hub ref already holds changes nothing.
  *
  * Reconnect-safe re-shipping: the substrate advances its shipped-tip
  * cursor on the ack (`push` calls `commitPackedTip` only after
