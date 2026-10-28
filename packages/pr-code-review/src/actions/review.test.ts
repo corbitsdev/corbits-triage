@@ -76,6 +76,21 @@ test("a repository finder that spent its budget before answering in JSON found n
   expect(folded.budgetExhausted).toBe(true);
 });
 
+test("findings without a title fold when their file, lines, explanation and any quoted lines match", async () => {
+  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout })) };
+  const untitled = { path: "src/a.ts", start: 1, end: 3, code: "return total;", why: "the total drops the tax" };
+  const unquoted = { path: "src/a.ts", start: 1, end: 3, why: "The total  drops the tax" };
+  const otherWhy = { ...untitled, why: "the total is in cents" };
+  const otherCode = { ...untitled, code: "return subtotal;" };
+  const found = [untitled, otherWhy, otherCode];
+  const folded = await candidates({ reviewInput, findDiff: reply({ findings: found }), findRepo: reply({ findings: [{ ...untitled, code: " return  total; " }, unquoted] }) });
+  expect(folded.kept).toEqual([
+    { ...untitled, finders: ["diff", "repo"], reports: 3 },
+    { ...otherWhy, finders: ["diff"], reports: 1 },
+    { ...otherCode, finders: ["diff"], reports: 1 },
+  ]);
+});
+
 test("a finding is posted when the check confirms it, or cannot decide and both finders reported it; the rest are kept with the check's reason", async () => {
   const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout })) };
   const folded = await candidates({ reviewInput, findDiff: reply({ findings: [] }), findRepo: reply({ findings: [] }) });

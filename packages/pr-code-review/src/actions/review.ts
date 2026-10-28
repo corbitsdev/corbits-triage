@@ -181,16 +181,31 @@ function findingsOf(output: unknown, finder: Finder): Candidate[] {
   return parsed.findings.map((finding) => ({ ...finding, finders: [finder], reports: 1 }));
 }
 
-function titleOf(finding: Finding): string | undefined {
-  return finding.title?.trim().replace(/\s+/g, " ").toLowerCase() || undefined;
+function spaced(text: string | undefined): string | undefined {
+  return text?.trim().replace(/\s+/g, " ") || undefined;
 }
 
+function normalized(text: string | undefined): string | undefined {
+  return spaced(text)?.toLowerCase();
+}
+
+/**
+ * Same file and lines, and the same title ignoring case and spacing. Two untitled findings compare their explanations
+ * instead, and their quoted lines ignoring spacing when both quote one.
+ */
 export function isDuplicate(a: Finding, b: Finding): boolean {
-  const title = titleOf(a);
-  return title !== undefined && title === titleOf(b) && samePath(a.path, b.path) && a.start === b.start && a.end === b.end;
+  if (!samePath(a.path, b.path) || a.start !== b.start || a.end !== b.end) return false;
+  const title = normalized(a.title);
+  if (title !== normalized(b.title)) return false;
+  if (title !== undefined) return true;
+  const why = normalized(a.why);
+  if (why === undefined || why !== normalized(b.why)) return false;
+  const code = spaced(a.code);
+  const other = spaced(b.code);
+  return code === undefined || other === undefined || code === other;
 }
 
-/** The candidates with each exact duplicate (same file, same lines, same title ignoring case and spacing) folded into the first. */
+/** The candidates with each exact duplicate folded into the first. */
 function withoutDuplicates(found: readonly Candidate[]): Candidate[] {
   const kept: Candidate[] = [];
   for (const candidate of found) {
