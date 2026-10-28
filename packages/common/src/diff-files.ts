@@ -99,3 +99,14 @@ export function addedLines(diff: string): Map<string, Set<number>> {
   }
   return added;
 }
+
+/** The text of each hunk of `path`'s part of the diff that shows any head-side line from `start` to `end`. */
+export function hunksAt(diff: string, { path, start, end }: { path: string; start: number; end: number }): string[] {
+  const section = sections(diff).find((s) => sectionPath(s) === path);
+  const body = section?.search(/^@@/m) ?? -1;
+  if (section === undefined || body < 0) return [];
+  return section
+    .slice(body)
+    .split(/^(?=@@)/m)
+    .filter((hunk) => parsePatch(hunk).some((h) => h.lines.some((line) => line.newNo !== null && line.newNo >= start && line.newNo <= end)));
+}

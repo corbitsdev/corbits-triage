@@ -13,8 +13,10 @@ under `prefix`, as `codeReviewReviewer`, the review a pull request's manager dep
 
 The request is `{ kind: "code-review", title, description, diff, checkout }`. The title and description are as the host
 shows them, without hidden text. Optional fields are `number` (the pull request's), `efforts` per step,
-`budgets.repoFinder`, and `cut` (`{ lines, of, unread? }`) when the sender cut the diff for size, `unread`
-naming the files it cut part-way or left out; the review carries it and never puts those names in a prompt.
+`budgets.repoFinder` (400,000 billable tokens by default), `budgets.check` (each check's, 100,000 by default),
+`budgets.checkTotal` (all of a review's checks together, 400,000 by default), and `cut` (`{ lines, of, unread? }`)
+when the sender cut the diff for size, `unread` naming the files it cut part-way or left out; the review carries it and
+never puts those names in a prompt.
 
 ### Process
 
@@ -32,9 +34,17 @@ naming the files it cut part-way or left out; the review carries it and never pu
    finders reported each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
    findings by defect. A group none of whose findings had a line of its file shown to the model is marked `unverified`.
-5. **check** reads each group's candidate, the code it quotes and the file lines around it in one model call per
-   group, on every review, and answers real or not real with a reason. A group it finds not real is
-   left out of the review and kept in its `dropped`, in its finder's words with the verdict and reason.
+5. **check** verifies each group on every review: the finding, the diff hunks that change its lines, and the read
+   tools on the checkout. The total is handed out up front, in review order, each group getting `budgets.check` or
+   what is left of `budgets.checkTotal`, so with the defaults the four most serious groups are checked; later groups
+   are unsure, "check budget spent", and post only when both finders reported them. The check answers real when lines
+   it read show the claimed behaviour, reached by the trigger with no guard and not intended by the description; not
+   real only when a line of code disproves it; unsure when it cannot decide. A real or not real reason that cites, as
+   path:line, no line it read (in the hunks or with the tools) is unsure, its reason led by "no cited line". Once a
+   check has been refused a read for its budget, only a not real that cites such a line stands; anything else is
+   unsure.
+   A group is posted when it is real, or unsure and both finders reported it; any other is left out of the review and
+   kept in its `dropped`, in its finder's words with the verdict and reason.
 6. **write** comments on every group left, most severe and most agreed-on first; each comment carries the code it
    quotes and how many finders reported it.
 

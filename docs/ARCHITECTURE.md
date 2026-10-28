@@ -920,11 +920,26 @@ its tools are the host read bundle and repository reads confined to that
 folder. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
-GitHub show as "Not checked against the file". The check step reads every
-consolidated group in one more model call each: the candidate, its quoted code
-and the file lines around it, answered real or not real with a reason. Only
-groups it finds real are written up and posted; the others stay in the
-reported result's `dropped`, each with the verdict and reason.
+GitHub show as "Not checked against the file". The check step verifies every
+consolidated group on the diff finder's model, one reader run each: it gets the
+finding (path, lines, title, why, trigger), the diff hunks that change its
+lines, and the repository read tools on the checkout. The total check budget
+is handed out up front, in review order (severity, then agreement): each group
+gets `budgets.check` (100,000 billable tokens by default) or what is left of
+`budgets.checkTotal` (400,000 by default), so with the defaults the four most
+serious groups are checked; later groups are unsure with the reason "check
+budget spent" and post only when both finders reported them. The check answers
+real when lines it read show the claimed behaviour, reached by the trigger with
+no guard and not intended by the description, not real only when a line of
+code disproves it, and unsure when it cannot decide. The reader director makes
+a real or not real whose reason cites, as path:line, no line from the hunks or
+from its own reads unsure, its reason led by "no cited line"; an answer with no
+verdict fails the step, which asks again. Once a check has been refused a read
+for its budget, only a not real that cites such a line stands, and anything
+else, no verdict included, is unsure; so is no verdict once the budget is
+spent. A group is posted when it is real, or unsure
+and both finders reported it; the others stay in the reported result's
+`dropped`, each with the verdict and reason.
 
 Beside the model steps, one step runs a tool and keeps what it says, as structured
 findings (source, rule, path, line, message, severity, fix when the tool gives

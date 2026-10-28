@@ -1,7 +1,7 @@
 # @corbits/pr-code-review-anthropic
 
 Code review on Anthropic's models: the [`@corbits/pr-code-review`](../pr-code-review/README.md) workflow built from the
-Anthropic profile (`src/profile.ts`), Opus 5.5 for the diff finder and Haiku 5.5 for every other step. A workspace runs
+Anthropic profile (`src/profile.ts`), Opus 5.5 for the diff finder and the check, and Haiku 5.5 for every other step. A workspace runs
 it while its Anthropic key is stored.
 
 ## Use

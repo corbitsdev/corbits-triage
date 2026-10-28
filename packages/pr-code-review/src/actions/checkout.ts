@@ -91,6 +91,10 @@ export function checkoutOf(text: string): Checkout | undefined {
 }
 
 export const DEFAULT_BUDGET = 400_000;
+/** Each check verifies one finding, so it reads on a smaller budget; one refused a read for it is unsure. */
+export const DEFAULT_CHECK_BUDGET = 100_000;
+/** What all of a review's checks may read together, handed out up front in review order; a finding left without any is unsure. */
+export const DEFAULT_CHECK_TOTAL = 400_000;
 
 // A director that reads the repository on a budget of billable tokens reads it from its own line.
 const BUDGET_TAG = /^<budget tokens="(\d+)"\/>\n/m;

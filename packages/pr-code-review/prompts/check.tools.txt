@@ -1,0 +1,3 @@
+<tools>
+The repository is checked out at the pull request's head. Call read_file, grep and list to read the code the finding depends on. Paths are relative to the repository root and line numbers are head-side. You have the token budget in <budget> for reading; answer before it is spent.
+</tools>

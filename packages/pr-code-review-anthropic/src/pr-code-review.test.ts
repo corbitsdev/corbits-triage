@@ -9,6 +9,7 @@ import { projectLiveToInert, type StepInvokeRequest, type WorkflowAuthorizeFn } 
 import { checkoutUnder } from "@corbits/pr-code-review/actions/checkout";
 import { codeReviewAgents, credentialBindingsFor } from "@corbits/pr-code-review/agents";
 import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
+import { CHECK_UNFINISHED, UNCITED } from "@corbits/pr-code-review/reader-director";
 import { codeReviewWorkflow } from "@corbits/pr-code-review/pr-code-review";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { runLocalWorkflow } from "../../triage-workflows/src/run-local.js";
@@ -39,6 +40,10 @@ const DIFF = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n
 const FINDING = { path: "src/a.ts", start: 2, end: 2, priority: 1, confidence: 0.9, title: "add subtracts", why: "it uses -", trigger: "add(1, 1)", code: "  return a - b;" };
 /** A candidate the check step answers not real. */
 const PLANTED = { path: "src/a.ts", start: 1, end: 1, priority: 2, confidence: 0.6, title: "add is not exported", why: "callers cannot import it", trigger: "import { add }", code: "export function add(a: number, b: number) {" };
+const DISPROOF = "src/a.ts:1 `export function add(a: number, b: number) {` exports add.";
+/** A file outside the diff, and a finding in it only the repository finder reports, which only reading it confirms. */
+const CALLER = "import { add } from \"./a\";\nexport const four = add(2, 2);\n";
+const OUTSIDE = { path: "src/b.ts", start: 2, end: 2, priority: 1, title: "four is 0", why: "add subtracts, so four is 0", trigger: "read four", code: "export const four = add(2, 2);" };
 
 let dir: string;
 let tarball: Uint8Array;
@@ -55,7 +60,13 @@ let writeProse = 0;
 /** Whether both finders also report `PLANTED`. */
 let planted = false;
 /** How many of the check step's next answers name no verdict it knows. */
-let checkUnsure = 0;
+let checkInvalid = 0;
+/** Whether the repository finder also reports `OUTSIDE`. */
+let outside = false;
+/** Whether the check of `OUTSIDE` keeps reading past its budget, then confirms it, or never answers. */
+let checkKeepsReading: "confirms" | "silent" | undefined;
+/** Whether the check of `OUTSIDE` cites no line it read. */
+let checkUncited = false;
 
 const allow: WorkflowAuthorizeFn = async function allow() {
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
@@ -66,6 +77,7 @@ async function host(input: string | URL | Request): Promise<Response> {
   fetched.push(pathname);
   if (pathname === `/repos/${REPO}/tarball/${SHA}`) return new Response(tarball);
   if (pathname === `/repos/${REPO}/contents/src/a.ts`) return new Response(FILE);
+  if (pathname === `/repos/${REPO}/contents/src/b.ts`) return new Response(CALLER);
   return new Response("not found", { status: 404 });
 }
 
@@ -75,14 +87,36 @@ interface MessagesRequest {
   messages: unknown[];
 }
 
+/** The check reads the finding's file, then confirms it, or, for `OUTSIDE`, confirms it only once it has read the caller. */
+function verdict(sent: string) {
+  if (checkInvalid > 0) {
+    checkInvalid--;
+    return { verdict: "maybe", reason: "Line 2 subtracts." };
+  }
+
+  if (sent.includes(PLANTED.title)) return { verdict: "not_real", reason: DISPROOF };
+  if (!sent.includes(OUTSIDE.title)) return { verdict: "real", reason: "src/a.ts:2 `return a - b;` subtracts." };
+  if (checkUncited) return { verdict: "real", reason: "four is 0 at line 9 of b.ts." };
+  if (sent.includes("const four = add(2, 2)")) return { verdict: "real", reason: "src/b.ts:2 `export const four = add(2, 2);` is 0." };
+  return { verdict: "unsure", reason: "The caller was not read." };
+}
+
 /** Each step's answer by its prompt; the repository finder reads three times, then answers. */
 function answer(body: MessagesRequest) {
   const system = JSON.stringify(body.system);
   const sent = JSON.stringify(body.messages);
+  if (sent.includes("Verify this finding.") && checkKeepsReading === "confirms" && sent.includes("Budget spent")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
+  if (sent.includes("Verify this finding.") && checkKeepsReading && sent.includes(OUTSIDE.title)) {
+    return [{ type: "tool_use", id: `verify-${sent.split("tool_result").length}`, name: "read_file", input: { path: OUTSIDE.path } }];
+  }
+  if (sent.includes("Verify this finding.") && !sent.includes("tool_result")) {
+    return [{ type: "tool_use", id: "verify", name: "read_file", input: { path: sent.includes(OUTSIDE.title) ? OUTSIDE.path : "src/a.ts" } }];
+  }
+  if (sent.includes("Verify this finding.")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
   if (system.includes("<tools>") && !sent.includes("tool_result")) {
     return [
       { type: "tool_use", id: "read", name: "read_file", input: { path: "src/a.ts" } },
-      { type: "tool_use", id: "grep", name: "grep", input: { pattern: "add" } },
+      { type: "tool_use", id: "grep", name: "grep", input: { pattern: "function add" } },
       { type: "tool_use", id: "escape", name: "read_file", input: { path: join(dir, "head/src/a.ts") } },
     ];
   }
@@ -95,13 +129,9 @@ function answer(body: MessagesRequest) {
     return [{ type: "text", text: "One defect: add subtracts." }];
   }
   if (system.includes("<tools>") && repoFinderProse) return [{ type: "text", text: "I read src/a.ts and ran out of budget before writing findings." }];
-  let text: unknown = { findings: planted ? [FINDING, PLANTED] : [FINDING] };
+  const reported = [FINDING, ...(planted ? [PLANTED] : []), ...(outside && system.includes("<tools>") ? [OUTSIDE] : [])];
+  let text: unknown = { findings: reported };
   if (system.includes("<cited_code>")) text = { groups: [{ defect: "add subtracts", members: [0], representative: 0 }] };
-  if (sent.includes("Is this defect real?") && checkUnsure > 0) {
-    checkUnsure--;
-    return [{ type: "text", text: JSON.stringify({ verdict: "unsure" }) }];
-  }
-  if (sent.includes("Is this defect real?")) text = sent.includes(PLANTED.title) ? { verdict: "not_real", reason: "Line 1 exports add." } : { verdict: "real", reason: "Line 2 subtracts." };
   if (sent.includes("Plan the review")) text = { areas: [], outside_diff: [] };
   if (sent.includes("Write the review.")) text = { summary: "One defect.", comments: [{ finding: 0, title: "add subtracts", body: "Use +." }] };
   return [{ type: "text", text: JSON.stringify(text) }];
@@ -111,6 +141,7 @@ beforeAll(function serve() {
   dir = mkdtempSync(join(tmpdir(), "code-review-"));
   mkdirSync(join(dir, "head/src"), { recursive: true });
   writeFileSync(join(dir, "head/src/a.ts"), FILE);
+  writeFileSync(join(dir, "head/src/b.ts"), CALLER);
   execFileSync("tar", ["-czf", join(dir, "head.tgz"), "-C", dir, "head"], { env: { PATH: "/usr/bin:/bin", COPYFILE_DISABLE: "1" } });
   tarball = readFileSync(join(dir, "head.tgz"));
   model = Bun.serve({
@@ -142,7 +173,7 @@ function hurried() {
 }
 
 /** A review whose checkout action writes under `checkoutDir` and whose repository finder reads under `readerDir`. */
-async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { repoFinder: number }) {
+async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { repoFinder?: number; check?: number }) {
   const origin = `http://localhost:${model.port}`;
   const results: ToolResult[] = [];
   const attempts: Record<string, number> = {};
@@ -239,7 +270,7 @@ test("a write answer that isn't JSON fails its step, which asks again", async ()
   expect(run.outputs["review"]).toMatchObject({ summary: "One defect." });
 });
 
-test("a candidate the check answers not real is left out of the review and kept with the check's verdict and reason", async () => {
+test("a candidate the check answers not real is left out of the review and kept with the line that disproves it", async () => {
   planted = true;
   try {
     const { run, attempts } = await review(join(dir, "data"));
@@ -247,7 +278,7 @@ test("a candidate the check answers not real is left out of the review and kept 
     expect(attempts["code-review-check"]).toBe(2);
     expect(run.outputs["review"]).toMatchObject({
       comments: [{ path: "src/a.ts", start: 2, title: "add subtracts" }],
-      dropped: [{ path: "src/a.ts", start: 1, title: "add is not exported", verdict: "not_real", reason: "Line 1 exports add." }],
+      dropped: [{ path: "src/a.ts", start: 1, title: "add is not exported", verdict: "not_real", reason: DISPROOF }],
     });
   } finally {
     planted = false;
@@ -255,10 +286,58 @@ test("a candidate the check answers not real is left out of the review and kept 
 });
 
 test("a check answer that is not a verdict and reason fails its step, which asks again", async () => {
-  checkUnsure = 1;
+  checkInvalid = 1;
   const { run, attempts } = await review(join(dir, "data"));
-  expect(checkUnsure).toBe(0);
+  expect(checkInvalid).toBe(0);
   expect(attempts["code-review-check"]).toBe(2);
   expect(run.terminalStatus).toBe("completed");
   expect(run.outputs["review"]).toMatchObject({ comments: [{ path: "src/a.ts", start: 2 }], dropped: [] });
 });
+
+test("a finding one finder reports outside the diff is posted once the check reads the file that proves it", async () => {
+  outside = true;
+  try {
+    const { run, results } = await review(join(dir, "data"), join(dir, "data"), { check: 30 });
+    expect(run.terminalStatus).toBe("completed");
+    expect(results.find((r) => r.callId === "verify" && JSON.stringify(r.content).includes("add(2, 2)"))).toMatchObject({ content: { path: "src/b.ts" } });
+    expect(run.outputs["review"]).toMatchObject({ comments: [{ path: "src/a.ts", start: 2 }, { path: "src/b.ts", start: 2, title: "four is 0", agreement: { finders: 1 } }], dropped: [] });
+  } finally {
+    outside = false;
+  }
+});
+
+test("a check whose reason cites no line it read is unsure, so a finding one finder reported is left out", async () => {
+  outside = true;
+  checkUncited = true;
+  try {
+    const { run, attempts } = await review(join(dir, "data"));
+    expect(run.terminalStatus).toBe("completed");
+    expect(attempts["code-review-check"]).toBe(2);
+    expect(run.outputs["review"]).toMatchObject({
+      comments: [{ path: "src/a.ts", start: 2 }],
+      dropped: [{ path: "src/b.ts", start: 2, verdict: "unsure", reason: `${UNCITED}: four is 0 at line 9 of b.ts.` }],
+    });
+  } finally {
+    outside = false;
+    checkUncited = false;
+  }
+});
+
+for (const [mode, reason] of [["confirms", "src/b.ts:2 `export const four = add(2, 2);` is 0."], ["silent", CHECK_UNFINISHED]] as const) {
+  test(`a check refused a read for its budget that then ${mode === "confirms" ? "confirms with a cited line" : "never answers"} is unsure, so a finding one finder reported is left out`, async () => {
+    outside = true;
+    checkKeepsReading = mode;
+    try {
+      const { run, attempts } = await review(join(dir, "data"), join(dir, "data"), { check: 30 });
+      expect(run.terminalStatus).toBe("completed");
+      expect(attempts["code-review-check"]).toBe(2);
+      expect(run.outputs["review"]).toMatchObject({
+        comments: [{ path: "src/a.ts", start: 2 }],
+        dropped: [{ path: "src/b.ts", start: 2, verdict: "unsure", reason }],
+      });
+    } finally {
+      outside = false;
+      checkKeepsReading = undefined;
+    }
+  });
+}

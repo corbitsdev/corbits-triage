@@ -24,8 +24,8 @@ export type CodeReviewComment = typeof CodeReviewComment.infer;
 /** A diff cut to its first `lines` of `of` lines for size, with the files it cut part-way or left out. */
 export const DiffCut = type({ lines: "number", of: "number", "unread?": "string[]" });
 
-/** A finding the review's check found not real, left out of the review with the check's reason. */
-const CodeReviewDropped = CodeReviewComment.and({ verdict: "'not_real'", reason: "string" });
+/** A finding the review left out: its check found it not real, or could not decide and only one finder reported it. */
+const CodeReviewDropped = CodeReviewComment.and({ verdict: "'not_real' | 'unsure'", reason: "string" });
 
 /**
  * What a code review run answers: its summary, its findings, the findings its check dropped, whether its reader stopped

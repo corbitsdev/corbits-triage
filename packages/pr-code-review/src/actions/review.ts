@@ -1,9 +1,10 @@
 import { type } from "arktype";
+import { hunksAt } from "@corbits/common/diff-files";
 import { isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
 import { changedFiles, parseFindings, quotedLine, samePath, type Finding, type Site } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
-import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, repositoryTag } from "./checkout.js";
+import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
 
@@ -14,7 +15,7 @@ const ReviewRequest = type({
   diff: "string",
   checkout: Checkout,
   "efforts?": { "plan?": Effort, "diffFinder?": Effort, "repoFinder?": Effort, "consolidate?": Effort, "check?": Effort, "write?": Effort },
-  "budgets?": { "repoFinder?": "number.integer > 0" },
+  "budgets?": { "repoFinder?": "number.integer > 0", "check?": "number.integer > 0", "checkTotal?": "number.integer > 0" },
   /** The pull request's number, so a run can be found by it. */
   "number?": "number.integer > 0",
   /** Set when the diff was cut to its first `lines` of `of` lines to keep the review within its size limit, with the files it cut part-way or left out. */
@@ -84,23 +85,27 @@ export interface Group {
 }
 
 /** The check step's answer; its director refuses any other, so the step asks again. */
-export const Verdict = type({ verdict: "'real' | 'not_real'", reason: "string" });
+export const Verdict = type({ verdict: "'real' | 'not_real' | 'unsure'", reason: "string" });
 type Verdict = typeof Verdict.infer;
 
 interface Checks {
   findings: Reported[];
+  /** One per finding from the first, while the review's total check budget lasts. */
   checks: { text: string; inference: StepInference }[];
 }
 
-/** A finding the check found not real: left out of the review, kept with the check's verdict and reason. */
-interface Dropped extends Verdict {
+/** The verdict of a finding the total check budget did not reach. */
+const UNCHECKED: Verdict = { verdict: "unsure", reason: "check budget spent" };
+
+/** A finding with the check's verdict and reason; one the review leaves out is kept with them in its `dropped`. */
+interface Judged extends Verdict {
   finding: Reported;
 }
 
 interface WriteInput {
   budgetExhausted: boolean;
   findings: Reported[];
-  dropped: Dropped[];
+  dropped: Judged[];
   text: string;
   inference: StepInference;
 }
@@ -268,54 +273,68 @@ function bySeverityThenAgreement(a: Reported, b: Reported): number {
   return severityOf(a) - severityOf(b) || b.agreement.finders - a.agreement.finders || b.agreement.reports - a.agreement.reports;
 }
 
-function checkMessage(request: ReviewRequest, finding: Reported, excerpt: string): string {
+/** The check's message: the checkout and budget it reads under, the finding, and the diff hunks that change its lines. */
+function checkMessage(request: ReviewRequest, finding: Reported, budget: number): string {
   const claim = { title: finding.title, why: finding.why, trigger: finding.trigger };
+  const hunks = hunksAt(request.diff, finding);
   return [
-    aboutPullRequest(request),
-    `<candidate path="${promptAttribute(finding.path)}" start="${finding.start}" end="${finding.end}">\n${promptText(JSON.stringify(claim, null, 2))}\n</candidate>`,
-    `<quoted_code>\n${promptText(String(finding.code))}\n</quoted_code>`,
-    `<file path="${promptAttribute(finding.path)}">\n${promptText(excerpt)}\n</file>`,
-    "Is this defect real?",
+    `${repositoryTag(request.checkout)}${budgetTag(budget)}${aboutPullRequest(request)}`,
+    `<finding path="${promptAttribute(finding.path)}" start="${finding.start}" end="${finding.end}">\n${promptText(JSON.stringify(claim, null, 2))}\n</finding>`,
+    ...(hunks.length > 0 ? [`<diff path="${promptAttribute(finding.path)}">\n${promptText(hunks.join(""))}\n</diff>`] : []),
+    "Verify this finding.",
   ].join("\n\n");
 }
 
 export interface Consolidated {
   groups: Group[];
   sites: Site[];
-  excerpts: string[];
   unreadFindings: number[];
 }
 
-/** Every consolidated group with its finding and excerpt, in the order the review reports them: by severity, then agreement. */
-export function orderedGroups(kept: readonly Candidate[], { groups, sites, excerpts, unreadFindings }: Consolidated) {
+/** Every consolidated group with its finding, in the order the review reports them: by severity, then agreement. */
+export function orderedGroups(kept: readonly Candidate[], { groups, sites, unreadFindings }: Consolidated) {
   function reported(joined: Group) {
     const group = readRepresentative(joined, unreadFindings);
     const finding = reportedOf(group, kept, sites);
-    return { group, finding: unreadFindings.includes(group.representative) ? { ...finding, unverified: true as const } : finding, excerpt: excerpts[group.representative]! };
+    return { group, finding: unreadFindings.includes(group.representative) ? { ...finding, unverified: true as const } : finding };
   }
   return joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
 }
 
-/** Every consolidated finding, ordered by severity then agreement, and one check of each. */
+/**
+ * Every consolidated finding, ordered by severity then agreement, and a check of each in that order, each on the per-check
+ * budget or what is left of the review's total, until the total is spent.
+ */
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { kept } = stepOutput(steps, "candidates");
-  const ordered = orderedGroups(kept, jsonReply<Consolidated>(stepOutput(steps, "consolidate")));
-  function check({ finding, excerpt }: (typeof ordered)[number]) {
-    return { text: checkMessage(request, finding, excerpt), inference: inference.check };
+  const findings = orderedGroups(kept, jsonReply<Consolidated>(stepOutput(steps, "consolidate"))).map((o) => o.finding);
+  const perCheck = request.budgets?.check ?? DEFAULT_CHECK_BUDGET;
+  let left = request.budgets?.checkTotal ?? DEFAULT_CHECK_TOTAL;
+  const checked: Checks["checks"] = [];
+  for (const finding of findings) {
+    const budget = Math.min(perCheck, left);
+    if (budget === 0) break;
+    left -= budget;
+    checked.push({ text: checkMessage(request, finding, budget), inference: inference.check });
   }
-  return { findings: ordered.map((o) => o.finding), checks: ordered.map(check) };
+  return { findings, checks: checked };
 }
 
-/** The findings the check found real, to report, those it found not real with its verdict and reason, and the write step's user message. */
+/** Whether a checked finding is posted: the check confirmed it, or could not decide and both finders reported it. */
+function posted({ finding, verdict }: Judged): boolean {
+  return verdict === "real" || (verdict === "unsure" && finding.agreement.finders === FINDERS.length);
+}
+
+/** The findings to report, those left out with the check's verdict and reason, and the write step's user message. */
 export async function writeInput(steps: Steps): Promise<WriteInput> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { budgetExhausted } = stepOutput(steps, "candidates");
   const { findings: checked } = stepOutput(steps, "checks");
   const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
-  const judged = checked.map((finding, i) => ({ finding, ...verdicts[i]! }));
-  const findings = judged.flatMap((j) => (j.verdict === "real" ? [j.finding] : []));
-  const dropped = judged.filter((j) => j.verdict !== "real");
+  const judged = checked.map((finding, i) => ({ finding, ...(verdicts[i] ?? UNCHECKED) }));
+  const findings = judged.flatMap((j) => (posted(j) ? [j.finding] : []));
+  const dropped = judged.filter((j) => !posted(j));
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nWrite the review.`;
@@ -341,7 +360,7 @@ function commentOf(finding: Reported, { title, body }: { title: string; body: st
 
 /**
  * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes, its
- * agreement and whether its lines went unread, whether it stopped early, and each finding the check dropped, in its
+ * agreement and whether its lines went unread, whether it stopped early, and each finding it left out, in its
  * finder's words with the check's verdict and reason. A finding the write step left without a comment gets one in its
  * finder's words.
  */
@@ -352,7 +371,7 @@ export async function review(steps: Steps) {
   function comment(finding: Reported, index: number) {
     return commentOf(finding, written.comments.find((c) => c.finding === index) ?? ownWords(finding));
   }
-  function droppedOf({ finding, verdict, reason }: Dropped) {
+  function droppedOf({ finding, verdict, reason }: Judged) {
     return { ...commentOf(finding, ownWords(finding)), verdict, reason };
   }
   return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, ...(request.cut && { cut: request.cut }) };
