@@ -782,7 +782,7 @@ describe("pr-triage body", () => {
     expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc0000000000000000000000000000000000000", state: "DISMISSED" })]);
   });
 
-  test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun", async () => {
+  test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun, through an in-progress comment too", async () => {
     const github = fakeGithub();
     const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
     github.pr.ci = "success";
@@ -790,6 +790,13 @@ describe("pr-triage body", () => {
     github.pr.head = "d36740c000000000000000000000000000000000";
     github.pr.ci = "failure";
     await triage(pack, { github });
+    await triage(pack, { github });
+    expect(github.comments).toHaveLength(1);
+    expect(github.comments[0]!.body).toEndWith("\n\nChanged since the last verdict (Pass at `abc0000`): 2 new commits, merging #1521 into this branch.");
+    github.pr.ci = "pending";
+    await triage(pack, { github });
+    expect(github.comments[0]!.body).toContain("**Triage: In progress**");
+    github.pr.ci = "failure";
     await triage(pack, { github });
     expect(github.comments).toHaveLength(1);
     expect(github.comments[0]!.body).toEndWith("\n\nChanged since the last verdict (Pass at `abc0000`): 2 new commits, merging #1521 into this branch.");

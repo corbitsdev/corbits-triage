@@ -8,8 +8,9 @@ type ArtifactRef = { id: string; version: number };
 /**
  * What a Triage comment was written for, kept in its marker so a later run can tell what changed. `repo` is the stored
  * policy a comment written before the policy file was the only policy names, so the comment that replaces it says so.
+ * `changed` is the note on what reached the head since the verdict before, so a rerun on the same head says it again.
  */
-export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string };
+export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string; changed?: string };
 
 /** One of Triage's marked comments as a host lists it, oldest first. */
 export type MarkedComment = { id: number; body: string; updatedAt?: string };
@@ -33,6 +34,7 @@ const TriageHeaderShape = type({
   head: "string",
   policy: type({ "repo?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) }).or("null"),
   verdict: "string",
+  "changed?": "string",
 });
 
 /** How a host writes the header on a Triage comment's first line, so a later run can read it back. */
@@ -124,17 +126,14 @@ function changedNote(before: TriageHeader, change: HeadChange): string {
 }
 
 /**
- * A verdict that changed on a new head says what reached the branch since; a rerun on the same head keeps what the
- * comment already said.
+ * The note on what reached the branch since the verdict before, for a verdict that changed on a new head; a rerun on
+ * the same head keeps the note its header carries.
  */
-async function withChangedNote(host: CommentHost, latest: MarkedComment | undefined, before: TriageHeader | undefined, header: TriageHeader, text: string): Promise<string> {
-  if (!latest || !before) return text;
-  if (before.head === header.head) {
-    const at = latest.body.lastIndexOf(`\n\n${CHANGED_NOTE}`);
-    return at === -1 ? text : `${text}${latest.body.slice(at)}`;
-  }
+async function changedSince(host: CommentHost, before: TriageHeader | undefined, header: TriageHeader): Promise<string | undefined> {
+  if (!before) return undefined;
+  if (before.head === header.head) return before.changed;
   const change = before.verdict !== header.verdict && host.changesSince ? await host.changesSince(before.head, header.head) : undefined;
-  return change ? `${text}\n\n${changedNote(before, change)}` : text;
+  return change && changedNote(before, change);
 }
 
 function unchangedSince(markers: MarkerFormat, latest: MarkedComment, header: TriageHeader, text: string): string | undefined {
@@ -182,14 +181,16 @@ export async function writeHeadedComment(host: CommentHost, markers: MarkerForma
   const current = own.filter((c) => !markers.isSuperseded(c.body));
   const latest = current[0];
   const before = latest && markers.headerOf(latest.body);
-  const shown = await withChangedNote(host, latest, before, header, text);
+  const note = await changedSince(host, before, header);
+  const shown = note ? `${text}\n\n${note}` : text;
+  const noted = note ? { ...header, changed: note } : header;
   const since = latest && unchangedSince(markers, latest, header, shown);
   if (latest && since) return { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
   const superseded = before !== undefined && supersedes(before, header)
     && await host.edit(latest!.id, `${markers.superseded(before)}\nSuperseded by the comment below.`) !== undefined;
   const earlier = earlierHeader(markers, own, current, superseded);
-  if (earlier && supersedes(earlier, header)) return { commentId: await host.post(`${markers.current(header)}\n${supersedesNote(earlier, header)}\n\n${shown}`), updated: false };
-  return upsertMarked(host, `${markers.current(header)}\n${shown}`, current);
+  if (earlier && supersedes(earlier, header)) return { commentId: await host.post(`${markers.current(noted)}\n${supersedesNote(earlier, header)}\n\n${shown}`), updated: false };
+  return upsertMarked(host, `${markers.current(noted)}\n${shown}`, current);
 }
 
 const LINK_REFERENCE_PREFIX = "[corbits-triage";
